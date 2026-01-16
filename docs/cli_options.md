@@ -480,11 +480,11 @@ Seconds to wait after the request is fully sent before cancelling. A delay of 0 
 
 #### `--user-centric-rate` `<float>`
 
-Enable user-centric rate limiting mode with the specified request rate (QPS). Each user has a gap = num_users / qps between turns. Users block on their previous turn (no interleaving within a user). When a user finishes, a new user is created to replace it. Designed for KV cache benchmarking with realistic multi-user patterns. Requires --num-users to be set.
+Enable user-centric rate limiting mode with the specified request rate (QPS). Each user has a gap = num_users / qps between turns. Users block on their previous turn (no interleaving within a user). New users are spawned on a fixed schedule to maintain steady-state throughput. Designed for KV cache benchmarking with realistic multi-user patterns. Requires --num-users to be set.
 
 #### `--num-users` `<int>`
 
-The number of concurrent users to use for --user-centric-rate mode.
+The number of initial users to use for --user-centric-rate mode.
 
 #### `--concurrency-ramp-duration` `<float>`
 

@@ -9,6 +9,7 @@ import zmq.asyncio
 
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.factories import CommunicationClientFactory
 from aiperf.common.hooks import background_task
@@ -81,7 +82,7 @@ class ZMQSubClient(BaseZMQClient):
 
         self._subscribers: dict[MessageTypeT, list[Callable[[Message], Any]]] = {}
         self._msg_count: int = 0
-        self._msg_count_interval: int = 10
+        self._yield_interval: int = Environment.ZMQ.SUB_YIELD_INTERVAL
 
     async def subscribe_all(
         self,
@@ -183,9 +184,10 @@ class ZMQSubClient(BaseZMQClient):
                 # NOTE: This must be async otherwise it may deadlock the event loop.
                 self.execute_async(self._handle_message(topic_bytes, message_bytes))
                 self._msg_count += 1
-                if self._msg_count % self._msg_count_interval == 0:
+                # Yield periodically to allow scheduled handlers to run
+                # and prevent event loop starvation during message bursts.
+                if self._yield_interval > 0 and self._msg_count >= self._yield_interval:
                     await yield_to_event_loop()
-                    self._msg_count = 0
 
             except zmq.Again:
                 self.debug(f"Sub client {self.client_id} receiver task timed out")

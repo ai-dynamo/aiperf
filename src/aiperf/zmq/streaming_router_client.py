@@ -13,6 +13,7 @@ from msgspec import Struct
 
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType
+from aiperf.common.environment import Environment
 from aiperf.common.factories import CommunicationClientFactory
 from aiperf.common.hooks import background_task, on_stop
 from aiperf.common.protocols import StreamingRouterClientProtocol
@@ -117,6 +118,8 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         """
         super().__init__(zmq.SocketType.ROUTER, address, bind, socket_ops, **kwargs)
         self._receiver_handler: WorkerToRouterHandler | None = None
+        self._msg_count: int = 0
+        self._yield_interval: int = Environment.ZMQ.STREAMING_ROUTER_YIELD_INTERVAL
 
     def register_receiver(self, handler: WorkerToRouterHandler) -> None:
         """
@@ -189,9 +192,15 @@ class ZMQStreamingRouterClient(BaseZMQClient):
                     )
 
                 if self._receiver_handler:
-                    self.scheduler.schedule_soon(
-                        self._receiver_handler(identity, message)
-                    )
+                    self.execute_async(self._receiver_handler(identity, message))
+                    self._msg_count += 1
+                    # Yield periodically to allow scheduled handlers to run
+                    # and prevent event loop starvation during message bursts.
+                    if (
+                        self._yield_interval > 0
+                        and self._msg_count >= self._yield_interval
+                    ):
+                        await yield_to_event_loop()
                 else:
                     self.warning(
                         f"Received {type(message).__name__} but no handler registered"

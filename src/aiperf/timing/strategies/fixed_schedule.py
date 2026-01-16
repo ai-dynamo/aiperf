@@ -169,6 +169,6 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
                 self._credit_issuer.issue_credit(turn),
             )
         else:
-            self._scheduler.schedule_soon(
+            self._scheduler.execute_async(
                 self._credit_issuer.issue_credit(turn),
             )

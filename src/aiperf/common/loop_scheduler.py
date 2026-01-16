@@ -117,21 +117,35 @@ class LoopScheduler:
         self._handles[handle_id] = (handle, coro)
         return handle_id
 
-    def schedule_later(self, delay_sec: float, coro: Coroutine) -> HandleId:
+    def execute_async(self, coro: Coroutine) -> asyncio.Task:
+        """Execute coroutine asynchronously (creates a task and returns it immediately).
+
+        Returns:
+            The task that was created.
+            The task will be automatically cleaned up when it completes.
+        """
+        task = self._loop.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._done_callback)
+        return task
+
+    def schedule_later(
+        self, delay_sec: float, coro: Coroutine
+    ) -> HandleId | asyncio.Task:
         """
         Schedule coroutine after a relative delay (seconds).
 
         Internally, it calls loop.call_later() and returns the handle ID.
 
         Args:
-            delay_sec: Seconds to wait. If <= 0, delegates to schedule_soon().
+            delay_sec: Seconds to wait. If <= 0, delegates to execute_async().
             coro: Coroutine object to execute.
 
         Returns:
             Handle for cancellation. Cancelled coroutines are properly closed.
         """
         if delay_sec <= 0:
-            return self.schedule_soon(coro)
+            return self.execute_async(coro)
 
         handle_container = [None]
         handle = self._loop.call_later(
@@ -140,21 +154,7 @@ class LoopScheduler:
         handle_container[0] = handle
         return self._track_handle_and_return_id(handle, coro)
 
-    def schedule_soon(self, coro: Coroutine) -> HandleId:
-        """
-        Schedule coroutine on the next event loop iteration (immediate).
-
-        Internally, it calls loop.call_soon() and returns the handle ID.
-
-        Returns:
-            Handle for cancellation. Cancelled coroutines are properly closed.
-        """
-        handle_container = [None]
-        handle = self._loop.call_soon(self._safe_callback, handle_container, coro)
-        handle_container[0] = handle
-        return self._track_handle_and_return_id(handle, coro)
-
-    def schedule_at(self, loop_time: float, coro: Coroutine) -> HandleId:
+    def schedule_at(self, loop_time: float, coro: Coroutine) -> HandleId | asyncio.Task:
         """
         Schedule coroutine at an absolute loop.time() timestamp.
 
@@ -174,7 +174,9 @@ class LoopScheduler:
         handle_container[0] = handle
         return self._track_handle_and_return_id(handle, coro)
 
-    def schedule_at_perf_sec(self, perf_sec: float, coro: Coroutine) -> HandleId:
+    def schedule_at_perf_sec(
+        self, perf_sec: float, coro: Coroutine
+    ) -> HandleId | asyncio.Task:
         """
         Schedule coroutine at an absolute perf_counter seconds timestamp.
 
@@ -184,11 +186,12 @@ class LoopScheduler:
 
         Args:
             perf_sec: Target time from time.perf_counter().
-                      If in the past, delegates to schedule_soon().
+                      If in the past, delegates to execute_async().
             coro: Coroutine object to execute.
 
         Returns:
             Handle for cancellation. Cancelled coroutines are properly closed.
+            If in the past, returns the task that was created by execute_async().
 
         Precision: Input is float seconds, uvloop timer resolution is ~1ms.
         """
@@ -197,10 +200,12 @@ class LoopScheduler:
         offset_sec = perf_sec - cur_perf_sec
 
         if offset_sec <= 0:
-            return self.schedule_soon(coro)
+            return self.execute_async(coro)
         return self.schedule_at(cur_loop_time + offset_sec, coro)
 
-    def schedule_at_perf_ns(self, perf_time_ns: int, coro: Coroutine) -> HandleId:
+    def schedule_at_perf_ns(
+        self, perf_time_ns: int, coro: Coroutine
+    ) -> HandleId | asyncio.Task:
         """
         Schedule coroutine at an absolute perf_counter_ns timestamp.
 
@@ -210,11 +215,12 @@ class LoopScheduler:
 
         Args:
             perf_time_ns: Target time from time.perf_counter_ns().
-                          If in the past, delegates to schedule_soon().
+                          If in the past, delegates to execute_async().
             coro: Coroutine object to execute.
 
         Returns:
             Handle for cancellation. Cancelled coroutines are properly closed.
+            If in the past, returns the task that was created by execute_async().
 
         Precision: Input is nanoseconds, but uvloop timer resolution is ~1ms.
         """
@@ -223,7 +229,7 @@ class LoopScheduler:
         offset_sec = (perf_time_ns - cur_perf_ns) / NANOS_PER_SECOND
 
         if offset_sec <= 0:
-            return self.schedule_soon(coro)
+            return self.execute_async(coro)
         return self.schedule_at(cur_loop_time + offset_sec, coro)
 
     def cancel_handle_id(self, handle_id: HandleId) -> bool:
