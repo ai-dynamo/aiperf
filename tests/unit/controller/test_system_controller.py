@@ -358,7 +358,7 @@ class TestSSLVerificationWarning:
         """Test that a warning is logged when SSL verification is disabled."""
         monkeypatch.setattr(Environment.HTTP, "SSL_VERIFY", False)
 
-        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
+        system_controller.send_command_and_wait_until_first_error = AsyncMock(
             return_value=[]
         )
 
@@ -376,7 +376,7 @@ class TestSSLVerificationWarning:
         """Test that no warning is logged when SSL verification is enabled."""
         monkeypatch.setattr(Environment.HTTP, "SSL_VERIFY", True)
 
-        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
+        system_controller.send_command_and_wait_until_first_error = AsyncMock(
             return_value=[]
         )
 
