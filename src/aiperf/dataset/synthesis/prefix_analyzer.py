@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Analyzer for extracting prefix statistics from traces."""
 
-import json
 import statistics
 from collections import Counter
 from pathlib import Path
+
+import orjson
 
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.dataset.synthesis.models import AnalysisStats, MetricStats
@@ -48,7 +49,7 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
         with open(trace_file) as f:
             for line in f:
                 if line.strip():
-                    data = json.loads(line)
+                    data = orjson.loads(line)
                     self._process_trace_first_pass(data)
 
         # Second pass: compute context lengths
