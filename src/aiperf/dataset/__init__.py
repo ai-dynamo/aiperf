@@ -55,8 +55,12 @@ from aiperf.dataset.loader import (
 )
 from aiperf.dataset.utils import (
     check_file_exists,
+    encode_audio,
     encode_image,
+    encode_video,
+    open_audio,
     open_image,
+    open_video,
 )
 
 __all__ = [
@@ -94,8 +98,12 @@ __all__ = [
     "SyntheticRankingsDatasetComposer",
     "VideoGenerator",
     "check_file_exists",
+    "encode_audio",
     "encode_image",
+    "encode_video",
     "main",
+    "open_audio",
     "open_image",
+    "open_video",
     "parallel_decode",
 ]
