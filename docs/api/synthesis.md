@@ -30,9 +30,15 @@ RollingHasher(block_size: int = 512) -> None
   - `blocks`: Sequence of text strings representing blocks
 - **Returns:** List of unique hash IDs
 
+`hash_token_blocks(blocks: Sequence[Sequence[int]]) -> list[int]`
+- Convert a sequence of token blocks to hash IDs
+- **Parameters:**
+  - `blocks`: Sequence of token blocks (each block is a sequence of token IDs)
+- **Returns:** List of unique hash IDs
+
 `reset() -> None`
 - Reset the hasher state for hashing new sequences
-- Note: Maintains global uniqueness across sequences
+- Note: Maintains global uniqueness across sequences (keeps `_hash_to_id` and `_id_counter`)
 
 `get_stats() -> dict[str, int]`
 - Get statistics about the hasher
@@ -78,9 +84,9 @@ RadixTree() -> None
 - Get all nodes in the tree
 - **Returns:** List of all RadixNode instances
 
-`get_stats() -> dict[str, Any]`
+`get_stats() -> RadixTreeStats`
 - Get statistics about tree structure
-- **Returns:** Dictionary with 'num_nodes', 'num_leaves', 'total_visits', 'max_depth'
+- **Returns:** `RadixTreeStats` object with 'num_nodes', 'num_leaves', 'total_visits', 'max_depth'
 
 **Properties:**
 
@@ -159,45 +165,34 @@ EmpiricalSampler(data: list[int] | list[float]) -> None
 
 **Methods:**
 
-`sample(rng: np.random.Generator | None = None) -> Any`
+`sample() -> int | float`
 - Draw a single sample from the learned distribution
-- **Parameters:**
-  - `rng`: Optional numpy random generator
 - **Returns:** A sampled value
 
-`sample_batch(size: int, rng: np.random.Generator | None = None) -> list[Any]`
+`sample_batch(size: int) -> list[int | float]`
 - Draw multiple samples from the learned distribution
 - **Parameters:**
   - `size`: Number of samples to draw
-  - `rng`: Optional numpy random generator
 - **Returns:** List of sampled values
 
-`get_stats() -> dict[str, Any]`
+`get_stats() -> EmpiricalSamplerStats`
 - Get statistics about the learned distribution
-- **Returns:** Dictionary with 'min', 'max', 'mean', 'median', 'num_unique'
+- **Returns:** `EmpiricalSamplerStats` object with 'min', 'max', 'mean', 'median', 'num_unique'
 
 **Example:**
 ```python
-from aiperf.dataset.synthesis import EmpiricalSampler
-import numpy as np
+from aiperf.dataset.synthesis import EmpiricalSampler, EmpiricalSamplerStats
 
 # Create sampler from observed data
 data = [100, 200, 150, 300, 250, 100, 200]
 sampler = EmpiricalSampler(data)
 
 # Sample from distribution
-rng = np.random.default_rng(42)
-sample = sampler.sample(rng)  # Returns a value like 100, 150, 200, 250, or 300
+sample = sampler.sample()  # Returns a value like 100, 150, 200, 250, or 300
 
 # Get distribution statistics
 stats = sampler.get_stats()
-# {
-#   'min': 100,
-#   'max': 300,
-#   'mean': 185.7,
-#   'median': 200.0,
-#   'num_unique': 5
-# }
+# EmpiricalSamplerStats(min=100.0, max=300.0, mean=185.7, median=200.0, num_unique=5)
 ```
 
 ---
@@ -271,6 +266,12 @@ Synthesizer(params: SynthesisParams | None = None) -> None
   - `traces`: List of input trace dictionaries
 - **Returns:** List of synthetic trace dictionaries
 
+`synthesize_grouped_traces(data: dict[str, list[dict]]) -> dict[str, list[dict]]`
+- Synthesize traces while preserving session grouping
+- **Parameters:**
+  - `data`: Dictionary mapping session_id to list of trace dicts
+- **Returns:** Dictionary mapping session_id to list of synthesized trace dicts
+
 `get_stats() -> dict[str, Any]`
 - Get synthesizer statistics
 - **Returns:** Dictionary with 'tree_nodes', 'tree_depth', 'params'
@@ -321,6 +322,24 @@ Statistics extracted from trace analysis.
 - `max_osl: int` - Maximum output sequence length
 - `avg_osl: float` - Average output sequence length
 - `prefix_reuse_ratio: float` - Ratio of reused prefixes (0.0 to 1.0)
+- `isl_stats: MetricStats | None` - Full statistics for input sequence length
+- `osl_stats: MetricStats | None` - Full statistics for output sequence length
+- `context_length_stats: MetricStats | None` - Full statistics for context (shared prefix) length
+- `unique_prompt_length_stats: MetricStats | None` - Full statistics for unique prompt length
+- `hit_rate_stats: MetricStats | None` - Full statistics for per-request cache hit rates
+
+#### `MetricStats`
+
+Statistics for a single metric with percentiles.
+
+**Fields:**
+- `mean: float` - Mean value
+- `std_dev: float` - Standard deviation
+- `min: float` - Minimum value
+- `p25: float` - 25th percentile
+- `median: float` - Median (50th percentile)
+- `p75: float` - 75th percentile
+- `max: float` - Maximum value
 
 #### `SynthesisParams`
 
@@ -333,6 +352,30 @@ Parameters for synthetic trace generation.
 - `prompt_len_multiplier: float = 1.0` - Leaf prompt length multiplier (ge 0.0)
 - `max_isl: int | None = None` - Maximum input sequence length filter
 - `block_size: int = 512` - KV cache page size (ge 1)
+
+**Class Methods:**
+- `from_synthesis_config(config: SynthesisConfig, block_size: int = 512) -> SynthesisParams` - Create from SynthesisConfig
+
+#### `RadixTreeStats`
+
+Statistics about radix tree structure.
+
+**Fields:**
+- `num_nodes: int` - Total number of nodes in tree
+- `num_leaves: int` - Number of leaf nodes (nodes with no children)
+- `total_visits: int` - Number of paths added to tree
+- `max_depth: int` - Maximum depth from root to leaf
+
+#### `EmpiricalSamplerStats`
+
+Statistics about learned empirical distribution.
+
+**Fields:**
+- `min: float` - Minimum value in original data
+- `max: float` - Maximum value in original data
+- `mean: float` - Mean of original data
+- `median: float` - Median of original data
+- `num_unique: int` - Number of unique values in distribution
 
 ---
 
@@ -362,7 +405,31 @@ Graph manipulation utilities for radix tree operations.
 
 `get_tree_stats(tree: RadixTree) -> dict[str, Any]`
 - Get comprehensive statistics about tree structure
-- **Returns:** Dictionary with tree metrics
+- **Returns:** Dictionary with tree metrics (includes RadixTreeStats fields plus 'internal_nodes' and 'branching_factor')
+
+#### `aiperf.dataset.synthesis.rolling_hasher`
+
+Utility functions for converting between texts and hash IDs.
+
+`texts_to_hashes(tokenizer: Tokenizer, texts: list[str], block_size: int = 512) -> list[list[int]]`
+- Convert a list of texts to hash ID sequences
+- Tokenizes texts, splits into blocks, and generates consecutive hash IDs
+- **Parameters:**
+  - `tokenizer`: Tokenizer for encoding texts
+  - `texts`: List of input text strings
+  - `block_size`: Number of tokens per block
+- **Returns:** List of hash ID sequences, one per input text
+
+`hashes_to_texts(prompt_generator: PromptGenerator, hash_ids_list: list[list[int]], input_lengths: list[int], block_size: int = 512) -> list[str]`
+- Convert hash ID sequences back to text strings
+- Uses the PromptGenerator's cache to ensure the same hash ID always produces the same token block
+- **Parameters:**
+  - `prompt_generator`: PromptGenerator instance for generating text from hash_ids
+  - `hash_ids_list`: List of hash ID sequences
+  - `input_lengths`: Target input lengths (in tokens) for each sequence
+  - `block_size`: Number of tokens per block
+- **Returns:** List of text strings, one per hash ID sequence
+- **Raises:** `ValueError` if `len(hash_ids) * block_size < input_length` for any sequence
 
 ---
 
@@ -391,53 +458,38 @@ aiperf analyze-trace traces/prod.jsonl --output-file analysis.json
 
 ---
 
-### `aiperf synthesize-trace`
-
-Generate synthetic trace with controlled prefix patterns.
-
-**Usage:**
-```bash
-aiperf synthesize-trace INPUT_FILE OUTPUT_FILE [OPTIONS]
-```
-
-**Arguments:**
-- `INPUT_FILE`: Path to input mooncake trace JSONL file
-- `OUTPUT_FILE`: Path for synthesized output trace JSONL file
-
-**Options:**
-- `--block-size INT` (default: 512) - KV cache block size
-- `--speedup-ratio FLOAT` (default: 1.0) - Timestamp scaling multiplier
-- `--prefix-len-multiplier FLOAT` (default: 1.0) - Core prefix length multiplier
-- `--prefix-root-multiplier INT` (default: 1) - Tree replication factor
-- `--prompt-len-multiplier FLOAT` (default: 1.0) - Leaf prompt length multiplier
-- `--max-isl INT` - Maximum input sequence length filter (optional)
-
-**Example:**
-```bash
-aiperf synthesize-trace input.jsonl output.jsonl \
-    --speedup-ratio 2.0 \
-    --prefix-len-multiplier 1.5 \
-    --max-isl 4096
-```
-
----
-
 ## Configuration
 
-Synthesis parameters can be configured via CLI or programmatically:
+Synthesis parameters can be configured via CLI or programmatically.
 
-**Via CLI Options:**
+**Via CLI Options (with `aiperf profile`):**
+
+Synthesis is applied automatically when running `aiperf profile` with mooncake traces and synthesis parameters:
+
+```bash
+aiperf profile \
+    --input-file traces/production.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --synthesis-speedup-ratio 2.0 \
+    --synthesis-prefix-len-multiplier 1.5 \
+    --synthesis-max-isl 4096 \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat
+```
+
+**Via SynthesisConfig:**
 ```python
-# Use SynthesisConfig in InputConfig
-config = UserConfig(
-    input=InputConfig(
-        synthesis=SynthesisConfig(
-            speedup_ratio=2.0,
-            prefix_len_multiplier=1.5,
-            max_isl=4096,
-        )
-    )
+from aiperf.common.config import SynthesisConfig
+
+config = SynthesisConfig(
+    speedup_ratio=2.0,
+    prefix_len_multiplier=1.5,
+    max_isl=4096,
 )
+
+# Check if synthesis would be triggered
+if config.should_synthesize():
+    print("Synthesis will be applied")
 ```
 
 **Direct Instantiation:**
@@ -459,21 +511,20 @@ synthetic_traces = synthesizer.synthesize_from_file("input.jsonl")
 
 ## Integration with AIPerf Benchmark
 
-Use synthesized traces in the AIPerf profile command:
+Synthesis is applied automatically during benchmark when using mooncake traces with synthesis parameters:
 
 ```bash
-# Generate synthetic trace
-aiperf synthesize-trace production.jsonl synthetic.jsonl \
-    --speedup-ratio 2.0 \
-    --prefix-len-multiplier 1.5
-
-# Run benchmark with synthesized trace
+# Run benchmark with synthesis applied in-memory
 aiperf profile \
-    --input-file synthetic.jsonl \
+    --input-file production.jsonl \
     --custom-dataset-type mooncake_trace \
+    --synthesis-speedup-ratio 2.0 \
+    --synthesis-prefix-len-multiplier 1.5 \
     --model Qwen/Qwen3-0.6B \
     --endpoint-type chat
 ```
+
+Synthesis is triggered automatically when any `--synthesis-*` parameter differs from its default value.
 
 ---
 

@@ -90,27 +90,27 @@ Percentiles are calculated using linear interpolation: for percentile `p` with `
 
 These metrics help you understand how much prefix caching could benefit your workload.
 
-## Step 2: Generate Synthetic Traces
+## Step 2: Run Benchmarks with Synthesis Parameters
 
-Use the analyzed patterns to generate new synthetic traces:
+Synthesis happens automatically when you run `aiperf profile` with mooncake traces and synthesis parameters. The trace is transformed in-memory before benchmarking:
 
 ```bash
-aiperf synthesize-trace traces/production.jsonl traces/synthetic.jsonl \
-    --block-size 512 \
-    --speedup-ratio 1.0 \
-    --prefix-len-multiplier 1.0 \
-    --prefix-root-multiplier 1 \
-    --prompt-len-multiplier 1.0
+aiperf profile \
+    --input-file traces/production.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --synthesis-speedup-ratio 1.0 \
+    --synthesis-prefix-len-multiplier 1.0 \
+    --synthesis-prefix-root-multiplier 1 \
+    --synthesis-prompt-len-multiplier 1.0
 ```
 
-This generates a new trace file `synthetic.jsonl` with the same characteristics as the original.
+This runs a benchmark using the original trace characteristics. Adjust the multipliers to scale different aspects.
 
 ### Understanding Synthesis Parameters
 
-#### `block-size` (default: 512)
-Token block size for KV cache pages. Should match your model's configuration.
-
-#### `speedup-ratio` (default: 1.0)
+#### `--synthesis-speedup-ratio` (default: 1.0)
 Scale timestamps to simulate faster or slower request rates:
 - `1.0`: No change, request times identical
 - `2.0`: 2x faster (timestamps halved)
@@ -118,10 +118,14 @@ Scale timestamps to simulate faster or slower request rates:
 
 Example: Simulate 2x more concurrent load:
 ```bash
-aiperf synthesize-trace input.jsonl output.jsonl --speedup-ratio 2.0
+aiperf profile \
+    --input-file traces/production.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --synthesis-speedup-ratio 2.0 \
+    ...
 ```
 
-#### `prefix-len-multiplier` (default: 1.0)
+#### `--synthesis-prefix-len-multiplier` (default: 1.0)
 Scale the length of core prefix paths (shared prefixes):
 - `1.0`: No change
 - `1.5`: Extend shared prefixes by 50%
@@ -129,10 +133,14 @@ Scale the length of core prefix paths (shared prefixes):
 
 Example: Simulate longer context windows:
 ```bash
-aiperf synthesize-trace input.jsonl output.jsonl --prefix-len-multiplier 1.5
+aiperf profile \
+    --input-file traces/production.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --synthesis-prefix-len-multiplier 1.5 \
+    ...
 ```
 
-#### `prefix-root-multiplier` (default: 1)
+#### `--synthesis-prefix-root-multiplier` (default: 1)
 Replicate the prefix tree structure N times:
 - `1`: No replication
 - `2`: Double the number of unique prefix combinations
@@ -140,10 +148,14 @@ Replicate the prefix tree structure N times:
 
 Example: Generate more diverse prefix patterns:
 ```bash
-aiperf synthesize-trace input.jsonl output.jsonl --prefix-root-multiplier 3
+aiperf profile \
+    --input-file traces/production.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --synthesis-prefix-root-multiplier 3 \
+    ...
 ```
 
-#### `prompt-len-multiplier` (default: 1.0)
+#### `--synthesis-prompt-len-multiplier` (default: 1.0)
 Scale the length of unique prompts (non-shared portions):
 - `1.0`: No change
 - `2.0`: Double unique prompt lengths
@@ -151,47 +163,45 @@ Scale the length of unique prompts (non-shared portions):
 
 Example: Simulate shorter user prompts:
 ```bash
-aiperf synthesize-trace input.jsonl output.jsonl --prompt-len-multiplier 0.7
+aiperf profile \
+    --input-file traces/production.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --synthesis-prompt-len-multiplier 0.7 \
+    ...
 ```
 
-#### `max-isl` (optional)
+#### `--synthesis-max-isl` (optional)
 Cap the maximum input sequence length:
 - Not set: No cap
 - `4096`: Maximum 4,096 tokens per request
 
 Example: Test with bounded context:
 ```bash
-aiperf synthesize-trace input.jsonl output.jsonl --max-isl 4096
-```
-
-## Step 3: Use Synthetic Traces in Benchmarks
-
-Run AIPerf with the synthesized traces:
-
-```bash
 aiperf profile \
-    --input-file traces/synthetic.jsonl \
+    --input-file traces/production.jsonl \
     --custom-dataset-type mooncake_trace \
-    --model Qwen/Qwen3-0.6B \
-    --endpoint-type chat \
-    --workers-max 4 \
-    --concurrency 32
+    --synthesis-max-isl 4096 \
+    ...
 ```
 
 ## Advanced Examples
 
 ### Scenario 1: Simulate High Cache Hit Rate
 
-Analyze original traces to understand their cache characteristics, then boost prefix reuse:
+Analyze original traces to understand their cache characteristics, then benchmark with boosted prefix reuse:
 
 ```bash
 # Analyze original
 aiperf analyze-trace prod.jsonl --output-file analysis.json
 
-# Generate with more prefix reuse
-aiperf synthesize-trace prod.jsonl high-cache-hit.jsonl \
-    --prefix-root-multiplier 5 \
-    --prompt-len-multiplier 0.8
+# Benchmark with more prefix reuse
+aiperf profile \
+    --input-file prod.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --synthesis-prefix-root-multiplier 5 \
+    --synthesis-prompt-len-multiplier 0.8 \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat
 ```
 
 ### Scenario 2: Load Testing with Scaled Timeline
@@ -199,28 +209,40 @@ aiperf synthesize-trace prod.jsonl high-cache-hit.jsonl \
 Compress timestamps to simulate 10x faster request rate:
 
 ```bash
-aiperf synthesize-trace prod.jsonl fast-load.jsonl \
-    --speedup-ratio 10.0
+aiperf profile \
+    --input-file prod.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --synthesis-speedup-ratio 10.0 \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat
 ```
 
 ### Scenario 3: Stress Testing with Extended Context
 
-Create traces with longer contexts while maintaining prefix patterns:
+Benchmark with longer contexts while maintaining prefix patterns:
 
 ```bash
-aiperf synthesize-trace prod.jsonl long-context.jsonl \
-    --prefix-len-multiplier 2.0 \
-    --max-isl 8192
+aiperf profile \
+    --input-file prod.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --synthesis-prefix-len-multiplier 2.0 \
+    --synthesis-max-isl 8192 \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat
 ```
 
 ### Scenario 4: Controlled Multi-Turn Simulation
 
-Generate traces with more diverse prefix patterns for multi-turn scenarios:
+Benchmark with more diverse prefix patterns for multi-turn scenarios:
 
 ```bash
-aiperf synthesize-trace prod.jsonl multiturn.jsonl \
-    --prefix-root-multiplier 10 \
-    --prompt-len-multiplier 1.2
+aiperf profile \
+    --input-file prod.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --synthesis-prefix-root-multiplier 10 \
+    --synthesis-prompt-len-multiplier 1.2 \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat
 ```
 
 ## Understanding Trace Format
@@ -250,7 +272,7 @@ The mooncake trace format is JSONL (JSON Lines), where each line is a JSON objec
 
 ## Tips and Best Practices
 
-### 1. Analyze Before Synthesizing
+### 1. Analyze Before Benchmarking
 Always run `analyze-trace` first to understand your data:
 ```bash
 aiperf analyze-trace your_trace.jsonl --output-file analysis.json
@@ -260,39 +282,52 @@ aiperf analyze-trace your_trace.jsonl --output-file analysis.json
 Test parameters incrementally rather than changing everything at once:
 ```bash
 # Test prefix scaling alone
-aiperf synthesize-trace input.jsonl output1.jsonl --prefix-len-multiplier 1.2
+aiperf profile \
+    --input-file traces/production.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --synthesis-prefix-len-multiplier 1.2 \
+    --model Qwen/Qwen3-0.6B --endpoint-type chat
 
 # Test speedup alone
-aiperf synthesize-trace input.jsonl output2.jsonl --speedup-ratio 2.0
+aiperf profile \
+    --input-file traces/production.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --synthesis-speedup-ratio 2.0 \
+    --model Qwen/Qwen3-0.6B --endpoint-type chat
 ```
 
-### 3. Validate Synthesized Output
-After synthesis, analyze the output to verify it meets expectations:
-```bash
-aiperf analyze-trace synthesized.jsonl --output-file syn-analysis.json
-```
-
-### 4. Use Multiple Parameter Sets
-Create multiple synthetic datasets for comprehensive testing:
+### 3. Compare Multiple Parameter Sets
+Run benchmarks with different synthesis parameters to compare:
 ```bash
 # Conservative: slight increase in cache hits
-aiperf synthesize-trace prod.jsonl syn-conservative.jsonl \
-    --prefix-len-multiplier 1.1 --prefix-root-multiplier 2
+aiperf profile \
+    --input-file prod.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --synthesis-prefix-len-multiplier 1.1 \
+    --synthesis-prefix-root-multiplier 2 \
+    --model Qwen/Qwen3-0.6B --endpoint-type chat
 
 # Aggressive: strong cache hit focus
-aiperf synthesize-trace prod.jsonl syn-aggressive.jsonl \
-    --prefix-len-multiplier 2.0 --prefix-root-multiplier 5
+aiperf profile \
+    --input-file prod.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --synthesis-prefix-len-multiplier 2.0 \
+    --synthesis-prefix-root-multiplier 5 \
+    --model Qwen/Qwen3-0.6B --endpoint-type chat
 
 # Load test: faster request rate
-aiperf synthesize-trace prod.jsonl syn-fast.jsonl \
-    --speedup-ratio 5.0
+aiperf profile \
+    --input-file prod.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --synthesis-speedup-ratio 5.0 \
+    --model Qwen/Qwen3-0.6B --endpoint-type chat
 ```
 
-### 5. Preserve Real Patterns
+### 4. Preserve Real Patterns
 The synthesis preserves statistical properties. For best results:
 - Use realistic input traces from production
 - Avoid extreme multiplier values (typically 0.5-3.0)
-- Test synthesized traces before production benchmarks
+- Compare results against baseline (no synthesis parameters)
 
 ## Troubleshooting
 
@@ -310,18 +345,14 @@ ls -la traces/production.jsonl
 Total requests: 1000
 Unique prefixes: 0
 ```
-**Solution:** Your trace file doesn't have hash_ids. This is normal for synthetic data:
-```bash
-# Synthesis will still work, just without prefix caching information
-aiperf synthesize-trace traces.jsonl output.jsonl
-```
+**Solution:** Your trace file doesn't have `hash_ids`. Synthesis will still work with `input_length` and `output_length` fields, but prefix caching information won't be available.
 
 ### Issue: Low cache hit rate
 ```
 Cache hit rate: 5.2%
 ```
 **Solution:** Your workload has low prefix reuse. Try:
-- Increasing `prefix-len-multiplier` to extend shared prefixes
-- Using `prefix-root-multiplier` to create more diverse patterns
+- Increasing `--synthesis-prefix-len-multiplier` to extend shared prefixes
+- Using `--synthesis-prefix-root-multiplier` to create more diverse patterns
 - Analyzing a different trace file that has more reuse
 
