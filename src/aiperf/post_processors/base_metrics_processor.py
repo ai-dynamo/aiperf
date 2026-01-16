@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC
@@ -6,6 +6,7 @@ from abc import ABC
 from aiperf.common.config import UserConfig
 from aiperf.common.constants import GOOD_REQUEST_COUNT_TAG
 from aiperf.common.enums import MetricFlags, MetricType
+from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.metric_registry import MetricRegistry
@@ -43,6 +44,10 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
             # Disable usage diff metrics if server token counts are used, because
             # these metrics are only applicable when client side tokenization is enabled.
             disallowed_flags |= MetricFlags.USAGE_DIFF_ONLY
+        if not Environment.DEV.MODE and not Environment.DEV.SHOW_INTERNAL_METRICS:
+            disallowed_flags |= MetricFlags.INTERNAL
+        if not Environment.DEV.MODE and not Environment.DEV.SHOW_EXPERIMENTAL_METRICS:
+            disallowed_flags |= MetricFlags.EXPERIMENTAL
         return required_flags, disallowed_flags
 
     def _configure_goodput(self, applicable_tags: set[str]) -> None:

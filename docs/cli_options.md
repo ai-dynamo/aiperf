@@ -85,8 +85,8 @@ Use server-reported token counts from API usage fields instead of client-side to
 
 #### `--connection-reuse-strategy` `<str>`
 
-Transport connection reuse strategy. 'pooled' (default): connections are pooled and reused across all requests. 'never': new connection for each request, closed after response.
-<br>_Choices: [`pooled`, `never`]_
+Transport connection reuse strategy. 'pooled' (default): connections are pooled and reused across all requests. 'never': new connection for each request, closed after response. 'sticky-user-sessions': connection persists across turns of a multi-turn conversation, closed on final turn (enables sticky load balancing).
+<br>_Choices: [`pooled`, `never`, `sticky-user-sessions`]_
 <br>_Default: `pooled`_
 
 ## Input Options
@@ -116,10 +116,12 @@ Specifies to automatically offset the timestamps in the fixed schedule, such tha
 #### `--fixed-schedule-start-offset` `<int>`
 
 Specifies the offset in milliseconds to start the fixed schedule at. By default, the schedule starts at 0, but this option can be used to start at a reference point further in the schedule. This option cannot be used in conjunction with the --fixed-schedule-auto-offset. The schedule will include any requests at the start offset.
+<br>_Constraints: ≥ 0_
 
 #### `--fixed-schedule-end-offset` `<int>`
 
 Specifies the offset in milliseconds to end the fixed schedule at. By default, the schedule ends at the last timestamp in the trace dataset, but this option can be used to only run a subset of the trace. The schedule will include any requests at the end offset.
+<br>_Constraints: ≥ 0_
 
 #### `--public-dataset` `<str>`
 
@@ -310,10 +312,12 @@ The number of tokens in each prefix prompt. This is only used if "num" is greate
 #### `--shared-system-prompt-length` `<int>`
 
 Length of shared system prompt in tokens. This prompt is identical across all sessions and appears as a system message. Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size.
+<br>_Constraints: ≥ 1_
 
 #### `--user-context-prompt-length` `<int>`
 
-Length of per-session user context prompt in tokens. Each session gets a unique user context prompt. Requires --num-sessions to be specified. Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size.
+Length of per-session user context prompt in tokens. Each dataset entry gets a unique user context prompt. Requires --num-dataset-entries to be specified. Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size.
+<br>_Constraints: ≥ 1_
 
 ## Rankings Options
 
@@ -382,6 +386,7 @@ The total number of unique conversations to generate. Each conversation represen
 #### `--num-dataset-entries`, `--num-prompts` `<int>`
 
 The total number of unique dataset entries to generate for the dataset. Each entry represents a single turn used in a request.
+<br>_Constraints: ≥ 1_
 <br>_Default: `100`_
 
 #### `--conversation-turn-mean`, `--session-turns-mean` `<int>`
@@ -426,6 +431,14 @@ The level of profile export files to create.
 <br>_Choices: [`summary`, `records`, `raw`]_
 <br>_Default: `records`_
 
+#### `--export-http-trace`
+
+Include HTTP trace data (timestamps, chunks, headers, socket info) in profile_export.jsonl. Computed metrics (http_req_duration, http_req_waiting, etc.) are always included regardless of this setting. See the HTTP Trace Metrics guide for details on trace data fields.
+
+#### `--show-trace-timing`
+
+Display HTTP trace timing metrics in the console at the end of the benchmark. Shows detailed timing breakdown: blocked, DNS, connecting, sending, waiting (TTFB), receiving, and total duration following k6 naming conventions.
+
 #### `--slice-duration` `<float>`
 
 The duration (in seconds) of an individual time slice to be used post-benchmark in time-slicing mode.
@@ -449,45 +462,133 @@ Allows custom tokenizer to be downloaded and executed. This carries security ris
 
 #### `--benchmark-duration` `<float>`
 
-The duration in seconds for benchmarking.
+The maximum duration in seconds for benchmarking.
+<br>_Constraints: > 0_
 
 #### `--benchmark-grace-period` `<float>`
 
-The grace period in seconds to wait for responses after benchmark duration ends. Only applies when --benchmark-duration is set. Responses received within this period are included in metrics.
+The grace period in seconds to wait for responses after benchmark duration ends. Only applies when --benchmark-duration is set. Responses received within this period are included in metrics. Use 'inf' to wait indefinitely for all responses.
+<br>_Constraints: ≥ 0_
 <br>_Default: `30.0`_
 
 #### `--concurrency` `<int>`
 
-The concurrency value to benchmark.
+The concurrency value to benchmark. By default, this is session-based concurrency.
+<br>_Constraints: ≥ 1_
+
+#### `--prefill-concurrency` `<int>`
+
+Max concurrent requests waiting for first token (prefill phase). Limits how many requests can be in the prefill/prompt-processing stage simultaneously.
+<br>_Constraints: ≥ 1_
 
 #### `--request-rate` `<float>`
 
 Sets the request rate for the load generated by AIPerf. Unit: requests/second.
+<br>_Constraints: > 0_
 
-#### `--request-rate-mode` `<str>`
+#### `--arrival-pattern`, `--request-rate-mode` `<str>`
 
-Sets the request rate mode for the load generated by AIPerf. Valid values: constant, poisson. constant: Generate requests at a fixed rate. poisson: Generate requests using a poisson distribution.
+Sets the arrival pattern for the load generated by AIPerf. Valid values: constant, poisson, gamma. `constant`: Generate requests at a fixed rate. `poisson`: Generate requests using a poisson distribution. `gamma`: Generate requests using a gamma distribution with tunable smoothness.
 <br>_Default: `poisson`_
+
+#### `--arrival-smoothness`, `--vllm-burstiness` `<float>`
+
+Smoothness parameter for gamma distribution arrivals (--arrival-pattern gamma). Controls the shape of the arrival pattern: - 1.0: Poisson-like (exponential inter-arrivals, default) - <1.0: Bursty/clustered arrivals (higher variance) - >1.0: Smooth/regular arrivals (lower variance) Compatible with vLLM's --burstiness parameter (same value = same distribution).
+<br>_Constraints: > 0_
 
 #### `--request-count`, `--num-requests` `<int>`
 
-The number of requests to use for measurement.
-<br>_Default: `10`_
+The maximum number of requests to send. If not set, will be automatically determined based on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`.
+<br>_Constraints: ≥ 1_
 
 #### `--warmup-request-count`, `--num-warmup-requests` `<int>`
 
-The number of warmup requests to send before benchmarking.
-<br>_Default: `0`_
+The maximum number of warmup requests to send before benchmarking. If not set and no --warmup-duration is set, then no warmup phase will be used.
+<br>_Constraints: > 0_
+
+#### `--warmup-duration` `<float>`
+
+The maximum duration in seconds for the warmup phase. If not set, it will use the `--warmup-request-count` value. If neither are set, no warmup phase will be used.
+<br>_Constraints: > 0_
+
+#### `--num-warmup-sessions` `<int>`
+
+The number of sessions to use for the warmup phase. If not set, it will use the `--warmup-request-count` value.
+
+#### `--warmup-concurrency` `<int>`
+
+The concurrency value to use for the warmup phase. If not set, it will use the `--concurrency` value.
+<br>_Constraints: ≥ 1_
+
+#### `--warmup-prefill-concurrency` `<int>`
+
+The prefill concurrency value to use for the warmup phase. If not set, it will use the `--prefill-concurrency` value.
+<br>_Constraints: ≥ 1_
+
+#### `--warmup-request-rate` `<float>`
+
+The request rate to use for the warmup phase. If not set, it will use the `--request-rate` value.
+<br>_Constraints: > 0_
+
+#### `--warmup-arrival-pattern` `<str>`
+
+The arrival pattern to use for the warmup phase. If not set, it will use the `--arrival-pattern` value. Valid values: constant, poisson, gamma.
+
+#### `--warmup-grace-period` `<float>`
+
+The grace period in seconds to wait for responses after warmup phase ends. Only applies when warmup is enabled. Responses received within this period are included in warmup completion. If not set, waits indefinitely for all warmup responses.
+<br>_Constraints: ≥ 0_
 
 #### `--request-cancellation-rate` `<float>`
 
-The percentage of requests to cancel.
-<br>_Default: `0.0`_
+Percentage of requests to cancel (0.0 - 100.0). Tests how inference servers handle client disconnections.
+<br>_Constraints: > 0.0, ≤ 100.0_
 
 #### `--request-cancellation-delay` `<float>`
 
-The delay in seconds before cancelling requests. This is used when --request-cancellation-rate is greater than 0.
+Seconds to wait after the request is fully sent before cancelling. A delay of 0 means 'send the full request, then immediately disconnect'. Requires --request-cancellation-rate to be set.
+<br>_Constraints: ≥ 0.0_
 <br>_Default: `0.0`_
+
+#### `--user-centric-rate` `<float>`
+
+Enable user-centric rate limiting mode with the specified request rate (QPS). Each user has a gap = num_users / qps between turns. Users block on their previous turn (no interleaving within a user). New users are spawned on a fixed schedule to maintain steady-state throughput. Designed for KV cache benchmarking with realistic multi-user patterns. Requires --num-users to be set.
+<br>_Constraints: > 0_
+
+#### `--num-users` `<int>`
+
+The number of initial users to use for --user-centric-rate mode.
+<br>_Constraints: ≥ 1_
+
+#### `--concurrency-ramp-duration` `<float>`
+
+Duration in seconds to ramp session concurrency from 1 to target. Useful for gradual warm-up of the target system.
+<br>_Constraints: > 0_
+
+#### `--prefill-concurrency-ramp-duration` `<float>`
+
+Duration in seconds to ramp prefill concurrency from 1 to target.
+<br>_Constraints: > 0_
+
+#### `--warmup-concurrency-ramp-duration` `<float>`
+
+Duration in seconds to ramp warmup session concurrency from 1 to target. If not set, uses `--concurrency-ramp-duration` value.
+<br>_Constraints: > 0_
+
+#### `--warmup-prefill-concurrency-ramp-duration` `<float>`
+
+Duration in seconds to ramp warmup prefill concurrency from 1 to target. If not set, uses `--prefill-concurrency-ramp-duration` value.
+<br>_Constraints: > 0_
+
+#### `--request-rate-ramp-duration` `<float>`
+
+Duration in seconds to ramp request rate from a proportional minimum to target. Start rate is calculated as target * (update_interval / duration), ensuring correct behavior for target rates below 1 QPS. Useful for gradual warm-up of the target system.
+<br>_Constraints: > 0_
+
+#### `--warmup-request-rate-ramp-duration` `<float>`
+
+Duration in seconds to ramp warmup request rate from a proportional minimum to target. Start rate is calculated as target * (update_interval / duration). If not set, uses `--request-rate-ramp-duration` value.
+<br>_Constraints: > 0_
 
 ## Telemetry Options
 
@@ -529,7 +630,7 @@ Path for IPC sockets.
 
 #### `--workers-max`, `--max-workers` `<int>`
 
-Maximum number of workers to create. If not specified, the number of workers will be determined by the formula `min(concurrency, (num CPUs * 0.75) - 1)`, with a default max cap of `32`. Any value provided will still be capped by the concurrency value (if specified), but not by the max cap.
+Maximum number of workers to create. If not specified, the number of workers will be determined by the formula `min(concurrency, (num CPUs * 0.75) - 1)`, with a default max cap of 32. Any value provided will still be capped by the concurrency value (if specified), but not by the max cap.
 
 ## Service Options
 
@@ -550,6 +651,7 @@ Equivalent to --log-level TRACE. Enables the most verbose logging output possibl
 #### `--record-processor-service-count`, `--record-processors` `<int>`
 
 Number of services to spawn for processing records. The higher the request rate, the more services should be spawned in order to keep up with the incoming records. If not specified, the number of services will be automatically determined based on the worker count.
+<br>_Constraints: ≥ 1_
 
 #### `--ui-type`, `--ui` `<str>`
 

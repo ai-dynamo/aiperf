@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -354,3 +354,152 @@ class TestServerTokenCount:
             mock_warning.assert_called_once()
             call_args = mock_warning.call_args[0][0]
             assert "Server did not provide token usage information" in call_args
+
+
+@pytest.mark.asyncio
+class TestContextPromptISL:
+    """Tests for ISL computation including context prompts (system_message and user_context_message)."""
+
+    async def test_isl_includes_system_message(
+        self, setup_inference_parser, sample_turn, spy_tokenizer, sample_request_info
+    ):
+        """ISL computation includes system_message tokens."""
+        sample_request_info.system_message = "You are a helpful assistant"  # 5 words
+        sample_request_info.turns = []  # Clear default turns
+        record = RequestRecord(
+            conversation_id="test-conversation",
+            turn_index=0,
+            model_name="test-model",
+            request_info=sample_request_info,
+        )
+        record.turns = [sample_turn]  # 8 words
+
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+
+        result = await setup_inference_parser.compute_input_token_count(record)
+
+        # 5 words (system) + 8 words (turn) = 13 tokens
+        assert result == 13
+        assert spy_tokenizer.encode.call_count == 3  # system + 2 text objects
+
+    async def test_isl_includes_user_context_message(
+        self, setup_inference_parser, sample_turn, spy_tokenizer, sample_request_info
+    ):
+        """ISL computation includes user_context_message tokens."""
+        sample_request_info.user_context_message = (
+            "This is user context for session"  # 6 words
+        )
+        sample_request_info.turns = []  # Clear default turns
+        record = RequestRecord(
+            conversation_id="test-conversation",
+            turn_index=0,
+            model_name="test-model",
+            request_info=sample_request_info,
+        )
+        record.turns = [sample_turn]  # 8 words
+
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+
+        result = await setup_inference_parser.compute_input_token_count(record)
+
+        # 6 words (user context) + 8 words (turn) = 14 tokens
+        assert result == 14
+        assert spy_tokenizer.encode.call_count == 3  # user context + 2 text objects
+
+    async def test_isl_includes_both_context_messages(
+        self, setup_inference_parser, sample_turn, spy_tokenizer, sample_request_info
+    ):
+        """ISL computation includes both system_message and user_context_message tokens."""
+        sample_request_info.system_message = "You are a helpful assistant"  # 5 words
+        sample_request_info.user_context_message = (
+            "This is user context for session"  # 6 words
+        )
+        sample_request_info.turns = []  # Clear default turns
+        record = RequestRecord(
+            conversation_id="test-conversation",
+            turn_index=0,
+            model_name="test-model",
+            request_info=sample_request_info,
+        )
+        record.turns = [sample_turn]  # 8 words
+
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+
+        result = await setup_inference_parser.compute_input_token_count(record)
+
+        # 5 words (system) + 6 words (user context) + 8 words (turn) = 19 tokens
+        assert result == 19
+        assert (
+            spy_tokenizer.encode.call_count == 4
+        )  # system + user context + 2 text objects
+
+    async def test_isl_without_context_messages(
+        self, setup_inference_parser, sample_turn, spy_tokenizer, sample_request_info
+    ):
+        """ISL computation works correctly when no context messages are present."""
+        # sample_request_info already has no context messages by default
+        sample_request_info.turns = []  # Clear default turns
+        record = RequestRecord(
+            conversation_id="test-conversation",
+            turn_index=0,
+            model_name="test-model",
+            request_info=sample_request_info,
+        )
+        record.turns = [sample_turn]  # 8 words
+
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+
+        result = await setup_inference_parser.compute_input_token_count(record)
+
+        # 8 words (turn only) = 8 tokens
+        assert result == 8
+        assert spy_tokenizer.encode.call_count == 2  # 2 text objects only
+
+    async def test_isl_with_empty_context_messages(
+        self, setup_inference_parser, sample_turn, spy_tokenizer, sample_request_info
+    ):
+        """ISL computation handles empty context message strings correctly."""
+        sample_request_info.system_message = ""  # Empty string should be skipped
+        sample_request_info.user_context_message = ""  # Empty string should be skipped
+        sample_request_info.turns = []  # Clear default turns
+        record = RequestRecord(
+            conversation_id="test-conversation",
+            turn_index=0,
+            model_name="test-model",
+            request_info=sample_request_info,
+        )
+        record.turns = [sample_turn]  # 8 words
+
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+
+        result = await setup_inference_parser.compute_input_token_count(record)
+
+        # 8 words (turn only) = 8 tokens (empty strings are falsy and skipped)
+        assert result == 8
+        assert spy_tokenizer.encode.call_count == 2  # 2 text objects only
+
+    async def test_isl_context_prompts_for_error_records(
+        self, setup_inference_parser, sample_turn, spy_tokenizer, sample_request_info
+    ):
+        """ISL computation includes context prompts even for error records."""
+        sample_request_info.system_message = "You are a helpful assistant"  # 5 words
+        sample_request_info.user_context_message = (
+            "This is user context for session"  # 6 words
+        )
+        sample_request_info.turns = []  # Clear default turns
+        record = RequestRecord(
+            conversation_id="test-conversation",
+            turn_index=0,
+            model_name="test-model",
+            request_info=sample_request_info,
+            error=ErrorDetails(code=500, message="Server error", type="ServerError"),
+        )
+        record.turns = [sample_turn]  # 8 words
+
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+
+        parsed_record = await setup_inference_parser.parse_request_record(record)
+
+        # 5 words (system) + 6 words (user context) + 8 words (turn) = 19 tokens
+        assert parsed_record.token_counts.input == 19
+        assert parsed_record.responses == []

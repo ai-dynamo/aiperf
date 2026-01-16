@@ -1,9 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Comprehensive unit tests for aiohttp client components."""
 
 import asyncio
 import json
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, Mock, patch
 
 import aiohttp
@@ -14,6 +15,7 @@ from aiperf.common.models import SSEField, SSEMessage
 from aiperf.transports.aiohttp_client import AioHttpClient
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
 from tests.unit.transports.conftest import (
+    MockStreamReader,
     assert_error_request_record,
     assert_successful_request_record,
     create_aiohttp_exception,
@@ -96,12 +98,7 @@ class TestAioHttpClient:
                 "aiperf.transports.aiohttp_client.AsyncSSEStreamReader"
             ) as mock_reader_class,
         ):
-
-            async def mock_content_iter():
-                yield b"data: test\n\n"
-
-            mock_sse_response.content = mock_content_iter()
-
+            mock_sse_response.content = MockStreamReader([b"data: test\n\n"])
             setup_mock_session(mock_session_class, mock_sse_response, ["request"])
 
             async def mock_aiter():
@@ -154,14 +151,11 @@ class TestAioHttpClient:
                 "aiperf.transports.aiohttp_client.AsyncSSEStreamReader"
             ) as mock_reader_class,
         ):
-
-            async def mock_content_iter():
-                yield b"event: error\n"
-                if comment_value:
-                    yield f": {comment_value}\n".encode()
-                yield b"data: {}\n\n"
-
-            mock_sse_response.content = mock_content_iter()
+            chunks = [b"event: error\n"]
+            if comment_value:
+                chunks.append(f": {comment_value}\n".encode())
+            chunks.append(b"data: {}\n\n")
+            mock_sse_response.content = MockStreamReader(chunks)
 
             setup_mock_session(mock_session_class, mock_sse_response, ["request"])
 
@@ -340,13 +334,12 @@ class TestAioHttpClient:
     ) -> None:
         """Test end-to-end SSE request flow."""
         with patch("aiohttp.ClientSession") as mock_session_class:
-
-            async def mock_content_iter():
-                yield b"data: Hello\nevent: message\n\n"
-                yield b"data: World\n\n"
-
-            mock_sse_response.content = mock_content_iter()
-
+            mock_sse_response.content = MockStreamReader(
+                [
+                    b"data: Hello\nevent: message\n\n",
+                    b"data: World\n\n",
+                ]
+            )
             setup_mock_session(mock_session_class, mock_sse_response, ["request"])
 
             with patch("time.perf_counter_ns", side_effect=range(123456789, 123456799)):
@@ -417,3 +410,151 @@ class TestAioHttpClient:
             mock_session.request.assert_called_once()
             call_args = mock_session.request.call_args
             assert call_args[1]["data"] == large_payload
+
+
+# --- FirstToken Callback Test Helpers ---
+
+
+def setup_sse_stream_mock(
+    mock_sse_response: Mock,
+    mock_messages: list[SSEMessage],
+):
+    """Setup mocks for SSE streaming with given messages.
+
+    Returns a context manager that patches ClientSession and AsyncSSEStreamReader.
+
+    Args:
+        mock_sse_response: Mock response with SSE content type
+        mock_messages: List of SSEMessage objects to yield from the stream
+
+    Returns:
+        Context manager for the patches
+    """
+
+    @contextmanager
+    def _setup():
+        with (
+            patch("aiohttp.ClientSession") as mock_session_class,
+            patch(
+                "aiperf.transports.aiohttp_client.AsyncSSEStreamReader"
+            ) as mock_reader_class,
+        ):
+            mock_sse_response.content = MockStreamReader([b"data: test\n\n"])
+            setup_mock_session(mock_session_class, mock_sse_response, ["request"])
+
+            async def mock_aiter():
+                for msg in mock_messages:
+                    yield msg
+
+            mock_reader = Mock()
+            mock_reader.__aiter__ = Mock(return_value=mock_aiter())
+            mock_reader_class.return_value = mock_reader
+
+            yield
+
+    return _setup()
+
+
+@pytest.mark.asyncio
+class TestFirstTokenCallback:
+    """Test suite for FirstToken callback behavior in AioHttpClient."""
+
+    async def test_callback_receives_ttft_ns_and_sse_message(
+        self, aiohttp_client: AioHttpClient, mock_sse_response: Mock
+    ) -> None:
+        """Test that callback receives ttft_ns (int) and SSEMessage."""
+        received_calls: list[tuple[int, SSEMessage]] = []
+
+        async def callback(ttft_ns: int, message: SSEMessage) -> bool:
+            received_calls.append((ttft_ns, message))
+            return True  # Stop after first message
+
+        mock_messages = [
+            SSEMessage(perf_ns=100_000_000),
+            SSEMessage(perf_ns=200_000_000),
+        ]
+
+        with setup_sse_stream_mock(mock_sse_response, mock_messages):
+            await aiohttp_client.post_request(
+                "http://test.com/stream",
+                '{"stream": true}',
+                {"Accept": "text/event-stream"},
+                first_token_callback=callback,
+            )
+
+        # Callback should be called with ttft_ns (int) and SSEMessage
+        assert len(received_calls) == 1
+        ttft_ns, message = received_calls[0]
+        assert isinstance(ttft_ns, int)
+        assert isinstance(message, SSEMessage)
+
+    @pytest.mark.parametrize(
+        "return_pattern,expected_call_count,description",
+        [
+            # fmt: off
+            pytest.param(
+                [True],
+                1,
+                "returns True immediately - stops after first",
+                id="true_stops",
+            ),
+            pytest.param(
+                [False, False, True],
+                3,
+                "returns False twice then True - stops on third",
+                id="false_continues",
+            ),
+            # fmt: on
+        ],
+    )
+    async def test_callback_return_value_controls_continuation(
+        self,
+        aiohttp_client: AioHttpClient,
+        mock_sse_response: Mock,
+        return_pattern: list[bool],
+        expected_call_count: int,
+        description: str,
+    ) -> None:
+        """Test that callback return value controls whether to continue calling."""
+        call_count = 0
+
+        async def callback(ttft_ns: int, message: SSEMessage) -> bool:
+            nonlocal call_count
+            call_count += 1
+            # Return value from pattern, or False if pattern exhausted
+            idx = call_count - 1
+            return return_pattern[idx] if idx < len(return_pattern) else False
+
+        # More messages than pattern to verify stopping behavior
+        mock_messages = [SSEMessage(perf_ns=i * 100_000_000) for i in range(1, 5)]
+
+        with setup_sse_stream_mock(mock_sse_response, mock_messages):
+            await aiohttp_client.post_request(
+                "http://test.com/stream",
+                '{"stream": true}',
+                {"Accept": "text/event-stream"},
+                first_token_callback=callback,
+            )
+
+        assert call_count == expected_call_count, f"Failed for: {description}"
+
+    async def test_no_callback_fast_path(
+        self, aiohttp_client: AioHttpClient, mock_sse_response: Mock
+    ) -> None:
+        """Test that no callback works correctly (fast path)."""
+        mock_messages = [
+            SSEMessage(perf_ns=100_000_000),
+            SSEMessage(perf_ns=200_000_000),
+        ]
+
+        with setup_sse_stream_mock(mock_sse_response, mock_messages):
+            record = await aiohttp_client.post_request(
+                "http://test.com/stream",
+                '{"stream": true}',
+                {"Accept": "text/event-stream"},
+                # No callback - using fast path
+            )
+
+        # All messages should be collected
+        assert len(record.responses) == 2
+        assert record.error is None

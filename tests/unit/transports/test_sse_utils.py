@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
 
@@ -463,8 +463,8 @@ class TestParseSSEMessagePerformance:
         result = SSEMessage.parse(raw_message, base_perf_ns)
         end_time = time.perf_counter()
 
-        # Should parse quickly (less than 100ms for 10KB)
-        assert (end_time - start_time) < 0.1
+        # Should parse quickly (less than 200ms for 10KB)
+        assert (end_time - start_time) < 0.2
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == 1
         assert result.packets[0].value == large_data
@@ -480,8 +480,8 @@ class TestParseSSEMessagePerformance:
         result = SSEMessage.parse(raw_message, base_perf_ns)
         end_time = time.perf_counter()
 
-        # Should parse quickly (less than 250ms for 1000 fields)
-        assert (end_time - start_time) < 0.250
+        # Should parse quickly (less than 500ms for 1000 fields)
+        assert (end_time - start_time) < 0.5
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == 1000
 

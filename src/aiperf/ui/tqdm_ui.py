@@ -1,9 +1,12 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from collections.abc import Callable
+
 from tqdm import tqdm
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import AIPerfUIType
+from aiperf.common.enums import AIPerfUIType, CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.factories import AIPerfUIFactory
 from aiperf.common.hooks import (
@@ -12,50 +15,79 @@ from aiperf.common.hooks import (
     on_stop,
     on_warmup_progress,
 )
-from aiperf.common.models import RecordsStats, RequestsStats
+from aiperf.common.mixins import CombinedPhaseStats
 from aiperf.common.protocols import AIPerfUIProtocol
 from aiperf.ui.base_ui import BaseAIPerfUI
+
+_logger = AIPerfLogger(__name__)
 
 
 class ProgressBar:
     """A progress bar that can be updated with a progress percentage."""
+
+    BAR_FORMAT_WITH_TOTAL = (
+        "{desc}: {n:,.0f}/{total:,} |{bar}| {percentage:3.0f}% [{elapsed}<{remaining}]"
+    )
+    BAR_FORMAT_PERCENT_ONLY = (
+        "{desc}: {percentage:3.0f}% |{bar}| [{elapsed}<{remaining}]"
+    )
 
     def __init__(
         self,
         desc: str,
         color: str,
         position: int,
-        total: int,
+        total: int | None = None,
         **kwargs,
     ):
+        self.has_known_total = total is not None
+        effective_total = total if total is not None else 100
+        bar_format = (
+            self.BAR_FORMAT_WITH_TOTAL
+            if self.has_known_total
+            else self.BAR_FORMAT_PERCENT_ONLY
+        )
+
         self.bar = tqdm(
-            total=total,
+            total=effective_total,
             desc=desc,
             colour=color,
             position=position,
             leave=False,
             dynamic_ncols=False,
-            bar_format="{desc}: {n:,.0f}/{total:,} |{bar}| {percentage:3.0f}% [{elapsed}<{remaining}]",
+            bar_format=bar_format,
             **kwargs,
         )
-        self.total = total
+        self.total = effective_total
         self.update_threshold = Environment.UI.MIN_UPDATE_PERCENT
         self.last_percent = 0.0
-        self.last_value = 0.0
 
     def update(self, progress: int):
         """Update the progress bar with a new progress percentage."""
-        if progress is None:  # Add defensive check
+        if self.bar.disable:
             return
+        if progress is None or not self.total:
+            return
+        # Cap progress to total to prevent tqdm from setting total=None internally
+        progress = min(progress, self.total)
         pct = (progress / self.total) * 100.0
         if pct >= self.last_percent + self.update_threshold:
-            self.bar.update(progress - self.last_value)
+            # Use bar.n (tqdm's actual value) to calculate delta to avoid race conditions
+            # where multiple updates arrive before last_percent is updated
+            delta = progress - self.bar.n
+            if delta <= 0:
+                # Already at or past this progress, just update our tracking state
+                self.last_percent = pct
+                return
+            self.bar.update(delta)
             self.last_percent = pct
-            self.last_value = progress
+            self.bar.refresh()
 
-    def close(self):
-        """Close the progress bar."""
-        self.bar.close()
+    def disable(self):
+        """Disable the progress bar."""
+        # NOTE: Closing the progress bar can cause a deadlock from the tqdm library randomly,
+        # so we just disable it instead.
+        self.bar.disable = True
 
 
 @implements_protocol(AIPerfUIProtocol)
@@ -65,52 +97,112 @@ class TQDMProgressUI(BaseAIPerfUI):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._warmup_bar: ProgressBar | None = None
-        self._requests_bar: ProgressBar | None = None
-        self._records_bar: ProgressBar | None = None
+        self._bars: dict[str, ProgressBar] = {}
+        self._stopped = False
+
+    def _disable_all_bars_sync(self):
+        """Disable all progress bars (sync helper)."""
+        bars_to_close = list(self._bars.values())
+        self._bars.clear()  # Clear immediately to prevent further updates
+        for bar in bars_to_close:
+            if bar is not None:
+                bar.disable()
 
     @on_stop
-    def _close_all_bars(self):
-        """Close all progress bars."""
-        for bar in [self._records_bar, self._requests_bar, self._warmup_bar]:
-            if bar is not None:
-                bar.close()
+    async def _disable_all_bars(self):
+        """Disable all progress bars (async hook)."""
+        self._disable_all_bars_sync()
+
+    def _create_or_update_requests_bar(
+        self,
+        key: str,
+        color: str,
+        stats: CombinedPhaseStats,
+        callback: Callable[
+            [CombinedPhaseStats], tuple[int | None, int | None, float | None]
+        ],
+    ):
+        if self.stop_requested:
+            return  # Don't create/update bars after stop
+        expected, finished, pct = callback(stats)
+        if key not in self._bars:
+            # Disable all existing bars to avoid overlap and interleaving of bars.
+            self._disable_all_bars_sync()
+            # Pass None when expected count is unknown to show percentage-only format
+            self._bars[key] = ProgressBar(
+                desc=key,
+                color=color,
+                position=0,
+                total=expected,
+            )
+        else:
+            try:
+                # If expected is not None, use the finished count as the progress, otherwise use the percentage.
+                value = finished if expected is not None else pct
+                if value is not None:
+                    bar = self._bars[key]
+                    bar.update(value)
+            except Exception as e:
+                _logger.error(f"Error updating progress bar {key}: {e!r}")
+                _logger.error(stats)
+
+    GRACE_PERIOD_COLORS = {
+        CreditPhase.WARMUP: "cyan",
+        CreditPhase.PROFILING: "magenta",
+    }
+    PHASE_COLORS = {
+        CreditPhase.WARMUP: "yellow",
+        CreditPhase.PROFILING: "green",
+    }
+    RECORDS_COLOR = "blue"
+
+    def _on_phase_progress(self, stats: CombinedPhaseStats):
+        """Callback for phase progress updates."""
+        if stats.timeout_triggered:
+            self._create_or_update_requests_bar(
+                f"{stats.phase.title()} Grace Period",
+                self.GRACE_PERIOD_COLORS[stats.phase],
+                stats,
+                lambda stats: (
+                    stats.requests_sent,
+                    stats.requests_completed + stats.requests_cancelled,
+                    None,
+                ),
+            )
+        else:
+            self._create_or_update_requests_bar(
+                f"{stats.phase.title()}",
+                self.PHASE_COLORS[stats.phase],
+                stats,
+                lambda stats: (
+                    stats.total_expected_requests,
+                    stats.requests_completed,
+                    stats.requests_progress_percent,
+                ),
+            )
 
     @on_warmup_progress
-    def _on_warmup_progress(self, warmup_stats: RequestsStats):
+    def _on_warmup_progress(self, warmup_stats: CombinedPhaseStats):
         """Callback for warmup progress updates."""
-        if self._warmup_bar is None and warmup_stats.total_expected_requests:
-            self._warmup_bar = ProgressBar(
-                desc="Warmup",
-                color="yellow",
-                position=0,
-                total=warmup_stats.total_expected_requests,
-            )
-        if self._warmup_bar:
-            self._warmup_bar.update(warmup_stats.finished)
+        self._on_phase_progress(warmup_stats)
 
     @on_profiling_progress
-    def _on_profiling_progress(self, profiling_stats: RequestsStats):
+    def _on_profiling_progress(self, profiling_stats: CombinedPhaseStats):
         """Callback for profiling progress updates."""
-        if self._requests_bar is None and profiling_stats.total_expected_requests:
-            self._requests_bar = ProgressBar(
-                desc="Requests (Profiling)",
-                color="green",
-                position=0,
-                total=profiling_stats.total_expected_requests,
-            )
-        if self._requests_bar:
-            self._requests_bar.update(profiling_stats.finished)
+        self._on_phase_progress(profiling_stats)
 
     @on_records_progress
-    def _on_records_progress(self, records_stats: RecordsStats):
+    def _on_records_progress(self, records_stats: CombinedPhaseStats):
         """Callback for records progress updates."""
-        if self._records_bar is None and records_stats.final_request_count is not None:
-            self._records_bar = ProgressBar(
-                desc="Records (Processing)",
-                color="blue",
-                position=0,
-                total=records_stats.final_request_count,
-            )
-        if self._records_bar and records_stats.finished is not None:
-            self._records_bar.update(records_stats.finished)
+        if records_stats.final_requests_completed is None:
+            return
+        self._create_or_update_requests_bar(
+            "Processing Records",
+            self.RECORDS_COLOR,
+            records_stats,
+            lambda stats: (
+                stats.final_requests_completed,
+                stats.total_records,
+                stats.records_progress_percent,
+            ),
+        )

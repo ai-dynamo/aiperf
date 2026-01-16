@@ -319,6 +319,27 @@ class RandomGenerator:
         """
         return self._python_rng.expovariate(lambd)
 
+    def gammavariate(self, alpha: float, beta: float) -> float:
+        """Generate gamma distributed random number.
+
+        Args:
+            alpha: Shape parameter (must be > 0). Controls the distribution shape:
+                   - alpha = 1.0: Exponential distribution (equivalent to expovariate)
+                   - alpha < 1.0: More bursty/clustered arrivals
+                   - alpha > 1.0: More regular/smooth arrivals
+            beta: Scale parameter (must be > 0). For rate-based arrivals,
+                  use beta = 1.0 / (rate * alpha) to maintain the target mean.
+
+        Returns:
+            Random float from gamma distribution
+
+        Note:
+            The mean of the distribution is alpha * beta.
+            For arrival intervals at a given rate with tunable smoothness:
+                interval = gammavariate(smoothness, 1.0 / (rate * smoothness))
+        """
+        return self._python_rng.gammavariate(alpha, beta)
+
     def random(self) -> float:
         """Generate random float in [0.0, 1.0).
 

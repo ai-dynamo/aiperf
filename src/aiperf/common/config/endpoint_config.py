@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Annotated
@@ -210,6 +210,8 @@ class EndpointConfig(BaseConfig):
                 "Transport connection reuse strategy. "
                 "'pooled' (default): connections are pooled and reused across all requests. "
                 "'never': new connection for each request, closed after response. "
+                "'sticky-user-sessions': connection persists across turns of a multi-turn "
+                "conversation, closed on final turn (enables sticky load balancing)."
             ),
         ),
         CLIParameter(

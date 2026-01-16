@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import contextlib
@@ -62,6 +62,12 @@ class ProgressHeader(Widget):
     #progress-name.records, #progress-bar.records, PercentageStatus.records{
         color: $success;
     }
+    #progress-name.grace-period, #progress-bar.grace-period, PercentageStatus.grace-period {
+        color: $primary;
+    }
+    #progress-name.warmup-grace, #progress-bar.warmup-grace, PercentageStatus.warmup-grace {
+        color: $warning;
+    }
     """
 
     def __init__(self, title: str, *args, **kwargs):
@@ -91,12 +97,14 @@ class ProgressHeader(Widget):
             if self.progress_name != header:
                 bar.remove_class("hidden")
                 self.query_one("#padding").add_class("hidden")
+                # Convert header to CSS class (e.g., "Grace Period" -> "grace-period")
+                css_class = header.lower().replace(" ", "-")
                 self.query_one("#progress-name", Static).remove_class(
-                    "warmup", "profiling", "records"
-                ).add_class(header.lower()).update(header)
+                    "warmup", "profiling", "records", "grace-period", "warmup-grace"
+                ).add_class(css_class).update(header)
                 self.query_one("PercentageStatus").remove_class(
-                    "warmup", "profiling", "records"
-                ).add_class(header.lower())
+                    "warmup", "profiling", "records", "grace-period", "warmup-grace"
+                ).add_class(css_class)
                 self.progress_name = header
             bar.update(progress=progress, total=total)
             self.refresh()

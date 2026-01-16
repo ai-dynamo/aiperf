@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
@@ -11,11 +11,11 @@ from aiperf.common.models.model_endpoint_info import (
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.common.models.record_models import RequestInfo
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_model_endpoint,
+    create_request_info,
 )
 
 
@@ -43,7 +43,7 @@ class TestChatEndpoint:
             texts=[Text(contents=["Hello, world!"])],
             model="test-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -64,7 +64,7 @@ class TestChatEndpoint:
             images=[Image(contents=["data:image/png;base64,abc123"])],
             model="test-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -88,7 +88,7 @@ class TestChatEndpoint:
             audios=[Audio(contents=["wav,YWJjMTIz"])],  # format,b64
             model="test-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -109,7 +109,7 @@ class TestChatEndpoint:
             audios=[Audio(contents=["invalid_no_comma"])],
             model="test-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         with pytest.raises(ValueError, match="Audio content must be in the format"):
             endpoint.format_payload(request_info)
@@ -121,7 +121,7 @@ class TestChatEndpoint:
             videos=[Video(contents=["https://example.com/video.mp4"])],
             model="test-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -137,7 +137,7 @@ class TestChatEndpoint:
             model="test-model",
             max_tokens=500,
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -151,7 +151,7 @@ class TestChatEndpoint:
             model="test-model",
             max_tokens=None,
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -181,7 +181,7 @@ class TestChatEndpoint:
             model="test-model",
             max_tokens=500,
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -211,7 +211,7 @@ class TestChatEndpoint:
             model="test-model",
             max_tokens=500,
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -241,7 +241,7 @@ class TestChatEndpoint:
             model="test-model",
             max_tokens=None,
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -258,7 +258,7 @@ class TestChatEndpoint:
             texts=[Text(contents=["Test streaming"])],
             model="test-model",
         )
-        request_info = RequestInfo(
+        request_info = create_request_info(
             model_endpoint=streaming_model_endpoint, turns=[turn]
         )
 
@@ -272,7 +272,7 @@ class TestChatEndpoint:
             texts=[Text(contents=["Test"])],
             model=None,  # No model specified
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -285,7 +285,7 @@ class TestChatEndpoint:
         endpoint = create_endpoint_with_mock_transport(ChatEndpoint, model_endpoint)
 
         turn = Turn(texts=[Text(contents=["Test"])], model="test-model")
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -298,7 +298,7 @@ class TestChatEndpoint:
             texts=[Text(contents=[""])],  # Empty string
             model="test-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -317,7 +317,7 @@ class TestChatEndpoint:
             ],
             model="test-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -338,7 +338,7 @@ class TestChatEndpoint:
             ],
             model="test-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -357,7 +357,7 @@ class TestChatEndpoint:
             role="assistant",
             model="test-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -372,7 +372,7 @@ class TestChatEndpoint:
         turn2 = Turn(texts=[Text(contents=["Second turn"])], model="model2")
 
         # Pass multiple turns - all should be included in the chat conversation
-        request_info = RequestInfo(
+        request_info = create_request_info(
             model_endpoint=model_endpoint, turn_index=0, turns=[turn1, turn2]
         )
 

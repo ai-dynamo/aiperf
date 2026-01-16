@@ -47,26 +47,42 @@ Features
 ### Getting Started
 - **[Basic Tutorial](docs/tutorial.md)** - Learn the fundamentals with Dynamo and vLLM examples
 
-### Advanced Benchmarking Features
+### Load Control & Timing
+
 | Feature | Description | Use Cases |
 |---------|-------------|-----------|
-| **[Random Number Generation & Reproducibility](docs/reproducibility.md)** | Deterministic dataset generation with `--random-seed` | Debugging, regression testing, controlled experiments |
+| **[Request Rate with Max Concurrency](docs/tutorials/request-rate-concurrency.md)** | Dual control of request timing and concurrent connection ceiling (Poisson or constant modes) | Testing API rate/concurrency limits, avoiding thundering herd, realistic client simulation |
+| **[Arrival Patterns](docs/tutorials/arrival-patterns.md)** | Configure traffic patterns (constant, Poisson, gamma) with tunable burstiness | Realistic traffic simulation, stress testing, vLLM-compatible benchmarks |
+| **[Prefill Concurrency](docs/tutorials/prefill-concurrency.md)** | Limit concurrent prefill operations to prevent memory exhaustion with long-context workloads | Long-context benchmarking, OOM prevention, memory-safe stress testing |
+| **[Gradual Ramping](docs/tutorials/ramping.md)** | Smooth ramp-up of concurrency and request rate over time | Capacity discovery, avoiding cold-start spikes, server warm-up |
+| **[Warmup Phase](docs/tutorials/warmup.md)** | Configure pre-benchmark warmup to eliminate cold-start effects | Accurate measurements, JIT warm-up, cache priming |
+| **[User-Centric Timing](docs/tutorials/user-centric-timing.md)** | Per-user rate limiting with precise timing for KV cache benchmarking | KV cache effectiveness, multi-user simulation, cache TTL testing |
 | **[Request Cancellation](docs/tutorials/request-cancellation.md)** | Test timeout behavior and service resilience | SLA validation, cancellation modeling |
+
+### Workloads & Data
+
+| Feature | Description | Use Cases |
+|---------|-------------|-----------|
+| **[Trace Benchmarking](docs/tutorials/trace-benchmarking.md)** | Deterministic workload replay with custom datasets | Regression testing, A/B testing |
 | **[Custom Prompt Benchmarking](docs/tutorials/custom-prompt-benchmarking.md)** | Send each prompt from your file exactly as-is, without sampling or generation | Regression testing, A/B testing, debugging specific prompts |
 | **[Fixed Schedule](docs/tutorials/fixed-schedule.md)** | Precise timestamp-based request execution | Traffic replay, temporal analysis, burst testing |
 | **[Time-based Benchmarking](docs/tutorials/time-based-benchmarking.md)** | Duration-based testing with grace period control | Stability testing, sustained performance |
-| **[Timeslice Metrics](docs/tutorials/timeslices.md)** | Split up benchmark into timeslices and calculate metrics for each timeslice | Load pattern impact, detecting warm-up effects, performance degradation analysis |
 | **[Sequence Distributions](docs/tutorials/sequence-distributions.md)** | Mixed ISL/OSL pairings | Benchmarking mixed use cases |
-| **[Goodput](docs/tutorials/goodput.md)** | Throughput of requests meeting user-defined SLOs | SLO validation, capacity planning, runtime/model comparisons |
-| **[Request Rate with Max Concurrency](docs/tutorials/request-rate-concurrency.md)** | Dual control of request timing and concurrent connection ceiling (Poisson or constant modes) | Testing API rate/concurrency limits, avoiding thundering herd, realistic client simulation |
-| **[GPU Telemetry](docs/tutorials/gpu-telemetry.md)** | Real-time GPU metrics collection via DCGM (power, utilization, memory, temperature, etc) | Performance optimization, resource monitoring, multi-node telemetry |
+| **[Random Number Generation & Reproducibility](docs/reproducibility.md)** | Deterministic dataset generation with `--random-seed` | Debugging, regression testing, controlled experiments |
 | **[Template Endpoint](docs/tutorials/template-endpoint.md)** | Benchmark custom APIs with flexible Jinja2 request templates | Custom API formats, rapid prototyping, non-standard endpoints |
 | **[SGLang Image Generation](docs/tutorials/sglang-image-generation.md)** | Benchmark image generation APIs using SGLang with FLUX.1-dev model | Image generation testing, text-to-image benchmarking, extracting generated images |
-| **[Server Metrics](docs/server_metrics/server-metrics.md)** | Collect Prometheus-compatible server metrics during benchmarking | Performance optimization, resource monitoring, multi-node telemetry |
-| **[Visualization & Plotting](docs/tutorials/plot.md)** | Generate PNG visualizations with automatic mode detection (single-run analysis or multi-run comparison) | Parameter sweep analysis, performance debugging, model comparison |
 
-### Working with Benchmark Data
-- **[Profile Exports](docs/tutorials/working-with-profile-exports.md)** - Parse and analyze `profile_export.jsonl` with Pydantic models, custom metrics, and async processing
+### Analysis & Monitoring
+
+| Feature | Description | Use Cases |
+|---------|-------------|-----------|
+| **[Timeslice Metrics](docs/tutorials/timeslices.md)** | Split up benchmark into timeslices and calculate metrics for each timeslice | Load pattern impact, detecting warm-up effects, performance degradation analysis |
+| **[Goodput](docs/tutorials/goodput.md)** | Throughput of requests meeting user-defined SLOs | SLO validation, capacity planning, runtime/model comparisons |
+| **[HTTP Trace Metrics](docs/tutorials/http-trace-metrics.md)** | Detailed HTTP request lifecycle timing (DNS, TCP/TLS, TTFB) following k6 and HAR conventions | Connection debugging, latency breakdown, transport-layer analysis |
+| **[Profile Exports](docs/tutorials/working-with-profile-exports.md)** | Parse and analyze `profile_export.jsonl` with Pydantic models, custom metrics, and async processing | Custom analysis, data pipelines, post-processing |
+| **[Visualization & Plotting](docs/tutorials/plot.md)** | Generate PNG visualizations with automatic mode detection (single-run analysis or multi-run comparison) | Parameter sweep analysis, performance debugging, model comparison |
+| **[GPU Telemetry](docs/tutorials/gpu-telemetry.md)** | Real-time GPU metrics collection via DCGM (power, utilization, memory, temperature, etc) | Performance optimization, resource monitoring, multi-node telemetry |
+| **[Server Metrics](docs/server_metrics/server-metrics.md)** | Collect Prometheus-compatible server metrics during benchmarking | Performance optimization, resource monitoring, multi-node telemetry |
 
 ### Quick Navigation
 ```bash

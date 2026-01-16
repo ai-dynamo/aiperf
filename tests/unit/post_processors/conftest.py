@@ -1,10 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Shared fixtures for testing AIPerf post processors."""
 
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 from unittest.mock import Mock
 
 import pytest
@@ -372,6 +372,7 @@ def create_metric_records_message(
     error: ErrorDetails | None = None,
     metadata: MetricRecordMetadata | None = None,
     x_request_id: str | None = None,
+    trace_data: Any | None = None,
     **metadata_kwargs,
 ) -> MetricRecordsMessage:
     """
@@ -382,8 +383,9 @@ def create_metric_records_message(
         results: List of metric result dictionaries
         error: Error details if any
         metadata: Pre-built metadata, or None to build from kwargs
-        x_request_id: Record ID (will be set as x_request_id in metadata if provided)
-        **metadata_kwargs: Arguments to pass to create_metric_metadata if metadata is None
+        x_request_id: Record ID (set as x_request_id in metadata if provided)
+        trace_data: HTTP trace data for the request (optional)
+        **metadata_kwargs: Args passed to create_metric_metadata if metadata is None
 
     Returns:
         MetricRecordsMessage object
@@ -403,6 +405,7 @@ def create_metric_records_message(
         metadata=metadata,
         results=results,
         error=error,
+        trace_data=trace_data,
     )
 
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -228,8 +228,8 @@ class TestAIPerfTextualAppProgressHandlers:
         mock_section = Mock()
 
         warmup_stats = Mock()
-        warmup_stats.finished = 50
-        warmup_stats.total_expected_requests = 100
+        warmup_stats.requests_progress_percent = 50.0
+        warmup_stats.timeout_triggered = False
 
         with patch.object(app, "query_one", return_value=mock_section):
             await app.on_warmup_progress(warmup_stats)
@@ -238,7 +238,33 @@ class TestAIPerfTextualAppProgressHandlers:
                 warmup_stats
             )
             app.progress_header.update_progress.assert_called_once_with(
-                header="Warmup", progress=50, total=100
+                header="Warmup", progress=50.0, total=100
+            )
+
+    @pytest.mark.asyncio
+    async def test_on_warmup_progress_grace_period(self, app):
+        """Test on_warmup_progress shows grace period when timeout triggered."""
+        app.progress_dashboard = Mock()
+        app.progress_dashboard.batch = MagicMock()
+        app.progress_header = Mock()
+        app._has_result_data = True
+        mock_section = Mock()
+
+        warmup_stats = Mock()
+        warmup_stats.timeout_triggered = True
+        warmup_stats.requests_sent = 100
+        warmup_stats.requests_completed = 70
+        warmup_stats.requests_cancelled = 5
+
+        with patch.object(app, "query_one", return_value=mock_section):
+            await app.on_warmup_progress(warmup_stats)
+
+            app.progress_dashboard.on_warmup_progress.assert_called_once_with(
+                warmup_stats
+            )
+            # Progress should be (70 + 5) / 100 * 100 = 75%
+            app.progress_header.update_progress.assert_called_once_with(
+                header="Warmup Grace", progress=75.0, total=100
             )
 
     @pytest.mark.asyncio
@@ -251,8 +277,8 @@ class TestAIPerfTextualAppProgressHandlers:
         mock_section = Mock()
 
         profiling_stats = Mock()
-        profiling_stats.finished = 75
-        profiling_stats.total_expected_requests = 150
+        profiling_stats.requests_progress_percent = 50.0
+        profiling_stats.timeout_triggered = False
 
         with patch.object(app, "query_one", return_value=mock_section):
             await app.on_profiling_progress(profiling_stats)
@@ -261,7 +287,33 @@ class TestAIPerfTextualAppProgressHandlers:
                 profiling_stats
             )
             app.progress_header.update_progress.assert_called_once_with(
-                header="Profiling", progress=75, total=150
+                header="Profiling", progress=50.0, total=100
+            )
+
+    @pytest.mark.asyncio
+    async def test_on_profiling_progress_grace_period(self, app):
+        """Test on_profiling_progress shows grace period when timeout triggered."""
+        app.progress_dashboard = Mock()
+        app.progress_dashboard.batch = MagicMock()
+        app.progress_header = Mock()
+        app._has_result_data = True
+        mock_section = Mock()
+
+        profiling_stats = Mock()
+        profiling_stats.timeout_triggered = True
+        profiling_stats.requests_sent = 100
+        profiling_stats.requests_completed = 80
+        profiling_stats.requests_cancelled = 10
+
+        with patch.object(app, "query_one", return_value=mock_section):
+            await app.on_profiling_progress(profiling_stats)
+
+            app.progress_dashboard.on_profiling_progress.assert_called_once_with(
+                profiling_stats
+            )
+            # Progress should be (80 + 10) / 100 * 100 = 90%
+            app.progress_header.update_progress.assert_called_once_with(
+                header="Grace Period", progress=90.0, total=100
             )
 
     @pytest.mark.asyncio
@@ -271,11 +323,11 @@ class TestAIPerfTextualAppProgressHandlers:
         app.progress_dashboard.batch = MagicMock()
         app.progress_header = Mock()
         app._profiling_stats = Mock()
-        app._profiling_stats.finished = 100
-        app._profiling_stats.total_expected_requests = 100
-        app._profiling_stats.is_complete = True
+        app._profiling_stats.is_requests_complete = True
 
         records_stats = Mock()
+        records_stats.records_progress_percent = 75.0
+        records_stats.total_records = 10
 
         await app.on_records_progress(records_stats)
 
@@ -283,7 +335,7 @@ class TestAIPerfTextualAppProgressHandlers:
             records_stats
         )
         app.progress_header.update_progress.assert_called_once_with(
-            header="Records", progress=100, total=100
+            header="Records", progress=75.0, total=100
         )
 
 

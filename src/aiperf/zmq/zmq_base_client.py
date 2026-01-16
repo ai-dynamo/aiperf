@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import uuid
@@ -7,6 +7,7 @@ import zmq.asyncio
 
 from aiperf.common.exceptions import InitializationError, NotInitializedError
 from aiperf.common.hooks import on_init, on_stop
+from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.zmq.zmq_defaults import ZMQSocketDefaults
 
@@ -51,6 +52,7 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             client_id
             or f"{self.socket_type.name.lower()}_client_{uuid.uuid4().hex[:8]}"
         )
+        self.scheduler: LoopScheduler | None = None
         super().__init__(id=self.client_id, **kwargs)
         self.trace(lambda: f"ZMQ client __init__: {self.client_id}")
 
@@ -60,6 +62,8 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             raise asyncio.CancelledError("Socket was stopped")
         if not self.socket:
             raise NotInitializedError("Socket not initialized or closed")
+        if not self.scheduler:
+            raise NotInitializedError("Scheduler not initialized")
 
     @property
     def socket_type_name(self) -> str:
@@ -77,6 +81,7 @@ class BaseZMQClient(AIPerfLifecycleMixin):
         - Run the AIPerfHook.ON_INIT hooks
         """
         try:
+            self.scheduler = LoopScheduler()
             self.socket = self.context.socket(self.socket_type)
             self.debug(
                 lambda: f"ZMQ {self.socket_type_name} socket initialized, try {'BIND' if self.bind else 'CONNECT'} to {self.address} ({self.client_id})"
@@ -132,6 +137,9 @@ class BaseZMQClient(AIPerfLifecycleMixin):
     @on_stop
     async def _shutdown_socket(self) -> None:
         """Shutdown the socket."""
+        # TODO: Should we await the cancellation of the tasks?
+        if self.scheduler:
+            self.scheduler.cancel_all()
         try:
             if self.socket:
                 self.socket.close()

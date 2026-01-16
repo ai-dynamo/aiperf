@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 Shared fixtures for dataset manager testing.
@@ -68,31 +68,15 @@ def capture_file_writes():
         def __init__(self):
             self.written_content = ""
 
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc_val, exc_tb):
-            pass
-
-        async def write(self, content: str):
-            self.written_content = content
-
-    class AsyncContextManager:
-        def __init__(self, capture):
-            self.capture = capture
-
-        async def __aenter__(self):
-            return self.capture
-
-        async def __aexit__(self, exc_type, exc_val, exc_tb):
-            pass
+        def write_bytes(self, data: bytes):
+            self.written_content = data.decode("utf-8")
 
     capture = FileWriteCapture()
 
-    def mock_open(file_path, mode="r"):
-        return AsyncContextManager(capture)
+    def mock_write_bytes(self, data):
+        capture.write_bytes(data)
 
-    with patch("aiperf.dataset.dataset_manager.aiofiles.open", mock_open):
+    with patch("pathlib.Path.write_bytes", mock_write_bytes):
         yield capture
 
 

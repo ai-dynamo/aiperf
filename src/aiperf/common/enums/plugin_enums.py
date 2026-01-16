@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
@@ -47,7 +47,10 @@ class ConnectionReuseStrategy(CaseInsensitiveStrEnum):
     Controls how connections are reused across requests:
     - POOLED: Connections are pooled and reused across all requests (default)
     - NEVER: New connection for each request, closed after response
+    - STICKY_USER_SESSIONS: Connection persists across turns of a multi-turn
+      conversation, closed on final turn (enables sticky load balancing)
     """
 
     POOLED = "pooled"
     NEVER = "never"
+    STICKY_USER_SESSIONS = "sticky-user-sessions"

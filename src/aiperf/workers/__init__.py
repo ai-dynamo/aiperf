@@ -11,6 +11,10 @@ __ignore__ = ["main"]
 from aiperf.workers.inference_client import (
     InferenceClient,
 )
+from aiperf.workers.session_manager import (
+    UserSession,
+    UserSessionManager,
+)
 from aiperf.workers.worker import (
     Worker,
 )
@@ -19,4 +23,11 @@ from aiperf.workers.worker_manager import (
     WorkerStatusInfo,
 )
 
-__all__ = ["InferenceClient", "Worker", "WorkerManager", "WorkerStatusInfo"]
+__all__ = [
+    "InferenceClient",
+    "UserSession",
+    "UserSessionManager",
+    "Worker",
+    "WorkerManager",
+    "WorkerStatusInfo",
+]

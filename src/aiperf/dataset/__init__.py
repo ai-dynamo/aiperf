@@ -53,6 +53,13 @@ from aiperf.dataset.loader import (
     SingleTurn,
     SingleTurnDatasetLoader,
 )
+from aiperf.dataset.memory_map_utils import (
+    ConversationOffset,
+    MemoryMapDatasetBackingStore,
+    MemoryMapDatasetClient,
+    MemoryMapDatasetClientStore,
+    MemoryMapDatasetIndex,
+)
 from aiperf.dataset.synthesis import (
     AnalysisStats,
     EmpiricalSampler,
@@ -93,6 +100,7 @@ __all__ = [
     "BaseGenerator",
     "BaseLoader",
     "BasePublicDatasetLoader",
+    "ConversationOffset",
     "CustomDatasetComposer",
     "CustomDatasetT",
     "DEFAULT_CORPUS_FILE",
@@ -103,6 +111,10 @@ __all__ = [
     "ImageGenerator",
     "MP3_SUPPORTED_SAMPLE_RATES",
     "MediaConversionMixin",
+    "MemoryMapDatasetBackingStore",
+    "MemoryMapDatasetClient",
+    "MemoryMapDatasetClientStore",
+    "MemoryMapDatasetIndex",
     "MetricStats",
     "MooncakeTrace",
     "MooncakeTraceDatasetLoader",

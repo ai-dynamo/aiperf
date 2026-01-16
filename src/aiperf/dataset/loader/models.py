@@ -47,12 +47,13 @@ class SingleTurn(AIPerfBaseModel):
         None,
         description="List of video strings or Video objects format",
     )
-    timestamp: int | None = Field(
-        default=None, description="Timestamp of the turn in milliseconds."
-    )
-    delay: int | None = Field(
+    timestamp: int | float | None = Field(
         default=None,
-        description="Amount of milliseconds to wait before sending the turn.",
+        description="Timestamp of the turn in milliseconds. Supports floating point, but scheduling accuracy is at the millisecond level.",
+    )
+    delay: int | float | None = Field(
+        default=None,
+        description="Amount of milliseconds to wait before sending the turn. Supports floating point, but scheduling accuracy is at the millisecond level.",
     )
     role: str | None = Field(default=None, description="Role of the turn.")
 
@@ -219,9 +220,13 @@ class MooncakeTrace(AIPerfBaseModel):
         None, description="The output sequence length of a request"
     )
     hash_ids: list[int] | None = Field(None, description="The hash ids of a request")
-    timestamp: int | None = Field(None, description="The timestamp of a request")
-    delay: int | None = Field(
-        None, description="Amount of milliseconds to wait before sending the turn."
+    timestamp: int | float | None = Field(
+        None,
+        description="The timestamp of a request in milliseconds. Supports floating point, but scheduling accuracy is at the millisecond level.",
+    )
+    delay: int | float | None = Field(
+        None,
+        description="Amount of milliseconds to wait before sending the turn. Supports floating point, but scheduling accuracy is at the millisecond level.",
     )
     session_id: str | None = Field(
         None, description="Unique identifier for the conversation session"

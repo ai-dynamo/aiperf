@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
@@ -291,7 +291,7 @@ class GPUTelemetryManager(BaseComponentService):
         has time to be published and transmitted to the SystemController.
         """
         await asyncio.sleep(Environment.GPU.SHUTDOWN_DELAY)
-        await self.stop()
+        await asyncio.shield(self.stop())
 
     async def _stop_all_collectors(self) -> None:
         """Stop all telemetry collectors.

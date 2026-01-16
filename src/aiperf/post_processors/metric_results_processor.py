@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from collections.abc import Callable
 from typing import Any
@@ -32,11 +32,14 @@ class MetricResultsProcessor(BaseMetricsProcessor):
     def __init__(self, user_config: UserConfig, **kwargs: Any):
         super().__init__(user_config=user_config, **kwargs)
         # For derived metrics, we don't care about splitting up the error metrics
+        # Note: _setup_metrics returns metrics in dependency order, which includes
+        # non-derived dependencies. We filter to only include actual derived metrics.
         self.derive_funcs: dict[
             MetricTagT, Callable[[MetricResultsDict], MetricValueTypeT]
         ] = {
             metric.tag: metric.derive_value  # type: ignore
             for metric in self._setup_metrics(MetricType.DERIVED)
+            if metric.type == MetricType.DERIVED
         }
 
         # Create the results dict, which will be used to store the results of non-derived metrics,
@@ -143,10 +146,12 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         await self.update_derived_metrics()
 
         # Compute and return the metric results.
-        return [
+        results = [
             self._create_metric_result(tag, values)
             for tag, values in self._results.items()
         ]
+        self.debug(lambda: f"Summarized {len(results)} metric results")
+        return results
 
     async def full_metrics(self) -> MetricResultsDict:
         """Returns the full metrics dict, including the derived metrics."""

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
@@ -12,6 +12,7 @@ from aiperf.endpoints.base_endpoint import BaseEndpoint
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_model_endpoint,
+    create_request_info,
 )
 
 
@@ -98,7 +99,7 @@ class TestBaseEndpoint:
         """Test get_endpoint_headers with various combinations."""
         model_endpoint.endpoint.api_key = api_key
         model_endpoint.endpoint.headers = custom_headers
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
 
         headers = endpoint.get_endpoint_headers(request_info)
 
@@ -121,7 +122,7 @@ class TestBaseEndpoint:
     ):
         """Test get_endpoint_params with various URL parameters."""
         model_endpoint.endpoint.url_params = url_params
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
 
         params = endpoint.get_endpoint_params(request_info)
 
@@ -219,7 +220,7 @@ class TestBaseEndpoint:
     @pytest.mark.asyncio
     async def test_format_payload_called(self, endpoint, model_endpoint):
         """Test that format_payload is implemented and callable."""
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
         payload = endpoint.format_payload(request_info)
         assert payload == {"test": "payload"}
 

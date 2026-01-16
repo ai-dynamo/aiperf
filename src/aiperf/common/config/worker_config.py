@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from typing import Annotated
 
@@ -8,7 +8,6 @@ from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
 from aiperf.common.config.config_defaults import WorkersDefaults
 from aiperf.common.config.groups import Groups
-from aiperf.common.environment import Environment
 
 
 class WorkersConfig(BaseConfig):
@@ -29,8 +28,8 @@ class WorkersConfig(BaseConfig):
         Field(
             description="Maximum number of workers to create. If not specified, the number of"
             " workers will be determined by the formula `min(concurrency, (num CPUs * 0.75) - 1)`, "
-            f" with a default max cap of `{Environment.WORKER.MAX_WORKERS_CAP}`. Any value provided will still be capped by"
-            f" the concurrency value (if specified), but not by the max cap.",
+            " with a default max cap of 32. Any value provided will still be capped by"
+            " the concurrency value (if specified), but not by the max cap.",
         ),
         CLIParameter(
             name=("--workers-max", "--max-workers"),

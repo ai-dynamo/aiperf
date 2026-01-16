@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-
-from unittest.mock import AsyncMock, patch
+import signal
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -87,8 +87,8 @@ class TestSystemControllerExitScenarios:
                 deep=True, update={"command": CommandType.PROFILE_CONFIGURE}
             )
         ]
-        # Mock the command responses
-        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
+        # Mock the command responses (using fail-fast method)
+        system_controller.send_command_and_wait_until_first_error = AsyncMock(
             return_value=error_responses
         )
 
@@ -119,8 +119,8 @@ class TestSystemControllerExitScenarios:
                 deep=True, update={"command": CommandType.PROFILE_START}
             )
         ]
-        # Mock the command responses
-        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
+        # Mock the command responses (using fail-fast method)
+        system_controller.send_command_and_wait_until_first_error = AsyncMock(
             return_value=error_responses
         )
 
@@ -218,6 +218,136 @@ class TestSystemControllerExitScenarios:
         )
 
 
+# =============================================================================
+# Signal Handling Tests (Two-Stage Ctrl+C)
+# =============================================================================
+
+
+class TestSignalHandling:
+    """Tests for two-stage Ctrl+C signal handling."""
+
+    @pytest.mark.asyncio
+    async def test_first_signal_calls_cancel_profiling(
+        self, system_controller: SystemController
+    ):
+        """First Ctrl+C calls _cancel_profiling for graceful shutdown."""
+        system_controller._cancel_profiling = AsyncMock()
+        system_controller._kill = AsyncMock()
+
+        # First signal - should trigger graceful cancel
+        with patch.object(system_controller, "_print_cancel_warning"):
+            await system_controller._handle_signal(signal.SIGINT)
+
+        system_controller._cancel_profiling.assert_called_once()
+        system_controller._kill.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_second_signal_calls_kill(self, system_controller: SystemController):
+        """Second Ctrl+C calls _kill for immediate termination."""
+        system_controller._cancel_profiling = AsyncMock()
+        system_controller._kill = AsyncMock()
+        system_controller._was_cancelled = (
+            True  # Simulate first Ctrl+C already happened
+        )
+
+        # Second signal - should trigger force quit
+        with patch.object(system_controller, "_print_force_quit_warning"):
+            await system_controller._handle_signal(signal.SIGINT)
+
+        system_controller._kill.assert_called_once()
+        system_controller._cancel_profiling.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_first_signal_sets_was_cancelled_flag(
+        self, system_controller: SystemController, mock_service_manager: AsyncMock
+    ):
+        """First Ctrl+C sets _was_cancelled flag via _cancel_profiling."""
+        # Mock the command response
+        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
+            return_value=[]
+        )
+        system_controller.stop = AsyncMock()  # Prevent actual stop
+
+        assert system_controller._was_cancelled is False
+
+        with patch.object(system_controller, "_print_cancel_warning"):
+            await system_controller._handle_signal(signal.SIGINT)
+
+        assert system_controller._was_cancelled is True
+
+    @pytest.mark.asyncio
+    async def test_cancel_profiling_sends_profile_cancel_command(
+        self, system_controller: SystemController, mock_service_manager: AsyncMock
+    ):
+        """_cancel_profiling sends ProfileCancelCommand to all services."""
+        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
+            return_value=[]
+        )
+        system_controller.stop = AsyncMock()
+
+        await system_controller._cancel_profiling()
+
+        # Verify ProfileCancelCommand was sent
+        system_controller.send_command_and_wait_for_all_responses.assert_called_once()
+        call_args = system_controller.send_command_and_wait_for_all_responses.call_args
+        assert call_args[0][0].command == CommandType.PROFILE_CANCEL
+
+    def test_print_cancel_warning_uses_console(
+        self, system_controller: SystemController
+    ):
+        """_print_cancel_warning prints to console."""
+        with patch("aiperf.controller.system_controller.Console") as mock_console_class:
+            mock_console = MagicMock()
+            mock_console_class.return_value = mock_console
+
+            system_controller._print_cancel_warning()
+
+            # Should have printed something
+            assert mock_console.print.call_count >= 2  # Panel and newlines
+            mock_console.file.flush.assert_called_once()
+
+    def test_print_force_quit_warning_uses_console(
+        self, system_controller: SystemController
+    ):
+        """_print_force_quit_warning prints to console."""
+        with patch("aiperf.controller.system_controller.Console") as mock_console_class:
+            mock_console = MagicMock()
+            mock_console_class.return_value = mock_console
+
+            system_controller._print_force_quit_warning()
+
+            # Should have printed something
+            assert mock_console.print.call_count >= 2  # Panel and newlines
+            mock_console.file.flush.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_sequential_signals_go_graceful_then_force(
+        self, system_controller: SystemController
+    ):
+        """Sequential signals: first graceful cancel, second force quit."""
+
+        # Mock _cancel_profiling to set _was_cancelled flag (mimicking real behavior)
+        async def cancel_side_effect():
+            system_controller._was_cancelled = True
+
+        system_controller._cancel_profiling = AsyncMock(side_effect=cancel_side_effect)
+        system_controller._kill = AsyncMock()
+
+        # First signal
+        with patch.object(system_controller, "_print_cancel_warning"):
+            await system_controller._handle_signal(signal.SIGINT)
+
+        assert system_controller._was_cancelled is True
+        system_controller._cancel_profiling.assert_called_once()
+        system_controller._kill.assert_not_called()
+
+        # Second signal
+        with patch.object(system_controller, "_print_force_quit_warning"):
+            await system_controller._handle_signal(signal.SIGINT)
+
+        system_controller._kill.assert_called_once()
+
+
 class TestSSLVerificationWarning:
     """Test SSL verification warning in SystemController."""
 
@@ -228,7 +358,7 @@ class TestSSLVerificationWarning:
         """Test that a warning is logged when SSL verification is disabled."""
         monkeypatch.setattr(Environment.HTTP, "SSL_VERIFY", False)
 
-        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
+        system_controller.send_command_and_wait_until_first_error = AsyncMock(
             return_value=[]
         )
 
@@ -246,7 +376,7 @@ class TestSSLVerificationWarning:
         """Test that no warning is logged when SSL verification is enabled."""
         monkeypatch.setattr(Environment.HTTP, "SSL_VERIFY", True)
 
-        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
+        system_controller.send_command_and_wait_until_first_error = AsyncMock(
             return_value=[]
         )
 

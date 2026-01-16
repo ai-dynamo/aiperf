@@ -3,6 +3,8 @@
 
 import contextlib
 import io
+import os
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 # Use TYPE_CHECKING to import BatchEncoding only during static type checks
@@ -53,18 +55,61 @@ class Tokenizer:
             ):
                 from transformers import AutoTokenizer
 
+                # Use local cache only when HuggingFace offline mode is enabled
+                if bool(os.environ.get("HF_HUB_OFFLINE", "")) or bool(
+                    os.environ.get("TRANSFORMERS_OFFLINE", "")
+                ):
+                    return cls._from_pretrained_local(
+                        AutoTokenizer.from_pretrained,
+                        name,
+                        trust_remote_code=trust_remote_code,
+                        revision=revision,
+                    )
+
                 tokenizer_cls = cls()
-
                 tokenizer_cls._tokenizer = AutoTokenizer.from_pretrained(
-                    name, trust_remote_code=trust_remote_code, revision=revision
+                    name,
+                    trust_remote_code=trust_remote_code,
+                    revision=revision,
                 )
-
         except Exception as e:
             raise InitializationError.from_tokenizer_error(
                 original_error=e,
                 tokenizer_name=name,
             ) from e
         return tokenizer_cls
+
+    @classmethod
+    def _from_pretrained_local(
+        cls,
+        from_pretrained_func: Callable,
+        name: str,
+        trust_remote_code: bool = False,
+        revision: str = "main",
+    ) -> "Tokenizer":
+        """
+        Factory to load a tokenizer for the given pretrained model name from local cache.
+        """
+        # Workaround for transformers 4.57+ bug: _patch_mistral_regex
+        # calls model_info() even with local_files_only=True
+        import huggingface_hub
+
+        class _OfflineModelInfo:
+            tags = None
+
+        _original_model_info = huggingface_hub.model_info
+        huggingface_hub.model_info = lambda *a, **kw: _OfflineModelInfo()
+        try:
+            tokenizer_cls = cls()
+            tokenizer_cls._tokenizer = from_pretrained_func(
+                name,
+                trust_remote_code=trust_remote_code,
+                revision=revision,
+                local_files_only=True,
+            )
+            return tokenizer_cls
+        finally:
+            huggingface_hub.model_info = _original_model_info
 
     def __call__(self, text, **kwargs) -> "BatchEncoding":
         """

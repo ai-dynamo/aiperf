@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import sys
@@ -12,6 +12,7 @@ from pydantic import (
     Field,
     RootModel,
     SerializeAsAny,
+    field_validator,
 )
 from typing_extensions import Self
 
@@ -25,6 +26,7 @@ from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
 from aiperf.common.types import JsonObject, MetricTagT, TimeSliceT
 from aiperf.common.utils import load_json_str
@@ -95,6 +97,11 @@ class MetricRecordMetadata(AIPerfBaseModel):
     turn_index: int | None = Field(
         default=None,
         description="The index of the turn in the conversation (if applicable). This can be used to lookup the original request data from the inputs.json file.",
+    )
+    credit_issued_ns: int | None = Field(
+        default=None,
+        description="Wall clock timestamp (time.time_ns) when the credit was issued by the rate limiter. "
+        "This is the control point for accurate rate measurement, before ZeroMQ transit to workers.",
     )
     request_start_ns: int = Field(
         ...,
@@ -319,11 +326,12 @@ class SSEMessage(BaseInferenceServerResponse):
         return message
 
     def extract_data_content(self) -> str:
-        """Extract the data contents from the SSE message as a list of strings. Note that the SSE spec specifies
-        that each data content should be combined and delimited by a single \n.
+        """Extract and combine the data contents from the SSE message.
+
+        Per the SSE spec, multiple data fields are combined and delimited by a single newline.
 
         Returns:
-            list[str]: A list of strings containing the data contents of the SSE message.
+            str: The combined data contents of the SSE message, joined by newlines.
         """
         return "\n".join(
             packet.value
@@ -353,31 +361,99 @@ class SSEMessage(BaseInferenceServerResponse):
             return None
 
 
-class RequestRecord(AIPerfBaseModel):
-    """Record of a request with its associated responses."""
+class RequestInfo(AIPerfBaseModel):
+    """Info about a request."""
 
-    turns: list[Turn] | None = Field(
-        default=None,
-        description="The turns of the request. This will include assistant turns as well as user turns in multi-turn conversations.",
+    model_endpoint: ModelEndpointInfo = Field(
+        ...,
+        description="The model endpoint that the request was sent to.",
     )
-    request_headers: dict[str, str] | None = Field(
-        default=None,
-        description="The headers of the request.",
+    turns: list[Turn] = Field(
+        default_factory=list,
+        description="The actual turns of the request. This will include assistant turns as well as user turns in multi-turn conversations.",
     )
-    credit_num: int | None = Field(
-        default=None,
+    turn_index: int = Field(
+        ...,
+        description="The index of the turn in the conversation (if applicable).",
+    )
+    endpoint_headers: dict[str, str] = Field(
+        default_factory=dict,
+        description="Endpoint-specific headers (auth, API keys, custom headers).",
+    )
+    endpoint_params: dict[str, str] = Field(
+        default_factory=dict,
+        description="Endpoint-specific URL query parameters.",
+    )
+    credit_num: int = Field(
+        ...,
         ge=0,
         description="The sequential number of the credit in the credit phase. This is used to track the progress of the credit phase,"
         " as well as the order that requests are sent in.",
     )
-    conversation_id: str | None = Field(
-        default=None,
-        description="The ID of the conversation (if applicable).",
+    credit_phase: CreditPhase = Field(
+        ...,
+        description="The type of credit phase (either warmup or profiling)",
     )
-    turn_index: int | None = Field(
+    cancel_after_ns: int | None = Field(
         default=None,
         ge=0,
-        description="The index of the turn in the conversation (if applicable).",
+        description="The delay in nanoseconds after which the request should be cancelled, or None if the request should not be cancelled.",
+    )
+    x_request_id: str = Field(
+        ...,
+        description="The X-Request-ID header of the request. This is a unique ID for the request.",
+    )
+    x_correlation_id: str = Field(
+        ...,
+        description="The X-Correlation-ID header of the request. This is the ID of the credit drop.",
+    )
+    conversation_id: str = Field(
+        ...,
+        description="The ID of the conversation (if applicable).",
+    )
+    system_message: str | None = Field(
+        default=None,
+        description="Optional shared system message to prepend to the first turn. "
+        "Extracted from conversation.system_message at request time.",
+    )
+    user_context_message: str | None = Field(
+        default=None,
+        description="Optional per-conversation user context message to prepend to the first turn. "
+        "Extracted from conversation.user_context_message at request time.",
+    )
+    drop_perf_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="The time in nanoseconds (perf_counter_ns) when the credit was dropped by the timing manager. "
+        "This is used to calculate the credit drop latency.",
+    )
+    credit_issued_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Wall clock timestamp (time.time_ns) when the credit was issued by the rate limiter. "
+        "This is the control point for accurate rate measurement, before ZeroMQ transit to workers.",
+    )
+    is_final_turn: bool = Field(
+        default=True,
+        description="Whether this is the final turn in the conversation. "
+        "Used by per-conversation connection strategy to release the connection lease.",
+    )
+
+
+class RequestRecord(AIPerfBaseModel):
+    """Record of a request with its associated responses."""
+
+    request_info: RequestInfo | None = Field(
+        default=None,
+        description="The original request info.",
+    )
+    turns: list[Turn] = Field(
+        default_factory=list,
+        description="The actual turns of the request. This will include assistant turns as well as user turns in multi-turn conversations.",
+    )
+    request_headers: dict[str, str] | None = Field(
+        default=None,
+        description="The headers of the request.",
     )
     model_name: str | None = Field(
         default=None,
@@ -417,49 +493,36 @@ class RequestRecord(AIPerfBaseModel):
         default=None,
         description="The error details if the request failed.",
     )
-    delayed_ns: int | None = Field(
-        default=None,
-        ge=0,
-        description="The number of nanoseconds the request was delayed from when it was expected to be sent, "
-        "or None if the request was sent on time, or did not have a credit_drop_ns timestamp.",
-    )
-    credit_phase: CreditPhase = Field(
-        default=CreditPhase.PROFILING,
-        description="The type of credit phase (either warmup or profiling)",
-    )
     credit_drop_latency: int | None = Field(
         default=None,
         description="The latency of the credit drop in nanoseconds from when it was first received by a Worker to when the inference request was actually sent. "
         "This can be used to trace internal latency in order to identify bottlenecks or other issues.",
         ge=0,
     )
-    was_cancelled: bool = Field(
-        default=False,
-        description="Whether the request was cancelled during execution.",
-    )
-    cancel_after_ns: int = Field(
-        default=0,
-        ge=0,
-        description="The delay in nanoseconds after which the request should be cancelled, as specified in the credit drop message.",
-    )
     cancellation_perf_ns: int | None = Field(
         default=None,
         ge=0,
         description="The time in nanoseconds (perf_counter_ns) when the request was actually cancelled, if applicable.",
     )
-    x_request_id: str | None = Field(
+    trace_data: SerializeAsAny[BaseTraceData] | None = Field(
         default=None,
-        description="The X-Request-ID header of the request. This is a unique ID for the request.",
-    )
-    x_correlation_id: str | None = Field(
-        default=None,
-        description="The X-Correlation-ID header of the request. This is the ID of the credit drop.",
+        description="Comprehensive trace data captured via a trace config. "
+        "Includes detailed timing for connection establishment, DNS resolution, request/response events, etc. "
+        "The type of the trace data is determined by the transport and library used.",
     )
 
+    @field_validator("trace_data", mode="before")
+    @classmethod
+    def route_trace_data(cls, v: Any) -> BaseTraceData | None:
+        """Route nested trace_data to correct subclass based on trace_type discriminator."""
+        if isinstance(v, dict):
+            return BaseTraceData.from_json(v)
+        return v
+
     @property
-    def delayed(self) -> bool:
-        """Check if the request was delayed."""
-        return self.delayed_ns is not None and self.delayed_ns > 0
+    def was_cancelled(self) -> bool:
+        """Check if the request was cancelled."""
+        return self.cancellation_perf_ns is not None
 
     # TODO: Most of these properties will be removed once we have proper record handling and metrics.
 
@@ -501,77 +564,6 @@ class RequestRecord(AIPerfBaseModel):
                         f"Response {i} perf ns timestamp is invalid: {response.perf_ns}"
                     )
             self.error = ErrorDetails.from_exception(err)
-
-    @property
-    def time_to_first_response_ns(self) -> int | None:
-        """Get the time to the first response in nanoseconds."""
-        if not self.valid:
-            return None
-        return (
-            self.responses[0].perf_ns - self.start_perf_ns
-            if self.start_perf_ns
-            else None
-        )
-
-    @property
-    def time_to_second_response_ns(self) -> int | None:
-        """Get the time to the second response in nanoseconds."""
-        if not self.valid or len(self.responses) < 2:
-            return None
-        return (
-            self.responses[1].perf_ns - self.responses[0].perf_ns
-            if self.responses[1].perf_ns and self.responses[0].perf_ns
-            else None
-        )
-
-    @property
-    def time_to_last_response_ns(self) -> int | None:
-        """Get the time to the last response in nanoseconds."""
-        if not self.valid:
-            return None
-        if self.end_perf_ns is None or self.start_perf_ns is None:
-            return None
-        return self.end_perf_ns - self.start_perf_ns if self.start_perf_ns else None
-
-    @property
-    def inter_token_latency_ns(self) -> float | None:
-        """Get the interval between responses in nanoseconds."""
-        if not self.valid or len(self.responses) < 2:
-            return None
-
-        if (
-            isinstance(self.responses[-1], SSEMessage)
-            and self.responses[-1].packets[-1].value == "[DONE]"
-        ):
-            return (
-                (self.responses[-2].perf_ns - self.responses[0].perf_ns)
-                / (len(self.responses) - 2)
-                if self.responses[-2].perf_ns and self.responses[0].perf_ns
-                else None
-            )
-
-        return (
-            (self.responses[-1].perf_ns - self.responses[0].perf_ns)
-            / (len(self.responses) - 1)
-            if self.responses[-1].perf_ns and self.responses[0].perf_ns
-            else None
-        )
-
-    def token_latency_ns(self, index: int) -> float | None:
-        """Get the latency of a token in nanoseconds."""
-        if not self.valid or len(self.responses) < 1:
-            return None
-        if index == 0:
-            return (
-                self.responses[0].perf_ns - self.recv_start_perf_ns
-                if self.recv_start_perf_ns
-                else None
-            )
-        return (
-            self.responses[index].perf_ns - self.responses[index - 1].perf_ns
-            if self.responses[index].perf_ns and self.responses[index - 1].perf_ns
-            else None
-        )
 
 
 class BaseResponseData(AIPerfBaseModel):
@@ -819,72 +811,6 @@ class ParsedResponseRecord(AIPerfBaseModel):
             self.request.error = ErrorDetails.from_exception(err)
 
 
-class RequestInfo(AIPerfBaseModel):
-    """Info about a request."""
-
-    model_endpoint: ModelEndpointInfo = Field(
-        ...,
-        description="The model endpoint that the request was sent to.",
-    )
-    turns: list[Turn] = Field(
-        default_factory=list,
-        description="The actual turns of the request. This will include assistant turns as well as user turns in multi-turn conversations.",
-    )
-    turn_index: int | None = Field(
-        default=None,
-        description="The index of the turn in the conversation (if applicable).",
-    )
-    endpoint_headers: dict[str, str] = Field(
-        default_factory=dict,
-        description="Endpoint-specific headers (auth, API keys, custom headers).",
-    )
-    endpoint_params: dict[str, str] = Field(
-        default_factory=dict,
-        description="Endpoint-specific URL query parameters.",
-    )
-    credit_num: int | None = Field(
-        default=None,
-        ge=0,
-        description="The sequential number of the credit in the credit phase. This is used to track the progress of the credit phase,"
-        " as well as the order that requests are sent in.",
-    )
-    credit_phase: CreditPhase = Field(
-        default=CreditPhase.PROFILING,
-        description="The type of credit phase (either warmup or profiling)",
-    )
-    should_cancel: bool = Field(
-        default=False,
-        description="Whether this request should be cancelled after the specified delay.",
-    )
-    cancel_after_ns: int = Field(
-        default=0,
-        ge=0,
-        description="The delay in nanoseconds after which the request should be cancelled, as specified in the credit drop message.",
-    )
-    x_request_id: str | None = Field(
-        default=None,
-        description="The X-Request-ID header of the request. This is a unique ID for the request.",
-    )
-    x_correlation_id: str | None = Field(
-        default=None,
-        description="The X-Correlation-ID header of the request. This is the ID of the credit drop.",
-    )
-    conversation_id: str | None = Field(
-        default=None,
-        description="The ID of the conversation (if applicable).",
-    )
-    system_message: str | None = Field(
-        default=None,
-        description="Optional shared system message to prepend to the first turn. "
-        "Extracted from conversation.system_message at request time.",
-    )
-    user_context_message: str | None = Field(
-        default=None,
-        description="Optional per-conversation user context message to prepend to the first turn. "
-        "Extracted from conversation.user_context_message at request time.",
-    )
-
-
 class MetricRecordInfo(AIPerfBaseModel):
     """The full info of a metric record including the metadata, metrics, and error for export."""
 
@@ -895,6 +821,12 @@ class MetricRecordInfo(AIPerfBaseModel):
     metrics: dict[str, MetricValue] = Field(
         ...,
         description="A dictionary containing all metric values along with their units.",
+    )
+    trace_data: SerializeAsAny[TraceDataExport] | None = Field(
+        default=None,
+        description="Comprehensive trace data captured via a trace config with wall-clock timestamps. "
+        "Includes detailed timing for connection establishment, DNS resolution, request/response events, etc. "
+        "The type of the trace data is determined by the transport and library used.",
     )
     error: ErrorDetails | None = Field(
         default=None,

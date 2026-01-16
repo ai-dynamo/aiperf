@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from pydantic import Field
 
@@ -22,7 +22,7 @@ class ServerMetricsRecordMessage(BaseServiceMessage):
         description="The ID of the server metrics data collector that collected the records"
     )
     record: ServerMetricsRecord | None = Field(
-        ...,
+        default=None,
         description="The server metrics record",
     )
     error: ErrorDetails | None = Field(

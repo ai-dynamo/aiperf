@@ -1,15 +1,14 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 Tests for pull_client.py - ZMQPullClient class.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import patch
 
 import pytest
 import zmq
-import zmq.asyncio
 
 from aiperf.common.enums import LifecycleState, MessageType
 from aiperf.common.environment import Environment
@@ -35,7 +34,7 @@ class TestZMQPullClientInitialization:
         ):
             client = ZMQPullClient(address="tcp://127.0.0.1:5555", bind=False)
 
-            assert client.semaphore._value == 10
+            assert client.semaphore.effective_slots == 10
 
     def test_init_with_custom_concurrency(self, mock_zmq_context):
         """Test initialization with custom max_pull_concurrency."""
@@ -43,7 +42,7 @@ class TestZMQPullClientInitialization:
             address="tcp://127.0.0.1:5555", bind=False, max_pull_concurrency=5
         )
 
-        assert client.semaphore._value == 5
+        assert client.semaphore.effective_slots == 5
 
 
 class TestZMQPullClientCallbackRegistration:
@@ -147,7 +146,7 @@ class TestZMQPullClientBackgroundTask:
             await wait_for_background_task()
 
             # Semaphore should still have its original value (releases after timeout)
-            assert client.semaphore._value == 5
+            assert client.semaphore.stats.release_count == 1
 
     @pytest.mark.asyncio
     async def test_background_task_handles_exception_gracefully(
@@ -181,9 +180,7 @@ class TestZMQPullClientConcurrency:
     """Test concurrency control with semaphore."""
 
     @pytest.mark.asyncio
-    async def test_semaphore_limits_concurrent_processing(
-        self, mock_zmq_context, wait_for_background_task
-    ):
+    async def test_semaphore_limits_concurrent_processing(self, mock_zmq):
         """Test that semaphore limits concurrent message processing."""
         messages = [
             HeartbeatMessage(
@@ -195,22 +192,20 @@ class TestZMQPullClientConcurrency:
             for i in range(10)
         ]
 
-        mock_socket = AsyncMock(spec=zmq.asyncio.Socket)
-        mock_socket.bind = Mock()
-        mock_socket.setsockopt = Mock()
-        mock_socket.recv = AsyncMock(
-            side_effect=[msg.to_json_bytes() for msg in messages]
-        )
-        mock_zmq_context.socket = Mock(return_value=mock_socket)
+        for message in messages:
+            await mock_zmq.recv_queue.put(message.to_json_bytes())
 
         client = ZMQPullClient(
             address="tcp://127.0.0.1:5555", bind=False, max_pull_concurrency=3
         )
 
         processing = []
+        done_event = asyncio.Event()
 
         async def slow_callback(msg: Message) -> None:
             processing.append(msg.request_id)
+            if len(processing) >= 3:  # At least 3 messages processed
+                done_event.set()
             # Simulate slow processing (mocked to instant yield)
             await asyncio.sleep(0.1)
 
@@ -218,10 +213,9 @@ class TestZMQPullClientConcurrency:
 
         await client.initialize()
         await client.start()
-        await wait_for_background_task()
 
-        # Give time for multiple messages to be processed (mocked to instant)
-        await asyncio.sleep(0.2)
+        # Wait for at least some messages to be processed
+        await asyncio.wait_for(done_event.wait(), timeout=1.0)
 
         await client.stop()
 
@@ -229,36 +223,28 @@ class TestZMQPullClientConcurrency:
         assert len(processing) > 0
 
     @pytest.mark.asyncio
-    async def test_semaphore_released_after_processing(
-        self, mock_zmq_context, sample_message, wait_for_background_task
-    ):
+    async def test_semaphore_released_after_processing(self, sample_message, mock_zmq):
         """Test that semaphore is released after message processing."""
-        mock_socket = AsyncMock(spec=zmq.asyncio.Socket)
-        mock_socket.bind = Mock()
-        mock_socket.setsockopt = Mock()
-        mock_socket.recv = AsyncMock(side_effect=[sample_message.to_json_bytes()])
-        mock_zmq_context.socket = Mock(return_value=mock_socket)
+        await mock_zmq.recv_queue.put(sample_message.to_json_bytes())
 
         client = ZMQPullClient(
             address="tcp://127.0.0.1:5555", bind=False, max_pull_concurrency=5
         )
 
+        done_event = asyncio.Event()
+
         async def callback(msg: Message) -> None:
-            # Simulate processing (mocked to instant yield)
+            # Simulate processing with mocked time
             await asyncio.sleep(0.01)
+            done_event.set()
 
         client.register_pull_callback(sample_message.message_type, callback)
 
-        initial_value = client.semaphore._value
-
         await client.initialize()
         await client.start()
-        await wait_for_background_task()
 
-        # Wait for processing to complete (mocked to instant yield)
-        await asyncio.sleep(0.2)
+        # Wait for processing to complete (using mocked time)
+        await done_event.wait()
 
-        # Semaphore should be back to initial value
-        assert client.semaphore._value == initial_value
-
-        await client.stop()
+        assert client.semaphore.stats.release_count == 1
+        assert client.semaphore.stats.wait_count == 0

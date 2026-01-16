@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 Shared fixtures and utilities for ZMQ testing.
@@ -14,9 +14,15 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 import zmq.asyncio
 
-from aiperf.common.enums import LifecycleState
+from aiperf.common.enums import CreditPhase, LifecycleState
 from aiperf.common.messages import HeartbeatMessage
-from aiperf.common.utils import yield_to_event_loop
+from aiperf.credit.messages import (
+    CancelCredits,
+    CreditReturn,
+    WorkerReady,
+    WorkerShutdown,
+)
+from aiperf.credit.structs import Credit
 
 
 async def _block_forever():
@@ -114,6 +120,49 @@ def sample_message_json(sample_message):
     return sample_message.model_dump_json()
 
 
+# =============================================================================
+# Credit/Worker Struct Fixtures (for streaming dealer/router tests)
+# =============================================================================
+
+
+@pytest.fixture
+def sample_credit():
+    """Create a sample credit struct for testing."""
+    return Credit(
+        id=1,
+        phase=CreditPhase.PROFILING,
+        conversation_id="conv-001",
+        x_correlation_id="corr-001",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=1000000000,
+    )
+
+
+@pytest.fixture
+def sample_worker_ready():
+    """Create a sample WorkerReady struct for testing."""
+    return WorkerReady(worker_id="worker-1")
+
+
+@pytest.fixture
+def sample_worker_shutdown():
+    """Create a sample WorkerShutdown struct for testing."""
+    return WorkerShutdown(worker_id="worker-1")
+
+
+@pytest.fixture
+def sample_credit_return(sample_credit):
+    """Create a sample CreditReturn struct for testing."""
+    return CreditReturn(credit=sample_credit)
+
+
+@pytest.fixture
+def sample_cancel_credits():
+    """Create a sample CancelCredits struct for testing."""
+    return CancelCredits(credit_ids={1, 2, 3})
+
+
 @pytest.fixture
 def assert_socket_configured():
     """Helper to assert socket was configured with default options."""
@@ -139,9 +188,12 @@ async def wait_for_background_task():
     """Helper to wait for background tasks to start."""
 
     async def _wait(iterations: int = 3) -> None:
-        """Wait for a few event loop iterations to let background tasks run."""
-        for _ in range(iterations):
-            await yield_to_event_loop()
+        """Wait for background tasks to run by yielding to the event loop once.
+
+        The iterations parameter is kept for API compatibility but a single
+        yield is sufficient - tight loops of yields cause starvation.
+        """
+        await asyncio.sleep(0)
 
     return _wait
 

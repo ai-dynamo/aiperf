@@ -121,15 +121,27 @@ class TestMooncakeTraceDatasetLoader:
         return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
 
     def make_user_config(
-        self, start_offset: int | None = None, end_offset: int | None = None
+        self,
+        start_offset: int | None = None,
+        end_offset: int | None = None,
+        file: str | None = None,
     ):
         """Create a UserConfig for testing."""
-        return UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(
+        # Only set fixed_schedule=True when offsets are provided (requires a file)
+        has_offsets = start_offset is not None or end_offset is not None
+        input_config = (
+            InputConfig(
+                file=file,
+                fixed_schedule=True,
                 fixed_schedule_start_offset=start_offset,
                 fixed_schedule_end_offset=end_offset,
-            ),
+            )
+            if has_offsets
+            else InputConfig()
+        )
+        return UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=input_config,
         )
 
     def test_load_dataset_basic_functionality(
@@ -296,7 +308,7 @@ class TestMooncakeTraceDatasetLoader:
         ]  # fmt: skip
         filename = create_jsonl_file(content)
 
-        user_config = self.make_user_config(start_offset, end_offset)
+        user_config = self.make_user_config(start_offset, end_offset, file=filename)
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
             user_config=user_config,
@@ -332,7 +344,7 @@ class TestMooncakeTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        user_config = self.make_user_config(start_offset, end_offset)
+        user_config = self.make_user_config(start_offset, end_offset, file=filename)
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
             user_config=user_config,

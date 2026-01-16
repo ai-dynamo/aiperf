@@ -16,6 +16,7 @@ Structure:
     Environment.RECORD.*         - Record processing
     Environment.SERVER_METRICS.* - Server metrics collection
     Environment.SERVICE.*        - Service lifecycle and communication
+    Environment.TIMING.*         - Timing manager settings
     Environment.UI.*             - User interface settings
     Environment.WORKER.*         - Worker management and scaling
     Environment.ZMQ.*            - ZMQ communication settings
@@ -31,6 +32,7 @@ Examples:
 """
 
 import platform
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import BeforeValidator, Field, model_validator
@@ -52,7 +54,8 @@ __all__ = ["Environment"]
 class _DatasetSettings(BaseSettings):
     """Dataset loading and configuration.
 
-    Controls timeouts and behavior for dataset loading operations.
+    Controls timeouts and behavior for dataset loading operations,
+    as well as memory-mapped dataset storage settings.
     """
 
     model_config = SettingsConfigDict(
@@ -64,6 +67,13 @@ class _DatasetSettings(BaseSettings):
         le=100000.0,
         default=300.0,
         description="Timeout in seconds for dataset configuration operations",
+    )
+    MMAP_BASE_PATH: Path | None = Field(
+        default=None,
+        description="Base path for memory-mapped dataset files. If None, uses system temp directory. "
+        "Set to a shared filesystem path for Kubernetes mounted volumes. "
+        "Example: AIPERF_DATASET_MMAP_BASE_PATH=/mnt/shared-pvc "
+        "creates files at /mnt/shared-pvc/aiperf_mmap_{benchmark_id}/",
     )
     PUBLIC_DATASET_TIMEOUT: float = Field(
         ge=1.0,
@@ -261,6 +271,14 @@ class _HTTPSettings(BaseSettings):
         description="Enable SSL certificate verification. Set to False to disable verification. "
         "WARNING: Disabling this is insecure and should only be used for testing in a trusted environment.",
     )
+    REQUEST_CANCELLATION_SEND_TIMEOUT: float = Field(
+        ge=10.0,
+        le=3600.0,
+        default=300.0,
+        description="Safety net timeout in seconds for waiting for HTTP request to be fully sent "
+        "when request cancellation is enabled. Used as fallback when no explicit timeout is configured "
+        "to prevent hanging indefinitely while waiting for the request to be written to the socket.",
+    )
 
 
 class _LoggingSettings(BaseSettings):
@@ -340,6 +358,12 @@ class _RecordSettings(BaseSettings):
         default=2.0,
         description="Interval in seconds between records progress report messages",
     )
+    PROCESS_RECORDS_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=300.0,
+        description="Timeout in seconds for processing record results",
+    )
 
 
 class _ServerMetricsSettings(BaseSettings):
@@ -385,6 +409,30 @@ class _ServerMetricsSettings(BaseSettings):
         le=300.0,
         default=5.0,
         description="Delay in seconds before shutting down server metrics service to allow command response transmission",
+    )
+
+
+class _TimingSettings(BaseSettings):
+    """Timing manager configuration.
+
+    Controls timing-related settings for credit phase execution and scheduling.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_TIMING_",
+    )
+
+    CANCEL_DRAIN_TIMEOUT: float = Field(
+        ge=1.0,
+        le=300.0,
+        default=10.0,
+        description="Timeout in seconds for waiting for cancelled credits to drain after phase timeout",
+    )
+    RATE_RAMP_UPDATE_INTERVAL: float = Field(
+        ge=0.01,
+        le=10.0,
+        default=0.1,
+        description="Update interval in seconds for continuous rate ramping (default 0.1s = 100ms)",
     )
 
 
@@ -451,6 +499,12 @@ class _ServiceSettings(BaseSettings):
         default=60.0,
         description="Timeout in seconds for profile start command",
     )
+    PROFILE_CANCEL_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=10.0,
+        description="Timeout in seconds for profile cancel command",
+    )
     REGISTRATION_INTERVAL: float = Field(
         ge=1.0,
         le=100000.0,
@@ -480,6 +534,27 @@ class _ServiceSettings(BaseSettings):
         le=100000.0,
         default=2.0,
         description="Maximum time in seconds to wait for simple tasks to complete when cancelling",
+    )
+    # Event loop health monitoring settings
+    EVENT_LOOP_HEALTH_ENABLED: bool = Field(
+        default=True,
+        description="Enable event loop health monitoring to detect blocked event loops. "
+        "When enabled, TimingManager and Worker services periodically check if the event loop is responsive "
+        "and log warnings when latency exceeds the threshold.",
+    )
+    EVENT_LOOP_HEALTH_INTERVAL: float = Field(
+        ge=0.05,
+        le=10.0,
+        default=0.25,
+        description="Interval in seconds between event loop health checks (default: 250ms). "
+        "The monitor sleeps for this duration and measures actual elapsed time to detect blocking.",
+    )
+    EVENT_LOOP_HEALTH_WARN_THRESHOLD_MS: float = Field(
+        gt=1.0,
+        le=10000.0,
+        default=10.0,
+        description="Warning threshold in milliseconds for event loop latency (default: 10ms). "
+        "If the actual sleep duration exceeds the expected duration by this amount, a warning is logged.",
     )
 
     @model_validator(mode="after")
@@ -527,6 +602,10 @@ class _UISettings(BaseSettings):
         le=1000.0,
         default=5.0,
         description="Interval in seconds between real-time metrics messages",
+    )
+    REALTIME_METRICS_ENABLED: bool = Field(
+        default=False,
+        description="Enable real-time metrics collection and reporting despite UI type",
     )
     SPINNER_REFRESH_RATE: float = Field(
         ge=0.1,
@@ -621,6 +700,54 @@ class _ZMQSettings(BaseSettings):
         le=100000.0,
         default=10.0,
         description="Timeout in seconds for terminating the ZMQ context during shutdown",
+    )
+    PULL_YIELD_INTERVAL: int = Field(
+        ge=0,
+        le=1_000_000,
+        default=10,
+        description="Yield to the event loop after every N received messages from ZMQ PULL clients. "
+        "Prevents event loop starvation during message bursts. "
+        "0 disables yielding, 1 yields after every message, 10 yields every 10 messages, etc.",
+    )
+    REPLY_YIELD_INTERVAL: int = Field(
+        ge=0,
+        le=1_000_000,
+        default=10,
+        description="Yield to the event loop after every N received requests from ZMQ ROUTER reply clients. "
+        "Prevents event loop starvation during request bursts. "
+        "0 disables yielding, 1 yields after every request, 10 yields every 10 requests, etc.",
+    )
+    REQUEST_YIELD_INTERVAL: int = Field(
+        ge=0,
+        le=1_000_000,
+        default=10,
+        description="Yield to the event loop after every N received responses from ZMQ DEALER request clients. "
+        "Prevents event loop starvation during response bursts. "
+        "0 disables yielding, 1 yields after every response, 10 yields every 10 responses, etc.",
+    )
+    STREAMING_DEALER_YIELD_INTERVAL: int = Field(
+        ge=0,
+        le=1_000_000,
+        default=10,
+        description="Yield to the event loop after every N received messages from ZMQ streaming DEALER clients. "
+        "Prevents event loop starvation during message bursts. "
+        "0 disables yielding, 1 yields after every message, 10 yields every 10 messages, etc.",
+    )
+    STREAMING_ROUTER_YIELD_INTERVAL: int = Field(
+        ge=0,
+        le=1_000_000,
+        default=10,
+        description="Yield to the event loop after every N received messages from ZMQ streaming ROUTER clients. "
+        "Prevents event loop starvation during message bursts. "
+        "0 disables yielding, 1 yields after every message, 10 yields every 10 messages, etc.",
+    )
+    SUB_YIELD_INTERVAL: int = Field(
+        ge=0,
+        le=1_000_000,
+        default=10,
+        description="Yield to the event loop after every N received messages from ZMQ SUB clients. "
+        "Prevents event loop starvation during message bursts. "
+        "0 disables yielding, 1 yields after every message, 10 yields every 10 messages, etc.",
     )
     PULL_MAX_CONCURRENCY: int = Field(
         ge=1,
@@ -726,6 +853,10 @@ class _Environment(BaseSettings):
     SERVICE: _ServiceSettings = Field(
         default_factory=_ServiceSettings,
         description="Service lifecycle and communication settings",
+    )
+    TIMING: _TimingSettings = Field(
+        default_factory=_TimingSettings,
+        description="Timing manager settings",
     )
     UI: _UISettings = Field(
         default_factory=_UISettings,

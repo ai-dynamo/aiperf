@@ -24,9 +24,11 @@ from aiperf.zmq.router_reply_client import (
     ZMQRouterReplyClient,
 )
 from aiperf.zmq.streaming_dealer_client import (
+    RouterToWorkerHandler,
     ZMQStreamingDealerClient,
 )
 from aiperf.zmq.streaming_router_client import (
+    WorkerToRouterHandler,
     ZMQStreamingRouterClient,
 )
 from aiperf.zmq.sub_client import (
@@ -65,9 +67,11 @@ __all__ = [
     "BaseZMQProxy",
     "ProxyEndType",
     "ProxySocketClient",
+    "RouterToWorkerHandler",
     "TOPIC_DELIMITER",
     "TOPIC_END",
     "TOPIC_END_ENCODED",
+    "WorkerToRouterHandler",
     "ZMQDealerRequestClient",
     "ZMQDealerRouterProxy",
     "ZMQIPCCommunication",
