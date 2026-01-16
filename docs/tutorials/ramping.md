@@ -238,3 +238,9 @@ This creates smooth traffic curves without sudden jumps.
 - Request rate starts proportionally low and interpolates smoothly
 - Ramps complete exactly at the specified duration
 - After ramping, values stay at the target for the rest of the phase
+
+## Related Documentation
+
+- [Prefill Concurrency](./prefill-concurrency.md) — Memory-safe long-context benchmarking with prefill limiting
+- [Request Rate with Concurrency](./request-rate-concurrency.md) — Combining rate and concurrency controls
+- [Timing Modes Reference](../benchmark_modes/timing-modes-reference.md) — Complete CLI compatibility matrix

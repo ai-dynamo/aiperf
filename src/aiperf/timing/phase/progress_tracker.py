@@ -192,6 +192,7 @@ class PhaseProgressTracker:
             total_expected_requests=self._config.total_expected_requests,
             expected_duration_sec=self._config.expected_duration_sec,
             expected_num_sessions=self._config.expected_num_sessions,
+            expected_grace_period_sec=self._config.grace_period_sec,
             # Progress from counter
             requests_sent=self._counter.requests_sent,
             requests_completed=self._counter.requests_completed,

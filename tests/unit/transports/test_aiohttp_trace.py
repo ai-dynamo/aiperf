@@ -13,6 +13,7 @@ from aiperf.transports.aiohttp_trace import create_aiohttp_trace_config
 
 def create_mock_response(
     status: int = 200,
+    reason: str = "OK",
     headers: dict | None = None,
     local_addr: tuple[str, int] = ("192.168.1.100", 54321),
     remote_addr: tuple[str, int] = ("10.0.0.1", 8080),
@@ -21,6 +22,7 @@ def create_mock_response(
 
     Args:
         status: HTTP status code
+        reason: HTTP status reason phrase
         headers: Response headers dict
         local_addr: Local (IP, port) tuple
         remote_addr: Remote (IP, port) tuple
@@ -30,6 +32,7 @@ def create_mock_response(
     """
     mock_response = Mock()
     mock_response.status = status
+    mock_response.reason = reason
     mock_response.headers = headers or {}
 
     mock_transport = Mock()

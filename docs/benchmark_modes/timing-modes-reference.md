@@ -84,6 +84,8 @@ When multiple options are specified, AIPerf uses this priority:
 
 > **Important**: If `--concurrency` is not set, session concurrency limiting is **disabled** (unlimited). For `--user-centric-rate` mode, consider setting `--concurrency` to at least `--num-users` to ensure all users can have in-flight requests.
 
+> **See also**: [Prefill Concurrency Tutorial](../tutorials/prefill-concurrency.md) for detailed guidance on memory-safe long-context benchmarking.
+
 ### Grace Period Options
 
 | Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | Notes |

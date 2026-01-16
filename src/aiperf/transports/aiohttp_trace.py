@@ -242,6 +242,7 @@ def create_aiohttp_trace_config(
 
         # Capture response metadata (status and headers are available at this point)
         trace_data.response_status_code = params.response.status
+        trace_data.response_reason = params.response.reason
         trace_data.response_headers = dict(params.response.headers)
 
         # Capture connection socket info (works for both new and reused connections)

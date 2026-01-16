@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
@@ -35,12 +35,12 @@ from aiperf.common.models import (
 
 | Model | Description | Source |
 |-------|-------------|--------|
-| `MetricRecordInfo` | Complete per-request record including metadata, metrics, and error information | [record_models.py](../../aiperf/common/models/record_models.py) |
-| `MetricRecordMetadata` | Request metadata: timestamps, IDs, worker identifiers, and phase information | [record_models.py](../../aiperf/common/models/record_models.py) |
-| `MetricValue` | Individual metric value with associated unit of measurement | [record_models.py](../../aiperf/common/models/record_models.py) |
-| `ErrorDetails` | Error information including HTTP code, error type, and descriptive message | [error_models.py](../../aiperf/common/models/error_models.py) |
-| `InputsFile` | Container for all input dataset sessions with formatted payloads for each turn | [dataset_models.py](../../aiperf/common/models/dataset_models.py) |
-| `SessionPayloads` | Single conversation session with session ID and list of formatted request payloads | [dataset_models.py](../../aiperf/common/models/dataset_models.py) |
+| `MetricRecordInfo` | Complete per-request record including metadata, metrics, and error information | [record_models.py](../../src/aiperf/common/models/record_models.py) |
+| `MetricRecordMetadata` | Request metadata: timestamps, IDs, worker identifiers, and phase information | [record_models.py](../../src/aiperf/common/models/record_models.py) |
+| `MetricValue` | Individual metric value with associated unit of measurement | [record_models.py](../../src/aiperf/common/models/record_models.py) |
+| `ErrorDetails` | Error information including HTTP code, error type, and descriptive message | [error_models.py](../../src/aiperf/common/models/error_models.py) |
+| `InputsFile` | Container for all input dataset sessions with formatted payloads for each turn | [dataset_models.py](../../src/aiperf/common/models/dataset_models.py) |
+| `SessionPayloads` | Single conversation session with session ID and list of formatted request payloads | [dataset_models.py](../../src/aiperf/common/models/dataset_models.py) |
 
 ## Output File Formats
 
@@ -275,3 +275,9 @@ correlate_inputs_and_results(
     Path("artifacts/my-run/profile_export.jsonl")
 )
 ```
+
+## Related Documentation
+
+- [HTTP Trace Metrics Guide](./http-trace-metrics.md) - Detailed HTTP request lifecycle timing (DNS, TCP/TLS, TTFB) with k6 and HAR conventions
+- [Source: record_models.py](../../src/aiperf/common/models/record_models.py) - `MetricRecordInfo`, `MetricRecordMetadata`, and `MetricValue` model definitions
+- [Source: dataset_models.py](../../src/aiperf/common/models/dataset_models.py) - `InputsFile` and `SessionPayloads` model definitions

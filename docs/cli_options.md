@@ -387,6 +387,14 @@ The level of profile export files to create.
 <br>_Choices: [`summary`, `records`, `raw`]_
 <br>_Default: `records`_
 
+#### `--export-http-trace`
+
+Include HTTP trace data (timestamps, chunks, headers, socket info) in profile_export.jsonl. Computed metrics (http_req_duration, http_req_waiting, etc.) are always included regardless of this setting. See the HTTP Trace Metrics guide for details on trace data fields.
+
+#### `--show-trace-timing`
+
+Display HTTP trace timing metrics in the console at the end of the benchmark. Shows detailed timing breakdown: blocked, DNS, connecting, sending, waiting (TTFB), receiving, and total duration following k6 naming conventions.
+
 #### `--slice-duration` `<float>`
 
 The duration (in seconds) of an individual time slice to be used post-benchmark in time-slicing mode.

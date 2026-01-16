@@ -105,6 +105,10 @@ class TraceDataExport(AIPerfBaseModel):
         default=None,
         description="The status code of the response.",
     )
+    response_reason: str | None = Field(
+        default=None,
+        description="The HTTP status reason phrase (e.g., 'OK', 'Not Found').",
+    )
     response_receive_start_ns: int | None = Field(
         default=None,
         description="When the response started being received from the server (wall-clock time.time_ns()).",
@@ -372,6 +376,10 @@ class BaseTraceData(AIPerfBaseModel):
     response_status_code: int | None = Field(
         default=None,
         description="The status code of the response.",
+    )
+    response_reason: str | None = Field(
+        default=None,
+        description="The HTTP status reason phrase (e.g., 'OK', 'Not Found').",
     )
     response_receive_start_perf_ns: int | None = Field(
         default=None,
