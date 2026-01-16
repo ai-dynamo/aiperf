@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Unified random number generation for AIPerf.
@@ -211,17 +211,19 @@ class RandomGenerator:
         """
         return self._python_rng.sample(population, k=k)
 
-    def numpy_choice(self, a, size=None):
+    def numpy_choice(self, a, size=None, p=None, replace=True):
         """NumPy random choice from array.
 
         Args:
             a: Array-like or int (if int, choose from range(a))
             size: Output shape, optional
+            p: Probabilities for each entry in a, optional
+            replace: Whether to sample with replacement, default True
 
         Returns:
             Random sample(s) from array
         """
-        return self._numpy_rng.choice(a, size=size)
+        return self._numpy_rng.choice(a, size=size, p=p, replace=replace)
 
     def normal(self, loc=0.0, scale=1.0, size=None):
         """Draw samples from normal (Gaussian) distribution.

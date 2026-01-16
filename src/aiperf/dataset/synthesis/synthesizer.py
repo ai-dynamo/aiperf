@@ -245,7 +245,7 @@ class Synthesizer(AIPerfLoggerMixin):
             Sampled ISL.
         """
         if self._isl_sampler:
-            return self._isl_sampler.sample(self._rng)
+            return self._isl_sampler.sample()
         return 512
 
     def _sample_osl(self) -> int:
@@ -255,7 +255,7 @@ class Synthesizer(AIPerfLoggerMixin):
             Sampled OSL.
         """
         if self._osl_sampler:
-            return self._osl_sampler.sample(self._rng)
+            return self._osl_sampler.sample()
         return 64
 
     def get_stats(self) -> dict[str, Any]:

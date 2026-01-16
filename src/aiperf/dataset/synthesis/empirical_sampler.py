@@ -3,8 +3,11 @@
 """Empirical distribution sampler for drawing from observed data distributions."""
 
 from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
+
+from aiperf.common import random_generator as rng
 
 
 @dataclass(slots=True)
@@ -27,11 +30,7 @@ class EmpiricalSamplerStats:
 
 
 class EmpiricalSampler:
-    """Samples values from an empirical distribution learned from data.
-
-    Learns the cumulative distribution function (CDF) from input data and
-    uses it to generate samples that match the empirical distribution.
-    """
+    """Samples values from an empirical distribution learned from data."""
 
     def __init__(self, data: list[int] | list[float]) -> None:
         """Initialize sampler from observed data.
@@ -40,63 +39,50 @@ class EmpiricalSampler:
             data: List of observed values to learn distribution from.
         """
         if not data:
-            self._original_data = np.array([0])
             self._values = np.array([0])
-            self._cdf = np.array([1.0])
-            return
+            self._probs = np.array([1.0])
+        else:
+            self._values, counts = np.unique(data, return_counts=True)
+            self._probs = counts / counts.sum()
+        self._rng = rng.derive("dataset.synthesis.empirical_sampler")
 
-        # Store original data for statistics
-        self._original_data = np.array(data)
-
-        # Sort unique values and compute CDF
-        sorted_data = np.sort(self._original_data)
-        self._values, counts = np.unique(sorted_data, return_counts=True)
-        self._cdf = np.cumsum(counts) / len(sorted_data)
-
-    def sample(self, rng: np.random.Generator | None = None) -> int | float:
+    def sample(self) -> int | float:
         """Draw a single sample from the learned distribution.
 
-        Args:
-            rng: Optional numpy random generator. If None, uses default random state.
-
         Returns:
-            A value sampled from the empirical distribution, preserving original type.
+            A value sampled from the empirical distribution.
         """
-        if rng is None:
-            rng = np.random.default_rng()
+        # Cast needed: numpy's choice() return type varies by size param, but
+        # type stubs don't capture this overload (returns scalar when size=None)
+        result = cast(np.intp, self._rng.numpy_choice(self._values, p=self._probs))
+        return result.item()
 
-        # Sample uniform random value and map through CDF
-        u = rng.uniform(0, 1)
-        idx = np.searchsorted(self._cdf, u)
-        idx = min(idx, len(self._values) - 1)
-
-        # Convert numpy scalar to Python type
-        return self._values[idx].item()
-
-    def sample_batch(
-        self, size: int, rng: np.random.Generator | None = None
-    ) -> list[int | float]:
+    def sample_batch(self, size: int) -> list[int | float]:
         """Draw multiple samples from the learned distribution.
 
         Args:
             size: Number of samples to draw.
-            rng: Optional numpy random generator.
 
         Returns:
             List of sampled values.
         """
-        return [self.sample(rng) for _ in range(size)]
+        # Cast needed: numpy's choice() return type varies by size param, but
+        # type stubs don't capture this overload (returns ndarray when size given)
+        result = cast(
+            np.ndarray, self._rng.numpy_choice(self._values, size=size, p=self._probs)
+        )
+        return result.tolist()
 
     def get_stats(self) -> EmpiricalSamplerStats:
         """Get statistics about the learned distribution.
 
         Returns:
-            EmpiricalSamplerStats with distribution statistics computed from original data.
+            EmpiricalSamplerStats with distribution statistics.
         """
         return EmpiricalSamplerStats(
-            min=float(np.min(self._original_data)),
-            max=float(np.max(self._original_data)),
-            mean=float(np.mean(self._original_data)),
-            median=float(np.median(self._original_data)),
+            min=float(self._values.min()),
+            max=float(self._values.max()),
+            mean=float(np.average(self._values, weights=self._probs)),
+            median=float(np.median(self._values)),
             num_unique=len(self._values),
         )
