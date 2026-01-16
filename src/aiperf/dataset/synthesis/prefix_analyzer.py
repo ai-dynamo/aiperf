@@ -4,8 +4,10 @@
 
 import statistics
 from collections import Counter
+from collections.abc import Sequence
 from pathlib import Path
 
+import numpy as np
 import orjson
 
 from aiperf.common.mixins import AIPerfLoggerMixin
@@ -147,7 +149,9 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
             self.context_lengths.append(context_len)
             self.unique_prompt_lengths.append(unique_prompt_len)
 
-    def _compute_metric_stats(self, values: list[float | int]) -> MetricStats | None:
+    def _compute_metric_stats(
+        self, values: Sequence[float | int]
+    ) -> MetricStats | None:
         """Compute full statistics for a list of values.
 
         Args:
@@ -159,30 +163,16 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
         if not values:
             return None
 
-        sorted_values = sorted(values)
-        n = len(sorted_values)
-
-        def percentile(p: float) -> float:
-            """Compute percentile using linear interpolation."""
-            if n == 1:
-                return float(sorted_values[0])
-            k = (n - 1) * p
-            f = int(k)
-            c = f + 1 if f + 1 < n else f
-            return sorted_values[f] + (k - f) * (sorted_values[c] - sorted_values[f])
-
-        mean = sum(values) / n
-        variance = sum((x - mean) ** 2 for x in values) / n
-        std_dev = variance**0.5
+        arr = np.asarray(values)
 
         return MetricStats(
-            mean=mean,
-            std_dev=std_dev,
-            min=float(min(values)),
-            p25=percentile(0.25),
-            median=percentile(0.5),
-            p75=percentile(0.75),
-            max=float(max(values)),
+            mean=float(np.mean(arr)),
+            std_dev=float(np.std(arr)),
+            min=float(np.min(arr)),
+            p25=float(np.percentile(arr, 25)),
+            median=float(np.median(arr)),
+            p75=float(np.percentile(arr, 75)),
+            max=float(np.max(arr)),
         )
 
     def _compute_stats(self) -> AnalysisStats:
