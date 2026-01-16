@@ -64,6 +64,7 @@ HTTP client socket and connection configuration. Controls low-level socket optio
 | `AIPERF_HTTP_FORCE_CLOSE` | `False` | — | Force close connections after each request |
 | `AIPERF_HTTP_ENABLE_CLEANUP_CLOSED` | `False` | — | Enable cleanup of closed ssl connections |
 | `AIPERF_HTTP_USE_DNS_CACHE` | `True` | — | Enable DNS cache |
+| `AIPERF_HTTP_SSL_VERIFY` | `True` | — | Enable SSL certificate verification. Set to False to disable verification. WARNING: Disabling this is insecure and should only be used for testing in a trusted environment. |
 
 ## LOGGING
 
