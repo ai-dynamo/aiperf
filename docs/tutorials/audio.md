@@ -20,9 +20,7 @@ Launch the vLLM server with Qwen2-Audio-7B-Instruct:
 docker pull vllm/vllm-openai:latest
 docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
   --model Qwen/Qwen2-Audio-7B-Instruct \
-  --trust-remote-code \
-  --max-model-len 4096 \
-  --limit-mm-per-prompt audio=2
+  --trust-remote-code
 ```
 <!-- /setup-vllm-audio-openai-endpoint-server -->
 
