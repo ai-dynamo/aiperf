@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import os
@@ -230,6 +230,11 @@ class SystemController(SignalHandlerMixin, BaseService):
         duration = time.perf_counter() - begin
         self._parse_responses_for_errors(responses, "Configure Profiling")
         self.info(f"All services configured in {duration:.2f} seconds")
+
+        if not Environment.HTTP.SSL_VERIFY:
+            self.warning(
+                "SSL certificate verification is DISABLED - this is insecure. This should only be used for testing in a trusted environment."
+            )
 
     async def _start_profiling_all_services(self) -> None:
         """Tell all services to start profiling."""

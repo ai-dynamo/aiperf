@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 Environment Configuration Module
@@ -255,6 +255,11 @@ class _HTTPSettings(BaseSettings):
     USE_DNS_CACHE: bool = Field(
         default=True,
         description="Enable DNS cache",
+    )
+    SSL_VERIFY: bool = Field(
+        default=True,
+        description="Enable SSL certificate verification. Set to False to disable verification. "
+        "WARNING: Disabling this is insecure and should only be used for testing in a trusted environment.",
     )
 
 
