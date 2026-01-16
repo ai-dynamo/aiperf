@@ -43,11 +43,7 @@ curl -s http://localhost:8000/v1/chat/completions \
 
 ## Profile with Synthetic Audio
 
-AIPerf can generate synthetic audio for benchmarking.
-
-### Audio-Only Benchmark
-
-Profile with audio inputs only (no text prompts):
+AIPerf can generate synthetic audio for benchmarking:
 
 <!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
@@ -64,14 +60,37 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-audio-openai-endpoint-server -->
 
-### Audio Configuration Options
+To add text prompts alongside audio, include `--synthetic-input-tokens-mean 100`
 
-AIPerf provides several options to control synthetic audio generation:
+## Profile with Custom Input File
 
-- `--audio-length-mean`: Mean audio duration in seconds (default: 10.0)
-- `--audio-length-stddev`: Standard deviation of audio duration (default: 0.0)
-- `--audio-format`: Audio format - `wav` or `mp3` (default: wav)
-- `--audio-sample-rates`: List of sample rates in kHz to randomly select from (default: 16)
-- `--audio-depths`: List of bit depths to randomly select from (default: 16)
-- `--audio-num-channels`: Number of audio channels - 1 (mono) or 2 (stereo) (default: 1)
-- `--audio-batch-size`: Number of audio inputs per request (default: 1)
+Create a JSONL file with audio data and optional text prompts.
+
+<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
+```bash
+cat <<EOF > inputs.jsonl
+{"texts": ["Transcribe this audio."], "audios": ["wav,UklGRiIFAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0Yf4EAAD..."]}
+{"texts": ["What is being said in this recording?"], "audios": ["mp3,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAA..."]}
+{"texts": ["Summarize the main points from this audio."], "audios": ["wav,UklGRooGAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YWY..."]}
+EOF
+```
+<!-- /aiperf-run-vllm-audio-openai-endpoint-server -->
+
+The audio data format is: `{format},{base64_encoded_audio_data}` where:
+- `format`: Either `wav` or `mp3`
+- `base64_encoded_audio_data`: Base64-encoded audio file content
+
+Run AIPerf using the custom input file:
+
+<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
+```bash
+aiperf profile \
+    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --endpoint-type chat \
+    --input-file inputs.jsonl \
+    --custom-dataset-type single_turn \
+    --streaming \
+    --url localhost:8000 \
+    --request-count 3
+```
+<!-- /aiperf-run-vllm-audio-openai-endpoint-server -->
