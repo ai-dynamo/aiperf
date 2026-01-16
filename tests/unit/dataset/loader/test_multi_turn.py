@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import json
@@ -492,8 +492,12 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
                 MultiTurn(
                     session_id="session_1",
                     turns=[
-                        SingleTurn(text="What's this?", image="image1.png"),
-                        SingleTurn(text="Follow up", image="image2.png"),
+                        SingleTurn(
+                            text="What's this?", image="https://example.com/image1.png"
+                        ),
+                        SingleTurn(
+                            text="Follow up", image="https://example.com/image2.png"
+                        ),
                     ],
                 )
             ]
@@ -511,12 +515,12 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
         # First turn
         first_turn = conversation.turns[0]
         assert first_turn.texts[0].contents == ["What's this?"]
-        assert first_turn.images[0].contents == ["image1.png"]
+        assert first_turn.images[0].contents == ["https://example.com/image1.png"]
 
         # Second turn
         second_turn = conversation.turns[1]
         assert second_turn.texts[0].contents == ["Follow up"]
-        assert second_turn.images[0].contents == ["image2.png"]
+        assert second_turn.images[0].contents == ["https://example.com/image2.png"]
 
     def test_convert_structured_objects_in_turns(self, default_user_config):
         """Test converting MultiTurn with structured Text objects."""
