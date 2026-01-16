@@ -21,7 +21,7 @@ class SynthesisIntegration(AIPerfLoggerMixin):
     """Integrates trace synthesis into the AIPerf dataset pipeline.
 
     Bridges between AIPerf's Conversation model and mooncake trace format,
-    enabling synthesis transformations to be applied during profiling.
+    enabling synthesis transformations to be applied as part of an aiperf profile.
     """
 
     def __init__(
