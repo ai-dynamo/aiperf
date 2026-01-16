@@ -13,17 +13,10 @@ This guide covers profiling audio models using OpenAI-compatible chat completion
 
 ## Start a vLLM Server
 
-Launch a vLLM server with Qwen2-Audio-7B-Instruct:
+Launch the vLLM server with Qwen2-Audio-7B-Instruct:
 
+<!-- setup-vllm-audio-openai-endpoint-server -->
 ```bash
-# Using vLLM directly
-vllm serve Qwen/Qwen2-Audio-7B-Instruct \
-  --port 8000 \
-  --trust-remote-code \
-  --max-model-len 4096 \
-  --limit-mm-per-prompt audio=2
-
-# Or using Docker
 docker pull vllm/vllm-openai:latest
 docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
   --model Qwen/Qwen2-Audio-7B-Instruct \
@@ -31,8 +24,12 @@ docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
   --max-model-len 4096 \
   --limit-mm-per-prompt audio=2
 ```
+<!-- /setup-vllm-audio-openai-endpoint-server -->
+
 
 Verify the server is ready:
+
+<!-- health-check-vllm-audio-openai-endpoint-server -->
 ```bash
 curl -s http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
@@ -42,6 +39,7 @@ curl -s http://localhost:8000/v1/chat/completions \
     "max_tokens": 10
   }' | jq
 ```
+<!-- /health-check-vllm-audio-openai-endpoint-server -->
 
 ---
 
@@ -53,6 +51,7 @@ AIPerf can generate synthetic audio for benchmarking.
 
 Profile with audio inputs only (no text prompts):
 
+<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-Audio-7B-Instruct \
@@ -65,24 +64,7 @@ aiperf profile \
     --request-count 20 \
     --concurrency 4
 ```
-
-### Audio with Text Prompts
-
-Add text prompts to provide context or instructions for the audio:
-
-```bash
-aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
-    --endpoint-type chat \
-    --audio-length-mean 5.0 \
-    --audio-format wav \
-    --audio-sample-rates 16 \
-    --synthetic-input-tokens-mean 100 \
-    --streaming \
-    --url localhost:8000 \
-    --request-count 20 \
-    --concurrency 4
-```
+<!-- /aiperf-run-vllm-audio-openai-endpoint-server -->
 
 ### Audio Configuration Options
 
