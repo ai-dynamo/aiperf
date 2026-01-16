@@ -13,12 +13,23 @@ This guide covers profiling audio models using OpenAI-compatible chat completion
 
 ## Start a vLLM Server
 
-Launch a vLLM server with an audio language model:
+Launch a vLLM server with Qwen2-Audio-7B-Instruct:
 
 ```bash
+# Using vLLM directly
+vllm serve Qwen/Qwen2-Audio-7B-Instruct \
+  --port 8000 \
+  --trust-remote-code \
+  --max-model-len 4096 \
+  --limit-mm-per-prompt audio=2
+
+# Or using Docker
 docker pull vllm/vllm-openai:latest
 docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
-  --model fixie-ai/ultravox-v0_2
+  --model Qwen/Qwen2-Audio-7B-Instruct \
+  --trust-remote-code \
+  --max-model-len 4096 \
+  --limit-mm-per-prompt audio=2
 ```
 
 Verify the server is ready:
@@ -26,7 +37,7 @@ Verify the server is ready:
 curl -s http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "fixie-ai/ultravox-v0_2",
+    "model": "Qwen/Qwen2-Audio-7B-Instruct",
     "messages": [{"role": "user", "content": "Hello"}],
     "max_tokens": 10
   }' | jq
@@ -44,7 +55,7 @@ Profile with audio inputs only (no text prompts):
 
 ```bash
 aiperf profile \
-    --model fixie-ai/ultravox-v0_2 \
+    --model Qwen/Qwen2-Audio-7B-Instruct \
     --endpoint-type chat \
     --audio-length-mean 5.0 \
     --audio-format wav \
@@ -61,7 +72,7 @@ Add text prompts to provide context or instructions for the audio:
 
 ```bash
 aiperf profile \
-    --model fixie-ai/ultravox-v0_2 \
+    --model Qwen/Qwen2-Audio-7B-Instruct \
     --endpoint-type chat \
     --audio-length-mean 5.0 \
     --audio-format wav \
