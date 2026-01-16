@@ -325,8 +325,3 @@ Cache hit rate: 5.2%
 - Using `prefix-root-multiplier` to create more diverse patterns
 - Analyzing a different trace file that has more reuse
 
-## See Also
-
-- [AIPerf Documentation](../../README.md)
-- [Mooncake Trace Format](../../docs/formats/mooncake-trace.md)
-- [KV Cache Optimization](../../docs/optimization/kv-cache.md)
