@@ -5,9 +5,9 @@
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import orjson
 
+from aiperf.common import random_generator as rng
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.dataset.synthesis.empirical_sampler import EmpiricalSampler
 from aiperf.dataset.synthesis.models import SynthesisParams
@@ -35,7 +35,7 @@ class Synthesizer(AIPerfLoggerMixin):
         self._tree = RadixTree()
         self._isl_sampler: EmpiricalSampler | None = None
         self._osl_sampler: EmpiricalSampler | None = None
-        self._rng = np.random.default_rng(42)
+        self._rng = rng.derive("dataset.synthesis.synthesizer")
 
     def synthesize_from_file(self, trace_file: Path | str) -> list[dict]:
         """Synthesize traces from an input trace file.
@@ -114,7 +114,7 @@ class Synthesizer(AIPerfLoggerMixin):
             if timestamp is not None and self.params.speedup_ratio > 0:
                 timestamp = int(timestamp / self.params.speedup_ratio)
 
-            synthetic_trace = {
+            synthetic_trace: dict[str, Any] = {
                 "input_length": isl,
                 "output_length": osl,
             }
@@ -245,7 +245,7 @@ class Synthesizer(AIPerfLoggerMixin):
             Sampled ISL.
         """
         if self._isl_sampler:
-            return self._isl_sampler.sample()
+            return int(self._isl_sampler.sample())
         return 512
 
     def _sample_osl(self) -> int:
@@ -255,7 +255,7 @@ class Synthesizer(AIPerfLoggerMixin):
             Sampled OSL.
         """
         if self._osl_sampler:
-            return self._osl_sampler.sample()
+            return int(self._osl_sampler.sample())
         return 64
 
     def get_stats(self) -> dict[str, Any]:
