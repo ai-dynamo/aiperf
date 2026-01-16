@@ -13,9 +13,6 @@ from aiperf.dataset.synthesis.graph_utils import (
     remove_leaves,
     validate_tree,
 )
-from aiperf.dataset.synthesis.integration import (
-    SynthesisIntegration,
-)
 from aiperf.dataset.synthesis.models import (
     AnalysisStats,
     MetricStats,
@@ -48,7 +45,6 @@ __all__ = [
     "RadixTree",
     "RadixTreeStats",
     "RollingHasher",
-    "SynthesisIntegration",
     "SynthesisParams",
     "Synthesizer",
     "compute_transition_cdfs",

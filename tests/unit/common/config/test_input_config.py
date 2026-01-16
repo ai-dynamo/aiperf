@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import tempfile
 from pathlib import PosixPath
@@ -13,6 +13,7 @@ from aiperf.common.config import (
     InputConfig,
     InputDefaults,
     PromptConfig,
+    SynthesisConfig,
 )
 from aiperf.common.enums import (
     CustomDatasetType,
@@ -189,3 +190,110 @@ def test_all_custom_dataset_types_require_file(dataset_type):
         InputConfig(custom_dataset_type=dataset_type, file=None)
 
     assert "Custom dataset type requires --input-file to be provided" in str(exc.value)
+
+
+# ============================================================================
+# Synthesis Validation Tests
+# ============================================================================
+
+
+def test_synthesis_with_mooncake_trace_succeeds():
+    """Test that synthesis options with mooncake_trace dataset type succeeds."""
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        config = InputConfig(
+            custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            file=temp_file.name,
+            synthesis=SynthesisConfig(speedup_ratio=2.0),
+        )
+        assert config.synthesis.speedup_ratio == 2.0
+        assert config.custom_dataset_type == CustomDatasetType.MOONCAKE_TRACE
+
+
+@pytest.mark.parametrize(
+    "dataset_type",
+    [
+        CustomDatasetType.SINGLE_TURN,
+        CustomDatasetType.MULTI_TURN,
+        CustomDatasetType.RANDOM_POOL,
+    ],
+)  # fmt: skip
+def test_synthesis_with_non_mooncake_trace_raises_error(dataset_type):
+    """Test that synthesis options with non-mooncake_trace dataset type raises error."""
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        with pytest.raises(ValidationError) as exc:
+            InputConfig(
+                custom_dataset_type=dataset_type,
+                file=temp_file.name,
+                synthesis=SynthesisConfig(speedup_ratio=2.0),
+            )
+
+        assert "require --custom-dataset-type mooncake_trace" in str(exc.value)
+
+
+def test_synthesis_with_auto_detect_dataset_type_succeeds():
+    """Test that synthesis options with auto-detect (None) dataset type succeeds.
+
+    When custom_dataset_type is None, the type will be auto-detected at runtime.
+    Synthesis validation is deferred until the actual type is known.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        config = InputConfig(
+            custom_dataset_type=None,
+            file=temp_file.name,
+            synthesis=SynthesisConfig(prefix_len_multiplier=2.0),
+        )
+        assert config.synthesis.prefix_len_multiplier == 2.0
+        assert config.custom_dataset_type is None
+
+
+@pytest.mark.parametrize(
+    "synthesis_config",
+    [
+        SynthesisConfig(speedup_ratio=2.0),
+        SynthesisConfig(prefix_len_multiplier=2.0),
+        SynthesisConfig(prefix_root_multiplier=2),
+        SynthesisConfig(prompt_len_multiplier=2.0),
+        SynthesisConfig(speedup_ratio=0.5, prefix_len_multiplier=1.5),
+    ],
+)  # fmt: skip
+def test_synthesis_various_options_require_mooncake_trace(synthesis_config):
+    """Test that various synthesis option combinations require mooncake_trace."""
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        with pytest.raises(ValidationError) as exc:
+            InputConfig(
+                custom_dataset_type=CustomDatasetType.SINGLE_TURN,
+                file=temp_file.name,
+                synthesis=synthesis_config,
+            )
+
+        assert "require --custom-dataset-type mooncake_trace" in str(exc.value)
+
+
+def test_synthesis_defaults_with_any_dataset_type_succeeds():
+    """Test that default synthesis options (no synthesis) work with any dataset type."""
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        # Default synthesis config (should_synthesize() returns False)
+        config = InputConfig(
+            custom_dataset_type=CustomDatasetType.SINGLE_TURN,
+            file=temp_file.name,
+            synthesis=SynthesisConfig(),  # All defaults
+        )
+        assert not config.synthesis.should_synthesize()
+        assert config.custom_dataset_type == CustomDatasetType.SINGLE_TURN
+
+
+def test_synthesis_max_isl_alone_does_not_trigger_synthesis():
+    """Test that max_isl alone doesn't trigger synthesis validation.
+
+    max_isl is a filter, not a synthesis transformation, so it shouldn't
+    require mooncake_trace by itself.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        config = InputConfig(
+            custom_dataset_type=CustomDatasetType.SINGLE_TURN,
+            file=temp_file.name,
+            synthesis=SynthesisConfig(max_isl=4096),
+        )
+        # max_isl alone doesn't trigger should_synthesize()
+        assert not config.synthesis.should_synthesize()
+        assert config.synthesis.max_isl == 4096

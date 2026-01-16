@@ -101,6 +101,26 @@ class InputConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def validate_synthesis_requires_mooncake_trace(self) -> Self:
+        """Validate that synthesis options require mooncake_trace dataset type.
+
+        Only validates when custom_dataset_type is explicitly set to a non-mooncake
+        type. If custom_dataset_type is None (auto-detect), we allow synthesis
+        options and defer validation to runtime when the actual type is determined.
+        """
+        if (
+            self.synthesis.should_synthesize()
+            and self.custom_dataset_type is not None
+            and self.custom_dataset_type != CustomDatasetType.MOONCAKE_TRACE
+        ):
+            raise ValueError(
+                "Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
+                "--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier) "
+                "require --custom-dataset-type mooncake_trace"
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_goodput(self) -> Self:
         """
         Validate that all keys provided to --goodput are known metric tags.

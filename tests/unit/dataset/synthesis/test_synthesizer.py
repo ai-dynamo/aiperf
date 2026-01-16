@@ -399,3 +399,175 @@ class TestSynthesizer:
 
         assert len(synthetic[0]["hash_ids"]) == expected_blocks
         assert synthetic[0]["input_length"] == expected_isl
+
+
+class TestSynthesizeGroupedTraces:
+    """Tests for synthesize_grouped_traces method."""
+
+    # ============================================================================
+    # Basic Functionality
+    # ============================================================================
+
+    def test_preserves_session_grouping(self) -> None:
+        """Test that session grouping is preserved through synthesis."""
+        data = {
+            "session-a": [
+                {"input_length": 100, "output_length": 20, "hash_ids": [1, 2]},
+                {"input_length": 150, "output_length": 30, "hash_ids": [1, 2, 3]},
+            ],
+            "session-b": [
+                {"input_length": 200, "output_length": 40, "hash_ids": [4, 5]},
+            ],
+        }
+        synthesizer = Synthesizer()
+        result = synthesizer.synthesize_grouped_traces(data)
+
+        assert set(result.keys()) == {"session-a", "session-b"}
+        assert len(result["session-a"]) == 2
+        assert len(result["session-b"]) == 1
+
+    def test_empty_input(self) -> None:
+        """Test synthesizing empty grouped data."""
+        synthesizer = Synthesizer()
+        result = synthesizer.synthesize_grouped_traces({})
+
+        assert result == {}
+
+    def test_single_session_single_trace(self) -> None:
+        """Test with minimal input: one session, one trace."""
+        data = {
+            "only-session": [
+                {"input_length": 100, "output_length": 20, "hash_ids": [1]},
+            ],
+        }
+        synthesizer = Synthesizer()
+        result = synthesizer.synthesize_grouped_traces(data)
+
+        assert "only-session" in result
+        assert len(result["only-session"]) == 1
+        assert "input_length" in result["only-session"][0]
+        assert "output_length" in result["only-session"][0]
+
+    # ============================================================================
+    # Synthesis Parameters Applied
+    # ============================================================================
+
+    def test_speedup_ratio_applied(self) -> None:
+        """Test that speedup_ratio is applied to grouped traces."""
+        data = {
+            "session-1": [
+                {"input_length": 100, "output_length": 20, "timestamp": 1000},
+                {"input_length": 150, "output_length": 30, "timestamp": 2000},
+            ],
+        }
+        params = SynthesisParams(speedup_ratio=2.0)
+        synthesizer = Synthesizer(params=params)
+        result = synthesizer.synthesize_grouped_traces(data)
+
+        assert result["session-1"][0]["timestamp"] == 500
+        assert result["session-1"][1]["timestamp"] == 1000
+
+    def test_prefix_multiplier_applied(self) -> None:
+        """Test that prefix_len_multiplier is applied to grouped traces."""
+        data = {
+            "session-1": [
+                {"input_length": 512, "output_length": 20, "hash_ids": [1, 2]},
+            ],
+        }
+        params = SynthesisParams(prefix_len_multiplier=2.0)
+        synthesizer = Synthesizer(params=params)
+        result = synthesizer.synthesize_grouped_traces(data)
+
+        # Hash IDs should be extended
+        assert len(result["session-1"][0]["hash_ids"]) > 2
+
+    def test_max_isl_filter_applied(self) -> None:
+        """Test that max_isl filter is applied to grouped traces."""
+        data = {
+            "session-1": [
+                {"input_length": 5000, "output_length": 20},
+            ],
+        }
+        params = SynthesisParams(max_isl=4096)
+        synthesizer = Synthesizer(params=params)
+        result = synthesizer.synthesize_grouped_traces(data)
+
+        assert result["session-1"][0]["input_length"] <= 4096
+
+    # ============================================================================
+    # Field Preservation
+    # ============================================================================
+
+    def test_delay_preserved(self) -> None:
+        """Test that delay field is preserved through grouped synthesis."""
+        data = {
+            "session-1": [
+                {"input_length": 100, "output_length": 20, "delay": 500},
+                {"input_length": 150, "output_length": 30, "delay": 1000},
+            ],
+        }
+        synthesizer = Synthesizer()
+        result = synthesizer.synthesize_grouped_traces(data)
+
+        assert result["session-1"][0]["delay"] == 500
+        assert result["session-1"][1]["delay"] == 1000
+
+    def test_session_id_not_in_output_traces(self) -> None:
+        """Test that session_id is removed from individual trace dicts."""
+        data = {
+            "my-session": [
+                {"input_length": 100, "output_length": 20},
+            ],
+        }
+        synthesizer = Synthesizer()
+        result = synthesizer.synthesize_grouped_traces(data)
+
+        # session_id should be the key, not in the trace dict
+        assert "session_id" not in result["my-session"][0]
+
+    # ============================================================================
+    # Multiple Sessions
+    # ============================================================================
+
+    def test_many_sessions(self) -> None:
+        """Test with many sessions."""
+        data = {
+            f"session-{i}": [{"input_length": 100 + i, "output_length": 20}]
+            for i in range(10)
+        }
+        synthesizer = Synthesizer()
+        result = synthesizer.synthesize_grouped_traces(data)
+
+        assert len(result) == 10
+        for i in range(10):
+            assert f"session-{i}" in result
+
+    def test_traces_without_hash_ids(self) -> None:
+        """Test grouped synthesis with traces lacking hash_ids."""
+        data = {
+            "session-1": [
+                {"input_length": 100, "output_length": 20},
+                {"input_length": 150, "output_length": 30},
+            ],
+        }
+        synthesizer = Synthesizer()
+        result = synthesizer.synthesize_grouped_traces(data)
+
+        assert len(result["session-1"]) == 2
+        # Should still have ISL/OSL
+        for trace in result["session-1"]:
+            assert "input_length" in trace
+            assert "output_length" in trace
+
+    def test_empty_sessions_preserved(self) -> None:
+        """Test that empty sessions are preserved, not dropped."""
+        data = {
+            "empty-session": [],
+            "non-empty": [{"input_length": 100, "output_length": 20}],
+        }
+        synthesizer = Synthesizer()
+        result = synthesizer.synthesize_grouped_traces(data)
+
+        assert set(result.keys()) == {"empty-session", "non-empty"}
+        assert result["empty-session"] == []
+        assert len(result["non-empty"]) == 1
