@@ -56,6 +56,7 @@ from aiperf.dataset.loader import (
 from aiperf.dataset.synthesis import (
     AnalysisStats,
     EmpiricalSampler,
+    EmpiricalSamplerStats,
     MetricStats,
     PrefixAnalyzer,
     RadixNode,
@@ -94,6 +95,7 @@ __all__ = [
     "DEFAULT_CORPUS_FILE",
     "DatasetManager",
     "EmpiricalSampler",
+    "EmpiricalSamplerStats",
     "Filename",
     "ImageGenerator",
     "MP3_SUPPORTED_SAMPLE_RATES",

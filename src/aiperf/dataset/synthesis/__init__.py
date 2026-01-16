@@ -4,6 +4,7 @@
 
 from aiperf.dataset.synthesis.empirical_sampler import (
     EmpiricalSampler,
+    EmpiricalSamplerStats,
 )
 from aiperf.dataset.synthesis.graph_utils import (
     compute_transition_cdfs,
@@ -40,6 +41,7 @@ from aiperf.dataset.synthesis.synthesizer import (
 __all__ = [
     "AnalysisStats",
     "EmpiricalSampler",
+    "EmpiricalSamplerStats",
     "MetricStats",
     "PrefixAnalyzer",
     "RadixNode",

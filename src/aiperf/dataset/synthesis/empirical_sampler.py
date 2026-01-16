@@ -2,9 +2,28 @@
 # SPDX-License-Identifier: Apache-2.0
 """Empirical distribution sampler for drawing from observed data distributions."""
 
-from typing import Any
+from dataclasses import dataclass
 
 import numpy as np
+
+
+@dataclass(slots=True)
+class EmpiricalSamplerStats:
+    """Statistics about the learned empirical distribution.
+
+    Attributes:
+        min: Minimum value in original data.
+        max: Maximum value in original data.
+        mean: Mean of original data.
+        median: Median of original data.
+        num_unique: Number of unique values in distribution.
+    """
+
+    min: float
+    max: float
+    mean: float
+    median: float
+    num_unique: int
 
 
 class EmpiricalSampler:
@@ -68,16 +87,16 @@ class EmpiricalSampler:
         """
         return [self.sample(rng) for _ in range(size)]
 
-    def get_stats(self) -> dict[str, Any]:
+    def get_stats(self) -> EmpiricalSamplerStats:
         """Get statistics about the learned distribution.
 
         Returns:
-            Dictionary with distribution statistics computed from original data.
+            EmpiricalSamplerStats with distribution statistics computed from original data.
         """
-        return {
-            "min": float(np.min(self._original_data)),
-            "max": float(np.max(self._original_data)),
-            "mean": float(np.mean(self._original_data)),
-            "median": float(np.median(self._original_data)),
-            "num_unique": len(self._values),
-        }
+        return EmpiricalSamplerStats(
+            min=float(np.min(self._original_data)),
+            max=float(np.max(self._original_data)),
+            mean=float(np.mean(self._original_data)),
+            median=float(np.median(self._original_data)),
+            num_unique=len(self._values),
+        )

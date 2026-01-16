@@ -94,11 +94,11 @@ class TestEmpiricalSampler:
         sampler = EmpiricalSampler(data)
         stats = sampler.get_stats()
 
-        assert "min" in stats
-        assert "max" in stats
-        assert "mean" in stats
-        assert "median" in stats
-        assert "num_unique" in stats
+        assert hasattr(stats, "min")
+        assert hasattr(stats, "max")
+        assert hasattr(stats, "mean")
+        assert hasattr(stats, "median")
+        assert hasattr(stats, "num_unique")
 
     def test_get_stats_values(self) -> None:
         """Test that statistics are correct."""
@@ -106,11 +106,11 @@ class TestEmpiricalSampler:
         sampler = EmpiricalSampler(data)
         stats = sampler.get_stats()
 
-        assert stats["min"] == 1
-        assert stats["max"] == 5
-        assert stats["mean"] == 3.0
-        assert stats["median"] == 3.0
-        assert stats["num_unique"] == 5
+        assert stats.min == 1
+        assert stats.max == 5
+        assert stats.mean == 3.0
+        assert stats.median == 3.0
+        assert stats.num_unique == 5
 
     def test_get_stats_with_duplicates(self) -> None:
         """Test statistics with duplicate values."""
@@ -118,7 +118,7 @@ class TestEmpiricalSampler:
         sampler = EmpiricalSampler(data)
         stats = sampler.get_stats()
 
-        assert stats["num_unique"] == 3
+        assert stats.num_unique == 3
 
     # ============================================================================
     # Edge Cases
@@ -143,8 +143,8 @@ class TestEmpiricalSampler:
         sampler = EmpiricalSampler(data)
         stats = sampler.get_stats()
 
-        assert stats["min"] == 1
-        assert stats["max"] == 1000
+        assert stats.min == 1
+        assert stats.max == 1000
 
     def test_reproducibility_with_seed(self) -> None:
         """Test that sampling is reproducible with same RNG seed."""
@@ -167,5 +167,5 @@ class TestEmpiricalSampler:
         stats = sampler.get_stats()
 
         # Values should be close to originals
-        assert abs(stats["min"] - 1.5) < 0.1
-        assert abs(stats["max"] - 5.2) < 0.1
+        assert abs(stats.min - 1.5) < 0.1
+        assert abs(stats.max - 5.2) < 0.1
