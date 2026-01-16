@@ -128,7 +128,7 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
     ) -> list[Conversation]:
         """Convert all the Mooncake trace data to conversation objects.
 
-        Uses a two-phase approach for optimal performance:
+        Uses a three-phase approach for optimal performance:
         1. Phase 1: Build token sequences, checking string cache first
         2. Phase 2: Batch parallel decode for cache misses
         3. Phase 3: Assemble final conversation objects
