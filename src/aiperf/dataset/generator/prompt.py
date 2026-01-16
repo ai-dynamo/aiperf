@@ -80,10 +80,8 @@ class PromptGenerator(BaseGenerator):
         Thread Safety Note:
             This method uses parallel tokenization for performance. Most tokenizers
             (including Hugging Face transformers) are thread-safe and deterministic.
-            However, if strict reproducibility is required with tokenizers that may
-            have thread-safety issues (e.g., dropout enabled, non-thread-safe vocab
-            structures), set the environment variable AIPERF_DETERMINISTIC_TOKENIZE=1
-            to force single-threaded tokenization.
+            Thread count doesn't affect reproducibility since chunks have deterministic
+            boundaries based on character count.
         """
         corpus_path = Path(__file__).parent / DEFAULT_CORPUS_FILE
 
@@ -122,25 +120,11 @@ class PromptGenerator(BaseGenerator):
         if buffer:
             chunks.append(buffer)
 
-        # Check for deterministic mode: force single-threaded for strict reproducibility
-        deterministic_mode = os.environ.get(
-            "AIPERF_DETERMINISTIC_TOKENIZE", ""
-        ).lower() in (
-            "1",
-            "true",
-            "yes",
-        )
-
-        if deterministic_mode:
-            # Single-threaded: guaranteed deterministic but slower
-            num_threads = 1
-            tokenized_chunks = [tokenize_chunk(chunk) for chunk in chunks]
-        else:
-            # Multi-threaded: fast, deterministic with thread-safe tokenizers
-            # Thread count doesn't affect reproducibility since chunks are deterministic
-            num_threads = min(os.cpu_count() or 4, 8)
-            with ThreadPoolExecutor(max_workers=num_threads) as executor:
-                tokenized_chunks = list(executor.map(tokenize_chunk, chunks))
+        # Multi-threaded tokenization: thread count doesn't affect reproducibility
+        # since chunks are character-based (deterministic boundaries)
+        num_threads = min(os.cpu_count() or 4, 8)
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            tokenized_chunks = list(executor.map(tokenize_chunk, chunks))
 
         self._tokenized_corpus = [
             token for chunk in tokenized_chunks for token in chunk
@@ -149,7 +133,6 @@ class PromptGenerator(BaseGenerator):
         self.debug(
             lambda: f"Initialized corpus with {self._corpus_size} tokens "
             f"from {len(chunks)} chunks using {num_threads} thread(s)"
-            + (" (deterministic mode)" if deterministic_mode else "")
         )
 
     def _create_prefix_prompt_pool(self) -> None:
