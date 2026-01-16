@@ -7,8 +7,26 @@ SPDX-License-Identifier: Apache-2.0
 
 ## `aiperf` Commands
 
+- [`analyze-trace`](#aiperf-analyze-trace) - Analyze mooncake trace for prefix statistics
 - [`profile`](#aiperf-profile) - Run the Profile subcommand.
 - [`plot`](#aiperf-plot) - Generate visualizations from AIPerf profiling data.
+
+## `aiperf analyze-trace`
+
+## Parameters Options
+
+#### `--input-file` `<str>` _(Required)_
+
+Path to input mooncake trace JSONL file.
+
+#### `--block-size` `<int>`
+
+KV cache block size for analysis (default: 512).
+<br>_Default: `512`_
+
+#### `--output-file` `<str>`
+
+Optional output path for analysis report (JSON).
 
 ## `aiperf profile`
 
@@ -333,6 +351,32 @@ Mean number of tokens in a query entry for rankings (default 550).
 Stddev for number of tokens in a query entry for rankings (default 0).
 <br>_Default: `0`_
 
+## Synthesis Options
+
+#### `--synthesis-speedup-ratio` `<float>`
+
+Multiplier for timestamp scaling in synthesized traces.
+<br>_Default: `1.0`_
+
+#### `--synthesis-prefix-len-multiplier` `<float>`
+
+Multiplier for core prefix branch lengths in radix tree.
+<br>_Default: `1.0`_
+
+#### `--synthesis-prefix-root-multiplier` `<int>`
+
+Number of times to replicate the radix tree structure.
+<br>_Default: `1`_
+
+#### `--synthesis-prompt-len-multiplier` `<float>`
+
+Multiplier for leaf path (unique prompt) lengths.
+<br>_Default: `1.0`_
+
+#### `--synthesis-max-isl` `<int>`
+
+Maximum input sequence length to include in synthesis.
+
 ## Conversation Input Options
 
 #### `--conversation-num`, `--num-conversations`, `--num-sessions` `<int>`
@@ -607,7 +651,6 @@ Equivalent to --log-level TRACE. Enables the most verbose logging output possibl
 #### `--record-processor-service-count`, `--record-processors` `<int>`
 
 Number of services to spawn for processing records. The higher the request rate, the more services should be spawned in order to keep up with the incoming records. If not specified, the number of services will be automatically determined based on the worker count.
-<br>_Constraints: ≥ 1_
 
 #### `--ui-type`, `--ui` `<str>`
 
