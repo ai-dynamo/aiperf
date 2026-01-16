@@ -1,21 +1,20 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Trace Benchmarking with Mooncake Traces
+# Custom Prompt Benchmarking
 
-Trace benchmarking allows you to send
-**exactly the payloads specified in your trace file**.
-Unlike other dataset types that sample or generate requests, mooncake traces
-with `text_input` provide complete control over what gets sent to your inference server.
+Benchmark with prompts from your own file, sent exactly as specified without sampling or generation.
 
 ## Overview
 
+This tutorial uses the `mooncake_trace` dataset type with `text_input` field to send prompts exactly as-is.
+
 The `mooncake_trace` dataset type with `text_input` provides:
 
-- **Exact Payload Control**: Send precisely the text you specify
-- **Deterministic Testing**: Same trace file produces identical requests every time
+- **Exact Control**: Send precisely the text you specify
+- **Deterministic Testing**: Same file produces identical request sequence every time
 - **Production Replay**: Use real user queries for realistic benchmarking
 - **Debugging**: Isolate performance issues with specific prompts
 
@@ -37,10 +36,10 @@ docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
 timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
 ```
 
-### Running Basic Trace Benchmark
+### Running the Benchmark
 
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
-# Create a trace file with specific text inputs
+# Create an input file with specific text inputs
 ```bash
 # Create an input file to use for benchmarking
 # Text can be provided via text_input or input_length

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import socket
 from dataclasses import dataclass
@@ -77,6 +77,7 @@ class AioHttpDefaults:
     KEEPALIVE_TIMEOUT = Environment.HTTP.KEEPALIVE_TIMEOUT  # Keepalive timeout
     HAPPY_EYEBALLS_DELAY = None  # Happy eyeballs delay (None = disabled)
     SOCKET_FAMILY = socket.AF_INET  # Family of the socket (IPv4)
+    SSL_VERIFY = Environment.HTTP.SSL_VERIFY  # Enable SSL certificate verification
 
     @classmethod
     def get_default_kwargs(cls) -> dict[str, Any]:
@@ -91,4 +92,5 @@ class AioHttpDefaults:
             "keepalive_timeout": cls.KEEPALIVE_TIMEOUT or None,
             "happy_eyeballs_delay": cls.HAPPY_EYEBALLS_DELAY,
             "family": cls.SOCKET_FAMILY,
+            "ssl": cls.SSL_VERIFY,
         }

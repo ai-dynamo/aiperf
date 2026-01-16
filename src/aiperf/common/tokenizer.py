@@ -73,7 +73,10 @@ class Tokenizer:
                     revision=revision,
                 )
         except Exception as e:
-            raise InitializationError(e) from e
+            raise InitializationError.from_tokenizer_error(
+                original_error=e,
+                tokenizer_name=name,
+            ) from e
         return tokenizer_cls
 
     @classmethod

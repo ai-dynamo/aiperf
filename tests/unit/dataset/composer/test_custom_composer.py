@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from unittest.mock import Mock, mock_open, patch
@@ -63,10 +63,14 @@ class TestCoreFunctionality:
         composer._create_loader_instance(dataset_type)
         assert isinstance(composer.loader, expected_instance)
 
+    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
-    def test_create_dataset_trace(self, mock_check_file, trace_config, mock_tokenizer):
+    def test_create_dataset_trace(
+        self, mock_check_file, mock_parallel_decode, trace_config, mock_tokenizer
+    ):
         """Test that create_dataset returns correct type."""
+        mock_parallel_decode.return_value = ["decoded 1", "decoded 2", "decoded 3"]
         composer = CustomDatasetComposer(trace_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
@@ -75,9 +79,13 @@ class TestCoreFunctionality:
         assert all(isinstance(turn, Turn) for c in conversations for turn in c.turns)
         assert all(len(turn.texts) == 1 for c in conversations for turn in c.turns)
 
+    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
-    def test_max_tokens_config(self, mock_check_file, trace_config, mock_tokenizer):
+    def test_max_tokens_config(
+        self, mock_check_file, mock_parallel_decode, trace_config, mock_tokenizer
+    ):
+        mock_parallel_decode.return_value = ["decoded 1", "decoded 2", "decoded 3"]
         trace_config.input.prompt.output_tokens.mean = 120
         trace_config.input.prompt.output_tokens.stddev = 8.0
 
@@ -95,13 +103,20 @@ class TestCoreFunctionality:
                 # Should be roughly around the mean of 120 (within 3 stddev)
                 assert 96 < turn.max_tokens < 144
 
+    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
     @patch("pathlib.Path.iterdir", return_value=[])
     def test_max_tokens_mooncake(
-        self, mock_iterdir, mock_check_file, custom_config, mock_tokenizer
+        self,
+        mock_iterdir,
+        mock_check_file,
+        mock_parallel_decode,
+        custom_config,
+        mock_tokenizer,
     ):
         """Test that max_tokens can be set from the custom file"""
+        mock_parallel_decode.return_value = ["decoded 1", "decoded 2", "decoded 3"]
         mock_check_file.return_value = None
         custom_config.input.custom_dataset_type = CustomDatasetType.MOONCAKE_TRACE
 

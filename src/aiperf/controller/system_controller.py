@@ -236,6 +236,11 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._parse_responses_for_errors(responses, "Configure Profiling")
         self.info(f"All services configured in {duration:.2f} seconds")
 
+        if not Environment.HTTP.SSL_VERIFY:
+            self.warning(
+                "SSL certificate verification is DISABLED - this is insecure. This should only be used for testing in a trusted environment."
+            )
+
     async def _start_profiling_all_services(self) -> None:
         """Tell all services to start profiling.
 

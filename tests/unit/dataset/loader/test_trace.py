@@ -1,12 +1,18 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import logging
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from pydantic import ValidationError
 
-from aiperf.common.config import EndpointConfig, InputConfig, UserConfig
+from aiperf.common.config import (
+    EndpointConfig,
+    InputConfig,
+    InputTokensConfig,
+    PromptConfig,
+    UserConfig,
+)
 from aiperf.common.enums import CustomDatasetType
 from aiperf.dataset import MooncakeTrace, MooncakeTraceDatasetLoader
 
@@ -102,6 +108,10 @@ class TestMooncakeTraceDatasetLoader:
         """Create a mock prompt generator for testing."""
         generator = Mock()
         generator.generate.return_value = "Generated prompt text"
+        # Required for convert_to_conversations() to check string cache
+        generator._decoded_cache = {}
+        # Mock _build_token_sequence to return a simple token list
+        generator._build_token_sequence.return_value = [1, 2, 3, 4, 5]
         return generator
 
     @pytest.fixture
@@ -332,8 +342,18 @@ class TestMooncakeTraceDatasetLoader:
         # Check that the skipped traces message is logged
         assert f"Skipped {expected_skipped:,} traces" in caplog.text
 
-    def test_convert_to_conversations(self, mock_prompt_generator, default_user_config):
+    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
+    def test_convert_to_conversations(
+        self, mock_parallel_decode, mock_prompt_generator, default_user_config
+    ):
         """Test conversion of trace data to conversations."""
+        # Mock parallel_decode to return decoded prompts
+        mock_parallel_decode.return_value = [
+            "decoded prompt 1",
+            "decoded prompt 2",
+            "decoded prompt 3",
+        ]
+
         # Setup trace data
         trace_data = {
             "session-1": [
@@ -477,3 +497,152 @@ class TestMooncakeTraceDatasetLoader:
 
         assert traces[0][0].delay == 500
         assert traces[1][0].delay == 1000
+
+
+class TestMooncakeTraceReproducibility:
+    """Tests for reproducibility of Mooncake trace prompt generation.
+
+    These tests verify that the two-phase Mooncake flow with parallel_decode
+    yields identical prompts across runs when the RNG is seeded consistently.
+    """
+
+    @pytest.fixture
+    def mock_prompt_generator(self):
+        """Create a mock prompt generator for testing."""
+        generator = Mock()
+        generator.generate.return_value = "Generated prompt text"
+        generator._decoded_cache = {}
+        generator._build_token_sequence.return_value = [1, 2, 3, 4, 5]
+        return generator
+
+    @pytest.fixture
+    def user_config_for_reproducibility(self):
+        """Create a UserConfig suitable for reproducibility testing."""
+        return UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                prompt=PromptConfig(
+                    input_tokens=InputTokensConfig(mean=100, stddev=0, block_size=64),
+                ),
+            ),
+        )
+
+    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
+    def test_mooncake_flow_reproducibility_with_same_seed(
+        self, mock_parallel_decode, mock_tokenizer_cls, user_config_for_reproducibility
+    ):
+        """Verify Mooncake flow produces identical prompts across runs with same seed.
+
+        This guards the reproducibility contract: seeding RNG, running conversion twice,
+        and asserting identical prompts.
+        """
+        from aiperf.common import random_generator as rng
+        from aiperf.dataset.generator import PromptGenerator
+
+        # Mock parallel_decode to return deterministic results based on input
+        def deterministic_decode(token_sequences, tokenizer_name):
+            return [
+                f"decoded_prompt_{i}_{len(seq)}"
+                for i, seq in enumerate(token_sequences)
+            ]
+
+        mock_parallel_decode.side_effect = deterministic_decode
+
+        # Create trace data with hash_ids to exercise the two-phase flow
+        trace_data = {
+            "session-1": [
+                MooncakeTrace(
+                    input_length=128, output_length=50, hash_ids=[1, 2], timestamp=1000
+                ),
+                MooncakeTrace(
+                    input_length=192,
+                    output_length=75,
+                    hash_ids=[3, 4, 5],
+                    timestamp=2000,
+                ),
+            ],
+            "session-2": [
+                MooncakeTrace(
+                    input_length=256,
+                    output_length=100,
+                    hash_ids=[6, 7, 8, 9],
+                    timestamp=3000,
+                ),
+            ],
+        }
+
+        # First run: seed, create generator, convert
+        rng.reset()
+        rng.init(42)
+
+        tokenizer1 = mock_tokenizer_cls.from_pretrained("test-model")
+        prompt_config1 = user_config_for_reproducibility.input.prompt
+        generator1 = PromptGenerator(prompt_config1, tokenizer1)
+
+        loader1 = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config_for_reproducibility,
+            prompt_generator=generator1,
+        )
+        conversations1 = loader1.convert_to_conversations(trace_data)
+        prompts1 = [
+            turn.texts[0].contents[0] for conv in conversations1 for turn in conv.turns
+        ]
+
+        # Second run: re-seed with same value, create fresh generator, convert
+        rng.reset()
+        rng.init(42)
+
+        tokenizer2 = mock_tokenizer_cls.from_pretrained("test-model")
+        prompt_config2 = user_config_for_reproducibility.input.prompt
+        generator2 = PromptGenerator(prompt_config2, tokenizer2)
+
+        loader2 = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config_for_reproducibility,
+            prompt_generator=generator2,
+        )
+        conversations2 = loader2.convert_to_conversations(trace_data)
+        prompts2 = [
+            turn.texts[0].contents[0] for conv in conversations2 for turn in conv.turns
+        ]
+
+        # Assert identical prompts
+        assert len(prompts1) == len(prompts2), "Prompt count mismatch"
+        assert prompts1 == prompts2, (
+            "Prompts should be identical across runs with the same seed. "
+            f"First run: {prompts1}, Second run: {prompts2}"
+        )
+
+    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
+    def test_parallel_decode_length_mismatch_raises(
+        self, mock_parallel_decode, mock_prompt_generator, default_user_config
+    ):
+        """Verify that length mismatch between pending_decodes and decoded_prompts raises.
+
+        This tests the strict=True behavior in zip() that guards against silent data loss.
+        """
+        # Mock parallel_decode to return FEWER results than expected
+        mock_parallel_decode.return_value = ["decoded prompt 1"]  # Only 1, expecting 3
+
+        trace_data = {
+            "session-1": [
+                MooncakeTrace(input_length=100, hash_ids=[1, 2], timestamp=1000),
+            ],
+            "session-2": [
+                MooncakeTrace(input_length=200, hash_ids=[3, 4, 5], timestamp=2000),
+            ],
+            "session-3": [
+                MooncakeTrace(input_length=150, hash_ids=[6], timestamp=3000),
+            ],
+        }
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+
+        # Should raise ValueError due to strict=True in zip
+        with pytest.raises(ValueError, match="zip"):
+            loader.convert_to_conversations(trace_data)
