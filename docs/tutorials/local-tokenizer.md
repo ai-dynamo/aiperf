@@ -101,6 +101,17 @@ If you are using a custom tokenizer (one that is not a standard pretrained model
 - **No files will be downloaded** from HuggingFace when using a local tokenizer path
 - No internet connection to HuggingFace servers is required
 
+### Fully Air-Gapped Environments
+
+For strictly air-gapped environments where you want to explicitly forbid any connection attempts, you can set the following environment variables:
+
+```bash
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+```
+
+This ensures that the underlying `transformers` library operates in offline mode.
+
 ### File Format Compatibility
 
 - Your local tokenizer directory structure and files must match the HuggingFace/tokenizers format
