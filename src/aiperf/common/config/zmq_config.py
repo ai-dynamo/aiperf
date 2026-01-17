@@ -197,7 +197,9 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
     host: Annotated[
         str,
         Field(
-            description="Host address for TCP connections",
+            description="Host address for internal ZMQ TCP communication between AIPerf services. Defaults to `127.0.0.1` (localhost) for "
+            "single-machine deployments. For distributed setups, set to a reachable IP address. All internal service-to-service communication "
+            "(message bus, dataset manager, workers) uses this host for TCP sockets.",
         ),
         CLIParameter(
             name=("--zmq-host"),
@@ -274,7 +276,9 @@ class ZMQIPCConfig(BaseZMQCommunicationConfig):
     path: Annotated[
         Path | None,
         Field(
-            description="Path for IPC sockets",
+            description="Directory path for ZMQ IPC (Inter-Process Communication) socket files. When using IPC transport instead of TCP, "
+            "AIPerf creates Unix domain socket files in this directory for faster local communication. Auto-generated in system temp directory "
+            "if not specified. Only applicable when using IPC communication backend.",
         ),
         CLIParameter(
             name=("--zmq-ipc-path"),

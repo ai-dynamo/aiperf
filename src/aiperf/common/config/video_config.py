@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Annotated
@@ -35,7 +35,9 @@ class VideoConfig(BaseConfig):
         int,
         Field(
             ge=0,
-            description="The video batch size of the requests AIPerf should send.\n",
+            description="Number of video files to include in each multimodal request. Supported with `chat` endpoint type for video understanding models. "
+            "Each video is generated synthetically with specified duration, FPS, resolution, and codec. Set to 0 to disable video inputs. "
+            "Higher batch sizes test multi-video understanding and significantly increase request payload size.",
         ),
         CLIParameter(
             name=(
@@ -50,7 +52,9 @@ class VideoConfig(BaseConfig):
         float,
         Field(
             ge=0.0,
-            description="Seconds per clip (default: 5.0).",
+            description="Duration in seconds for each synthetically generated video clip. Combined with `--video-fps`, determines total frame count "
+            "(frames = duration × FPS). Longer durations increase file size and processing time. Typical values: 1-10 seconds for testing. "
+            "Requires FFmpeg for video generation.",
         ),
         CLIParameter(
             name=("--video-duration",),
@@ -62,7 +66,9 @@ class VideoConfig(BaseConfig):
         int,
         Field(
             ge=1,
-            description="Frames per second (default/recommended for Cosmos: 4).",
+            description="Frames per second for generated video. Higher FPS creates smoother video but increases frame count and file size. "
+            "Common values: `4` (minimal motion, recommended for Cosmos models), `24` (cinematic), `30` (standard video), `60` (high frame rate). "
+            "Total frames = `--video-duration` × FPS.",
         ),
         CLIParameter(
             name=("--video-fps",),
@@ -74,7 +80,8 @@ class VideoConfig(BaseConfig):
         int | None,
         Field(
             ge=1,
-            description="Video width in pixels.",
+            description="Video frame width in pixels. Must be specified together with `--video-height` (both or neither). Determines video resolution "
+            "and file size. Common resolutions: `640×480` (SD), `1280×720` (HD), `1920×1080` (Full HD). If not specified, uses codec/format defaults.",
         ),
         CLIParameter(
             name=("--video-width",),
@@ -86,7 +93,8 @@ class VideoConfig(BaseConfig):
         int | None,
         Field(
             ge=1,
-            description="Video height in pixels.",
+            description="Video frame height in pixels. Must be specified together with `--video-width` (both or neither). Combined with width "
+            "determines aspect ratio and total pixel count per frame. Higher resolution increases processing demands and file size.",
         ),
         CLIParameter(
             name=("--video-height",),
@@ -97,7 +105,9 @@ class VideoConfig(BaseConfig):
     synth_type: Annotated[
         VideoSynthType,
         Field(
-            description="Synthetic generator type.",
+            description="Algorithm for generating synthetic video content. Different types produce different visual patterns for testing. "
+            "Options vary by implementation (e.g., `noise`, `gradient`, `checkerboard`). Content doesn't affect semantic meaning but may "
+            "impact encoding efficiency and file size.",
         ),
         CLIParameter(
             name=("--video-synth-type",),
@@ -108,7 +118,9 @@ class VideoConfig(BaseConfig):
     format: Annotated[
         VideoFormat,
         Field(
-            description="The video format of the generated files.",
+            description="Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed), `mp4` (H.264/H.265, widely compatible), "
+            "`avi` (legacy, larger files), `mkv` (Matroska, flexible). Format choice affects compatibility, file size, and encoding options. "
+            "Use `webm` for open-source workflows, `mp4` for maximum compatibility.",
         ),
         CLIParameter(
             name=("--video-format",),

@@ -84,7 +84,9 @@ class EndpointConfig(BaseConfig):
     custom_endpoint: Annotated[
         str | None,
         Field(
-            description="Set a custom endpoint that differs from the OpenAI defaults.",
+            description="Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). "
+            "By default, endpoints follow OpenAI-compatible paths like `/v1/chat/completions`. "
+            "Use this option to override the default path for non-standard API implementations.",
         ),
         CLIParameter(
             name=(
@@ -98,7 +100,9 @@ class EndpointConfig(BaseConfig):
     type: Annotated[
         EndpointType,
         Field(
-            description="The endpoint type to send requests to on the server.",
+            description="The API endpoint type to benchmark. Determines request/response format and supported features. "
+            "Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). "
+            "See enum documentation for all supported endpoint types.",
         ),
         CLIParameter(
             name=(
@@ -111,7 +115,9 @@ class EndpointConfig(BaseConfig):
     streaming: Annotated[
         bool,
         Field(
-            description="An option to enable the use of the streaming API.",
+            description="Enable streaming responses. When enabled, the server streams tokens incrementally "
+            "as they are generated. Automatically disabled if the selected endpoint type does not support streaming. "
+            "Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.",
         ),
         CLIParameter(
             name=(
@@ -124,7 +130,8 @@ class EndpointConfig(BaseConfig):
     url: Annotated[
         str,
         Field(
-            description="URL of the endpoint to target for benchmarking.",
+            description="Base URL of the API server to benchmark (e.g., `http://localhost:8000`, `https://api.example.com`). "
+            "The endpoint path is automatically appended based on `--endpoint-type` (e.g., `/v1/chat/completions` for `chat`).",
         ),
         CLIParameter(
             name=(
@@ -135,11 +142,12 @@ class EndpointConfig(BaseConfig):
         ),
     ] = EndpointDefaults.URL
 
-    # NEW AIPerf Option
     timeout_seconds: Annotated[
         float,
         Field(
-            description="The timeout in floating-point seconds for each request to the endpoint.",
+            description="Maximum time in seconds to wait for each HTTP request to complete, including connection establishment, "
+            "request transmission, and response receipt. Applies to both streaming and non-streaming requests. "
+            "Requests exceeding this timeout are cancelled and recorded as failures.",
         ),
         CLIParameter(
             name=("--request-timeout-seconds"),
@@ -147,12 +155,11 @@ class EndpointConfig(BaseConfig):
         ),
     ] = EndpointDefaults.TIMEOUT
 
-    # NEW AIPerf Option
     api_key: Annotated[
         str | None,
         Field(
-            description="The API key to use for the endpoint. If provided, it will be sent with every request as "
-            "a header: `Authorization: Bearer <api_key>`.",
+            description="API authentication key for the endpoint. When provided, automatically included in request headers as "
+            "`Authorization: Bearer <api_key>`.",
         ),
         CLIParameter(
             name=("--api-key"),
@@ -163,8 +170,9 @@ class EndpointConfig(BaseConfig):
     transport: Annotated[
         TransportType | None,
         Field(
-            description="The transport to use for the endpoint. If not provided, it will be auto-detected from the URL."
-            "This can also be used to force an alternative transport or implementation.",
+            description="Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme "
+            "(`http`/`https` → `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, "
+            "TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.",
         ),
         CLIParameter(
             name=("--transport", "--transport-type"),

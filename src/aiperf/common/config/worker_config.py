@@ -18,7 +18,8 @@ class WorkersConfig(BaseConfig):
     min: Annotated[
         int | None,
         Field(
-            description="Minimum number of workers to maintain",
+            description="Minimum number of worker processes to maintain in the pool. Workers handle request execution and API communication. "
+            "Currently not configurable via CLI - reserved for future dynamic scaling features.",
         ),
         DisableCLI(reason="Not currently supported"),
     ] = WorkersDefaults.MIN

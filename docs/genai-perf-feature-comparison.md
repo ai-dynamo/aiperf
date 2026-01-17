@@ -22,6 +22,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 
 | Subcommand | Description | GenAI-Perf | AIPerf | Notes |
 |------------|-------------|------------|---------|-------|
+| **analyze-trace** | Analyze mooncake trace for prefix statistics | ❌ | ✅ | |
 | **profile** | Profile LLMs and GenAI models | ✅ | ✅ | |
 | **plot** | Generate visualizations from profiling data | ❌ | ✅ | Auto-detects multi-run comparison vs single-run analysis; supports dashboard mode |
 | **analyze** | Sweep through multiple scenarios | ✅ | ❌ | |
@@ -348,7 +349,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **Streaming API support** | ✅ | ✅ | |
 | **Multi-turn conversations** | ✅ | ✅ | Full multi-turn benchmarking with session tracking |
 | **Payload scheduling** | ✅ | ✅ | Fixed schedule workloads |
-| **Distributed testing** | ✅ | ❌ | Multi-node result aggregation |
+| **Distributed testing** | ✅ | 🟡 | Multi-node result aggregation |
 | **Custom endpoints** | ✅ | ✅ |  |
 | **Synthetic data generation** | ✅ | ✅ | |
 | **Bring Your Own Data (BYOD)** | ✅ | ✅ | Custom dataset support |
