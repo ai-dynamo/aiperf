@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Annotated
@@ -27,7 +27,9 @@ class TurnDelayConfig(BaseConfig):
         float,
         Field(
             ge=0,
-            description="The mean delay between turns within a conversation in milliseconds.",
+            description="Mean delay in milliseconds between consecutive turns within a multi-turn conversation. Simulates user think time between "
+            "receiving a response and sending the next message. Delays follow normal distribution around this mean (±`--conversation-turn-delay-stddev`). "
+            "Only applies to multi-turn conversations (`--conversation-turn-mean` > 1). Set to 0 for back-to-back turns.",
         ),
         CLIParameter(
             name=(
@@ -42,8 +44,9 @@ class TurnDelayConfig(BaseConfig):
         float,
         Field(
             ge=0,
-            description="The standard deviation of the delay between turns \n"
-            "within a conversation in milliseconds.",
+            description="Standard deviation for turn delays in milliseconds. Creates variability in user think time between conversation turns. "
+            "Delays follow normal distribution. Set to 0 for deterministic delays. "
+            "Models realistic human interaction patterns with variable response times.",
         ),
         CLIParameter(
             name=(
@@ -58,7 +61,9 @@ class TurnDelayConfig(BaseConfig):
         float,
         Field(
             ge=0,
-            description="A ratio to scale multi-turn delays.",
+            description="Multiplier for scaling all turn delays within conversations. Applied after mean/stddev calculation: "
+            "`actual_delay = calculated_delay × ratio`. Use to proportionally adjust timing without changing distribution shape. "
+            "Values < 1 speed up conversations, > 1 slow them down. Set to 0 to eliminate delays entirely.",
         ),
         CLIParameter(
             name=(
@@ -81,7 +86,9 @@ class TurnConfig(BaseConfig):
         int,
         Field(
             ge=1,
-            description="The mean number of turns within a conversation.",
+            description="Mean number of request-response turns per conversation. Each turn consists of a user message and model response. "
+            "Turn counts follow normal distribution around this mean (±`--conversation-turn-stddev`). Set to 1 for single-turn interactions. "
+            "Multi-turn conversations enable testing of context retention and conversation history handling.",
         ),
         CLIParameter(
             name=(
@@ -96,7 +103,9 @@ class TurnConfig(BaseConfig):
         int,
         Field(
             ge=0,
-            description="The standard deviation of the number of turns within a conversation.",
+            description="Standard deviation for number of turns per conversation. Creates variability in conversation lengths, simulating "
+            "diverse interaction patterns (quick questions vs. extended dialogues). Turn counts follow normal distribution. "
+            "Set to 0 for uniform conversation lengths.",
         ),
         CLIParameter(
             name=(
@@ -141,8 +150,9 @@ class ConversationConfig(BaseConfig):
         int,
         Field(
             ge=1,
-            description="The total number of unique dataset entries to generate for the dataset.\n"
-            "Each entry represents a single turn used in a request.\n",
+            description="Total number of unique entries to generate for the dataset. Each entry represents one user message that can be "
+            "used as a turn in conversations. Entries are reused across conversations and turns according to `--dataset-sampling-strategy`. "
+            "Higher values provide more diversity.",
         ),
         CLIParameter(
             name=(

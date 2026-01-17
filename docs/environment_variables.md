@@ -99,7 +99,7 @@ Record processing and export configuration. Controls batch sizes, processor scal
 
 ## SERVERMETRICS
 
-Server metrics collection configuration. Controls server metrics collection frequency, endpoint detection, and shutdown behavior. Metrics are collected from Prometheus-compatible endpoints at the specified interval. Use --no-server-metrics CLI flag to disable collection.
+Server metrics collection configuration. Controls server metrics collection frequency, endpoint detection, and shutdown behavior. Metrics are collected from Prometheus-compatible endpoints at the specified interval. Use `--no-server-metrics` CLI flag to disable collection.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
