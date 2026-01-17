@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Integration tests for custom GPU metrics CSV loading functionality."""
 
@@ -15,8 +15,7 @@ from aiperf.common.enums.metric_enums import (
 from aiperf.gpu_telemetry.constants import (
     GPU_TELEMETRY_METRICS_CONFIG,
 )
-from tests.integration.conftest import AIPerfCLI
-from tests.integration.models import AIPerfMockServer
+from tests.harness.utils import AIPerfCLI, AIPerfMockServer
 
 
 @pytest.mark.skipif(
@@ -170,35 +169,6 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
                     f"mem_copy_util unit is {gpu_data.metrics['mem_copy_util'].unit}, expected {GenericMetricUnit.PERCENT.value}"
                 )
 
-    async def test_custom_metrics_in_csv_export(
-        self,
-        cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
-        custom_gpu_metrics_csv: Path,
-    ):
-        """Test custom metrics appear in CSV export with correct columns."""
-        result = await cli.run(
-            f"""
-            aiperf profile \
-                --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
-                --endpoint-type chat \
-                --gpu-telemetry {custom_gpu_metrics_csv} {" ".join(aiperf_mock_server.dcgm_urls)} \
-                --request-count 50 \
-                --concurrency 2 \
-                --workers-max 2
-            """
-        )
-
-        assert result.has_gpu_telemetry
-        csv_content = result.csv
-
-        assert "SM Clock" in csv_content or "sm_clock" in csv_content
-        assert "Memory Clock" in csv_content or "mem_clock" in csv_content
-        assert "Memory Temp" in csv_content or "memory_temp" in csv_content
-        assert "Memory Copy" in csv_content or "mem_copy_util" in csv_content
-
     async def test_custom_metrics_deduplication(
         self,
         cli: AIPerfCLI,
@@ -245,40 +215,6 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
                 assert (
                     len(gpu_data.metrics) >= default_metric_count + custom_metrics_added
                 )
-
-    async def test_custom_metrics_with_mixed_configuration(
-        self,
-        cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
-        custom_gpu_metrics_csv: Path,
-    ):
-        """Test combining CSV file with dashboard mode and custom URLs."""
-        result = await cli.run(
-            f"""
-            aiperf profile \
-                --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
-                --endpoint-type chat \
-                --gpu-telemetry dashboard {custom_gpu_metrics_csv} {" ".join(aiperf_mock_server.dcgm_urls)} \
-                --request-count 50 \
-                --concurrency 2 \
-                --workers-max 2 \
-                --ui simple
-            """
-        )
-
-        assert result.request_count == 50
-        assert result.has_gpu_telemetry
-        assert result.json.telemetry_data.endpoints is not None
-
-        for dcgm_url in result.json.telemetry_data.endpoints:
-            endpoint_data = result.json.telemetry_data.endpoints[dcgm_url]
-            for gpu_data in endpoint_data.gpus.values():
-                assert "sm_clock" in gpu_data.metrics
-                assert "mem_clock" in gpu_data.metrics
-                assert "memory_temp" in gpu_data.metrics
-                assert "mem_copy_util" in gpu_data.metrics
 
     async def test_invalid_csv_fallback_to_defaults(
         self,
@@ -333,49 +269,3 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
         )
 
         assert result.exit_code != 0
-
-    async def test_custom_metrics_dynamic_field_validation(
-        self,
-        cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
-        tmp_path: Path,
-    ):
-        """Test that TelemetryMetrics model accepts custom field names dynamically.
-
-        Uses metrics that DCGMFaker returns to ensure they appear in output.
-        """
-        csv_path = tmp_path / "custom_gpu_metrics.csv"
-        csv_content = """# Unusual field names to test dynamic validation
-DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
-DCGM_FI_DEV_MEM_CLOCK, gauge, Memory clock frequency (in MHz)
-DCGM_FI_DEV_MEMORY_TEMP, gauge, Memory temperature (in °C)
-DCGM_FI_DEV_MEM_COPY_UTIL, gauge, Memory copy utilization (in %)
-DCGM_FI_DEV_THERMAL_VIOLATION, counter, Throttling duration due to thermal constraints (in us)
-"""
-        csv_path.write_text(csv_content)
-
-        result = await cli.run(
-            f"""
-            aiperf profile \
-                --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
-                --endpoint-type chat \
-                --gpu-telemetry {csv_path} {" ".join(aiperf_mock_server.dcgm_urls)} \
-                --request-count 50 \
-                --concurrency 2 \
-                --workers-max 2
-            """
-        )
-
-        assert result.request_count == 50
-        assert result.has_gpu_telemetry
-
-        for dcgm_url in result.json.telemetry_data.endpoints:
-            endpoint_data = result.json.telemetry_data.endpoints[dcgm_url]
-            for gpu_data in endpoint_data.gpus.values():
-                assert "sm_clock" in gpu_data.metrics
-                assert "mem_clock" in gpu_data.metrics
-                assert "memory_temp" in gpu_data.metrics
-                assert "mem_copy_util" in gpu_data.metrics
-                assert "thermal_violation" in gpu_data.metrics

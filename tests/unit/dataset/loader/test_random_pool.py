@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import tempfile
@@ -238,8 +238,8 @@ class TestRandomPoolDatasetLoader:
             "multimodal.jsonl": [
                 RandomPool(
                     text="What's in this image?",
-                    image="/path/to/image.png",
-                    audio="/path/to/audio.wav",
+                    image="https://example.com/image.png",
+                    audio="https://example.com/audio.wav",
                 )
             ]
         }
@@ -254,9 +254,9 @@ class TestRandomPoolDatasetLoader:
         assert len(turn.texts) == 1
         assert turn.texts[0].contents == ["What's in this image?"]
         assert len(turn.images) == 1
-        assert turn.images[0].contents == ["/path/to/image.png"]
+        assert turn.images[0].contents == ["https://example.com/image.png"]
         assert len(turn.audios) == 1
-        assert turn.audios[0].contents == ["/path/to/audio.wav"]
+        assert turn.audios[0].contents == ["https://example.com/audio.wav"]
 
     def test_convert_batched_pool_data(self, default_user_config):
         """Test converting pool data with batched content."""
@@ -264,7 +264,10 @@ class TestRandomPoolDatasetLoader:
             "batched.jsonl": [
                 RandomPool(
                     texts=["First question", "Second question"],
-                    images=["/image1.png", "/image2.png"],
+                    images=[
+                        "https://example.com/image1.png",
+                        "https://example.com/image2.png",
+                    ],
                 )
             ]
         }
@@ -279,7 +282,10 @@ class TestRandomPoolDatasetLoader:
         assert len(turn.texts) == 1
         assert turn.texts[0].contents == ["First question", "Second question"]
         assert len(turn.images) == 1
-        assert turn.images[0].contents == ["/image1.png", "/image2.png"]
+        assert turn.images[0].contents == [
+            "https://example.com/image1.png",
+            "https://example.com/image2.png",
+        ]
 
     def test_convert_multiple_files_no_name_specified(self, default_user_config):
         """Test converting data from multiple files without name specified."""
@@ -338,12 +344,12 @@ class TestRandomPoolDatasetLoader:
         """Test converting data from multiple files with multiple samples."""
         data = {
             "queries.jsonl": [
-                RandomPool(text="text1", image="image1.png"),
-                RandomPool(text="text2", image="image2.png"),
+                RandomPool(text="text1", image="https://example.com/image1.png"),
+                RandomPool(text="text2", image="https://example.com/image2.png"),
             ],
             "contexts.jsonl": [
-                RandomPool(text="text3", image="image3.png"),
-                RandomPool(text="text4", image="image4.png"),
+                RandomPool(text="text3", image="https://example.com/image3.png"),
+                RandomPool(text="text4", image="https://example.com/image4.png"),
             ],
         }
 
@@ -374,10 +380,10 @@ class TestRandomPoolDatasetLoader:
             ("text2", "text4"),
         }
         possible_image_contents = {
-            ("image1.png", "image3.png"),
-            ("image1.png", "image4.png"),
-            ("image2.png", "image3.png"),
-            ("image2.png", "image4.png"),
+            ("https://example.com/image1.png", "https://example.com/image3.png"),
+            ("https://example.com/image1.png", "https://example.com/image4.png"),
+            ("https://example.com/image2.png", "https://example.com/image3.png"),
+            ("https://example.com/image2.png", "https://example.com/image4.png"),
         }
 
         text_contents = tuple(t.contents[0] for t in turn1.texts)

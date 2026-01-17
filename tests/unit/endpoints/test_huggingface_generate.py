@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from unittest.mock import Mock
@@ -14,9 +14,10 @@ from aiperf.common.models.model_endpoint_info import (
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.common.models.record_models import RequestInfo, Turn
+from aiperf.common.models.record_models import Turn
 from aiperf.common.protocols import InferenceServerResponse
 from aiperf.endpoints.huggingface_generate import HuggingFaceGenerateEndpoint
+from tests.unit.endpoints.conftest import create_request_info
 
 
 class TestHuggingFaceGenerateEndpoint:
@@ -54,7 +55,7 @@ class TestHuggingFaceGenerateEndpoint:
 
     def test_format_payload_basic(self, endpoint, model_endpoint):
         turn = Turn(texts=[{"contents": ["Hello world"]}])
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
         assert payload["inputs"] == "Hello world"
@@ -63,7 +64,7 @@ class TestHuggingFaceGenerateEndpoint:
     def test_format_payload_with_max_tokens_and_extra(self, endpoint, model_endpoint):
         turn = Turn(texts=[{"contents": ["hi"]}], max_tokens=25)
         model_endpoint.endpoint.extra = {"temperature": 0.9}
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
         assert payload["parameters"]["max_new_tokens"] == 25
@@ -72,7 +73,9 @@ class TestHuggingFaceGenerateEndpoint:
     def test_format_payload_multiple_turns_raises(self, endpoint, model_endpoint):
         turn1 = Turn(texts=[{"contents": ["a"]}])
         turn2 = Turn(texts=[{"contents": ["b"]}])
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn1, turn2])
+        request_info = create_request_info(
+            model_endpoint=model_endpoint, turns=[turn1, turn2]
+        )
         with pytest.raises(ValueError):
             endpoint.format_payload(request_info)
 

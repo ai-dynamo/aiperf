@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -10,8 +10,6 @@ This module tests:
 """
 
 from unittest.mock import mock_open, patch
-
-import pytest
 
 from aiperf.common.config import (
     EndpointConfig,
@@ -32,8 +30,7 @@ class TestMooncakeTraceRequestCount:
             loadgen=LoadGeneratorConfig(request_count=100),
         )
 
-        result = config.get_effective_request_count()
-        assert result == 100
+        assert config.loadgen.request_count == 100
 
     def test_no_custom_dataset_uses_default_count(self):
         """Test that default request count is used when no explicit count."""
@@ -41,8 +38,7 @@ class TestMooncakeTraceRequestCount:
             endpoint=EndpointConfig(model_names=["test-model"]),
         )
 
-        result = config.get_effective_request_count()
-        assert result == 10
+        assert config.loadgen.request_count == 10
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
@@ -64,7 +60,7 @@ class TestMooncakeTraceRequestCount:
         )
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            result = config.get_effective_request_count()
+            result = config._count_dataset_entries()
             assert result == 3
 
     @patch("pathlib.Path.exists", return_value=True)
@@ -89,13 +85,13 @@ class TestMooncakeTraceRequestCount:
         )
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            result = config.get_effective_request_count()
+            result = config._count_dataset_entries()
             assert result == 3  # Only non-empty lines counted
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
-    def test_mooncake_trace_empty_file_raises_error(self, mock_is_file, mock_exists):
-        """Test that empty mooncake_trace file raises an error."""
+    def test_mooncake_trace_empty_file_returns_zero(self, mock_is_file, mock_exists):
+        """Test that empty mooncake_trace file returns 0."""
         mock_file_content = ""
 
         config = UserConfig(
@@ -107,18 +103,14 @@ class TestMooncakeTraceRequestCount:
             ),
         )
 
-        with (
-            patch("builtins.open", mock_open(read_data=mock_file_content)),
-            pytest.raises(ValueError, match="Empty mooncake_trace dataset file"),
-        ):
-            config.get_effective_request_count()
+        with patch("builtins.open", mock_open(read_data=mock_file_content)):
+            result = config._count_dataset_entries()
+            assert result == 0
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
-    def test_mooncake_trace_file_error_raises_exception(
-        self, mock_is_file, mock_exists
-    ):
-        """Test that mooncake_trace file read errors raise exceptions."""
+    def test_mooncake_trace_file_error_returns_zero(self, mock_is_file, mock_exists):
+        """Test that mooncake_trace file read errors return 0 and log error."""
         config = UserConfig(
             endpoint=EndpointConfig(model_names=["test-model"]),
             loadgen=LoadGeneratorConfig(request_count=42),
@@ -128,18 +120,14 @@ class TestMooncakeTraceRequestCount:
             ),
         )
 
-        with (
-            patch("builtins.open", side_effect=OSError("File read error")),
-            pytest.raises(
-                ValueError, match="Could not read mooncake_trace dataset file"
-            ),
-        ):
-            config.get_effective_request_count()
+        with patch("builtins.open", side_effect=OSError("File read error")):
+            result = config._count_dataset_entries()
+            assert result == 0
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
-    def test_other_custom_dataset_uses_request_count(self, mock_is_file, mock_exists):
-        """Test that non-mooncake_trace custom datasets always use request count."""
+    def test_other_custom_dataset_counts_file_entries(self, mock_is_file, mock_exists):
+        """Test that non-mooncake_trace custom datasets count file entries."""
         mock_file_content = '{"some": "data"}\n{"other": "data"}\n'
 
         config = UserConfig(
@@ -152,8 +140,9 @@ class TestMooncakeTraceRequestCount:
         )
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            result = config.get_effective_request_count()
-            assert result == 75
+            result = config._count_dataset_entries()
+            # Returns actual file line count, not request_count
+            assert result == 2
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
@@ -170,8 +159,7 @@ class TestMooncakeTraceRequestCount:
         )
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            result = config.get_effective_request_count()
-            assert result == 10
+            assert config.loadgen.request_count == 10
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)

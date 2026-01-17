@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import graphlib
 import importlib
@@ -260,7 +260,8 @@ class MetricRegistry:
         Create a dependency order for the given metrics using topological sort.
 
         This ensures that all dependencies are computed before their dependents.
-        If `tags` is provided, only the tags present in `tags` will be included in the order.
+        If `tags` is provided, the returned order will include all metrics needed
+        to compute the requested tags (including their recursive dependencies).
 
         Arguments:
             tags: The tags of the metrics to compute the dependency order for. If not provided, all metrics will be included.
@@ -274,10 +275,13 @@ class MetricRegistry:
         if tags is None:
             tags = cls._metrics_map.keys()
 
+        # Expand tags to include all recursive dependencies
+        all_required_tags = cls._get_all_required_tags(tags)
+
         # Build the dependency graph
         sorter = graphlib.TopologicalSorter()
 
-        for metric in cls.classes_for(tags):
+        for metric in cls.classes_for(all_required_tags):
             # Add the metric with its required dependencies
             sorter.add(metric.tag, *(metric.required_metrics or set()))
 
@@ -285,9 +289,8 @@ class MetricRegistry:
             # Get the dependency order
             order = list(sorter.static_order())
 
-            # Make sure we only return the tags that were requested
-            tags_set = set(tags)
-            return [tag for tag in order if tag in tags_set]
+            # Return only the tags needed (requested + their dependencies)
+            return [tag for tag in order if tag in all_required_tags]
 
         except graphlib.CycleError as e:
             raise MetricTypeError(

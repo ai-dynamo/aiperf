@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Main CLI entry point for the AIPerf system."""
 
@@ -14,6 +14,17 @@ from aiperf.cli_utils import exit_on_error
 from aiperf.common.config import ServiceConfig, UserConfig
 
 app = App(name="aiperf", help="NVIDIA AIPerf")
+
+
+def _register_trace_commands() -> None:
+    """Register trace analysis commands."""
+    from aiperf.cli_commands.analyze_trace import analyze_app
+
+    app.command(analyze_app)
+
+
+# Register trace commands
+_register_trace_commands()
 
 
 @app.command(name="profile")

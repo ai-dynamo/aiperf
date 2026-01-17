@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
@@ -7,10 +7,30 @@ import multiprocessing
 import os
 import platform
 import sys
+import warnings
 
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.environment import Environment
 from aiperf.common.protocols import ServiceProtocol
+
+# Suppress ZMQ RuntimeWarning about dropped messages during shutdown.
+# This is expected behavior when async tasks are cancelled while ZMQ messages are in-flight.
+warnings.filterwarnings(
+    "ignore",
+    message=".*Future.*completed while awaiting.*A message has been dropped.*",
+    category=RuntimeWarning,
+    module="zmq._future",
+)
+
+# Suppress multiprocessing semaphore leak warnings during shutdown.
+# These occur when processes are terminated before cleaning up their semaphores,
+# which is expected during Ctrl+C cancellation.
+warnings.filterwarnings(
+    "ignore",
+    message=".*leaked semaphore.*",
+    category=UserWarning,
+    module="multiprocessing.resource_tracker",
+)
 
 
 def bootstrap_and_run_service(

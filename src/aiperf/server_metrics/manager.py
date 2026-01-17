@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
@@ -286,24 +286,7 @@ class ServerMetricsManager(BaseComponentService):
         Ensures all collectors are properly stopped and cleaned up even if shutdown
         command was not received.
         """
-        await self._cancel_shutdown_task()
         await self._stop_all_collectors()
-
-    async def _cancel_shutdown_task(self) -> None:
-        """Cancel the delayed shutdown task if it exists and is still running."""
-        if self._shutdown_task is not None and not self._shutdown_task.done():
-            shutdown_task = self._shutdown_task
-            self.debug("Cancelling delayed shutdown task")
-            shutdown_task.cancel()
-            try:
-                await asyncio.wait_for(
-                    shutdown_task, timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT
-                )
-            except asyncio.TimeoutError:
-                self.warning("Timed out waiting for delayed shutdown task to complete")
-            finally:
-                self._shutdown_task = None
-                self.debug("Delayed shutdown task cancelled")
 
     async def _stop_all_collectors(self) -> None:
         """Stop all server metrics collectors.
@@ -336,7 +319,7 @@ class ServerMetricsManager(BaseComponentService):
         has time to be published and transmitted to the SystemController.
         """
         await asyncio.sleep(Environment.SERVER_METRICS.SHUTDOWN_DELAY)
-        await self.stop()
+        await asyncio.shield(self.stop())
 
     async def _on_server_metrics_records(
         self, records: list[ServerMetricsRecord], collector_id: str

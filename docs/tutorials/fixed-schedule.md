@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
@@ -125,6 +125,6 @@ aiperf profile \
 
 ## Related Tutorials
 
-- [Trace Benchmarking](trace-benchmarking.md) - For deterministic request patterns
+- [Custom Prompt Benchmarking](custom-prompt-benchmarking.md) - For sending custom prompts without timing control
 - [Time-based Benchmarking](time-based-benchmarking.md) - For duration-based testing
 - [Request Cancellation](request-cancellation.md) - For timeout testing

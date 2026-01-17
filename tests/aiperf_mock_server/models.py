@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from typing import Any, Literal
 
@@ -189,6 +189,11 @@ class SolidoRAGRequest(BaseModel):
     query: list[str]
     filters: dict[str, Any] = {}
     inference_model: str = "default-model"
+
+    # Internal fields for mock server compatibility (not part of SOLIDO API)
+    model: str = "solido-rag"
+    ignore_eos: bool = False
+    min_tokens: int | None = None
 
 
 # ============================================================================

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import sys
@@ -12,7 +12,10 @@ from typing_extensions import Self
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
-from aiperf.common.config.config_defaults import ServerMetricsDefaults
+from aiperf.common.config.config_defaults import (
+    LoadGeneratorDefaults,
+    ServerMetricsDefaults,
+)
 from aiperf.common.config.config_validators import coerce_value, parse_str_or_list
 from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.config.groups import Groups
@@ -22,7 +25,7 @@ from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
 from aiperf.common.enums import CustomDatasetType, GPUTelemetryMode, ServerMetricsFormat
 from aiperf.common.enums.plugin_enums import EndpointType
-from aiperf.common.enums.timing_enums import RequestRateMode, TimingMode
+from aiperf.common.enums.timing_enums import ArrivalPattern, TimingMode
 from aiperf.common.utils import load_json_str
 
 _logger = AIPerfLogger(__name__)
@@ -63,49 +66,172 @@ class UserConfig(BaseConfig):
             self.benchmark_id = str(uuid.uuid4())
         return self
 
+    # TODO: Dataset validator class for these
+
     @model_validator(mode="after")
     def validate_timing_mode(self) -> Self:
         """Set the timing mode based on the user config. Will be called after all user config is set."""
         if self.input.fixed_schedule:
             self._timing_mode = TimingMode.FIXED_SCHEDULE
+            if (
+                self.loadgen.request_count is None
+                and self.input.conversation.num is None
+            ):
+                self.loadgen.request_count = self._count_dataset_entries()
+                _logger.info(
+                    f"No request count value provided for fixed schedule mode, setting to dataset entry count: {self.loadgen.request_count}"
+                )
         elif self._should_use_fixed_schedule_for_mooncake_trace():
             self._timing_mode = TimingMode.FIXED_SCHEDULE
             _logger.info(
                 "Automatically enabling fixed schedule mode for mooncake_trace dataset with timestamps"
             )
+            if (
+                self.loadgen.request_count is None
+                and self.input.conversation.num is None
+            ):
+                self.loadgen.request_count = self._count_dataset_entries()
+                _logger.info(
+                    f"No request count value provided for mooncake trace dataset, setting to dataset entry count: {self.loadgen.request_count}"
+                )
+        elif self.loadgen.user_centric_rate is not None:
+            # User-centric rate mode: per-user rate limiting (LMBenchmark parity)
+            # --user-centric-rate takes the QPS value directly
+            self._timing_mode = TimingMode.USER_CENTRIC_RATE
+            if self.loadgen.num_users is None:
+                raise ValueError("--user-centric-rate requires --num-users to be set")
+            # TODO: Design a better way to create mutually exclusive options.
+            if (
+                "request_rate" in self.loadgen.model_fields_set
+                or "arrival_pattern" in self.loadgen.model_fields_set
+            ):
+                raise ValueError(
+                    "--user-centric-rate cannot be used together with --request-rate or --arrival-pattern"
+                )
+
+            if (
+                self.loadgen.benchmark_duration is not None
+                and "benchmark_grace_period" not in self.loadgen.model_fields_set
+            ):
+                # By default, lmbench waits indefinitely for all responses.
+                self.loadgen.benchmark_grace_period = float("inf")
+
+            # User-centric mode only makes sense for multi-turn conversations.
+            # With single-turn, it degenerates to request-rate mode with extra overhead.
+            if self.input.conversation.turn.mean < 2:
+                raise ValueError(
+                    "--user-centric-rate requires multi-turn conversations (--session-turns-mean >= 2). "
+                    "For single-turn workloads, use --request-rate instead."
+                )
         elif self.loadgen.request_rate is not None:
             # Request rate is checked first, as if user has provided request rate and concurrency,
             # we will still use the request rate strategy.
             self._timing_mode = TimingMode.REQUEST_RATE
-            if self.loadgen.request_rate_mode == RequestRateMode.CONCURRENCY_BURST:
+            if self.loadgen.arrival_pattern == ArrivalPattern.CONCURRENCY_BURST:
                 raise ValueError(
-                    f"Request rate mode cannot be {RequestRateMode.CONCURRENCY_BURST!r} when a request rate is specified."
+                    f"Request rate mode cannot be {ArrivalPattern.CONCURRENCY_BURST!r} when a request rate is specified."
                 )
+            if (
+                self.loadgen.request_count is None
+                and self.input.conversation.num is None
+                and self.loadgen.benchmark_duration is None
+            ):
+                _logger.warning(
+                    f"No request count value provided, setting to {LoadGeneratorDefaults.MIN_REQUEST_COUNT}"
+                )
+                self.loadgen.request_count = LoadGeneratorDefaults.MIN_REQUEST_COUNT
         else:
-            # Default to concurrency burst mode if no request rate or schedule is provided
-            if self.loadgen.concurrency is None:
-                # If user has not provided a concurrency value, set it to 1
+            # Default to concurrency burst mode if no request rate or schedule is provided.
+            # CONCURRENCY_BURST works with either session concurrency OR prefill concurrency.
+            if (
+                self.loadgen.concurrency is None
+                and self.loadgen.prefill_concurrency is None
+            ):
+                # Only set default session concurrency if neither concurrency type is specified
+                _logger.warning("No concurrency value provided, setting to 1")
                 self.loadgen.concurrency = 1
+
+            if (
+                self.loadgen.request_count is None
+                and self.input.conversation.num is None
+                and self.loadgen.benchmark_duration is None
+            ):
+                # Use whichever concurrency is set for calculating default request count
+                effective_concurrency = (
+                    self.loadgen.concurrency or self.loadgen.prefill_concurrency
+                )
+                self.loadgen.request_count = max(
+                    LoadGeneratorDefaults.MIN_REQUEST_COUNT,
+                    effective_concurrency
+                    * LoadGeneratorDefaults.REQUEST_COUNT_MULTIPLIER,
+                )
+                _logger.warning(
+                    f"No request count value provided, setting to {self.loadgen.request_count}"
+                )
             self._timing_mode = TimingMode.REQUEST_RATE
-            self.loadgen.request_rate_mode = RequestRateMode.CONCURRENCY_BURST
+            self.loadgen.arrival_pattern = ArrivalPattern.CONCURRENCY_BURST
+
+        if (
+            "arrival_pattern" not in self.loadgen.model_fields_set
+            and self.loadgen.arrival_smoothness is not None
+        ):
+            self.loadgen.arrival_pattern = ArrivalPattern.GAMMA
+            _logger.info(
+                "Arrival smoothness specified, but arrival pattern is not. Setting arrival pattern to gamma by default."
+            )
+        elif (
+            self.loadgen.arrival_pattern != ArrivalPattern.GAMMA
+            and self.loadgen.arrival_smoothness is not None
+        ):
+            raise ValueError(
+                "--arrival-smoothness can only be used with --arrival-pattern gamma. "
+                "Please specify --arrival-pattern gamma to use --arrival-smoothness."
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_num_users_requirements(self) -> Self:
+        """Validate that num_users requirements are met when set.
+
+        When --num-users is set along with --num-sessions or --request-count,
+        both --num-sessions and --request-count (if specified) must be >= --num-users
+        to ensure there are enough sessions and requests for all users.
+        """
+        if self.loadgen.num_users is None:
+            return self
+
+        # Check if either num_sessions or request_count is set
+        has_num_sessions = self.input.conversation.num is not None
+        has_request_count = self.loadgen.request_count is not None
+
+        if not (has_num_sessions or has_request_count):
+            return self
+
+        num_users = self.loadgen.num_users
+
+        # Validate num_sessions if set
+        if has_num_sessions and self.input.conversation.num < num_users:
+            raise ValueError(
+                f"--num-sessions ({self.input.conversation.num}) cannot be less than "
+                f"--num-users ({num_users}). Each user needs at least one session."
+            )
+
+        # Validate request_count if set
+        if has_request_count and self.loadgen.request_count < num_users:
+            raise ValueError(
+                f"--request-count ({self.loadgen.request_count}) cannot be less than "
+                f"--num-users ({num_users}). There must be at least one request per user."
+            )
 
         return self
 
     @model_validator(mode="after")
     def validate_benchmark_mode(self) -> Self:
-        """Validate benchmarking is count-based or timing-based, plus associated args are correctly set."""
-        if (
-            "benchmark_duration" in self.loadgen.model_fields_set
-            and "request_count" in self.loadgen.model_fields_set
-        ):
-            raise ValueError(
-                "Count-based and duration-based benchmarking cannot be used together. "
-                "Use either --request-count or --benchmark-duration."
-            )
-
+        """Validate benchmarking associated args are correctly set."""
         if (
             "benchmark_grace_period" in self.loadgen.model_fields_set
-            and "benchmark_duration" not in self.loadgen.model_fields_set
+            and self.loadgen.benchmark_duration is None
         ):
             raise ValueError(
                 "--benchmark-grace-period can only be used with "
@@ -114,28 +240,76 @@ class UserConfig(BaseConfig):
 
         return self
 
-    def get_effective_request_count(self) -> int:
-        """Get the effective number of requests to send.
+    @model_validator(mode="after")
+    def validate_warmup_grace_period(self) -> Self:
+        """Validate warmup grace period is only used when --warmup-duration is set."""
+        if (
+            "warmup_grace_period" in self.loadgen.model_fields_set
+            and self.loadgen.warmup_duration is None
+        ):
+            raise ValueError(
+                "--warmup-grace-period can only be used when --warmup-duration is set. "
+                "Set --warmup-duration."
+            )
 
-        For mooncake_trace custom datasets, always use the dataset size to ensure
-        exact trace replay. For all other scenarios, use the configured request_count.
+        return self
 
-        Returns:
-            int: The number of requests that should be sent
+    @model_validator(mode="after")
+    def validate_unused_options(self) -> Self:
+        """Validate that options are not set without their required companion options.
+
+        These options are only meaningful with specific configurations.
+        Rather than silently ignoring them, we raise an error.
         """
-        if self.input.custom_dataset_type == CustomDatasetType.MOONCAKE_TRACE:
-            try:
-                dataset_size = self._count_dataset_entries()
-                if dataset_size > 0:
-                    return dataset_size
-                else:
-                    raise ValueError("Empty mooncake_trace dataset file")
-            except Exception as e:
-                raise ValueError(
-                    f"Could not read mooncake_trace dataset file: {e}"
-                ) from e
+        # --num-users without --user-centric-rate
+        if (
+            "num_users" in self.loadgen.model_fields_set
+            and self.loadgen.user_centric_rate is None
+        ):
+            raise ValueError(
+                "--num-users can only be used with --user-centric-rate. "
+                "Either add --user-centric-rate or remove --num-users."
+            )
 
-        return self.loadgen.request_count
+        # --request-cancellation-delay without --request-cancellation-rate
+        if (
+            "request_cancellation_delay" in self.loadgen.model_fields_set
+            and self.loadgen.request_cancellation_rate is None
+        ):
+            raise ValueError(
+                "--request-cancellation-delay can only be used with --request-cancellation-rate. "
+                "Either add --request-cancellation-rate or remove --request-cancellation-delay."
+            )
+
+        # --fixed-schedule-* options without --fixed-schedule
+        fixed_schedule_enabled = self.input.fixed_schedule
+        fixed_schedule_options_set = []
+
+        if "fixed_schedule_auto_offset" in self.input.model_fields_set:
+            fixed_schedule_options_set.append("--fixed-schedule-auto-offset")
+        if "fixed_schedule_start_offset" in self.input.model_fields_set:
+            fixed_schedule_options_set.append("--fixed-schedule-start-offset")
+        if "fixed_schedule_end_offset" in self.input.model_fields_set:
+            fixed_schedule_options_set.append("--fixed-schedule-end-offset")
+
+        if fixed_schedule_options_set and not fixed_schedule_enabled:
+            options_str = ", ".join(fixed_schedule_options_set)
+            raise ValueError(
+                f"{options_str} can only be used with --fixed-schedule. "
+                "Either add --fixed-schedule or remove these options."
+            )
+
+        # --request-rate-ramp-duration without --request-rate
+        # Rate ramping only works with rate-based scheduling (not user-centric or fixed-schedule)
+        if (
+            "request_rate_ramp_duration" in self.loadgen.model_fields_set
+            and self.timing_mode != TimingMode.REQUEST_RATE
+        ):
+            raise ValueError(
+                "--request-rate-ramp-duration can only be used with --request-rate scheduling."
+            )
+
+        return self
 
     def _should_use_fixed_schedule_for_mooncake_trace(self) -> bool:
         """Check if mooncake_trace dataset has timestamps and should use fixed schedule.
@@ -456,9 +630,7 @@ class UserConfig(BaseConfig):
         # Preprocess Huggingface model names that include '/' in their model name.
         if "/" in model_name:
             filtered_name = "_".join(model_name.split("/"))
-            from aiperf.common.logging import AIPerfLogger
 
-            _logger = AIPerfLogger(__name__)
             _logger.info(
                 f"Model name '{model_name}' cannot be used to create artifact "
                 f"directory. Instead, '{filtered_name}' will be used."
@@ -489,6 +661,13 @@ class UserConfig(BaseConfig):
                 return "-".join(stimulus)
             case TimingMode.FIXED_SCHEDULE:
                 return "fixed_schedule"
+            case TimingMode.USER_CENTRIC_RATE:
+                stimulus = ["user_centric"]
+                if self.loadgen.num_users is not None:
+                    stimulus.append(f"users{self.loadgen.num_users}")
+                if self.loadgen.user_centric_rate is not None:
+                    stimulus.append(f"qps{self.loadgen.user_centric_rate}")
+                return "-".join(stimulus)
             case _:
                 raise ValueError(f"Unknown timing mode '{self._timing_mode}'.")
 
@@ -502,12 +681,22 @@ class UserConfig(BaseConfig):
         """Validate multi-turn options."""
         # Multi-turn validation: only one of request_count or num_sessions should be set
         if (
-            "request_count" in self.loadgen.model_fields_set
-            and "num" in self.input.conversation.model_fields_set
+            self.loadgen.request_count is not None
+            and self.input.conversation.num is not None
         ):
             raise ValueError(
                 "Both a request-count and number of conversations are set. This can result in confusing output. "
-                "Use only --conversation-num for multi-turn scenarios."
+                "Use either --request-count or --conversation-num but not both."
+            )
+
+        # Same validation for warmup options
+        if (
+            self.loadgen.warmup_request_count is not None
+            and self.loadgen.warmup_num_sessions is not None
+        ):
+            raise ValueError(
+                "Both --warmup-request-count and --num-warmup-sessions are set. "
+                "Use either --warmup-request-count or --num-warmup-sessions but not both."
             )
 
         return self
@@ -519,36 +708,105 @@ class UserConfig(BaseConfig):
             return self
 
         # For multi-turn scenarios, check against conversation_num
-        if self.input.conversation.num is not None:
-            if self.loadgen.concurrency > self.input.conversation.num:
-                raise ValueError(
-                    f"Concurrency ({self.loadgen.concurrency}) cannot be greater than "
-                    f"the number of conversations ({self.input.conversation.num}). "
-                    "Either reduce --concurrency or increase --conversation-num."
-                )
+        if (
+            self.input.conversation.num is not None
+            and self.loadgen.concurrency > self.input.conversation.num
+        ):
+            raise ValueError(
+                f"Concurrency ({self.loadgen.concurrency}) cannot be greater than "
+                f"the number of conversations ({self.input.conversation.num}). "
+                "Either reduce --concurrency or increase --conversation-num."
+            )
         # For single-turn scenarios, check against request_count if it is set
         elif (
-            "request_count" in self.loadgen.model_fields_set
+            self.loadgen.request_count is not None
             and self.loadgen.concurrency > self.loadgen.request_count
         ):
             raise ValueError(
                 f"Concurrency ({self.loadgen.concurrency}) cannot be greater than "
-                f"the request count ({self.loadgen.request_count}). "
-                "Either reduce --concurrency or increase --request-count."
+                f"the request count ({self.loadgen.request_count}). Either reduce "
+                "--concurrency or increase --request-count."
             )
 
         return self
 
     @model_validator(mode="after")
-    def validate_user_context_requires_sessions(self) -> Self:
-        """Validate that user context prompt requires num-sessions to be specified."""
+    def validate_prefill_concurrency(self) -> Self:
+        """Validate prefill_concurrency configuration.
+
+        Prefill concurrency requires:
+        1. Streaming to be enabled (FirstToken event is only available with streaming)
+        2. prefill_concurrency <= concurrency (cannot have more prefill slots than total slots)
+        """
+        prefill_concurrency = self.loadgen.prefill_concurrency
+        warmup_prefill_concurrency = self.loadgen.warmup_prefill_concurrency
+
+        # Check if any prefill concurrency is set
+        if prefill_concurrency is None and warmup_prefill_concurrency is None:
+            return self
+
+        # Validate streaming requirement
+        if not self.endpoint.streaming:
+            raise ValueError(
+                "--prefill-concurrency requires --streaming to be enabled. "
+                "Prefill concurrency relies on FirstToken events which are only "
+                "available with streaming responses."
+            )
+
+        # Validate prefill_concurrency <= concurrency
         if (
-            self.input.prompt.prefix_prompt.user_context_prompt_length is not None
-            and self.input.conversation.num is None
+            prefill_concurrency is not None
+            and self.loadgen.concurrency is not None
+            and prefill_concurrency > self.loadgen.concurrency
         ):
             raise ValueError(
-                "--user-context-prompt-length requires --num-sessions to be specified. "
-                "Each session needs a unique user context prompt, so the number of sessions must be defined."
+                f"--prefill-concurrency ({prefill_concurrency}) cannot be greater than "
+                f"--concurrency ({self.loadgen.concurrency}). "
+                "Prefill concurrency limits how many requests can be in the prefill stage, "
+                "which cannot exceed the total concurrent requests."
+            )
+
+        # Validate warmup_prefill_concurrency <= warmup_concurrency (or concurrency)
+        if warmup_prefill_concurrency is not None:
+            effective_warmup_concurrency = (
+                self.loadgen.warmup_concurrency or self.loadgen.concurrency
+            )
+            if (
+                effective_warmup_concurrency is not None
+                and warmup_prefill_concurrency > effective_warmup_concurrency
+            ):
+                raise ValueError(
+                    f"--warmup-prefill-concurrency ({warmup_prefill_concurrency}) cannot be "
+                    f"greater than warmup concurrency ({effective_warmup_concurrency}). "
+                    "Prefill concurrency limits how many requests can be in the prefill stage, "
+                    "which cannot exceed the total concurrent requests."
+                )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_dataset_sampling_strategy(self) -> Self:
+        """Validate that the dataset sampling strategy is compatible with the timing mode."""
+        if (
+            self.timing_mode == TimingMode.FIXED_SCHEDULE
+            and self.input.dataset_sampling_strategy is not None
+        ):
+            raise ValueError(
+                "Dataset sampling strategy is not compatible with fixed schedule mode. "
+                "Please remove the --dataset-sampling-strategy option."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_user_context_requires_dataset_entries(self) -> Self:
+        """Validate that user context prompt requires num-dataset-entries to be specified."""
+        if (
+            self.input.prompt.prefix_prompt.user_context_prompt_length is not None
+            and "num_dataset_entries" not in self.input.conversation.model_fields_set
+        ):
+            raise ValueError(
+                "--user-context-prompt-length requires --num-dataset-entries to be specified. "
+                "Each dataset entry needs a unique user context prompt, so the number of dataset entries must be defined."
             )
         return self
 
@@ -629,5 +887,18 @@ class UserConfig(BaseConfig):
                 "--rankings-query-prompt-token-mean, --rankings-query-prompt-token-stddev, ). "
                 f"Rankings endpoints: ({', '.join(rankings_endpoints)})."
                 "Please use only one set of options."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_must_have_stop_condition(self) -> Self:
+        """Validate that at least one stop condition is set (requests, sessions, or duration)"""
+        if (
+            self.loadgen.request_count is None
+            and self.input.conversation.num is None
+            and self.loadgen.benchmark_duration is None
+        ):
+            raise ValueError(
+                "At least one stop condition must be set (--request-count, --num-sessions, or --benchmark-duration)"
             )
         return self

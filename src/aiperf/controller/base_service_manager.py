@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 from abc import ABC, abstractmethod
@@ -84,7 +84,11 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
         return output
 
     async def run_required_services(self) -> None:
-        await self.run_services(self.required_services)
+        results = await self.run_services(self.required_services)
+        # Log any exceptions that occurred during service startup
+        for result in results:
+            if isinstance(result, Exception):
+                self.exception(f"Error starting required service: {result!r}")
 
     @abstractmethod
     async def run_service(

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
@@ -7,11 +7,11 @@ import pytest
 
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import Text, Turn
-from aiperf.common.models.record_models import RequestInfo
 from aiperf.endpoints.openai_embeddings import EmbeddingsEndpoint
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_model_endpoint,
+    create_request_info,
 )
 
 
@@ -36,7 +36,7 @@ class TestEmbeddingsEndpoint:
             texts=[Text(contents=["Embed this text"])],
             model="embeddings-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -52,7 +52,7 @@ class TestEmbeddingsEndpoint:
             ],
             model="embeddings-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -67,7 +67,7 @@ class TestEmbeddingsEndpoint:
             ],
             model="embeddings-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -81,7 +81,7 @@ class TestEmbeddingsEndpoint:
             model="embeddings-model",
             max_tokens=100,  # Not supported for embeddings
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         with caplog.at_level(logging.ERROR):
             endpoint.format_payload(request_info)
@@ -94,7 +94,7 @@ class TestEmbeddingsEndpoint:
             texts=[Text(contents=["Test"])],
             model=None,
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -114,7 +114,7 @@ class TestEmbeddingsEndpoint:
         )
 
         turn = Turn(texts=[Text(contents=["Test"])], model="embeddings-model")
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -127,7 +127,7 @@ class TestEmbeddingsEndpoint:
             texts=[],
             model="embeddings-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -138,7 +138,7 @@ class TestEmbeddingsEndpoint:
         turn1 = Turn(texts=[Text(contents=["Embed me"])], model="model1")
         turn2 = Turn(texts=[Text(contents=["Not me"])], model="model2")
 
-        request_info = RequestInfo(
+        request_info = create_request_info(
             model_endpoint=model_endpoint, turn_index=0, turns=[turn1, turn2]
         )
 
@@ -155,7 +155,7 @@ class TestEmbeddingsEndpoint:
             texts=[Text(contents=[long_text])],
             model="embeddings-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -169,7 +169,7 @@ class TestEmbeddingsEndpoint:
             texts=[Text(contents=[special_text])],
             model="embeddings-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 

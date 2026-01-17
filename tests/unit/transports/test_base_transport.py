@@ -1,10 +1,17 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
+import importlib.metadata as importlib_metadata
+
 import pytest
 
-from aiperf.common.enums import EndpointType, ModelSelectionStrategy, TransportType
+from aiperf.common.enums import (
+    CreditPhase,
+    EndpointType,
+    ModelSelectionStrategy,
+    TransportType,
+)
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -14,8 +21,10 @@ from aiperf.common.models.model_endpoint_info import (
 from aiperf.common.models.record_models import RequestInfo, RequestRecord
 from aiperf.transports.base_transports import BaseTransport, TransportMetadata
 
+AIPERF_USER_AGENT = f"aiperf/{importlib_metadata.version('aiperf')}"
 
-class MockTransport(BaseTransport):
+
+class FakeTransport(BaseTransport):
     """Concrete implementation of BaseTransport for testing."""
 
     @classmethod
@@ -58,8 +67,8 @@ class TestBaseTransport:
 
     @pytest.fixture
     def transport(self, model_endpoint):
-        """Create a MockTransport instance."""
-        return MockTransport(model_endpoint=model_endpoint)
+        """Create a FakeTransport instance."""
+        return FakeTransport(model_endpoint=model_endpoint)
 
     @pytest.fixture
     def request_info(self, model_endpoint):
@@ -69,6 +78,12 @@ class TestBaseTransport:
             turns=[],
             endpoint_headers={},
             endpoint_params={},
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="test-request-id",
+            x_correlation_id="test-correlation-id",
+            conversation_id="test-conversation-id",
         )
 
     def test_metadata(self, transport):
@@ -86,22 +101,22 @@ class TestBaseTransport:
     @pytest.mark.parametrize(
         "x_request_id,x_correlation_id,expected_headers",
         [
-            (None, None, {"User-Agent": "aiperf/1.0"}),
+            (None, None, {"User-Agent": AIPERF_USER_AGENT}),
             (
                 "req-123456",
                 None,
-                {"User-Agent": "aiperf/1.0", "X-Request-ID": "req-123456"},
+                {"User-Agent": AIPERF_USER_AGENT, "X-Request-ID": "req-123456"},
             ),
             (
                 None,
                 "corr-789",
-                {"User-Agent": "aiperf/1.0", "X-Correlation-ID": "corr-789"},
+                {"User-Agent": AIPERF_USER_AGENT, "X-Correlation-ID": "corr-789"},
             ),
             (
                 "req-123",
                 "corr-456",
                 {
-                    "User-Agent": "aiperf/1.0",
+                    "User-Agent": AIPERF_USER_AGENT,
                     "X-Request-ID": "req-123",
                     "X-Correlation-ID": "corr-456",
                 },
@@ -128,12 +143,12 @@ class TestBaseTransport:
         headers = transport.build_headers(request_info)
         assert headers["Authorization"] == "Bearer token123"
         assert headers["Custom-Header"] == "custom-value"
-        assert headers["User-Agent"] == "aiperf/1.0"
+        assert headers["User-Agent"] == AIPERF_USER_AGENT
 
     def test_build_headers_transport_headers_override(self, request_info):
         """Test that transport headers can override endpoint headers."""
 
-        class CustomTransport(MockTransport):
+        class CustomTransport(FakeTransport):
             def get_transport_headers(
                 self, request_info: RequestInfo
             ) -> dict[str, str]:
@@ -153,7 +168,7 @@ class TestBaseTransport:
     def test_build_headers_priority_order(self, request_info):
         """Test header merge priority: universal < endpoint < transport."""
 
-        class CustomTransport(MockTransport):
+        class CustomTransport(FakeTransport):
             def get_transport_headers(
                 self, request_info: RequestInfo
             ) -> dict[str, str]:
@@ -166,7 +181,7 @@ class TestBaseTransport:
         }
 
         headers = transport.build_headers(request_info)
-        assert headers["User-Agent"] == "aiperf/1.0"  # Universal
+        assert headers["User-Agent"] == AIPERF_USER_AGENT  # Universal
         assert headers["Authorization"] == "Bearer token"  # Endpoint
         assert headers["X-Priority"] == "transport"  # Transport wins
         assert headers["Content-Type"] == "application/json"  # Transport
@@ -195,6 +210,12 @@ class TestBaseTransport:
             turns=[],
             endpoint_headers={},
             endpoint_params={"new": "value"},
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="test-request-id",
+            x_correlation_id="test-correlation-id",
+            conversation_id="test-conversation-id",
         )
 
         url = transport.build_url(request_info)
@@ -213,6 +234,12 @@ class TestBaseTransport:
             turns=[],
             endpoint_headers={},
             endpoint_params={"key": "overridden"},
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="test-request-id",
+            x_correlation_id="test-correlation-id",
+            conversation_id="test-conversation-id",
         )
 
         url = transport.build_url(request_info)
@@ -248,6 +275,12 @@ class TestBaseTransport:
             turns=[],
             endpoint_headers={},
             endpoint_params={"d": "4", "b": "overridden"},  # Override 'b'
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="test-request-id",
+            x_correlation_id="test-correlation-id",
+            conversation_id="test-conversation-id",
         )
 
         url = transport.build_url(request_info)

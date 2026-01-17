@@ -3,14 +3,13 @@
 """Utility functions for integration tests."""
 
 import base64
-import json
 import subprocess
 from pathlib import Path
 
 import orjson
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from tests.integration.models import VideoDetails
+from tests.harness.utils import VideoDetails
 
 logger = AIPerfLogger(__name__)
 
@@ -81,7 +80,7 @@ def extract_base64_video_details(base64_data: str) -> VideoDetails:
     ]
     result = subprocess.run(cmd, input=video_bytes, capture_output=True, check=True)
 
-    probe_data = json.loads(result.stdout)
+    probe_data = orjson.loads(result.stdout)
     format_info = probe_data["format"]
     video_stream = next(s for s in probe_data["streams"] if s["codec_type"] == "video")
 

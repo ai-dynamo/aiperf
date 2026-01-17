@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 Tests for zmq_proxy_base.py and zmq_proxy_sockets.py - ZMQ proxy classes.
@@ -24,7 +24,8 @@ from aiperf.zmq.zmq_proxy_sockets import (
 class TestProxySocketClient:
     """Test ProxySocketClient class."""
 
-    def test_init_creates_client_with_correct_params(self, mock_zmq_context):
+    @pytest.mark.asyncio
+    async def test_init_creates_client_with_correct_params(self, mock_zmq_context):
         """Test that ProxySocketClient initializes correctly."""
         client = ProxySocketClient(
             socket_type=zmq.SocketType.ROUTER,
@@ -39,6 +40,7 @@ class TestProxySocketClient:
         assert "router" in client.client_id.lower()
         assert "test-uuid" in client.client_id
 
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "socket_type,end_type",
         [
@@ -48,7 +50,7 @@ class TestProxySocketClient:
             (zmq.SocketType.REP, ProxyEndType.Control),
         ],
     )  # fmt: skip
-    def test_init_with_various_socket_types(
+    async def test_init_with_various_socket_types(
         self, socket_type, end_type, mock_zmq_context
     ):
         """Test initialization with various socket and end types."""
@@ -61,7 +63,8 @@ class TestProxySocketClient:
         assert client.socket_type == socket_type
         assert client.bind is True  # Proxy sockets always bind
 
-    def test_init_generates_uuid_if_not_provided(self, mock_zmq_context):
+    @pytest.mark.asyncio
+    async def test_init_generates_uuid_if_not_provided(self, mock_zmq_context):
         """Test that ProxySocketClient generates UUID if not provided."""
         client = ProxySocketClient(
             socket_type=zmq.SocketType.ROUTER,
@@ -76,7 +79,8 @@ class TestProxySocketClient:
 class TestZMQXPubXSubProxy:
     """Test ZMQXPubXSubProxy class."""
 
-    def test_from_config_creates_proxy(self, mock_zmq_context):
+    @pytest.mark.asyncio
+    async def test_from_config_creates_proxy(self, mock_zmq_context):
         """Test that from_config creates a proxy instance."""
         config = ZMQTCPConfig()
 
@@ -141,11 +145,12 @@ class TestZMQXPubXSubProxy:
 class TestZMQDealerRouterProxy:
     """Test ZMQDealerRouterProxy class."""
 
-    def test_from_config_creates_proxy(self, mock_zmq_context):
+    @pytest.mark.asyncio
+    async def test_from_config_creates_proxy(self, mock_zmq_context):
         """Test that from_config creates a proxy instance."""
-        config = ZMQTCPConfig()
+        proxy_config = ZMQTCPProxyConfig(frontend_port=5661, backend_port=5662)
 
-        proxy = ZMQDealerRouterProxy.from_config(config.dataset_manager_proxy_config)
+        proxy = ZMQDealerRouterProxy.from_config(proxy_config)
 
         assert proxy is not None
         assert proxy.frontend_socket.socket_type == zmq.SocketType.ROUTER
@@ -154,9 +159,9 @@ class TestZMQDealerRouterProxy:
     @pytest.mark.asyncio
     async def test_initialize_binds_sockets(self, mock_zmq_socket, mock_zmq_context):
         """Test that initialize binds frontend and backend sockets."""
-        config = ZMQTCPConfig()
+        proxy_config = ZMQTCPProxyConfig(frontend_port=5661, backend_port=5662)
 
-        proxy = ZMQDealerRouterProxy.from_config(config.dataset_manager_proxy_config)
+        proxy = ZMQDealerRouterProxy.from_config(proxy_config)
 
         await proxy.initialize()
 
@@ -167,7 +172,8 @@ class TestZMQDealerRouterProxy:
 class TestZMQPushPullProxy:
     """Test ZMQPushPullProxy class."""
 
-    def test_from_config_creates_proxy(self, mock_zmq_context):
+    @pytest.mark.asyncio
+    async def test_from_config_creates_proxy(self, mock_zmq_context):
         """Test that from_config creates a proxy instance."""
         config = ZMQTCPConfig()
 
@@ -209,8 +215,8 @@ class TestProxyLifecycle:
 
             # Start
             await proxy.start()
-            # Wait for background task (mocked to instant)
-            await asyncio.sleep(0.1)
+            # Yield to event loop to let background task run
+            await asyncio.sleep(0)
 
             # Stop
             await proxy.stop()
@@ -298,7 +304,8 @@ class TestProxyEdgeCases:
         with pytest.raises(asyncio.CancelledError):
             await proxy.initialize()
 
-    def test_proxy_has_unique_id(self, mock_zmq_context):
+    @pytest.mark.asyncio
+    async def test_proxy_has_unique_id(self, mock_zmq_context):
         """Test that each proxy has a unique ID."""
         config = ZMQTCPConfig()
 
@@ -309,7 +316,8 @@ class TestProxyEdgeCases:
         assert proxy1.proxy_id != proxy2.proxy_id
         assert proxy1.proxy_uuid != proxy2.proxy_uuid
 
-    def test_proxy_custom_uuid(self, mock_zmq_context):
+    @pytest.mark.asyncio
+    async def test_proxy_custom_uuid(self, mock_zmq_context):
         """Test creating proxy with custom UUID."""
         config = ZMQTCPConfig()
 

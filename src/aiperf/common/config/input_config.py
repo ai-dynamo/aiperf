@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Annotated, Any
@@ -22,6 +22,7 @@ from aiperf.common.config.groups import Groups
 from aiperf.common.config.image_config import ImageConfig
 from aiperf.common.config.prompt_config import PromptConfig
 from aiperf.common.config.rankings_config import RankingsConfig
+from aiperf.common.config.synthesis_config import SynthesisConfig
 from aiperf.common.config.video_config import VideoConfig
 from aiperf.common.enums import CustomDatasetType, PublicDatasetType
 from aiperf.common.enums.dataset_enums import DatasetSamplingStrategy
@@ -97,6 +98,26 @@ class InputConfig(BaseConfig):
         """Validate that custom dataset type has a file."""
         if self.custom_dataset_type is not None and self.file is None:
             raise ValueError("Custom dataset type requires --input-file to be provided")
+        return self
+
+    @model_validator(mode="after")
+    def validate_synthesis_requires_mooncake_trace(self) -> Self:
+        """Validate that synthesis options require mooncake_trace dataset type.
+
+        Only validates when custom_dataset_type is explicitly set to a non-mooncake
+        type. If custom_dataset_type is None (auto-detect), we allow synthesis
+        options and defer validation to runtime when the actual type is determined.
+        """
+        if (
+            self.synthesis.should_synthesize()
+            and self.custom_dataset_type is not None
+            and self.custom_dataset_type != CustomDatasetType.MOONCAKE_TRACE
+        ):
+            raise ValueError(
+                "Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
+                "--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier) "
+                "require --custom-dataset-type mooncake_trace"
+            )
         return self
 
     @model_validator(mode="after")
@@ -312,4 +333,5 @@ class InputConfig(BaseConfig):
     video: VideoConfig = VideoConfig()
     prompt: PromptConfig = PromptConfig()
     rankings: RankingsConfig = RankingsConfig()
+    synthesis: SynthesisConfig = SynthesisConfig()
     conversation: ConversationConfig = ConversationConfig()

@@ -6,12 +6,13 @@ import pytest
 from aiperf.common.enums import EndpointType
 from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.models import Image, Text, Turn
-from aiperf.common.models.record_models import RequestInfo, TextResponseData
+from aiperf.common.models.record_models import TextResponseData
 from aiperf.endpoints.template_endpoint import TemplateEndpoint
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_mock_response,
     create_model_endpoint,
+    create_request_info,
 )
 
 
@@ -45,7 +46,7 @@ class TestTemplateEndpointFormatPayload:
         """Test basic text formatting."""
         turn = Turn(texts=[Text(contents=["Hello"])], model="test-model")
         payload = template_endpoint.format_payload(
-            RequestInfo(model_endpoint=template_model_endpoint, turns=[turn])
+            create_request_info(model_endpoint=template_model_endpoint, turns=[turn])
         )
 
         assert payload["text"] == ["Hello"]
@@ -58,7 +59,7 @@ class TestTemplateEndpointFormatPayload:
             model="test-model",
         )
         payload = template_endpoint.format_payload(
-            RequestInfo(model_endpoint=template_model_endpoint, turns=[turn])
+            create_request_info(model_endpoint=template_model_endpoint, turns=[turn])
         )
 
         assert payload["text"] == ["A", "B", "C"]
@@ -90,7 +91,7 @@ class TestTemplateEndpointFormatPayload:
             model="test-model",
         )
         payload = endpoint.format_payload(
-            RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
         )
 
         assert all(payload.get(k) == v for k, v in expected.items())
@@ -99,7 +100,7 @@ class TestTemplateEndpointFormatPayload:
         """Test model fallback to endpoint default."""
         turn = Turn(texts=[Text(contents=["Test"])], model=None)
         payload = template_endpoint.format_payload(
-            RequestInfo(model_endpoint=template_model_endpoint, turns=[turn])
+            create_request_info(model_endpoint=template_model_endpoint, turns=[turn])
         )
 
         assert payload["model"] == template_model_endpoint.primary_model_name
@@ -114,7 +115,7 @@ class TestTemplateEndpointFormatPayload:
 
         turn = Turn(texts=[Text(contents=["What is AI?"])], model="test-model")
         payload = endpoint.format_payload(
-            RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
         )
 
         assert payload == {"text": ["What is AI?"]}
@@ -131,7 +132,7 @@ class TestTemplateEndpointFormatPayload:
             texts=[Text(contents=["text1", "text2", "text3"])], model="test-model"
         )
         payload = endpoint.format_payload(
-            RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
         )
 
         assert payload == {"text": ["text1", "text2", "text3"]}
@@ -147,7 +148,7 @@ class TestTemplateEndpointFormatPayload:
 
         turn = Turn(texts=[Text(contents=["Test"])], model="test-model")
         payload = endpoint.format_payload(
-            RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
         )
 
         assert payload["custom"] == ["Test"]
@@ -163,14 +164,14 @@ class TestTemplateEndpointFormatPayload:
         turn = Turn(texts=[Text(contents=["Test"])], model="test-model")
         with pytest.raises(ValueError, match="did not render valid JSON"):
             endpoint.format_payload(
-                RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+                create_request_info(model_endpoint=model_endpoint, turns=[turn])
             )
 
     def test_no_turns_raises_error(self, template_endpoint, template_model_endpoint):
         """Test error when no turns provided."""
         with pytest.raises(ValueError, match="requires at least one turn"):
             template_endpoint.format_payload(
-                RequestInfo(model_endpoint=template_model_endpoint, turns=[])
+                create_request_info(model_endpoint=template_model_endpoint, turns=[])
             )
 
     def test_missing_template_raises_error(self):
@@ -193,7 +194,7 @@ class TestTemplateEndpointFormatPayload:
             model="test-model",
         )
         payload = endpoint.format_payload(
-            RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
         )
 
         assert payload["text"] == "Hello"
@@ -215,7 +216,7 @@ class TestTemplateEndpointFormatPayload:
         endpoint = create_endpoint_with_mock_transport(TemplateEndpoint, model_endpoint)
 
         turn = Turn(texts=[Text(contents=["Hello"])], model="test-model")
-        request_info = RequestInfo(
+        request_info = create_request_info(
             model_endpoint=model_endpoint,
             turns=[turn],
             x_correlation_id="corr-123",
@@ -241,7 +242,7 @@ class TestTemplateEndpointFormatPayload:
             model="test-model",
         )
         payload = endpoint.format_payload(
-            RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
         )
 
         assert payload["text"] == "Single text"
@@ -270,7 +271,7 @@ class TestTemplateEndpointFormatPayload:
             model="test-model",
         )
         payload = endpoint.format_payload(
-            RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
         )
 
         assert payload["query"] == "What is AI?"
@@ -307,7 +308,7 @@ class TestTemplateEndpointFormatPayload:
             model="test-model",
         )
         payload = endpoint.format_payload(
-            RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
         )
 
         assert payload["system"] == ["You are a helpful assistant"]

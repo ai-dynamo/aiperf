@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
@@ -59,3 +59,17 @@ class DatasetSamplingStrategy(CaseInsensitiveStrEnum):
     SHUFFLE = "shuffle"
     """Shuffle the dataset and iterate through it. Will randomly sample without replacement.
     Once the end of the dataset is reached, shuffle the dataset again and start over."""
+
+
+class DatasetBackingStoreType(CaseInsensitiveStrEnum):
+    """Types of dataset backing stores (DatasetManager side)."""
+
+    MEMORY_MAP = "memory_map"
+    """Store dataset in memory-mapped files for zero-copy worker access."""
+
+
+class DatasetClientStoreType(CaseInsensitiveStrEnum):
+    """Types of dataset client stores (Worker side)."""
+
+    MEMORY_MAP = "memory_map"
+    """Read from memory-mapped files (zero-copy, O(1) lookup)."""

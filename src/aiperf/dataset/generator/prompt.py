@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import os
@@ -51,6 +51,10 @@ class PromptGenerator(BaseGenerator):
         # Cached prompts: block ID -> list of tokens
         self._cache: dict[int, list[int]] = {}
 
+        # Decoded string cache: (hash_ids tuple, num_tokens, block_size) -> decoded string
+        # This avoids redundant tokenizer.decode() calls for repeated hash_id combinations
+        self._decoded_cache: dict[tuple[tuple[int, ...], int, int], str] = {}
+
         # TODO: move this under initialize() method
         # Initialize corpus if not already done
         if self._tokenized_corpus is None:
@@ -72,6 +76,12 @@ class PromptGenerator(BaseGenerator):
         The chunk size is fixed (not CPU-dependent) to ensure the same tokenization
         boundaries regardless of hardware, which guarantees identical prompts with
         the same random seed across all environments.
+
+        Thread Safety Note:
+            This method uses parallel tokenization for performance. Most tokenizers
+            (including Hugging Face transformers) are thread-safe and deterministic.
+            Thread count doesn't affect reproducibility since chunks have deterministic
+            boundaries based on character count.
         """
         corpus_path = Path(__file__).parent / DEFAULT_CORPUS_FILE
 
@@ -110,10 +120,9 @@ class PromptGenerator(BaseGenerator):
         if buffer:
             chunks.append(buffer)
 
-        # Use reasonable thread count for performance (up to 8 threads is efficient)
-        # Thread count doesn't affect reproducibility since chunks are deterministic
+        # Multi-threaded tokenization: thread count doesn't affect reproducibility
+        # since chunks are character-based (deterministic boundaries)
         num_threads = min(os.cpu_count() or 4, 8)
-
         with ThreadPoolExecutor(max_workers=num_threads) as executor:
             tokenized_chunks = list(executor.map(tokenize_chunk, chunks))
 
@@ -123,7 +132,7 @@ class PromptGenerator(BaseGenerator):
         self._corpus_size = len(self._tokenized_corpus)
         self.debug(
             lambda: f"Initialized corpus with {self._corpus_size} tokens "
-            f"from {len(chunks)} chunks using {num_threads} threads"
+            f"from {len(chunks)} chunks using {num_threads} thread(s)"
         )
 
     def _create_prefix_prompt_pool(self) -> None:
@@ -212,6 +221,43 @@ class PromptGenerator(BaseGenerator):
         Raises:
             ConfigurationError: If the input parameters are not compatible.
         """
+        # Check decoded string cache first to avoid redundant decode calls
+        cache_key = (tuple(hash_ids), num_tokens, block_size)
+        if cache_key in self._decoded_cache:
+            return self._decoded_cache[cache_key]
+
+        # Build token sequence using _build_token_sequence (shared logic)
+        final_prompt = self._build_token_sequence(num_tokens, hash_ids, block_size)
+
+        # Decode and cache the result
+        decoded = self.tokenizer.decode(final_prompt, skip_special_tokens=False)
+        self._decoded_cache[cache_key] = decoded
+        return decoded
+
+    def _build_token_sequence(
+        self,
+        num_tokens: int,
+        hash_ids: list[int],
+        block_size: int,
+    ) -> list[int]:
+        """
+        Build a token sequence without decoding. Used for batch parallel decode.
+
+        Each hash index in `hash_ids` corresponds to a block of `block_size` tokens.
+        If a hash index is found in `_cache`, its stored tokens are reused.
+        Otherwise, new tokens are sampled and stored in `_cache`.
+
+        Args:
+            num_tokens: The number of tokens required in the prompt.
+            hash_ids: A list of hash IDs to use for token reuse.
+            block_size: The number of tokens allocated per hash block.
+
+        Returns:
+            list[int]: A list of token IDs.
+
+        Raises:
+            ConfigurationError: If the input parameters are not compatible.
+        """
         final_prompt: list[int] = []
         current_block_size = block_size
 
@@ -244,7 +290,7 @@ class PromptGenerator(BaseGenerator):
 
             final_prompt.extend(self._cache[hash_id])
 
-        return self.tokenizer.decode(final_prompt, skip_special_tokens=False)
+        return final_prompt
 
     def _sample_tokens(self, num_tokens: int) -> list[int]:
         """Generate a list of token IDs containing exactly `num_tokens` number of tokens

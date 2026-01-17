@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Annotated
@@ -187,8 +187,8 @@ class PrefixPromptConfig(BaseConfig):
             ge=1,
             description=(
                 "Length of per-session user context prompt in tokens.\n"
-                "Each session gets a unique user context prompt.\n"
-                "Requires --num-sessions to be specified.\n"
+                "Each dataset entry gets a unique user context prompt.\n"
+                "Requires --num-dataset-entries to be specified.\n"
                 "Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size."
             ),
         ),

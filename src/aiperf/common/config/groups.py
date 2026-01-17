@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from cyclopts import Group
 
@@ -20,6 +20,7 @@ class Groups:
     PROMPT = Group.create_ordered("Prompt")
     PREFIX_PROMPT = Group.create_ordered("Prefix Prompt")
     RANKINGS = Group.create_ordered("Rankings")
+    SYNTHESIS = Group.create_ordered("Synthesis")
     AUDIO_INPUT = Group.create_ordered("Audio Input")
     IMAGE_INPUT = Group.create_ordered("Image Input")
     VIDEO_INPUT = Group.create_ordered("Video Input")

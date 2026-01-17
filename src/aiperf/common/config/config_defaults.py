@@ -1,13 +1,13 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from aiperf.common.enums import (
     AIPerfLogLevel,
     AIPerfUIType,
+    ArrivalPattern,
     AudioFormat,
     CommunicationBackend,
     ConnectionReuseStrategy,
@@ -16,10 +16,8 @@ from aiperf.common.enums import (
     ExportLevel,
     ImageFormat,
     ModelSelectionStrategy,
-    RequestRateMode,
     ServerMetricsFormat,
     ServiceRunType,
-    TimingMode,
     VideoFormat,
     VideoSynthType,
 )
@@ -149,7 +147,7 @@ class OutputDefaults:
     ARTIFACT_DIRECTORY = Path("./artifacts")
     RAW_RECORDS_FOLDER = Path("raw_records")
     LOG_FOLDER = Path("logs")
-    LOG_FILE = Path(f"aiperf_{int(time.time())}.log")
+    LOG_FILE = Path("aiperf.log")
     INPUTS_JSON_FILE = Path("inputs.json")
     PROFILE_EXPORT_AIPERF_CSV_FILE = Path("profile_export_aiperf.csv")
     PROFILE_EXPORT_AIPERF_JSON_FILE = Path("profile_export_aiperf.json")
@@ -167,6 +165,8 @@ class OutputDefaults:
     SERVER_METRICS_EXPORT_CSV_FILE = Path("server_metrics_export.csv")
     SERVER_METRICS_EXPORT_PARQUET_FILE = Path("server_metrics_export.parquet")
     EXPORT_LEVEL = ExportLevel.RECORDS
+    EXPORT_HTTP_TRACE = False
+    SHOW_TRACE_TIMING = False
     SLICE_DURATION = None
 
 
@@ -197,16 +197,10 @@ class ServiceDefaults:
 
 @dataclass(frozen=True)
 class LoadGeneratorDefaults:
-    BENCHMARK_DURATION = None
     BENCHMARK_GRACE_PERIOD = 30.0
-    CONCURRENCY = None
-    REQUEST_RATE = None
-    REQUEST_COUNT = 10
-    WARMUP_REQUEST_COUNT = 0
-    REQUEST_RATE_MODE = RequestRateMode.POISSON
-    TIMING_MODE = TimingMode.REQUEST_RATE
-    REQUEST_CANCELLATION_RATE = 0.0
-    REQUEST_CANCELLATION_DELAY = 0.0
+    MIN_REQUEST_COUNT = 10
+    REQUEST_COUNT_MULTIPLIER = 2
+    ARRIVAL_PATTERN = ArrivalPattern.POISSON
 
 
 @dataclass(frozen=True)

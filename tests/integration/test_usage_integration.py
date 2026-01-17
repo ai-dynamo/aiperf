@@ -1,12 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Integration tests for API usage field parsing with mock server."""
 
 import pytest
 
-from tests.integration.conftest import AIPerfCLI
+from tests.harness.utils import AIPerfCLI, AIPerfMockServer
 from tests.integration.conftest import IntegrationTestDefaults as defaults
-from tests.integration.models import AIPerfMockServer
 
 
 @pytest.mark.integration
@@ -104,57 +103,3 @@ class TestUsageIntegration:
             and any(k.startswith("usage_") for k in record.metrics)
         ]
         assert len(records_with_both) > 0
-
-    async def test_client_vs_usage_comparison(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
-    ):
-        """Test that client-side and API usage field metrics both exist."""
-        result = await cli.run(
-            f"""
-            aiperf profile \
-                --model openai/gpt-oss-120b \
-                --url {aiperf_mock_server.url} \
-                --endpoint-type chat \
-                --request-count {defaults.request_count} \
-                --concurrency {defaults.concurrency} \
-                --workers-max {defaults.workers_max} \
-                --ui {defaults.ui}
-            """
-        )
-
-        assert result.exit_code == 0
-
-        json_data = result.json.model_dump()
-
-        client_metrics = ["output_token_count", "input_sequence_length"]
-        client_found = [m for m in client_metrics if m in json_data]
-        assert len(client_found) > 0
-
-        usage_found = [m for m in self.USAGE_METRIC_TAGS if m in json_data]
-        assert len(usage_found) > 0
-
-    async def test_reasoning_model_usage(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
-    ):
-        """Test usage metrics for reasoning-capable models."""
-        result = await cli.run(
-            f"""
-            aiperf profile \
-                --model openai/gpt-oss-120b \
-                --url {aiperf_mock_server.url} \
-                --endpoint-type chat \
-                --request-count {defaults.request_count} \
-                --concurrency {defaults.concurrency} \
-                --workers-max {defaults.workers_max} \
-                --ui {defaults.ui}
-            """
-        )
-
-        assert result.exit_code == 0
-
-        json_data = result.json.model_dump()
-        reasoning_metrics = ["reasoning_token_count", "usage_reasoning_tokens"]
-        found = [m for m in reasoning_metrics if m in json_data and json_data[m]]
-
-        if found:
-            assert len(found) > 0

@@ -745,7 +745,7 @@
     },
     "loadgen": {
       "concurrency": 2,
-      "request_rate_mode": "concurrency_burst",
+      "arrival_pattern": "concurrency_burst",
       "request_count": 64,
       "warmup_request_count": 1
     },

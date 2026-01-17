@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,7 +12,7 @@ from aiperf.common.models.model_endpoint_info import (
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.common.models.record_models import RequestInfo, RequestRecord
+from aiperf.common.models.record_models import RequestRecord
 from aiperf.workers.inference_client import InferenceClient
 
 
@@ -51,17 +51,19 @@ class TestInferenceClient:
             mock_endpoint.format_payload.return_value = {}
             mock_transport_factory.return_value = mock_transport
             mock_endpoint_factory.return_value = mock_endpoint
-            return InferenceClient(model_endpoint=model_endpoint)
+            return InferenceClient(
+                model_endpoint=model_endpoint, service_id="test-service-id"
+            )
 
     @pytest.mark.asyncio
     async def test_send_request_sets_endpoint_headers(
-        self, inference_client, model_endpoint
+        self, inference_client, model_endpoint, sample_request_info
     ):
         """Test that send_request sets endpoint_headers on request_info."""
         model_endpoint.endpoint.api_key = "test-key"
         model_endpoint.endpoint.headers = [("X-Custom", "value")]
 
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[])
+        request_info = sample_request_info
 
         expected_headers = {
             "Authorization": "Bearer test-key",
@@ -70,7 +72,7 @@ class TestInferenceClient:
         inference_client.endpoint.get_endpoint_headers.return_value = expected_headers
 
         inference_client.transport.send_request = AsyncMock(
-            return_value=RequestRecord()
+            return_value=RequestRecord(request_info=sample_request_info)
         )
 
         await inference_client.send_request(request_info)
@@ -81,18 +83,18 @@ class TestInferenceClient:
 
     @pytest.mark.asyncio
     async def test_send_request_sets_endpoint_params(
-        self, inference_client, model_endpoint
+        self, inference_client, model_endpoint, sample_request_info
     ):
         """Test that send_request sets endpoint_params on request_info."""
         model_endpoint.endpoint.url_params = {"api-version": "v1", "timeout": "30"}
 
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[])
+        request_info = sample_request_info
 
         expected_params = {"api-version": "v1", "timeout": "30"}
         inference_client.endpoint.get_endpoint_params.return_value = expected_params
 
         inference_client.transport.send_request = AsyncMock(
-            return_value=RequestRecord()
+            return_value=RequestRecord(request_info=sample_request_info)
         )
 
         await inference_client.send_request(request_info)
@@ -101,10 +103,16 @@ class TestInferenceClient:
         assert request_info.endpoint_params["timeout"] == "30"
 
     @pytest.mark.asyncio
-    async def test_send_request_calls_transport(self, inference_client, model_endpoint):
+    async def test_send_request_calls_transport(
+        self,
+        inference_client,
+        model_endpoint,
+        sample_request_info,
+        sample_request_record,
+    ):
         """Test that send_request delegates to transport."""
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[])
-        expected_record = RequestRecord()
+        request_info = sample_request_info
+        expected_record = sample_request_record
 
         inference_client.transport.send_request = AsyncMock(
             return_value=expected_record

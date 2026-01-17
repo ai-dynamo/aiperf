@@ -1,12 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import logging
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from pydantic import ValidationError
 
-from aiperf.common.config import EndpointConfig, InputConfig, UserConfig
+from aiperf.common.config import (
+    EndpointConfig,
+    InputConfig,
+    InputTokensConfig,
+    PromptConfig,
+    SynthesisConfig,
+    UserConfig,
+)
 from aiperf.common.enums import CustomDatasetType
 from aiperf.dataset import MooncakeTrace, MooncakeTraceDatasetLoader
 
@@ -102,6 +109,10 @@ class TestMooncakeTraceDatasetLoader:
         """Create a mock prompt generator for testing."""
         generator = Mock()
         generator.generate.return_value = "Generated prompt text"
+        # Required for convert_to_conversations() to check string cache
+        generator._decoded_cache = {}
+        # Mock _build_token_sequence to return a simple token list
+        generator._build_token_sequence.return_value = [1, 2, 3, 4, 5]
         return generator
 
     @pytest.fixture
@@ -110,15 +121,27 @@ class TestMooncakeTraceDatasetLoader:
         return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
 
     def make_user_config(
-        self, start_offset: int | None = None, end_offset: int | None = None
+        self,
+        start_offset: int | None = None,
+        end_offset: int | None = None,
+        file: str | None = None,
     ):
         """Create a UserConfig for testing."""
-        return UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(
+        # Only set fixed_schedule=True when offsets are provided (requires a file)
+        has_offsets = start_offset is not None or end_offset is not None
+        input_config = (
+            InputConfig(
+                file=file,
+                fixed_schedule=True,
                 fixed_schedule_start_offset=start_offset,
                 fixed_schedule_end_offset=end_offset,
-            ),
+            )
+            if has_offsets
+            else InputConfig()
+        )
+        return UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=input_config,
         )
 
     def test_load_dataset_basic_functionality(
@@ -285,7 +308,7 @@ class TestMooncakeTraceDatasetLoader:
         ]  # fmt: skip
         filename = create_jsonl_file(content)
 
-        user_config = self.make_user_config(start_offset, end_offset)
+        user_config = self.make_user_config(start_offset, end_offset, file=filename)
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
             user_config=user_config,
@@ -321,7 +344,7 @@ class TestMooncakeTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        user_config = self.make_user_config(start_offset, end_offset)
+        user_config = self.make_user_config(start_offset, end_offset, file=filename)
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
             user_config=user_config,
@@ -332,8 +355,18 @@ class TestMooncakeTraceDatasetLoader:
         # Check that the skipped traces message is logged
         assert f"Skipped {expected_skipped:,} traces" in caplog.text
 
-    def test_convert_to_conversations(self, mock_prompt_generator, default_user_config):
+    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
+    def test_convert_to_conversations(
+        self, mock_parallel_decode, mock_prompt_generator, default_user_config
+    ):
         """Test conversion of trace data to conversations."""
+        # Mock parallel_decode to return decoded prompts
+        mock_parallel_decode.return_value = [
+            "decoded prompt 1",
+            "decoded prompt 2",
+            "decoded prompt 3",
+        ]
+
         # Setup trace data
         trace_data = {
             "session-1": [
@@ -477,3 +510,552 @@ class TestMooncakeTraceDatasetLoader:
 
         assert traces[0][0].delay == 500
         assert traces[1][0].delay == 1000
+
+
+class TestMooncakeTraceReproducibility:
+    """Tests for reproducibility of Mooncake trace prompt generation.
+
+    These tests verify that the two-phase Mooncake flow with parallel_decode
+    yields identical prompts across runs when the RNG is seeded consistently.
+    """
+
+    @pytest.fixture
+    def mock_prompt_generator(self):
+        """Create a mock prompt generator for testing."""
+        generator = Mock()
+        generator.generate.return_value = "Generated prompt text"
+        generator._decoded_cache = {}
+        generator._build_token_sequence.return_value = [1, 2, 3, 4, 5]
+        return generator
+
+    @pytest.fixture
+    def user_config_for_reproducibility(self):
+        """Create a UserConfig suitable for reproducibility testing."""
+        return UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                prompt=PromptConfig(
+                    input_tokens=InputTokensConfig(mean=100, stddev=0, block_size=64),
+                ),
+            ),
+        )
+
+    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
+    def test_mooncake_flow_reproducibility_with_same_seed(
+        self, mock_parallel_decode, mock_tokenizer_cls, user_config_for_reproducibility
+    ):
+        """Verify Mooncake flow produces identical prompts across runs with same seed.
+
+        This guards the reproducibility contract: seeding RNG, running conversion twice,
+        and asserting identical prompts.
+        """
+        from aiperf.common import random_generator as rng
+        from aiperf.dataset.generator import PromptGenerator
+
+        # Mock parallel_decode to return deterministic results based on input
+        def deterministic_decode(token_sequences, tokenizer_name):
+            return [
+                f"decoded_prompt_{i}_{len(seq)}"
+                for i, seq in enumerate(token_sequences)
+            ]
+
+        mock_parallel_decode.side_effect = deterministic_decode
+
+        # Create trace data with hash_ids to exercise the two-phase flow
+        trace_data = {
+            "session-1": [
+                MooncakeTrace(
+                    input_length=128, output_length=50, hash_ids=[1, 2], timestamp=1000
+                ),
+                MooncakeTrace(
+                    input_length=192,
+                    output_length=75,
+                    hash_ids=[3, 4, 5],
+                    timestamp=2000,
+                ),
+            ],
+            "session-2": [
+                MooncakeTrace(
+                    input_length=256,
+                    output_length=100,
+                    hash_ids=[6, 7, 8, 9],
+                    timestamp=3000,
+                ),
+            ],
+        }
+
+        # First run: seed, create generator, convert
+        rng.reset()
+        rng.init(42)
+
+        tokenizer1 = mock_tokenizer_cls.from_pretrained("test-model")
+        prompt_config1 = user_config_for_reproducibility.input.prompt
+        generator1 = PromptGenerator(prompt_config1, tokenizer1)
+
+        loader1 = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config_for_reproducibility,
+            prompt_generator=generator1,
+        )
+        conversations1 = loader1.convert_to_conversations(trace_data)
+        prompts1 = [
+            turn.texts[0].contents[0] for conv in conversations1 for turn in conv.turns
+        ]
+
+        # Second run: re-seed with same value, create fresh generator, convert
+        rng.reset()
+        rng.init(42)
+
+        tokenizer2 = mock_tokenizer_cls.from_pretrained("test-model")
+        prompt_config2 = user_config_for_reproducibility.input.prompt
+        generator2 = PromptGenerator(prompt_config2, tokenizer2)
+
+        loader2 = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config_for_reproducibility,
+            prompt_generator=generator2,
+        )
+        conversations2 = loader2.convert_to_conversations(trace_data)
+        prompts2 = [
+            turn.texts[0].contents[0] for conv in conversations2 for turn in conv.turns
+        ]
+
+        # Assert identical prompts
+        assert len(prompts1) == len(prompts2), "Prompt count mismatch"
+        assert prompts1 == prompts2, (
+            "Prompts should be identical across runs with the same seed. "
+            f"First run: {prompts1}, Second run: {prompts2}"
+        )
+
+    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
+    def test_parallel_decode_length_mismatch_raises(
+        self, mock_parallel_decode, mock_prompt_generator, default_user_config
+    ):
+        """Verify that length mismatch between pending_decodes and decoded_prompts raises.
+
+        This tests the strict=True behavior in zip() that guards against silent data loss.
+        """
+        # Mock parallel_decode to return FEWER results than expected
+        mock_parallel_decode.return_value = ["decoded prompt 1"]  # Only 1, expecting 3
+
+        trace_data = {
+            "session-1": [
+                MooncakeTrace(input_length=100, hash_ids=[1, 2], timestamp=1000),
+            ],
+            "session-2": [
+                MooncakeTrace(input_length=200, hash_ids=[3, 4, 5], timestamp=2000),
+            ],
+            "session-3": [
+                MooncakeTrace(input_length=150, hash_ids=[6], timestamp=3000),
+            ],
+        }
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+
+        # Should raise ValueError due to strict=True in zip
+        with pytest.raises(ValueError, match="zip"):
+            loader.convert_to_conversations(trace_data)
+
+
+# ============================================================================
+# Synthesis Integration Tests
+# ============================================================================
+
+
+def make_synthesis_config(
+    speedup_ratio: float = 1.0,
+    prefix_len_multiplier: float = 1.0,
+    prefix_root_multiplier: int = 1,
+    prompt_len_multiplier: float = 1.0,
+    max_isl: int | None = None,
+    block_size: int = 512,
+) -> UserConfig:
+    """Helper to create UserConfig with synthesis settings."""
+    return UserConfig(
+        endpoint=EndpointConfig(model_names=["test-model"]),
+        input=InputConfig(
+            synthesis=SynthesisConfig(
+                speedup_ratio=speedup_ratio,
+                prefix_len_multiplier=prefix_len_multiplier,
+                prefix_root_multiplier=prefix_root_multiplier,
+                prompt_len_multiplier=prompt_len_multiplier,
+                max_isl=max_isl,
+            ),
+            prompt=PromptConfig(
+                input_tokens=InputTokensConfig(block_size=block_size),
+            ),
+        ),
+    )
+
+
+class TestMooncakeTraceSynthesisIntegration:
+    """Tests for _apply_synthesis integration in MooncakeTraceDatasetLoader."""
+
+    @pytest.fixture
+    def mock_prompt_generator(self):
+        """Create a mock prompt generator for testing."""
+        generator = Mock()
+        generator.generate.return_value = "Generated prompt text"
+        generator._decoded_cache = {}
+        generator._build_token_sequence.return_value = [1, 2, 3, 4, 5]
+        return generator
+
+    @pytest.fixture
+    def sample_trace_data(self) -> dict[str, list[MooncakeTrace]]:
+        """Sample trace data grouped by session."""
+        return {
+            "session-1": [
+                MooncakeTrace(input_length=512, output_length=64, hash_ids=[1, 2]),
+                MooncakeTrace(input_length=768, output_length=128, hash_ids=[1, 2, 3]),
+            ],
+            "session-2": [
+                MooncakeTrace(input_length=1024, output_length=256, hash_ids=[4, 5]),
+            ],
+        }
+
+    # ============================================================================
+    # Basic Functionality
+    # ============================================================================
+
+    def test_synthesis_not_applied_when_disabled(
+        self, mock_prompt_generator, sample_trace_data
+    ):
+        """Test that synthesis is skipped when should_synthesize() returns False."""
+        user_config = make_synthesis_config()  # All defaults, should not synthesize
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+
+        # Directly call _apply_synthesis should still work
+        result = loader._apply_synthesis(sample_trace_data)
+
+        # Should have same structure
+        assert set(result.keys()) == {"session-1", "session-2"}
+        assert len(result["session-1"]) == 2
+        assert len(result["session-2"]) == 1
+
+    def test_synthesis_preserves_session_grouping(
+        self, mock_prompt_generator, sample_trace_data
+    ):
+        """Test that session grouping is preserved through synthesis."""
+        user_config = make_synthesis_config(prefix_len_multiplier=2.0)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+
+        result = loader._apply_synthesis(sample_trace_data)
+
+        assert set(result.keys()) == {"session-1", "session-2"}
+        assert len(result["session-1"]) == 2
+        assert len(result["session-2"]) == 1
+
+    def test_synthesis_returns_mooncake_trace_objects(
+        self, mock_prompt_generator, sample_trace_data
+    ):
+        """Test that synthesis returns MooncakeTrace objects, not dicts."""
+        user_config = make_synthesis_config(speedup_ratio=2.0)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+
+        result = loader._apply_synthesis(sample_trace_data)
+
+        for traces in result.values():
+            for trace in traces:
+                assert isinstance(trace, MooncakeTrace)
+
+    # ============================================================================
+    # Synthesis Parameters
+    # ============================================================================
+
+    def test_speedup_ratio_applied(self, mock_prompt_generator):
+        """Test that speedup_ratio scales timestamps."""
+        data = {
+            "session-1": [
+                MooncakeTrace(input_length=512, output_length=64, timestamp=1000),
+                MooncakeTrace(input_length=512, output_length=64, timestamp=2000),
+            ],
+        }
+        user_config = make_synthesis_config(speedup_ratio=2.0)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+
+        result = loader._apply_synthesis(data)
+
+        assert result["session-1"][0].timestamp == 500
+        assert result["session-1"][1].timestamp == 1000
+
+    def test_prefix_len_multiplier_extends_hash_ids(self, mock_prompt_generator):
+        """Test that prefix_len_multiplier extends hash_ids."""
+        data = {
+            "session-1": [
+                MooncakeTrace(input_length=512, output_length=64, hash_ids=[1, 2]),
+            ],
+        }
+        user_config = make_synthesis_config(prefix_len_multiplier=2.0)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+
+        result = loader._apply_synthesis(data)
+
+        # Hash IDs should be extended
+        assert len(result["session-1"][0].hash_ids) > 2
+
+    def test_max_isl_caps_input_length(self, mock_prompt_generator):
+        """Test that max_isl caps synthesized input_length."""
+        data = {
+            "session-1": [
+                MooncakeTrace(input_length=5000, output_length=64),
+            ],
+        }
+        user_config = make_synthesis_config(max_isl=4096)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+
+        result = loader._apply_synthesis(data)
+
+        assert result["session-1"][0].input_length <= 4096
+
+    @pytest.mark.parametrize(
+        "speedup,input_ts,expected_ts",
+        [
+            (1.0, 1000, 1000),
+            (2.0, 1000, 500),
+            (4.0, 1000, 250),
+            (0.5, 1000, 2000),
+        ],
+    )  # fmt: skip
+    def test_speedup_ratio_variations(
+        self, mock_prompt_generator, speedup, input_ts, expected_ts
+    ):
+        """Parametrized test for various speedup ratios."""
+        data = {
+            "session-1": [
+                MooncakeTrace(input_length=512, output_length=64, timestamp=input_ts),
+            ],
+        }
+        user_config = make_synthesis_config(speedup_ratio=speedup)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+
+        result = loader._apply_synthesis(data)
+
+        assert result["session-1"][0].timestamp == expected_ts
+
+    # ============================================================================
+    # Field Preservation
+    # ============================================================================
+
+    def test_delay_field_preserved(self, mock_prompt_generator):
+        """Test that delay field is preserved through synthesis."""
+        data = {
+            "session-1": [
+                MooncakeTrace(input_length=512, output_length=64, delay=500),
+                MooncakeTrace(input_length=512, output_length=64, delay=1000),
+            ],
+        }
+        user_config = make_synthesis_config(speedup_ratio=2.0)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+
+        result = loader._apply_synthesis(data)
+
+        assert result["session-1"][0].delay == 500
+        assert result["session-1"][1].delay == 1000
+
+    # ============================================================================
+    # Edge Cases
+    # ============================================================================
+
+    def test_empty_input(self, mock_prompt_generator):
+        """Test synthesis with empty input data."""
+        user_config = make_synthesis_config(prefix_len_multiplier=2.0)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+
+        result = loader._apply_synthesis({})
+
+        assert result == {}
+
+    def test_empty_session_preserved(self, mock_prompt_generator):
+        """Test that empty sessions are preserved, not dropped."""
+        data = {
+            "empty-session": [],
+            "non-empty": [
+                MooncakeTrace(input_length=512, output_length=64),
+            ],
+        }
+        user_config = make_synthesis_config(speedup_ratio=2.0)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+
+        result = loader._apply_synthesis(data)
+
+        assert set(result.keys()) == {"empty-session", "non-empty"}
+        assert result["empty-session"] == []
+        assert len(result["non-empty"]) == 1
+
+    def test_block_size_passed_to_synthesis(self, mock_prompt_generator):
+        """Test that user-configured block_size is passed to synthesis."""
+        data = {
+            "session-1": [
+                MooncakeTrace(input_length=512, output_length=64, hash_ids=[1, 2]),
+            ],
+        }
+        # Use non-default block_size (256 instead of default 512)
+        user_config = make_synthesis_config(prefix_len_multiplier=2.0, block_size=256)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+
+        # Verify block_size is set correctly on loader
+        assert loader._block_size == 256
+
+        # Apply synthesis - block_size affects hash_id/input_length calculations
+        result = loader._apply_synthesis(data)
+
+        # With block_size=256 and prefix_len_multiplier=2.0:
+        # Original: 2 hash_ids, input_length=512 (2 full blocks of 256)
+        # Extended: should add more hash_ids based on 256-token blocks
+        assert len(result["session-1"]) == 1
+        trace = result["session-1"][0]
+        assert trace.input_length > 512  # Should be extended
+
+    def test_traces_without_hash_ids(self, mock_prompt_generator):
+        """Test synthesis with traces that have no hash_ids."""
+        data = {
+            "session-1": [
+                MooncakeTrace(input_length=512, output_length=64),
+                MooncakeTrace(input_length=768, output_length=128),
+            ],
+        }
+        user_config = make_synthesis_config(speedup_ratio=2.0)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+
+        result = loader._apply_synthesis(data)
+
+        assert len(result["session-1"]) == 2
+        for trace in result["session-1"]:
+            assert trace.input_length is not None
+            assert trace.output_length is not None
+
+    def test_single_trace_single_session(self, mock_prompt_generator):
+        """Test minimal case: one session, one trace."""
+        data = {
+            "only-session": [
+                MooncakeTrace(input_length=512, output_length=64, hash_ids=[1]),
+            ],
+        }
+        user_config = make_synthesis_config(prefix_len_multiplier=1.5)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+
+        result = loader._apply_synthesis(data)
+
+        assert "only-session" in result
+        assert len(result["only-session"]) == 1
+        assert isinstance(result["only-session"][0], MooncakeTrace)
+
+    # ============================================================================
+    # End-to-End: load_dataset with synthesis
+    # ============================================================================
+
+    def test_load_dataset_applies_synthesis(
+        self, create_jsonl_file, mock_prompt_generator
+    ):
+        """Test that load_dataset applies synthesis when configured."""
+        content = [
+            '{"input_length": 512, "output_length": 64, "hash_ids": [1, 2], "timestamp": 1000}',
+            '{"input_length": 768, "output_length": 128, "hash_ids": [1, 2, 3], "timestamp": 2000}',
+        ]
+        filename = create_jsonl_file(content)
+
+        user_config = make_synthesis_config(speedup_ratio=2.0)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename=filename,
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        dataset = loader.load_dataset()
+
+        # Timestamps should be scaled by speedup_ratio
+        traces = list(dataset.values())
+        assert traces[0][0].timestamp == 500
+        assert traces[1][0].timestamp == 1000
+
+    def test_load_dataset_skips_synthesis_when_disabled(
+        self, create_jsonl_file, mock_prompt_generator
+    ):
+        """Test that load_dataset skips synthesis when not configured."""
+        content = [
+            '{"input_length": 512, "output_length": 64, "timestamp": 1000}',
+        ]
+        filename = create_jsonl_file(content)
+
+        # Default config - synthesis disabled
+        user_config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+
+        loader = MooncakeTraceDatasetLoader(
+            filename=filename,
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        dataset = loader.load_dataset()
+
+        # Timestamp should be unchanged
+        traces = list(dataset.values())
+        assert traces[0][0].timestamp == 1000

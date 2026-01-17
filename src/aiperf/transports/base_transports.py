@@ -1,15 +1,37 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
+import importlib.metadata as importlib_metadata
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from aiperf.common.mixins import AIPerfLifecycleMixin
-from aiperf.common.models import RequestInfo, RequestRecord, TransportMetadata
+from aiperf.common.models import (
+    RequestInfo,
+    RequestRecord,
+    SSEMessage,
+    TransportMetadata,
+)
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.types import RequestInputT
+
+FirstTokenCallback = Callable[[int, SSEMessage], Awaitable[bool]]
+"""
+Type alias for a callback that is called with the ttft_ns and the first SSE message:
+
+Args:
+    ttft_ns: duration from request start
+    message: the first SSE message
+
+Returns:
+    True if this is meaningful content (stop looking for first token), False otherwise
+
+This callback is used to determine if the first token has been received and can be released.
+It is used to release prefill concurrency.
+"""
 
 
 class BaseTransport(AIPerfLifecycleMixin, ABC):
@@ -20,7 +42,11 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
 
     def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.model_endpoint = model_endpoint
+        self.model_endpoint: ModelEndpointInfo = model_endpoint
+        self.user_agent: str = f"aiperf/{importlib_metadata.version('aiperf')}"
+        self.base_headers: dict[str, str] = {
+            "User-Agent": self.user_agent,
+        }
 
     @classmethod
     @abstractmethod
@@ -59,7 +85,7 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
         Returns:
             Complete header dictionary for request
         """
-        headers: dict[str, str] = {"User-Agent": "aiperf/1.0"}
+        headers: dict[str, str] = self.base_headers.copy()
 
         if request_info.x_request_id:
             headers["X-Request-ID"] = request_info.x_request_id
@@ -115,13 +141,18 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
 
     @abstractmethod
     async def send_request(
-        self, request_info: RequestInfo, payload: RequestInputT
+        self,
+        request_info: RequestInfo,
+        payload: RequestInputT,
+        *,
+        first_token_callback: FirstTokenCallback | None = None,
     ) -> RequestRecord:
         """Execute request via this transport protocol.
 
         Args:
             request_info: Request context and metadata
             payload: Request payload (format depends on transport)
+            first_token_callback: Optional callback fired on first SSE message with ttft_ns
 
         Returns:
             Record containing responses, timing, and any errors

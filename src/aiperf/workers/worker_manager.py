@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import multiprocessing
 import time
@@ -13,9 +13,8 @@ from aiperf.common.enums import MessageType, ServiceType
 from aiperf.common.enums.worker_enums import WorkerStatus
 from aiperf.common.environment import Environment
 from aiperf.common.factories import ServiceFactory
-from aiperf.common.hooks import background_task, on_message, on_start, on_stop
+from aiperf.common.hooks import background_task, on_message, on_start
 from aiperf.common.messages import (
-    ShutdownWorkersCommand,
     SpawnWorkersCommand,
     WorkerHealthMessage,
 )
@@ -108,19 +107,6 @@ class WorkerManager(BaseComponentService):
             )
         )
         self.debug("WorkerManager started")
-
-    @on_stop
-    async def _stop(self) -> None:
-        self.debug("WorkerManager stopping")
-
-        await self.publish(
-            ShutdownWorkersCommand(
-                service_id=self.service_id,
-                all_workers=True,
-                # Target the system controller directly to avoid broadcasting to all services.
-                target_service_type=ServiceType.SYSTEM_CONTROLLER,
-            )
-        )
 
     @on_message(MessageType.WORKER_HEALTH)
     async def _on_worker_health(self, message: WorkerHealthMessage) -> None:

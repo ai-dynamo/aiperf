@@ -1,10 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from unittest.mock import Mock, mock_open, patch
 
 import pytest
 
+from aiperf.common.config import SynthesisConfig
 from aiperf.common.enums import CustomDatasetType, DatasetSamplingStrategy
 from aiperf.common.models import Conversation, Turn
 from aiperf.dataset import (
@@ -63,10 +64,14 @@ class TestCoreFunctionality:
         composer._create_loader_instance(dataset_type)
         assert isinstance(composer.loader, expected_instance)
 
+    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
-    def test_create_dataset_trace(self, mock_check_file, trace_config, mock_tokenizer):
+    def test_create_dataset_trace(
+        self, mock_check_file, mock_parallel_decode, trace_config, mock_tokenizer
+    ):
         """Test that create_dataset returns correct type."""
+        mock_parallel_decode.return_value = ["decoded 1", "decoded 2", "decoded 3"]
         composer = CustomDatasetComposer(trace_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
@@ -75,9 +80,13 @@ class TestCoreFunctionality:
         assert all(isinstance(turn, Turn) for c in conversations for turn in c.turns)
         assert all(len(turn.texts) == 1 for c in conversations for turn in c.turns)
 
+    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
-    def test_max_tokens_config(self, mock_check_file, trace_config, mock_tokenizer):
+    def test_max_tokens_config(
+        self, mock_check_file, mock_parallel_decode, trace_config, mock_tokenizer
+    ):
+        mock_parallel_decode.return_value = ["decoded 1", "decoded 2", "decoded 3"]
         trace_config.input.prompt.output_tokens.mean = 120
         trace_config.input.prompt.output_tokens.stddev = 8.0
 
@@ -95,13 +104,20 @@ class TestCoreFunctionality:
                 # Should be roughly around the mean of 120 (within 3 stddev)
                 assert 96 < turn.max_tokens < 144
 
+    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
     @patch("pathlib.Path.iterdir", return_value=[])
     def test_max_tokens_mooncake(
-        self, mock_iterdir, mock_check_file, custom_config, mock_tokenizer
+        self,
+        mock_iterdir,
+        mock_check_file,
+        mock_parallel_decode,
+        custom_config,
+        mock_tokenizer,
     ):
         """Test that max_tokens can be set from the custom file"""
+        mock_parallel_decode.return_value = ["decoded 1", "decoded 2", "decoded 3"]
         mock_check_file.return_value = None
         custom_config.input.custom_dataset_type = CustomDatasetType.MOONCAKE_TRACE
 
@@ -178,3 +194,79 @@ class TestSamplingStrategy:
         composer._set_sampling_strategy(dataset_type)
 
         assert composer.config.input.dataset_sampling_strategy == explicit_strategy
+
+
+class TestSynthesisValidation:
+    """Test class for synthesis configuration validation."""
+
+    def test_synthesis_allowed_with_mooncake_trace(self, trace_config, mock_tokenizer):
+        """Test that synthesis options are allowed with mooncake_trace dataset type."""
+        trace_config.input.synthesis = SynthesisConfig(speedup_ratio=2.0)
+        composer = CustomDatasetComposer(trace_config, mock_tokenizer)
+
+        # Should not raise
+        composer._validate_synthesis_config(CustomDatasetType.MOONCAKE_TRACE)
+
+    @pytest.mark.parametrize(
+        "dataset_type",
+        [
+            CustomDatasetType.SINGLE_TURN,
+            CustomDatasetType.MULTI_TURN,
+            CustomDatasetType.RANDOM_POOL,
+        ],
+    )
+    def test_synthesis_raises_error_with_non_mooncake_types(
+        self, custom_config, mock_tokenizer, dataset_type
+    ):
+        """Test that synthesis options raise error with non-mooncake dataset types."""
+        custom_config.input.synthesis = SynthesisConfig(speedup_ratio=2.0)
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+
+        with pytest.raises(ValueError) as exc:
+            composer._validate_synthesis_config(dataset_type)
+
+        assert "only supported with mooncake_trace" in str(exc.value)
+        assert dataset_type.value in str(exc.value)
+
+    @pytest.mark.parametrize(
+        "synthesis_config",
+        [
+            SynthesisConfig(speedup_ratio=2.0),
+            SynthesisConfig(prefix_len_multiplier=2.0),
+            SynthesisConfig(prefix_root_multiplier=2),
+            SynthesisConfig(prompt_len_multiplier=2.0),
+        ],
+    )
+    def test_various_synthesis_options_raise_error(
+        self, custom_config, mock_tokenizer, synthesis_config
+    ):
+        """Test that various synthesis options all trigger validation error."""
+        custom_config.input.synthesis = synthesis_config
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+
+        with pytest.raises(ValueError) as exc:
+            composer._validate_synthesis_config(CustomDatasetType.SINGLE_TURN)
+
+        assert "only supported with mooncake_trace" in str(exc.value)
+
+    def test_default_synthesis_allowed_with_any_type(
+        self, custom_config, mock_tokenizer
+    ):
+        """Test that default synthesis config (no changes) is allowed with any type."""
+        custom_config.input.synthesis = SynthesisConfig()  # All defaults
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+
+        # Should not raise for any type
+        for dataset_type in CustomDatasetType:
+            composer._validate_synthesis_config(dataset_type)
+
+    def test_max_isl_alone_allowed_with_any_type(self, custom_config, mock_tokenizer):
+        """Test that max_isl alone doesn't trigger synthesis validation.
+
+        max_isl is a filter, not a synthesis transformation.
+        """
+        custom_config.input.synthesis = SynthesisConfig(max_isl=4096)
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+
+        # Should not raise - max_isl doesn't trigger should_synthesize()
+        composer._validate_synthesis_config(CustomDatasetType.SINGLE_TURN)

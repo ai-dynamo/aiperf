@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Utility functions for the AIPerf Mock Server."""
 
@@ -11,10 +11,13 @@ from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from functools import wraps
 from time import perf_counter
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import orjson
 from aiperf_mock_server.config import server_config
+
+if TYPE_CHECKING:
+    from aiperf_mock_server.config import MockServerConfig
 from aiperf_mock_server.metrics_utils import (
     record_itl,
     record_streamed_token,
@@ -26,8 +29,10 @@ from aiperf_mock_server.models import (
     CompletionRequest,
     EmbeddingRequest,
     HFTEIRerankRequest,
+    ImageGenerationRequest,
     RankingRequest,
     RequestT,
+    SolidoRAGRequest,
     TGIGenerateRequest,
 )
 from aiperf_mock_server.tokens import TokenizedText, tokenize_request
@@ -80,9 +85,11 @@ class LatencySimulator:
         endpoint: str,
         model: str,
         start_time: float,
+        config: "MockServerConfig | None" = None,
     ) -> None:
-        self.ttft_sec = server_config.ttft * 0.001
-        self.itl_sec = server_config.itl * 0.001
+        cfg = config or server_config
+        self.ttft_sec = cfg.ttft * 0.001
+        self.itl_sec = cfg.itl * 0.001
         self.start_time = start_time
         self.token_index = 0
         self.last_token_time: float | None = None
@@ -169,8 +176,20 @@ class RequestCtx:
         return self.tokenized.reasoning_content_tokens
 
 
-def make_ctx(request: RequestT, endpoint: str, start_time: float) -> RequestCtx:
-    """Create request context with all fields directly accessible."""
+def make_ctx(
+    request: RequestT,
+    endpoint: str,
+    start_time: float,
+    config: "MockServerConfig | None" = None,
+) -> RequestCtx:
+    """Create request context with all fields directly accessible.
+
+    Args:
+        request: The parsed request object.
+        endpoint: The endpoint path string.
+        start_time: Request start time from perf_counter().
+        config: Optional MockServerConfig for test isolation. Falls back to global config.
+    """
     model = getattr(request, "model", "unknown")
     tokenized = tokenize_request(request)
 
@@ -179,7 +198,7 @@ def make_ctx(request: RequestT, endpoint: str, start_time: float) -> RequestCtx:
         model=model,
         tokenized=tokenized,
         usage=tokenized.create_usage(),
-        latency_sim=LatencySimulator(endpoint, model, start_time),
+        latency_sim=LatencySimulator(endpoint, model, start_time, config),
     )
 
 
@@ -194,6 +213,10 @@ def _create_request_id(request: RequestT) -> str:
             return f"emb-{uuid.uuid4()}"
         case RankingRequest() | HFTEIRerankRequest() | CohereRerankRequest():
             return f"rank-{uuid.uuid4()}"
+        case ImageGenerationRequest():
+            return f"img-{uuid.uuid4()}"
+        case SolidoRAGRequest():
+            return f"rag-{uuid.uuid4()}"
         case _:
             raise ValueError(f"Invalid request type: {type(request)}")
 
@@ -315,3 +338,28 @@ async def stream_text_completion(
         )
 
     yield _SSE_DONE
+
+
+async def stream_tgi_completion(
+    ctx: RequestCtx, endpoint: str, _include_usage: bool = False
+) -> AsyncGenerator[bytes, None]:
+    """Stream TGI tokens as SSE chunks (include_usage ignored - TGI doesn't support it)."""
+    num_tokens = len(ctx.tokens)
+
+    for i, token_text in enumerate(ctx.tokens):
+        await ctx.latency_sim.wait_for_next_token()
+        record_streamed_token(endpoint, ctx.model)
+
+        chunk: dict[str, Any] = {
+            "index": i,
+            "token": {
+                "id": i,
+                "text": token_text,
+                "logprob": -0.1,
+                "special": False,
+            },
+        }
+        if i == num_tokens - 1:
+            chunk["generated_text"] = ctx.content
+
+        yield _sse(chunk)

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
@@ -6,7 +6,6 @@ import pytest
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import Text, Turn
 from aiperf.common.models.record_models import (
-    RequestInfo,
     TextResponseData,
 )
 from aiperf.endpoints.solido_rag import SolidoEndpoint
@@ -68,7 +67,7 @@ class TestSolidoEndpointFormatPayload:
             ],
             model="solido-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -80,7 +79,7 @@ class TestSolidoEndpointFormatPayload:
             texts=[Text(contents=["Valid query", "", "Another query"])],
             model="solido-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -101,7 +100,7 @@ class TestSolidoEndpointFormatPayload:
             texts=[Text(contents=["Test query"])],
             model=turn_model,
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -160,7 +159,7 @@ class TestSolidoEndpointFormatPayload:
 
     def test_format_payload_no_turns_raises_error(self, endpoint, model_endpoint):
         """Test that missing turns raises ValueError."""
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
 
         with pytest.raises(
             ValueError, match="SOLIDO endpoint requires at least one turn"
@@ -172,7 +171,7 @@ class TestSolidoEndpointFormatPayload:
         turn1 = Turn(texts=[Text(contents=["First"])], model="model1")
         turn2 = Turn(texts=[Text(contents=["Second"])], model="model2")
 
-        request_info = RequestInfo(
+        request_info = create_request_info(
             model_endpoint=model_endpoint,
             turns=[turn1, turn2],
         )

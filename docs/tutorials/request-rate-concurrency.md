@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
@@ -17,15 +17,15 @@ Combining `--request-rate` with `--concurrency` gives you precise control over b
 
 When both parameters are specified, AIPerf uses a **sleep-then-gate** pattern for each request:
 
-1. **Sleep** — wait according to request rate timing (Poisson or constant intervals)
-2. **Acquire semaphore** — block if currently at max concurrency
-3. **Issue request** — send to server
+1. **Sleep** — wait according to request rate timing (based on arrival pattern)
+2. **Check concurrency** — attempt to acquire a semaphore slot
+3. **Issue request** — send to server if slot acquired
 4. **On completion** — release semaphore slot for next request
 
 The sleep controls **when** requests attempt to launch (the rate), while the semaphore controls **whether** they can proceed (the concurrency ceiling).
 
 > [!IMPORTANT]
-> **No catch-up behavior**: When blocked at max concurrency, the inter-arrival schedule pauses. The system does not attempt to "catch up" by issuing requests faster once slots free up. Hitting the concurrency limit proportionally delays the entire schedule.
+> **No catch-up behavior**: When the concurrency limit is reached, the system does not attempt to "catch up" by issuing requests faster once slots free up. The schedule continues at the configured rate.
 
 > [!TIP]
 > **Sustaining max concurrency**: If your request rate is faster than your server's average response time, the system will naturally reach and sustain max concurrency. For example, at 100 req/s with 1 second average response time, new requests arrive every 10ms but each takes 1 second to complete—so slots are always waiting to be filled, keeping the system at the concurrency ceiling. Conversely, if the request rate is slower than response time, slots free up faster than new requests arrive, so concurrency may never reach the maximum.
@@ -39,14 +39,18 @@ The sleep controls **when** requests attempt to launch (the rate), while the sem
 > | 50          | 50 req/s     | ~1.0 second  |
 > | 100         | 20 req/s     | ~5.0 seconds |
 
-## Choosing Your Request Rate Mode
+## Choosing Your Arrival Pattern
 
-The sleep intervals in step 1 are determined by your chosen request rate mode. AIPerf supports two distribution patterns:
+The sleep intervals in step 1 are determined by your chosen arrival pattern (`--arrival-pattern` or `--request-rate-mode`). AIPerf supports four distribution patterns:
 
 > [!TIP]
 > **`poisson` (default)** — Uses exponentially-distributed inter-arrival times to mimic natural traffic with randomized spacing. Ideal for realistic load testing and capacity planning. Add `--random-seed` for reproducible random patterns.
 >
 > **`constant`** — Requests arrive at precisely evenly-spaced intervals for deterministic, predictable load. Ideal for reproducible benchmarks and regression testing.
+>
+> **`gamma`** — Uses gamma-distributed inter-arrival times with tunable smoothness via `--arrival-smoothness`. Values <1.0 create bursty traffic, >1.0 creates smoother traffic, and 1.0 is equivalent to Poisson. Compatible with vLLM's `--burstiness` parameter.
+>
+> **`concurrency_burst`** — Issues requests as fast as possible (zero interval), useful for stress testing or when concurrency is the only rate limiter. Often used internally for warmup phases.
 
 ## Setting Up the Server
 
@@ -137,15 +141,20 @@ Simulate organic user behavior with natural variance in request timing. The Pois
 **Key Parameters:**
 - `--request-rate <number>` — Target requests per second
 - `--concurrency <number>` — Maximum concurrent requests (acts as ceiling)
-- `--request-rate-mode <poisson|constant>` — Request timing distribution (default: `poisson`)
-- `--random-seed <number>` — Makes Poisson mode reproducible
+- `--arrival-pattern <pattern>` — Request timing distribution (default: `poisson`)
+  - Options: `poisson`, `constant`, `gamma`, `concurrency_burst`
+- `--arrival-smoothness <number>` — Smoothness for gamma distribution (default: 1.0)
+- `--random-seed <number>` — Makes random patterns reproducible
 
 **Behavior:**
-- Sleep-then-gate pattern: sleep based on rate, then wait for semaphore slot (max concurrency)
-- No catch-up: blocked requests pause the schedule
+- Sleep-then-gate pattern: sleep based on rate, then acquire concurrency slot
+- Continuation turns block on concurrency; new sessions skip if no slot available
+- No catch-up: the schedule continues at the configured rate regardless of blocking
 - Sustained concurrency: achieved when request rate exceeds server response time
 
-**Choosing a mode:**
+**Choosing a pattern:**
 - Use `poisson` for realistic traffic simulation with natural variance
 - Use `constant` for reproducible benchmarks with predictable timing
-- Add `--random-seed` to `poisson` for reproducible randomness
+- Use `gamma` with `--arrival-smoothness` for tunable burstiness
+- Use `concurrency_burst` for maximum throughput stress tests
+- Add `--random-seed` for reproducible random patterns

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
@@ -44,7 +44,6 @@ class TestRealtimeTelemetryMetricsMixin:
         """Test that mixin initializes with correct attributes."""
         assert hasattr(mocked_mixin, "_controller")
         assert hasattr(mocked_mixin, "_telemetry_metrics")
-        assert hasattr(mocked_mixin, "_telemetry_metrics_lock")
         assert mocked_mixin._telemetry_metrics == []
 
     @pytest.mark.asyncio
@@ -124,37 +123,32 @@ class TestRealtimeTelemetryMetricsMixin:
         mocked_mixin.run_hooks.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_concurrent_access_with_lock(self, mocked_mixin):
-        """Test that the lock protects concurrent access to telemetry metrics."""
+    async def test_concurrent_updates_are_atomic(self, mocked_mixin):
+        """Test that concurrent updates replace metrics atomically (lock-free design)."""
+        update_count = 0
 
-        # Track lock acquisition order
-        lock_acquired_order = []
-
-        async def acquire_lock_and_update(metrics_value, delay):
+        async def update_metrics(metrics_value):
             """Helper to simulate concurrent updates."""
-            async with mocked_mixin._telemetry_metrics_lock:
-                lock_acquired_order.append(metrics_value)
-                await asyncio.sleep(delay)
-                mocked_mixin._telemetry_metrics = [
-                    MetricResult(
-                        tag=f"metric_{metrics_value}",
-                        header=f"Metric {metrics_value}",
-                        unit="ms",
-                        avg=float(metrics_value),
-                    )
-                ]
+            nonlocal update_count
+            mocked_mixin._telemetry_metrics = [
+                MetricResult(
+                    tag=f"metric_{metrics_value}",
+                    header=f"Metric {metrics_value}",
+                    unit="ms",
+                    avg=float(metrics_value),
+                )
+            ]
+            update_count += 1
 
         # Start two concurrent operations
-        await asyncio.gather(
-            acquire_lock_and_update(1, 0.01), acquire_lock_and_update(2, 0.005)
-        )
+        await asyncio.gather(update_metrics(1), update_metrics(2))
 
-        # Both should have acquired the lock (order doesn't matter for this test)
-        assert len(lock_acquired_order) == 2
-        assert set(lock_acquired_order) == {1, 2}
+        # Both updates should have completed
+        assert update_count == 2
 
-        # Final value should be from the last completed operation
+        # Final value should be from one of the operations (atomic replacement)
         assert len(mocked_mixin._telemetry_metrics) == 1
+        assert mocked_mixin._telemetry_metrics[0].tag in ("metric_1", "metric_2")
 
     @pytest.mark.asyncio
     async def test_multiple_metrics_handling(self, mocked_mixin):
