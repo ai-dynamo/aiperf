@@ -201,12 +201,13 @@ Metrics specific to streaming requests that measure real-time token generation c
 
 | Metric | Tag | Formula | Unit |
 |--------|-----|---------|------|
-| [**Time to First Token (TTFT)**](docs/metrics_reference.md#time-to-first-token-ttft) | `ttft` | `responses[0].perf_ns - request.start_perf_ns` | `ms` |
-| [**Time to Second Token (TTST)**](docs/metrics_reference.md#time-to-second-token-ttst) | `ttst` | `responses[1].perf_ns - responses[0].perf_ns` | `ms` |
-| [**Inter Token Latency (ITL)**](docs/metrics_reference.md#inter-token-latency-itl) | `inter_token_latency` | `(request_latency - ttft) / (output_sequence_length - 1)` | `ms` |
-| [**Inter Chunk Latency (ICL)**](docs/metrics_reference.md#inter-chunk-latency-icl) | `inter_chunk_latency` | `[responses[i].perf_ns - responses[i-1].perf_ns for i in range(1, len(responses))]` | `ms` |
+| [**Time to First Token (TTFT)**](docs/metrics_reference.md#time-to-first-token-ttft) | `time_to_first_token` | `content_responses[0].perf_ns - request.start_perf_ns` | `ms` |
+| [**Time to Second Token (TTST)**](docs/metrics_reference.md#time-to-second-token-ttst) | `time_to_second_token` | `content_responses[1].perf_ns - content_responses[0].perf_ns` | `ms` |
+| [**Inter Token Latency (ITL)**](docs/metrics_reference.md#inter-token-latency-itl) | `inter_token_latency` | `(request_latency - time_to_first_token) / (output_sequence_length - 1)` | `ms` |
+| [**Inter Chunk Latency (ICL)**](docs/metrics_reference.md#inter-chunk-latency-icl) | `inter_chunk_latency` | `[content_responses[i].perf_ns - content_responses[i-1].perf_ns for i in range(1, len(content_responses))]` | `ms` |
 | [**Output Token Throughput Per User**](docs/metrics_reference.md#output-token-throughput-per-user) | `output_token_throughput_per_user` | `1.0 / inter_token_latency_seconds` | `tokens/sec/user` |
-| [**Prefill Throughput**](docs/metrics_reference.md#prefill-throughput) | `prefill_throughput` | `input_sequence_length / ttft_seconds` | `tokens/sec` |
+| [**Time to First Output Token (TTFO)**](docs/metrics_reference.md#time-to-first-output-token-ttfo) | `time_to_first_output_token` | `first_non_reasoning_token_perf_ns - request.start_perf_ns` | `ms` |
+| [**Prefill Throughput Per User**](docs/metrics_reference.md#prefill-throughput-per-user) | `prefill_throughput_per_user` | `input_sequence_length / time_to_first_token_seconds` | `tokens/sec/user` |
 
 ### Token Based Metrics
 
@@ -221,6 +222,16 @@ Metrics for token-producing endpoints that track token counts and throughput. Re
 | [**Total Output Sequence Length**](docs/metrics_reference.md#total-output-sequence-length) | `total_osl` | `sum(r.output_sequence_length for r in records if r.valid)` | `tokens` |
 | [**Total Input Sequence Length**](docs/metrics_reference.md#total-input-sequence-length) | `total_isl` | `sum(r.input_sequence_length for r in records if r.valid)` | `tokens` |
 | [**Output Token Throughput**](docs/metrics_reference.md#output-token-throughput) | `output_token_throughput` | `total_osl / benchmark_duration_seconds` | `tokens/sec` |
+| [**Total Token Throughput**](docs/metrics_reference.md#total-token-throughput) | `total_token_throughput` | `(total_isl + total_osl) / benchmark_duration_seconds` | `tokens/sec` |
+
+### Image Metrics
+
+Metrics for image processing endpoints. Requires image-capable endpoints.
+
+| Metric | Tag | Formula | Unit |
+|--------|-----|---------|------|
+| [**Image Throughput**](docs/metrics_reference.md#image-throughput) | `image_throughput` | `num_images / request_latency_seconds` | `images/sec` |
+| [**Image Latency**](docs/metrics_reference.md#image-latency) | `image_latency` | `request_latency_ms / num_images` | `ms/image` |
 
 ### Reasoning Metrics
 
@@ -281,12 +292,31 @@ Metrics available for all benchmark runs with no special requirements.
 
 | Metric | Tag | Formula | Unit |
 |--------|-----|---------|------|
-| [**Request Latency**](docs/metrics_reference.md#request-latency) | `request_latency` | `responses[-1].perf_ns - request.start_perf_ns` | `ms` |
+| [**Request Latency**](docs/metrics_reference.md#request-latency) | `request_latency` | `content_responses[-1].perf_ns - request.start_perf_ns` | `ms` |
 | [**Request Throughput**](docs/metrics_reference.md#request-throughput) | `request_throughput` | `request_count / benchmark_duration_seconds` | `requests/sec` |
 | [**Request Count**](docs/metrics_reference.md#request-count) | `request_count` | `sum(1 for r in records if r.valid)` | `requests` |
 | [**Minimum Request Timestamp**](docs/metrics_reference.md#minimum-request-timestamp) | `min_request_timestamp` | `min(r.timestamp_ns for r in records)` | `datetime` |
 | [**Maximum Response Timestamp**](docs/metrics_reference.md#maximum-response-timestamp) | `max_response_timestamp` | `max(r.timestamp_ns + r.request_latency for r in records)` | `datetime` |
 | [**Benchmark Duration**](docs/metrics_reference.md#benchmark-duration) | `benchmark_duration` | `max_response_timestamp - min_request_timestamp` | `sec` |
+
+### HTTP Trace Metrics
+
+Low-level HTTP timing metrics following k6 and HAR conventions. Requires HTTP trace data collection enabled.
+
+| Metric | Tag | Formula | Unit |
+|--------|-----|---------|------|
+| [**HTTP Request Blocked**](docs/metrics_reference.md#http-request-blocked) | `http_req_blocked` | `connection_pool_wait_end_perf_ns - connection_pool_wait_start_perf_ns` | `ms` |
+| [**HTTP Request DNS Lookup**](docs/metrics_reference.md#http-request-dns-lookup) | `http_req_dns_lookup` | `dns_lookup_end_perf_ns - dns_lookup_start_perf_ns` | `ms` |
+| [**HTTP Request Connecting**](docs/metrics_reference.md#http-request-connecting) | `http_req_connecting` | `tcp_connect_end_perf_ns - tcp_connect_start_perf_ns` | `ms` |
+| [**HTTP Request Sending**](docs/metrics_reference.md#http-request-sending) | `http_req_sending` | `request_send_end_perf_ns - request_send_start_perf_ns` | `ms` |
+| [**HTTP Request Waiting**](docs/metrics_reference.md#http-request-waiting) | `http_req_waiting` | `response_chunks[0][0] - request_send_end_perf_ns` | `ms` |
+| [**HTTP Request Receiving**](docs/metrics_reference.md#http-request-receiving) | `http_req_receiving` | `response_chunks[-1][0] - response_chunks[0][0]` | `ms` |
+| [**HTTP Request Duration**](docs/metrics_reference.md#http-request-duration) | `http_req_duration` | `response_receive_end_perf_ns - request_send_start_perf_ns` | `ms` |
+| [**HTTP Request Connection Overhead**](docs/metrics_reference.md#http-request-connection-overhead) | `http_req_connection_overhead` | `http_req_blocked + http_req_dns_lookup + http_req_connecting` | `ms` |
+| [**HTTP Request Total**](docs/metrics_reference.md#http-request-total) | `http_req_total` | `http_req_blocked + http_req_dns_lookup + http_req_connecting + http_req_sending + http_req_waiting + http_req_receiving` | `ms` |
+| [**HTTP Request Data Sent**](docs/metrics_reference.md#http-request-data-sent) | `http_req_data_sent` | `sum(size for _, size in request_chunks)` | `bytes` |
+| [**HTTP Request Data Received**](docs/metrics_reference.md#http-request-data-received) | `http_req_data_received` | `sum(size for _, size in response_chunks)` | `bytes` |
+| [**HTTP Request Connection Reused**](docs/metrics_reference.md#http-request-connection-reused) | `http_req_connection_reused` | `1 if connection_reused_perf_ns is not None else 0` | `boolean` |
 
 </br>
 

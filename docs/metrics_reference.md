@@ -1,5 +1,5 @@
 <!--
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 -->
 # AIPerf Metrics Reference
@@ -17,10 +17,11 @@ This document provides a comprehensive reference of all metrics available in AIP
   - [Streaming Metrics](#streaming-metrics)
     - [Time to First Token (TTFT)](#time-to-first-token-ttft)
     - [Time to Second Token (TTST)](#time-to-second-token-ttst)
+    - [Time to First Output Token (TTFO)](#time-to-first-output-token-ttfo)
     - [Inter Token Latency (ITL)](#inter-token-latency-itl)
     - [Inter Chunk Latency (ICL)](#inter-chunk-latency-icl)
     - [Output Token Throughput Per User](#output-token-throughput-per-user)
-    - [Prefill Throughput](#prefill-throughput)
+    - [Prefill Throughput Per User](#prefill-throughput-per-user)
   - [Token Based Metrics](#token-based-metrics)
     - [Output Token Count](#output-token-count)
     - [Output Sequence Length (OSL)](#output-sequence-length-osl)
@@ -29,6 +30,10 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Total Output Sequence Length](#total-output-sequence-length)
     - [Total Input Sequence Length](#total-input-sequence-length)
     - [Output Token Throughput](#output-token-throughput)
+    - [Total Token Throughput](#total-token-throughput)
+  - [Image Metrics](#image-metrics)
+    - [Image Throughput](#image-throughput)
+    - [Image Latency](#image-latency)
   - [Reasoning Metrics](#reasoning-metrics)
     - [Reasoning Token Count](#reasoning-token-count)
     - [Total Reasoning Tokens](#total-reasoning-tokens)
@@ -59,6 +64,19 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Minimum Request Timestamp](#minimum-request-timestamp)
     - [Maximum Response Timestamp](#maximum-response-timestamp)
     - [Benchmark Duration](#benchmark-duration)
+  - [HTTP Trace Metrics](#http-trace-metrics)
+    - [HTTP Blocked](#http-blocked)
+    - [HTTP DNS Lookup](#http-dns-lookup)
+    - [HTTP Connecting](#http-connecting)
+    - [HTTP Sending](#http-sending)
+    - [HTTP Waiting (TTFB)](#http-waiting-ttfb)
+    - [HTTP Receiving](#http-receiving)
+    - [HTTP Duration](#http-duration)
+    - [HTTP Connection Overhead](#http-connection-overhead)
+    - [HTTP Total Time](#http-total-time)
+    - [HTTP Data Sent](#http-data-sent)
+    - [HTTP Data Received](#http-data-received)
+    - [HTTP Connection Reused](#http-connection-reused)
 - [Metric Flags Reference](#metric-flags-reference)
 
 ---
@@ -80,7 +98,7 @@ AIPerf computes metrics in three distinct phases during benchmark execution: **R
 Record Metrics are computed **individually** for **each request** and its **response(s)** during the benchmark run. A single request may have one response (non-streaming) or multiple responses (streaming). These metrics capture **per-request characteristics** such as latency, token counts, and streaming behavior. Record metrics produce **statistical distributions** (min, max, mean, median, p90, p99, etc.) that reveal performance variability across requests.
 
 ### Example Metrics
-`request_latency`, `ttft`, `inter_token_latency`, `output_token_count`, `input_sequence_length`
+`request_latency`, `time_to_first_token`, `inter_token_latency`, `output_token_count`, `input_sequence_length`
 
 ### Dependencies
 Record Metrics can depend on raw request/response data and other Record Metrics from the same request.
@@ -133,7 +151,7 @@ Measures how long it takes to receive the first token (or chunk of tokens) after
 **Formula:**
 ```python
 # nanoseconds
-ttft_ns = request.responses[0].perf_ns - request.start_perf_ns
+ttft_ns = request.content_responses[0].perf_ns - request.start_perf_ns
 
 # Convert to milliseconds for display
 ttft_ms = ttft_ns / 1e6
@@ -158,7 +176,7 @@ Measures the time gap between the first and second chunk of tokens. This metric 
 **Formula:**
 ```python
 # nanoseconds
-ttst_ns = request.responses[1].perf_ns - request.responses[0].perf_ns
+ttst_ns = request.content_responses[1].perf_ns - request.content_responses[0].perf_ns
 
 # Convert to milliseconds for display
 ttst_ms = ttst_ns / 1e6
@@ -167,6 +185,30 @@ ttst_ms = ttst_ns / 1e6
 **Notes:**
 - Requires at least 2 non-empty response chunks to compute the time between first and second tokens.
 - Raw timestamps are in nanoseconds; converted to milliseconds for display.
+
+---
+
+### Time to First Output Token (TTFO)
+
+**Type:** [Record Metric](#record-metrics)
+
+Calculates the time elapsed from request start to the first non-reasoning output token. This metric measures the latency from when a request is initiated to when the first actual output token (non-reasoning content) is received. It is particularly relevant for models that perform extended reasoning before generating output.
+
+**Formula:**
+```python
+# nanoseconds
+# First non-reasoning token: TextResponseData with non-empty text, or
+# ReasoningResponseData with non-empty content field
+ttfo_ns = first_non_reasoning_token_perf_ns - request.start_perf_ns
+
+# Convert to milliseconds for display
+ttfo_ms = ttfo_ns / 1e6
+```
+
+**Notes:**
+- TTFO vs TTFT: Time to First Output (TTFO) measures time to the first non-reasoning token, while Time to First Token (TTFT) measures time to any first token including reasoning tokens. For models without reasoning, TTFO and TTFT are equivalent.
+- Non-reasoning tokens include TextResponseData with non-empty text, or ReasoningResponseData with non-empty content field (regardless of reasoning field).
+- Requires at least one non-empty non-reasoning response chunk.
 
 ---
 
@@ -179,7 +221,7 @@ Measures the average time between consecutive tokens during generation, excludin
 **Formula:**
 ```python
 # Calculate in nanoseconds, then convert to seconds
-inter_token_latency_ns = (request_latency_ns - ttft_ns) / (output_sequence_length - 1)
+inter_token_latency_ns = (request_latency_ns - time_to_first_token_ns) / (output_sequence_length - 1)
 
 # Convert to seconds for throughput calculations
 inter_token_latency_seconds = inter_token_latency_ns / 1e9
@@ -189,7 +231,7 @@ inter_token_latency_ms = inter_token_latency_ns / 1e6
 ```
 
 **Notes:**
-- Requires at least 2 non-empty response chunks and valid `ttft`, `request_latency`, and `output_sequence_length` metrics.
+- Requires at least 2 non-empty response chunks and valid `time_to_first_token`, `request_latency`, and `output_sequence_length` metrics.
 - Result is in seconds when used for throughput calculations (Output Token Throughput Per User).
 
 ---
@@ -202,7 +244,7 @@ Captures the time gaps between all consecutive response chunks in a streaming re
 
 **Formula:**
 ```python
-inter_chunk_latency = [request.responses[i].perf_ns - request.responses[i-1].perf_ns for i in range(1, len(request.responses))]
+inter_chunk_latency = [request.content_responses[i].perf_ns - request.content_responses[i-1].perf_ns for i in range(1, len(request.content_responses))]
 ```
 
 **Notes:**
@@ -234,15 +276,15 @@ output_token_throughput_per_user = 1.0 / inter_token_latency_seconds
 
 ---
 
-### Prefill Throughput
+### Prefill Throughput Per User
 
 **Type:** [Record Metric](#record-metrics)
 
-Measures the rate at which input tokens are processed during the prefill phase, calculated as input tokens per second based on TTFT.
+Measures the rate at which input tokens are processed during the prefill phase, calculated as input tokens per second based on TTFT. This is only applicable to streaming responses.
 
 **Formula:**
 ```python
-prefill_throughput = input_sequence_length / ttft_seconds
+prefill_throughput_per_user = input_sequence_length / time_to_first_token_seconds
 ```
 
 **Notes:**
@@ -370,13 +412,67 @@ The aggregate token generation rate across all concurrent requests, measured as 
 
 **Formula:**
 ```python
-output_token_throughput = benchmark_token_count / benchmark_duration_seconds
+output_token_throughput = total_osl / benchmark_duration_seconds
 ```
 
 **Notes:**
 - Measures aggregate throughput across all concurrent requests; represents the overall system token generation rate.
 - Higher values indicate better system utilization and capacity.
-- Uses the hidden `benchmark_token_count` metric (sum of all output sequence lengths) as the numerator.
+
+---
+
+### Total Token Throughput
+
+**Type:** [Derived Metric](#derived-metrics)
+
+Calculates the total token throughput metric, combining both input and output token processing across all concurrent requests.
+
+**Formula:**
+```python
+total_token_throughput = (total_isl + total_osl) / benchmark_duration_seconds
+```
+
+**Notes:**
+- Measures the combined input and output token processing rate.
+- Includes reasoning tokens in the output count (via total_osl).
+- Useful for understanding total system token processing capacity.
+
+---
+
+## Image Metrics
+
+> [!NOTE]
+> All metrics in this section require image-capable endpoints (e.g., image generation APIs). These metrics are not available for text-only or other non-image endpoints.
+
+### Image Throughput
+
+**Type:** [Record Metric](#record-metrics)
+
+Calculates the image throughput from the record by dividing the number of images by the request latency.
+
+**Formula:**
+```python
+image_throughput = num_images / request_latency_seconds
+```
+
+**Notes:**
+- Higher values indicate faster image generation.
+
+---
+
+### Image Latency
+
+**Type:** [Record Metric](#record-metrics)
+
+Calculates the image latency from the record by dividing the request latency by the number of images.
+
+**Formula:**
+```python
+image_latency = request_latency_ms / num_images
+```
+
+**Notes:**
+- Lower values indicate faster per-image generation.
 
 ---
 
@@ -709,7 +805,7 @@ Measures the total end-to-end time from sending a request until receiving the fi
 
 **Formula:**
 ```python
-request_latency_ns = request.responses[-1].perf_ns - request.start_perf_ns
+request_latency_ns = request.content_responses[-1].perf_ns - request.start_perf_ns
 ```
 
 **Notes:**
@@ -807,6 +903,227 @@ benchmark_duration = max_response_timestamp - min_request_timestamp
 
 ---
 
+## HTTP Trace Metrics
+
+> [!NOTE]
+> All metrics in this section require HTTP trace data to be collected during requests. These metrics provide detailed HTTP request lifecycle timing following k6 naming conventions. See the [HTTP Trace Metrics tutorial](../docs/tutorials/http-trace-metrics.md) for configuration details.
+
+### HTTP Blocked
+
+**Type:** [Record Metric](#record-metrics)
+
+Time spent blocked waiting for a free TCP connection slot from the pool. This metric measures the time a request spent waiting in the connection pool queue before a connection became available. High values indicate connection pool saturation.
+
+**Formula:**
+```python
+http_req_blocked = connection_pool_wait_end_perf_ns - connection_pool_wait_start_perf_ns
+```
+
+**Notes:**
+- k6 equivalent: `http_req_blocked`
+- HAR equivalent: `blocked`
+- Returns 0 if no pool wait occurred (connection immediately available).
+- Only available for AioHttpTraceData.
+
+---
+
+### HTTP DNS Lookup
+
+**Type:** [Record Metric](#record-metrics)
+
+Time spent on DNS resolution. This metric measures the time spent resolving the hostname to an IP address.
+
+**Formula:**
+```python
+http_req_dns_lookup = dns_lookup_end_perf_ns - dns_lookup_start_perf_ns
+```
+
+**Notes:**
+- k6 equivalent: `http_req_looking_up`
+- HAR equivalent: `dns`
+- Returns 0 if DNS cache hit or connection was reused.
+- Only available for AioHttpTraceData.
+
+---
+
+### HTTP Connecting
+
+**Type:** [Record Metric](#record-metrics)
+
+Time spent establishing TCP connection to the remote host. For HTTPS requests, this includes both TCP connection establishment and TLS handshake time (combined measurement from aiohttp).
+
+**Formula:**
+```python
+http_req_connecting = tcp_connect_end_perf_ns - tcp_connect_start_perf_ns
+```
+
+**Notes:**
+- k6 equivalent: `http_req_connecting`
+- HAR equivalent: `connect`
+- Returns 0 if connection was reused.
+- Only available for AioHttpTraceData.
+
+---
+
+### HTTP Sending
+
+**Type:** [Record Metric](#record-metrics)
+
+Time spent sending data to the remote host. This metric measures the time from when the request started being sent to when the full request (headers + body) was transmitted.
+
+**Formula:**
+```python
+http_req_sending = request_send_end_perf_ns - request_send_start_perf_ns
+```
+
+**Notes:**
+- k6 equivalent: `http_req_sending`
+- HAR equivalent: `send`
+
+---
+
+### HTTP Waiting (TTFB)
+
+**Type:** [Record Metric](#record-metrics)
+
+Time to First Byte (TTFB) - time waiting for the server to respond. This metric measures the time from when the request was fully sent to when the first byte of the response body was received. This represents server processing time plus network latency.
+
+**Formula:**
+```python
+http_req_waiting = response_chunks[0][0] - request_send_end_perf_ns
+```
+
+**Notes:**
+- k6 equivalent: `http_req_waiting` (also known as TTFB)
+- HAR equivalent: `wait`
+- Note that this is not the same as the time to first token (TTFT), which is the time from request start to the first valid token received. The server may send non-token data first.
+
+---
+
+### HTTP Receiving
+
+**Type:** [Record Metric](#record-metrics)
+
+Time spent receiving response data from the remote host. This metric measures the time from when the first byte of the response was received to when the last byte was received.
+
+**Formula:**
+```python
+http_req_receiving = response_chunks[-1][0] - response_chunks[0][0]
+```
+
+**Notes:**
+- k6 equivalent: `http_req_receiving`
+- HAR equivalent: `receive`
+- Returns 0 if response was a single chunk.
+
+---
+
+### HTTP Duration
+
+**Type:** [Record Metric](#record-metrics)
+
+Time for HTTP request/response exchange, excluding connection overhead. This measures only the request/response exchange time: `sending + waiting + receiving`.
+
+**Formula:**
+```python
+http_req_duration = response_receive_end_perf_ns - request_send_start_perf_ns
+```
+
+**Notes:**
+- k6 equivalent: `http_req_duration`
+- HAR equivalent: `time`
+- EXCLUDES connection overhead (blocked, dns_lookup, connecting).
+- For full end-to-end time including connection setup, use `http_req_total`.
+- Note: This uses trace-level timestamps for more accurate measurement than application-level request latency.
+
+---
+
+### HTTP Connection Overhead
+
+**Type:** [Record Metric](#record-metrics)
+
+Total connection overhead time (blocked + dns_lookup + connecting). This metric combines all pre-request overhead.
+
+**Formula:**
+```python
+http_req_connection_overhead = http_req_blocked + http_req_dns_lookup + http_req_connecting
+```
+
+**Notes:**
+- Useful for identifying total connection establishment costs.
+- Returns 0 if connection was reused with no pool wait.
+- Only available for AioHttpTraceData.
+
+---
+
+### HTTP Total Time
+
+**Type:** [Record Metric](#record-metrics)
+
+Sum of all HTTP timing phases from connection pool to last chunk received. This is the sum of all 6 timing components: `blocked + dns_lookup + connecting + sending + waiting + receiving`.
+
+**Formula:**
+```python
+http_req_total = http_req_blocked + http_req_dns_lookup + http_req_connecting + http_req_sending + http_req_waiting + http_req_receiving
+```
+
+**Notes:**
+- This ensures the math adds up: individual timing metrics sum exactly to this total.
+- Only available for AioHttpTraceData (requires connection overhead metrics).
+
+---
+
+### HTTP Data Sent
+
+**Type:** [Record Metric](#record-metrics)
+
+Total bytes sent in the HTTP request (headers + body).
+
+**Formula:**
+```python
+http_req_data_sent = sum(size for _, size in request_chunks)
+```
+
+**Notes:**
+- k6 equivalent: `data_sent` (per request)
+- Measures total bytes written to the transport layer.
+
+---
+
+### HTTP Data Received
+
+**Type:** [Record Metric](#record-metrics)
+
+Total bytes received in the HTTP response (headers + body).
+
+**Formula:**
+```python
+http_req_data_received = sum(size for _, size in response_chunks)
+```
+
+**Notes:**
+- k6 equivalent: `data_received` (per request)
+- Measures total bytes read from the transport layer.
+
+---
+
+### HTTP Connection Reused
+
+**Type:** [Record Metric](#record-metrics)
+
+Whether the HTTP connection was reused from the connection pool. Returns 1 if reused, 0 if new connection was established.
+
+**Formula:**
+```python
+http_req_connection_reused = 1 if connection_reused_perf_ns is not None else 0
+```
+
+**Notes:**
+- Helps identify connection reuse patterns and keep-alive effectiveness.
+- Only available for AioHttpTraceData.
+
+---
+
 # Metric Flags Reference
 
 Metric flags are used to control when and how metrics are computed, displayed, and grouped. Flags can be combined using bitwise operations to create composite behaviors.
@@ -829,6 +1146,8 @@ Metric flags are used to control when and how metrics are computed, displayed, a
 | <a id="flag-goodput"></a>`GOODPUT` | Only computed when goodput is enabled | Requires SLO thresholds to be configured (e.g., `--goodput-constraints`); skipped otherwise |
 | <a id="flag-no-individual-records"></a>`NO_INDIVIDUAL_RECORDS` | Not exported for individual records | Aggregate metrics not relevant to individual records (e.g., request count, min/max timestamps); excluded from per-record exports |
 | <a id="flag-tokenizes-input-only"></a>`TOKENIZES_INPUT_ONLY` | Only computed when endpoint tokenizes input | Requires endpoints that process and tokenize input text; skipped for non-text endpoints |
+| <a id="flag-http-trace-only"></a>`HTTP_TRACE_ONLY` | Only computed when HTTP trace data is available | Requires HTTP request tracing to be enabled; provides detailed HTTP lifecycle timing metrics |
+| <a id="flag-usage-diff-only"></a>`USAGE_DIFF_ONLY` | Only computed when usage field data is available | Requires API responses to include usage field with token counts for comparison with client-computed values |
 
 ## Composite Flags
 
