@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 from collections.abc import Callable, Coroutine
@@ -8,6 +8,7 @@ import zmq.asyncio
 
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType
+from aiperf.common.environment import Environment
 from aiperf.common.factories import CommunicationClientFactory
 from aiperf.common.hooks import background_task, on_stop
 from aiperf.common.messages import ErrorMessage, Message
@@ -73,6 +74,8 @@ class ZMQRouterReplyClient(BaseZMQClient):
             tuple[str, Callable[[Message], Coroutine[Any, Any, Message | None]]],
         ] = {}
         self._response_futures: dict[str, asyncio.Future[Message | None]] = {}
+        self._msg_count: int = 0
+        self._yield_interval: int = Environment.ZMQ.REPLY_YIELD_INTERVAL
 
     @on_stop
     async def _clear_request_handlers(self) -> None:
@@ -211,6 +214,11 @@ class ZMQRouterReplyClient(BaseZMQClient):
                 self.execute_async(
                     self._wait_for_response(request.request_id, routing_envelope)
                 )
+                self._msg_count += 1
+                # Yield periodically to allow scheduled handlers to run
+                # and prevent event loop starvation during message bursts.
+                if self._yield_interval > 0 and self._msg_count >= self._yield_interval:
+                    await yield_to_event_loop()
 
             except Exception as e:
                 self.exception(f"Exception receiving request: {e}")

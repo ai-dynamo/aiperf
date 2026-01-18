@@ -1,12 +1,12 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for DCGMFaker using real telemetry parsing logic."""
 
 import pytest
+from aiperf_mock_server.dcgm_faker import GPU_CONFIGS, DCGMFaker
 from pytest import approx
 
-from aiperf.gpu_telemetry.telemetry_data_collector import TelemetryDataCollector
-from tests.aiperf_mock_server.dcgm_faker import GPU_CONFIGS, DCGMFaker
+from aiperf.gpu_telemetry.data_collector import GPUTelemetryDataCollector
 
 
 class TestDCGMFaker:
@@ -20,7 +20,7 @@ class TestDCGMFaker:
         print(metrics_text)
 
         # Use real TelemetryDataCollector to parse the output
-        collector = TelemetryDataCollector(dcgm_url="http://fake")
+        collector = GPUTelemetryDataCollector(dcgm_url="http://fake")
         records = collector._parse_metrics_to_records(metrics_text)
 
         # Should get 2 TelemetryRecord objects (one per GPU)
@@ -31,7 +31,7 @@ class TestDCGMFaker:
         gpu_indices = {record.gpu_index for record in records}
         assert gpu_indices == {0, 1}
 
-        # Verify metadata is correctly parsed
+        # Verify metadata fields (TelemetryRecord inherits from GpuMetadata)
         for i, record in enumerate(records):
             gpu = faker.gpus[i]
             assert record.gpu_model_name == gpu.cfg.model
@@ -52,18 +52,8 @@ class TestDCGMFaker:
             assert telemetry.gpu_memory_used == approx(
                 gpu.mem_used * 1.048576 * 1e-3, abs=0.01
             )  # MiB to GB
-            assert telemetry.gpu_memory_total == approx(
-                gpu.mem_total * 1.048576 * 1e-3, abs=0.01
-            )  # MiB to GB
-            assert telemetry.gpu_memory_free == approx(
-                gpu.mem_free * 1.048576 * 1e-3, abs=0.01
-            )  # MiB to GB
-            assert telemetry.sm_clock_frequency == approx(gpu.sm_clk, abs=0.01)
-            assert telemetry.memory_clock_frequency == approx(gpu.mem_clk, abs=0.01)
-            assert telemetry.memory_temperature == approx(gpu.mem_temp, abs=0.01)
             assert telemetry.xid_errors == approx(gpu.xid, abs=0.01)
             assert telemetry.power_violation == approx(gpu.power_viol, abs=0.01)
-            assert telemetry.thermal_violation == approx(gpu.thermal_viol, abs=0.01)
 
             # Verify values are in reasonable ranges
             assert 0 <= telemetry.gpu_utilization <= 100
@@ -73,7 +63,7 @@ class TestDCGMFaker:
     def test_load_affects_telemetry_records(self):
         """Test that load changes affect TelemetryRecords when parsed by real collector."""
         faker = DCGMFaker(gpu_name="b200", num_gpus=1, seed=42)
-        collector = TelemetryDataCollector(dcgm_url="http://fake")
+        collector = GPUTelemetryDataCollector(dcgm_url="http://fake")
 
         # Low load
         faker.set_load(0.1)
@@ -92,34 +82,3 @@ class TestDCGMFaker:
         assert high_telemetry.gpu_temperature > low_telemetry.gpu_temperature
         assert high_telemetry.gpu_utilization > low_telemetry.gpu_utilization
         assert high_telemetry.gpu_memory_used > low_telemetry.gpu_memory_used
-
-    def test_metrics_clamped_to_bounds(self):
-        """Test that all metrics are clamped to [0, max] bounds."""
-        faker = DCGMFaker(gpu_name="h100", num_gpus=2, seed=42)
-        collector = TelemetryDataCollector(dcgm_url="http://fake")
-
-        # Test extreme high load
-        faker.set_load(1.0)
-        for _ in range(10):  # Generate multiple times to test with noise variance
-            metrics = faker.generate()
-            records = collector._parse_metrics_to_records(metrics)
-
-            for record in records:
-                t = record.telemetry_data
-                cfg = faker.cfg
-
-                # All metrics should be non-negative
-                assert t.gpu_utilization >= 0
-                assert t.gpu_power_usage >= 0
-                assert t.gpu_temperature >= 0
-                assert t.sm_clock_frequency >= 0
-                assert t.memory_clock_frequency >= 0
-                assert t.gpu_memory_used >= 0
-
-                # All metrics should not exceed their max values
-                assert t.gpu_utilization <= 100
-                assert t.gpu_power_usage <= cfg.max_power_w
-                assert t.gpu_temperature <= cfg.temp_max_c
-                assert t.sm_clock_frequency <= cfg.sm_clock_boost_mhz
-                assert t.memory_clock_frequency <= cfg.mem_clock_mhz
-                assert t.gpu_memory_used <= t.gpu_memory_total

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Unified random number generation for AIPerf.
@@ -211,17 +211,19 @@ class RandomGenerator:
         """
         return self._python_rng.sample(population, k=k)
 
-    def numpy_choice(self, a, size=None):
+    def numpy_choice(self, a, size=None, p=None, replace=True):
         """NumPy random choice from array.
 
         Args:
             a: Array-like or int (if int, choose from range(a))
             size: Output shape, optional
+            p: Probabilities for each entry in a, optional
+            replace: Whether to sample with replacement, default True
 
         Returns:
             Random sample(s) from array
         """
-        return self._numpy_rng.choice(a, size=size)
+        return self._numpy_rng.choice(a, size=size, p=p, replace=replace)
 
     def normal(self, loc=0.0, scale=1.0, size=None):
         """Draw samples from normal (Gaussian) distribution.
@@ -316,6 +318,27 @@ class RandomGenerator:
             For desired mean of X, use lambd = 1.0 / X
         """
         return self._python_rng.expovariate(lambd)
+
+    def gammavariate(self, alpha: float, beta: float) -> float:
+        """Generate gamma distributed random number.
+
+        Args:
+            alpha: Shape parameter (must be > 0). Controls the distribution shape:
+                   - alpha = 1.0: Exponential distribution (equivalent to expovariate)
+                   - alpha < 1.0: More bursty/clustered arrivals
+                   - alpha > 1.0: More regular/smooth arrivals
+            beta: Scale parameter (must be > 0). For rate-based arrivals,
+                  use beta = 1.0 / (rate * alpha) to maintain the target mean.
+
+        Returns:
+            Random float from gamma distribution
+
+        Note:
+            The mean of the distribution is alpha * beta.
+            For arrival intervals at a given rate with tunable smoothness:
+                interval = gammavariate(smoothness, 1.0 / (rate * smoothness))
+        """
+        return self._python_rng.gammavariate(alpha, beta)
 
     def random(self) -> float:
         """Generate random float in [0.0, 1.0).

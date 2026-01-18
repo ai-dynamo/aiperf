@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import uuid
@@ -64,6 +64,8 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
         self.request_callbacks: dict[
             str, Callable[[Message], Coroutine[Any, Any, None]]
         ] = {}
+        self._msg_count: int = 0
+        self._yield_interval: int = Environment.ZMQ.REQUEST_YIELD_INTERVAL
 
     @background_task(immediate=True, interval=None)
     async def _request_async_task(self) -> None:
@@ -79,6 +81,14 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
                 if response_message.request_id in self.request_callbacks:
                     callback = self.request_callbacks.pop(response_message.request_id)
                     self.execute_async(callback(response_message))
+                    self._msg_count += 1
+                    # Yield periodically to allow scheduled handlers to run
+                    # and prevent event loop starvation during message bursts.
+                    if (
+                        self._yield_interval > 0
+                        and self._msg_count >= self._yield_interval
+                    ):
+                        await yield_to_event_loop()
 
             except zmq.Again:
                 self.debug("No data on dealer socket received, yielding to event loop")
@@ -146,7 +156,12 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
         future = asyncio.Future[Message]()
 
         async def callback(response_message: Message) -> None:
-            future.set_result(response_message)
+            if not future.done():
+                future.set_result(response_message)
+            else:
+                self.debug(
+                    lambda: f"Received response for request {message.request_id} after it was already completed. Ignoring."
+                )
 
         await self.request_async(message, callback)
         return await asyncio.wait_for(future, timeout=timeout)

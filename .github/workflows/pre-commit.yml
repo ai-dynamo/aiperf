@@ -24,8 +24,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        make setup-venv
-        make setup-mkinit
+        make first-time-setup PYTHON_VERSION=3.10
 
     - uses: pre-commit/action@v3.0.1
       env:

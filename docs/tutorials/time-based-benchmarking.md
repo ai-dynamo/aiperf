@@ -1,83 +1,107 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Time-based Benchmarking
+# Time-Based Benchmarking
 
-Time-based benchmarking allows you to run benchmarks for a specific duration rather than a fixed number of requests.
-This approach is ideal for measuring sustained performance and testing service stability over time.
+Time-based benchmarking runs for a specific duration rather than a fixed number of requests. Use it for SLA validation, stability testing, capacity planning, and A/B comparisons where consistent time windows matter.
 
-## Overview
-
-Time-based benchmarking provides several advantages:
-
-- **Consistent Measurement Window**: Compare performance across different configurations using the same time duration
-- **Real-world Simulation**: Mirror production scenarios where load is sustained over time
-- **Resource Utilization**: Identify memory leaks, connection pooling issues, and resource exhaustion patterns
-- **SLA Validation**: Establish and verify performance guarantees over specific time periods
-- **Grace Period Control**: Handle in-flight requests gracefully or force immediate completion as needed
-
-## Core Parameters
-
-### Benchmark Duration
-- `--benchmark-duration SECONDS`: Total time to run the benchmark
-- Requests are sent continuously until duration expires
-
-### Grace Period
-- `--benchmark-grace-period SECONDS`: Time to wait for in-flight requests after duration expires
-- Default: 30 seconds
-- Set to 0 for immediate completion when duration ends
-
-## Basic Time-based Testing
-
-### Setting Up the Server
+## Quick Start
 
 ```bash
-# Start vLLM server for time-based benchmarking
-docker pull vllm/vllm-openai:latest
-docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
-  --model Qwen/Qwen3-0.6B \
-  --host 0.0.0.0 --port 8000 &
-```
-
-```bash
-# Wait for server to be ready
-timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
-```
-
-### Duration Testing
-
-Run brief performance checks to quickly validate service health:
-
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
-```bash
-# Run 30-second benchmark with concurrency
 aiperf profile \
-    --model Qwen/Qwen3-0.6B \
-    --endpoint-type chat \
-    --endpoint /v1/chat/completions \
-    --streaming \
+    --model your-model \
     --url localhost:8000 \
-    --benchmark-duration 30.0 \
-    --benchmark-grace-period 15.0 \
-    --synthetic-input-tokens-mean 200 \
-    --synthetic-input-tokens-stddev 50 \
-    --output-tokens-mean 100 \
-    --output-tokens-stddev 20 \
-    --concurrency 5 \
-    --warmup-request-count 3 \
-    --random-seed 33333
+    --endpoint-type chat \
+    --streaming \
+    --concurrency 10 \
+    --benchmark-duration 60
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
+Requests are sent continuously until the duration expires. AIPerf then waits for in-flight requests to complete (up to the grace period).
 
-## Use Cases
+## How It Works
 
-> [!TIP]
-> **When to Use Time-based Benchmarking:**
-> - **SLA Validation**: Verify performance meets requirements over time
-> - **Capacity Planning**: Determine sustainable load levels
-> - **Stability Testing**: Identify performance degradation over time
-> - **Resource Planning**: Understand resource consumption patterns
-> - **Production Readiness**: Validate service stability before deployment
+```
+│          BENCHMARK DURATION           │   GRACE PERIOD    │
+│        (sending requests)             │   (drain only)    │
+├───────────────────────────────────────┼───────────────────┤
+│ New requests dispatched               │ No new requests   │
+│ Responses collected                   │ Wait for in-flight│
+└───────────────────────────────────────┴───────────────────┘
+                    ▲                             ▲
+           Duration expires              Grace period ends
+```
+
+- **Grace period default**: 30 seconds (use `inf` to wait forever, `0` for immediate completion)
+- Responses received within grace period are included in metrics; responses still pending when grace expires are not
+
+> [!IMPORTANT]
+> `--benchmark-grace-period` requires `--benchmark-duration` to be set.
+
+## Combining with Request Count
+
+Duration can be combined with count-based stopping—**first condition reached wins**:
+
+```bash
+# Stop when EITHER 1000 requests sent OR 120 seconds pass
+aiperf profile \
+    --model your-model \
+    --url localhost:8000 \
+    --endpoint-type chat \
+    --streaming \
+    --request-rate 20 \
+    --benchmark-duration 120 \
+    --request-count 1000
+```
+
+## Examples
+
+### Stability Test (5 minutes)
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen2.5-7B-Instruct \
+    --url localhost:8000 \
+    --endpoint-type chat \
+    --streaming \
+    --concurrency 50 \
+    --benchmark-duration 300 \
+    --benchmark-grace-period 60 \
+    --warmup-duration 30
+```
+
+### Soak Test (1 hour)
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen2.5-7B-Instruct \
+    --url localhost:8000 \
+    --endpoint-type chat \
+    --streaming \
+    --concurrency 20 \
+    --benchmark-duration 3600 \
+    --benchmark-grace-period 120 \
+    --warmup-duration 60
+```
+
+## CLI Reference
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--benchmark-duration` | float | None | Stop sending requests after this many seconds |
+| `--benchmark-grace-period` | float | 30.0 | Seconds to wait for in-flight requests after duration. Use `inf` for unlimited. Requires `--benchmark-duration`. |
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Requests cut off mid-response | Increase `--benchmark-grace-period` or use `inf` |
+| Grace period error | Add `--benchmark-duration` (grace period requires it) |
+
+## Related Documentation
+
+- [Warmup Phase](./warmup.md) — Configure pre-benchmark warmup
+- [User-Centric Timing](./user-centric-timing.md) — Multi-turn benchmarking (auto-sets infinite grace)
+- [Timing Modes Reference](../benchmark_modes/timing-modes-reference.md) — Complete CLI compatibility matrix

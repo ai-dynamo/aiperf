@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from typing import Annotated
 
@@ -106,7 +106,8 @@ class ServiceConfig(BaseConfig):
     log_level: Annotated[
         AIPerfLogLevel,
         Field(
-            description="Logging level",
+            description="Set the logging verbosity level. Controls the amount of output displayed during benchmark execution. "
+            "Use `TRACE` for debugging ZMQ messages, `DEBUG` for detailed operation logs, or `INFO` (default) for standard progress updates.",
         ),
         CLIParameter(
             name=("--log-level"),
@@ -117,7 +118,8 @@ class ServiceConfig(BaseConfig):
     verbose: Annotated[
         bool,
         Field(
-            description="Equivalent to --log-level DEBUG. Enables more verbose logging output, but lacks some raw message logging.",
+            description="Equivalent to `--log-level DEBUG`. Enables detailed logging output showing function calls and state transitions. "
+            "Also automatically switches UI to `simple` mode for better console visibility. Does not include raw ZMQ message logging.",
             json_schema_extra={ADD_TO_TEMPLATE: False},
         ),
         CLIParameter(
@@ -129,7 +131,8 @@ class ServiceConfig(BaseConfig):
     extra_verbose: Annotated[
         bool,
         Field(
-            description="Equivalent to --log-level TRACE. Enables the most verbose logging output possible.",
+            description="Equivalent to `--log-level TRACE`. Enables the most verbose logging possible, including all ZMQ messages, "
+            "internal state changes, and low-level operations. Also switches UI to `simple` mode. Use for deep debugging.",
             json_schema_extra={ADD_TO_TEMPLATE: False},
         ),
         CLIParameter(
@@ -142,9 +145,9 @@ class ServiceConfig(BaseConfig):
         int | None,
         Field(
             ge=1,
-            description="Number of services to spawn for processing records. The higher the request rate, the more services "
-            "should be spawned in order to keep up with the incoming records. If not specified, the number of services will be "
-            "automatically determined based on the worker count.",
+            description="Number of `RecordProcessor` services to spawn for parallel metric computation. "
+            "Higher request rates require more processors to keep up with incoming records. "
+            "If not specified, automatically determined based on worker count (typically 1-2 processors per 8 workers).",
         ),
         CLIParameter(
             name=("--record-processor-service-count", "--record-processors"),
@@ -155,7 +158,9 @@ class ServiceConfig(BaseConfig):
     ui_type: Annotated[
         AIPerfUIType,
         Field(
-            description="Type of UI to use",
+            description="Select the user interface type for displaying benchmark progress. "
+            "`dashboard` (default) shows real-time metrics in a Textual TUI, `simple` uses TQDM progress bars, "
+            "`none` disables UI completely. Automatically set to `simple` when using `--verbose` or `--extra-verbose`.",
         ),
         CLIParameter(
             name=("--ui-type", "--ui"),

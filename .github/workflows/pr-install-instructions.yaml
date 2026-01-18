@@ -6,6 +6,7 @@ on:
   pull_request_target:
     types:
       - opened
+      - synchronize  # Triggers when new commits are pushed to the PR
   workflow_dispatch:
     inputs:
       pr_number:
@@ -21,12 +22,12 @@ jobs:
     name: Comment with install instructions
     runs-on: ubuntu-latest
     steps:
-      - name: Post install instructions
+      - name: Post or update install instructions
         uses: actions/github-script@v7
         with:
           script: |
-            // Get PR number and branch name based on trigger type
-            let prNumber, branchName;
+            // Get PR number and commit SHA based on trigger type
+            let prNumber, commitSha;
 
             if (context.eventName === 'workflow_dispatch') {
               // Manual trigger - fetch PR details
@@ -36,29 +37,60 @@ jobs:
                 repo: context.repo.repo,
                 pull_number: prNumber
               });
-              branchName = pr.head.ref;
+              commitSha = pr.head.sha;
             } else {
-              // Automatic trigger on PR opened
+              // Automatic trigger on PR opened or synchronized
               prNumber = context.issue.number;
-              branchName = context.payload.pull_request.head.ref;
+              commitSha = context.payload.pull_request.head.sha;
             }
 
-            const commentBody = `### Try out this PR
+            const commentIdentifier = '<!-- aiperf-pr-install-instructions -->';
+            const repoUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}`;
+            const commentBody = `${commentIdentifier}
+            ### Try out this PR
 
             **Quick install:**
             \`\`\`bash
-            pip install --upgrade --force-reinstall git+https://github.com/ai-dynamo/aiperf.git@${branchName}
+            pip install --upgrade --force-reinstall git+https://github.com/ai-dynamo/aiperf.git@${commitSha}
             \`\`\`
 
             **Recommended with virtual environment (using [uv](https://docs.astral.sh/uv/)):**
             \`\`\`bash
             uv venv --python 3.12 && source .venv/bin/activate
-            uv pip install --upgrade --force-reinstall git+https://github.com/ai-dynamo/aiperf.git@${branchName}
-            \`\`\``;
+            uv pip install --upgrade --force-reinstall git+https://github.com/ai-dynamo/aiperf.git@${commitSha}
+            \`\`\`
 
-            await github.rest.issues.createComment({
-              issue_number: prNumber,
+            ---
+            _Last updated for commit: [\`${commitSha.substring(0, 7)}\`](${repoUrl}/commit/${commitSha}) • [Browse code](${repoUrl}/tree/${commitSha})_`;
+
+            // Find existing comment from this bot
+            const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: commentBody
+              issue_number: prNumber,
             });
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
+              comment.body.includes(commentIdentifier)
+            );
+
+            if (botComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: commentBody
+              });
+              console.log('Updated existing comment with new commit SHA');
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                issue_number: prNumber,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: commentBody
+              });
+              console.log('Created new comment with commit SHA');
+            }

@@ -59,7 +59,9 @@ class ChatEndpoint(BaseEndpoint):
 
         turns = request_info.turns
         model_endpoint = request_info.model_endpoint
-        messages = self._create_messages(turns)
+        messages = self._create_messages(
+            turns, request_info.system_message, request_info.user_context_message
+        )
 
         payload = {
             "messages": messages,
@@ -68,17 +70,67 @@ class ChatEndpoint(BaseEndpoint):
         }
 
         if turns[-1].max_tokens is not None:
-            payload["max_completion_tokens"] = turns[-1].max_tokens
+            token_field = (
+                "max_tokens"
+                if model_endpoint.endpoint.use_legacy_max_tokens
+                else "max_completion_tokens"
+            )
+            payload[token_field] = turns[-1].max_tokens
 
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
 
-        self.debug(lambda: f"Formatted payload: {payload}")
+        if (
+            model_endpoint.endpoint.streaming
+            and model_endpoint.endpoint.use_server_token_count
+        ):
+            # Automatically set stream_options to include usage when using server token counts
+            if "stream_options" not in payload:
+                payload["stream_options"] = {"include_usage": True}
+            elif (
+                isinstance(payload["stream_options"], dict)
+                and "include_usage" not in payload["stream_options"]
+            ):
+                payload["stream_options"]["include_usage"] = True
+
+        self.trace(lambda: f"Formatted payload: {payload}")
         return payload
 
-    def _create_messages(self, turns: list[Turn]) -> list[dict[str, Any]]:
-        """Create messages from turns for OpenAI Chat Completions."""
+    def _create_messages(
+        self,
+        turns: list[Turn],
+        system_message: str | None,
+        user_context_message: str | None,
+    ) -> list[dict[str, Any]]:
+        """Create messages from turns for OpenAI Chat Completions.
+
+        Args:
+            turns: List of turns in the request
+            system_message: Optional shared system message to prepend
+            user_context_message: Optional per-conversation user context to prepend
+
+        Returns:
+            List of formatted message dicts for OpenAI Chat Completions API
+        """
         messages = []
+
+        # Prepend system_message and user_context_message if present
+        if system_message:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": system_message,
+                }
+            )
+
+        if user_context_message:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": user_context_message,
+                }
+            )
+
         for turn in turns:
             message = {
                 "role": turn.role or _DEFAULT_ROLE,

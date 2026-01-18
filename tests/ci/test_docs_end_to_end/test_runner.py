@@ -7,6 +7,8 @@ Test runner for executing server setup, health checks, and AIPerf tests.
 import logging
 import os
 import subprocess
+import threading
+import time
 
 from constants import (
     AIPERF_UI_TYPE,
@@ -14,8 +16,9 @@ from constants import (
 )
 from data_types import Server
 from utils import (
-    cleanup_docker_resources,
     docker_stop_and_remove,
+    force_cleanup_containers,
+    get_all_container_ids,
     get_repo_root,
 )
 
@@ -28,12 +31,27 @@ class EndToEndTestRunner:
     def __init__(self):
         self.aiperf_container_id = None
         self.setup_process = None
+        self.log_monitoring_thread = None
+        self.stop_log_monitoring = threading.Event()
+        self.server_containers: dict[str, set[str]] = {}  # Track containers per server
 
     def run_tests(self, servers: dict[str, Server]) -> bool:
         """Run complete test suite"""
         logger.info("Starting end-to-end test execution")
+        start_time = time.time()
 
         try:
+            # Step 0: Force cleanup any leftover containers from previous runs
+            logger.info(
+                "Cleaning up any leftover containers from previous test runs..."
+            )
+            leftover_containers = get_all_container_ids()
+            if leftover_containers:
+                logger.info(f"Found {len(leftover_containers)} containers to clean up")
+                force_cleanup_containers(leftover_containers)
+            else:
+                logger.info("No leftover containers found")
+
             # Step 1: Build AIPerf container
             if not self._build_aiperf_container():
                 logger.error("AIPerf container build failed - stopping all tests")
@@ -59,6 +77,10 @@ class EndToEndTestRunner:
 
         finally:
             self._cleanup()
+            elapsed_time = time.time() - start_time
+            logger.info("=" * 60)
+            logger.info(f"Total test execution time: {elapsed_time:.2f} seconds")
+            logger.info("=" * 60)
 
     def _build_aiperf_container(self) -> bool:
         """Build AIPerf container from Dockerfile"""
@@ -166,11 +188,35 @@ class EndToEndTestRunner:
         logger.info("Server validation passed")
         return True
 
+    def _monitor_server_logs(self, process: subprocess.Popen, server_name: str):
+        """Continuously monitor and display server logs in background thread"""
+        import sys
+
+        try:
+            while not self.stop_log_monitoring.is_set():
+                line = process.stdout.readline()
+                if not line:
+                    # Check if process has ended
+                    if process.poll() is not None:
+                        break
+                    continue
+                # Display log line with server identification and flush immediately
+                print(f"SERVER[{server_name}]: {line.rstrip()}", flush=True)
+                sys.stdout.flush()
+        except Exception as e:
+            logger.debug(f"Log monitoring thread exception: {e}")
+
     def _test_server(self, server: Server) -> bool:
         """Test a single server: setup + health check + aiperf runs"""
         logger.info(f"Setting up server: {server.name}")
 
-        # Execute setup command in background with initial output monitoring
+        # Snapshot containers before server setup to track what gets created
+        containers_before = get_all_container_ids()
+        logger.info(
+            f"Container snapshot before {server.name} setup: {len(containers_before)} containers"
+        )
+
+        # Execute setup command in background
         logger.info(f"Starting server setup for {server.name}:")
         logger.info(f"Command: {server.setup_command.command}")
         logger.info("=" * 60)
@@ -185,36 +231,54 @@ class EndToEndTestRunner:
             universal_newlines=True,
         )
 
-        # Monitor initial output for a short time to catch immediate failures
-        import time
+        # Store the process for cleanup later
+        self.setup_process = setup_process
 
-        setup_output_lines = []
+        # Start background thread immediately to stream logs in real-time
+        logger.info(f"Starting real-time log monitoring for {server.name}...")
+        self.stop_log_monitoring.clear()
+        self.log_monitoring_thread = threading.Thread(
+            target=self._monitor_server_logs,
+            args=(setup_process, server.name),
+            daemon=True,
+        )
+        self.log_monitoring_thread.start()
+
+        # Monitor for early failures without blocking log output
         start_time = time.time()
-
-        while (
-            time.time() - start_time < SETUP_MONITOR_TIMEOUT
-        ):  # Monitor for initial failures
-            line = setup_process.stdout.readline()
-            if line:
-                print(f"SETUP: {line.rstrip()}")
-                setup_output_lines.append(line)
-
+        while time.time() - start_time < SETUP_MONITOR_TIMEOUT:
             # Check if process failed early
             if setup_process.poll() is not None:
                 if setup_process.returncode != 0:
                     logger.error("=" * 60)
                     logger.error(f"Server setup failed early: {server.name}")
                     logger.error(f"Return code: {setup_process.returncode}")
+                    # Stop the log monitoring thread
+                    self.stop_log_monitoring.set()
+                    if self.log_monitoring_thread:
+                        self.log_monitoring_thread.join(timeout=2)
                     return False
                 else:
                     # Process completed successfully (some servers might do this)
                     break
+            # Sleep briefly to avoid busy waiting
+            time.sleep(0.1)
 
         logger.info("=" * 60)
-        logger.info(f"Server {server.name} setup started in background")
+        logger.info(f"Server {server.name} setup started successfully")
 
-        # Store the process for cleanup later
-        self.setup_process = setup_process
+        # Add delay to allow Docker containers to be fully created
+        # This is important when setup commands background docker run with &
+        logger.info("Waiting for Docker containers to be created...")
+        time.sleep(3)
+
+        # Snapshot containers after server setup to identify new containers
+        containers_after = get_all_container_ids()
+        new_containers = containers_after - containers_before
+        self.server_containers[server.name] = new_containers
+        logger.info(
+            f"Container snapshot after {server.name} setup: {len(containers_after)} total, {len(new_containers)} new containers created"
+        )
 
         # Start health check immediately in parallel (it has built-in timeout)
         logger.info(f"Starting health check in parallel for server: {server.name}")
@@ -265,9 +329,10 @@ class EndToEndTestRunner:
             exec_command = f"docker exec {self.aiperf_container_id} bash -c 'source /opt/aiperf/venv/bin/activate && {aiperf_command_with_ui}'"
 
             logger.info(
-                f"Executing AIPerf command {i + 1}/{len(server.aiperf_commands)}:"
+                f"Executing AIPerf command {i + 1}/{len(server.aiperf_commands)} against {server.name}:"
             )
-            logger.info(f"Original: {aiperf_cmd.command}")
+            logger.info(f"Server: {server.name}")
+            logger.info(f"Command: {aiperf_cmd.command}")
             logger.info(f"With UI flag: {aiperf_command_with_ui}")
             logger.info("=" * 60)
 
@@ -288,7 +353,7 @@ class EndToEndTestRunner:
                 if not line and aiperf_process.poll() is not None:
                     break
                 if line:
-                    print(f"AIPERF: {line.rstrip()}")
+                    print(f"AIPERF[{server.name}]: {line.rstrip()}")
                     aiperf_output_lines.append(line)
 
             aiperf_process.wait()
@@ -311,61 +376,40 @@ class EndToEndTestRunner:
         # Cleanup server (basic cleanup - stop any containers)
         self._cleanup_server(server.name)
 
+        # Force cleanup only the tracked containers for this server
+        logger.info(f"Force cleaning up tracked containers after {server.name} test...")
+        containers = self.server_containers.get(server.name, set())
+        force_cleanup_containers(containers)
+
         return all_aiperf_passed
 
     def _graceful_server_shutdown(self, server_name: str):
-        """Gracefully shutdown server based on server type"""
+        """Gracefully shutdown server using tracked containers"""
         logger.info(f"Gracefully shutting down server: {server_name}")
 
+        # Get tracked containers for this server
+        containers = self.server_containers.get(server_name, set())
+
+        if not containers:
+            logger.warning(
+                f"No containers tracked for {server_name}, skipping shutdown"
+            )
+            return
+
+        logger.info(f"Stopping {len(containers)} tracked containers for {server_name}")
+
         try:
-            if "dynamo" in server_name.lower():
-                # Dynamo-specific graceful shutdown
-                logger.info("Executing Dynamo graceful shutdown...")
-                shutdown_cmd = """
-                    timeout 30 bash -c '
-                        echo "Stopping Docker Compose services..."
-                        docker compose -f docker-compose.yml down 2>/dev/null || true
+            # Convert set to space-separated string
+            container_list = " ".join(containers)
 
-                        echo "Stopping Dynamo containers..."
-                        # Stop containers by Dynamo image
-                        docker ps --filter ancestor=*dynamo* --format "{{.ID}}" | xargs -r docker stop 2>/dev/null || true
-                        docker ps --filter ancestor=*vllm-runtime* --format "{{.ID}}" | xargs -r docker stop 2>/dev/null || true
-
-                        # Remove containers
-                        docker ps -aq --filter ancestor=*dynamo* | xargs -r docker rm 2>/dev/null || true
-                        docker ps -aq --filter ancestor=*vllm-runtime* | xargs -r docker rm 2>/dev/null || true
-
-                        echo "Dynamo graceful shutdown completed"
-                    '
-                """
-
-            elif "vllm" in server_name.lower():
-                # vLLM-specific graceful shutdown
-                logger.info("Executing vLLM graceful shutdown...")
-                shutdown_cmd = """
-                    timeout 30 bash -c '
-                        echo "Stopping vLLM containers..."
-                        # Stop containers by vLLM image
-                        docker ps --filter ancestor=*vllm* --format "{{.ID}}" | xargs -r docker stop 2>/dev/null || true
-
-                        # Remove containers
-                        docker ps -aq --filter ancestor=*vllm* | xargs -r docker rm 2>/dev/null || true
-
-                        echo "vLLM graceful shutdown completed"
-                    '
-                """
-
-            else:
-                # Generic server shutdown
-                logger.info("Executing generic server shutdown...")
-                shutdown_cmd = f"""
-                    timeout 30 bash -c '
-                        echo "Stopping containers for {server_name}..."
-                        docker ps --filter name={server_name} --format "{{.ID}}" | xargs -r docker stop 2>/dev/null || true
-                        docker ps -aq --filter name={server_name} | xargs -r docker rm 2>/dev/null || true
-                        echo "Generic server shutdown completed"
-                    '
-                """
+            # Stop containers gracefully
+            shutdown_cmd = f"""
+                timeout 30 bash -c '
+                    echo "Stopping {len(containers)} containers for {server_name}..."
+                    echo "{container_list}" | xargs -r docker stop -t 10 2>/dev/null || true
+                    echo "Graceful shutdown completed"
+                '
+            """
 
             # Execute the shutdown command
             result = subprocess.run(
@@ -391,6 +435,14 @@ class EndToEndTestRunner:
         """Basic cleanup for server"""
         logger.info(f"Cleaning up server: {server_name}")
 
+        # Stop the log monitoring thread first
+        if self.log_monitoring_thread and self.log_monitoring_thread.is_alive():
+            logger.info("Stopping log monitoring thread...")
+            self.stop_log_monitoring.set()
+            self.log_monitoring_thread.join(timeout=5)
+            if self.log_monitoring_thread.is_alive():
+                logger.warning("Log monitoring thread did not stop gracefully")
+
         # Stop the setup process if it's still running
         if self.setup_process and self.setup_process.poll() is None:
             logger.info("Terminating server setup process...")
@@ -401,11 +453,29 @@ class EndToEndTestRunner:
                 logger.warning("Setup process didn't terminate, killing...")
                 self.setup_process.kill()
 
-        # Stop any containers that might be related to this server using utility functions
-        cleanup_docker_resources()
+        # Note: Do NOT call cleanup_docker_resources() here as it could remove the aiperf container
+        # The aiperf container must remain running until all tests are complete
+        # Server-specific containers are cleaned up via force_cleanup_containers() with tracked IDs
 
     def _cleanup(self):
         """Cleanup AIPerf container and other resources"""
         if self.aiperf_container_id:
             logger.info(f"Cleaning up AIPerf container: {self.aiperf_container_id}")
             docker_stop_and_remove(self.aiperf_container_id)
+
+        # Final force cleanup of all tracked containers
+        logger.info("Final cleanup of all tracked containers...")
+        all_tracked_containers = set()
+        for server_name, containers in self.server_containers.items():
+            logger.info(
+                f"Adding {len(containers)} containers from {server_name} to cleanup list"
+            )
+            all_tracked_containers.update(containers)
+
+        if all_tracked_containers:
+            logger.info(
+                f"Cleaning up {len(all_tracked_containers)} total tracked containers"
+            )
+            force_cleanup_containers(all_tracked_containers)
+        else:
+            logger.info("No tracked containers to clean up")

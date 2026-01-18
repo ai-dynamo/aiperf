@@ -43,10 +43,10 @@ class OutputTokenCountMetric(BaseRecordMetric[int]):
         Raises:
             NoMetricValue: If the record does not have an output token count.
         """
-        if not record.output_token_count:
+        if record.token_counts is None or not record.token_counts.output:
             raise NoMetricValue("Output token count is missing in the record.")
 
-        return record.output_token_count
+        return record.token_counts.output
 
 
 class TotalOutputTokensMetric(DerivedSumMetric[int, OutputTokenCountMetric]):

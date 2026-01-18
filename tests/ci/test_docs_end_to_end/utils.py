@@ -206,3 +206,56 @@ def cleanup_docker_resources(force: bool = False) -> None:
 
     except Exception as e:
         logger.debug(f"Docker cleanup had some issues: {e}")
+
+
+def get_all_container_ids() -> set[str]:
+    """Get set of all Docker container IDs currently on the system"""
+    try:
+        result = subprocess.run(
+            "docker ps -aq",
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return set(result.stdout.strip().split("\n"))
+        return set()
+    except Exception as e:
+        logger.debug(f"Failed to get container IDs: {e}")
+        return set()
+
+
+def force_cleanup_containers(container_ids: set[str]) -> None:
+    """Force remove specific Docker containers by ID.
+
+    Args:
+        container_ids: Set of container IDs to remove
+    """
+    if not container_ids:
+        logger.info("No containers to clean up")
+        return
+
+    logger.info(f"Force cleaning up {len(container_ids)} containers...")
+
+    try:
+        # Convert set to space-separated string
+        container_list = " ".join(container_ids)
+
+        # Force stop and remove the specific containers
+        cleanup_cmd = (
+            f"echo '{container_list}' | xargs -r docker rm -f 2>/dev/null || true"
+        )
+        subprocess.run(cleanup_cmd, shell=True, capture_output=True, timeout=30)
+
+        # Final prune to clean up dangling resources
+        subprocess.run(
+            "docker container prune -f", shell=True, capture_output=True, timeout=10
+        )
+
+        logger.info("Force cleanup completed successfully")
+
+    except subprocess.TimeoutExpired:
+        logger.warning("Force cleanup timed out, but may have partially succeeded")
+    except Exception as e:
+        logger.warning(f"Force cleanup encountered issues: {e}")

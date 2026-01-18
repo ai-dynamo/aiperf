@@ -69,7 +69,20 @@ class CompletionsEndpoint(BaseEndpoint):
         if extra:
             payload.update(extra)
 
-        self.debug(lambda: f"Formatted payload: {payload}")
+        if (
+            model_endpoint.endpoint.streaming
+            and model_endpoint.endpoint.use_server_token_count
+        ):
+            # Automatically set stream_options to include usage when using server token counts
+            if "stream_options" not in payload:
+                payload["stream_options"] = {"include_usage": True}
+            elif (
+                isinstance(payload["stream_options"], dict)
+                and "include_usage" not in payload["stream_options"]
+            ):
+                payload["stream_options"]["include_usage"] = True
+
+        self.trace(lambda: f"Formatted payload: {payload}")
         return payload
 
     def parse_response(

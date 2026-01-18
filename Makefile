@@ -17,10 +17,11 @@
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install install-app docker docker-run first-time-setup \
-		test-verbose init-files setup-venv setup-mkinit install-mock-server \
+		test-verbose init-files setup-venv install-mock-server test-ci \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
-		test-stress stress-tests internal-help help
+		test-component-integration test-component-integration-ci test-component-integration-verbose \
+		generate-cli-docs generate-env-vars-docs test-stress stress-tests internal-help help
 
 
 # Include user-defined environment variables
@@ -37,9 +38,9 @@ PYTHON_VERSION ?= 3.12
 # The command to activate the virtual environment
 activate_venv = . $(VENV_PATH)/bin/activate
 
-# Try and get the app name and version from uv
-APP_NAME := $(shell $(activate_venv) 2>/dev/null && uv version 2>/dev/null | cut -d ' ' -f 1)
-APP_VERSION := $(shell $(activate_venv) 2>/dev/null && uv version 2>/dev/null | cut -d ' ' -f 2)
+# Try and get the app name and version from pyproject.toml
+APP_NAME := $(shell grep '^name = ' pyproject.toml 2>/dev/null | sed 's/name = "\(.*\)"/\1/')
+APP_VERSION := $(shell grep '^version = ' pyproject.toml 2>/dev/null | sed 's/version = "\(.*\)"/\1/')
 
 # The folder where uv is installed
 UV_PATH ?= $(HOME)/.local/bin
@@ -108,13 +109,13 @@ check-format check-fmt: #? check the formatting of the project using ruff.
 	$(activate_venv) && ruff format . --check $(args)
 
 test: #? run the tests using pytest-xdist.
-	$(activate_venv) && pytest -n auto -m 'not integration and not performance' $(args)
+	$(activate_venv) && pytest tests/unit -n auto -m 'not integration and not performance' $(args)
 
 test-verbose: #? run the tests using pytest-xdist with DEBUG logging.
-	$(activate_venv) && pytest -n auto -v -s --log-cli-level=DEBUG -m 'not integration and not performance'
+	$(activate_venv) && pytest tests/unit -n auto -v -s --log-cli-level=DEBUG -m 'not integration and not performance'
 
 coverage: #? run the tests and generate an html coverage report.
-	$(activate_venv) && pytest -n auto --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance' $(args)
+	$(activate_venv) && pytest tests/unit -n auto --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance' $(args)
 
 install: install-app install-mock-server #? install the project and mock server in editable mode.
 
@@ -160,9 +161,6 @@ setup-venv: #? create the virtual environment.
 		printf "$(bold)$(green)Virtual environment already exists$(reset)\n"; \
 	fi
 
-setup-mkinit: #? install the mkinit and ruff packages for pre-commit.
-	$(activate_venv) && uv pip install mkinit ruff
-
 first-time-setup: #? convenience command to setup the environment for the first time
 	$(MAKE) setup-venv --no-print-directory
 
@@ -181,6 +179,21 @@ first-time-setup: #? convenience command to setup the environment for the first 
 	@# Print a success message
 	@printf "$(bold)$(green)Done!$(reset)\n"
 
+test-ci: #? run the tests using pytest-xdist for CI.
+	@printf "$(bold)$(blue)Running unit and component integration tests (CI mode)...$(reset)\n"
+	@# Run unit tests first with coverage
+	@printf "$(bold)$(blue)Running unit tests...$(reset)\n"
+	@$(activate_venv) && pytest tests/unit -n auto --cov=src/aiperf --cov-branch --cov-report= -m 'not performance and not stress' --tb=short $(args) || exit_code=$$?; \
+	# Run component integration tests with coverage append regardless of unit test result \
+	printf "$(bold)$(blue)Running component integration tests...$(reset)\n"; \
+	$(activate_venv) && pytest tests/component_integration -n auto --cov=src/aiperf --cov-branch --cov-append --cov-report=html --cov-report=xml --cov-report=term -m 'not performance and not stress' -v --tb=short $(args) || exit_code=$$((exit_code + $$?)); \
+	if [[ $$exit_code -eq 0 ]]; then \
+		printf "$(bold)$(green)AIPerf unit and component integration tests (CI mode) passed!$(reset)\n"; \
+	else \
+		printf "$(bold)$(red)AIPerf tests failed with exit code $$exit_code$(reset)\n"; \
+		exit $$exit_code; \
+	fi
+
 stress-tests test-stress: #? run stress tests with with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running stress tests with AIPerf Mock Server...$(reset)\n"
 	$(activate_venv) && pytest tests/integration/ -m 'stress' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
@@ -188,21 +201,43 @@ stress-tests test-stress: #? run stress tests with with AIPerf Mock Server.
 
 integration-tests test-integration: #? run integration tests with with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running integration tests with AIPerf Mock Server...$(reset)\n"
-	$(activate_venv) && pytest tests/integration/ -m 'integration and not stress and not performance' -n auto -v --tb=short $(args)
+	$(activate_venv) && pytest tests/integration/ -m 'not stress and not performance' -n auto -v --tb=short --no-looptime $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server integration tests passed!$(reset)\n"
 
 integration-tests-ci test-integration-ci: #? run integration tests with with AIPerf Mock Server for CI (parallel, verbose, no performance and no ffmpeg tests).
 	@printf "$(bold)$(blue)Running integration tests (CI mode) with AIPerf Mock Server...$(reset)\n"
-	$(activate_venv) && pytest tests/integration/ -m 'integration and not performance and not ffmpeg and not stress' -n auto -v --tb=long $(args)
+	$(activate_venv) && pytest tests/integration/ -m 'not performance and not ffmpeg and not stress' -n auto -v --tb=long $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server integration tests (CI mode) passed!$(reset)\n"
 
 integration-tests-ci-macos test-integration-ci-macos: #? run integration tests with with AIPerf Mock Server for CI on macOS (non-parallel, verbose, no performance and no ffmpeg tests).
 	@printf "$(bold)$(blue)Running integration tests (CI mode on macOS) with AIPerf Mock Server...$(reset)\n"
-	$(activate_venv) && pytest tests/integration/ -m 'integration and not performance and not ffmpeg and not stress' -v --tb=long $(args)
+	$(activate_venv) && pytest tests/integration/ -m 'not performance and not ffmpeg and not stress' -v --tb=long $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server integration tests (CI mode on macOS) passed!$(reset)\n"
 
 integration-tests-verbose test-integration-verbose: #? run integration tests with verbose output with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running integration tests (verbose, sequential) with AIPerf Mock Server...$(reset)\n"
 	@printf "$(yellow)Note: Sequential mode shows real-time AIPerf output$(reset)\n"
-	$(activate_venv) && pytest tests/integration/ -m 'integration and not stress and not performance' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
+	$(activate_venv) && pytest tests/integration/ -m 'not stress and not performance' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server integration tests passed!$(reset)\n"
+
+component-integration-tests test-component-integration: #? run component integration tests with with AIPerf Mock Server.
+	@printf "$(bold)$(blue)Running Fake Component Integration tests...$(reset)\n"
+	$(activate_venv) && pytest tests/component_integration/ -m 'not stress and not performance' -n auto --tb=short $(args)
+	@printf "$(bold)$(green)AIPerf Fake Component Integration tests passed!$(reset)\n"
+
+component-integration-tests-ci test-component-integration-ci: #? run component integration tests with with AIPerf Mock Server for CI (parallel, verbose, no performance and no ffmpeg tests).
+	@printf "$(bold)$(blue)Running Fake Component Integration tests (CI mode)...$(reset)\n"
+	$(activate_venv) && pytest tests/component_integration/ -m 'not performance and not ffmpeg and not stress' -n auto -v --tb=long $(args)
+	@printf "$(bold)$(green)AIPerf Fake Component Integration tests (CI mode) passed!$(reset)\n"
+
+component-integration-tests-verbose test-component-integration-verbose: #? run component integration tests with verbose output with AIPerf Mock Server.
+	@printf "$(bold)$(blue)Running Fake Component Integration tests (verbose, sequential)...$(reset)\n"
+	@printf "$(yellow)Note: Sequential mode shows real-time AIPerf output$(reset)\n"
+	$(activate_venv) && pytest tests/component_integration/ -m 'not stress and not performance' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
+	@printf "$(bold)$(green)AIPerf Fake Component Integration tests passed!$(reset)\n"
+
+generate-cli-docs: #? generate the CLI documentation.
+	$(activate_venv) && tools/generate_cli_docs.py
+
+generate-env-vars-docs: #? generate the environment variables documentation.
+	$(activate_venv) && tools/generate_env_vars_docs.py

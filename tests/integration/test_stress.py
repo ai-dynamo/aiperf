@@ -1,12 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Tests for high concurrency and performance scenarios."""
 
 import pytest
 
-from tests.integration.conftest import AIPerfCLI
+from tests.harness.utils import AIPerfCLI, AIPerfMockServer
 from tests.integration.conftest import IntegrationTestDefaults as defaults
-from tests.integration.models import AIPerfMockServer
 
 
 @pytest.mark.stress
@@ -27,7 +26,7 @@ class TestStressScenarios:
                 --gpu-telemetry {" ".join(aiperf_mock_server.dcgm_urls)} \
                 --endpoint-type chat \
                 --streaming \
-                --warmup-request-count 1000 \
+                --warmup-request-count 100 \
                 --request-count 1000 \
                 --concurrency 1000 \
                 --request-rate 1000 \
@@ -58,7 +57,7 @@ class TestStressScenarios:
                 --osl 50 \
                 --workers-max 100 \
                 --streaming \
-                --ui dashboard
+                --ui {defaults.ui}
             """,
             timeout=180.0,
         )

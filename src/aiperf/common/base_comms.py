@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from abc import ABC, abstractmethod
-from typing import cast
+from typing import Any, cast
 
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType
@@ -14,6 +14,8 @@ from aiperf.common.protocols import (
     PushClientProtocol,
     ReplyClientProtocol,
     RequestClientProtocol,
+    StreamingDealerClientProtocol,
+    StreamingRouterClientProtocol,
     SubClientProtocol,
 )
 from aiperf.common.types import CommAddressType
@@ -42,6 +44,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         bind: bool = False,
         socket_ops: dict | None = None,
         max_pull_concurrency: int | None = None,
+        **kwargs: Any,
     ) -> CommunicationClientProtocol:
         """Create a communication client for a given client type and address.
 
@@ -51,6 +54,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
             bind: Whether to bind or connect the socket.
             socket_ops: Additional socket options to set.
             max_pull_concurrency: The maximum number of concurrent pull requests to allow. (Only used for pull clients)
+            **kwargs: Additional keyword arguments passed to specific client types (e.g., identity for DEALER).
         """
 
     def create_pub_client(
@@ -124,4 +128,36 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         return cast(
             ReplyClientProtocol,
             self.create_client(CommClientType.REPLY, address, bind, socket_ops),
+        )
+
+    def create_streaming_router_client(
+        self,
+        address: CommAddressType,
+        bind: bool = True,
+        socket_ops: dict | None = None,
+    ) -> StreamingRouterClientProtocol:
+        return cast(
+            StreamingRouterClientProtocol,
+            self.create_client(
+                CommClientType.STREAMING_ROUTER, address, bind, socket_ops
+            ),
+        )
+
+    def create_streaming_dealer_client(
+        self,
+        address: CommAddressType,
+        identity: str,
+        bind: bool = False,
+        socket_ops: dict | None = None,
+    ) -> StreamingDealerClientProtocol:
+        # Identity must be passed through client_kwargs since it's specific to DEALER
+        return cast(
+            StreamingDealerClientProtocol,
+            self.create_client(
+                CommClientType.STREAMING_DEALER,
+                address,
+                bind,
+                socket_ops,
+                identity=identity,
+            ),
         )

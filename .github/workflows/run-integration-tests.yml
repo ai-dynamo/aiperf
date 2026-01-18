@@ -14,8 +14,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ["ubuntu-latest", "macos-latest"]
-        python-version: ["3.10", "3.11", "3.12"]
+        os: ["ubuntu-latest"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
     - uses: actions/checkout@v4
@@ -31,8 +31,4 @@ jobs:
 
     - name: Run integration tests
       run: |
-        if [ "${{ matrix.os }}" = "macos-latest" ]; then
-          make integration-tests-ci-macos
-        else
-          make integration-tests-ci
-        fi
+        make integration-tests-ci

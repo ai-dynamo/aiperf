@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -171,7 +171,8 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         - Simple fields: text, content, response, output, result
         - List of strings (joined without separator): {"text": ["A", "B", "C"]} -> "ABC"
         - OpenAI completions: {"choices": [{"text": "..."}]}
-        - OpenAI chat: {"choices": [{"message": {"content": "..."}}]}
+        - OpenAI chat (non-streaming): {"choices": [{"message": {"content": "..."}}]}
+        - OpenAI chat (streaming): {"choices": [{"delta": {"content": "..."}}]}
 
         Args:
             json_obj: JSON response object
@@ -195,8 +196,13 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
             choice = choices[0]
             if text := choice.get("text"):
                 return self.make_text_response_data(text)
+            # Non-streaming chat format
             message = choice.get("message")
             if message and (content := message.get("content")):
+                return self.make_text_response_data(content)
+            # Streaming chat format (delta)
+            delta = choice.get("delta")
+            if delta and (content := delta.get("content")):
                 return self.make_text_response_data(content)
 
         return None

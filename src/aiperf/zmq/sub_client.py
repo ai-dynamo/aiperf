@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import contextlib
@@ -9,6 +9,7 @@ import zmq.asyncio
 
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.factories import CommunicationClientFactory
 from aiperf.common.hooks import background_task
@@ -80,6 +81,8 @@ class ZMQSubClient(BaseZMQClient):
         super().__init__(zmq.SocketType.SUB, address, bind, socket_ops, **kwargs)
 
         self._subscribers: dict[MessageTypeT, list[Callable[[Message], Any]]] = {}
+        self._msg_count: int = 0
+        self._yield_interval: int = Environment.ZMQ.SUB_YIELD_INTERVAL
 
     async def subscribe_all(
         self,
@@ -155,7 +158,7 @@ class ZMQSubClient(BaseZMQClient):
         # This is optimal for our workload (84% large messages in push/pull, 45% in pub/sub)
         message = Message.from_json(message_bytes)
 
-        self.debug(
+        self.trace(
             lambda: f"Calling callbacks for message: {message}, {self._subscribers.get(topic)}"
         )
 
@@ -178,7 +181,13 @@ class ZMQSubClient(BaseZMQClient):
                     self.trace(
                         f"Socket received message: {topic_bytes} {message_bytes}"
                     )
+                # NOTE: This must be async otherwise it may deadlock the event loop.
                 self.execute_async(self._handle_message(topic_bytes, message_bytes))
+                self._msg_count += 1
+                # Yield periodically to allow scheduled handlers to run
+                # and prevent event loop starvation during message bursts.
+                if self._yield_interval > 0 and self._msg_count >= self._yield_interval:
+                    await yield_to_event_loop()
 
             except zmq.Again:
                 self.debug(f"Sub client {self.client_id} receiver task timed out")

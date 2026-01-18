@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import tempfile
@@ -55,13 +55,8 @@ class BaseZMQCommunicationConfig(BaseModel, ABC):
 
     @property
     @abstractmethod
-    def credit_drop_address(self) -> str:
-        """Get the credit drop address based on protocol configuration."""
-
-    @property
-    @abstractmethod
-    def credit_return_address(self) -> str:
-        """Get the credit return address based on protocol configuration."""
+    def credit_router_address(self) -> str:
+        """Get the credit router address for bidirectional ROUTER-DEALER credit routing."""
 
     def get_address(self, address_type: CommAddress) -> str:
         """Get the actual address based on the address type."""
@@ -70,8 +65,7 @@ class BaseZMQCommunicationConfig(BaseModel, ABC):
             CommAddress.EVENT_BUS_PROXY_BACKEND: self.event_bus_proxy_config.backend_address,
             CommAddress.DATASET_MANAGER_PROXY_FRONTEND: self.dataset_manager_proxy_config.frontend_address,
             CommAddress.DATASET_MANAGER_PROXY_BACKEND: self.dataset_manager_proxy_config.backend_address,
-            CommAddress.CREDIT_DROP: self.credit_drop_address,
-            CommAddress.CREDIT_RETURN: self.credit_return_address,
+            CommAddress.CREDIT_ROUTER: self.credit_router_address,
             CommAddress.RECORDS: self.records_push_pull_address,
             CommAddress.RAW_INFERENCE_PROXY_FRONTEND: self.raw_inference_proxy_config.frontend_address,
             CommAddress.RAW_INFERENCE_PROXY_BACKEND: self.raw_inference_proxy_config.backend_address,
@@ -203,7 +197,9 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
     host: Annotated[
         str,
         Field(
-            description="Host address for TCP connections",
+            description="Host address for internal ZMQ TCP communication between AIPerf services. Defaults to `127.0.0.1` (localhost) for "
+            "single-machine deployments. For distributed setups, set to a reachable IP address. All internal service-to-service communication "
+            "(message bus, dataset manager, workers) uses this host for TCP sockets.",
         ),
         CLIParameter(
             name=("--zmq-host"),
@@ -213,11 +209,8 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
     records_push_pull_port: Annotated[int, DisableCLI()] = Field(
         default=5557, description="Port for inference push/pull messages"
     )
-    credit_drop_port: Annotated[int, DisableCLI()] = Field(
-        default=5562, description="Port for credit drop operations"
-    )
-    credit_return_port: Annotated[int, DisableCLI()] = Field(
-        default=5563, description="Port for credit return operations"
+    credit_router_port: Annotated[int, DisableCLI()] = Field(
+        default=5564, description="Port for credit router (ROUTER-DEALER streaming)"
     )
     dataset_manager_proxy_config: Annotated[  # type: ignore
         ZMQTCPProxyConfig, DisableCLI()
@@ -253,14 +246,9 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
         return f"tcp://{self.host}:{self.records_push_pull_port}"
 
     @property
-    def credit_drop_address(self) -> str:
-        """Get the credit drop address based on protocol configuration."""
-        return f"tcp://{self.host}:{self.credit_drop_port}"
-
-    @property
-    def credit_return_address(self) -> str:
-        """Get the credit return address based on protocol configuration."""
-        return f"tcp://{self.host}:{self.credit_return_port}"
+    def credit_router_address(self) -> str:
+        """Get the credit router address for streaming ROUTER-DEALER."""
+        return f"tcp://{self.host}:{self.credit_router_port}"
 
 
 class ZMQIPCConfig(BaseZMQCommunicationConfig):
@@ -288,7 +276,9 @@ class ZMQIPCConfig(BaseZMQCommunicationConfig):
     path: Annotated[
         Path | None,
         Field(
-            description="Path for IPC sockets",
+            description="Directory path for ZMQ IPC (Inter-Process Communication) socket files. When using IPC transport instead of TCP, "
+            "AIPerf creates Unix domain socket files in this directory for faster local communication. Auto-generated in system temp directory "
+            "if not specified. Only applicable when using IPC communication backend.",
         ),
         CLIParameter(
             name=("--zmq-ipc-path"),
@@ -323,15 +313,8 @@ class ZMQIPCConfig(BaseZMQCommunicationConfig):
         return f"ipc://{self.path / 'records_push_pull.ipc'}"
 
     @property
-    def credit_drop_address(self) -> str:
-        """Get the credit drop address based on protocol configuration."""
+    def credit_router_address(self) -> str:
+        """Get the credit router address for streaming ROUTER-DEALER."""
         if not self.path:
             raise ValueError("Path is required for IPC transport")
-        return f"ipc://{self.path / 'credit_drop.ipc'}"
-
-    @property
-    def credit_return_address(self) -> str:
-        """Get the credit return address based on protocol configuration."""
-        if not self.path:
-            raise ValueError("Path is required for IPC transport")
-        return f"ipc://{self.path / 'credit_return.ipc'}"
+        return f"ipc://{self.path / 'credit_router.ipc'}"

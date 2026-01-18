@@ -40,6 +40,9 @@ class EndpointMetadata(AIPerfBaseModel):
     supports_videos: bool = Field(
         default=False, description="Whether endpoint accepts video input."
     )
+    produces_images: bool = Field(
+        default=False, description="Whether endpoint produces image-based outputs."
+    )
     metrics_title: str | None = Field(
         default=None, description="Display title for metrics dashboard."
     )

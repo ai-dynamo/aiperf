@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import traceback
@@ -33,7 +33,6 @@ from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.protocols import (
     PushClientProtocol,
     RecordProcessorProtocol,
-    RequestClientProtocol,
 )
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import compute_time_ns
@@ -64,11 +63,6 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         )
         self.records_push_client: PushClientProtocol = self.comms.create_push_client(
             CommAddress.RECORDS,
-        )
-        self.conversation_request_client: RequestClientProtocol = (
-            self.comms.create_request_client(
-                CommAddress.DATASET_MANAGER_PROXY_FRONTEND,
-            )
         )
         self.tokenizers: dict[str, Tokenizer] = {}
         self.user_config: UserConfig = user_config
@@ -150,18 +144,19 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         )
 
         return MetricRecordMetadata(
+            credit_issued_ns=record.request_info.credit_issued_ns,
             request_start_ns=start_time_ns,
             request_ack_ns=request_ack_ns,
             request_end_ns=request_end_ns,
-            conversation_id=record.conversation_id,
-            turn_index=record.turn_index,
+            conversation_id=record.request_info.conversation_id,
+            turn_index=record.request_info.turn_index,
             record_processor_id=self.service_id,
-            benchmark_phase=record.credit_phase,
-            x_request_id=record.x_request_id,
-            x_correlation_id=record.x_correlation_id,
-            session_num=record.credit_num,
+            benchmark_phase=record.request_info.credit_phase,
+            x_request_id=record.request_info.x_request_id,
+            x_correlation_id=record.request_info.x_correlation_id,
+            session_num=record.request_info.credit_num,
             worker_id=worker_id,
-            was_cancelled=record.was_cancelled,
+            was_cancelled=cancellation_time_ns is not None,
             cancellation_time_ns=cancellation_time_ns,
         )
 
@@ -189,6 +184,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 service_id=self.service_id,
                 metadata=metadata,
                 results=results,
+                trace_data=message.record.trace_data,
                 error=message.record.error,
             )
         )

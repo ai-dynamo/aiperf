@@ -1,5 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import os
 from collections.abc import Callable
 from threading import Lock
@@ -14,9 +16,10 @@ from aiperf.common.enums import (
     ConsoleExporterType,
     CustomDatasetType,
     DataExporterType,
+    DatasetBackingStoreType,
+    DatasetClientStoreType,
     EndpointType,
     RecordProcessorType,
-    RequestRateMode,
     ResultsProcessorType,
     ServiceRunType,
     ServiceType,
@@ -29,6 +32,7 @@ from aiperf.common.exceptions import (
     InvalidOperationError,
     InvalidStateError,
 )
+from aiperf.common.models import DatasetClientMetadata
 from aiperf.common.models.metadata import EndpointMetadata
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.protocols import EndpointProtocol
@@ -55,9 +59,10 @@ if TYPE_CHECKING:
         CommunicationProtocol,
         ConsoleExporterProtocol,
         DataExporterProtocol,
+        DatasetBackingStoreProtocol,
+        DatasetClientStoreProtocol,
         DatasetSamplingStrategyProtocol,
         RecordProcessorProtocol,
-        RequestRateGeneratorProtocol,
         ResultsProcessorProtocol,
         ServiceManagerProtocol,
         TransportProtocol,
@@ -67,7 +72,6 @@ if TYPE_CHECKING:
     )
     from aiperf.dataset.composer.base import BaseDatasetComposer
     from aiperf.exporters.exporter_config import ExporterConfig
-    from aiperf.timing.config import TimingManagerConfig
     from aiperf.zmq.zmq_proxy_base import BaseZMQProxy
 
 
@@ -362,7 +366,7 @@ class CommunicationClientFactory(
         bind: bool,
         socket_ops: dict | None = None,
         **kwargs,
-    ) -> "CommunicationClientProtocol":
+    ) -> CommunicationClientProtocol:
         return super().create_instance(
             class_type, address=address, bind=bind, socket_ops=socket_ops, **kwargs
         )
@@ -379,9 +383,9 @@ class CommunicationFactory(
     def create_instance(  # type: ignore[override]
         cls,
         class_type: CommunicationBackend | str,
-        config: "BaseZMQCommunicationConfig",
+        config: BaseZMQCommunicationConfig,
         **kwargs,
-    ) -> "CommunicationProtocol":
+    ) -> CommunicationProtocol:
         return super().create_instance(class_type, config=config, **kwargs)
 
 
@@ -395,7 +399,7 @@ class ComposerFactory(AIPerfFactory[ComposerType, "BaseDatasetComposer"]):
         cls,
         class_type: ComposerType | str,
         **kwargs,
-    ) -> "BaseDatasetComposer":
+    ) -> BaseDatasetComposer:
         return super().create_instance(class_type, **kwargs)
 
 
@@ -410,9 +414,9 @@ class ConsoleExporterFactory(
     def create_instance(  # type: ignore[override]
         cls,
         class_type: ConsoleExporterType | str,
-        exporter_config: "ExporterConfig",
+        exporter_config: ExporterConfig,
         **kwargs,
-    ) -> "ConsoleExporterProtocol":
+    ) -> ConsoleExporterProtocol:
         return super().create_instance(
             class_type, exporter_config=exporter_config, **kwargs
         )
@@ -430,9 +434,9 @@ class CustomDatasetFactory(
         cls,
         class_type: CustomDatasetType | str,
         filename: str,
-        user_config: "UserConfig",
+        user_config: UserConfig,
         **kwargs,
-    ) -> "CustomDatasetLoaderProtocol":
+    ) -> CustomDatasetLoaderProtocol:
         return super().create_instance(
             class_type, filename=filename, user_config=user_config, **kwargs
         )
@@ -447,9 +451,9 @@ class DataExporterFactory(AIPerfFactory[DataExporterType, "DataExporterProtocol"
     def create_instance(  # type: ignore[override]
         cls,
         class_type: DataExporterType | str,
-        exporter_config: "ExporterConfig",
+        exporter_config: ExporterConfig,
         **kwargs,
-    ) -> "DataExporterProtocol":
+    ) -> DataExporterProtocol:
         return super().create_instance(
             class_type, exporter_config=exporter_config, **kwargs
         )
@@ -468,9 +472,66 @@ class DatasetSamplingStrategyFactory(
         class_type: DatasetSamplingStrategy | str,
         conversation_ids: list[str],
         **kwargs,
-    ) -> "DatasetSamplingStrategyProtocol":
+    ) -> DatasetSamplingStrategyProtocol:
         return super().create_instance(
             class_type, conversation_ids=conversation_ids, **kwargs
+        )
+
+
+class DatasetBackingStoreFactory(
+    AIPerfFactory[DatasetBackingStoreType, "DatasetBackingStoreProtocol"]
+):
+    """Factory for creating DatasetBackingStoreProtocol instances (DatasetManager side).
+    see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
+    """
+
+    @classmethod
+    def create_instance(  # type: ignore[override]
+        cls,
+        class_type: DatasetBackingStoreType | str,
+        **kwargs,
+    ) -> DatasetBackingStoreProtocol:
+        """Create a dataset backing store instance.
+
+        After creation, use add_conversation(s) to load data, then finalize().
+
+        Args:
+            class_type: Type of backing store to create
+            **kwargs: Implementation-specific configuration
+
+        Returns:
+            DatasetBackingStoreProtocol implementation
+        """
+        return super().create_instance(class_type, **kwargs)
+
+
+class DatasetClientStoreFactory(
+    AIPerfFactory[DatasetClientStoreType, "DatasetClientStoreProtocol"]
+):
+    """Factory for creating DatasetClientStoreProtocol instances (Worker side).
+    see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
+    """
+
+    @classmethod
+    def create_instance(  # type: ignore[override]
+        cls,
+        client_metadata: DatasetClientMetadata,
+        **kwargs,
+    ) -> DatasetClientStoreProtocol:
+        """Create a dataset client store instance.
+
+        The client_type is automatically extracted from client_metadata.client_type,
+        leveraging the discriminated union pattern for type-safe routing.
+
+        Args:
+            client_metadata: Typed metadata from DatasetBackingStore.get_client_metadata()
+            **kwargs: Additional client-specific configuration
+
+        Returns:
+            DatasetClientStoreProtocol implementation
+        """
+        return super().create_instance(
+            client_metadata.client_type, client_metadata=client_metadata, **kwargs
         )
 
 
@@ -483,15 +544,15 @@ class EndpointFactory(AIPerfFactory[EndpointType, "EndpointProtocol"]):
     def create_instance(  # type: ignore[override]
         cls,
         class_type: EndpointType | str,
-        model_endpoint: "ModelEndpointInfo",
+        model_endpoint: ModelEndpointInfo,
         **kwargs,
-    ) -> "EndpointProtocol":
+    ) -> EndpointProtocol:
         return super().create_instance(
             class_type, model_endpoint=model_endpoint, **kwargs
         )
 
     @classmethod
-    def get_metadata(cls, class_type: EndpointType | str) -> "EndpointMetadata":
+    def get_metadata(cls, class_type: EndpointType | str) -> EndpointMetadata:
         return cls.get_class_from_type(class_type).metadata()
 
 
@@ -533,10 +594,10 @@ class ServiceManagerFactory(AIPerfFactory[ServiceRunType, "ServiceManagerProtoco
         cls,
         class_type: ServiceRunType | str,
         required_services: dict[ServiceTypeT, int],
-        service_config: "ServiceConfig",
-        user_config: "UserConfig",
+        service_config: ServiceConfig,
+        user_config: UserConfig,
         **kwargs,
-    ) -> "ServiceManagerProtocol":
+    ) -> ServiceManagerProtocol:
         return super().create_instance(
             class_type,
             required_services=required_services,
@@ -557,10 +618,10 @@ class RecordProcessorFactory(
     def create_instance(  # type: ignore[override]
         cls,
         class_type: RecordProcessorType | str,
-        service_config: "ServiceConfig",
-        user_config: "UserConfig",
+        service_config: ServiceConfig,
+        user_config: UserConfig,
         **kwargs,
-    ) -> "RecordProcessorProtocol":
+    ) -> RecordProcessorProtocol:
         return super().create_instance(
             class_type,
             service_config=service_config,
@@ -580,31 +641,16 @@ class ResultsProcessorFactory(
     def create_instance(  # type: ignore[override]
         cls,
         class_type: ResultsProcessorType | str,
-        service_config: "ServiceConfig",
-        user_config: "UserConfig",
+        service_config: ServiceConfig,
+        user_config: UserConfig,
         **kwargs,
-    ) -> "ResultsProcessorProtocol":
+    ) -> ResultsProcessorProtocol:
         return super().create_instance(
             class_type,
             service_config=service_config,
             user_config=user_config,
             **kwargs,
         )
-
-
-class RequestRateGeneratorFactory(
-    AIPerfFactory[RequestRateMode, "RequestRateGeneratorProtocol"]
-):
-    """Factory for registering and creating RequestRateGeneratorProtocol instances based on the specified RequestRateMode.
-    see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
-    """
-
-    @classmethod
-    def create_instance(  # type: ignore[override]
-        cls,
-        config: "TimingManagerConfig",
-    ) -> "RequestRateGeneratorProtocol":
-        return super().create_instance(config.request_rate_mode, config=config)
 
 
 class TransportFactory(AIPerfFactory[TransportType, "TransportProtocol"]):
@@ -617,7 +663,7 @@ class TransportFactory(AIPerfFactory[TransportType, "TransportProtocol"]):
         cls,
         class_type: TransportType | str,
         **kwargs,
-    ) -> "TransportProtocol":
+    ) -> TransportProtocol:
         return super().create_instance(class_type, **kwargs)
 
     @classmethod
@@ -666,9 +712,9 @@ class ZMQProxyFactory(AIPerfFactory[ZMQProxyType, "BaseZMQProxy"]):
     def create_instance(  # type: ignore[override]
         cls,
         class_type: ZMQProxyType | str,
-        zmq_proxy_config: "BaseZMQProxyConfig",
+        zmq_proxy_config: BaseZMQProxyConfig,
         **kwargs,
-    ) -> "BaseZMQProxy":
+    ) -> BaseZMQProxy:
         return super().create_instance(
             class_type, zmq_proxy_config=zmq_proxy_config, **kwargs
         )

@@ -58,7 +58,9 @@ class TemplateEndpoint(BaseEndpoint):
             except (OSError, ValueError) as e:
                 self.debug(f"Not a file or treating as inline template: '{e!r}'")
 
-        self._template = jinja2.Environment().from_string(template_source)
+        self._template = jinja2.Environment(autoescape=True).from_string(
+            template_source
+        )
         self.info(f"Compiled template ({len(template_source)} chars)")
 
         response_field = extra_dict.get("response_field")
@@ -153,7 +155,7 @@ class TemplateEndpoint(BaseEndpoint):
         if self._extra_fields:
             payload.update(self._extra_fields)
 
-        self.debug(lambda: f"Formatted payload: {payload}")
+        self.trace(lambda: f"Formatted payload: {payload}")
         return payload
 
     def parse_response(

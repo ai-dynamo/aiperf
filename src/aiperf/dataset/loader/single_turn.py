@@ -2,19 +2,21 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from collections import defaultdict
+from pathlib import Path
+from typing import Any
 
-from aiperf.common.config.user_config import UserConfig
-from aiperf.common.enums import CustomDatasetType, MediaType
+from pydantic import ValidationError
+
+from aiperf.common.enums import CustomDatasetType, DatasetSamplingStrategy, MediaType
 from aiperf.common.factories import CustomDatasetFactory
 from aiperf.common.models import Conversation, Turn
-from aiperf.common.session_id_generator import SessionIDGenerator
-from aiperf.dataset.loader.base_loader import BaseLoader
+from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import SingleTurn
 
 
 @CustomDatasetFactory.register(CustomDatasetType.SINGLE_TURN)
-class SingleTurnDatasetLoader(BaseLoader, MediaConversionMixin):
+class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
     """A dataset loader that loads single turn data from a file.
 
     The single turn type
@@ -66,12 +68,28 @@ class SingleTurnDatasetLoader(BaseLoader, MediaConversionMixin):
     ```
     """
 
-    def __init__(self, filename: str, user_config: UserConfig, **kwargs):
-        super().__init__(filename=filename, user_config=user_config, **kwargs)
-        self.session_id_generator: SessionIDGenerator = SessionIDGenerator(
-            seed=user_config.input.random_seed
-        )
-        self.filename = filename
+    @classmethod
+    def can_load(
+        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
+    ) -> bool:
+        """Check if this loader can handle the given data format.
+
+        SingleTurn format has modality fields (text/texts, image/images, etc.)
+        but does NOT have a "turns" field. Use the SingleTurn model to validate the data.
+        """
+        if data is None:
+            return False
+
+        try:
+            SingleTurn.model_validate(data)
+            return True
+        except ValidationError:
+            return False
+
+    @classmethod
+    def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
+        """Get the preferred dataset sampling strategy for SingleTurn."""
+        return DatasetSamplingStrategy.SEQUENTIAL
 
     def load_dataset(self) -> dict[str, list[SingleTurn]]:
         """Load single-turn data from a JSONL file.
@@ -116,6 +134,7 @@ class SingleTurnDatasetLoader(BaseLoader, MediaConversionMixin):
                         texts=media[MediaType.TEXT],
                         images=media[MediaType.IMAGE],
                         audios=media[MediaType.AUDIO],
+                        videos=media[MediaType.VIDEO],
                         timestamp=single_turn.timestamp,
                         delay=single_turn.delay,
                         role=single_turn.role,

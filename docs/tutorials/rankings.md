@@ -32,7 +32,26 @@ curl -s http://localhost:8080/rerank \
   -d '{"query":"What is AI?", "texts":["AI is artificial intelligence.","Bananas are yellow."]}' | jq
 ```
 
-### Profile with AIPerf
+### Profile using Synthetic Inputs
+
+Run AIPerf using the following command:
+```bash
+aiperf profile \
+    -m BAAI/bge-reranker-base \
+    --endpoint-type hf_tei_rankings \
+    --url localhost:8080 \
+    --request-count 10 \
+    --rankings-passages-mean 5 \
+    --rankings-passages-stddev 1 \
+    --rankings-passages-prompt-token-mean 32 \
+    --rankings-passages-prompt-token-stddev 8 \
+    --rankings-query-prompt-token-mean 16 \
+    --rankings-query-prompt-token-stddev 4
+```
+
+> **Note:** The rankings-specific token options cannot be used together with `--prompt-input-tokens-mean` or `--prompt-input-tokens-stddev`. Use the rankings-specific options for controlling token counts in rankings queries and passages.
+
+### Profile using Custom Inputs
 
 Create a file named rankings.jsonl where each line represents a ranking request with a query and one or more passages.
 
@@ -46,7 +65,7 @@ cat <<EOF > rankings.jsonl
 EOF
 ```
 
-Run AIPerf:
+Run AIPerf using the following command:
 ```bash
 aiperf profile \
     -m BAAI/bge-reranker-base \
@@ -78,7 +97,18 @@ curl -s http://localhost:8080/v1/rerank \
   -d '{"query":"What is AI?","documents":["Artificial intelligence overview","Bananas are yellow"]}' | jq
 ```
 
-### Profile with AIPerf
+### Profile using Synthetic Inputs
+Run AIPerf using the following command:
+
+```bash
+aiperf profile \
+    -m BAAI/bge-reranker-v2-m3 \
+    --endpoint-type cohere_rankings \
+    --url localhost:8080 \
+    --request-count 10
+```
+
+### Profile using Custom Inputs
 
 Create a file named `rankings.jsonl`:
 ```bash

@@ -1,11 +1,18 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from pydantic import Field
+from typing import Any
+
+from pydantic import Field, SerializeAsAny, field_validator
 
 from aiperf.common.enums import CreditPhase, MessageType
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.models import Conversation, Turn
+from aiperf.common.models import (
+    Conversation,
+    DatasetClientMetadata,
+    DatasetMetadata,
+    Turn,
+)
 from aiperf.common.types import MessageTypeT
 
 
@@ -14,12 +21,10 @@ class ConversationRequestMessage(BaseServiceMessage):
 
     message_type: MessageTypeT = MessageType.CONVERSATION_REQUEST
 
-    conversation_id: str | None = Field(
-        default=None, description="The session ID of the conversation"
-    )
+    conversation_id: str = Field(..., description="The dataset conversation ID")
     credit_phase: CreditPhase | None = Field(
         default=None,
-        description="The type of credit phase (either warmup or profiling). If not provided, the timing manager will use the default credit phase.",
+        description="The type of credit phase (either warmup or profiling). If not provided, the dataset manager will use the default credit phase.",
     )
 
 
@@ -54,24 +59,33 @@ class ConversationTurnResponseMessage(BaseServiceMessage):
     turn: Turn = Field(..., description="The turn data")
 
 
-class DatasetTimingRequest(BaseServiceMessage):
-    """Message for a dataset timing request."""
-
-    message_type: MessageTypeT = MessageType.DATASET_TIMING_REQUEST
-
-
-class DatasetTimingResponse(BaseServiceMessage):
-    """Message for a dataset timing response."""
-
-    message_type: MessageTypeT = MessageType.DATASET_TIMING_RESPONSE
-
-    timing_data: list[tuple[int, str]] = Field(
-        ...,
-        description="The timing data of the dataset. Tuple of (timestamp, conversation_id)",
-    )
-
-
 class DatasetConfiguredNotification(BaseServiceMessage):
-    """Notification sent to notify other services that the dataset has been configured."""
+    """Notification sent to notify other services that the dataset has been configured.
+
+    Contains two separate pieces of information:
+    - metadata: Dataset structure (conversations, sampling strategy) for timing strategies
+    - client_metadata: Client access info (e.g., mmap paths) for workers to read data
+    """
 
     message_type: MessageTypeT = MessageType.DATASET_CONFIGURED_NOTIFICATION
+
+    metadata: DatasetMetadata = Field(
+        ...,
+        description="Dataset structure metadata (conversations, timing) for timing strategies.",
+    )
+    client_metadata: SerializeAsAny[DatasetClientMetadata] = Field(
+        ...,
+        description="Client access metadata (e.g., mmap file paths) for workers to read dataset.",
+    )
+
+    @field_validator("client_metadata", mode="before")
+    @classmethod
+    def route_client_metadata(cls, v: Any) -> DatasetClientMetadata:
+        """Route nested AutoRoutedModel field to correct subclass.
+
+        Pydantic's nested model validation doesn't use AutoRoutedModel.from_json(),
+        so we manually route dict inputs to the correct subclass based on client_type.
+        """
+        if isinstance(v, dict):
+            return DatasetClientMetadata.from_json(v)
+        return v

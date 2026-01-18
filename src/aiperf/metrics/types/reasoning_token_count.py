@@ -46,10 +46,10 @@ class ReasoningTokenCountMetric(BaseRecordMetric[int]):
         Raises:
             ValueError: If the record does not have a reasoning token count.
         """
-        if record.reasoning_token_count is None:
+        if record.token_counts is None or record.token_counts.reasoning is None:
             raise NoMetricValue("Reasoning token count is missing in the record.")
 
-        return record.reasoning_token_count
+        return record.token_counts.reasoning
 
 
 class TotalReasoningTokensMetric(DerivedSumMetric[int, ReasoningTokenCountMetric]):

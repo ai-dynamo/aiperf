@@ -20,6 +20,8 @@ nav:
     - Goodput: tutorials/goodput.md
     - Request Rate with Max Concurrency: tutorials/request-rate-concurrency.md
     - GPU Telemetry: tutorials/gpu-telemetry.md
+    - Timeslices: tutorials/timeslices.md
+    - Visualization and Plotting: tutorials/plot.md
     - Template Endpoint: tutorials/template-endpoint.md
   - Reference:
     - Architecture: architecture.md

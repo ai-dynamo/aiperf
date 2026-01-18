@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from collections import defaultdict
 from typing import Any
@@ -100,6 +100,7 @@ class TimesliceMetricResultsProcessor(MetricResultsProcessor):
 
         This will compute the values for the derived metrics, and then create the MetricResult objects for each metric.
         """
+        self.info("Summarizing timeslice metric results...")
         await self.update_derived_metrics()
 
         # Compute and return the metric results.
@@ -115,4 +116,7 @@ class TimesliceMetricResultsProcessor(MetricResultsProcessor):
             ]
             timeslice_metric_results[counter] = metric_results
 
+        self.info(
+            f"Summarized {len(timeslice_metric_results)} timeslice metric results"
+        )
         return timeslice_metric_results

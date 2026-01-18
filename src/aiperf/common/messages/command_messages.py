@@ -258,6 +258,15 @@ class ProfileStartCommand(CommandMessage):
     command: CommandTypeT = CommandType.PROFILE_START
 
 
+class ProfileCompleteCommand(CommandMessage):
+    """Command message sent when all records are received and profiling is complete.
+
+    Triggers final scrape of server metrics to capture end state.
+    """
+
+    command: CommandTypeT = CommandType.PROFILE_COMPLETE
+
+
 class ProfileCancelCommand(CommandMessage):
     """Command message sent to request services to cancel profiling."""
 

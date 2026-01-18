@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import os
@@ -7,6 +7,7 @@ import time
 from typing import cast
 
 from rich.console import Console
+from rich.panel import Panel
 
 from aiperf.cli_utils import print_developer_mode_warning
 from aiperf.common.base_service import BaseService
@@ -31,15 +32,17 @@ from aiperf.common.logging import cleanup_global_log_queue, get_global_log_queue
 from aiperf.common.messages import (
     CommandErrorResponse,
     CommandResponse,
-    CreditsCompleteMessage,
+    CommandSuccessResponse,
     HeartbeatMessage,
     ProcessRecordsResultMessage,
+    ProcessServerMetricsResultMessage,
     ProcessTelemetryResultMessage,
     ProfileCancelCommand,
     ProfileConfigureCommand,
     ProfileStartCommand,
     RealtimeMetricsCommand,
     RegisterServiceCommand,
+    ServerMetricsStatusMessage,
     ShutdownCommand,
     ShutdownWorkersCommand,
     SpawnWorkersCommand,
@@ -50,14 +53,16 @@ from aiperf.common.models import (
     ErrorDetails,
     ProcessRecordsResult,
     ServiceRunInfo,
-    TelemetryResults,
 )
 from aiperf.common.models.error_models import ExitErrorInfo
+from aiperf.common.models.export_models import TelemetryExportData
+from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.protocols import AIPerfUIProtocol, ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
 from aiperf.controller.controller_utils import print_exit_errors
 from aiperf.controller.proxy_manager import ProxyManager
 from aiperf.controller.system_mixins import SignalHandlerMixin
+from aiperf.credit.messages import CreditsCompleteMessage
 from aiperf.exporters.exporter_manager import ExporterManager
 
 
@@ -125,14 +130,18 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._stop_tasks: set[asyncio.Task] = set()
         self._profile_results: ProcessRecordsResult | None = None
         self._exit_errors: list[ExitErrorInfo] = []
-        self._telemetry_results: TelemetryResults | None = None
+        self._telemetry_results: TelemetryExportData | None = None
+        self._server_metrics_results: ServerMetricsResults | None = None
         self._profile_results_received = False
         self._should_wait_for_telemetry = False
+        self._should_wait_for_server_metrics = False
 
         self._shutdown_triggered = False
         self._shutdown_lock = asyncio.Lock()
-        self._endpoints_configured: list[str] = []
-        self._endpoints_reachable: list[str] = []
+        self._telemetry_endpoints_configured: list[str] = []
+        self._telemetry_endpoints_reachable: list[str] = []
+        self._server_metrics_endpoints_configured: list[str] = []
+        self._server_metrics_endpoints_reachable: list[str] = []
         self.debug("System Controller created")
 
     async def request_realtime_metrics(self) -> None:
@@ -181,8 +190,19 @@ class SystemController(SignalHandlerMixin, BaseService):
             await self.service_manager.start()
 
         # Start optional services before waiting for registration so they can participate in configuration
-        self.debug("Starting optional TelemetryManager service")
-        await self.service_manager.run_service(ServiceType.TELEMETRY_MANAGER, 1)
+        if not self.user_config.gpu_telemetry_disabled:
+            self.debug("Starting optional TelemetryManager service")
+            await self.service_manager.run_service(ServiceType.GPU_TELEMETRY_MANAGER)
+        else:
+            self.info("GPU telemetry disabled via --no-gpu-telemetry")
+            self._should_wait_for_telemetry = False
+
+        if not self.user_config.server_metrics_disabled:
+            self.debug("Starting optional ServerMetricsManager service")
+            await self.service_manager.run_service(ServiceType.SERVER_METRICS_MANAGER)
+        else:
+            self.info("Server metrics disabled via --no-server-metrics")
+            self._should_wait_for_server_metrics = False
 
         async with self.try_operation_or_stop("Register Services"):
             await self.service_manager.wait_for_all_services_registration(
@@ -198,11 +218,13 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _profile_configure_all_services(self) -> None:
         """Configure all services to start profiling.
 
-        This is a blocking call that will wait for all services to be configured before returning. This way we can ensure that all services are configured before we start profiling.
+        This is a blocking call that will wait for all services to be configured
+        before returning. Uses fail-fast behavior: if any service returns an error,
+        we abort immediately without waiting for the remaining services.
         """
         self.info("Configuring all services to start profiling")
         begin = time.perf_counter()
-        responses = await self.send_command_and_wait_for_all_responses(
+        responses = await self.send_command_and_wait_until_first_error(
             ProfileConfigureCommand(
                 service_id=self.service_id,
                 config=self.user_config,
@@ -214,10 +236,19 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._parse_responses_for_errors(responses, "Configure Profiling")
         self.info(f"All services configured in {duration:.2f} seconds")
 
+        if not Environment.HTTP.SSL_VERIFY:
+            self.warning(
+                "SSL certificate verification is DISABLED - this is insecure. This should only be used for testing in a trusted environment."
+            )
+
     async def _start_profiling_all_services(self) -> None:
-        """Tell all services to start profiling."""
+        """Tell all services to start profiling.
+
+        Uses fail-fast behavior: if any service returns an error,
+        we abort immediately without waiting for the remaining services.
+        """
         self.debug("Sending PROFILE_START command to all services")
-        responses = await self.send_command_and_wait_for_all_responses(
+        responses = await self.send_command_and_wait_until_first_error(
             ProfileStartCommand(
                 service_id=self.service_id,
             ),
@@ -257,9 +288,10 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _handle_register_service_command(
         self, message: RegisterServiceCommand
     ) -> None:
-        """Process a registration message from a service. It will
-        add the service to the service manager and send a configure command
-        to the service.
+        """Process a registration message from a service.
+
+        Adds the service to the service manager's tracking maps (service_id_map and
+        service_map) so it can participate in lifecycle coordination.
 
         Args:
             message: The registration message to process
@@ -301,31 +333,28 @@ class SystemController(SignalHandlerMixin, BaseService):
         service_type = message.service_type
         timestamp = message.request_ns
 
-        self.debug(lambda: f"Received heartbeat from {service_type} (ID: {service_id})")
-
         # Update the last heartbeat timestamp if the component exists
         try:
             service_info = self.service_manager.service_id_map[service_id]
             service_info.last_seen = timestamp
             service_info.state = message.state
-            self.debug(f"Updated heartbeat for {service_id} to {timestamp}")
+            self.debug(lambda: f"Updated heartbeat for '{service_id}' to {timestamp}")
         except Exception:
             self.warning(
-                f"Received heartbeat from unknown service: {service_id} ({service_type})"
+                f"Received heartbeat from unknown service: '{service_id}' ('{service_type}')"
             )
 
     @on_message(MessageType.CREDITS_COMPLETE)
     async def _process_credits_complete_message(
         self, message: CreditsCompleteMessage
     ) -> None:
-        """Process a credits complete message from a service. It will
-        update the state of the service with the service manager.
+        """Log receipt of credits complete message from a service.
 
         Args:
             message: The credits complete message to process
         """
         service_id = message.service_id
-        self.info(f"Received credits complete from {service_id}")
+        self.info(f"Received credits complete from '{service_id}'")
 
     @on_message(MessageType.STATUS)
     async def _process_status_message(self, message: StatusMessage) -> None:
@@ -342,7 +371,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         state = message.state
 
         self.debug(
-            lambda: f"Received status update from {service_type} (ID: {service_id}): {state}"
+            lambda: f"Received status update from '{service_type}' (ID: '{service_id}'): {state}"
         )
 
         # Update the component state if the component exists
@@ -369,8 +398,8 @@ class SystemController(SignalHandlerMixin, BaseService):
         TelemetryStatusMessage informs SystemController if telemetry results will be available.
         """
 
-        self._endpoints_configured = message.endpoints_configured
-        self._endpoints_reachable = message.endpoints_reachable
+        self._telemetry_endpoints_configured = message.endpoints_configured
+        self._telemetry_endpoints_reachable = message.endpoints_reachable
         self._should_wait_for_telemetry = message.enabled
 
         if not message.enabled:
@@ -380,6 +409,40 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.info(
                 f"GPU telemetry enabled - {len(message.endpoints_reachable)}/{len(message.endpoints_configured)} endpoint(s) reachable"
             )
+
+        # Re-check shutdown readiness in case results arrived before status message
+        await self._check_and_trigger_shutdown()
+
+    @on_message(MessageType.SERVER_METRICS_STATUS)
+    async def _on_server_metrics_status_message(
+        self, message: ServerMetricsStatusMessage
+    ) -> None:
+        """Handle server metrics status from ServerMetricsManager.
+
+        ServerMetricsStatusMessage informs SystemController if server metrics results will be available.
+        """
+
+        self._server_metrics_endpoints_configured = message.endpoints_configured
+        self._server_metrics_endpoints_reachable = message.endpoints_reachable
+        self._should_wait_for_server_metrics = message.enabled
+
+        if not message.enabled:
+            reason_msg = f" - {message.reason}" if message.reason else ""
+            self.info(f"Server metrics disabled{reason_msg}")
+        else:
+            self.info(
+                f"Server metrics enabled - {len(message.endpoints_reachable)}/{len(message.endpoints_configured)} endpoint(s) reachable."
+            )
+            unreachable_endpoints = set(message.endpoints_configured) - set(
+                message.endpoints_reachable
+            )
+            if unreachable_endpoints:
+                self.warning(
+                    f"Unreachable endpoints: {', '.join(unreachable_endpoints)}"
+                )
+
+        # Re-check shutdown readiness in case results arrived before status message
+        await self._check_and_trigger_shutdown()
 
     @on_message(MessageType.COMMAND_RESPONSE)
     async def _process_command_response_message(self, message: CommandResponse) -> None:
@@ -430,7 +493,10 @@ class SystemController(SignalHandlerMixin, BaseService):
         self, message: ProcessRecordsResultMessage
     ) -> None:
         """Handle a profile results message."""
-        self.debug(lambda: f"Received profile results message: {message}")
+        self.trace_or_debug(
+            lambda: f"Received profile results message: {message}",
+            lambda: f"Received profile results message: {len(message.results.results)} records",
+        )
         if message.results.errors:
             self.error(
                 f"Received process records result message with errors: {message.results.errors}"
@@ -454,50 +520,102 @@ class SystemController(SignalHandlerMixin, BaseService):
         self, message: ProcessTelemetryResultMessage
     ) -> None:
         """Handle a telemetry results message."""
-        self.debug(lambda: f"Received telemetry results message: {message}")
-
-        if message.telemetry_result.errors:
-            self.warning(
-                f"Received process telemetry result message with errors: {message.telemetry_result.errors}"
+        try:
+            self.trace_or_debug(
+                lambda: f"Received telemetry results message: {message}",
+                lambda: f"Received telemetry results message: {len(message.telemetry_result.results.endpoints)} endpoints",
             )
 
-        self.debug(
-            lambda: f"Error summary: {message.telemetry_result.results.error_summary}"
-        )
+            telemetry_results = message.telemetry_result.results
+            if not telemetry_results:
+                self.error(
+                    f"Received process telemetry result message with no records: {telemetry_results}"
+                )
+            else:
+                # Update endpoint info in the summary (TelemetryExportData structure)
+                telemetry_results.summary.endpoints_configured = (
+                    self._telemetry_endpoints_configured
+                )
+                telemetry_results.summary.endpoints_successful = (
+                    self._telemetry_endpoints_reachable
+                )
 
-        telemetry_results = message.telemetry_result.results
+            self._telemetry_results = telemetry_results
+        except Exception as e:
+            self.exception(f"Error processing telemetry results message: {e!r}")
+        finally:
+            self._should_wait_for_telemetry = False
+            await self._check_and_trigger_shutdown()
 
-        if not message.telemetry_result.results:
-            self.error(
-                f"Received process telemetry result message with no records: {telemetry_results}"
+    @on_message(MessageType.PROCESS_SERVER_METRICS_RESULT)
+    async def _on_process_server_metrics_result_message(
+        self, message: ProcessServerMetricsResultMessage
+    ) -> None:
+        """Handle a server metrics results message."""
+        try:
+            self.trace_or_debug(
+                lambda: f"Received server metrics results message: {message}",
+                lambda: f"Received server metrics results message: {len(message.server_metrics_result.results.endpoint_summaries)} endpoints",
             )
 
-        if telemetry_results:
-            telemetry_results.endpoints_configured = self._endpoints_configured
-            telemetry_results.endpoints_successful = self._endpoints_reachable
+            self.debug(
+                lambda: f"Server metrics error summary: {message.server_metrics_result.results.error_summary}"
+            )
 
-        self._telemetry_results = telemetry_results
+            server_metrics_results = message.server_metrics_result.results
 
-        await self._check_and_trigger_shutdown()
+            if not server_metrics_results:
+                self.debug(
+                    f"Received process server metrics result message with no results: {server_metrics_results}"
+                )
+            else:
+                server_metrics_results.endpoints_configured = (
+                    self._server_metrics_endpoints_configured
+                )
+                server_metrics_results.endpoints_successful = (
+                    self._server_metrics_endpoints_reachable
+                )
+
+            self._server_metrics_results = server_metrics_results
+        except Exception as e:
+            self.exception(f"Error processing server metrics results message: {e!r}")
+        finally:
+            self._should_wait_for_server_metrics = False
+            await self._check_and_trigger_shutdown()
 
     async def _check_and_trigger_shutdown(self) -> None:
         """Check if all required results are received and trigger unified export + shutdown.
 
         Coordination logic:
         1. Always wait for profile results (ProcessRecordsResultMessage)
-        2. If telemetry disabled OR telemetry results received → proceed with shutdown
-        3. Otherwise → wait (telemetry results arrive nearly simultaneously and will call this method again)
+        2. If telemetry disabled OR telemetry results received → proceed
+        3. If server metrics disabled OR server metrics results received → proceed
+        4. Otherwise → wait (results arrive nearly simultaneously and will call this method again)
 
         Thread safety:
-        Uses self._shutdown_lock to prevent race conditions when ProcessRecordsResultMessage
-        and ProcessTelemetryResultMessage arrive concurrently. The lock ensures atomic
-        check-and-set of _shutdown_triggered, preventing double-triggering of stop().
+        Uses self._shutdown_lock to prevent race conditions when ProcessRecordsResultMessage,
+        ProcessTelemetryResultMessage, and ProcessServerMetricsResultMessage arrive concurrently.
+        The lock ensures atomic check-and-set of _shutdown_triggered, preventing double-triggering of stop().
         """
+        self.debug(
+            f"_check_and_trigger_shutdown: profile_received={self._profile_results_received}, "
+            f"wait_telemetry={self._should_wait_for_telemetry}, telemetry_results={self._telemetry_results is not None}, "
+            f"wait_server_metrics={self._should_wait_for_server_metrics}, server_metrics_results={self._server_metrics_results is not None}, "
+            f"shutdown_triggered={self._shutdown_triggered}"
+        )
+        # Check if we should trigger shutdown (with lock protection)
+        should_shutdown = False
         async with self._shutdown_lock:
             if self._shutdown_triggered:
+                self.debug(
+                    "_check_and_trigger_shutdown: shutdown already triggered, returning"
+                )
                 return
 
             if not self._profile_results_received:
+                self.debug(
+                    "_check_and_trigger_shutdown: profile results not received yet"
+                )
                 return
 
             telemetry_ready_for_shutdown = (
@@ -505,38 +623,173 @@ class SystemController(SignalHandlerMixin, BaseService):
                 or self._telemetry_results is not None
             )
 
-            if telemetry_ready_for_shutdown:
+            server_metrics_ready_for_shutdown = (
+                not self._should_wait_for_server_metrics
+                or self._server_metrics_results is not None
+            )
+
+            if telemetry_ready_for_shutdown and server_metrics_ready_for_shutdown:
                 self._shutdown_triggered = True
-                self.debug("All results received, initiating shutdown")
-                await asyncio.shield(self.stop())
+                should_shutdown = True
+                self.info("All results received, initiating shutdown")
             else:
-                self.debug("Waiting for telemetry results...")
+                if not telemetry_ready_for_shutdown:
+                    self.info("Waiting for telemetry results...")
+                if not server_metrics_ready_for_shutdown:
+                    self.info("Waiting for server metrics results...")
+
+        # Call stop() OUTSIDE the lock to prevent deadlock
+        if should_shutdown:
+            self.debug("Calling self.stop()...")
+            await asyncio.shield(self.stop())
+            self.debug("self.stop() completed")
 
     async def _handle_signal(self, sig: int) -> None:
-        """Handle received signals by triggering graceful shutdown.
+        """Handle received signals with two-stage cancellation.
+
+        First Ctrl+C: Graceful cancel - stops issuing new credits, cancels
+        in-flight requests, and writes results to files.
+
+        Second Ctrl+C: Force quit - immediately terminates all processes.
+        Results may be incomplete or not written.
 
         Args:
             sig: The signal number received
         """
-        if self.stop_requested:
-            # If we are already in a stopping state, we need to kill the process to be safe.
-            self.warning(f"Received signal {sig}, killing")
+        if self._was_cancelled:
+            # SECOND Ctrl+C - Force quit immediately
+            self._print_force_quit_warning()
+            self.warning(f"Force quit requested (signal {sig})")
             await self._kill()
             return
 
-        self.debug(lambda: f"Received signal {sig}, initiating graceful shutdown")
+        # FIRST Ctrl+C - Graceful cancel with warning
+        self._print_cancel_warning()
+        self.warning(f"Graceful shutdown requested (signal {sig})")
         await self._cancel_profiling()
+
+    def _print_cancel_warning(self) -> None:
+        """Print prominent warning panel on first Ctrl+C.
+
+        Informs user that the benchmark is being cancelled gracefully and
+        results are being processed. Also instructs how to force quit.
+
+        Uses stderr to ensure visibility even when stdout is redirected or
+        captured by the UI.
+        """
+        console = Console(file=sys.stderr, force_terminal=True)
+        console.print()
+        console.print(
+            Panel(
+                "[bold yellow]⚠️  BENCHMARK CANCELLED[/bold yellow]\n\n"
+                "Stopping credit issuance and cancelling in-flight requests...\n"
+                "Results will be written to files.\n\n"
+                "[dim]Press Ctrl+C again to force quit immediately[/dim]\n"
+                "[dim](results may be incomplete or not written)[/dim]",
+                border_style="yellow",
+                padding=(1, 2),
+                title="[bold yellow]Cancellation in Progress[/bold yellow]",
+            )
+        )
+        console.print()
+        console.file.flush()
+
+    def _print_force_quit_warning(self) -> None:
+        """Print warning panel on second Ctrl+C (force quit).
+
+        Warns user that results may be incomplete due to immediate termination.
+
+        Uses stderr to ensure visibility even when stdout is redirected or
+        captured by the UI.
+        """
+        console = Console(file=sys.stderr, force_terminal=True)
+        console.print()
+        console.print(
+            Panel(
+                "[bold red]🛑 FORCE QUIT[/bold red]\n\n"
+                "Terminating all processes immediately.\n"
+                "Results may be incomplete or not written to files.",
+                border_style="red",
+                padding=(1, 2),
+                title="[bold red]Force Quit[/bold red]",
+            )
+        )
+        console.print()
+        console.file.flush()
 
     async def _cancel_profiling(self) -> None:
         self.debug("Cancelling profiling of all services")
         self._was_cancelled = True
-        await self.publish(ProfileCancelCommand(service_id=self.service_id))
 
-        # TODO: HACK: Wait for 2 seconds to ensure the profiling is cancelled
-        # Wait for the profiling to be cancelled
-        await asyncio.sleep(2)
-        self.debug("Stopping system controller after profiling cancelled")
-        await asyncio.shield(self.stop())
+        # Mark shutdown as triggered FIRST to prevent _check_and_trigger_shutdown()
+        # from also calling stop() when results arrive during cancellation.
+        # This prevents the race condition that causes SIGKILL (exit code -9).
+        # Also track if shutdown was already triggered to avoid double-stop.
+        should_call_stop = False
+        async with self._shutdown_lock:
+            if not self._shutdown_triggered:
+                self._shutdown_triggered = True
+                should_call_stop = True
+            else:
+                self.debug("Shutdown already triggered, skipping stop() call")
+
+        # Only wait for RecordsManager's response since it returns ProcessRecordsResult.
+        # Other services receive the broadcast cancel command but we don't wait for them.
+        # This avoids blocking if a service has exited early (e.g., TelemetryManager).
+        records_manager_ids = [
+            service_id
+            for service_id, info in self.service_manager.service_id_map.items()
+            if info.service_type == ServiceType.RECORDS_MANAGER
+        ]
+        self.debug(
+            f"Sending cancel to all services, waiting for {len(records_manager_ids)} RecordsManager(s)"
+        )
+
+        try:
+            responses = await self.send_command_and_wait_for_all_responses(
+                ProfileCancelCommand(
+                    service_id=self.service_id,
+                ),
+                records_manager_ids,
+                timeout=Environment.SERVICE.PROFILE_CANCEL_TIMEOUT,
+            )
+
+            # Log any errors but do NOT raise exceptions during cancellation.
+            # Cancellation is best-effort - we must always proceed to stop().
+            for response in responses:
+                if isinstance(response, ErrorDetails):
+                    self.warning(
+                        f"Cancel command error (timeout or service unavailable): {response}"
+                    )
+                elif isinstance(response, CommandErrorResponse):
+                    self.warning(
+                        f"Cancel command failed from {response.service_id}: {response.error}"
+                    )
+
+            # Extract ProcessRecordsResult from the RecordsManager's response.
+            # We must set _profile_results here because we've blocked the normal
+            # message-based shutdown flow by setting _shutdown_triggered = True.
+            # The command response contains the same data as ProcessRecordsResultMessage.
+            for response in responses:
+                if (
+                    isinstance(response, CommandSuccessResponse)
+                    and response.command == CommandType.PROFILE_CANCEL
+                    and isinstance(response.data, ProcessRecordsResult)
+                ):
+                    self.debug(
+                        lambda r=response: f"Received ProcessRecordsResult from cancel command: {r.data}"
+                    )
+                    self._profile_results = response.data
+                    self._profile_results_received = True
+                    break
+        except Exception as e:
+            # Catch ANY exception during cancellation - we must always proceed to stop().
+            self.warning(f"Exception during cancel command (proceeding to stop): {e!r}")
+
+        # Only call stop() if we were the first to trigger shutdown
+        if should_call_stop:
+            self.debug("Stopping system controller after profiling cancelled")
+            await asyncio.shield(self.stop())
 
     @on_stop
     async def _stop_system_controller(self) -> None:
@@ -582,8 +835,8 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _print_post_benchmark_info_and_metrics(self) -> None:
         """Print post benchmark info and metrics to the console."""
         if not self._profile_results or not self._profile_results.results.records:
-            self.warning("No profile results to export")
-            return
+            self.error("No profile results to export")
+            sys.exit(1)
 
         console = Console()
         if console.width < 100:
@@ -594,6 +847,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             user_config=self.user_config,
             service_config=self.service_config,
             telemetry_results=self._telemetry_results,
+            server_metrics_results=self._server_metrics_results,
         )
 
         # Export data files (CSV, JSON) with complete dataset including telemetry
@@ -676,4 +930,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    sys.exit(0)

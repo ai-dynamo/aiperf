@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Annotated
@@ -21,12 +21,10 @@ class TokenizerConfig(BaseConfig):
     name: Annotated[
         str | None,
         Field(
-            description=(
-                "The HuggingFace tokenizer to use to interpret token metrics "
-                "from prompts and responses.\nThe value can be the "
-                "name of a tokenizer or the filepath of the tokenizer.\n"
-                "The default value is the model name."
-            ),
+            description="HuggingFace tokenizer identifier or local path for token counting in prompts and responses. "
+            "Accepts model names (e.g., `meta-llama/Llama-2-7b-hf`) or filesystem paths to tokenizer files. "
+            "If not specified, defaults to the value of `--model-names`. Essential for accurate token-based metrics "
+            "(input/output token counts, token throughput).",
         ),
         CLIParameter(
             name=("--tokenizer"),
@@ -37,10 +35,9 @@ class TokenizerConfig(BaseConfig):
     revision: Annotated[
         str,
         Field(
-            description=(
-                "The specific model version to use.\n"
-                "It can be a branch name, tag name, or commit ID."
-            ),
+            description="Specific tokenizer version to load from HuggingFace Hub. Can be a branch name (e.g., `main`), "
+            "tag name (e.g., `v1.0`), or full commit hash. Ensures reproducible tokenization across runs by pinning "
+            "to a specific version. Defaults to `main` branch if not specified.",
         ),
         CLIParameter(
             name=("--tokenizer-revision"),
@@ -51,11 +48,9 @@ class TokenizerConfig(BaseConfig):
     trust_remote_code: Annotated[
         bool,
         Field(
-            description=(
-                "Allows custom tokenizer to be downloaded and executed.\n"
-                "This carries security risks and should only be used for repositories you trust.\n"
-                "This is only necessary for custom tokenizers stored in HuggingFace Hub."
-            ),
+            description="Allow execution of custom Python code from HuggingFace Hub tokenizer repositories. Required for tokenizers "
+            "with custom implementations not in the standard `transformers` library. **Security Warning**: Only enable for "
+            "trusted repositories, as this executes arbitrary code. Unnecessary for standard tokenizers.",
         ),
         CLIParameter(
             name=("--tokenizer-trust-remote-code"),

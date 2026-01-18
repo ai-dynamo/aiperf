@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Model endpoint information.
 
@@ -12,7 +12,12 @@ from typing import Any
 from pydantic import Field
 
 from aiperf.common.config import EndpointDefaults, UserConfig
-from aiperf.common.enums import EndpointType, ModelSelectionStrategy, TransportType
+from aiperf.common.enums import (
+    ConnectionReuseStrategy,
+    EndpointType,
+    ModelSelectionStrategy,
+    TransportType,
+)
 from aiperf.common.models import AIPerfBaseModel
 
 
@@ -58,7 +63,7 @@ class EndpointInfo(AIPerfBaseModel):
     """Information about an endpoint."""
 
     type: EndpointType = Field(
-        default=EndpointType.CHAT,
+        default=EndpointDefaults.TYPE,
         description="The type of request payload to use for the endpoint.",
     )
     base_url: str = Field(
@@ -73,7 +78,7 @@ class EndpointInfo(AIPerfBaseModel):
         default=None, description="Custom URL parameters to use for the endpoint."
     )
     streaming: bool = Field(
-        default=False,
+        default=EndpointDefaults.STREAMING,
         description="Whether the endpoint supports streaming.",
     )
     headers: list[tuple[str, str]] = Field(
@@ -81,7 +86,7 @@ class EndpointInfo(AIPerfBaseModel):
         description="Custom URL headers to use for the endpoint.",
     )
     api_key: str | None = Field(
-        default=None,
+        default=EndpointDefaults.API_KEY,
         description="API key to use for the endpoint.",
     )
     ssl_options: dict[str, Any] | None = Field(
@@ -98,10 +103,22 @@ class EndpointInfo(AIPerfBaseModel):
         "You can repeat this flag for multiple inputs. Inputs should be in an 'input_name:value' format. "
         "Alternatively, a string representing a json formatted dict can be provided.",
     )
+    use_legacy_max_tokens: bool = Field(
+        default=EndpointDefaults.USE_LEGACY_MAX_TOKENS,
+        description="Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request payloads.",
+    )
+    use_server_token_count: bool = Field(
+        default=EndpointDefaults.USE_SERVER_TOKEN_COUNT,
+        description="Use server-reported token counts from API usage fields instead of client-side tokenization.",
+    )
+    connection_reuse_strategy: ConnectionReuseStrategy = Field(
+        default=EndpointDefaults.CONNECTION_REUSE_STRATEGY,
+        description="Transport connection reuse strategy.",
+    )
 
     @classmethod
     def from_user_config(cls, user_config: UserConfig) -> "EndpointInfo":
-        """Create an HttpEndpointInfo from a UserConfig."""
+        """Create an EndpointInfo from a UserConfig."""
         return cls(
             type=user_config.endpoint.type,
             custom_endpoint=user_config.endpoint.custom_endpoint,
@@ -111,6 +128,9 @@ class EndpointInfo(AIPerfBaseModel):
             extra=user_config.input.extra,
             timeout=user_config.endpoint.timeout_seconds,
             api_key=user_config.endpoint.api_key,
+            use_legacy_max_tokens=user_config.endpoint.use_legacy_max_tokens,
+            use_server_token_count=user_config.endpoint.use_server_token_count,
+            connection_reuse_strategy=user_config.endpoint.connection_reuse_strategy,
         )
 
 

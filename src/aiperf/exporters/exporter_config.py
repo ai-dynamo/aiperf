@@ -5,18 +5,25 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.models import ProfileResults, TelemetryResults
+from aiperf.common.models import ProfileResults
+from aiperf.common.models.export_models import TelemetryExportData
+from aiperf.common.models.server_metrics_models import ServerMetricsResults
 
 
-@dataclass
+@dataclass(slots=True)
 class ExporterConfig:
-    results: ProfileResults
+    """Configuration for the exporter."""
+
+    results: ProfileResults | None
     user_config: UserConfig
-    service_config: ServiceConfig
-    telemetry_results: TelemetryResults | None
+    service_config: ServiceConfig | None
+    telemetry_results: TelemetryExportData | None
+    server_metrics_results: ServerMetricsResults | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class FileExportInfo:
+    """Information about a file export."""
+
     export_type: str
     file_path: Path

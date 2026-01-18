@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Annotated
@@ -24,7 +24,9 @@ class AudioLengthConfig(BaseConfig):
         float,
         Field(
             ge=0,
-            description="The mean length of the audio in seconds.",
+            description="Mean duration in seconds for synthetically generated audio files. Audio lengths follow a normal distribution "
+            "around this mean (±`--audio-length-stddev`). Used when `--audio-batch-size` > 0 for multimodal benchmarking. "
+            "Generated audio is random noise with specified sample rate, bit depth, and format.",
         ),
         CLIParameter(
             name=(
@@ -38,7 +40,9 @@ class AudioLengthConfig(BaseConfig):
         float,
         Field(
             ge=0,
-            description="The standard deviation of the length of the audio in seconds.",
+            description="Standard deviation for synthetic audio duration in seconds. Creates variability in audio lengths when > 0, "
+            "simulating mixed-duration audio inputs. Durations follow normal distribution. "
+            "Set to 0 for uniform audio lengths.",
         ),
         CLIParameter(
             name=(
@@ -60,8 +64,7 @@ class AudioConfig(BaseConfig):
         int,
         Field(
             ge=0,
-            description="The batch size of audio requests AIPerf should send.\n"
-            "This is currently supported with the OpenAI `chat` endpoint type",
+            description="The number of audio inputs to include in each request. Supported with the `chat` endpoint type for multimodal models.",
         ),
         CLIParameter(
             name=(
@@ -77,7 +80,8 @@ class AudioConfig(BaseConfig):
     format: Annotated[
         AudioFormat,
         Field(
-            description="The format of the audio files (wav or mp3).",
+            description="File format for generated audio files. Supports `wav` (uncompressed PCM, larger files) and `mp3` (compressed, smaller files). "
+            "Format choice affects file size in multimodal requests but not audio characteristics (sample rate, bit depth, duration).",
         ),
         CLIParameter(
             name=(
@@ -91,7 +95,9 @@ class AudioConfig(BaseConfig):
         list[int],
         Field(
             min_length=1,
-            description="A list of audio bit depths to randomly select from in bits.",
+            description="List of audio bit depths in bits to randomly select from when generating audio files. Each audio file is assigned "
+            "a random depth from this list. Common values: `8` (low quality), `16` (CD quality), `24` (professional), `32` (high-end). "
+            "Specify multiple values (e.g., `--audio-depths 16 24`) for mixed-quality testing.",
         ),
         BeforeValidator(parse_str_or_list_of_positive_values),
         CLIParameter(
@@ -123,7 +129,9 @@ class AudioConfig(BaseConfig):
         Field(
             ge=1,
             le=2,
-            description="The number of audio channels to use for the audio data generation.",
+            description="Number of audio channels for synthetic audio generation. `1` = mono (single channel), `2` = stereo (left/right channels). "
+            "Stereo doubles file size but simulates realistic audio for models supporting spatial audio processing. "
+            "Most speech models use mono.",
         ),
         CLIParameter(
             name=(

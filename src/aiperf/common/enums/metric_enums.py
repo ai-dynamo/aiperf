@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from collections.abc import Callable
@@ -46,6 +46,10 @@ class BaseMetricUnitInfo(BasePydanticEnumInfo):
 
 class BaseMetricUnit(BasePydanticBackedStrEnum):
     """Base class for all metric units."""
+
+    def display_name(self) -> str:
+        """Get the display name of the metric unit."""
+        return self.name.lower().replace("_per_second", "/s")
 
     @cached_property
     def info(self) -> BaseMetricUnitInfo:
@@ -182,12 +186,19 @@ def _unit(tag: str) -> BaseMetricUnitInfo:
 class GenericMetricUnit(BaseMetricUnit):
     """Defines generic units for metrics. These dont have any extra information other than the tag, which is used for display purposes."""
 
+    BLOCKS = _unit("blocks")
     COUNT = _unit("count")
+    ERRORS = _unit("errors")
+    IMAGE = _unit("image")
+    IMAGES = _unit("images")
+    PERCENT = _unit("%")
+    RATIO = _unit("ratio")
     REQUESTS = _unit("requests")
     TOKENS = _unit("tokens")
-    RATIO = _unit("ratio")
     USER = _unit("user")
-    PERCENT = _unit("%")
+    USERS = _unit("users")
+    VIDEO = _unit("video")
+    VIDEOS = _unit("videos")
 
 
 class PowerMetricUnitInfo(BaseMetricUnitInfo):
@@ -289,7 +300,11 @@ class MetricOverTimeUnitInfo(BaseMetricUnitInfo):
     @model_validator(mode="after")
     def _set_tag(self: Self) -> Self:
         """Set the tag based on the existing units. ie. requests/sec, tokens/sec, etc."""
-        self.tag = f"{self.primary_unit}/{self.time_unit}"
+        self.tag = (
+            f"{self.primary_unit}/{self.time_unit}"
+            if not self.inverted
+            else f"{self.time_unit}/{self.primary_unit}"
+        )
         if self.third_unit:
             # If there is a third unit, add it to the tag. ie. tokens/sec/user
             self.tag += f"/{self.third_unit}"
@@ -302,6 +317,7 @@ class MetricOverTimeUnitInfo(BaseMetricUnitInfo):
     primary_unit: "MetricUnitT"
     time_unit: MetricTimeUnit | MetricTimeUnitInfo
     third_unit: "MetricUnitT | None" = None
+    inverted: bool = False
 
     def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
         """Convert a value from this unit to another unit."""
@@ -342,6 +358,32 @@ class MetricOverTimeUnit(BaseMetricUnit):
         time_unit=MetricTimeUnit.SECONDS,
         third_unit=GenericMetricUnit.USER,
     )
+    IMAGES_PER_SECOND = MetricOverTimeUnitInfo(
+        primary_unit=GenericMetricUnit.IMAGES,
+        time_unit=MetricTimeUnit.SECONDS,
+    )
+    MS_PER_IMAGE = MetricOverTimeUnitInfo(
+        time_unit=MetricTimeUnit.MILLISECONDS,
+        primary_unit=GenericMetricUnit.IMAGE,
+        inverted=True,
+    )
+    VIDEOS_PER_SECOND = MetricOverTimeUnitInfo(
+        primary_unit=GenericMetricUnit.VIDEOS,
+        time_unit=MetricTimeUnit.SECONDS,
+    )
+    MS_PER_VIDEO = MetricOverTimeUnitInfo(
+        time_unit=MetricTimeUnit.MILLISECONDS,
+        primary_unit=GenericMetricUnit.VIDEO,
+        inverted=True,
+    )
+    MB_PER_SECOND = MetricOverTimeUnitInfo(
+        primary_unit=MetricSizeUnit.MEGABYTES,
+        time_unit=MetricTimeUnit.SECONDS,
+    )
+    GB_PER_SECOND = MetricOverTimeUnitInfo(
+        primary_unit=MetricSizeUnit.GIGABYTES,
+        time_unit=MetricTimeUnit.SECONDS,
+    )
 
     @cached_property
     def info(self) -> MetricOverTimeUnitInfo:
@@ -363,6 +405,11 @@ class MetricOverTimeUnit(BaseMetricUnit):
         """Get the third unit (if applicable)."""
         return self.info.third_unit
 
+    @cached_property
+    def inverted(self) -> bool:
+        """Whether the metric is inverted (e.g. time / metric)."""
+        return self.info.inverted
+
 
 class MetricType(CaseInsensitiveStrEnum):
     """Defines the possible types of metrics."""
@@ -380,6 +427,16 @@ class MetricType(CaseInsensitiveStrEnum):
     DERIVED = "derived"
     """Metrics that are purely derived from other metrics as a summary, and do not require per-request values.
     Examples: request throughput, output token throughput, etc."""
+
+
+class PlotMetricDirection(CaseInsensitiveStrEnum):
+    """Direction indicating whether higher or lower metric values are better for plotting purposes."""
+
+    HIGHER = "higher"
+    """Higher values are better (e.g., throughput, accuracy)."""
+
+    LOWER = "lower"
+    """Lower values are better (e.g., latency, error rate)."""
 
 
 class MetricValueTypeInfo(BasePydanticEnumInfo):
@@ -642,6 +699,15 @@ class MetricFlags(Flag):
 
     TOKENIZES_INPUT_ONLY = 1 << 12
     """Metrics that are only applicable when the endpoint tokenizes input text."""
+
+    SUPPORTS_VIDEO_ONLY = 1 << 13
+    """Metrics that are only applicable to video-based endpoints."""
+
+    USAGE_DIFF_ONLY = 1 << 14
+    """Metrics that are only applicable when client side tokenization is enabled and the usage field is used."""
+
+    HTTP_TRACE_ONLY = 1 << 15
+    """Metrics that are only applicable to HTTP trace data (AioHttpTraceData)."""
 
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""

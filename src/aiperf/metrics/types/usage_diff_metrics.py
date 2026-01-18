@@ -52,7 +52,11 @@ class UsagePromptTokensDiffMetric(BaseRecordMetric[float]):
     short_header = "Prompt Diff"
     short_header_hide_unit = True
     unit = GenericMetricUnit.PERCENT
-    flags = MetricFlags.TOKENIZES_INPUT_ONLY | MetricFlags.NO_CONSOLE
+    flags = (
+        MetricFlags.TOKENIZES_INPUT_ONLY
+        | MetricFlags.USAGE_DIFF_ONLY
+        | MetricFlags.NO_CONSOLE
+    )
     required_metrics = {
         UsagePromptTokensMetric.tag,
         InputSequenceLengthMetric.tag,
@@ -113,7 +117,11 @@ class UsageCompletionTokensDiffMetric(BaseRecordMetric[float]):
     short_header = "Completion Diff"
     short_header_hide_unit = True
     unit = GenericMetricUnit.PERCENT
-    flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.NO_CONSOLE
+    flags = (
+        MetricFlags.PRODUCES_TOKENS_ONLY
+        | MetricFlags.USAGE_DIFF_ONLY
+        | MetricFlags.NO_CONSOLE
+    )
     required_metrics = {
         UsageCompletionTokensMetric.tag,
         OutputSequenceLengthMetric.tag,
@@ -180,6 +188,7 @@ class UsageReasoningTokensDiffMetric(BaseRecordMetric[float]):
     flags = (
         MetricFlags.PRODUCES_TOKENS_ONLY
         | MetricFlags.SUPPORTS_REASONING
+        | MetricFlags.USAGE_DIFF_ONLY
         | MetricFlags.NO_CONSOLE
     )
     required_metrics = {
@@ -253,7 +262,11 @@ class UsageDiscrepancyCountMetric(BaseAggregateCounterMetric[int]):
     short_header = "Discrepancies"
     short_header_hide_unit = True
     unit = GenericMetricUnit.REQUESTS
-    flags = MetricFlags.NO_CONSOLE | MetricFlags.NO_INDIVIDUAL_RECORDS
+    flags = (
+        MetricFlags.USAGE_DIFF_ONLY
+        | MetricFlags.NO_CONSOLE
+        | MetricFlags.NO_INDIVIDUAL_RECORDS
+    )
     # Required metrics ensures dependency ordering. We require prompt and completion
     # which are always available, and opportunistically check reasoning in _parse_record
     required_metrics = {

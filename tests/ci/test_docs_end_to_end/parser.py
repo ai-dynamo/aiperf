@@ -125,9 +125,9 @@ class MarkdownParser:
 
         if tag_name.startswith(SETUP_TAG_PREFIX):
             # Extract server name: setup-{server-name}-endpoint-server
-            server_name = tag_name[
-                SETUP_TAG_PREFIX_LEN:-TAG_SUFFIX_LEN
-            ]  # Remove prefix and suffix
+            server_name = tag_name[SETUP_TAG_PREFIX_LEN:-TAG_SUFFIX_LEN].rstrip(
+                "-"
+            )  # Remove prefix, suffix, and trailing dash
 
             if server_name not in self.servers:
                 self.servers[server_name] = Server(
@@ -149,9 +149,9 @@ class MarkdownParser:
 
         elif tag_name.startswith(HEALTH_CHECK_TAG_PREFIX):
             # Extract server name: health-check-{server-name}-endpoint-server
-            server_name = tag_name[
-                HEALTH_CHECK_TAG_PREFIX_LEN:-TAG_SUFFIX_LEN
-            ]  # Remove prefix and suffix
+            server_name = tag_name[HEALTH_CHECK_TAG_PREFIX_LEN:-TAG_SUFFIX_LEN].rstrip(
+                "-"
+            )  # Remove prefix, suffix, and trailing dash
 
             if server_name not in self.servers:
                 self.servers[server_name] = Server(
@@ -175,9 +175,9 @@ class MarkdownParser:
 
         elif tag_name.startswith(AIPERF_RUN_TAG_PREFIX):
             # Extract server name: aiperf-run-{server-name}-endpoint-server
-            server_name = tag_name[
-                AIPERF_RUN_TAG_PREFIX_LEN:-TAG_SUFFIX_LEN
-            ]  # Remove prefix and suffix
+            server_name = tag_name[AIPERF_RUN_TAG_PREFIX_LEN:-TAG_SUFFIX_LEN].rstrip(
+                "-"
+            )  # Remove prefix, suffix, and trailing dash
 
             if server_name not in self.servers:
                 self.servers[server_name] = Server(

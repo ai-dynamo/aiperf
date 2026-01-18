@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from dataclasses import dataclass
@@ -7,19 +7,20 @@ from pathlib import Path
 from aiperf.common.enums import (
     AIPerfLogLevel,
     AIPerfUIType,
+    ArrivalPattern,
     AudioFormat,
     CommunicationBackend,
+    ConnectionReuseStrategy,
+    DatasetSamplingStrategy,
     EndpointType,
     ExportLevel,
     ImageFormat,
     ModelSelectionStrategy,
-    RequestRateMode,
+    ServerMetricsFormat,
     ServiceRunType,
-    TimingMode,
     VideoFormat,
     VideoSynthType,
 )
-from aiperf.common.enums.dataset_enums import DatasetSamplingStrategy
 
 
 #
@@ -36,8 +37,11 @@ class EndpointDefaults:
     TYPE = EndpointType.CHAT
     STREAMING = False
     URL = "localhost:8000"
-    TIMEOUT = 600.0
+    TIMEOUT = 6 * 60 * 60  # 6 hours, match vLLM benchmark default
     API_KEY = None
+    USE_LEGACY_MAX_TOKENS = False
+    USE_SERVER_TOKEN_COUNT = False
+    CONNECTION_REUSE_STRATEGY = ConnectionReuseStrategy.POOLED
 
 
 @dataclass(frozen=True)
@@ -56,6 +60,16 @@ class InputDefaults:
     DATASET_SAMPLING_STRATEGY = DatasetSamplingStrategy.SHUFFLE
     RANDOM_SEED = None
     NUM_DATASET_ENTRIES = 100
+
+
+@dataclass(frozen=True)
+class RankingsDefaults:
+    PASSAGES_MEAN = 1
+    PASSAGES_STDDEV = 0
+    PASSAGES_PROMPT_TOKEN_MEAN = 550
+    PASSAGES_PROMPT_TOKEN_STDDEV = 0
+    QUERY_PROMPT_TOKEN_MEAN = 550
+    QUERY_PROMPT_TOKEN_STDDEV = 0
 
 
 @dataclass(frozen=True)
@@ -87,8 +101,8 @@ class VideoDefaults:
     WIDTH = None
     HEIGHT = None
     SYNTH_TYPE = VideoSynthType.MOVING_SHAPES
-    FORMAT = VideoFormat.MP4
-    CODEC = "libx264"
+    FORMAT = VideoFormat.WEBM
+    CODEC = "libvpx-vp9"
 
 
 @dataclass(frozen=True)
@@ -146,7 +160,13 @@ class OutputDefaults:
     PROFILE_EXPORT_JSONL_FILE = Path("profile_export.jsonl")
     PROFILE_EXPORT_RAW_JSONL_FILE = Path("profile_export_raw.jsonl")
     PROFILE_EXPORT_GPU_TELEMETRY_JSONL_FILE = Path("gpu_telemetry_export.jsonl")
+    SERVER_METRICS_EXPORT_JSONL_FILE = Path("server_metrics_export.jsonl")
+    SERVER_METRICS_EXPORT_JSON_FILE = Path("server_metrics_export.json")
+    SERVER_METRICS_EXPORT_CSV_FILE = Path("server_metrics_export.csv")
+    SERVER_METRICS_EXPORT_PARQUET_FILE = Path("server_metrics_export.parquet")
     EXPORT_LEVEL = ExportLevel.RECORDS
+    EXPORT_HTTP_TRACE = False
+    SHOW_TRACE_TIMING = False
     SLICE_DURATION = None
 
 
@@ -177,19 +197,18 @@ class ServiceDefaults:
 
 @dataclass(frozen=True)
 class LoadGeneratorDefaults:
-    BENCHMARK_DURATION = None
     BENCHMARK_GRACE_PERIOD = 30.0
-    CONCURRENCY = None
-    REQUEST_RATE = None
-    REQUEST_COUNT = 10
-    WARMUP_REQUEST_COUNT = 0
-    REQUEST_RATE_MODE = RequestRateMode.POISSON
-    TIMING_MODE = TimingMode.REQUEST_RATE
-    REQUEST_CANCELLATION_RATE = 0.0
-    REQUEST_CANCELLATION_DELAY = 0.0
+    MIN_REQUEST_COUNT = 10
+    REQUEST_COUNT_MULTIPLIER = 2
+    ARRIVAL_PATTERN = ArrivalPattern.POISSON
 
 
 @dataclass(frozen=True)
 class WorkersDefaults:
     MIN = None
     MAX = None
+
+
+@dataclass(frozen=True)
+class ServerMetricsDefaults:
+    DEFAULT_FORMATS = [ServerMetricsFormat.JSON, ServerMetricsFormat.CSV]
