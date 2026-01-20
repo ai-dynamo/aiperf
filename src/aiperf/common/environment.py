@@ -371,7 +371,7 @@ class _ServerMetricsSettings(BaseSettings):
 
     Controls server metrics collection frequency, endpoint detection, and shutdown behavior.
     Metrics are collected from Prometheus-compatible endpoints at the specified interval.
-    Use --no-server-metrics CLI flag to disable collection.
+    Use `--no-server-metrics` CLI flag to disable collection.
     """
 
     model_config = SettingsConfigDict(

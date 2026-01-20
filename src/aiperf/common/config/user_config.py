@@ -545,8 +545,7 @@ class UserConfig(BaseConfig):
         Field(
             description=(
                 "Specify which output formats to generate for server metrics. "
-                "Options: json, csv, jsonl, and parquet. Default is json and csv (jsonl excluded due to large file size, parquet is opt-in only). "
-                "Example: --server-metrics-formats json csv parquet"
+                "Multiple formats can be specified (e.g., `--server-metrics-formats json csv parquet`)."
             ),
         ),
         BeforeValidator(parse_str_or_list),
@@ -824,8 +823,8 @@ class UserConfig(BaseConfig):
 
         if has_context_prompts and has_legacy_prefix:
             raise ValueError(
-                "Cannot use both --shared-system-prompt-length/--user-context-prompt-length "
-                "and --prefix-prompt-length/--prefix-prompt-pool-size. "
+                "Cannot use both `--shared-system-prompt-length`/`--user-context-prompt-length` "
+                "and `--prefix-prompt-length`/`--prefix-prompt-pool-size`. "
                 "These are mutually exclusive prompt configuration modes."
             )
         return self
@@ -869,9 +868,9 @@ class UserConfig(BaseConfig):
         ]
         if rankings_options_modified and not endpoint_type_is_rankings:
             raise ValueError(
-                f"Rankings-specific options (--rankings-passages-mean, --rankings-passages-stddev, "
-                "--rankings-passages-prompt-token-mean, --rankings-passages-prompt-token-stddev, "
-                "--rankings-query-prompt-token-mean, --rankings-query-prompt-token-stddev) "
+                f"Rankings-specific options (`--rankings-passages-mean`, `--rankings-passages-stddev`, "
+                "`--rankings-passages-prompt-token-mean`, `--rankings-passages-prompt-token-stddev`, "
+                "`--rankings-query-prompt-token-mean`, `--rankings-query-prompt-token-stddev`) "
                 "can only be used with rankings endpoint types "
                 f"Rankings endpoints: ({', '.join(rankings_endpoints)})."
             )
@@ -881,10 +880,10 @@ class UserConfig(BaseConfig):
             rankings_tokens_modified or endpoint_type_is_rankings
         ):
             raise ValueError(
-                "The --prompt-input-tokens-mean/--prompt-input-tokens-stddev options "
+                "The `--prompt-input-tokens-mean`/`--prompt-input-tokens-stddev` options "
                 "cannot be used together with rankings-specific token options or the rankings endpoints"
-                "Ranking options: (--rankings-passages-prompt-token-mean, --rankings-passages-prompt-token-stddev, "
-                "--rankings-query-prompt-token-mean, --rankings-query-prompt-token-stddev, ). "
+                "Ranking options: (`--rankings-passages-prompt-token-mean`, `--rankings-passages-prompt-token-stddev`, "
+                "`--rankings-query-prompt-token-mean`, `--rankings-query-prompt-token-stddev`). "
                 f"Rankings endpoints: ({', '.join(rankings_endpoints)})."
                 "Please use only one set of options."
             )

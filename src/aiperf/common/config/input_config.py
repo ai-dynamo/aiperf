@@ -146,9 +146,9 @@ class InputConfig(BaseConfig):
     extra: Annotated[
         Any,
         Field(
-            description="Provide additional inputs to include with every request.\n"
-            "Inputs should be in an 'input_name:value' format.\n"
-            "Alternatively, a string representing a json formatted dict can be provided.",
+            description="Additional input parameters to include in every API request payload. Specify as `key:value` pairs "
+            "(e.g., `--extra-inputs temperature:0.7 top_p:0.9`) or as JSON string (e.g., `'{\"temperature\": 0.7}'`). "
+            "These parameters are merged with request-specific inputs and sent directly to the endpoint API.",
         ),
         CLIParameter(
             name=(
@@ -163,9 +163,10 @@ class InputConfig(BaseConfig):
     headers: Annotated[
         Any,
         Field(
-            description="Adds a custom header to the requests.\n"
-            "Headers must be specified as 'Header:Value' pairs.\n"
-            "Alternatively, a string representing a json formatted dict can be provided.",
+            description="Custom HTTP headers to include with every request. Specify as `Header:Value` pairs "
+            "(e.g., `--header X-Custom-Header:value`) or as JSON string. Can be specified multiple times. "
+            "Useful for custom authentication, tracking, or API-specific requirements. Combined with auto-generated headers "
+            "(e.g., `Authorization` from `--api-key`).",
         ),
         BeforeValidator(parse_str_or_dict_as_tuple_list),
         CLIParameter(
@@ -181,9 +182,9 @@ class InputConfig(BaseConfig):
     file: Annotated[
         Any,
         Field(
-            description="The file or directory path that contains the dataset to use for profiling.\n"
-            "This parameter is used in conjunction with the `custom_dataset_type` parameter\n"
-            "to support different types of user provided datasets.",
+            description="Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. "
+            "Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL trace files for `mooncake_trace`, "
+            "directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.",
         ),
         BeforeValidator(parse_file),
         CLIParameter(
@@ -197,7 +198,8 @@ class InputConfig(BaseConfig):
     fixed_schedule: Annotated[
         bool,
         Field(
-            description="Specifies to run a fixed schedule of requests. This is normally inferred from the --input-file parameter, but can be set manually here."
+            description="Run requests according to timestamps specified in the input dataset. When enabled, AIPerf replays "
+            "the exact timing pattern from the dataset. This mode is automatically enabled for `mooncake_trace` datasets."
         ),
         CLIParameter(
             name=(
@@ -207,13 +209,12 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.FIXED_SCHEDULE
 
-    # NEW AIPerf Option
     fixed_schedule_auto_offset: Annotated[
         bool,
         Field(
-            description="Specifies to automatically offset the timestamps in the fixed schedule, such that the first "
-            "timestamp is considered 0, and the rest are shifted accordingly. If disabled, the timestamps will be "
-            "assumed to be relative to 0."
+            description="Automatically normalize timestamps in fixed schedule by shifting all timestamps so the first timestamp becomes 0. "
+            "When enabled, benchmark starts immediately with the timing pattern preserved. When disabled, timestamps are used as absolute "
+            "offsets from benchmark start. Mutually exclusive with `--fixed-schedule-start-offset`.",
         ),
         CLIParameter(
             name=("--fixed-schedule-auto-offset",),
@@ -221,15 +222,14 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET
 
-    # NEW AIPerf Option
     fixed_schedule_start_offset: Annotated[
         int | None,
         Field(
             ge=0,
-            description="Specifies the offset in milliseconds to start the fixed schedule at. By default, the schedule "
-            "starts at 0, but this option can be used to start at a reference point further in the schedule. This "
-            "option cannot be used in conjunction with the --fixed-schedule-auto-offset. The schedule will include "
-            "any requests at the start offset.",
+            description="Start offset in milliseconds for fixed schedule replay. Skips all requests before this timestamp, allowing "
+            "benchmark to start from a specific point in the trace. Requests at exactly the start offset are included. "
+            "Useful for analyzing specific time windows. Mutually exclusive with `--fixed-schedule-auto-offset`. "
+            "Must be ≤ `--fixed-schedule-end-offset` if both specified.",
         ),
         CLIParameter(
             name=("--fixed-schedule-start-offset",),
@@ -237,14 +237,13 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.FIXED_SCHEDULE_START_OFFSET
 
-    # NEW AIPerf Option
     fixed_schedule_end_offset: Annotated[
         int | None,
         Field(
             ge=0,
-            description="Specifies the offset in milliseconds to end the fixed schedule at. By default, the schedule "
-            "ends at the last timestamp in the trace dataset, but this option can be used to only run a subset of the trace. "
-            "The schedule will include any requests at the end offset.",
+            description="End offset in milliseconds for fixed schedule replay. Stops issuing requests after this timestamp, allowing "
+            "benchmark of specific trace subsets. Requests at exactly the end offset are included. Defaults to last timestamp in dataset. "
+            "Must be ≥ `--fixed-schedule-start-offset` if both specified.",
         ),
         CLIParameter(
             name=("--fixed-schedule-end-offset",),
@@ -254,37 +253,39 @@ class InputConfig(BaseConfig):
 
     public_dataset: Annotated[
         PublicDatasetType | None,
-        Field(description="The public dataset to use for the requests."),
+        Field(
+            description="Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). "
+            "AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. "
+            "See `PublicDatasetType` enum for available datasets.",
+        ),
         CLIParameter(
             name=("--public-dataset"),
             group=_CLI_GROUP,
         ),
     ] = InputDefaults.PUBLIC_DATASET
 
-    # NEW AIPerf Option
     custom_dataset_type: Annotated[
         CustomDatasetType | None,
         Field(
-            description="The type of custom dataset to use.\n"
-            "This parameter is used in conjunction with the --input-file parameter.\n"
-            "[choices: single_turn, multi_turn, random_pool, mooncake_trace]",
+            description="Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. "
+            "Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), "
+            "`mooncake_trace` (timestamped trace files), `random_pool` (directory of reusable prompts). "
+            "Requires `--input-file`. Mutually exclusive with `--public-dataset`.",
         ),
         CLIParameter(
             name=("--custom-dataset-type"),
             group=_CLI_GROUP,
-            show_choices=False,
         ),
     ] = InputDefaults.CUSTOM_DATASET_TYPE
 
     dataset_sampling_strategy: Annotated[
         DatasetSamplingStrategy | None,
         Field(
-            default=InputDefaults.DATASET_SAMPLING_STRATEGY,
-            description="The strategy to use for sampling the dataset.\n"
-            "`sequential`: Iterate through the dataset sequentially, then wrap around to the beginning.\n"
-            "`random`: Randomly select a conversation from the dataset. Will randomly sample with replacement.\n"
-            "`shuffle`: Shuffle the dataset and iterate through it. Will randomly sample without replacement.\n"
-            "Once the end of the dataset is reached, shuffle the dataset again and start over.",
+            description="Strategy for selecting entries from dataset during benchmarking. "
+            "`sequential`: Iterate through dataset in order, wrapping to start after end. "
+            "`random`: Randomly sample with replacement (entries may repeat before all are used). "
+            "`shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. "
+            "Default behavior depends on dataset type (e.g., `sequential` for traces, `shuffle` for synthetic).",
         ),
         CLIParameter(
             name=("--dataset-sampling-strategy",),
@@ -295,9 +296,9 @@ class InputConfig(BaseConfig):
     random_seed: Annotated[
         int | None,
         Field(
-            description="The seed used to generate random values.\n"
-            "Set to some value to make the synthetic data generation deterministic.\n"
-            "It will use system default if not provided.",
+            description="Random seed for deterministic data generation. When set, makes synthetic prompts, sampling, delays, and other "
+            "random operations reproducible across runs. Essential for A/B testing and debugging. Uses system entropy if not specified. "
+            "Initialized globally at config creation.",
         ),
         CLIParameter(
             name=(
