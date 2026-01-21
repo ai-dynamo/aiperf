@@ -7,7 +7,6 @@ import pytest
 
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import Text, Turn
-from aiperf.common.models.record_models import RequestInfo
 from aiperf.endpoints.openai_embeddings import EmbeddingsEndpoint
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
