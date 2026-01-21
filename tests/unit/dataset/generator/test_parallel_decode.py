@@ -37,60 +37,60 @@ class TestParallelDecode:
         assert mock_tokenizer.decode.call_count == 2
         assert result == ["decoded", "decoded"]
 
-    # @patch.object(pd_module, "ProcessPoolExecutor")
-    # def test_parallel_decode_large_batch_uses_executor(self, mock_executor_class):
-    #     """Test that large batches (>= 10) use ProcessPoolExecutor."""
-    #     mock_executor = MagicMock()
-    #     mock_executor.__enter__ = MagicMock(return_value=mock_executor)
-    #     mock_executor.__exit__ = MagicMock(return_value=False)
-    #     mock_executor.map.return_value = ["decoded"] * 15
-    #     mock_executor_class.return_value = mock_executor
+    @patch.object(pd_module, "ProcessPoolExecutor")
+    def test_parallel_decode_large_batch_uses_executor(self, mock_executor_class):
+        """Test that large batches (>= 10) use ProcessPoolExecutor."""
+        mock_executor = MagicMock()
+        mock_executor.__enter__ = MagicMock(return_value=mock_executor)
+        mock_executor.__exit__ = MagicMock(return_value=False)
+        mock_executor.map.return_value = ["decoded"] * 15
+        mock_executor_class.return_value = mock_executor
 
-    #     token_sequences = [[i] for i in range(15)]  # 15 sequences
-    #     result = parallel_decode(token_sequences, "gpt2")
+        token_sequences = [[i] for i in range(15)]  # 15 sequences
+        result = parallel_decode(token_sequences, "gpt2")
 
-    #     # Should use ProcessPoolExecutor
-    #     mock_executor_class.assert_called_once()
-    #     mock_executor.map.assert_called_once()
-    #     assert len(result) == 15
+        # Should use ProcessPoolExecutor
+        mock_executor_class.assert_called_once()
+        mock_executor.map.assert_called_once()
+        assert len(result) == 15
 
-    # @patch.object(pd_module, "mp")
-    # @patch.object(pd_module, "ProcessPoolExecutor")
-    # def test_parallel_decode_respects_max_workers(self, mock_executor_class, mock_mp):
-    #     """Test that max_workers parameter is respected."""
-    #     mock_mp.cpu_count.return_value = 16
-    #     mock_executor = MagicMock()
-    #     mock_executor.__enter__ = MagicMock(return_value=mock_executor)
-    #     mock_executor.__exit__ = MagicMock(return_value=False)
-    #     mock_executor.map.return_value = ["decoded"] * 15
-    #     mock_executor_class.return_value = mock_executor
+    @patch.object(pd_module, "mp")
+    @patch.object(pd_module, "ProcessPoolExecutor")
+    def test_parallel_decode_respects_max_workers(self, mock_executor_class, mock_mp):
+        """Test that max_workers parameter is respected."""
+        mock_mp.cpu_count.return_value = 16
+        mock_executor = MagicMock()
+        mock_executor.__enter__ = MagicMock(return_value=mock_executor)
+        mock_executor.__exit__ = MagicMock(return_value=False)
+        mock_executor.map.return_value = ["decoded"] * 15
+        mock_executor_class.return_value = mock_executor
 
-    #     token_sequences = [[i] for i in range(15)]
-    #     parallel_decode(token_sequences, "gpt2", max_workers=4)
+        token_sequences = [[i] for i in range(15)]
+        parallel_decode(token_sequences, "gpt2", max_workers=4)
 
-    #     # Should be called with max_workers=4
-    #     call_kwargs = mock_executor_class.call_args.kwargs
-    #     assert call_kwargs["max_workers"] == 4
+        # Should be called with max_workers=4
+        call_kwargs = mock_executor_class.call_args.kwargs
+        assert call_kwargs["max_workers"] == 4
 
-    # @patch.object(pd_module, "mp")
-    # @patch.object(pd_module, "ProcessPoolExecutor")
-    # def test_parallel_decode_default_max_workers_capped_at_8(
-    #     self, mock_executor_class, mock_mp
-    # ):
-    #     """Test that default max_workers is capped at 8."""
-    #     mock_mp.cpu_count.return_value = 64  # Lots of CPUs
-    #     mock_executor = MagicMock()
-    #     mock_executor.__enter__ = MagicMock(return_value=mock_executor)
-    #     mock_executor.__exit__ = MagicMock(return_value=False)
-    #     mock_executor.map.return_value = ["decoded"] * 15
-    #     mock_executor_class.return_value = mock_executor
+    @patch.object(pd_module, "mp")
+    @patch.object(pd_module, "ProcessPoolExecutor")
+    def test_parallel_decode_default_max_workers_capped_at_8(
+        self, mock_executor_class, mock_mp
+    ):
+        """Test that default max_workers is capped at 8."""
+        mock_mp.cpu_count.return_value = 64  # Lots of CPUs
+        mock_executor = MagicMock()
+        mock_executor.__enter__ = MagicMock(return_value=mock_executor)
+        mock_executor.__exit__ = MagicMock(return_value=False)
+        mock_executor.map.return_value = ["decoded"] * 15
+        mock_executor_class.return_value = mock_executor
 
-    #     token_sequences = [[i] for i in range(15)]
-    #     parallel_decode(token_sequences, "gpt2")
+        token_sequences = [[i] for i in range(15)]
+        parallel_decode(token_sequences, "gpt2")
 
-    #     # Should be capped at 8
-    #     call_kwargs = mock_executor_class.call_args.kwargs
-    #     assert call_kwargs["max_workers"] == 8
+        # Should be capped at 8
+        call_kwargs = mock_executor_class.call_args.kwargs
+        assert call_kwargs["max_workers"] == 8
 
 
 class TestWorkerFunctions:
