@@ -5,11 +5,11 @@ import pytest
 
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import Image, Text, Turn
-from aiperf.common.models.record_models import RequestInfo
 from aiperf.endpoints.nim_embeddings import NIMEmbeddingsEndpoint
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_model_endpoint,
+    create_request_info,
 )
 from tests.unit.endpoints.test_embeddings_endpoint import TestEmbeddingsEndpoint
 
@@ -46,13 +46,13 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
             images=[Image(contents=[image_data_url])],
             model="nim-embeddings-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
         assert payload["model"] == "nim-embeddings-model"
-        assert len(payload["input"]) == 1
-        assert payload["input"] == [f"<img src='{image_data_url}'/>"]
+        assert payload["input"] == [image_data_url]
+        assert payload["modality"] == "image"
 
     def test_format_payload_multiple_images(self, endpoint, model_endpoint):
         """Test embedding request with multiple images."""
@@ -62,12 +62,12 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
             images=[Image(contents=[image1, image2])],
             model="nim-embeddings-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
-        assert len(payload["input"]) == 2
-        assert payload["input"] == [f"<img src='{image1}'/>", f"<img src='{image2}'/>"]
+        assert payload["input"] == [image1, image2]
+        assert payload["modality"] == "image"
 
     def test_format_payload_text_and_image_combined(self, endpoint, model_endpoint):
         """Test embedding request with both text and images combined."""
@@ -78,13 +78,13 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
             images=[Image(contents=[image_data_url])],
             model="nim-embeddings-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
         assert payload["model"] == "nim-embeddings-model"
-        assert len(payload["input"]) == 1
-        assert payload["input"] == [f"{text} <img src='{image_data_url}'/>"]
+        assert payload["input"] == [f"{text} {image_data_url}"]
+        assert payload["modality"] == "text_image"
 
     def test_format_payload_multiple_text_and_images(self, endpoint, model_endpoint):
         """Test embedding request with multiple texts and images paired together."""
@@ -95,15 +95,15 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
             images=[Image(contents=images)],
             model="nim-embeddings-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
-        assert len(payload["input"]) == 2
         assert payload["input"] == [
-            f"{texts[0]} <img src='{images[0]}'/>",
-            f"{texts[1]} <img src='{images[1]}'/>",
+            f"{texts[0]} {images[0]}",
+            f"{texts[1]} {images[1]}",
         ]
+        assert payload["modality"] == "text_image"
 
     def test_format_payload_text_image_count_mismatch(self, endpoint, model_endpoint):
         """Test that mismatched text and image counts raise an error."""
@@ -112,7 +112,7 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
             images=[Image(contents=["data:image/png;base64,img1"])],
             model="nim-embeddings-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         with pytest.raises(ValueError, match="must have the same length"):
             endpoint.format_payload(request_info)
@@ -131,15 +131,15 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
             ],
             model="nim-embeddings-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
-        assert len(payload["input"]) == 2
         assert payload["input"] == [
-            "<img src='data:image/png;base64,valid'/>",
-            "<img src='data:image/png;base64,another'/>",
+            "data:image/png;base64,valid",
+            "data:image/png;base64,another",
         ]
+        assert payload["modality"] == "image"
 
     def test_metadata_returns_nim_specific_title(self, endpoint):
         """Test that metadata returns NIM-specific metrics title."""
@@ -160,12 +160,12 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
             ],
             model="nim-embeddings-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
-        assert len(payload["input"]) == 2
         assert payload["input"] == [
-            "<img src='data:image/png;base64,img1'/>",
-            "<img src='data:image/png;base64,img2'/>",
+            "data:image/png;base64,img1",
+            "data:image/png;base64,img2",
         ]
+        assert payload["modality"] == "image"

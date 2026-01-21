@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import EndpointType
 from aiperf.common.factories import EndpointFactory
@@ -56,39 +58,29 @@ class NIMEmbeddingsEndpoint(EmbeddingsEndpoint):
             if image_content
         ]
 
-        # Build input based on what's provided
-        inputs = self._build_inputs(texts, images)
-
-        return self._build_payload(request_info, inputs)
-
-    def _build_inputs(self, texts: list[str], images: list[str]) -> list[str]:
-        """Build inputs from text and/or images.
-
-        Args:
-            texts: List of text contents
-            images: List of image data URLs
-
-        Returns:
-            List of input strings formatted for NIM embeddings
-
-        Raises:
-            ValueError: If both texts and images are provided with different lengths
-        """
+        # Determine inputs and modality
         if texts and images:
-            # Both text and images provided - must be same length
             if len(texts) != len(images):
                 raise ValueError(
                     f"When both texts and images are provided, they must have the same length. "
                     f"Got {len(texts)} texts and {len(images)} images."
                 )
-            # Combine as "text <img src='data_url'/>"
-            return [
-                f"{text} <img src='{image}'/>"
-                for text, image in zip(texts, images, strict=False)
+            inputs: list[Any] = [
+                f"{text} {image}" for text, image in zip(texts, images, strict=False)
             ]
+            modality = "text_image"
         elif images:
-            # Only images provided - wrap each in an img tag
-            return [f"<img src='{image}'/>" for image in images]
+            inputs = images
+            modality = "image"
         else:
-            # Only text provided (or nothing)
-            return texts
+            inputs = texts
+            modality = None
+
+        # Build base payload using parent
+        payload = self._build_payload(request_info, inputs)  # type: ignore[arg-type]
+
+        # Add modality for image/multimodal requests
+        if modality:
+            payload["modality"] = modality
+
+        return payload
