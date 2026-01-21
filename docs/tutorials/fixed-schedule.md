@@ -78,6 +78,7 @@ aiperf profile \
     --url localhost:8000 \
     --input-file precise_schedule.jsonl \
     --custom-dataset-type mooncake_trace \
+    --fixed-schedule \
     --fixed-schedule-auto-offset
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
@@ -102,6 +103,7 @@ aiperf profile \
     --url localhost:8000 \
     --input-file precise_schedule.jsonl \
     --custom-dataset-type mooncake_trace \
+    --fixed-schedule \
     --fixed-schedule-start-offset 2000 \
     --fixed-schedule-end-offset 4000
 ```
