@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
@@ -63,9 +63,9 @@ Create a trace file with timing information:
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 cat > custom_trace.jsonl << 'EOF'
-{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [0, 1, 2]}
-{"timestamp": 10535, "input_length": 672, "output_length": 26, "hash_ids": [0, 3, 4, 5]}
-{"timestamp": 27482, "input_length": 655, "output_length": 52, "hash_ids": [0, 6, 7]}
+{"timestamp": 0, "input_length": 1200, "output_length": 52, "hash_ids": [0, 1, 2]}
+{"timestamp": 105, "input_length": 1800, "output_length": 26, "hash_ids": [0, 3, 4, 5]}
+{"timestamp": 274, "input_length": 1300, "output_length": 52, "hash_ids": [1, 4, 6]}
 EOF
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
@@ -93,7 +93,7 @@ For real-world benchmarking, use the FAST25 production trace data from the Moonc
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 # Download the Mooncake trace data
-curl -o mooncake_trace.jsonl https://raw.githubusercontent.com/kvcache-ai/Mooncake/refs/heads/main/FAST25-release/arxiv-trace/mooncake_trace.jsonl
+curl -Lo mooncake_trace.jsonl https://raw.githubusercontent.com/kvcache-ai/Mooncake/refs/heads/main/FAST25-release/arxiv-trace/mooncake_trace.jsonl
 
 # Create a subset for quick testing
 head -n 10 mooncake_trace.jsonl > mooncake_trace_short.jsonl
