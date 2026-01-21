@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -41,7 +41,7 @@ class DashboardServer:
 
     Example:
         >>> server = DashboardServer(runs=runs, mode=VisualizationMode.MULTI_RUN,
-        ...                          theme=PlotTheme.DARK, plot_config=config, port=8050)
+        ...                          theme=PlotTheme.DARK, plot_config=config, host="127.0.0.1", port=8050)
         >>> server.run()
     """
 

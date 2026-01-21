@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 Shared fixtures for testing AIPerf services.
@@ -8,8 +8,8 @@ and made available to test functions in the same directory and subdirectories.
 """
 
 import asyncio
-import logging
 from collections.abc import Callable, Generator
+from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -18,7 +18,7 @@ import pytest
 import zmq.asyncio
 
 from aiperf.common import random_generator as rng
-from aiperf.common.aiperf_logger import _TRACE
+from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import CommunicationBackend, ServiceRunType
 from aiperf.common.messages import Message
@@ -26,6 +26,7 @@ from aiperf.common.models import (
     Conversation,
     ParsedResponse,
     ParsedResponseRecord,
+    RequestInfo,
     RequestRecord,
     Text,
     TextResponseData,
@@ -36,56 +37,8 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.types import MessageTypeT
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.module_loader import ensure_modules_loaded
-
-
-@pytest.fixture(autouse=True, scope="function")
-def mock_zmq_globally(monkeypatch):
-    """
-    Globally mock ZMQ for all tests to prevent real socket/context creation.
-
-    This fixture runs automatically for every test across the entire test suite.
-    It prevents ZMQ from creating real sockets and contexts which could cause
-    resource leaks, port conflicts, and test failures.
-
-    Tests in tests/zmq/ will use their own more specific mocking from tests/zmq/conftest.py.
-    """
-
-    async def _block_forever():
-        """Block forever by awaiting a Future that never completes."""
-        await asyncio.Future()  # Never resolves
-
-    # Create mock socket
-    mock_socket = AsyncMock(spec=zmq.asyncio.Socket)
-    mock_socket.bind = Mock()
-    mock_socket.connect = Mock()
-    mock_socket.close = Mock()
-    mock_socket.setsockopt = Mock()
-    mock_socket.send = AsyncMock()
-    mock_socket.send_multipart = AsyncMock()
-    # Block forever instead of raising zmq.Again in a loop
-    mock_socket.recv = AsyncMock(side_effect=_block_forever)
-    mock_socket.recv_multipart = AsyncMock(side_effect=_block_forever)
-    mock_socket.closed = False
-
-    # Create mock context
-    mock_context = MagicMock(spec=zmq.asyncio.Context)
-    mock_context.socket = Mock(return_value=mock_socket)
-    mock_context.term = Mock()
-
-    # Mock Context.instance() to return our mock context
-    monkeypatch.setattr("zmq.asyncio.Context.instance", lambda: mock_context)
-
-    return mock_context
-
-
-real_sleep = (
-    asyncio.sleep
-)  # save the real sleep so we can use it in the no_sleep fixture
-from tests.unit.utils.time_traveler import (  # noqa: E402
-    time_traveler as time_traveler,  # import fixture globally
-)
-
-logging.basicConfig(level=_TRACE)
+from tests.harness.fake_tokenizer import FakeTokenizer
+from tests.harness.time_traveler import TimeTraveler
 
 # Shared test constants for request/response records
 DEFAULT_START_TIME_NS = 1_000_000
@@ -94,21 +47,214 @@ DEFAULT_LAST_RESPONSE_NS = 1_100_000
 DEFAULT_INPUT_TOKENS = 5
 DEFAULT_OUTPUT_TOKENS = 2
 
+_REAL_SLEEP = asyncio.sleep
+
 
 @pytest.fixture(autouse=True)
-def no_sleep(monkeypatch) -> None:
+def no_sleep(monkeypatch, request):
+    """Patch asyncio.sleep to do nothing, unless test uses time_traveler fixture.
+
+    Tests using time_traveler (or time_traveler_no_patch_sleep) need looptime
+    to handle asyncio.sleep for virtual time advancement, so we skip patching.
     """
-    Patch asyncio.sleep with a no-op to prevent test delays.
+    # Check if test uses time_traveler fixtures (which need looptime to work)
+    fixture_names = request.fixturenames
+    uses_time_traveler = (
+        "time_traveler" in fixture_names
+        or "time_traveler_no_patch_sleep" in fixture_names
+    )
+    if not uses_time_traveler:
+        monkeypatch.setattr("asyncio.sleep", lambda delay: _REAL_SLEEP(0))
+    yield
 
-    This ensures tests don't need to wait for real sleep calls.
+
+@pytest.fixture
+async def enable_looptime(request):
+    """Enable looptime (virtual time).
+
+    This fixture enables looptime on the event loop, making asyncio.sleep/wait_for
+    run instantly in virtual time.
+
+    Note: When @pytest.mark.looptime is used, the looptime plugin already enables
+    looptime via its context manager. This fixture detects that and becomes a no-op
+    to avoid the "already enabled" error.
+    """
+    # Check if @pytest.mark.looptime is used - if so, looptime plugin handles enabling
+    looptime_marker = request.node.get_closest_marker("looptime")
+    if looptime_marker is not None:
+        # Looptime is already enabled by the plugin's context manager
+        yield
+        return
+
+    # No marker - try to enable programmatically (fallback for tests without marker)
+    try:
+        loop = asyncio.get_running_loop()
+        # Check if loop is looptime-patched and enable it if not already enabled
+        if hasattr(loop, "looptime_on") and not loop.looptime_on:
+            # Use the name-mangled private attribute to enable looptime
+            # This is the internal flag that looptime checks to decide if it's enabled
+            loop._LoopTimeEventLoop__enabled = True
+    except RuntimeError:
+        # No running loop yet - that's okay, looptime will be enabled when loop starts
+        pass
+
+    yield
+
+
+@pytest.fixture
+async def time_traveler(enable_looptime):
+    """
+    TimeTraveler fixture for virtual time testing.
+
+    Provides:
+    - Virtual time tracking (time.time(), time.perf_counter(), etc. return virtual time)
+    - Timing assertion utilities (sleeps_for, sleeps_at_least, etc.)
+    - Works with looptime
+
+    Usage:
+        async def test_timing(time_traveler):
+            start = time_traveler.time()
+            await asyncio.sleep(10.0)  # Instant in real time!
+            elapsed = time_traveler.time() - start
+            assert elapsed >= 10.0
+
+        async def test_with_assertion(time_traveler):
+            async with time_traveler.sleeps_for(5.0):
+                await asyncio.sleep(5.0)
+    """
+    traveler = TimeTraveler()
+    traveler.start_traveling()
+    yield traveler
+    traveler.stop_traveling()
+
+
+@pytest.fixture
+async def time_traveler_no_patch_sleep(enable_looptime):
+    """
+    TimeTraveler fixture for virtual time testing with real asyncio.sleep.
+
+    Provides:
+    - Virtual time tracking (time.time(), time.perf_counter(), etc. return virtual time)
+    - Timing assertion utilities (sleeps_for, sleeps_at_least, etc.)
+    - Works with looptime
+
+    Usage:
+        async def test_timing(time_traveler):
+            start = time_traveler.time()
+            await asyncio.sleep(10.0)  # Instant in real time!
+            elapsed = time_traveler.time() - start
+            assert elapsed >= 10.0
+
+        async def test_with_assertion(time_traveler):
+            async with time_traveler.sleeps_for(5.0):
+                await asyncio.sleep(5.0)
+    """
+    traveler = TimeTraveler(patch_sleep=False)
+    traveler.start_traveling()
+    yield traveler
+    traveler.stop_traveling()
+
+
+@pytest.fixture
+def fake_tokenizer():
+    """Patch Tokenizer.from_pretrained to use FakeTokenizer."""
+    with patch(
+        "aiperf.common.tokenizer.Tokenizer.from_pretrained",
+        FakeTokenizer.from_pretrained,
+    ):
+        yield
+
+
+@pytest.fixture
+def skip_service_registration():
+    """Patch BaseComponentService._register_service_on_start to do nothing."""
+    with patch.object(BaseComponentService, "_register_service_on_start", AsyncMock()):
+        yield
+
+
+@dataclass
+class MockZmqFixture:
+    """
+    Container for mock ZMQ components with send capture and receive queues.
+
+    Attributes:
+        context: Mock ZMQ context returned by Context.instance().
+        socket: Mock ZMQ socket created by context.socket().
+        sent: List capturing all data passed to socket.send().
+        sent_multipart: List capturing all parts passed to socket.send_multipart().
+        recv_queue: Queue for injecting messages returned by socket.recv().
+        recv_multipart_queue: Queue for injecting messages returned by socket.recv_multipart().
     """
 
-    async def fast_sleep(*args, **kwargs):
-        await real_sleep(
-            0
-        )  # relinquish time slice to other tasks to avoid blocking the event loop
+    context: MagicMock
+    socket: AsyncMock
+    sent: list[bytes]
+    sent_multipart: list[list[bytes]]
+    recv_queue: asyncio.Queue[bytes]
+    recv_multipart_queue: asyncio.Queue[list[bytes]]
 
-    monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+
+@pytest.fixture
+def mock_zmq(monkeypatch) -> MockZmqFixture:
+    """
+    Mock ZMQ to prevent real socket/context creation and enable message inspection.
+
+    Prevents ZMQ from creating real sockets and contexts which could cause
+    resource leaks, port conflicts, and test failures.
+
+    Send operations are captured in lists. Receive operations pull from queues,
+    blocking forever when empty (safe for tests that don't need to receive).
+
+    Example:
+    ```python
+        async def test_zmq_echo(mock_zmq):
+            mock_zmq.recv_queue.put_nowait(b"ping")
+            # ... run code that receives and sends ...
+            assert mock_zmq.sent == [b"pong"]
+    ```
+    Note:
+        Tests in tests/zmq/ use their own specific mocking from tests/zmq/conftest.py.
+    """
+    mock_socket = AsyncMock(spec=zmq.asyncio.Socket)
+    mock_socket.bind = Mock()
+    mock_socket.connect = Mock()
+    mock_socket.close = Mock()
+    mock_socket.setsockopt = Mock()
+    mock_socket.closed = False
+
+    mock_context = MagicMock(spec=zmq.asyncio.Context)
+    mock_context.socket = Mock(return_value=mock_socket)
+    mock_context.term = Mock()
+
+    fixture = MockZmqFixture(
+        context=mock_context,
+        socket=mock_socket,
+        sent=[],
+        sent_multipart=[],
+        recv_queue=asyncio.Queue(),
+        recv_multipart_queue=asyncio.Queue(),
+    )
+
+    async def _capture_send(data: bytes, flags: int = 0) -> None:
+        fixture.sent.append(data)
+
+    async def _capture_send_multipart(parts: list[bytes], flags: int = 0) -> None:
+        fixture.sent_multipart.append(list(parts))
+
+    async def _recv(flags: int = 0) -> bytes:
+        return await fixture.recv_queue.get()
+
+    async def _recv_multipart(flags: int = 0) -> list[bytes]:
+        return await fixture.recv_multipart_queue.get()
+
+    mock_socket.send = AsyncMock(side_effect=_capture_send)
+    mock_socket.send_multipart = AsyncMock(side_effect=_capture_send_multipart)
+    mock_socket.recv = AsyncMock(side_effect=_recv)
+    mock_socket.recv_multipart = AsyncMock(side_effect=_recv_multipart)
+
+    monkeypatch.setattr("zmq.asyncio.Context.instance", lambda: mock_context)
+
+    return fixture
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -359,11 +505,46 @@ def sample_conversations() -> dict[str, Conversation]:
 
 
 @pytest.fixture
-def sample_request_record() -> RequestRecord:
+def sample_request_info() -> RequestInfo:
+    """Create a sample RequestInfo for testing."""
+    from aiperf.common.enums import CreditPhase, EndpointType, ModelSelectionStrategy
+    from aiperf.common.models.model_endpoint_info import (
+        EndpointInfo,
+        ModelEndpointInfo,
+        ModelInfo,
+        ModelListInfo,
+    )
+
+    return RequestInfo(
+        model_endpoint=ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_url="http://localhost:8000/v1/test",
+            ),
+        ),
+        turns=[
+            Turn(
+                texts=[Text(contents=["test prompt"])], role="user", model="test-model"
+            )
+        ],
+        turn_index=0,
+        credit_num=0,
+        credit_phase=CreditPhase.PROFILING,
+        x_request_id="test-request-id",
+        x_correlation_id="test-correlation-id",
+        conversation_id="test-conversation",
+    )
+
+
+@pytest.fixture
+def sample_request_record(sample_request_info: RequestInfo) -> RequestRecord:
     """Create a sample RequestRecord for testing."""
     return RequestRecord(
-        conversation_id="test-conversation",
-        turn_index=0,
+        request_info=sample_request_info,
         model_name="test-model",
         start_perf_ns=DEFAULT_START_TIME_NS,
         timestamp_ns=DEFAULT_START_TIME_NS,

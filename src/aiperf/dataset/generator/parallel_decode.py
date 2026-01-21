@@ -78,7 +78,9 @@ def parallel_decode(
         return []
 
     # For small batches, sequential is faster (avoid process overhead)
-    if len(token_sequences) < 10:
+    # if len(token_sequences) < 10:
+    # TODO: Temp fix until we can find a solution to the daemon process issue
+    if True:
         from aiperf.common.tokenizer import Tokenizer
 
         tokenizer = Tokenizer.from_pretrained(tokenizer_name)

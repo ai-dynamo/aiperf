@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -54,7 +54,10 @@ class RecordExportResultsProcessor(
         self.show_experimental = (
             Environment.DEV.MODE and Environment.DEV.SHOW_EXPERIMENTAL_METRICS
         )
+        self.export_http_trace = user_config.output.export_http_trace
         self.info(f"Record metrics export enabled: {self.output_file}")
+        if self.export_http_trace:
+            self.info("HTTP trace export enabled (--export-http-trace)")
 
     async def process_result(self, record_data: MetricRecordsData) -> None:
         try:
@@ -62,12 +65,20 @@ class RecordExportResultsProcessor(
             display_metrics = metric_dict.to_display_dict(
                 MetricRegistry, self.show_internal, self.show_experimental
             )
-            if not display_metrics:
+            # Skip records with no displayable metrics UNLESS they have an error
+            # (error records should always be exported for debugging/analysis)
+            if not display_metrics and not record_data.error:
                 return
+
+            # Convert trace data to export format (wall-clock timestamps) if enabled
+            export_trace_data = None
+            if self.export_http_trace and record_data.trace_data:
+                export_trace_data = record_data.trace_data.to_export()
 
             record_info = MetricRecordInfo(
                 metadata=record_data.metadata,
                 metrics=display_metrics,
+                trace_data=export_trace_data,
                 error=record_data.error,
             )
 

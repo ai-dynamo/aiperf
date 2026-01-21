@@ -1,11 +1,64 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
 # Request Cancellation Testing
 
 AIPerf supports request timeout and cancellation scenarios, which are important for calculating the impact of user cancellation on performance.
+
+## How Request Cancellation Works
+
+Request cancellation tests how inference servers handle client disconnections. A percentage of requests are sent completely, then the client disconnects before receiving the full response.
+
+### Timing Flow
+
+```
+T0: Request scheduled
+     │
+     │← Worker processing, connection acquired from pool
+     ▼
+T1: Start writing request to socket
+     │
+     │← HTTP headers + body transmitted
+     ▼
+T2: Request fully sent (cancellation timer starts here)
+     │
+     │← --request-cancellation-delay
+     ▼
+T3: Request cancelled if still waiting for response
+```
+
+The cancellation timer starts at **T2** ("request fully sent") for two reasons:
+
+1. **Realistic simulation**: The server always receives the complete request before cancellation, just like when a real user closes their browser tab.
+
+2. **Reproducibility**: The delay is measured from a fixed point (request fully sent) rather than being affected by variable queue times or connection setup. This means running the same benchmark twice with `--request-cancellation-delay 0.5` will cancel requests at the same point in their lifecycle, regardless of system load.
+
+> [!NOTE]
+> If the server responds before the delay expires, the request completes normally and is **not** cancelled. Only requests still waiting for a response when the timer expires are cancelled.
+
+### Understanding the Delay Parameter
+
+| Delay | Behavior |
+|-------|----------|
+| `0` | Disconnect immediately after request is fully sent |
+| `0.5` | Wait 0.5 seconds after sending, then disconnect |
+| `5` | Wait 5 seconds after sending, then disconnect |
+
+> [!TIP]
+> A delay of **0 means "send the full request, then immediately disconnect"**. The server receives the complete request but the client closes the connection before receiving any response. Longer delays allow partial responses to be received before disconnection.
+
+### Testing Disaggregated Inference Systems
+
+The delay parameter can be used to target different inference phases:
+
+| Delay | Likely Cancelled During | Tests |
+|-------|------------------------|-------|
+| `0` or very small | **Prefill phase** | Prefill worker cancellation, KV cache allocation cleanup |
+| Longer delays | **Generation phase** | Decode worker cancellation, partial KV cache cleanup |
+
+This is useful for testing how disaggregated architectures (separate prefill and decode workers) handle cancellations at different stages of request processing.
 
 ## Setting Up the Server
 
@@ -73,9 +126,9 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
-### Immediate Cancellation Testing
+### Immediate Cancellation Testing (Delay = 0)
 
-Test rapid cancellation scenarios:
+Test immediate disconnection where the client closes the connection right after sending the request:
 
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
@@ -95,6 +148,8 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
-**Expected Results:**
-- Tests how quickly the server can handle connection terminations
-- Useful for testing resource cleanup and connection pooling
+**What happens with delay=0:**
+- The full request (headers + body) is sent to the server
+- The client immediately disconnects after sending
+- The server receives the complete request but the client won't read any response
+- Tests how the server handles abandoned requests and cleans up resources

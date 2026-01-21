@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 This module provides an extensive set of hook definitions for AIPerf. It is designed to be
@@ -415,7 +415,7 @@ def on_records_progress(func: Callable) -> Callable:
     ```python
     class MyPlugin(ProgressTrackerMixin):
         @on_records_progress
-        def _on_records_progress(self, progress: RecordsStats) -> None:
+        def _on_records_progress(self, progress: PhaseRecordsStats) -> None:
             pass
     ```
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
@@ -10,8 +10,8 @@ from aiperf.common.models.model_endpoint_info import (
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.common.models.record_models import RequestInfo
 from aiperf.endpoints.openai_completions import CompletionsEndpoint
+from tests.unit.endpoints.conftest import create_request_info
 
 
 class TestCompletionsEndpoint:
@@ -38,9 +38,8 @@ class TestCompletionsEndpoint:
         # Use the first turn from the sample_conversations fixture
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=turns)
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
         payload = endpoint.format_payload(request_info)
-        print(f"Payload: {payload}")
         expected_payload = {
             "prompt": ["Hello, world!"],
             "model": "test-model",
@@ -58,9 +57,8 @@ class TestCompletionsEndpoint:
         turns[0].max_tokens = 50
         model_endpoint.endpoint.streaming = True
         model_endpoint.endpoint.extra = [("ignore_eos", True)]
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=turns)
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
         payload = endpoint.format_payload(request_info)
-        print(f"Payload: {payload}")
         expected_payload = {
             "prompt": ["Hello, world!"],
             "model": "test-model",
@@ -104,7 +102,7 @@ class TestCompletionsEndpoint:
         model_endpoint.endpoint.use_server_token_count = use_server_token_count
         if user_extra:
             model_endpoint.endpoint.extra = user_extra
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=turns)
+        request_info = create_request_info(turns=turns, model_endpoint=model_endpoint)
         payload = endpoint.format_payload(request_info)
 
         if expected_stream_options is None:

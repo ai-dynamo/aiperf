@@ -1,10 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import asyncio
 import inspect
 import os
 import traceback
-from collections.abc import Callable
+import types
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import orjson
@@ -100,13 +100,17 @@ def load_json_str(
         raise
 
 
-async def yield_to_event_loop() -> None:
+@types.coroutine
+def yield_to_event_loop() -> Awaitable[None]:
     """Yield to the event loop. This forces the current coroutine to yield and allow
     other coroutines to run, preventing starvation. Use this when you do not want to
     delay your coroutine via sleep, but still want to allow other coroutines to run if
     there is a potential for an infinite loop.
+
+    NOTE: This still must be called using `await`. It is not defined as `async def` because it uses
+    a lower-level asyncio technique than the overhead of calling `asyncio.sleep(0)` in a nested coroutine.
     """
-    await asyncio.sleep(0)
+    yield
 
 
 def compute_time_ns(

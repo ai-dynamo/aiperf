@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
@@ -15,18 +15,32 @@ class TimingMode(CaseInsensitiveStrEnum):
     Optionally, a max concurrency limit can be specified as well.
     """
 
+    USER_CENTRIC_RATE = "user_centric_rate"
+    """A mode where each session acts as a separate user with gap = num_users / request_rate between turns.
+    Users block on their previous turn (no interleaving within a user).
+    Matches LMBenchmark behavior for KV cache benchmarking.
+    """
 
-class RequestRateMode(CaseInsensitiveStrEnum):
-    """The different ways the RequestRateStrategy should generate requests."""
+
+class ArrivalPattern(CaseInsensitiveStrEnum):
+    """The different ways the IntervalGenerator should generate intervals."""
 
     CONSTANT = "constant"
-    """Generate requests at a constant rate."""
+    """Generate intervals at a constant rate."""
 
     POISSON = "poisson"
-    """Generate requests using a poisson process."""
+    """Generate intervals using a poisson process."""
+
+    GAMMA = "gamma"
+    """Generate intervals using a gamma distribution with tunable smoothness.
+    Use --arrival-smoothness to control the shape parameter:
+    - smoothness = 1.0: Equivalent to Poisson (exponential inter-arrivals)
+    - smoothness < 1.0: More bursty/clustered arrivals
+    - smoothness > 1.0: More regular/smooth arrivals
+    """
 
     CONCURRENCY_BURST = "concurrency_burst"
-    """Generate requests as soon as possible, up to a max concurrency limit. Only allowed when a request rate is not specified."""
+    """Generate intervals as soon as possible, up to a max concurrency limit. Only allowed when a request rate is not specified."""
 
 
 class CreditPhase(CaseInsensitiveStrEnum):

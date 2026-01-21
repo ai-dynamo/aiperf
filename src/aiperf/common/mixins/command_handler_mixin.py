@@ -1,12 +1,18 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import sys
 from abc import ABC
-from collections.abc import Iterable
+
+if sys.version_info >= (3, 11):
+    from asyncio import timeout as async_timeout
+else:
+    from async_timeout import timeout as async_timeout
+from collections.abc import AsyncIterator, Iterable
 from typing import Any
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import MessageType
+from aiperf.common.enums import CommandType, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import (
     AIPerfHook,
@@ -227,6 +233,88 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
                 future.cancel()
             del self._multi_response_futures[command.command_id]
 
+    async def send_command_and_stream_responses(
+        self,
+        command: CommandMessage,
+        service_ids: list[str],
+        timeout: float = Environment.SERVICE.COMMAND_RESPONSE_TIMEOUT,
+    ) -> AsyncIterator[tuple[str, CommandResponse | ErrorDetails]]:
+        """Broadcast command and yield (service_id, response) as each arrives.
+
+        This method allows callers to process responses as they arrive and
+        optionally abort early (e.g., on first error) by breaking out of the loop.
+        Cleanup is handled automatically in the finally block.
+
+        Args:
+            command: The command message to broadcast
+            service_ids: List of service IDs to wait for responses from
+            timeout: Maximum time to wait for all responses
+
+        Yields:
+            Tuples of (service_id, response) as each service responds.
+            On timeout, yields (service_id, ErrorDetails) for services that didn't respond.
+        """
+        futures = {service_id: asyncio.Future() for service_id in service_ids}
+        self._multi_response_futures[command.command_id] = futures
+        await self.publish(command)
+
+        seen: set[str] = set()
+
+        try:
+            async with async_timeout(timeout):
+                for coro in asyncio.as_completed(futures.values()):
+                    response = await coro
+                    seen.add(response.service_id)
+                    yield (response.service_id, response)
+        except asyncio.TimeoutError:
+            # Yield timeout errors for services that didn't respond
+            for service_id in service_ids:
+                if service_id not in seen:
+                    yield (
+                        service_id,
+                        ErrorDetails.from_exception(asyncio.TimeoutError()),
+                    )
+        finally:
+            for future in futures.values():
+                future.cancel()
+            del self._multi_response_futures[command.command_id]
+
+    async def send_command_and_wait_until_first_error(
+        self,
+        command: CommandMessage,
+        service_ids: list[str],
+        timeout: float = Environment.SERVICE.COMMAND_RESPONSE_TIMEOUT,
+    ) -> list[CommandResponse | ErrorDetails]:
+        """Broadcast command and wait for responses, aborting on first error.
+
+        This is a fail-fast variant of send_command_and_wait_for_all_responses.
+        It returns immediately when any service returns a CommandErrorResponse,
+        without waiting for the remaining services.
+
+        Args:
+            command: The command message to broadcast
+            service_ids: List of service IDs to wait for responses from
+            timeout: Maximum time to wait for all responses
+
+        Returns:
+            List of responses received. If an error occurred, the list contains
+            responses received up to and including the first error response.
+        """
+        responses: list[CommandResponse | ErrorDetails] = []
+
+        async for service_id, response in self.send_command_and_stream_responses(
+            command, service_ids, timeout
+        ):
+            responses.append(response)
+            if isinstance(response, CommandErrorResponse):
+                self.debug(
+                    f"Received error from {service_id}, aborting wait for "
+                    f"remaining {len(service_ids) - len(responses)} service(s)"
+                )
+                break
+
+        return responses
+
     @on_message(
         lambda self: {
             # NOTE: Command responses are only ever sent to the original service that sent the command,
@@ -271,9 +359,10 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
                         lambda: f"Already received response for command {message.command_id} from {message.service_id}, ignoring duplicate"
                     )
             else:
-                self.warning(
-                    f"Received command response for service we were not expecting: {message.service_id}. Ignoring."
-                )
+                if message.command != CommandType.PROFILE_CANCEL:
+                    self.warning(
+                        f"Received command response for service we were not expecting: {message.service_id}. Ignoring."
+                    )
             return
 
         # If we reach here, we received a command response that we were not tracking. It is

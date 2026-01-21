@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
@@ -13,6 +13,7 @@ class MessageType(CaseInsensitiveStrEnum):
     """
 
     ALL_RECORDS_RECEIVED = "all_records_received"
+    CANCEL_CREDITS = "cancel_credits"
     COMMAND = "command"
     COMMAND_RESPONSE = "command_response"
     CONNECTION_PROBE = "connection_probe"
@@ -20,16 +21,13 @@ class MessageType(CaseInsensitiveStrEnum):
     CONVERSATION_RESPONSE = "conversation_response"
     CONVERSATION_TURN_REQUEST = "conversation_turn_request"
     CONVERSATION_TURN_RESPONSE = "conversation_turn_response"
-    CREDITS_COMPLETE = "credits_complete"
-    CREDIT_DROP = "credit_drop"
     CREDIT_PHASE_COMPLETE = "credit_phase_complete"
     CREDIT_PHASE_PROGRESS = "credit_phase_progress"
     CREDIT_PHASE_SENDING_COMPLETE = "credit_phase_sending_complete"
     CREDIT_PHASE_START = "credit_phase_start"
-    CREDIT_RETURN = "credit_return"
+    CREDIT_PHASES_CONFIGURED = "credit_phases_configured"
+    CREDITS_COMPLETE = "credits_complete"
     DATASET_CONFIGURED_NOTIFICATION = "dataset_configured_notification"
-    DATASET_TIMING_REQUEST = "dataset_timing_request"
-    DATASET_TIMING_RESPONSE = "dataset_timing_response"
     ERROR = "error"
     HEARTBEAT = "heartbeat"
     INFERENCE_RESULTS = "inference_results"

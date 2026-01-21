@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
@@ -32,7 +32,6 @@ from aiperf_mock_server.metrics_utils import (
     record_embedding_success,
     record_ranking_success,
     record_request_bytes,
-    record_streamed_token,
     record_tgi_success,
     register_dcgm_load_callback,
     track_llm_request,
@@ -54,6 +53,7 @@ from aiperf_mock_server.utils import (
     make_ctx,
     stream_chat_completion,
     stream_text_completion,
+    stream_tgi_completion,
     with_error_injection,
 )
 from fastapi import FastAPI, HTTPException, Response
@@ -95,6 +95,11 @@ async def lifespan(_: FastAPI):
     logger.info("Server starting: %s", server_config.model_dump())
     if server_config.random_seed is not None:
         random.seed(server_config.random_seed)
+
+    if not server_config.no_tokenizer:
+        from aiperf_mock_server.tokens import _load_corpus
+
+        _load_corpus()
 
     dcgm_fakers.append(_create_dcgm_faker(server_config.dcgm_seed))
     dcgm_fakers.append(
@@ -154,6 +159,23 @@ asgi_app = TimingMiddleware(app)
 # ============================================================================
 
 
+def _build_chat_response_data(ctx: RequestCtx) -> dict[str, Any]:
+    """Build non-streaming chat completion response data."""
+    message: dict[str, Any] = {"role": "assistant", "content": ctx.content}
+    if ctx.reasoning_content:
+        message["reasoning_content"] = ctx.reasoning_content
+    return {
+        "id": ctx.request_id,
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": ctx.model,
+        "choices": [
+            {"index": 0, "finish_reason": ctx.finish_reason, "message": message}
+        ],
+        "usage": ctx.usage,
+    }
+
+
 @app.post("/v1/chat/completions", response_model=None)
 @with_error_injection
 async def chat_completions(
@@ -174,21 +196,7 @@ async def chat_completions(
 
     with track_llm_request(ctx, req.model, endpoint):
         await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
-
-        message: dict[str, Any] = {"role": "assistant", "content": ctx.content}
-        if ctx.reasoning_content:
-            message["reasoning_content"] = ctx.reasoning_content
-
-        response_data = {
-            "id": ctx.request_id,
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": ctx.model,
-            "choices": [
-                {"index": 0, "finish_reason": ctx.finish_reason, "message": message}
-            ],
-            "usage": ctx.usage,
-        }
+        response_data = _build_chat_response_data(ctx)
         response_bytes = len(orjson.dumps(response_data))
         record_request_bytes(endpoint, len(ctx.tokenized.text), response_bytes)
         return ORJSONResponse(response_data)
@@ -206,6 +214,24 @@ async def _chat_stream_wrapper(
 # ============================================================================
 # Text Completions
 # ============================================================================
+
+
+def _build_completion_response_data(ctx: RequestCtx) -> dict[str, Any]:
+    """Build non-streaming text completion response data."""
+    return {
+        "id": ctx.request_id,
+        "object": "text_completion",
+        "created": int(time.time()),
+        "model": ctx.model,
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": ctx.finish_reason,
+                "text": ctx.content,
+            }
+        ],
+        "usage": ctx.usage,
+    }
 
 
 @app.post("/v1/completions", response_model=None)
@@ -228,21 +254,7 @@ async def completions(
 
     with track_llm_request(ctx, req.model, endpoint):
         await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
-
-        response_data = {
-            "id": ctx.request_id,
-            "object": "text_completion",
-            "created": int(time.time()),
-            "model": ctx.model,
-            "choices": [
-                {
-                    "index": 0,
-                    "finish_reason": ctx.finish_reason,
-                    "text": ctx.content,
-                }
-            ],
-            "usage": ctx.usage,
-        }
+        response_data = _build_completion_response_data(ctx)
         response_bytes = len(orjson.dumps(response_data))
         record_request_bytes(endpoint, len(ctx.tokenized.text), response_bytes)
         return ORJSONResponse(response_data)
@@ -267,6 +279,41 @@ async def _wait_for_processing(base_ms: float, per_unit_ms: float, units: int) -
         await asyncio.sleep(total_ms / 1000.0)
 
 
+def generate_embedding(text: str, dim: int = 768) -> list[float]:
+    """Generate deterministic embedding from text using stable hash.
+
+    Args:
+        text: Input text to generate embedding for.
+        dim: Embedding dimension (default 768).
+
+    Returns:
+        List of floats representing the embedding vector.
+    """
+    digest = hashlib.blake2s(text.encode("utf-8")).digest()
+    seed = int.from_bytes(digest, byteorder="big")
+    rng = random.Random(seed)
+    return [rng.random() - 0.5 for _ in range(dim)]
+
+
+def _build_embedding_response_data(
+    ctx: RequestCtx, inputs: list[str]
+) -> dict[str, Any]:
+    """Build embedding response data."""
+    return {
+        "object": "list",
+        "model": ctx.model,
+        "data": [
+            {
+                "object": "embedding",
+                "index": i,
+                "embedding": generate_embedding(text),
+            }
+            for i, text in enumerate(inputs)
+        ],
+        "usage": ctx.usage,
+    }
+
+
 @app.post("/v1/embeddings", response_model=None)
 @with_error_injection
 async def embeddings(req: EmbeddingRequest, request: Request) -> ORJSONResponse:
@@ -274,13 +321,6 @@ async def embeddings(req: EmbeddingRequest, request: Request) -> ORJSONResponse:
     endpoint = "/v1/embeddings"
     start_time = request.state.start_time
     ctx = make_ctx(req, endpoint, start_time)
-
-    def generate_embedding(text: str) -> list[float]:
-        """Generate deterministic embedding from text using stable hash."""
-        digest = hashlib.blake2s(text.encode("utf-8")).digest()
-        seed = int.from_bytes(digest, byteorder="big")
-        rng = random.Random(seed)
-        return [rng.random() - 0.5 for _ in range(768)]
 
     with track_request(endpoint, req.model):
         await _wait_for_processing(
@@ -297,21 +337,7 @@ async def embeddings(req: EmbeddingRequest, request: Request) -> ORJSONResponse:
             perf_counter() - start_time,
         )
 
-        return ORJSONResponse(
-            {
-                "object": "list",
-                "model": ctx.model,
-                "data": [
-                    {
-                        "object": "embedding",
-                        "index": i,
-                        "embedding": generate_embedding(text),
-                    }
-                    for i, text in enumerate(req.inputs)
-                ],
-                "usage": ctx.usage,
-            }
-        )
+        return ORJSONResponse(_build_embedding_response_data(ctx, req.inputs))
 
 
 # ============================================================================
@@ -367,20 +393,25 @@ async def _handle_ranking_request(
 # ============================================================================
 
 
+def _build_nim_ranking_response_data(
+    ctx: RequestCtx, ranked_scores: list[tuple[int, float]]
+) -> dict[str, Any]:
+    """Build NIM /v1/ranking response data."""
+    return {
+        "id": ctx.request_id,
+        "object": "rankings",
+        "model": ctx.model,
+        "rankings": [{"index": i, "relevance_score": s} for i, s in ranked_scores],
+        "usage": ctx.usage,
+    }
+
+
 @app.post("/v1/ranking", response_model=None)
 @with_error_injection
 async def rankings(req: RankingRequest) -> ORJSONResponse:
     """Mock NVIDIA NIM /v1/ranking endpoint."""
     ctx, ranked_scores = await _handle_ranking_request(req, "/v1/ranking")
-    return ORJSONResponse(
-        {
-            "id": ctx.request_id,
-            "object": "rankings",
-            "model": ctx.model,
-            "rankings": [{"index": i, "relevance_score": s} for i, s in ranked_scores],
-            "usage": ctx.usage,
-        }
-    )
+    return ORJSONResponse(_build_nim_ranking_response_data(ctx, ranked_scores))
 
 
 # ============================================================================
@@ -388,14 +419,19 @@ async def rankings(req: RankingRequest) -> ORJSONResponse:
 # ============================================================================
 
 
+def _build_hf_tei_ranking_response_data(
+    _ctx: RequestCtx, ranked_scores: list[tuple[int, float]]
+) -> dict[str, Any]:
+    """Build HuggingFace TEI /rerank response data."""
+    return {"results": [{"index": i, "score": s} for i, s in ranked_scores]}
+
+
 @app.post("/rerank", response_model=None)
 @with_error_injection
 async def hf_tei_rerank(req: HFTEIRerankRequest) -> ORJSONResponse:
     """Mock HuggingFace TEI /rerank endpoint."""
-    _, ranked_scores = await _handle_ranking_request(req, "/rerank")
-    return ORJSONResponse(
-        {"results": [{"index": i, "score": s} for i, s in ranked_scores]}
-    )
+    ctx, ranked_scores = await _handle_ranking_request(req, "/rerank")
+    return ORJSONResponse(_build_hf_tei_ranking_response_data(ctx, ranked_scores))
 
 
 # ============================================================================
@@ -403,14 +439,19 @@ async def hf_tei_rerank(req: HFTEIRerankRequest) -> ORJSONResponse:
 # ============================================================================
 
 
+def _build_cohere_ranking_response_data(
+    _ctx: RequestCtx, ranked_scores: list[tuple[int, float]]
+) -> dict[str, Any]:
+    """Build Cohere /v2/rerank response data."""
+    return {"results": [{"index": i, "relevance_score": s} for i, s in ranked_scores]}
+
+
 @app.post("/v2/rerank", response_model=None)
 @with_error_injection
 async def cohere_rerank(req: CohereRerankRequest) -> ORJSONResponse:
     """Mock Cohere /v2/rerank endpoint."""
-    _, ranked_scores = await _handle_ranking_request(req, "/v2/rerank")
-    return ORJSONResponse(
-        {"results": [{"index": i, "relevance_score": s} for i, s in ranked_scores]}
-    )
+    ctx, ranked_scores = await _handle_ranking_request(req, "/v2/rerank")
+    return ORJSONResponse(_build_cohere_ranking_response_data(ctx, ranked_scores))
 
 
 # ============================================================================
@@ -473,6 +514,11 @@ async def custom_multimodal(req: dict, request: Request) -> dict:
 # ============================================================================
 
 
+def _build_tgi_response_data(ctx: RequestCtx) -> dict[str, Any]:
+    """Build non-streaming TGI /generate response."""
+    return {"generated_text": ctx.content}
+
+
 @app.post("/generate", response_model=None)
 @with_error_injection
 async def huggingface_generate(
@@ -486,7 +532,7 @@ async def huggingface_generate(
     with track_request(endpoint, req.model):
         await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
         record_tgi_success(endpoint, ctx.usage, perf_counter() - start_time)
-        return ORJSONResponse({"generated_text": ctx.content})
+        return ORJSONResponse(_build_tgi_response_data(ctx))
 
 
 @app.post("/generate_stream", response_model=None)
@@ -497,29 +543,18 @@ async def huggingface_generate_stream(req: TGIGenerateRequest, request: Request)
     start_time = request.state.start_time
     ctx = make_ctx(req, endpoint, start_time)
     STREAMING_REQUESTS_TOTAL.labels(endpoint=endpoint, model=req.model).inc()
+    return StreamingResponse(
+        _tgi_stream_wrapper(ctx, endpoint, start_time),
+        media_type="text/event-stream",
+    )
 
-    async def event_stream():
-        async with async_track_request(endpoint, req.model):
-            num_tokens = len(ctx.tokens)
-            for i, token_text in enumerate(ctx.tokens):
-                await ctx.latency_sim.wait_for_next_token()
-                chunk: dict[str, Any] = {
-                    "index": i,
-                    "token": {
-                        "id": i,
-                        "text": token_text,
-                        "logprob": -0.1,
-                        "special": False,
-                    },
-                }
-                if i == num_tokens - 1:
-                    chunk["generated_text"] = ctx.content
-                yield b"data: " + orjson.dumps(chunk) + b"\n\n"
-                record_streamed_token(endpoint, req.model)
 
-            record_tgi_success(endpoint, ctx.usage, perf_counter() - start_time)
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+async def _tgi_stream_wrapper(ctx: RequestCtx, endpoint: str, start_time: float):
+    """Wrapper for TGI streaming that records metrics after completion."""
+    async with async_track_request(endpoint, ctx.model):
+        async for chunk in stream_tgi_completion(ctx, endpoint):
+            yield chunk
+        record_tgi_success(endpoint, ctx.usage, perf_counter() - start_time)
 
 
 # ============================================================================
@@ -557,7 +592,7 @@ def _generate_mock_jpeg_b64(prompt: str, index: int = 0) -> str:
 
 
 def _build_image_response_data(
-    req: ImageGenerationRequest, ctx: RequestCtx
+    ctx: RequestCtx, req: ImageGenerationRequest
 ) -> dict[str, Any]:
     """Build non-streaming image generation response."""
     data = []
@@ -621,12 +656,39 @@ async def image_generation(
 
     with track_llm_request(ctx, req.model, endpoint):
         await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
-        return ORJSONResponse(_build_image_response_data(req, ctx))
+        return ORJSONResponse(_build_image_response_data(ctx, req))
 
 
 # ============================================================================
 # SOLIDO RAG
 # ============================================================================
+
+
+def _build_solido_rag_response_data(
+    ctx: RequestCtx, req: SolidoRAGRequest
+) -> dict[str, Any]:
+    """Build SOLIDO RAG response data."""
+    query_text = " ".join(req.query)
+    sources = []
+    num_sources = min(3, len(req.query))
+    for i in range(num_sources):
+        source_hash = hashlib.blake2s(f"{query_text}|source{i}".encode()).hexdigest()[
+            :8
+        ]
+        sources.append(
+            {
+                "id": f"doc_{source_hash}",
+                "title": f"Document {i + 1}",
+                "score": 0.9 - (i * 0.1),
+                "content": f"Source content for query: {query_text[:50]}...",
+            }
+        )
+    return {
+        "content": ctx.content,
+        "sources": sources,
+        "filters": req.filters,
+        "inference_model": req.inference_model,
+    }
 
 
 @app.post("/rag/api/prompt", response_model=None)
@@ -649,31 +711,7 @@ async def solido_rag(req: SolidoRAGRequest, request: Request) -> ORJSONResponse:
 
     with track_llm_request(ctx, req.inference_model, endpoint):
         await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
-
-        # Generate mock sources based on query
-        sources = []
-        num_sources = min(3, len(req.query))
-        for i in range(num_sources):
-            source_hash = hashlib.blake2s(
-                f"{query_text}|source{i}".encode()
-            ).hexdigest()[:8]
-            sources.append(
-                {
-                    "id": f"doc_{source_hash}",
-                    "title": f"Document {i + 1}",
-                    "score": 0.9 - (i * 0.1),
-                    "content": f"Source content for query: {query_text[:50]}...",
-                }
-            )
-
-        return ORJSONResponse(
-            {
-                "content": ctx.content,
-                "sources": sources,
-                "filters": req.filters,
-                "inference_model": req.inference_model,
-            }
-        )
+        return ORJSONResponse(_build_solido_rag_response_data(ctx, req))
 
 
 # ============================================================================

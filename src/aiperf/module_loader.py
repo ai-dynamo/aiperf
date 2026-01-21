@@ -32,14 +32,42 @@ def _load_all_modules() -> None:
             and module.name != "plot"
             and (module / "__init__.py").exists()
         ):
-            _logger.debug(f"Loading module: aiperf.{module.name}")
-            try:
-                importlib.import_module(f"aiperf.{module.name}")
-            except ImportError:
-                _logger.exception(
-                    f"Error loading AIPerf module: aiperf.{module.name}. Ensure the folder {module.resolve()} is a valid Python package"
+            # Recursively find all Python files in this module and its subdirectories
+            for file in sorted(module.rglob("*.py")):
+                # Skip __pycache__ and other hidden/private directories
+                # Check each directory component (not the filename) for leading underscore/dot
+                skip = False
+                for i, part in enumerate(file.parts):
+                    # Skip check for the last part (filename) and for parts before our module
+                    if (
+                        i >= len(Path(__file__).parent.parts)
+                        and part != file.name
+                        and (part.startswith("_") or part.startswith("."))
+                    ):
+                        skip = True
+                        break
+                if skip:
+                    _logger.debug(f"Skipping private/hidden path: {file}")
+                    continue
+
+                # Build qualified module name from path
+                relative_path = file.relative_to(Path(__file__).parent)
+                parts = list(relative_path.parts[:-1])  # Remove filename
+                if file.name != "__init__.py":
+                    parts.append(file.stem)  # Add module name without .py extension
+
+                qualified_name = (
+                    "aiperf." + ".".join(parts) if parts else f"aiperf.{file.stem}"
                 )
-                raise
+
+                _logger.debug(f"Loading module: {qualified_name}")
+                try:
+                    importlib.import_module(qualified_name)
+                except ImportError:
+                    _logger.exception(
+                        f"Error loading AIPerf module: {qualified_name}. Ensure the file {file.resolve()} is a valid Python module"
+                    )
+                    raise
 
 
 _modules_loaded = False

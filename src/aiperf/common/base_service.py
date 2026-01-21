@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import os
@@ -8,7 +8,7 @@ from abc import ABC
 from typing import ClassVar
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import CommandType, LifecycleState
+from aiperf.common.enums import CommandType, LifecycleState, ServiceType
 from aiperf.common.exceptions import ServiceError
 from aiperf.common.hooks import on_command
 from aiperf.common.messages import CommandMessage
@@ -90,6 +90,9 @@ class BaseService(CommandHandlerMixin, ProcessHealthMixin, ABC):
         """This overrides the base class stop method to handle the case where the service is already stopping.
         In this case, we need to kill the process to be safe."""
         if self.stop_requested:
+            if self.service_type != ServiceType.SYSTEM_CONTROLLER:
+                self.error(f"Attempted to stop {self} in state {self.state}. Ignoring.")
+                return
             self.error(f"Attempted to stop {self} in state {self.state}. Killing.")
             await self._kill()
             return
@@ -101,6 +104,7 @@ class BaseService(CommandHandlerMixin, ProcessHealthMixin, ABC):
         """
         await self._set_state(LifecycleState.FAILED)
         self.error(lambda: f"Killing {self}")
+        # TODO: Publish a ServiceFailedMessage to the message bus to notify the system controller that the service has failed.
         self.stop_requested = True
         self.stopped_event.set()
         # TODO: This is a hack to ensure that the process is killed.

@@ -1,21 +1,31 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Streaming DEALER client for bidirectional communication with ROUTER."""
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from typing import TypeAlias
 
+import msgspec
 import zmq
+from msgspec import Struct
 
 from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import CommClientType
+from aiperf.common.environment import Environment
 from aiperf.common.factories import CommunicationClientFactory
 from aiperf.common.hooks import background_task, on_stop
-from aiperf.common.messages import Message
 from aiperf.common.protocols import StreamingDealerClientProtocol
 from aiperf.common.utils import yield_to_event_loop
+from aiperf.credit.messages import RouterToWorkerMessage
 from aiperf.zmq.zmq_base_client import BaseZMQClient
+
+# Pre-created encoder/decoder for performance (caches schema)
+_encoder = msgspec.msgpack.Encoder()
+_decoder = msgspec.msgpack.Decoder(RouterToWorkerMessage)
+
+RouterToWorkerHandler: TypeAlias = Callable[[RouterToWorkerMessage], Awaitable[None]]
 
 
 @implements_protocol(StreamingDealerClientProtocol)
@@ -47,25 +57,32 @@ class ZMQStreamingDealerClient(BaseZMQClient):
 
     Example:
     ```python
+        from aiperf.common.structs import (
+            Credit, CancelCredits, WorkerReady, WorkerShutdown, CreditReturn
+        )
+
         # Create via comms (recommended - handles lifecycle management)
         dealer = comms.create_streaming_dealer_client(
-            address=CommAddress.CREDIT_ROUTER,  # or "tcp://localhost:5555"
+            address=CommAddress.CREDIT_ROUTER,
             identity="worker-1",
         )
 
-        async def handle_message(message: Message) -> None:
-            if message.message_type == MessageType.CREDIT_DROP:
-                do_some_work(message.credit)
-                await dealer.send(CreditReturnMessage(...))
+        async def handle_message(message: Credit | CancelCredits) -> None:
+            match message:
+                case Credit() as credit:
+                    do_some_work(credit)
+                    await dealer.send(CreditReturn(credit_id=credit.id))
+                case CancelCredits(credit_ids=ids):
+                    cancel_credits(ids)
 
         dealer.register_receiver(handle_message)
 
-        # Lifecycle managed by comms - initialize/start/stop comms instead
+        # Lifecycle managed by comms
         await comms.initialize()
         await comms.start()
-        await dealer.send(WorkerReadyMessage(...))
+        await dealer.send(WorkerReady(worker_id="worker-1"))
         ...
-        await dealer.send(WorkerShutdownMessage(...))
+        await dealer.send(WorkerShutdown(worker_id="worker-1"))
         await comms.stop()
     ```
     """
@@ -98,16 +115,18 @@ class ZMQStreamingDealerClient(BaseZMQClient):
             **kwargs,
         )
         self.identity = identity
-        self._receiver_handler: Callable[[Message], Awaitable[None]] | None = None
+        self._receiver_handler: RouterToWorkerHandler | None = None
+        self._msg_count: int = 0
+        self._yield_interval: int = Environment.ZMQ.STREAMING_DEALER_YIELD_INTERVAL
 
-    def register_receiver(self, handler: Callable[[Message], Awaitable[None]]) -> None:
+    def register_receiver(self, handler: RouterToWorkerHandler) -> None:
         """
         Register handler for incoming messages from ROUTER.
 
-        The handler will be called for each message received.
+        The handler will be called for each message received (Credit or CancelCredits).
 
         Args:
-            handler: Async function that takes (message: Message)
+            handler: Async function that takes a RouterToWorkerMessage (Credit | CancelCredits)
         """
         if self._receiver_handler is not None:
             raise ValueError("Receiver handler already registered")
@@ -121,29 +140,15 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         """Clear receiver handler on stop."""
         self._receiver_handler = None
 
-    async def send(self, message: Message) -> None:
-        """
-        Send message to ROUTER.
-
-        Args:
-            message: The message to send
-
-        Raises:
-            NotInitializedError: If socket not initialized
-            CommunicationError: If send fails
-        """
+    async def send(self, struct: Struct) -> None:
+        """Send struct to ROUTER."""
         await self._check_initialized()
-
-        if not isinstance(message, Message):
-            raise TypeError(
-                f"message must be an instance of Message, got {type(message).__name__}"
-            )
 
         try:
             # DEALER automatically handles framing - use single-frame send
-            await self.socket.send(message.to_json_bytes())
+            await self.socket.send(_encoder.encode(struct))
             if self.is_trace_enabled:
-                self.trace(f"Sent message: {message}")
+                self.trace(f"Sent struct: {struct}")
         except Exception as e:
             self.exception(f"Failed to send message: {e}")
             raise
@@ -153,8 +158,8 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         """
         Background task for receiving messages from ROUTER.
 
-        Runs continuously until stop is requested. Receives messages with DEALER
-        envelope format: [empty_delimiter, message_bytes] or just [message_bytes]
+        Runs continuously until stop is requested. Decodes messages as
+        RouterToWorkerMessage (Credit | CancelCredits) using msgpack.
         """
         self.debug(
             lambda: f"Streaming DEALER receiver task started for {self.identity}"
@@ -165,13 +170,21 @@ class ZMQStreamingDealerClient(BaseZMQClient):
                 message_bytes = await self.socket.recv()
                 if self.is_trace_enabled:
                     self.trace(f"Received message: {message_bytes}")
-                message = Message.from_json(message_bytes)
+                message = _decoder.decode(message_bytes)
 
                 if self._receiver_handler:
                     self.execute_async(self._receiver_handler(message))
+                    self._msg_count += 1
+                    # Yield periodically to allow scheduled handlers to run
+                    # and prevent event loop starvation during message bursts.
+                    if (
+                        self._yield_interval > 0
+                        and self._msg_count >= self._yield_interval
+                    ):
+                        await yield_to_event_loop()
                 else:
                     self.warning(
-                        f"Received {message.message_type} message but no handler registered"
+                        f"Received {type(message).__name__} but no handler registered"
                     )
 
             except zmq.Again:

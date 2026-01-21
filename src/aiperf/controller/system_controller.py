@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import os
+import sys
 import time
 from typing import cast
 
 from rich.console import Console
+from rich.panel import Panel
 
 from aiperf.cli_utils import print_developer_mode_warning
 from aiperf.common.base_service import BaseService
@@ -30,7 +32,7 @@ from aiperf.common.logging import cleanup_global_log_queue, get_global_log_queue
 from aiperf.common.messages import (
     CommandErrorResponse,
     CommandResponse,
-    CreditsCompleteMessage,
+    CommandSuccessResponse,
     HeartbeatMessage,
     ProcessRecordsResultMessage,
     ProcessServerMetricsResultMessage,
@@ -60,6 +62,7 @@ from aiperf.common.types import ServiceTypeT
 from aiperf.controller.controller_utils import print_exit_errors
 from aiperf.controller.proxy_manager import ProxyManager
 from aiperf.controller.system_mixins import SignalHandlerMixin
+from aiperf.credit.messages import CreditsCompleteMessage
 from aiperf.exporters.exporter_manager import ExporterManager
 
 
@@ -215,11 +218,13 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _profile_configure_all_services(self) -> None:
         """Configure all services to start profiling.
 
-        This is a blocking call that will wait for all services to be configured before returning. This way we can ensure that all services are configured before we start profiling.
+        This is a blocking call that will wait for all services to be configured
+        before returning. Uses fail-fast behavior: if any service returns an error,
+        we abort immediately without waiting for the remaining services.
         """
         self.info("Configuring all services to start profiling")
         begin = time.perf_counter()
-        responses = await self.send_command_and_wait_for_all_responses(
+        responses = await self.send_command_and_wait_until_first_error(
             ProfileConfigureCommand(
                 service_id=self.service_id,
                 config=self.user_config,
@@ -237,9 +242,13 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
 
     async def _start_profiling_all_services(self) -> None:
-        """Tell all services to start profiling."""
+        """Tell all services to start profiling.
+
+        Uses fail-fast behavior: if any service returns an error,
+        we abort immediately without waiting for the remaining services.
+        """
         self.debug("Sending PROFILE_START command to all services")
-        responses = await self.send_command_and_wait_for_all_responses(
+        responses = await self.send_command_and_wait_until_first_error(
             ProfileStartCommand(
                 service_id=self.service_id,
             ),
@@ -279,9 +288,10 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _handle_register_service_command(
         self, message: RegisterServiceCommand
     ) -> None:
-        """Process a registration message from a service. It will
-        add the service to the service manager and send a configure command
-        to the service.
+        """Process a registration message from a service.
+
+        Adds the service to the service manager's tracking maps (service_id_map and
+        service_map) so it can participate in lifecycle coordination.
 
         Args:
             message: The registration message to process
@@ -338,8 +348,7 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _process_credits_complete_message(
         self, message: CreditsCompleteMessage
     ) -> None:
-        """Process a credits complete message from a service. It will
-        update the state of the service with the service manager.
+        """Log receipt of credits complete message from a service.
 
         Args:
             message: The credits complete message to process
@@ -484,7 +493,10 @@ class SystemController(SignalHandlerMixin, BaseService):
         self, message: ProcessRecordsResultMessage
     ) -> None:
         """Handle a profile results message."""
-        self.debug(lambda: f"Received profile results message: {message}")
+        self.trace_or_debug(
+            lambda: f"Received profile results message: {message}",
+            lambda: f"Received profile results message: {len(message.results.results)} records",
+        )
         if message.results.errors:
             self.error(
                 f"Received process records result message with errors: {message.results.errors}"
@@ -509,7 +521,10 @@ class SystemController(SignalHandlerMixin, BaseService):
     ) -> None:
         """Handle a telemetry results message."""
         try:
-            self.debug(lambda: f"Received telemetry results message: {message}")
+            self.trace_or_debug(
+                lambda: f"Received telemetry results message: {message}",
+                lambda: f"Received telemetry results message: {len(message.telemetry_result.results.endpoints)} endpoints",
+            )
 
             telemetry_results = message.telemetry_result.results
             if not telemetry_results:
@@ -538,10 +553,13 @@ class SystemController(SignalHandlerMixin, BaseService):
     ) -> None:
         """Handle a server metrics results message."""
         try:
-            self.debug(lambda: f"Received server metrics results message: {message}")
+            self.trace_or_debug(
+                lambda: f"Received server metrics results message: {message}",
+                lambda: f"Received server metrics results message: {len(message.server_metrics_result.results.endpoint_summaries)} endpoints",
+            )
 
             self.debug(
-                lambda: f"Error summary: {message.server_metrics_result.results.error_summary}"
+                lambda: f"Server metrics error summary: {message.server_metrics_result.results.error_summary}"
             )
 
             server_metrics_results = message.server_metrics_result.results
@@ -579,11 +597,25 @@ class SystemController(SignalHandlerMixin, BaseService):
         ProcessTelemetryResultMessage, and ProcessServerMetricsResultMessage arrive concurrently.
         The lock ensures atomic check-and-set of _shutdown_triggered, preventing double-triggering of stop().
         """
+        self.debug(
+            f"_check_and_trigger_shutdown: profile_received={self._profile_results_received}, "
+            f"wait_telemetry={self._should_wait_for_telemetry}, telemetry_results={self._telemetry_results is not None}, "
+            f"wait_server_metrics={self._should_wait_for_server_metrics}, server_metrics_results={self._server_metrics_results is not None}, "
+            f"shutdown_triggered={self._shutdown_triggered}"
+        )
+        # Check if we should trigger shutdown (with lock protection)
+        should_shutdown = False
         async with self._shutdown_lock:
             if self._shutdown_triggered:
+                self.debug(
+                    "_check_and_trigger_shutdown: shutdown already triggered, returning"
+                )
                 return
 
             if not self._profile_results_received:
+                self.debug(
+                    "_check_and_trigger_shutdown: profile results not received yet"
+                )
                 return
 
             telemetry_ready_for_shutdown = (
@@ -598,39 +630,166 @@ class SystemController(SignalHandlerMixin, BaseService):
 
             if telemetry_ready_for_shutdown and server_metrics_ready_for_shutdown:
                 self._shutdown_triggered = True
-                self.debug("All results received, initiating shutdown")
-                await asyncio.shield(self.stop())
+                should_shutdown = True
+                self.info("All results received, initiating shutdown")
             else:
                 if not telemetry_ready_for_shutdown:
-                    self.debug("Waiting for telemetry results...")
+                    self.info("Waiting for telemetry results...")
                 if not server_metrics_ready_for_shutdown:
-                    self.debug("Waiting for server metrics results...")
+                    self.info("Waiting for server metrics results...")
+
+        # Call stop() OUTSIDE the lock to prevent deadlock
+        if should_shutdown:
+            self.debug("Calling self.stop()...")
+            await asyncio.shield(self.stop())
+            self.debug("self.stop() completed")
 
     async def _handle_signal(self, sig: int) -> None:
-        """Handle received signals by triggering graceful shutdown.
+        """Handle received signals with two-stage cancellation.
+
+        First Ctrl+C: Graceful cancel - stops issuing new credits, cancels
+        in-flight requests, and writes results to files.
+
+        Second Ctrl+C: Force quit - immediately terminates all processes.
+        Results may be incomplete or not written.
 
         Args:
             sig: The signal number received
         """
-        if self.stop_requested:
-            # If we are already in a stopping state, we need to kill the process to be safe.
-            self.warning(f"Received signal {sig}, killing")
+        if self._was_cancelled:
+            # SECOND Ctrl+C - Force quit immediately
+            self._print_force_quit_warning()
+            self.warning(f"Force quit requested (signal {sig})")
             await self._kill()
             return
 
-        self.debug(lambda: f"Received signal {sig}, initiating graceful shutdown")
+        # FIRST Ctrl+C - Graceful cancel with warning
+        self._print_cancel_warning()
+        self.warning(f"Graceful shutdown requested (signal {sig})")
         await self._cancel_profiling()
+
+    def _print_cancel_warning(self) -> None:
+        """Print prominent warning panel on first Ctrl+C.
+
+        Informs user that the benchmark is being cancelled gracefully and
+        results are being processed. Also instructs how to force quit.
+
+        Uses stderr to ensure visibility even when stdout is redirected or
+        captured by the UI.
+        """
+        console = Console(file=sys.stderr, force_terminal=True)
+        console.print()
+        console.print(
+            Panel(
+                "[bold yellow]⚠️  BENCHMARK CANCELLED[/bold yellow]\n\n"
+                "Stopping credit issuance and cancelling in-flight requests...\n"
+                "Results will be written to files.\n\n"
+                "[dim]Press Ctrl+C again to force quit immediately[/dim]\n"
+                "[dim](results may be incomplete or not written)[/dim]",
+                border_style="yellow",
+                padding=(1, 2),
+                title="[bold yellow]Cancellation in Progress[/bold yellow]",
+            )
+        )
+        console.print()
+        console.file.flush()
+
+    def _print_force_quit_warning(self) -> None:
+        """Print warning panel on second Ctrl+C (force quit).
+
+        Warns user that results may be incomplete due to immediate termination.
+
+        Uses stderr to ensure visibility even when stdout is redirected or
+        captured by the UI.
+        """
+        console = Console(file=sys.stderr, force_terminal=True)
+        console.print()
+        console.print(
+            Panel(
+                "[bold red]🛑 FORCE QUIT[/bold red]\n\n"
+                "Terminating all processes immediately.\n"
+                "Results may be incomplete or not written to files.",
+                border_style="red",
+                padding=(1, 2),
+                title="[bold red]Force Quit[/bold red]",
+            )
+        )
+        console.print()
+        console.file.flush()
 
     async def _cancel_profiling(self) -> None:
         self.debug("Cancelling profiling of all services")
         self._was_cancelled = True
-        await self.publish(ProfileCancelCommand(service_id=self.service_id))
 
-        # TODO: HACK: Wait for 2 seconds to ensure the profiling is cancelled
-        # Wait for the profiling to be cancelled
-        await asyncio.sleep(2)
-        self.debug("Stopping system controller after profiling cancelled")
-        await asyncio.shield(self.stop())
+        # Mark shutdown as triggered FIRST to prevent _check_and_trigger_shutdown()
+        # from also calling stop() when results arrive during cancellation.
+        # This prevents the race condition that causes SIGKILL (exit code -9).
+        # Also track if shutdown was already triggered to avoid double-stop.
+        should_call_stop = False
+        async with self._shutdown_lock:
+            if not self._shutdown_triggered:
+                self._shutdown_triggered = True
+                should_call_stop = True
+            else:
+                self.debug("Shutdown already triggered, skipping stop() call")
+
+        # Only wait for RecordsManager's response since it returns ProcessRecordsResult.
+        # Other services receive the broadcast cancel command but we don't wait for them.
+        # This avoids blocking if a service has exited early (e.g., TelemetryManager).
+        records_manager_ids = [
+            service_id
+            for service_id, info in self.service_manager.service_id_map.items()
+            if info.service_type == ServiceType.RECORDS_MANAGER
+        ]
+        self.debug(
+            f"Sending cancel to all services, waiting for {len(records_manager_ids)} RecordsManager(s)"
+        )
+
+        try:
+            responses = await self.send_command_and_wait_for_all_responses(
+                ProfileCancelCommand(
+                    service_id=self.service_id,
+                ),
+                records_manager_ids,
+                timeout=Environment.SERVICE.PROFILE_CANCEL_TIMEOUT,
+            )
+
+            # Log any errors but do NOT raise exceptions during cancellation.
+            # Cancellation is best-effort - we must always proceed to stop().
+            for response in responses:
+                if isinstance(response, ErrorDetails):
+                    self.warning(
+                        f"Cancel command error (timeout or service unavailable): {response}"
+                    )
+                elif isinstance(response, CommandErrorResponse):
+                    self.warning(
+                        f"Cancel command failed from {response.service_id}: {response.error}"
+                    )
+
+            # Extract ProcessRecordsResult from the RecordsManager's response.
+            # We must set _profile_results here because we've blocked the normal
+            # message-based shutdown flow by setting _shutdown_triggered = True.
+            # The command response contains the same data as ProcessRecordsResultMessage.
+            for response in responses:
+                if (
+                    isinstance(response, CommandSuccessResponse)
+                    and response.command == CommandType.PROFILE_CANCEL
+                    and isinstance(response.data, ProcessRecordsResult)
+                ):
+                    self.debug(
+                        lambda r=response: f"Received ProcessRecordsResult from cancel command: {r.data}"
+                    )
+                    self._profile_results = response.data
+                    self._profile_results_received = True
+                    break
+        except Exception as e:
+            # Catch ANY exception during cancellation - we must always proceed to stop().
+            self.warning(f"Exception during cancel command (proceeding to stop): {e!r}")
+
+        # Only call stop() if we were the first to trigger shutdown
+        if should_call_stop:
+            self.debug("Stopping system controller after profiling cancelled")
+            await asyncio.shield(self.stop())
 
     @on_stop
     async def _stop_system_controller(self) -> None:
@@ -676,8 +835,8 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _print_post_benchmark_info_and_metrics(self) -> None:
         """Print post benchmark info and metrics to the console."""
         if not self._profile_results or not self._profile_results.results.records:
-            self.warning("No profile results to export")
-            return
+            self.error("No profile results to export")
+            sys.exit(1)
 
         console = Console()
         if console.width < 100:

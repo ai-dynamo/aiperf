@@ -1,147 +1,278 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for the TimingManager service."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+import asyncio
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.config import UserConfig
 from aiperf.common.enums import TimingMode
 from aiperf.common.environment import Environment
+from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.messages import (
-    DatasetTimingRequest,
-    DatasetTimingResponse,
+    CommandMessage,
+    DatasetConfiguredNotification,
+    ProfileCancelCommand,
     ProfileConfigureCommand,
 )
-from aiperf.timing.timing_manager import TimingManager
+from aiperf.common.models import DatasetMetadata, MemoryMapClientMetadata
+from aiperf.timing.manager import TimingManager
+from tests.unit.timing.conftest import make_dataset_with_schedule
 
 
-class TestTimingManagerDatasetTimeout:
-    """Test suite for TimingManager dataset request timeout behavior."""
+@pytest.fixture
+def user_config() -> UserConfig:
+    return UserConfig.model_construct(
+        endpoint=MagicMock(), _timing_mode=TimingMode.REQUEST_RATE
+    )
 
-    def _create_timing_manager(
-        self, service_config: ServiceConfig, user_config: UserConfig
-    ) -> TimingManager:
-        """Create a TimingManager instance (ZMQ is globally mocked)."""
+
+@pytest.fixture
+def create_manager(service_config):
+    def _create(cfg: UserConfig) -> TimingManager:
         return TimingManager(
             service_config=service_config,
-            user_config=user_config,
+            user_config=cfg,
             service_id="test-timing-manager",
         )
 
-    @pytest.fixture
-    def service_config(self):
-        """Service configuration fixture."""
-        return ServiceConfig()
+    return _create
 
-    @pytest.fixture
-    def user_config_fixed_schedule(self):
-        """User config with fixed schedule timing mode."""
-        return UserConfig.model_construct(
-            endpoint=MagicMock(),
-            _timing_mode=TimingMode.FIXED_SCHEDULE,
-        )
 
-    @pytest.fixture
-    def user_config_request_rate(self):
-        """User config with request rate timing mode."""
-        return UserConfig.model_construct(
-            endpoint=MagicMock(),
-            _timing_mode=TimingMode.REQUEST_RATE,
-        )
+@pytest.fixture
+def configured_manager(create_manager, user_config):
+    async def async_noop(*args, **kwargs):
+        return None
 
-    @pytest.fixture
-    def mock_dataset_client(self):
-        """Create a mock dataset request client with a sample response."""
-        client = AsyncMock()
-        response = DatasetTimingResponse(
-            service_id="test-dataset-manager",
-            timing_data=[(0, "conv1"), (100, "conv2")],
-        )
-        client.request = AsyncMock(return_value=response)
-        return client
+    mgr = create_manager(user_config)
+    mgr._phase_orchestrator = MagicMock()
+    mgr._phase_orchestrator.start = MagicMock(side_effect=async_noop)
+    mgr._phase_orchestrator.stop = MagicMock(side_effect=async_noop)
+    mgr._phase_orchestrator.cancel = MagicMock(side_effect=async_noop)
+    mgr.initialized_event.set()
+    return mgr
 
+
+@pytest.fixture
+def mock_metadata() -> DatasetMetadata:
+    return make_dataset_with_schedule(
+        schedule=[(0, "conv1"), (100, "conv2"), (200, "conv3")]
+    )
+
+
+class TestTimingManagerDatasetConfiguration:
+    @pytest.mark.parametrize(
+        "timing_mode", [TimingMode.FIXED_SCHEDULE, TimingMode.REQUEST_RATE]
+    )
     @pytest.mark.asyncio
-    async def test_profile_configure_uses_dataset_timeout_for_fixed_schedule(
-        self, service_config, user_config_fixed_schedule, mock_dataset_client
-    ):
-        """Test that profile configure command uses DATASET.CONFIGURATION_TIMEOUT for fixed schedule mode."""
-        manager = self._create_timing_manager(
-            service_config, user_config_fixed_schedule
-        )
-        manager.dataset_request_client = mock_dataset_client
+    async def test_profile_configure_waits_for_dataset_notification(
+        self, create_manager, mock_metadata, timing_mode
+    ) -> None:
+        cfg = UserConfig.model_construct(endpoint=MagicMock(), _timing_mode=timing_mode)
+        mgr = create_manager(cfg)
+        mock_engine = MagicMock()
+        mock_engine.initialize = lambda *a, **kw: asyncio.sleep(0)
 
         with patch(
-            "aiperf.timing.timing_manager.CreditIssuingStrategyFactory.create_instance"
-        ) as mock_factory:
-            mock_factory.return_value = MagicMock()
+            "aiperf.timing.manager.PhaseOrchestrator", return_value=mock_engine
+        ) as mock_orch:
+            task = asyncio.create_task(
+                mgr._profile_configure_command(
+                    ProfileConfigureCommand.model_construct(
+                        service_id="test-system-controller", config={}
+                    )
+                )
+            )
+            await asyncio.sleep(0.2)
+            await mgr._on_dataset_configured_notification(
+                DatasetConfiguredNotification(
+                    service_id="test-dataset-manager",
+                    metadata=mock_metadata,
+                    client_metadata=MemoryMapClientMetadata(
+                        data_file_path=Path("/tmp/test_data.mmap"),
+                        index_file_path=Path("/tmp/test_index.mmap"),
+                        conversation_count=3,
+                        total_size_bytes=1024,
+                    ),
+                )
+            )
+            await task
+            assert mgr._dataset_metadata == mock_metadata
+            assert mock_orch.call_args.kwargs["dataset_metadata"] == mock_metadata
 
-            command = ProfileConfigureCommand.model_construct(
-                service_id="test-system-controller",
-                config={},
+    @pytest.mark.asyncio
+    async def test_dataset_configuration_timeout(self, create_manager) -> None:
+        cfg = UserConfig.model_construct(
+            endpoint=MagicMock(), _timing_mode=TimingMode.FIXED_SCHEDULE
+        )
+        mgr = create_manager(cfg)
+        with (
+            patch.object(Environment.DATASET, "CONFIGURATION_TIMEOUT", 0.1),
+            pytest.raises(asyncio.TimeoutError),
+        ):
+            await mgr._profile_configure_command(
+                ProfileConfigureCommand.model_construct(
+                    service_id="test-system-controller", config={}
+                )
             )
 
-            await manager._profile_configure_command(command)
+    @pytest.mark.asyncio
+    async def test_dataset_notification_before_configure(
+        self, create_manager, mock_metadata
+    ) -> None:
+        cfg = UserConfig.model_construct(
+            endpoint=MagicMock(), _timing_mode=TimingMode.FIXED_SCHEDULE
+        )
+        mgr = create_manager(cfg)
+        await mgr._on_dataset_configured_notification(
+            DatasetConfiguredNotification(
+                service_id="test-dataset-manager",
+                metadata=mock_metadata,
+                client_metadata=MemoryMapClientMetadata(
+                    data_file_path=Path("/tmp/test_data.mmap"),
+                    index_file_path=Path("/tmp/test_index.mmap"),
+                    conversation_count=3,
+                    total_size_bytes=1024,
+                ),
+            )
+        )
+        assert mgr._dataset_metadata == mock_metadata
 
-            # Verify dataset request client was called with correct timeout
-            mock_dataset_client.request.assert_called_once()
-            call_args = mock_dataset_client.request.call_args
+        mock_engine = MagicMock()
+        mock_engine.initialize = lambda *a, **kw: asyncio.sleep(0)
+        with patch(
+            "aiperf.timing.manager.PhaseOrchestrator", return_value=mock_engine
+        ) as mock_orch:
+            await mgr._profile_configure_command(
+                ProfileConfigureCommand.model_construct(
+                    service_id="test-system-controller", config={}
+                )
+            )
+            assert mock_orch.call_args.kwargs["dataset_metadata"] == mock_metadata
 
+
+class TestTimingManagerGarbageCollection:
+    @pytest.mark.asyncio
+    async def test_gc_disabled_on_profiling_start(self, configured_manager) -> None:
+        with patch("aiperf.timing.manager.gc") as mock_gc:
+            await configured_manager._on_start_profiling(
+                CommandMessage.model_construct(service_id="test-controller")
+            )
+            calls = [c[0] for c in mock_gc.method_calls]
             assert (
-                call_args.kwargs["timeout"] == Environment.DATASET.CONFIGURATION_TIMEOUT
-            )
-            assert isinstance(call_args.kwargs["message"], DatasetTimingRequest)
-            assert call_args.kwargs["message"].service_id == "test-timing-manager"
-
-    @pytest.mark.asyncio
-    async def test_profile_configure_does_not_call_dataset_for_request_rate(
-        self, service_config, user_config_request_rate
-    ):
-        """Test that profile configure command does not call dataset manager for non-fixed-schedule modes."""
-        manager = self._create_timing_manager(service_config, user_config_request_rate)
-
-        mock_dataset_client = AsyncMock()
-        manager.dataset_request_client = mock_dataset_client
-
-        with patch(
-            "aiperf.timing.timing_manager.CreditIssuingStrategyFactory.create_instance"
-        ) as mock_factory:
-            mock_factory.return_value = MagicMock()
-
-            command = ProfileConfigureCommand.model_construct(
-                service_id="test-system-controller",
-                config={},
+                calls.index("collect") < calls.index("freeze") < calls.index("disable")
             )
 
-            await manager._profile_configure_command(command)
-
-            # Verify dataset request client was NOT called for request rate mode
-            mock_dataset_client.request.assert_not_called()
+    @pytest.mark.asyncio
+    async def test_gc_enabled_on_stop(self, configured_manager) -> None:
+        with patch("aiperf.timing.manager.gc") as mock_gc:
+            await configured_manager._timing_manager_stop()
+            calls = [c[0] for c in mock_gc.method_calls]
+            assert calls.index("unfreeze") < calls.index("enable")
 
     @pytest.mark.asyncio
-    async def test_dataset_timeout_uses_environment_constant(
-        self, service_config, user_config_fixed_schedule, mock_dataset_client
-    ):
-        """Test that the timeout value used is exactly Environment.DATASET.CONFIGURATION_TIMEOUT."""
-        manager = self._create_timing_manager(
-            service_config, user_config_fixed_schedule
+    async def test_gc_enabled_on_stop_without_orchestrator(
+        self, create_manager, user_config
+    ) -> None:
+        mgr = create_manager(user_config)
+        with patch("aiperf.timing.manager.gc") as mock_gc:
+            await mgr._timing_manager_stop()
+            assert mock_gc.unfreeze.called and mock_gc.enable.called
+
+
+class TestTimingManagerCancelCommand:
+    @pytest.mark.asyncio
+    async def test_cancel_calls_orchestrator_cancel(self, configured_manager) -> None:
+        await configured_manager._handle_profile_cancel_command(
+            ProfileCancelCommand.model_construct(service_id="test-controller")
         )
-        manager.dataset_request_client = mock_dataset_client
+        configured_manager._phase_orchestrator.cancel.assert_called_once()
 
-        with patch(
-            "aiperf.timing.timing_manager.CreditIssuingStrategyFactory.create_instance"
-        ) as mock_factory:
-            mock_factory.return_value = MagicMock()
+    @pytest.mark.asyncio
+    async def test_cancel_without_orchestrator_is_safe(
+        self, create_manager, user_config
+    ) -> None:
+        mgr = create_manager(user_config)
+        await mgr._handle_profile_cancel_command(
+            ProfileCancelCommand.model_construct(service_id="test-controller")
+        )
 
-            command = ProfileConfigureCommand.model_construct(
-                service_id="test-system-controller",
-                config={},
+    @pytest.mark.asyncio
+    async def test_cancel_can_be_called_multiple_times(
+        self, configured_manager
+    ) -> None:
+        cmd = ProfileCancelCommand.model_construct(service_id="test-controller")
+        await configured_manager._handle_profile_cancel_command(cmd)
+        await configured_manager._handle_profile_cancel_command(cmd)
+        assert configured_manager._phase_orchestrator.cancel.call_count == 2
+
+
+class TestTimingManagerStartProfilingAndInitialization:
+    @pytest.mark.asyncio
+    async def test_start_profiling_without_orchestrator_raises(
+        self, create_manager, user_config
+    ) -> None:
+        mgr = create_manager(user_config)
+        with pytest.raises(InvalidStateError, match="No phase orchestrator configured"):
+            await mgr._on_start_profiling(
+                CommandMessage.model_construct(service_id="test-controller")
             )
-            await manager._profile_configure_command(command)
 
-            # Verify timeout matches the dataset configuration timeout constant
-            call_args = mock_dataset_client.request.call_args
-            assert (
-                call_args.kwargs["timeout"] == Environment.DATASET.CONFIGURATION_TIMEOUT
+    @pytest.mark.asyncio
+    async def test_start_profiling_calls_orchestrator_start(
+        self, create_manager, user_config
+    ) -> None:
+        mgr = create_manager(user_config)
+        mock_orchestrator = MagicMock()
+        start_called = asyncio.Event()
+
+        async def mock_start():
+            start_called.set()
+
+        mock_orchestrator.start = mock_start
+        mgr._phase_orchestrator = mock_orchestrator
+
+        with patch("aiperf.timing.manager.gc"):
+            await mgr._on_start_profiling(
+                CommandMessage.model_construct(service_id="test-controller")
             )
+        await asyncio.sleep(0.05)  # Allow execute_async to run
+        assert start_called.is_set()
+
+    @pytest.mark.asyncio
+    async def test_configure_raises_when_event_set_but_no_metadata(
+        self, create_manager, user_config
+    ) -> None:
+        mgr = create_manager(user_config)
+        mgr._dataset_configured_event.set()
+        with pytest.raises(
+            InvalidStateError, match="Dataset metadata is not available"
+        ):
+            await mgr._profile_configure_command(
+                ProfileConfigureCommand.model_construct(
+                    service_id="test-controller", config={}
+                )
+            )
+
+    def test_creates_timing_config_from_user_config(
+        self, create_manager, user_config
+    ) -> None:
+        mgr = create_manager(user_config)
+        assert mgr.config.phase_configs[0].timing_mode == TimingMode.REQUEST_RATE
+
+    def test_creates_phase_publisher_and_sticky_router(
+        self, create_manager, user_config
+    ) -> None:
+        mgr = create_manager(user_config)
+        assert mgr.phase_publisher is not None and mgr.sticky_router is not None
+
+    def test_no_orchestrator_and_event_not_set_initially(
+        self, create_manager, user_config
+    ) -> None:
+        mgr = create_manager(user_config)
+        assert (
+            mgr._phase_orchestrator is None
+            and not mgr._dataset_configured_event.is_set()
+        )

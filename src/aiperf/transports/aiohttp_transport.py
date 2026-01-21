@@ -1,21 +1,88 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Mapping
 from typing import Any
 
+import aiohttp
 import orjson
 
 from aiperf.common.enums import ConnectionReuseStrategy, TransportType
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.factories import TransportFactory
 from aiperf.common.hooks import on_init, on_stop
+from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import ErrorDetails, RequestInfo, RequestRecord
 from aiperf.transports.aiohttp_client import AioHttpClient, create_tcp_connector
-from aiperf.transports.base_transports import BaseTransport, TransportMetadata
+from aiperf.transports.base_transports import (
+    BaseTransport,
+    FirstTokenCallback,
+    TransportMetadata,
+)
+
+
+class ConnectionLeaseManager(AIPerfLoggerMixin):
+    """Manages connection leases for sticky-user-sessions connection strategy.
+
+    Each user session (identified by x_correlation_id) gets a dedicated TCP connector
+    that persists across all turns. The connector is closed when the final turn
+    completes, enabling sticky load balancing where all turns of a user session
+    hit the same backend server.
+    """
+
+    def __init__(self, tcp_kwargs: Mapping[str, Any] | None = None, **kwargs) -> None:
+        """Initialize the lease manager.
+
+        Args:
+            tcp_kwargs: TCP connector configuration passed to new connectors
+            **kwargs: Additional arguments passed to parent
+        """
+        super().__init__(**kwargs)
+        self._tcp_kwargs = dict(tcp_kwargs) if tcp_kwargs else {}
+        # Map session_id (x_correlation_id) -> TCPConnector
+        self._leases: dict[str, aiohttp.TCPConnector] = {}
+
+    def get_connector(self, session_id: str) -> aiohttp.TCPConnector:
+        """Get or create a connector for a user session.
+
+        Args:
+            session_id: Unique identifier for the user session (x_correlation_id)
+
+        Returns:
+            TCP connector dedicated to this user session
+        """
+        if session_id not in self._leases:
+            # Create a new connector with limit=1 for single connection
+            # This ensures all requests for this session use the same TCP connection
+            connector = create_tcp_connector(limit=1, **self._tcp_kwargs)
+            self._leases[session_id] = connector
+            self.debug(lambda: f"Created connection lease for session {session_id}")
+        return self._leases[session_id]
+
+    async def release_lease(self, session_id: str) -> None:
+        """Release and close the connector for a session.
+
+        Should be called when the final turn of a conversation completes,
+        or when a request is cancelled (connection becomes dirty).
+
+        Args:
+            session_id: Unique identifier for the session (x_correlation_id)
+        """
+        if session_id in self._leases:
+            connector = self._leases.pop(session_id)
+            await connector.close()
+            self.debug(lambda: f"Released connection lease for session {session_id}")
+
+    async def close_all(self) -> None:
+        """Close all active connection leases."""
+        leases = list(self._leases.values())
+        self._leases.clear()
+        for lease in leases:
+            await lease.close()
 
 
 @TransportFactory.register(TransportType.HTTP)
@@ -27,6 +94,7 @@ class AioHttpTransport(BaseTransport):
     - SSE (Server-Sent Events) streaming support
     - Automatic error handling and timing
     - Custom TCP connector configuration
+    - Connection reuse strategy support (pooled, never, sticky-user-sessions)
     """
 
     def __init__(
@@ -40,21 +108,32 @@ class AioHttpTransport(BaseTransport):
         """
         super().__init__(**kwargs)
         self.tcp_kwargs = tcp_kwargs or {}
-        self.aiohttp_client = None
+        self.aiohttp_client: AioHttpClient | None = None
+        self.lease_manager: ConnectionLeaseManager | None = None
 
     @on_init
     async def _init_aiohttp_client(self) -> None:
-        """Initialize the AioHttpClient."""
+        """Initialize the AioHttpClient and lease manager if sticky-user-sessions strategy is used."""
         self.aiohttp_client = AioHttpClient(
             timeout=self.model_endpoint.endpoint.timeout, tcp_kwargs=self.tcp_kwargs
         )
+        if (
+            self.model_endpoint.endpoint.connection_reuse_strategy
+            == ConnectionReuseStrategy.STICKY_USER_SESSIONS
+        ):
+            self.lease_manager = ConnectionLeaseManager(tcp_kwargs=self.tcp_kwargs)
 
     @on_stop
     async def _close_aiohttp_client(self) -> None:
-        """Cleanup hook to close aiohttp session on stop."""
+        """Cleanup hook to close aiohttp session on stop (and lease manager if sticky-user-sessions strategy is used)."""
+        if self.lease_manager:
+            lease_manager = self.lease_manager
+            self.lease_manager = None
+            await lease_manager.close_all()
         if self.aiohttp_client:
-            await self.aiohttp_client.close()
+            aiohttp_client = self.aiohttp_client
             self.aiohttp_client = None
+            await aiohttp_client.close()
 
     @classmethod
     def metadata(cls) -> TransportMetadata:
@@ -126,13 +205,23 @@ class AioHttpTransport(BaseTransport):
         return url if url.startswith("http") else f"http://{url}"
 
     async def send_request(
-        self, request_info: RequestInfo, payload: dict[str, Any]
+        self,
+        request_info: RequestInfo,
+        payload: dict[str, Any],
+        *,
+        first_token_callback: FirstTokenCallback | None = None,
     ) -> RequestRecord:
         """Send HTTP POST request with JSON payload.
 
+        Connection behavior depends on the configured connection_reuse_strategy:
+        - POOLED: Uses shared connection pool (default aiohttp behavior)
+        - NEVER: Creates a new connection for each request, closed after
+        - STICKY_USER_SESSIONS: Reuses connection across conversation turns, closed on final turn
+
         Args:
-            request_info: Request context and metadata
+            request_info: Request context and metadata (includes cancel_after_ns)
             payload: JSON-serializable request payload
+            first_token_callback: Optional callback fired on first SSE message with ttft_ns
 
         Returns:
             Request record with responses, timing, and any errors
@@ -145,6 +234,9 @@ class AioHttpTransport(BaseTransport):
         start_perf_ns = time.perf_counter_ns()
         headers = None
         reuse_strategy = self.model_endpoint.endpoint.connection_reuse_strategy
+
+        # Capture lease_manager reference to avoid race with concurrent shutdown
+        lease_manager = self.lease_manager
 
         try:
             url = self.build_url(request_info)
@@ -162,6 +254,19 @@ class AioHttpTransport(BaseTransport):
                     connector = create_tcp_connector(**kwargs)
                     connector_owner = True
 
+                case ConnectionReuseStrategy.STICKY_USER_SESSIONS:
+                    if lease_manager is None:
+                        raise NotInitializedError(
+                            "ConnectionLeaseManager not initialized for sticky-user-sessions strategy"
+                        )
+                    # Use x_correlation_id as the session key - it's the shared ID
+                    # for all turns in a multi-turn conversation.
+                    connector = lease_manager.get_connector(
+                        request_info.x_correlation_id
+                    )
+                    # We are going to manage the connector lifecycle ourselves, so we don't want aiohttp to close it.
+                    connector_owner = False
+
                 case ConnectionReuseStrategy.POOLED:
                     # Setting connector to None uses the shared pool internally, and connector_owner
                     # is set to False to ensure the connector is not closed automatically by aiohttp.
@@ -177,12 +282,37 @@ class AioHttpTransport(BaseTransport):
                 url,
                 json_str,
                 headers,
+                cancel_after_ns=request_info.cancel_after_ns,
+                first_token_callback=first_token_callback,
                 connector=connector,
                 connector_owner=connector_owner,
             )
             record.request_headers = headers
+
+            # Release lease for sticky-user-sessions strategy if it's the final turn of the conversation,
+            # or the request was cancelled (connection is now dirty/closed), or there was an error.
+            if (
+                reuse_strategy == ConnectionReuseStrategy.STICKY_USER_SESSIONS
+                and lease_manager is not None
+            ):
+                should_release = (
+                    request_info.is_final_turn
+                    or record.cancellation_perf_ns is not None
+                    or record.error is not None
+                )
+                if should_release:
+                    await lease_manager.release_lease(request_info.x_correlation_id)
+
+        except asyncio.CancelledError:
+            # Task was cancelled externally (e.g., credit cancellation from router)
+            # Release the lease since the connection is now dirty/unusable
+            if (
+                reuse_strategy == ConnectionReuseStrategy.STICKY_USER_SESSIONS
+                and lease_manager is not None
+            ):
+                await lease_manager.release_lease(request_info.x_correlation_id)
+            raise
         except Exception as e:
-            # Capture all exceptions with timing and error details
             record = RequestRecord(
                 request_headers=headers or request_info.endpoint_headers,
                 start_perf_ns=start_perf_ns,
@@ -190,5 +320,11 @@ class AioHttpTransport(BaseTransport):
                 error=ErrorDetails.from_exception(e),
             )
             self.exception(f"HTTP request failed: {e!r}")
+            # Release lease on exception - connection is likely broken
+            if (
+                reuse_strategy == ConnectionReuseStrategy.STICKY_USER_SESSIONS
+                and lease_manager is not None
+            ):
+                await lease_manager.release_lease(request_info.x_correlation_id)
 
         return record

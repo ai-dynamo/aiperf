@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Pytest configuration and shared fixtures for mock server tests."""
 
@@ -18,6 +18,8 @@ from aiperf_mock_server.models import (
 )
 from aiperf_mock_server.tokens import TokenizedText
 from fastapi.testclient import TestClient
+
+pytestmark = pytest.mark.server_unit
 
 # ============================================================================
 # Auto-use Fixtures (Applied to all tests)

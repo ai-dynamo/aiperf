@@ -1,14 +1,18 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import logging
 import multiprocessing
 import queue
 import threading
+from datetime import datetime
 from pathlib import Path
 
-from rich.console import Console
+from rich.console import Console, ConsoleRenderable, Group
+from rich.highlighter import ReprHighlighter
 from rich.logging import RichHandler
+from rich.text import Text
+from rich.traceback import Traceback
 
 from aiperf.common.aiperf_logger import _DEBUG, _TRACE, AIPerfLogger
 from aiperf.common.config import ServiceConfig, ServiceDefaults, UserConfig
@@ -20,6 +24,17 @@ from aiperf.common.factories import ServiceFactory
 _logger = AIPerfLogger(__name__)
 _global_log_queue: "multiprocessing.Queue | None" = None
 _log_queue_lock = threading.Lock()
+
+_LOG_LEVEL_STYLES = {
+    "TRACE": "dim",
+    "DEBUG": "dim",
+    "INFO": "cyan",
+    "NOTICE": "blue",
+    "WARNING": "yellow",
+    "SUCCESS": "green",
+    "ERROR": "red",
+    "CRITICAL": "bold red",
+}
 
 
 def get_global_log_queue() -> multiprocessing.Queue:
@@ -128,16 +143,14 @@ def setup_child_process_logging(
         queue_handler.setLevel(level)
         root_logger.addHandler(queue_handler)
     else:
-        # For all other cases, set up rich logging to the console
-        rich_handler = RichHandler(
+        # For all other cases, set up custom rich logging to the console
+        rich_handler = CustomRichHandler(
             rich_tracebacks=True,
-            show_path=True,
+            show_path=False,
             console=Console(),
-            show_time=True,
-            show_level=True,
+            show_time=False,
+            show_level=False,
             tracebacks_show_locals=False,
-            log_time_format="%H:%M:%S.%f",
-            omit_repeated_times=False,
         )
         rich_handler.setLevel(level)
         root_logger.addHandler(rich_handler)
@@ -156,15 +169,13 @@ def setup_rich_logging(user_config: UserConfig, service_config: ServiceConfig) -
     level = service_config.log_level.upper()
     logging.root.setLevel(level)
 
-    rich_handler = RichHandler(
+    rich_handler = CustomRichHandler(
         rich_tracebacks=True,
-        show_path=True,
+        show_path=False,
         console=Console(),
-        show_time=True,
-        show_level=True,
+        show_time=False,
+        show_level=False,
         tracebacks_show_locals=False,
-        log_time_format="%H:%M:%S.%f",
-        omit_repeated_times=False,
     )
     logging.root.addHandler(rich_handler)
 
@@ -203,6 +214,115 @@ def create_file_handler(
     return file_handler
 
 
+class CustomRichHandler(RichHandler):
+    """Custom RichHandler that formats logs with the logger name right-aligned at the end."""
+
+    DEFAULT_WIDTH = 120
+    MAX_MESSAGE_LENGTH = 2000
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.highlighter = ReprHighlighter()
+
+    def render(
+        self,
+        *,
+        record: logging.LogRecord,
+        traceback: Traceback | None,
+        message_renderable: ConsoleRenderable,
+    ) -> ConsoleRenderable:
+        """Render log for display with file:line at end, using character-level wrapping."""
+        timestamp = datetime.fromtimestamp(record.created).strftime("%H:%M:%S.%f")[:-3]
+        level_style = _LOG_LEVEL_STYLES.get(record.levelname, "white")
+        message = record.getMessage()[: self.MAX_MESSAGE_LENGTH]
+        log_suffix = f"({record.filename}:{record.lineno})"
+
+        # Calculate widths
+        console_width = self.console.size.width if self.console else self.DEFAULT_WIDTH
+        target_width = max(console_width - 2, 40)
+
+        prefix = f"{timestamp} {record.levelname:<8} "
+        prefix_len = len(prefix)
+        content_width = target_width - prefix_len
+
+        # Combine message and suffix into one string for character-level wrapping
+        full_content = f"{message} {log_suffix}"
+        suffix_start_pos = (
+            len(message) + 1
+        )  # Position where suffix starts in full_content
+
+        # Only indent continuation lines on wide consoles (90+)
+        indent_continuations = console_width >= 90
+        # Continuation lines get full width when not indented
+        continuation_width = content_width if indent_continuations else target_width
+
+        # Manual character-level wrapping
+        lines = []
+        remaining = full_content
+        is_first_line = True
+        while remaining:
+            line_width = content_width if is_first_line else continuation_width
+            if len(remaining) <= line_width:
+                lines.append(remaining)
+                break
+            lines.append(remaining[:line_width])
+            remaining = remaining[line_width:]
+            is_first_line = False
+
+        # Build output with proper styling
+        parts = []
+        char_pos = 0  # Track position in full_content
+        for i, line in enumerate(lines):
+            if i > 0:
+                parts.append(Text("\n"))
+                if indent_continuations:
+                    parts.append(Text(" " * prefix_len))
+            else:
+                parts.append(Text(f"{timestamp} ", style="log.time"))
+                parts.append(Text(f"{record.levelname:<8} ", style=level_style))
+
+            line_end_pos = char_pos + len(line)
+
+            # Determine how much of this line is message vs suffix
+            if char_pos >= suffix_start_pos:
+                # Entire line is suffix
+                parts.append(Text(line, style="dim italic"))
+            elif line_end_pos <= suffix_start_pos:
+                # Entire line is message
+                parts.append(self.highlighter(Text(line)))
+            else:
+                # Line contains both message and suffix
+                msg_chars = suffix_start_pos - char_pos
+                parts.append(self.highlighter(Text(line[:msg_chars])))
+                parts.append(Text(line[msg_chars:], style="dim italic"))
+
+            char_pos = line_end_pos
+
+        formatted_log = Text.assemble(*parts)
+        formatted_log.no_wrap = True  # Prevent Rich from re-wrapping
+
+        if traceback:
+            return Group(formatted_log, traceback)
+
+        return formatted_log
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Emit with soft_wrap=False to prevent Rich from adding word-based wrapping."""
+        message = self.format(record)
+        traceback = None
+        if (
+            self.rich_tracebacks
+            and record.exc_info
+            and record.exc_info != (None, None, None)
+        ):
+            traceback = Traceback.from_exception(*record.exc_info)
+        message_renderable = self.render_message(record, message)
+        log_renderable = self.render(
+            record=record, traceback=traceback, message_renderable=message_renderable
+        )
+        self.console.print(log_renderable, soft_wrap=False)
+
+
 class MultiProcessLogHandler(RichHandler):
     """Custom logging handler that forwards log records to a multiprocessing queue."""
 
@@ -225,6 +345,8 @@ class MultiProcessLogHandler(RichHandler):
                 "levelno": record.levelno,
                 "msg": record.getMessage(),
                 "created": record.created,
+                "filename": record.filename,
+                "lineno": record.lineno,
                 "process_name": self._proc_name,
                 "process_id": self._proc_id,
                 "service_id": self.service_id,

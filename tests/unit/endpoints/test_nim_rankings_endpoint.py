@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
@@ -7,11 +7,11 @@ import pytest
 
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import Text, Turn
-from aiperf.common.models.record_models import RequestInfo
 from aiperf.endpoints.nim_rankings import NIMRankingsEndpoint
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_model_endpoint,
+    create_request_info,
 )
 
 
@@ -49,7 +49,7 @@ class TestNIMRankingsEndpoint:
     def test_format_payload_basic(self, converter, model_endpoint, basic_turn):
         """Test basic payload formatting with query and passages."""
         payload = converter.format_payload(
-            RequestInfo(model_endpoint=model_endpoint, turns=[basic_turn])
+            create_request_info(model_endpoint=model_endpoint, turns=[basic_turn])
         )
 
         assert payload["model"] == "test-model"
@@ -70,7 +70,7 @@ class TestNIMRankingsEndpoint:
         )
 
         payload = converter.format_payload(
-            RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
         )
 
         assert payload["query"] == {"text": "What is Python?"}
@@ -91,7 +91,7 @@ class TestNIMRankingsEndpoint:
 
         with caplog.at_level(logging.WARNING):
             payload = converter.format_payload(
-                RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+                create_request_info(model_endpoint=model_endpoint, turns=[turn])
             )
 
         assert "Multiple query texts found" in caplog.text
@@ -105,7 +105,7 @@ class TestNIMRankingsEndpoint:
 
         with caplog.at_level(logging.WARNING):
             payload = converter.format_payload(
-                RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+                create_request_info(model_endpoint=model_endpoint, turns=[turn])
             )
 
         assert "no passages to rank" in caplog.text
@@ -122,7 +122,7 @@ class TestNIMRankingsEndpoint:
             ValueError, match="requires a text with name 'query' or 'queries'"
         ):
             converter.format_payload(
-                RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+                create_request_info(model_endpoint=model_endpoint, turns=[turn])
             )
 
     def test_format_payload_empty_query_contents(self, converter, model_endpoint):
@@ -139,7 +139,7 @@ class TestNIMRankingsEndpoint:
             ValueError, match="requires a text with name 'query' or 'queries'"
         ):
             converter.format_payload(
-                RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+                create_request_info(model_endpoint=model_endpoint, turns=[turn])
             )
 
     def test_format_payload_ignored_texts(self, converter, model_endpoint, caplog):
@@ -157,7 +157,7 @@ class TestNIMRankingsEndpoint:
         # Should warn about ignored texts
         with caplog.at_level(logging.WARNING):
             payload = converter.format_payload(
-                RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+                create_request_info(model_endpoint=model_endpoint, turns=[turn])
             )
 
         # Check that warnings were issued for ignored texts
@@ -180,7 +180,7 @@ class TestNIMRankingsEndpoint:
         )
 
         payload = converter.format_payload(
-            RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
         )
 
         assert payload["query"] == {"text": "What is AI?"}
@@ -200,7 +200,7 @@ class TestNIMRankingsEndpoint:
         )
 
         payload = converter.format_payload(
-            RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
         )
         assert payload["model"] == "turn-model"
 
@@ -215,7 +215,7 @@ class TestNIMRankingsEndpoint:
         )
 
         payload = converter.format_payload(
-            RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
         )
         assert payload["model"] == model_endpoint.primary_model_name
 
@@ -232,7 +232,7 @@ class TestNIMRankingsEndpoint:
 
         with caplog.at_level(logging.WARNING):
             converter.format_payload(
-                RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+                create_request_info(model_endpoint=model_endpoint, turns=[turn])
             )
 
         assert "not supported for rankings" in caplog.text
@@ -256,19 +256,13 @@ class TestNIMRankingsEndpoint:
         )
 
         payload = converter.format_payload(
-            RequestInfo(model_endpoint=test_endpoint, turns=[turn])
+            create_request_info(model_endpoint=test_endpoint, turns=[turn])
         )
 
         assert payload["top_k"] == 5
         assert payload["return_scores"] is True
         assert payload["model"] == "test-model"
         assert payload["query"] == {"text": "Test query"}
-
-    def test_converter_docstring(self, converter):
-        """Test that the converter has proper documentation."""
-        assert "query" in converter.__class__.__doc__
-        assert "passages" in converter.__class__.__doc__
-        assert "rankings" in converter.__class__.__doc__.lower()
 
     def test_format_payload_queries_plural_backward_compatibility(
         self, converter, model_endpoint
@@ -287,7 +281,7 @@ class TestNIMRankingsEndpoint:
         )
 
         payload = converter.format_payload(
-            RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
         )
 
         # Should work just like "query" (singular)

@@ -40,6 +40,9 @@ from aiperf.exporters.exporter_manager import (
 from aiperf.exporters.gpu_telemetry_console_exporter import (
     GPUTelemetryConsoleExporter,
 )
+from aiperf.exporters.http_trace_console_exporter import (
+    HttpTraceConsoleExporter,
+)
 from aiperf.exporters.internal_metrics_console_exporter import (
     ConsoleInternalMetricsExporter,
 )
@@ -71,6 +74,7 @@ __all__ = [
     "ExporterManager",
     "FileExportInfo",
     "GPUTelemetryConsoleExporter",
+    "HttpTraceConsoleExporter",
     "MaxCompletionTokensDetector",
     "MetricsBaseExporter",
     "MetricsCsvExporter",

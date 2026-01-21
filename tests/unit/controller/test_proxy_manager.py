@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 Tests for proxy_manager.py - ProxyManager lifecycle.
@@ -16,7 +16,7 @@ class TestProxyManagerLifecycle:
     """Test ProxyManager lifecycle to ensure proper ZMQ context handling."""
 
     @pytest.mark.asyncio
-    async def test_context_term_not_called_during_stop(self, mock_zmq_globally):
+    async def test_context_term_not_called_during_stop(self, mock_zmq):
         """
         Test that context.term() is NOT called during proxy stop.
 
@@ -37,4 +37,4 @@ class TestProxyManagerLifecycle:
             await proxy_manager.stop()
 
             # Verify that context.term() was NEVER called
-            mock_zmq_globally.term.assert_not_called()
+            mock_zmq.context.term.assert_not_called()

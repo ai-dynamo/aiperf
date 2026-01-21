@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -410,6 +410,282 @@ class TestManagerCallbackFunctionality:
         await manager._on_server_metrics_records(test_records, "test_collector")
 
 
+class TestDisabledServerMetrics:
+    """Test server metrics disabled scenarios."""
+
+    @pytest.mark.asyncio
+    async def test_configure_when_server_metrics_disabled(
+        self,
+        service_config: ServiceConfig,
+    ):
+        """Test configuration when server metrics are disabled via CLI flag."""
+        user_config = UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.CHAT,
+                url="http://localhost:8000/v1/chat",
+            ),
+            no_server_metrics=True,  # Disable server metrics
+        )
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config,
+        )
+
+        manager.publish = AsyncMock()
+
+        await manager._profile_configure_command(
+            ProfileConfigureCommand(
+                service_id=manager.id,
+                command=CommandType.PROFILE_CONFIGURE,
+                config={},
+            )
+        )
+
+        # Should not create any collectors
+        assert len(manager._collectors) == 0
+        # Should publish disabled status
+        manager.publish.assert_called_once()
+
+
+class TestExceptionHandling:
+    """Test exception handling in various scenarios."""
+
+    @pytest.mark.asyncio
+    async def test_exception_during_reachability_check(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_endpoint: UserConfig,
+    ):
+        """Test that exceptions during reachability check are handled."""
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_endpoint,
+        )
+
+        with patch(
+            "aiperf.server_metrics.manager.ServerMetricsDataCollector"
+        ) as mock_collector_class:
+            mock_collector = AsyncMock()
+            mock_collector.is_url_reachable.side_effect = Exception("Network error")
+            mock_collector_class.return_value = mock_collector
+
+            await manager._profile_configure_command(
+                ProfileConfigureCommand(
+                    service_id=manager.id,
+                    command=CommandType.PROFILE_CONFIGURE,
+                    config={},
+                )
+            )
+
+            # Should handle exception and not add collector
+            assert len(manager._collectors) == 0
+
+    @pytest.mark.asyncio
+    async def test_exception_during_baseline_capture(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_endpoint: UserConfig,
+    ):
+        """Test that exceptions during baseline capture are logged but don't fail configuration."""
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_endpoint,
+        )
+
+        with patch(
+            "aiperf.server_metrics.manager.ServerMetricsDataCollector"
+        ) as mock_collector_class:
+            mock_collector = AsyncMock()
+            mock_collector.is_url_reachable = AsyncMock(return_value=True)
+            mock_collector.initialize = AsyncMock()
+            mock_collector.collect_and_process_metrics.side_effect = Exception(
+                "Baseline failed"
+            )
+            mock_collector_class.return_value = mock_collector
+
+            await manager._profile_configure_command(
+                ProfileConfigureCommand(
+                    service_id=manager.id,
+                    command=CommandType.PROFILE_CONFIGURE,
+                    config={},
+                )
+            )
+
+            # Collector should still be added despite baseline failure
+            assert len(manager._collectors) > 0
+
+
+class TestPartialStartup:
+    """Test partial collector startup scenarios."""
+
+    @pytest.mark.asyncio
+    async def test_partial_collector_startup(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_server_metrics_urls: UserConfig,
+    ):
+        """Test scenario where some collectors start successfully and some fail."""
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_server_metrics_urls,
+        )
+
+        # Create 2 collectors: one succeeds, one fails
+        mock_collector1 = AsyncMock()
+        mock_collector1.start = AsyncMock()  # Succeeds
+
+        mock_collector2 = AsyncMock()
+        mock_collector2.start.side_effect = Exception("Start failed")  # Fails
+
+        manager._collectors = {
+            "endpoint1": mock_collector1,
+            "endpoint2": mock_collector2,
+        }
+
+        await manager._on_start_profiling(
+            ProfileStartCommand(
+                service_id=manager.id, command=CommandType.PROFILE_START
+            )
+        )
+
+        # Both should be called
+        mock_collector1.start.assert_called_once()
+        mock_collector2.start.assert_called_once()
+
+
+class TestProfileCompleteAndCancel:
+    """Test profile completion and cancellation scenarios."""
+
+    @pytest.mark.asyncio
+    async def test_profile_complete_triggers_final_scrape(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_endpoint: UserConfig,
+    ):
+        """Test that profile complete triggers final metrics scrape."""
+        from aiperf.common.messages import ProfileCompleteCommand
+
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_endpoint,
+        )
+
+        mock_collector = AsyncMock()
+        manager._collectors = {"endpoint1": mock_collector}
+
+        await manager._handle_profile_complete_command(
+            ProfileCompleteCommand(
+                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
+            )
+        )
+
+        # Should call final scrape
+        mock_collector.collect_and_process_metrics.assert_called_once()
+        # Should stop collector after final scrape
+        mock_collector.stop.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_profile_complete_handles_final_scrape_failure(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_endpoint: UserConfig,
+    ):
+        """Test that profile complete handles final scrape failures gracefully."""
+        from aiperf.common.messages import ProfileCompleteCommand
+
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_endpoint,
+        )
+
+        mock_collector = AsyncMock()
+        mock_collector.collect_and_process_metrics.side_effect = Exception(
+            "Final scrape failed"
+        )
+        manager._collectors = {"endpoint1": mock_collector}
+
+        await manager._handle_profile_complete_command(
+            ProfileCompleteCommand(
+                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
+            )
+        )
+
+        # Should still stop collector even if final scrape fails
+        mock_collector.stop.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_profile_complete_when_already_stopped(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_endpoint: UserConfig,
+    ):
+        """Test that profile complete is idempotent when collectors already stopped."""
+        from aiperf.common.messages import ProfileCompleteCommand
+
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_endpoint,
+        )
+
+        manager._collectors = {}  # Already stopped
+
+        # Should not raise exception
+        await manager._handle_profile_complete_command(
+            ProfileCompleteCommand(
+                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
+            )
+        )
+
+    @pytest.mark.asyncio
+    async def test_profile_cancel(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_endpoint: UserConfig,
+    ):
+        """Test that profile cancel stops all collectors."""
+        from aiperf.common.messages import ProfileCancelCommand
+
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_endpoint,
+        )
+
+        mock_collector = AsyncMock()
+        manager._collectors = {"endpoint1": mock_collector}
+
+        await manager._handle_profile_cancel_command(
+            ProfileCancelCommand(
+                service_id=manager.id, command=CommandType.PROFILE_CANCEL
+            )
+        )
+
+        mock_collector.stop.assert_called_once()
+
+
+class TestLifecycleHooks:
+    """Test lifecycle hook handlers."""
+
+    @pytest.mark.asyncio
+    async def test_on_stop_hook(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_endpoint: UserConfig,
+    ):
+        """Test that on_stop hook stops all collectors."""
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_endpoint,
+        )
+
+        mock_collector = AsyncMock()
+        manager._collectors = {"endpoint1": mock_collector}
+
+        await manager._server_metrics_manager_stop()
+
+        mock_collector.stop.assert_called_once()
+
+
 class TestStopAllCollectors:
     """Test stopping all collectors."""
 
@@ -454,3 +730,115 @@ class TestStopAllCollectors:
         manager._collectors = {"endpoint1": mock_collector}
 
         await manager._stop_all_collectors()
+
+    @pytest.mark.asyncio
+    async def test_stop_all_collectors_when_no_collectors(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_endpoint: UserConfig,
+    ):
+        """Test that stop_all_collectors handles empty collectors dict."""
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_endpoint,
+        )
+
+        manager._collectors = {}
+
+        # Should not raise exception
+        await manager._stop_all_collectors()
+
+
+class TestDelayedShutdown:
+    """Test delayed shutdown functionality."""
+
+    @pytest.mark.asyncio
+    async def test_delayed_shutdown(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_endpoint: UserConfig,
+    ):
+        """Test that delayed shutdown sleeps and then stops service."""
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_endpoint,
+        )
+
+        manager.stop = AsyncMock()
+
+        with (
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            patch("asyncio.shield", new_callable=AsyncMock) as mock_shield,
+        ):
+            await manager._delayed_shutdown()
+
+            # Should sleep before stopping
+            mock_sleep.assert_called_once()
+            # Should call stop with shield
+            mock_shield.assert_called_once()
+
+
+class TestCallbackEdgeCases:
+    """Test callback edge cases and error handling."""
+
+    @pytest.mark.asyncio
+    async def test_record_callback_with_empty_list(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_endpoint: UserConfig,
+    ):
+        """Test that record callback handles empty record list."""
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_endpoint,
+        )
+
+        manager.records_push_client.push = AsyncMock()
+
+        await manager._on_server_metrics_records([], "test_collector")
+
+        # Should not push anything for empty list
+        manager.records_push_client.push.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_error_callback_handles_send_failure(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_endpoint: UserConfig,
+    ):
+        """Test that error callback handles message send failures gracefully."""
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_endpoint,
+        )
+
+        manager.records_push_client.push = AsyncMock(
+            side_effect=Exception("Send failed")
+        )
+
+        test_error = ErrorDetails.from_exception(ValueError("Test error"))
+
+        # Should not raise exception
+        await manager._on_server_metrics_error(test_error, "test_collector")
+
+    @pytest.mark.asyncio
+    async def test_status_send_failure(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_endpoint: UserConfig,
+    ):
+        """Test that status send failures are handled gracefully."""
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_endpoint,
+        )
+
+        manager.publish = AsyncMock(side_effect=Exception("Publish failed"))
+
+        # Should not raise exception
+        await manager._send_server_metrics_status(
+            enabled=True,
+            reason=None,
+            endpoints_configured=[],
+            endpoints_reachable=[],
+        )

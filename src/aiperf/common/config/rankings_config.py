@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Annotated
@@ -22,9 +22,9 @@ class RankingsPassagesConfig(BaseConfig):
         int,
         Field(
             ge=1,
-            description=(
-                "Mean number of passages per rankings entry (per query)(default 1)."
-            ),
+            description="Mean number of passages to include per ranking request. For `rankings` endpoint type, each request contains a query "
+            "and multiple passages to rank. Passages follow normal distribution around this mean (±`--rankings-passages-stddev`). "
+            "Higher values test ranking at scale but increase request payload size and processing time.",
         ),
         CLIParameter(
             name=("--rankings-passages-mean",),
@@ -36,7 +36,8 @@ class RankingsPassagesConfig(BaseConfig):
         int,
         Field(
             ge=0,
-            description=("Stddev for passages per rankings entry (default 0)."),
+            description="Standard deviation for number of passages per ranking request. Creates variability in ranking workload complexity. "
+            "Passage counts follow normal distribution. Set to 0 for uniform passage counts across all requests.",
         ),
         CLIParameter(
             name=("--rankings-passages-stddev",),
@@ -48,9 +49,9 @@ class RankingsPassagesConfig(BaseConfig):
         int,
         Field(
             ge=1,
-            description=(
-                "Mean number of tokens in a passage entry for rankings (default 550)."
-            ),
+            description="Mean token length for each passage in ranking requests. Passages are synthetically generated text with lengths "
+            "following normal distribution around this mean (±`--rankings-passages-prompt-token-stddev`). "
+            "Longer passages increase input processing demands and request size.",
         ),
         CLIParameter(
             name=("--rankings-passages-prompt-token-mean",),
@@ -62,9 +63,9 @@ class RankingsPassagesConfig(BaseConfig):
         int,
         Field(
             ge=0,
-            description=(
-                "Stddev for number of tokens in a passage entry for rankings (default 0)."
-            ),
+            description="Standard deviation for passage token lengths in ranking requests. Creates variability in passage sizes, simulating "
+            "realistic heterogeneous document collections. Token lengths follow normal distribution. "
+            "Set to 0 for uniform passage lengths.",
         ),
         CLIParameter(
             name=("--rankings-passages-prompt-token-stddev",),
@@ -84,9 +85,8 @@ class RankingsQueryConfig(BaseConfig):
         int,
         Field(
             ge=1,
-            description=(
-                "Mean number of tokens in a query entry for rankings (default 550)."
-            ),
+            description="Mean token length for query text in ranking requests. Each ranking request contains one query and multiple passages. "
+            "Queries are synthetically generated with lengths following normal distribution around this mean (±`--rankings-query-prompt-token-stddev`). ",
         ),
         CLIParameter(
             name=("--rankings-query-prompt-token-mean",),
@@ -98,9 +98,9 @@ class RankingsQueryConfig(BaseConfig):
         int,
         Field(
             ge=0,
-            description=(
-                "Stddev for number of tokens in a query entry for rankings (default 0)."
-            ),
+            description="Standard deviation for query token lengths in ranking requests. Creates variability in query complexity, simulating "
+            "realistic user search patterns. Token lengths follow normal distribution. "
+            "Set to 0 for uniform query lengths.",
         ),
         CLIParameter(
             name=("--rankings-query-prompt-token-stddev",),

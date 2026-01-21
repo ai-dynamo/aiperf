@@ -1,6 +1,5 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import asyncio
 
 from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import MessageType
@@ -17,13 +16,15 @@ class RealtimeMetricsMixin(MessageBusClientMixin):
     def __init__(self, service_config: ServiceConfig, **kwargs):
         super().__init__(service_config=service_config, **kwargs)
         self._metrics: list[MetricResult] = []
-        self._metrics_lock = asyncio.Lock()
 
     @on_message(MessageType.REALTIME_METRICS)
     async def _on_realtime_metrics(self, message: RealtimeMetricsMessage):
-        """Update the metrics from a real-time metrics message."""
-        async with self._metrics_lock:
-            self._metrics = message.metrics
+        """Update the metrics from a real-time metrics message.
+
+        Lock-free because self._metrics is atomically replaced.
+        Operations are atomic only when used in a single thread asyncio context.
+        """
+        self._metrics = message.metrics
         await self.run_hooks(
             AIPerfHook.ON_REALTIME_METRICS,
             metrics=message.metrics,

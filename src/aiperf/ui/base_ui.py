@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.mixins import (
@@ -34,12 +34,12 @@ class BaseAIPerfUI(
             super().__init__(**kwargs)
 
         @on_records_progress
-        def _on_records_progress(self, records_stats: RecordsStats):
+        def _on_records_progress(self, records_stats: CombinedPhaseStats):
             '''Callback for records progress updates.'''
             pass
 
         @on_requests_phase_progress
-        def _on_requests_phase_progress(self, phase: CreditPhase, requests_stats: RequestsStats):
+        def _on_requests_phase_progress(self, phase_progress: CombinedPhaseStats):
             '''Callback for requests phase progress updates.'''
             pass
 

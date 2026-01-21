@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import tempfile
@@ -7,7 +7,11 @@ from typing import cast
 
 import pytest
 
-from aiperf.common.config import ServiceConfig, ZMQIPCConfig, ZMQTCPConfig
+from aiperf.common.config import (
+    ServiceConfig,
+    ZMQIPCConfig,
+    ZMQTCPConfig,
+)
 from aiperf.common.enums import AIPerfUIType, CommunicationBackend
 
 
@@ -29,8 +33,7 @@ def custom_tcp_config():
     return ZMQTCPConfig(
         host="10.0.0.1",
         records_push_pull_port=6000,
-        credit_drop_port=6001,
-        credit_return_port=6002,
+        credit_router_port=6001,
     )
 
 
@@ -81,7 +84,8 @@ class TestServiceConfigCommValidation:
     def test_both_configs_raises_error(self, tcp_config, ipc_config):
         """Should raise error when both TCP and IPC configs are provided."""
         with pytest.raises(
-            ValueError, match="Cannot use both ZMQ TCP and ZMQ IPC configuration"
+            ValueError,
+            match="Cannot use both ZMQ TCP and ZMQ IPC configuration at the same time",
         ):
             ServiceConfig(zmq_tcp=tcp_config, zmq_ipc=ipc_config)
 
@@ -118,8 +122,7 @@ class TestTCPConfiguration:
         assert comm_config.event_bus_proxy_config.host == "10.0.0.1"
         assert comm_config.raw_inference_proxy_config.host == "10.0.0.1"
         assert comm_config.records_push_pull_port == 6000
-        assert comm_config.credit_drop_port == 6001
-        assert comm_config.credit_return_port == 6002
+        assert comm_config.credit_router_port == 6001
 
     def test_address_generation(self, custom_tcp_config):
         """Should generate correct TCP addresses."""
@@ -128,8 +131,7 @@ class TestTCPConfiguration:
 
         expected_addresses = {
             "records_push_pull_address": "tcp://10.0.0.1:6000",
-            "credit_drop_address": "tcp://10.0.0.1:6001",
-            "credit_return_address": "tcp://10.0.0.1:6002",
+            "credit_router_address": "tcp://10.0.0.1:6001",
         }
 
         for attr, expected in expected_addresses.items():
@@ -147,8 +149,7 @@ class TestTCPConfiguration:
         assert comm_config.event_bus_proxy_config.host == "127.0.0.1"
         assert comm_config.raw_inference_proxy_config.host == "127.0.0.1"
         assert comm_config.records_push_pull_port == 5557
-        assert comm_config.credit_drop_port == 5562
-        assert comm_config.credit_return_port == 5563
+        assert comm_config.credit_router_port == 5564
 
 
 class TestIPCConfiguration:
@@ -161,8 +162,7 @@ class TestIPCConfiguration:
                 Path("/tmp/aiperf"),  # Custom specified path
                 {
                     "records_push_pull_address": "ipc:///tmp/aiperf/records_push_pull.ipc",
-                    "credit_drop_address": "ipc:///tmp/aiperf/credit_drop.ipc",
-                    "credit_return_address": "ipc:///tmp/aiperf/credit_return.ipc",
+                    "credit_router_address": "ipc:///tmp/aiperf/credit_router.ipc",
                 },
             ),
         ],

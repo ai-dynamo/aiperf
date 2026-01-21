@@ -1,22 +1,6 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 repos:
-  - repo: local
-    hooks:
-      - id: generate-cli-docs
-        name: generate-cli-docs
-        entry: make generate-cli-docs
-        language: python
-        types: [python]
-        pass_filenames: false
-        args: []
-      - id: generate-env-vars-docs
-        name: generate-env-vars-docs
-        entry: make generate-env-vars-docs
-        language: python
-        files: ^src/aiperf/common/environment\.py$
-        pass_filenames: false
-        args: []
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0  # Use the latest stable version
     hooks:
@@ -56,6 +40,20 @@ repos:
         entry: bash tools/generate_init_files.sh
         language: system
         types: [python]
+        pass_filenames: false
+        args: []
+      - id: generate-cli-docs
+        name: generate-cli-docs
+        entry: make generate-cli-docs
+        language: python
+        types: [python]
+        pass_filenames: false
+        args: []
+      - id: generate-env-vars-docs
+        name: generate-env-vars-docs
+        entry: make generate-env-vars-docs
+        language: python
+        files: ^src/aiperf/common/environment\.py$
         pass_filenames: false
         args: []
   - repo: https://github.com/astral-sh/ruff-pre-commit

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 name: "Run Unit Tests"
 
@@ -26,11 +26,11 @@ jobs:
     - name: Install dependencies
       run: |
         make first-time-setup PYTHON_VERSION=${{ matrix.python-version }}
-    - name: Run unit tests
+    - name: Run unit tests and component integration tests
       run: |
-        make coverage PYTHON_VERSION=${{ matrix.python-version }}
+        make test-ci PYTHON_VERSION=${{ matrix.python-version }}
     - name: Upload results to Codecov
-      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.10'
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
       uses: codecov/codecov-action@v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }}

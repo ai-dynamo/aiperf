@@ -172,6 +172,18 @@ class InvalidStateError(AIPerfError):
     """Exception raised when something is in an invalid state."""
 
 
+class MemoryMapDatasetError(AIPerfError):
+    """Base exception for memory-mapped dataset errors."""
+
+
+class MemoryMapSerializationError(MemoryMapDatasetError):
+    """Exception raised when serialization/deserialization of mmap data fails."""
+
+
+class MemoryMapFileOperationError(MemoryMapDatasetError):
+    """Exception raised when file operations on mmap files fail."""
+
+
 class MetricTypeError(AIPerfError):
     """Exception raised when a metric type encounters an error while creating a class."""
 
@@ -216,13 +228,13 @@ class SSEResponseError(AIPerfError):
         super().__init__(message)
 
 
+class TokenizerError(AIPerfError):
+    """Exception raised when a tokenizer encounters an error."""
+
+
 class UnsupportedHookError(AIPerfError):
     """Exception raised when a hook is defined on a class that does not have any base classes that provide that hook type."""
 
 
 class ValidationError(AIPerfError):
     """Exception raised when something fails validation."""
-
-
-class TokenizerError(AIPerfError):
-    """Exception raised when a tokenizer encounters an error."""

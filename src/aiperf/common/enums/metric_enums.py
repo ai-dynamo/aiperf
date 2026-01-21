@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from collections.abc import Callable
@@ -705,6 +705,9 @@ class MetricFlags(Flag):
 
     USAGE_DIFF_ONLY = 1 << 14
     """Metrics that are only applicable when client side tokenization is enabled and the usage field is used."""
+
+    HTTP_TRACE_ONLY = 1 << 15
+    """Metrics that are only applicable to HTTP trace data (AioHttpTraceData)."""
 
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""

@@ -1,15 +1,15 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
 
 from aiperf.common.enums import EndpointType
 from aiperf.common.models import Text, Turn
-from aiperf.common.models.record_models import RequestInfo
 from aiperf.endpoints.openai_completions import CompletionsEndpoint
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_model_endpoint,
+    create_request_info,
 )
 
 
@@ -34,7 +34,7 @@ class TestCompletionsEndpoint:
             texts=[Text(contents=["Once upon a time"])],
             model="completion-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -51,7 +51,7 @@ class TestCompletionsEndpoint:
             ],
             model="completion-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -66,7 +66,7 @@ class TestCompletionsEndpoint:
             ],
             model="completion-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -90,7 +90,7 @@ class TestCompletionsEndpoint:
             model="completion-model",
             max_tokens=max_tokens,
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -109,7 +109,9 @@ class TestCompletionsEndpoint:
         )
 
         turn = Turn(texts=[Text(contents=["Test"])], model="completion-model")
-        request_info = RequestInfo(model_endpoint=streaming_endpoint, turns=[turn])
+        request_info = create_request_info(
+            model_endpoint=streaming_endpoint, turns=[turn]
+        )
 
         payload = endpoint.format_payload(request_info)
 
@@ -130,7 +132,7 @@ class TestCompletionsEndpoint:
         )
 
         turn = Turn(texts=[Text(contents=["Test"])], model="completion-model")
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -144,7 +146,7 @@ class TestCompletionsEndpoint:
             texts=[],  # No texts
             model="completion-model",
         )
-        request_info = RequestInfo(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -155,7 +157,7 @@ class TestCompletionsEndpoint:
         turn1 = Turn(texts=[Text(contents=["First"])], model="model1")
         turn2 = Turn(texts=[Text(contents=["Second"])], model="model2")
 
-        request_info = RequestInfo(
+        request_info = create_request_info(
             model_endpoint=model_endpoint, turn_index=0, turns=[turn1, turn2]
         )
 

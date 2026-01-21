@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -100,3 +100,127 @@ class TestGracePeriodValidation:
         user_config = UserConfig(endpoint=endpoint_config, loadgen=loadgen_config)
 
         assert user_config.loadgen.benchmark_grace_period == grace_period
+
+
+class TestWarmupGracePeriodValidation:
+    """Test validation of warmup grace period configuration."""
+
+    def test_warmup_grace_period_with_warmup_duration_valid(self):
+        """Test that warmup grace period is valid when used with warmup duration."""
+        loadgen_config = LoadGeneratorConfig(
+            warmup_duration=5.0,
+            warmup_grace_period=10.0,
+            benchmark_duration=30.0,
+        )
+
+        endpoint_config = EndpointConfig(
+            url="http://localhost:8000/test", model_names=["test-model"]
+        )
+
+        user_config = UserConfig(endpoint=endpoint_config, loadgen=loadgen_config)
+
+        assert user_config.loadgen.warmup_duration == 5.0
+        assert user_config.loadgen.warmup_grace_period == 10.0
+
+    def test_warmup_grace_period_with_warmup_request_count_requires_duration(self):
+        """Test that warmup grace period requires warmup duration even with request count."""
+        with pytest.raises(
+            ValidationError,
+            match=".*--warmup-grace-period can only be used when --warmup-duration is set.*",
+        ):
+            loadgen_config = LoadGeneratorConfig(
+                warmup_request_count=10,
+                warmup_grace_period=15.0,
+                benchmark_duration=30.0,
+            )
+
+            endpoint_config = EndpointConfig(
+                url="http://localhost:8000/test", model_names=["test-model"]
+            )
+
+            UserConfig(endpoint=endpoint_config, loadgen=loadgen_config)
+
+    def test_warmup_grace_period_with_warmup_num_sessions_requires_duration(self):
+        """Test that warmup grace period requires warmup duration even with num sessions."""
+        with pytest.raises(
+            ValidationError,
+            match=".*--warmup-grace-period can only be used when --warmup-duration is set.*",
+        ):
+            loadgen_config = LoadGeneratorConfig(
+                warmup_num_sessions=5,
+                warmup_grace_period=20.0,
+                benchmark_duration=30.0,
+            )
+
+            endpoint_config = EndpointConfig(
+                url="http://localhost:8000/test", model_names=["test-model"]
+            )
+
+            UserConfig(endpoint=endpoint_config, loadgen=loadgen_config)
+
+    def test_warmup_grace_period_without_warmup_duration_invalid(self):
+        """Test that warmup grace period without warmup duration raises validation error."""
+        with pytest.raises(
+            ValidationError,
+            match=".*--warmup-grace-period can only be used when --warmup-duration is set.*",
+        ):
+            loadgen_config = LoadGeneratorConfig(
+                warmup_grace_period=30.0,
+                benchmark_duration=60.0,
+            )
+
+            endpoint_config = EndpointConfig(
+                url="http://localhost:8000/test", model_names=["test-model"]
+            )
+
+            UserConfig(endpoint=endpoint_config, loadgen=loadgen_config)
+
+    def test_default_warmup_grace_period_without_warmup_valid(self):
+        """Test that default warmup grace period (None) without warmup is valid."""
+        loadgen_config = LoadGeneratorConfig(benchmark_duration=10.0)
+
+        endpoint_config = EndpointConfig(
+            url="http://localhost:8000/test", model_names=["test-model"]
+        )
+
+        user_config = UserConfig(endpoint=endpoint_config, loadgen=loadgen_config)
+
+        assert user_config.loadgen.warmup_grace_period is None
+
+    def test_negative_warmup_grace_period_invalid(self):
+        """Test that negative warmup grace period raises validation error."""
+        with pytest.raises(ValidationError):
+            LoadGeneratorConfig(warmup_duration=5.0, warmup_grace_period=-1.0)
+
+    def test_zero_warmup_grace_period_valid(self):
+        """Test that zero warmup grace period is valid (no wait for responses)."""
+        loadgen_config = LoadGeneratorConfig(
+            warmup_duration=5.0,
+            warmup_grace_period=0.0,
+            benchmark_duration=30.0,
+        )
+
+        endpoint_config = EndpointConfig(
+            url="http://localhost:8000/test", model_names=["test-model"]
+        )
+
+        user_config = UserConfig(endpoint=endpoint_config, loadgen=loadgen_config)
+
+        assert user_config.loadgen.warmup_grace_period == 0.0
+
+    @pytest.mark.parametrize("grace_period", [0.0, 5.0, 10.0, 30.0, 60.0])
+    def test_valid_warmup_grace_period_values(self, grace_period: float):
+        """Test various valid warmup grace period values."""
+        loadgen_config = LoadGeneratorConfig(
+            warmup_duration=5.0,
+            warmup_grace_period=grace_period,
+            benchmark_duration=30.0,
+        )
+
+        endpoint_config = EndpointConfig(
+            url="http://localhost:8000/test", model_names=["test-model"]
+        )
+
+        user_config = UserConfig(endpoint=endpoint_config, loadgen=loadgen_config)
+
+        assert user_config.loadgen.warmup_grace_period == grace_period
