@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -29,7 +29,7 @@ _ALL_METRIC_NAMES: dict[str, str] = {
         for display_name, field_name, _ in GPU_TELEMETRY_METRICS_CONFIG
     },
     # Derived metrics calculated during data processing
-    "output_token_throughput_per_gpu": "Output Token Throughput Per GPU",
+    "output_token_throughput_per_gpu": "Output Token Throughput Per GPU",  # nosec
 }
 
 # Pre-compute metric lists by data source at module load time
