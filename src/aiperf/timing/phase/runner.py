@@ -12,7 +12,7 @@ import asyncio
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CreditPhase, TimingMode
 from aiperf.common.environment import Environment
 from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.mixins import TaskManagerMixin
@@ -91,6 +91,18 @@ class PhaseRunner(TaskManagerMixin):
         super().__init__(**kwargs)
         self._config = config
         self._conversation_source = conversation_source
+
+        # For FIXED_SCHEDULE mode, use actual dataset size instead of config values.
+        # Config values may reflect pre-filtered file size, but dataset_metadata
+        # reflects the actual filtered dataset after start/end offset filtering.
+        metadata = conversation_source.dataset_metadata
+        if config.timing_mode == TimingMode.FIXED_SCHEDULE and metadata:
+            self._config = config.model_copy(
+                update={
+                    "total_expected_requests": metadata.total_turn_count,
+                    "expected_num_sessions": len(metadata.conversations),
+                }
+            )
         self._phase_publisher = phase_publisher
         self._credit_router = credit_router
         self._concurrency_manager = concurrency_manager
@@ -245,12 +257,42 @@ class PhaseRunner(TaskManagerMixin):
                 await self._wait_for_returning_complete()
                 self._progress_task.cancel()
 
-            return self._progress.create_stats(self._lifecycle)
-
-        finally:
             for ramper in self._rampers:
                 ramper.stop()
             self._scheduler.cancel_all()
+
+            return self._progress.create_stats(self._lifecycle)
+
+        except Exception as e:
+            # TODO: This can be improved a bit by having a better way to notify other services
+            # and the system controller of a failure in the benchmark.
+            # If there is an error while setting up or executing the phase,
+            # we need to flush it through the lifecycle to ensure the other services
+            # are notified that the phase has ended, and the benchmark does not hang forever.
+            self.exception(f"Error executing phase {self._config.phase.title}: {e!r}")
+            if not self._was_cancelled:
+                self.cancel()
+
+            if not self._lifecycle.is_started:
+                self._lifecycle.start()
+                stats = self._progress.create_stats(self._lifecycle)
+                await self._phase_publisher.publish_phase_start(self._config, stats)
+
+            if not self._lifecycle.is_sending_complete:
+                self._lifecycle.mark_sending_complete(timeout_triggered=False)
+                self._progress.freeze_sent_counts()
+                self._progress.all_credits_sent_event.set()
+                stats = self._progress.create_stats(self._lifecycle)
+                await self._phase_publisher.publish_phase_sending_complete(stats)
+
+            if not self._lifecycle.is_complete:
+                self._lifecycle.mark_complete(grace_period_triggered=False)
+                self._progress.freeze_completed_counts()
+                self._progress.all_credits_returned_event.set()
+                stats = self._progress.create_stats(self._lifecycle)
+                await self._phase_publisher.publish_phase_complete(stats)
+
+            raise e
 
     def _create_rampers(self, strategy: TimingStrategyProtocol) -> None:
         """Create rampers for concurrency and rate if ramp durations are configured.
