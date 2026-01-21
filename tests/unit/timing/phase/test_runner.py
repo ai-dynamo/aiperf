@@ -6,13 +6,41 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import ArrivalPattern, CreditPhase, TimingMode
-from aiperf.common.models import CreditPhaseStats
+from aiperf.common.enums import (
+    ArrivalPattern,
+    CreditPhase,
+    DatasetSamplingStrategy,
+    TimingMode,
+)
+from aiperf.common.models import (
+    ConversationMetadata,
+    CreditPhaseStats,
+    DatasetMetadata,
+    TurnMetadata,
+)
 from aiperf.credit.structs import Credit
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.phase.runner import PhaseRunner
 
 pytestmark = pytest.mark.looptime
+
+
+def make_dataset_metadata(conversations: list[tuple[str, int]]) -> DatasetMetadata:
+    """Create dataset metadata with specified conversations.
+
+    Args:
+        conversations: List of (conversation_id, num_turns) tuples.
+    """
+    return DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id=conv_id,
+                turns=[TurnMetadata() for _ in range(num_turns)],
+            )
+            for conv_id, num_turns in conversations
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
 
 
 @dataclass
@@ -621,3 +649,111 @@ class TestEdgeCases:
             with pytest.raises(RuntimeError):
                 await r.run(is_final_phase=True)
             mock_ramper.stop.assert_called_once()
+
+
+class TestFixedScheduleConfigCorrection:
+    """Tests for FIXED_SCHEDULE mode config correction using actual dataset size."""
+
+    async def test_fixed_schedule_updates_config_from_dataset_metadata(
+        self,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """FIXED_SCHEDULE should use dataset metadata size, not config values."""
+        # Config says 100 requests/sessions, but dataset only has 2 conversations
+        config = cfg(mode=TimingMode.FIXED_SCHEDULE, reqs=100)
+        config = config.model_copy(update={"expected_num_sessions": 100})
+
+        conv_src = MagicMock()
+        conv_src.dataset_metadata = make_dataset_metadata([("c1", 3), ("c2", 2)])
+
+        r = make_runner(config, conv_src, pub, router, conc, cancel, cb)
+
+        # Config should be updated to reflect actual dataset size
+        assert r._config.total_expected_requests == 5  # 3 + 2 turns
+        assert r._config.expected_num_sessions == 2  # 2 conversations
+
+    async def test_fixed_schedule_without_metadata_uses_config(
+        self,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """FIXED_SCHEDULE without metadata falls back to config values."""
+        config = cfg(mode=TimingMode.FIXED_SCHEDULE, reqs=100)
+
+        conv_src = MagicMock()
+        conv_src.dataset_metadata = None
+
+        r = make_runner(config, conv_src, pub, router, conc, cancel, cb)
+
+        # Config should remain unchanged
+        assert r._config.total_expected_requests == 100
+
+    async def test_request_rate_mode_ignores_dataset_metadata(
+        self,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """REQUEST_RATE mode should use config values even with metadata."""
+        config = cfg(mode=TimingMode.REQUEST_RATE, reqs=100)
+
+        conv_src = MagicMock()
+        conv_src.dataset_metadata = make_dataset_metadata([("c1", 1)])
+
+        r = make_runner(config, conv_src, pub, router, conc, cancel, cb)
+
+        # Config should remain unchanged for REQUEST_RATE
+        assert r._config.total_expected_requests == 100
+
+    async def test_user_centric_rate_mode_ignores_dataset_metadata(
+        self,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """USER_CENTRIC_RATE mode should use config values even with metadata."""
+        config = cfg(mode=TimingMode.USER_CENTRIC_RATE, reqs=100)
+
+        conv_src = MagicMock()
+        conv_src.dataset_metadata = make_dataset_metadata([("c1", 1)])
+
+        r = make_runner(config, conv_src, pub, router, conc, cancel, cb)
+
+        # Config should remain unchanged for USER_CENTRIC_RATE
+        assert r._config.total_expected_requests == 100
+
+    async def test_fixed_schedule_filtered_dataset_scenario(
+        self,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """Simulates start/end offset filtering that reduces dataset size."""
+        # Original file had 1000 conversations, config reflects that
+        config = cfg(mode=TimingMode.FIXED_SCHEDULE, reqs=1000)
+        config = config.model_copy(update={"expected_num_sessions": 1000})
+
+        # But filtering reduced to just 2 conversations
+        conv_src = MagicMock()
+        conv_src.dataset_metadata = make_dataset_metadata(
+            [("filtered_1", 1), ("filtered_2", 1)]
+        )
+
+        r = make_runner(config, conv_src, pub, router, conc, cancel, cb)
+
+        # Config should reflect the filtered dataset, not the original
+        assert r._config.total_expected_requests == 2
+        assert r._config.expected_num_sessions == 2

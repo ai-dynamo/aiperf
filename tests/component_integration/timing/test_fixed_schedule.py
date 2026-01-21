@@ -625,3 +625,172 @@ class TestFixedScheduleStress:
 
         assert analyzer.credits_balanced()
         assert analyzer.num_sessions == 2
+
+
+# =============================================================================
+# Start/End Offset Filtering Tests
+# =============================================================================
+
+
+@pytest.mark.component_integration
+class TestFixedScheduleOffsetFiltering:
+    """Tests for fixed schedule with start/end offset filtering.
+
+    Verifies that when using --fixed-schedule-start-offset and
+    --fixed-schedule-end-offset, the phase completes correctly based
+    on the actual filtered dataset size, not the original file size.
+    """
+
+    def test_offset_filtering_completes(self, cli: AIPerfCLI, tmp_path: Path):
+        """Test that filtered dataset completes without waiting for original size.
+
+        Creates a 10-line trace file (timestamps 1000-10000ms), filters to
+        lines with timestamps between 1500-3500ms (should yield 2 lines:
+        timestamp 2000 and 3000), and verifies the phase completes with
+        exactly 2 requests.
+        """
+        trace_file = tmp_path / "trace.jsonl"
+
+        # Create 10 entries with timestamps 1000-10000ms (1 second apart)
+        with open(trace_file, "w") as f:
+            for i in range(10):
+                timestamp = (i + 1) * 1000  # 1000, 2000, ..., 10000
+                line = {
+                    "timestamp": timestamp,
+                    "text_input": f"Question {i + 1}",
+                    "output_length": 50 + i * 10,
+                }
+                f.write(orjson.dumps(line).decode() + "\n")
+
+        # Filter to timestamps between 1500-3500ms
+        # Should include: timestamp 2000 and 3000 (2 lines)
+        cmd = f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --streaming \
+                --fixed-schedule \
+                --input-file {trace_file} \
+                --fixed-schedule-start-offset 1500 \
+                --fixed-schedule-end-offset 3500 \
+                --workers-max 3 \
+                --osl 50 \
+                --extra-inputs ignore_eos:true \
+                --ui {defaults.ui}
+        """
+        result = cli.run_sync(cmd, timeout=30.0)
+
+        # Should complete with exactly 2 requests (not hang waiting for 10)
+        assert get_request_count(result) == 2
+
+        runner: AIPerfRunnerResultWithSharedBus = result.runner_result
+        analyzer = CreditFlowAnalyzer(runner)
+        assert analyzer.credits_balanced()
+
+    def test_offset_filtering_multi_session(self, cli: AIPerfCLI, tmp_path: Path):
+        """Test offset filtering with multi-turn sessions."""
+        trace_file = tmp_path / "trace.jsonl"
+
+        # Create sessions with different timestamps
+        with open(trace_file, "w") as f:
+
+            def write(d):
+                f.write(orjson.dumps(d).decode() + "\n")
+
+            # Session A: starts at 500ms (before filter)
+            write({"session_id": "A", "timestamp": 500, "input_length": 100})
+            write({"session_id": "A", "delay": 50, "input_length": 100})
+
+            # Session B: starts at 2000ms (within filter)
+            write({"session_id": "B", "timestamp": 2000, "input_length": 100})
+            write({"session_id": "B", "delay": 50, "input_length": 100})
+
+            # Session C: starts at 3000ms (within filter)
+            write({"session_id": "C", "timestamp": 3000, "input_length": 100})
+            write({"session_id": "C", "delay": 50, "input_length": 100})
+
+            # Session D: starts at 5000ms (after filter)
+            write({"session_id": "D", "timestamp": 5000, "input_length": 100})
+            write({"session_id": "D", "delay": 50, "input_length": 100})
+
+        # Filter to 1500-3500ms: should include B and C (4 turns total)
+        cmd = f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --streaming \
+                --fixed-schedule \
+                --custom-dataset-type mooncake_trace \
+                --input-file {trace_file} \
+                --fixed-schedule-start-offset 1500 \
+                --fixed-schedule-end-offset 3500 \
+                --workers-max 3 \
+                --osl 50 \
+                --extra-inputs ignore_eos:true \
+                --ui {defaults.ui}
+        """
+        result = cli.run_sync(cmd, timeout=30.0, assert_success=False)
+
+        # TODO: Currently we have a limitation where if the first turn is not within the offset range,
+        # the phase will fail and exit with a non-zero exit code. We need to improve this so that the
+        # phase can complete successfully even if the first turn is not within the offset range,
+        # however that is a larger overall issue that needs to be addressed.
+
+        # For now, it is important that the run does not hang, and will return a non-zero exit code
+        # from the failure to setup the phase.
+        assert result.exit_code != 0
+
+    def test_offset_filtering_single_entry(self, cli: AIPerfCLI, tmp_path: Path):
+        """Test offset filtering that results in a single entry."""
+        trace_file = tmp_path / "trace.jsonl"
+
+        with open(trace_file, "w") as f:
+            for i in range(5):
+                timestamp = (i + 1) * 1000
+                line = {"timestamp": timestamp, "input_length": 100}
+                f.write(orjson.dumps(line).decode() + "\n")
+
+        # Filter to 2500-3500ms: should include only timestamp 3000 (1 line)
+        cmd = f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --streaming \
+                --fixed-schedule \
+                --input-file {trace_file} \
+                --fixed-schedule-start-offset 2500 \
+                --fixed-schedule-end-offset 3500 \
+                --workers-max 1 \
+                --osl 50 \
+                --extra-inputs ignore_eos:true \
+                --ui {defaults.ui}
+        """
+        result = cli.run_sync(cmd, timeout=30.0)
+
+        assert get_request_count(result) == 1
+
+    def test_offset_filtering_empty_result(self, cli: AIPerfCLI, tmp_path: Path):
+        """Test offset filtering that results in no entries."""
+        trace_file = tmp_path / "trace.jsonl"
+
+        with open(trace_file, "w") as f:
+            for i in range(5):
+                timestamp = (i + 1) * 1000  # 1000-5000ms
+                line = {"timestamp": timestamp, "input_length": 100}
+                f.write(orjson.dumps(line).decode() + "\n")
+
+        # Filter to 10000-20000ms: should include nothing
+        cmd = f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --streaming \
+                --fixed-schedule \
+                --input-file {trace_file} \
+                --fixed-schedule-start-offset 10000 \
+                --fixed-schedule-end-offset 20000 \
+                --workers-max 1 \
+                --osl 50 \
+                --extra-inputs ignore_eos:true \
+                --ui {defaults.ui}
+        """
+        result = cli.run_sync(cmd, timeout=30.0)
+
+        # Should complete with 0 requests (not hang)
+        assert get_request_count(result) == 0

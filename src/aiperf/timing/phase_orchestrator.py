@@ -148,13 +148,14 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         """Execute all phases and publish completion when done."""
         self.debug(lambda: "Starting PhaseOrchestrator")
 
-        # Execute all phases sequentially (each PhaseRunner handles its own progress reporting)
-        await self._execute_phases()
-
-        # Cleanup
-        self.notice("All credits completed")
-        self._credit_router.mark_credits_complete()
-        await self._phase_publisher.publish_credits_complete()
+        try:
+            # Execute all phases sequentially (each PhaseRunner handles its own progress reporting)
+            await self._execute_phases()
+        finally:
+            # Cleanup
+            self.notice("All credits completed")
+            self._credit_router.mark_credits_complete()
+            await self._phase_publisher.publish_credits_complete()
 
     async def _execute_phases(self) -> None:
         """Execute phases in order (typically: warmup → profiling).
@@ -194,9 +195,14 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             # Track active runner (multiple possible with seamless mode)
             self._active_runners.append(runner)
 
-            # Execute phase (runner.run() returns after sending complete for seamless,
-            # or after all returns complete for non-seamless/final phases)
-            await runner.run(is_final_phase=is_final_phase)
+            try:
+                # Execute phase (runner.run() returns after sending complete for seamless,
+                # or after all returns complete for non-seamless/final phases)
+                await runner.run(is_final_phase=is_final_phase)
+            except Exception as e:
+                self.exception(f"Error executing phase {runner.phase}: {e!r}")
+                await self.cancel()
+                raise e
 
             # Remove from active runners when fully complete
             # For seamless phases, this happens after returns complete (background task)
