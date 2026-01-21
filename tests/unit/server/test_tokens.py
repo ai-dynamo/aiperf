@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for tokens module."""
 
@@ -15,6 +15,8 @@ from aiperf_mock_server.tokens import (
     tokenize,
     tokenize_request,
 )
+
+pytestmark = pytest.mark.server_unit
 
 
 class TestTokenize:
