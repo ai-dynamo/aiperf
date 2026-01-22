@@ -245,21 +245,35 @@ class TestSynthesizer:
         assert len(synthetic) == 0
 
     def test_root_replication_multiplier(self) -> None:
-        """Test prefix_root_multiplier effect."""
+        """Test prefix_root_multiplier distributes traces across independent trees."""
+        # Use many traces to test probabilistic distribution
         traces = [
             {
                 "input_length": 100,
                 "output_length": 20,
                 "hash_ids": [1, 2],
             }
+            for _ in range(100)
         ]
         params = SynthesisParams(prefix_root_multiplier=3)
         synthesizer = Synthesizer(params=params)
         synthetic = synthesizer.synthesize_traces(traces)
 
-        hash_ids = synthetic[0].get("hash_ids", [])
-        # With root multiplier of 3, should replicate the tree
-        assert len(hash_ids) > 2
+        # Collect all unique hash_id[0] values (representing different tree roots)
+        first_ids = {trace["hash_ids"][0] for trace in synthetic}
+
+        # With multiplier=3 and max_hash_id=2, expected roots are:
+        # tree 0: offset 0 -> hash_ids start at 1
+        # tree 1: offset 3 -> hash_ids start at 4
+        # tree 2: offset 6 -> hash_ids start at 7
+        expected_roots = {1, 4, 7}
+        assert first_ids.issubset(expected_roots)
+        # With 100 traces and 3 trees, statistically we should see multiple trees
+        assert len(first_ids) > 1
+
+        # Verify hash_ids length is preserved (not extended)
+        for trace in synthetic:
+            assert len(trace["hash_ids"]) == 2
 
     # ============================================================================
     # Incomplete Block Handling Tests

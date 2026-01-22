@@ -141,12 +141,14 @@ aiperf profile \
 ```
 
 #### `--synthesis-prefix-root-multiplier` (default: 1)
-Replicate the prefix tree structure N times:
-- `1`: No replication
-- `2`: Double the number of unique prefix combinations
-- `3`: Triple the number of unique prefix combinations
+Distribute traces across N independent radix trees:
+- `1`: All traces share the same prefix tree (default)
+- `2`: Traces randomly assigned to 2 independent trees (50% each)
+- `3`: Traces randomly assigned to 3 independent trees (33% each)
 
-Example: Generate more diverse prefix patterns:
+Each tree has identical structure but different hash IDs, so traces in different trees cannot share prefixes. This reduces the effective cache hit rate by splitting the workload.
+
+Example: Simulate lower cache hit rates with more diverse prefix roots:
 ```bash
 aiperf profile \
     --input-file traces/production.jsonl \
