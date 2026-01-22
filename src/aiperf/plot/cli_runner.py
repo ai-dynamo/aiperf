@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """CLI runner for plot command."""
 
@@ -16,6 +16,7 @@ def run_plot_controller(
     config: str | None = None,
     verbose: bool = False,
     dashboard: bool = False,
+    host: str = "127.0.0.1",
     port: int = 8050,
 ) -> None:
     """Generate plots from AIPerf profiling data.
@@ -28,6 +29,7 @@ def run_plot_controller(
         config: Path to custom plot configuration YAML file. If not specified, uses default config.
         verbose: Show detailed error tracebacks in console.
         dashboard: Launch interactive dashboard server instead of generating static PNGs.
+        host: Host for dashboard server (only used with --dashboard). Defaults to 127.0.0.1.
         port: Port for dashboard server (only used with dashboard=True). Defaults to 8050.
     """
     input_paths = paths or ["./artifacts"]
@@ -53,6 +55,7 @@ def run_plot_controller(
         theme=theme,
         config_path=config_path,
         verbose=verbose,
+        host=host,
         port=port,
     )
 

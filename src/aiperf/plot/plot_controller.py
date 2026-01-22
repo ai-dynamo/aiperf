@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Plot controller for generating visualizations from profiling data."""
 
@@ -42,6 +42,7 @@ class PlotController:
         theme: PlotTheme = PlotTheme.LIGHT,
         config_path: Path | None = None,
         verbose: bool = False,
+        host: str = "127.0.0.1",
         port: int = 8050,
     ):
         self.paths = paths
@@ -49,6 +50,7 @@ class PlotController:
         self.mode = mode
         self.theme = theme
         self.verbose = verbose
+        self.host = host
         self.port = port
 
         log_level = "DEBUG" if verbose else "INFO"
@@ -231,6 +233,7 @@ class PlotController:
             theme=self.theme,
             plot_config=self.plot_config,
             loader=self.loader,
+            host=self.host,
             port=self.port,
         )
 

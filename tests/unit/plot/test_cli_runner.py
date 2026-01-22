@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Tests for CLI runner."""
 
@@ -295,6 +295,7 @@ class TestRunPlotController:
             theme=PlotTheme.DARK,
             config_path=None,
             verbose=True,
+            host="127.0.0.1",
             port=8050,
         )
 

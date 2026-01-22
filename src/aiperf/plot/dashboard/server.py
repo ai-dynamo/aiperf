@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -41,7 +41,7 @@ class DashboardServer:
 
     Example:
         >>> server = DashboardServer(runs=runs, mode=VisualizationMode.MULTI_RUN,
-        ...                          theme=PlotTheme.DARK, plot_config=config, port=8050)
+        ...                          theme=PlotTheme.DARK, plot_config=config, host="127.0.0.1", port=8050)
         >>> server.run()
     """
 
@@ -53,6 +53,7 @@ class DashboardServer:
         theme: PlotTheme,
         plot_config: PlotConfig,
         loader: DataLoader,
+        host: str = "127.0.0.1",
         port: int = 8050,
     ):
         """Initialize the dashboard server."""
@@ -62,6 +63,7 @@ class DashboardServer:
         self.theme = theme
         self.plot_config = plot_config
         self.loader = loader
+        self.host = host
         self.port = port
 
         # Initialize Dash app with Bootstrap theme
@@ -151,7 +153,7 @@ class DashboardServer:
         self.register_callbacks()
 
         # Print startup message
-        url = f"http://127.0.0.1:{self.port}"
+        url = f"http://{self.host}:{self.port}"
         mode_name = self.mode.value.replace("_", "-")
         run_word = "run" if len(self.runs) == 1 else "runs"
 
@@ -178,4 +180,4 @@ class DashboardServer:
             print(f"Please open {url} manually in your browser\n")
 
         # Start server (this blocks until Ctrl+C)
-        self.app.run(debug=False, host="127.0.0.1", port=self.port, use_reloader=False)
+        self.app.run(debug=False, host=self.host, port=self.port, use_reloader=False)
