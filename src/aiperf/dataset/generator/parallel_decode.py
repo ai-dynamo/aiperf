@@ -4,12 +4,19 @@
 """Parallel decode utilities for batch tokenizer operations.
 
 This module provides functions to decode multiple token sequences in parallel
-using ProcessPoolExecutor, bypassing Python's GIL for CPU-bound tokenizer operations.
+using ProcessPoolExecutor with billiard context, bypassing Python's GIL for
+CPU-bound tokenizer operations.
+
+billiard is used because AIPerf services run as daemon processes, and Python's
+stdlib multiprocessing does not allow daemon processes to spawn children.
+billiard (used by Celery) removes this restriction by overriding Process.start().
 """
 
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING
+
+import billiard
 
 if TYPE_CHECKING:
     from aiperf.common.tokenizer import Tokenizer
@@ -65,6 +72,9 @@ def parallel_decode(
     For small batches (< 10 sequences), it falls back to sequential decoding
     to avoid process spawn overhead.
 
+    Uses billiard's context to allow spawning from daemon processes (AIPerf
+    services run as daemons, and Python's stdlib forbids daemon children).
+
     Args:
         token_sequences: List of token ID lists to decode.
         tokenizer_name: Name or path of the pretrained tokenizer to use in workers.
@@ -78,9 +88,7 @@ def parallel_decode(
         return []
 
     # For small batches, sequential is faster (avoid process overhead)
-    # if len(token_sequences) < 10:
-    # TODO: Temp fix until we can find a solution to the daemon process issue
-    if True:
+    if len(token_sequences) < 10:
         from aiperf.common.tokenizer import Tokenizer
 
         tokenizer = Tokenizer.from_pretrained(tokenizer_name)
@@ -91,10 +99,14 @@ def parallel_decode(
 
     num_workers = max_workers or min(mp.cpu_count() or 4, 8)
 
+    # Use billiard context to bypass daemon process restriction
+    mp_context = billiard.get_context()
+
     with ProcessPoolExecutor(
         max_workers=num_workers,
         initializer=_init_worker,
         initargs=(tokenizer_name,),
+        mp_context=mp_context,
     ) as executor:
         results = list(
             executor.map(_decode_tokens, token_sequences, chunksize=chunksize)
