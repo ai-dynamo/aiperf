@@ -649,15 +649,15 @@ class TestMooncakeTraceDatasetLoader:
     @pytest.mark.parametrize(
         "max_osl,expected_output_lengths,description",
         [
-            (None, [50, 100, 150, 200], "no truncation when max_osl is None"),
-            (500, [50, 100, 150, 200], "no truncation when max_osl is high enough"),
-            (200, [50, 100, 150, 200], "output_length=200 not truncated when max_osl=200"),
-            (150, [50, 100, 150, 150], "truncates output_length > 150 to 150"),
-            (75, [50, 75, 75, 75], "truncates output_length > 75 to 75"),
-            (25, [25, 25, 25, 25], "truncates all output_lengths to 25"),
+            (None, [50, 100, 150, 200], "no capping when max_osl is None"),
+            (500, [50, 100, 150, 200], "no capping when max_osl is high enough"),
+            (200, [50, 100, 150, 200], "output_length=200 not capped when max_osl=200"),
+            (150, [50, 100, 150, 150], "caps output_length > 150 to 150"),
+            (75, [50, 75, 75, 75], "caps output_length > 75 to 75"),
+            (25, [25, 25, 25, 25], "caps all output_lengths to 25"),
         ],
     )  # fmt: skip
-    def test_load_dataset_with_max_osl_truncation(
+    def test_load_dataset_with_max_osl_capping(
         self,
         create_jsonl_file,
         mock_prompt_generator,
@@ -665,7 +665,7 @@ class TestMooncakeTraceDatasetLoader:
         expected_output_lengths,
         description,
     ):
-        """Test dataset loading with max_osl truncation (not filtering)."""
+        """Test dataset loading with max_osl capping (not filtering)."""
         content = [
             '{"input_length": 100, "output_length": 50, "timestamp": 1000}',
             '{"input_length": 100, "output_length": 100, "timestamp": 2000}',
@@ -685,17 +685,17 @@ class TestMooncakeTraceDatasetLoader:
         )
         dataset = loader.load_dataset()
 
-        # All traces should be kept (truncation, not filtering)
+        # All traces should be kept (capping, not filtering)
         assert len(dataset) == 4, f"Failed for {description}"
 
-        # Check output_lengths are truncated correctly
+        # Check output_lengths are capped correctly
         traces = list(dataset.values())
         actual_output_lengths = [t[0].output_length for t in traces]
         assert actual_output_lengths == expected_output_lengths, (
             f"Failed for {description}"
         )
 
-    def test_load_dataset_max_osl_does_not_truncate_none_output_length(
+    def test_load_dataset_max_osl_does_not_cap_none_output_length(
         self, create_jsonl_file, mock_prompt_generator
     ):
         """Test that max_osl does not affect traces without output_length."""
@@ -724,16 +724,16 @@ class TestMooncakeTraceDatasetLoader:
         # First trace: no output_length, should remain None
         assert traces[0][0].output_length is None
 
-        # Second trace: output_length=200 should be truncated to 50
+        # Second trace: output_length=200 should be capped to 50
         assert traces[1][0].output_length == 50
 
         # Third trace: text_input, no output_length, should remain None
         assert traces[2][0].output_length is None
 
-    def test_load_dataset_max_osl_logs_truncated_traces(
+    def test_load_dataset_max_osl_logs_capped_traces(
         self, create_jsonl_file, mock_prompt_generator, caplog
     ):
-        """Test that truncated traces due to max_osl are properly logged."""
+        """Test that capped traces due to max_osl are properly logged."""
         caplog.set_level(logging.INFO)
 
         content = [
@@ -754,21 +754,18 @@ class TestMooncakeTraceDatasetLoader:
         )
         loader.load_dataset()
 
-        # Should truncate 2 traces (output_length=100 and 150 exceed max_osl=75)
-        assert (
-            "Truncated 2 traces because output_length exceeded max_osl of 75"
-            in caplog.text
-        )
+        # Should cap 2 traces (output_length=100 and 150 exceed max_osl=75)
+        assert "2 traces exceeded max_osl of 75 and were capped to 75" in caplog.text
 
     def test_load_dataset_max_isl_and_max_osl_combined(
         self, create_jsonl_file, mock_prompt_generator
     ):
-        """Test that max_isl filtering and max_osl truncation work together."""
+        """Test that max_isl filtering and max_osl capping work together."""
         content = [
-            '{"input_length": 100, "output_length": 200, "timestamp": 1000}',  # Passes max_isl, truncated by max_osl
+            '{"input_length": 100, "output_length": 200, "timestamp": 1000}',  # Passes max_isl, capped by max_osl
             '{"input_length": 300, "output_length": 50, "timestamp": 2000}',   # Filtered by max_isl
-            '{"input_length": 150, "output_length": 150, "timestamp": 3000}',  # Passes max_isl, truncated by max_osl
-            '{"input_length": 50, "output_length": 50, "timestamp": 4000}',    # Passes both, no truncation
+            '{"input_length": 150, "output_length": 150, "timestamp": 3000}',  # Passes max_isl, capped by max_osl
+            '{"input_length": 50, "output_length": 50, "timestamp": 4000}',    # Passes both, no capping
         ]  # fmt: skip
         filename = create_jsonl_file(content)
 
@@ -787,15 +784,15 @@ class TestMooncakeTraceDatasetLoader:
         assert len(dataset) == 3
 
         traces = list(dataset.values())
-        # First: input_length=100 passes, output_length=200 truncated to 100
+        # First: input_length=100 passes, output_length=200 capped to 100
         assert traces[0][0].input_length == 100
         assert traces[0][0].output_length == 100
 
-        # Second: input_length=150 passes, output_length=150 truncated to 100
+        # Second: input_length=150 passes, output_length=150 capped to 100
         assert traces[1][0].input_length == 150
         assert traces[1][0].output_length == 100
 
-        # Third: input_length=50 passes, output_length=50 not truncated
+        # Third: input_length=50 passes, output_length=50 not capped
         assert traces[2][0].input_length == 50
         assert traces[2][0].output_length == 50
 
