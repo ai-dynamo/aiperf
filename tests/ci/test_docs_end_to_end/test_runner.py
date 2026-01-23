@@ -83,7 +83,7 @@ class EndToEndTestRunner:
             logger.info("=" * 60)
 
     def _build_aiperf_container(self) -> bool:
-        """Build AIPerf container using test target"""
+        """Build AIPerf container from Dockerfile"""
         logger.info("Building AIPerf container...")
 
         # Get repo root using centralized function
