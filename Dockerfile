@@ -159,3 +159,18 @@ ENV VIRTUAL_ENV=/opt/aiperf/venv \
 
 # Set bash as entrypoint
 ENTRYPOINT ["/bin/bash", "-c"]
+
+############################################
+############### Test Image #################
+############################################
+# Test stage: env-builder has aiperf, just add curl
+FROM env-builder AS test
+
+RUN apt-get update -y && \
+    apt-get install -y curl && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV VIRTUAL_ENV=/opt/aiperf/venv \
+    PATH="/opt/aiperf/venv/bin:${PATH}"
+
+ENTRYPOINT ["/bin/bash", "-c"]
