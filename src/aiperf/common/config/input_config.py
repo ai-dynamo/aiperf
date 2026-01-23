@@ -109,13 +109,18 @@ class InputConfig(BaseConfig):
         options and defer validation to runtime when the actual type is determined.
         """
         if (
-            self.synthesis.should_synthesize()
+            (
+                self.synthesis.should_synthesize()
+                or self.synthesis.max_isl is not None
+                or self.synthesis.max_osl is not None
+            )
             and self.custom_dataset_type is not None
             and self.custom_dataset_type != CustomDatasetType.MOONCAKE_TRACE
         ):
             raise ValueError(
                 "Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
-                "--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier) "
+                "--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier, "
+                "--synthesis-max-isl, --synthesis-max-osl) "
                 "require --custom-dataset-type mooncake_trace"
             )
         return self

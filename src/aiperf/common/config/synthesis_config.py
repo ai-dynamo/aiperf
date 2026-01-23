@@ -61,16 +61,28 @@ class SynthesisConfig(BaseConfig):
         Field(
             default=None,
             ge=1,
-            description="Maximum input sequence length to include in synthesis",
+            description="Maximum input sequence length for filtering. Traces with input_length > max_isl are skipped.",
         ),
         CLIParameter(name=("--synthesis-max-isl",), group=_CLI_GROUP),
+    ] = None
+
+    max_osl: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description="Maximum output sequence length cap. Traces with output_length > max_osl are capped to max_osl.",
+        ),
+        CLIParameter(name=("--synthesis-max-osl",), group=_CLI_GROUP),
     ] = None
 
     def should_synthesize(self) -> bool:
         """Check if synthesis should be auto-triggered based on non-default values.
 
+        max_isl and max_osl are filters and caps, not synthesis transformations, so they don't trigger synthesis.
+
         Returns:
-            True if any synthesis parameter differs from defaults.
+            True if any synthesis parameter differs from defaults (excluding max_isl and max_osl)
         """
         return (
             self.speedup_ratio != 1.0

@@ -283,17 +283,76 @@ def test_synthesis_defaults_with_any_dataset_type_succeeds():
 
 
 def test_synthesis_max_isl_alone_does_not_trigger_synthesis():
-    """Test that max_isl alone doesn't trigger synthesis validation.
+    """Test that max_isl alone doesn't trigger should_synthesize().
 
     max_isl is a filter, not a synthesis transformation, so it shouldn't
-    require mooncake_trace by itself.
+    trigger should_synthesize() even though it requires mooncake_trace.
     """
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         config = InputConfig(
-            custom_dataset_type=CustomDatasetType.SINGLE_TURN,
+            custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
             file=temp_file.name,
             synthesis=SynthesisConfig(max_isl=4096),
         )
         # max_isl alone doesn't trigger should_synthesize()
         assert not config.synthesis.should_synthesize()
         assert config.synthesis.max_isl == 4096
+
+
+def test_synthesis_max_osl_alone_does_not_trigger_synthesis():
+    """Test that max_osl alone doesn't trigger should_synthesize().
+
+    max_osl is a cap, not a synthesis transformation, so it shouldn't
+    trigger should_synthesize() even though it requires mooncake_trace.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        config = InputConfig(
+            custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            file=temp_file.name,
+            synthesis=SynthesisConfig(max_osl=2048),
+        )
+        # max_osl alone doesn't trigger should_synthesize()
+        assert not config.synthesis.should_synthesize()
+        assert config.synthesis.max_osl == 2048
+
+
+@pytest.mark.parametrize(
+    "dataset_type",
+    [
+        CustomDatasetType.SINGLE_TURN,
+        CustomDatasetType.MULTI_TURN,
+        CustomDatasetType.RANDOM_POOL,
+    ],
+)  # fmt: skip
+def test_synthesis_max_isl_requires_mooncake_trace(dataset_type):
+    """Test that max_isl requires mooncake_trace dataset type."""
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        with pytest.raises(ValidationError) as exc:
+            InputConfig(
+                custom_dataset_type=dataset_type,
+                file=temp_file.name,
+                synthesis=SynthesisConfig(max_isl=4096),
+            )
+
+        assert "require --custom-dataset-type mooncake_trace" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "dataset_type",
+    [
+        CustomDatasetType.SINGLE_TURN,
+        CustomDatasetType.MULTI_TURN,
+        CustomDatasetType.RANDOM_POOL,
+    ],
+)  # fmt: skip
+def test_synthesis_max_osl_requires_mooncake_trace(dataset_type):
+    """Test that max_osl requires mooncake_trace dataset type."""
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        with pytest.raises(ValidationError) as exc:
+            InputConfig(
+                custom_dataset_type=dataset_type,
+                file=temp_file.name,
+                synthesis=SynthesisConfig(max_osl=2048),
+            )
+
+        assert "require --custom-dataset-type mooncake_trace" in str(exc.value)

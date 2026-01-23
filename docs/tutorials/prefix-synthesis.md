@@ -173,16 +173,30 @@ aiperf profile \
 ```
 
 #### `--synthesis-max-isl` (optional)
-Cap the maximum input sequence length:
-- Not set: No cap
-- `4096`: Maximum 4,096 tokens per request
+Filter traces by maximum input sequence length. Traces with input_length > max_isl are skipped:
+- Not set: No filtering
+- `4096`: Skip traces with more than 4,096 input tokens
 
-Example: Test with bounded context:
+Example: Filter out long contexts:
 ```bash
 aiperf profile \
     --input-file traces/production.jsonl \
     --custom-dataset-type mooncake_trace \
     --synthesis-max-isl 4096 \
+    ...
+```
+
+#### `--synthesis-max-osl` (optional)
+Cap traces to a maximum output sequence length. Traces with output_length > max_osl are capped to max_osl:
+- Not set: No capping
+- `2048`: Cap output_length to 2,048 tokens
+
+Example: Cap output lengths to 2,048 tokens:
+```bash
+aiperf profile \
+    --input-file traces/production.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --synthesis-max-osl 2048 \
     ...
 ```
 
