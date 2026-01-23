@@ -485,7 +485,7 @@ Multiplier for core prefix branch lengths in radix tree.
 
 #### `--synthesis-prefix-root-multiplier` `<int>`
 
-Number of times to replicate the radix tree structure.
+Number of independent radix trees to distribute traces across.
 <br>_Default: `1`_
 
 #### `--synthesis-prompt-len-multiplier` `<float>`
