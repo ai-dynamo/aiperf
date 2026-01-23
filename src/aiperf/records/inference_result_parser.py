@@ -230,29 +230,31 @@ class InferenceResultParser(CommunicationMixin):
             return None
 
         tokenizer = await self.get_tokenizer(request_record.model_name)
-        input_token_count = 0
+        prompt_texts: list[str] = []
 
         # Include system_message if present (shared system prompt)
         if request_record.request_info and request_record.request_info.system_message:
-            input_token_count += len(
-                tokenizer.encode(request_record.request_info.system_message)
-            )
+            prompt_texts.append(request_record.request_info.system_message)
 
         # Include user_context_message if present (per-conversation user context)
         if (
             request_record.request_info
             and request_record.request_info.user_context_message
         ):
-            input_token_count += len(
-                tokenizer.encode(request_record.request_info.user_context_message)
-            )
+            prompt_texts.append(request_record.request_info.user_context_message)
 
         # Include all turns' text content
-        # TODO: We need to handle images, audios, videos, etc.
         for turn in turns:
             for text in turn.texts:
-                input_token_count += len(tokenizer.encode("".join(text.contents)))
-        return input_token_count
+                prompt_texts.append("".join(text.contents))
+
+        if not prompt_texts:
+            return None
+
+        # NOTE: We combine all the prompt texts with a space separator to create a single prompt string.
+        # This will get us the most accurate token count for the prompt by avoiding any potential
+        # boundary issues that could occur if we were to tokenize each text individually.
+        return self._compute_token_count(tokenizer, prompt_texts, separator=" ")
 
     async def _compute_server_token_counts(
         self, responses: list[ParsedResponse]
@@ -317,20 +319,21 @@ class InferenceResultParser(CommunicationMixin):
         return output_texts, reasoning_texts
 
     def _compute_token_count(
-        self, tokenizer: Tokenizer, texts: list[str]
+        self, tokenizer: Tokenizer, texts: list[str], separator: str = ""
     ) -> int | None:
-        """Compute the number of tokens in the texts by joining them without any separators and encoding with the tokenizer.
+        """Compute the number of tokens in the texts by joining them with an optional separator (default none) and encoding with the tokenizer.
 
         Args:
             tokenizer: The tokenizer to use
             texts: List of texts to compute the token count for
+            separator: The separator to use between the texts
 
         Returns:
             The number of tokens in the texts, or None if the texts are empty
         """
         if not texts:
             return None
-        return len(tokenizer.encode("".join(texts)))
+        return len(tokenizer.encode(separator.join(texts)))
 
     async def _compute_client_side_token_counts(
         self, request_record: RequestRecord, responses: list[ParsedResponse]

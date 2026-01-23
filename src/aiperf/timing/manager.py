@@ -3,7 +3,6 @@
 
 
 import asyncio
-import gc
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -129,13 +128,6 @@ class TimingManager(BaseComponentService):
         if not self._phase_orchestrator:
             raise InvalidStateError("No phase orchestrator configured")
 
-        # Disable GC during profiling to eliminate unpredictable latency spikes.
-        # Collect and freeze first to minimize memory pressure during the benchmark.
-        self.debug("Disabling garbage collection for stable timing")
-        gc.collect()
-        gc.freeze()
-        gc.disable()
-
         # Start event loop health monitoring only during the benchmark
         self.event_loop_monitor.start()
 
@@ -164,16 +156,6 @@ class TimingManager(BaseComponentService):
             await self._phase_orchestrator.stop()
 
         self.event_loop_monitor.stop()
-        self._re_enable_gc()
-
-    def _re_enable_gc(self) -> None:
-        """Re-enable garbage collection."""
-        self.debug(
-            "Re-enabling garbage collection to allow the timing manager "
-            "to clean up resources"
-        )
-        gc.unfreeze()
-        gc.enable()
 
 
 def main() -> None:

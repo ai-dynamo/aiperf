@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import gc
 import time
 import uuid
 
@@ -52,6 +51,7 @@ from aiperf.common.models import (
 from aiperf.common.protocols import (
     DatasetClientStoreProtocol,
     PushClientProtocol,
+    RequestClientProtocol,
     StreamingDealerClientProtocol,
 )
 from aiperf.credit.messages import (
@@ -198,6 +198,16 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._prefill_concurrency_enabled: bool = (
             self.user_config.loadgen.prefill_concurrency is not None
             or self.user_config.loadgen.warmup_prefill_concurrency is not None
+        )
+
+        # Only used as a fallback when dataset client is not initialized
+        # or was not available when the credit was dropped. Must be created here
+        # so it can be attached to the worker lifecycle.
+        self.conversation_request_client: RequestClientProtocol = (
+            self.comms.create_request_client(
+                address=CommAddress.DATASET_MANAGER_PROXY_FRONTEND,
+                bind=False,
+            )
         )
 
     async def _on_event_loop_blocked_callback(self, delta_ms: float) -> None:
@@ -551,6 +561,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """
         if self._dataset_client is not None:
             return await self._dataset_client.get_conversation(conversation_id)
+        elif self.stop_requested:
+            raise asyncio.CancelledError("Stop requested while retrieving conversation")
 
         return await self._request_conversation_from_dataset_manager(
             conversation_id, credit_context
@@ -663,12 +675,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self._dataset_configured_event.wait(),
             timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
         )
-        self.debug(
-            "Disabling garbage collection to prevent large pauses during profiling"
-        )
-        gc.collect()
-        gc.freeze()
-        gc.disable()
         if self.is_debug_enabled:
             memory_usage = self.get_process_health().memory_usage / BYTES_PER_MIB
             self.memory_usage_before_profiling = memory_usage
@@ -686,19 +692,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self.debug("Dataset client stopped")
 
         self.event_loop_monitor.stop()
-
-        self.debug(
-            "Re-enabling garbage collection to allow the worker to clean up resources"
-        )
-        if self.is_debug_enabled:
-            health = self.get_process_health()
-            memory_usage = health.memory_usage / BYTES_PER_MIB
-            self.debug(
-                f"Memory usage after profiling: {memory_usage:.2f} MiB (delta: {memory_usage - (self.memory_usage_before_profiling or 0):.2f} MiB)"
-            )
-
-        gc.unfreeze()
-        gc.enable()
 
 
 def main() -> None:
