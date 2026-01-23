@@ -871,6 +871,11 @@ Show detailed error tracebacks in console (errors are always logged to ~/.aiperf
 
 Launch interactive dashboard server instead of generating static PNGs.
 
+#### `--host` `<str>`
+
+Host for dashboard server (only used with --dashboard). Defaults to 127.0.0.1.
+<br>_Default: `127.0.0.1`_
+
 #### `--port` `<int>`
 
 Port for dashboard server (only used with --dashboard). Defaults to 8050.

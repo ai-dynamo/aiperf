@@ -495,14 +495,16 @@ class SystemController(SignalHandlerMixin, BaseService):
         """Handle a profile results message."""
         self.trace_or_debug(
             lambda: f"Received profile results message: {message}",
-            lambda: f"Received profile results message: {len(message.results.results)} records",
+            lambda: f"Received profile results message: {len(message.results.results.records) if message.results.results else 0} records",
         )
         if message.results.errors:
             self.error(
                 f"Received process records result message with errors: {message.results.errors}"
             )
 
-        self.debug(lambda: f"Error summary: {message.results.results.error_summary}")
+        self.debug(
+            lambda: f"Error summary: {message.results.results.error_summary if message.results.results else 'N/A'}"
+        )
 
         self._profile_results = message.results
 
@@ -523,7 +525,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         try:
             self.trace_or_debug(
                 lambda: f"Received telemetry results message: {message}",
-                lambda: f"Received telemetry results message: {len(message.telemetry_result.results.endpoints)} endpoints",
+                lambda: f"Received telemetry results message: {len(message.telemetry_result.results.endpoints) if message.telemetry_result.results else 0} endpoints",
             )
 
             telemetry_results = message.telemetry_result.results
@@ -555,11 +557,11 @@ class SystemController(SignalHandlerMixin, BaseService):
         try:
             self.trace_or_debug(
                 lambda: f"Received server metrics results message: {message}",
-                lambda: f"Received server metrics results message: {len(message.server_metrics_result.results.endpoint_summaries)} endpoints",
+                lambda: f"Received server metrics results message: {len(message.server_metrics_result.results.endpoint_summaries or {}) if message.server_metrics_result.results else 0} endpoints",
             )
 
             self.debug(
-                lambda: f"Server metrics error summary: {message.server_metrics_result.results.error_summary}"
+                lambda: f"Server metrics error summary: {message.server_metrics_result.results.error_summary if message.server_metrics_result.results else 'N/A'}"
             )
 
             server_metrics_results = message.server_metrics_result.results
