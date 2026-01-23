@@ -348,7 +348,7 @@ Parameters for synthetic trace generation.
 **Fields:**
 - `speedup_ratio: float = 1.0` - Timestamp scaling multiplier (ge 0.0)
 - `prefix_len_multiplier: float = 1.0` - Core prefix length multiplier (ge 0.0)
-- `prefix_root_multiplier: int = 1` - Tree replication factor (ge 1)
+- `prefix_root_multiplier: int = 1` - Number of independent trees to distribute traces across (ge 1)
 - `prompt_len_multiplier: float = 1.0` - Leaf prompt length multiplier (ge 0.0)
 - `max_isl: int | None = None` - Maximum input sequence length filter
 - `block_size: int = 512` - KV cache page size (ge 1)

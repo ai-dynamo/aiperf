@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Tests for usage field passthrough in InferenceResultParser.
 
@@ -20,6 +20,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.records.inference_result_parser import InferenceResultParser
+from tests.unit.records.conftest import create_test_request_info
 
 
 @pytest.fixture
@@ -76,10 +77,10 @@ def parser():
 def create_test_record() -> RequestRecord:
     """Helper to create a simple test RequestRecord."""
     return RequestRecord(
-        conversation_id="test",
-        turn_index=0,
         model_name="test-model",
-        turns=[Turn(role="user", texts=[Text(contents=["Test input"])])],
+        request_info=create_test_request_info(
+            turns=[Turn(role="user", texts=[Text(contents=["Test input"])])]
+        ),
     )
 
 

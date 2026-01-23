@@ -146,6 +146,46 @@ class Turn(AIPerfBaseModel):
             delay_ms=self.delay,
         )
 
+    def copy_with_stripped_media(self) -> "Turn":
+        """Create a copy of this turn with multimodal data replaced by placeholders.
+
+        This preserves text data (needed for tokenization) but replaces potentially
+        large image/audio/video contents with small placeholder strings. This is
+        more efficient than a full deep copy followed by stripping.
+
+        Returns:
+            A new Turn with stripped multimodal contents.
+        """
+        return Turn(
+            model=self.model,
+            role=self.role,
+            timestamp=self.timestamp,
+            delay=self.delay,
+            max_tokens=self.max_tokens,
+            texts=[Text(name=t.name, contents=list(t.contents)) for t in self.texts],
+            images=[
+                Image(
+                    name=img.name,
+                    contents=[f"image_{i}" for i in range(len(img.contents))],
+                )
+                for img in self.images
+            ],
+            audios=[
+                Audio(
+                    name=aud.name,
+                    contents=[f"audio_{i}" for i in range(len(aud.contents))],
+                )
+                for aud in self.audios
+            ],
+            videos=[
+                Video(
+                    name=vid.name,
+                    contents=[f"video_{i}" for i in range(len(vid.contents))],
+                )
+                for vid in self.videos
+            ],
+        )
+
 
 class ConversationMetadata(AIPerfBaseModel):
     """Metadata of a conversation."""

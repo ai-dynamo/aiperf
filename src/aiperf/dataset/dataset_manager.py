@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import gc
 import time
 
 import orjson
@@ -22,6 +23,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.factories import (
     ComposerFactory,
     DatasetBackingStoreFactory,
+    DatasetClientStoreFactory,
     EndpointFactory,
     ServiceFactory,
 )
@@ -45,6 +47,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.protocols import (
     DatasetBackingStoreProtocol,
+    DatasetClientStoreProtocol,
     EndpointProtocol,
     ServiceProtocol,
 )
@@ -94,6 +97,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 benchmark_id=user_config.benchmark_id,
             )
         )
+        self._dataset_client: DatasetClientStoreProtocol | None = None
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -111,8 +115,32 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         begin = time.perf_counter()
         await self._configure_dataset()
         await self._generate_inputs_json_file()
+        await self._configure_dataset_client_and_free_memory()
+
         duration = time.perf_counter() - begin
         self.info(lambda: f"Dataset configured in {duration:.2f} seconds")
+
+    async def _configure_dataset_client_and_free_memory(self) -> None:
+        """Configure the dataset client for serving fallback requests."""
+        # Create dataset client for serving fallback requests, then free in-memory dataset
+        client_metadata = self._backing_store.get_client_metadata()
+        self._dataset_client = DatasetClientStoreFactory.create_instance(
+            client_metadata=client_metadata,
+        )
+        await self._dataset_client.initialize()
+        # Now that the client is ready, signal that fallback requests can be served
+        self.dataset_configured.set()
+        # Free the in-memory dataset now that we have the client to serve fallback requests.
+        # Reassign to new empty containers (not .clear()) to release object references,
+        # then run gc.collect() twice to ensure circular references are cleaned up.
+        conversation_count = len(self.dataset)
+        self.dataset = {}
+        self._conversation_ids_cache = []
+        gc.collect()
+        gc.collect()
+        self.info(
+            f"Dataset client initialized and freed {conversation_count} conversations from memory"
+        )
 
     async def _configure_tokenizer(self) -> None:
         """Configure the tokenizer for the dataset manager."""
@@ -304,7 +332,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             f"unique conversations: {len(self.dataset_metadata.conversations)}, "
             f"unique turn count: {self.dataset_metadata.total_turn_count}"
         )
-        self.dataset_configured.set()
+        # Note: dataset_configured event is set in _profile_configure_command after
+        # the dataset client is initialized, to avoid a race condition where fallback
+        # requests arrive before the client is ready.
         await self.publish(
             DatasetConfiguredNotification(
                 service_id=self.service_id,
@@ -317,39 +347,32 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     async def _handle_conversation_request(
         self, message: ConversationRequestMessage
     ) -> ConversationResponseMessage:
-        """Handle a conversation request."""
+        """Handle a conversation request using the dataset client."""
         self.debug(lambda: f"Handling conversation request: {message}")
 
         await self._wait_for_dataset_configuration()
 
-        if not self.dataset:
+        if self._dataset_client is None:
             raise self._service_error(
-                "Dataset is empty and must be configured before handling requests.",
+                "Dataset client is not initialized. Dataset must be configured before handling requests.",
             )
 
-        return self._return_conversation_by_id(
-            request_id=message.request_id,
-            conversation_id=message.conversation_id,
-        )
-
-    def _return_conversation_by_id(
-        self, request_id: str | None, conversation_id: str
-    ) -> ConversationResponseMessage:
-        """Return a conversation if it exists, otherwise raise an error."""
-
-        if conversation_id not in self.dataset:
-            raise self._service_error(
-                f"Conversation {conversation_id} not found in dataset.",
+        try:
+            conversation = await self._dataset_client.get_conversation(
+                message.conversation_id
             )
+        except KeyError:
+            raise self._service_error(
+                f"Conversation {message.conversation_id} not found in dataset.",
+            ) from None
 
-        conversation = self.dataset[conversation_id]
         self.trace_or_debug(
             lambda: f"Sending conversation response: {conversation}",
             lambda: f"Sending conversation response with id: {conversation.session_id}",
         )
         return ConversationResponseMessage(
             service_id=self.service_id,
-            request_id=request_id,
+            request_id=message.request_id,
             conversation=conversation,
         )
 
@@ -357,15 +380,25 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     async def _handle_conversation_turn_request(
         self, message: ConversationTurnRequestMessage
     ) -> ConversationTurnResponseMessage:
-        """Handle a turn request."""
+        """Handle a turn request using the dataset client."""
         self.debug(lambda: f"Handling turn request: {message}")
 
-        if message.conversation_id not in self.dataset:
+        await self._wait_for_dataset_configuration()
+
+        if self._dataset_client is None:
             raise self._service_error(
-                f"Conversation {message.conversation_id} not found in dataset.",
+                "Dataset client is not initialized. Dataset must be configured before handling requests.",
             )
 
-        conversation = self.dataset[message.conversation_id]
+        try:
+            conversation = await self._dataset_client.get_conversation(
+                message.conversation_id
+            )
+        except KeyError as e:
+            raise self._service_error(
+                f"Conversation {message.conversation_id} not found in dataset.",
+            ) from e
+
         if message.turn_index >= len(conversation.turns):
             raise self._service_error(
                 f"Turn index {message.turn_index} is out of range for conversation {message.conversation_id}.",
@@ -395,8 +428,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             )
 
     @on_stop
-    async def _cleanup_backing_store(self) -> None:
-        """Clean up the backing store and associated mmap files."""
+    async def _cleanup(self) -> None:
+        """Clean up the backing store, dataset client, and associated mmap files."""
+        if self._dataset_client is not None:
+            await self._dataset_client.stop()
+            self.debug("Dataset client cleanup complete")
         if self._backing_store is not None:
             await self._backing_store.stop()
             self.debug("Backing store cleanup complete")
