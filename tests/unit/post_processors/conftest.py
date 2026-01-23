@@ -10,7 +10,13 @@ from unittest.mock import Mock
 import pytest
 
 from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
-from aiperf.common.enums import CreditPhase, EndpointType, ExportLevel, MessageType
+from aiperf.common.enums import (
+    CreditPhase,
+    EndpointType,
+    ExportLevel,
+    MessageType,
+    ModelSelectionStrategy,
+)
 from aiperf.common.enums.metric_enums import MetricValueTypeT
 from aiperf.common.messages import MetricRecordsMessage
 from aiperf.common.mixins import AIPerfLifecycleMixin
@@ -18,10 +24,17 @@ from aiperf.common.models import (
     ErrorDetails,
     ParsedResponse,
     ParsedResponseRecord,
+    RequestInfo,
     RequestRecord,
     TelemetryMetrics,
     TelemetryRecord,
     TextResponse,
+)
+from aiperf.common.models.model_endpoint_info import (
+    EndpointInfo,
+    ModelEndpointInfo,
+    ModelInfo,
+    ModelListInfo,
 )
 from aiperf.common.models.record_models import (
     MetricRecordMetadata,
@@ -109,6 +122,34 @@ def user_config_raw(tmp_artifact_dir: Path) -> UserConfig:
     )
 
 
+def _create_test_request_info(
+    model_name: str = "test-model",
+    conversation_id: str = "test-conversation",
+    turn_index: int = 0,
+    turns: list | None = None,
+) -> RequestInfo:
+    """Create a RequestInfo for testing post processors."""
+    return RequestInfo(
+        model_endpoint=ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name=model_name)],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_url="http://localhost:8000/v1/test",
+            ),
+        ),
+        turns=turns or [],
+        turn_index=turn_index,
+        credit_num=0,
+        credit_phase=CreditPhase.PROFILING,
+        x_request_id="test-request-id",
+        x_correlation_id="test-correlation-id",
+        conversation_id=conversation_id,
+    )
+
+
 @pytest.fixture
 def sample_parsed_record_with_raw_responses() -> ParsedResponseRecord:
     """Create a sample ParsedResponseRecord with raw responses for raw record testing.
@@ -116,7 +157,7 @@ def sample_parsed_record_with_raw_responses() -> ParsedResponseRecord:
     This fixture includes raw TextResponse objects in the request, which is needed
     for raw record serialization tests.
     """
-    from aiperf.common.models import Text, Turn
+    from aiperf.common.models import Text, TextResponseData, Turn
 
     turns = [
         Turn(
@@ -131,12 +172,11 @@ def sample_parsed_record_with_raw_responses() -> ParsedResponseRecord:
         TextResponse(text=" world", perf_ns=DEFAULT_LAST_RESPONSE_NS),
     ]
 
-    from aiperf.common.models import TextResponseData
-
     request = RequestRecord(
-        turns=turns,
-        conversation_id="conv-123",
-        turn_index=0,
+        request_info=_create_test_request_info(
+            conversation_id="conv-123",
+            turns=turns,
+        ),
         model_name="test-model",
         start_perf_ns=DEFAULT_START_TIME_NS,
         timestamp_ns=DEFAULT_START_TIME_NS,
@@ -185,9 +225,10 @@ def error_parsed_record() -> ParsedResponseRecord:
     ]
 
     request = RequestRecord(
-        turns=turns,
-        conversation_id="test-conversation-error",
-        turn_index=0,
+        request_info=_create_test_request_info(
+            conversation_id="test-conversation-error",
+            turns=turns,
+        ),
         model_name="test-model",
         start_perf_ns=DEFAULT_START_TIME_NS,
         timestamp_ns=DEFAULT_START_TIME_NS,

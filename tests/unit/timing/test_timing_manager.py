@@ -153,35 +153,6 @@ class TestTimingManagerDatasetConfiguration:
             assert mock_orch.call_args.kwargs["dataset_metadata"] == mock_metadata
 
 
-class TestTimingManagerGarbageCollection:
-    @pytest.mark.asyncio
-    async def test_gc_disabled_on_profiling_start(self, configured_manager) -> None:
-        with patch("aiperf.timing.manager.gc") as mock_gc:
-            await configured_manager._on_start_profiling(
-                CommandMessage.model_construct(service_id="test-controller")
-            )
-            calls = [c[0] for c in mock_gc.method_calls]
-            assert (
-                calls.index("collect") < calls.index("freeze") < calls.index("disable")
-            )
-
-    @pytest.mark.asyncio
-    async def test_gc_enabled_on_stop(self, configured_manager) -> None:
-        with patch("aiperf.timing.manager.gc") as mock_gc:
-            await configured_manager._timing_manager_stop()
-            calls = [c[0] for c in mock_gc.method_calls]
-            assert calls.index("unfreeze") < calls.index("enable")
-
-    @pytest.mark.asyncio
-    async def test_gc_enabled_on_stop_without_orchestrator(
-        self, create_manager, user_config
-    ) -> None:
-        mgr = create_manager(user_config)
-        with patch("aiperf.timing.manager.gc") as mock_gc:
-            await mgr._timing_manager_stop()
-            assert mock_gc.unfreeze.called and mock_gc.enable.called
-
-
 class TestTimingManagerCancelCommand:
     @pytest.mark.asyncio
     async def test_cancel_calls_orchestrator_cancel(self, configured_manager) -> None:
@@ -234,10 +205,9 @@ class TestTimingManagerStartProfilingAndInitialization:
         mock_orchestrator.start = mock_start
         mgr._phase_orchestrator = mock_orchestrator
 
-        with patch("aiperf.timing.manager.gc"):
-            await mgr._on_start_profiling(
-                CommandMessage.model_construct(service_id="test-controller")
-            )
+        await mgr._on_start_profiling(
+            CommandMessage.model_construct(service_id="test-controller")
+        )
         await asyncio.sleep(0.05)  # Allow execute_async to run
         assert start_called.is_set()
 
