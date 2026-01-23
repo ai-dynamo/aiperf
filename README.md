@@ -12,7 +12,7 @@ SPDX-License-Identifier: Apache-2.0
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ai-dynamo/aiperf)
 
 
-**[Architecture](docs/architecture.md)**| **[Design Proposals](https://github.com/ai-dynamo/enhancements)** | **[Migrating from Genai-Perf](docs/migrating.md)** | **[CLI Options](docs/cli_options.md)**
+**[Architecture](docs/architecture.md)** | **[Design Proposals](https://github.com/ai-dynamo/enhancements)** | **[Migrating from Genai-Perf](docs/migrating.md)** | **[CLI Options](docs/cli_options.md)** | **[Metrics Reference](docs/metrics_reference.md)**
 
 
 AIPerf is a comprehensive benchmarking tool that measures the performance of generative AI models served by your preferred inference solution.
@@ -115,7 +115,6 @@ aiperf profile --benchmark-duration 300.0 --benchmark-grace-period 30.0 [other o
 
 </br>
 
-
 <!--
 ======================
 INSTALLATION
@@ -183,6 +182,143 @@ NVIDIA AIPerf | LLM Metrics
 └──────────────────────────────────────┴───────────┴────────┴────────┴────────┴────────┴────────┴───────┘
 ```
 </div>
+
+
+
+<!--
+======================
+METRICS REFERENCE
+======================
+-->
+
+## Metrics Reference
+
+AIPerf provides comprehensive metrics organized into multiple functional categories. For detailed descriptions, requirements, and nuances of each metric, see the **[Complete Metrics Reference](docs/metrics_reference.md)**.
+
+### Streaming Metrics
+
+Metrics specific to streaming requests that measure real-time token generation characteristics. Requires `--streaming` flag.
+
+| Metric | Tag | Formula | Unit |
+|--------|-----|---------|------|
+| [**Time to First Token (TTFT)**](docs/metrics_reference.md#time-to-first-token-ttft) | `time_to_first_token` | `content_responses[0].perf_ns - request.start_perf_ns` | `ms` |
+| [**Time to Second Token (TTST)**](docs/metrics_reference.md#time-to-second-token-ttst) | `time_to_second_token` | `content_responses[1].perf_ns - content_responses[0].perf_ns` | `ms` |
+| [**Inter Token Latency (ITL)**](docs/metrics_reference.md#inter-token-latency-itl) | `inter_token_latency` | `(request_latency - time_to_first_token) / (output_sequence_length - 1)` | `ms` |
+| [**Inter Chunk Latency (ICL)**](docs/metrics_reference.md#inter-chunk-latency-icl) | `inter_chunk_latency` | `[content_responses[i].perf_ns - content_responses[i-1].perf_ns for i in range(1, len(content_responses))]` | `ms` |
+| [**Output Token Throughput Per User**](docs/metrics_reference.md#output-token-throughput-per-user) | `output_token_throughput_per_user` | `1.0 / inter_token_latency_seconds` | `tokens/sec/user` |
+| [**Time to First Output Token (TTFO)**](docs/metrics_reference.md#time-to-first-output-token-ttfo) | `time_to_first_output_token` | `first_non_reasoning_token_perf_ns - request.start_perf_ns` | `ms` |
+| [**Prefill Throughput Per User**](docs/metrics_reference.md#prefill-throughput-per-user) | `prefill_throughput_per_user` | `input_sequence_length / time_to_first_token_seconds` | `tokens/sec/user` |
+
+### Token Based Metrics
+
+Metrics for token-producing endpoints that track token counts and throughput. Requires text-generating endpoints (chat, completion, etc.).
+
+| Metric | Tag | Formula | Unit |
+|--------|-----|---------|------|
+| [**Output Token Count**](docs/metrics_reference.md#output-token-count) | `output_token_count` | `len(tokenizer.encode(content, add_special_tokens=False))` | `tokens` |
+| [**Output Sequence Length (OSL)**](docs/metrics_reference.md#output-sequence-length-osl) | `output_sequence_length` | `(output_token_count or 0) + (reasoning_token_count or 0)` | `tokens` |
+| [**Input Sequence Length (ISL)**](docs/metrics_reference.md#input-sequence-length-isl) | `input_sequence_length` | `len(tokenizer.encode(prompt, add_special_tokens=False))` | `tokens` |
+| [**Total Output Tokens**](docs/metrics_reference.md#total-output-tokens) | `total_output_tokens` | `sum(r.output_token_count for r in records if r.valid)` | `tokens` |
+| [**Total Output Sequence Length**](docs/metrics_reference.md#total-output-sequence-length) | `total_osl` | `sum(r.output_sequence_length for r in records if r.valid)` | `tokens` |
+| [**Total Input Sequence Length**](docs/metrics_reference.md#total-input-sequence-length) | `total_isl` | `sum(r.input_sequence_length for r in records if r.valid)` | `tokens` |
+| [**Output Token Throughput**](docs/metrics_reference.md#output-token-throughput) | `output_token_throughput` | `total_osl / benchmark_duration_seconds` | `tokens/sec` |
+| [**Total Token Throughput**](docs/metrics_reference.md#total-token-throughput) | `total_token_throughput` | `(total_isl + total_osl) / benchmark_duration_seconds` | `tokens/sec` |
+
+### Image Metrics
+
+Metrics for image processing endpoints. Requires image-capable endpoints.
+
+| Metric | Tag | Formula | Unit |
+|--------|-----|---------|------|
+| [**Image Throughput**](docs/metrics_reference.md#image-throughput) | `image_throughput` | `num_images / request_latency_seconds` | `images/sec` |
+| [**Image Latency**](docs/metrics_reference.md#image-latency) | `image_latency` | `request_latency_ms / num_images` | `ms/image` |
+
+### Reasoning Metrics
+
+Metrics specific to models that support reasoning/thinking tokens. Requires models with separate `reasoning_content` field.
+
+| Metric | Tag | Formula | Unit |
+|--------|-----|---------|------|
+| [**Reasoning Token Count**](docs/metrics_reference.md#reasoning-token-count) | `reasoning_token_count` | `len(tokenizer.encode(reasoning_content, add_special_tokens=False))` | `tokens` |
+| [**Total Reasoning Tokens**](docs/metrics_reference.md#total-reasoning-tokens) | `total_reasoning_tokens` | `sum(r.reasoning_token_count for r in records if r.valid)` | `tokens` |
+
+### Usage Field Metrics
+
+Metrics tracking API-reported token counts from the `usage` field in responses. Useful for comparing client-side vs server-side token counts.
+
+| Metric | Tag | Formula | Unit |
+|--------|-----|---------|------|
+| [**Usage Prompt Tokens**](docs/metrics_reference.md#usage-prompt-tokens) | `usage_prompt_tokens` | `response.usage.prompt_tokens` | `tokens` |
+| [**Usage Completion Tokens**](docs/metrics_reference.md#usage-completion-tokens) | `usage_completion_tokens` | `response.usage.completion_tokens` | `tokens` |
+| [**Usage Total Tokens**](docs/metrics_reference.md#usage-total-tokens) | `usage_total_tokens` | `response.usage.total_tokens` | `tokens` |
+| [**Usage Reasoning Tokens**](docs/metrics_reference.md#usage-reasoning-tokens) | `usage_reasoning_tokens` | `response.usage.completion_tokens_details.reasoning_tokens` | `tokens` |
+| [**Total Usage Prompt Tokens**](docs/metrics_reference.md#total-usage-prompt-tokens) | `total_usage_prompt_tokens` | `sum(r.usage_prompt_tokens for r in records if r.valid)` | `tokens` |
+| [**Total Usage Completion Tokens**](docs/metrics_reference.md#total-usage-completion-tokens) | `total_usage_completion_tokens` | `sum(r.usage_completion_tokens for r in records if r.valid)` | `tokens` |
+| [**Total Usage Total Tokens**](docs/metrics_reference.md#total-usage-total-tokens) | `total_usage_total_tokens` | `sum(r.usage_total_tokens for r in records if r.valid)` | `tokens` |
+
+### Usage Discrepancy Metrics
+
+Metrics measuring differences between API-reported and client-computed token counts.
+
+| Metric | Tag | Formula | Unit |
+|--------|-----|---------|------|
+| [**Usage Prompt Tokens Diff %**](docs/metrics_reference.md#usage-prompt-tokens-diff-) | `usage_prompt_tokens_diff_pct` | `abs((usage_prompt_tokens - input_sequence_length) / input_sequence_length) * 100` | `%` |
+| [**Usage Completion Tokens Diff %**](docs/metrics_reference.md#usage-completion-tokens-diff-) | `usage_completion_tokens_diff_pct` | `abs((usage_completion_tokens - output_sequence_length) / output_sequence_length) * 100` | `%` |
+| [**Usage Reasoning Tokens Diff %**](docs/metrics_reference.md#usage-reasoning-tokens-diff-) | `usage_reasoning_tokens_diff_pct` | `abs((usage_reasoning_tokens - reasoning_token_count) / reasoning_token_count) * 100` | `%` |
+| [**Usage Discrepancy Count**](docs/metrics_reference.md#usage-discrepancy-count) | `usage_discrepancy_count` | `sum(1 for r in records if r.any_diff > threshold)` | `requests` |
+
+### Goodput Metrics
+
+Metrics measuring throughput of requests meeting user-defined Service Level Objectives (SLOs).
+
+| Metric | Tag | Formula | Unit |
+|--------|-----|---------|------|
+| [**Good Request Count**](docs/metrics_reference.md#good-request-count) | `good_request_count` | `sum(1 for r in records if r.all_slos_met)` | `requests` |
+| [**Goodput**](docs/metrics_reference.md#goodput) | `goodput` | `good_request_count / benchmark_duration_seconds` | `requests/sec` |
+
+### Error Metrics
+
+Metrics computed for failed/error requests.
+
+| Metric | Tag | Formula | Unit |
+|--------|-----|---------|------|
+| [**Error Input Sequence Length**](docs/metrics_reference.md#error-input-sequence-length) | `error_isl` | `input_sequence_length` (for error requests) | `tokens` |
+| [**Total Error Input Sequence Length**](docs/metrics_reference.md#total-error-input-sequence-length) | `total_error_isl` | `sum(r.input_sequence_length for r in records if not r.valid)` | `tokens` |
+| [**Error Request Count**](docs/metrics_reference.md#error-request-count) | `error_request_count` | `sum(1 for r in records if not r.valid)` | `requests` |
+
+### General Metrics
+
+Metrics available for all benchmark runs with no special requirements.
+
+| Metric | Tag | Formula | Unit |
+|--------|-----|---------|------|
+| [**Request Latency**](docs/metrics_reference.md#request-latency) | `request_latency` | `content_responses[-1].perf_ns - request.start_perf_ns` | `ms` |
+| [**Request Throughput**](docs/metrics_reference.md#request-throughput) | `request_throughput` | `request_count / benchmark_duration_seconds` | `requests/sec` |
+| [**Request Count**](docs/metrics_reference.md#request-count) | `request_count` | `sum(1 for r in records if r.valid)` | `requests` |
+| [**Minimum Request Timestamp**](docs/metrics_reference.md#minimum-request-timestamp) | `min_request_timestamp` | `min(r.timestamp_ns for r in records)` | `datetime` |
+| [**Maximum Response Timestamp**](docs/metrics_reference.md#maximum-response-timestamp) | `max_response_timestamp` | `max(r.timestamp_ns + r.request_latency for r in records)` | `datetime` |
+| [**Benchmark Duration**](docs/metrics_reference.md#benchmark-duration) | `benchmark_duration` | `max_response_timestamp - min_request_timestamp` | `sec` |
+
+### HTTP Trace Metrics
+
+Low-level HTTP timing metrics following k6 and HAR conventions. Requires HTTP trace data collection enabled.
+
+| Metric | Tag | Formula | Unit |
+|--------|-----|---------|------|
+| [**HTTP Request Blocked**](docs/metrics_reference.md#http-request-blocked) | `http_req_blocked` | `connection_pool_wait_end_perf_ns - connection_pool_wait_start_perf_ns` | `ms` |
+| [**HTTP Request DNS Lookup**](docs/metrics_reference.md#http-request-dns-lookup) | `http_req_dns_lookup` | `dns_lookup_end_perf_ns - dns_lookup_start_perf_ns` | `ms` |
+| [**HTTP Request Connecting**](docs/metrics_reference.md#http-request-connecting) | `http_req_connecting` | `tcp_connect_end_perf_ns - tcp_connect_start_perf_ns` | `ms` |
+| [**HTTP Request Sending**](docs/metrics_reference.md#http-request-sending) | `http_req_sending` | `request_send_end_perf_ns - request_send_start_perf_ns` | `ms` |
+| [**HTTP Request Waiting**](docs/metrics_reference.md#http-request-waiting) | `http_req_waiting` | `response_chunks[0][0] - request_send_end_perf_ns` | `ms` |
+| [**HTTP Request Receiving**](docs/metrics_reference.md#http-request-receiving) | `http_req_receiving` | `response_chunks[-1][0] - response_chunks[0][0]` | `ms` |
+| [**HTTP Request Duration**](docs/metrics_reference.md#http-request-duration) | `http_req_duration` | `response_receive_end_perf_ns - request_send_start_perf_ns` | `ms` |
+| [**HTTP Request Connection Overhead**](docs/metrics_reference.md#http-request-connection-overhead) | `http_req_connection_overhead` | `http_req_blocked + http_req_dns_lookup + http_req_connecting` | `ms` |
+| [**HTTP Request Total**](docs/metrics_reference.md#http-request-total) | `http_req_total` | `http_req_blocked + http_req_dns_lookup + http_req_connecting + http_req_sending + http_req_waiting + http_req_receiving` | `ms` |
+| [**HTTP Request Data Sent**](docs/metrics_reference.md#http-request-data-sent) | `http_req_data_sent` | `sum(size for _, size in request_chunks)` | `bytes` |
+| [**HTTP Request Data Received**](docs/metrics_reference.md#http-request-data-received) | `http_req_data_received` | `sum(size for _, size in response_chunks)` | `bytes` |
+| [**HTTP Request Connection Reused**](docs/metrics_reference.md#http-request-connection-reused) | `http_req_connection_reused` | `1 if connection_reused_perf_ns is not None else 0` | `boolean` |
+
+</br>
 
 
 ## Known Issues
