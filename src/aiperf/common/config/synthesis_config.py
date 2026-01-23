@@ -41,7 +41,7 @@ class SynthesisConfig(BaseConfig):
         Field(
             default=1,
             ge=1,
-            description="Number of times to replicate the radix tree structure",
+            description="Number of independent radix trees to distribute traces across",
         ),
         CLIParameter(name=("--synthesis-prefix-root-multiplier",), group=_CLI_GROUP),
     ] = 1
