@@ -495,7 +495,11 @@ Multiplier for leaf path (unique prompt) lengths.
 
 #### `--synthesis-max-isl` `<int>`
 
-Maximum input sequence length to include in synthesis.
+Maximum input sequence length for filtering. Traces with input_length > max_isl are skipped.
+
+#### `--synthesis-max-osl` `<int>`
+
+Maximum output sequence length cap. Traces with output_length > max_osl are capped to max_osl.
 
 ### Conversation Input
 

@@ -511,6 +511,291 @@ class TestMooncakeTraceDatasetLoader:
         assert traces[0][0].delay == 500
         assert traces[1][0].delay == 1000
 
+    @pytest.mark.parametrize(
+        "max_isl,expected_count,description",
+        [
+            (None, 4, "no filtering when max_isl is None"),
+            (500, 4, "all traces pass when max_isl is high enough"),
+            (250, 4, "input_length=250 passes when max_isl=250"),
+            (249, 3, "filters traces with input_length > 249"),
+            (150, 2, "filters traces with input_length > 150"),
+            (50, 0, "filters all traces when max_isl is very low"),
+        ],
+    )  # fmt: skip
+    def test_load_dataset_with_max_isl_filtering(
+        self,
+        create_jsonl_file,
+        mock_prompt_generator,
+        max_isl,
+        expected_count,
+        description,
+    ):
+        """Test dataset loading with max_isl filtering."""
+        content = [
+            '{"input_length": 100, "output_length": 50, "timestamp": 1000}',
+            '{"input_length": 150, "output_length": 60, "timestamp": 2000}',
+            '{"input_length": 200, "output_length": 70, "timestamp": 3000}',
+            '{"input_length": 250, "output_length": 80, "timestamp": 4000}',
+        ]
+        filename = create_jsonl_file(content)
+
+        user_config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(synthesis=SynthesisConfig(max_isl=max_isl)),
+        )
+        loader = MooncakeTraceDatasetLoader(
+            filename=filename,
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        dataset = loader.load_dataset()
+
+        assert len(dataset) == expected_count, f"Failed for {description}"
+
+    def test_load_dataset_max_isl_does_not_filter_text_input(
+        self, create_jsonl_file, mock_prompt_generator
+    ):
+        """Test that max_isl does not filter traces with text_input (no input_length)."""
+        content = [
+            '{"text_input": "Hello world", "timestamp": 1000}',
+            '{"text_input": "This is a longer text input", "timestamp": 2000}',
+            '{"input_length": 500, "output_length": 50, "timestamp": 3000}',
+        ]
+        filename = create_jsonl_file(content)
+
+        # max_isl=100 should only filter the input_length=500 trace
+        user_config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(synthesis=SynthesisConfig(max_isl=100)),
+        )
+        loader = MooncakeTraceDatasetLoader(
+            filename=filename,
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        dataset = loader.load_dataset()
+
+        # Should have 2 traces (text_input ones pass, input_length=500 filtered)
+        assert len(dataset) == 2
+        traces = list(dataset.values())
+        assert traces[0][0].text_input == "Hello world"
+        assert traces[1][0].text_input == "This is a longer text input"
+
+    def test_load_dataset_max_isl_logs_skipped_traces(
+        self, create_jsonl_file, mock_prompt_generator, caplog
+    ):
+        """Test that skipped traces due to max_isl are properly logged."""
+        caplog.set_level(logging.INFO)
+
+        content = [
+            '{"input_length": 100, "output_length": 50, "timestamp": 1000}',
+            '{"input_length": 200, "output_length": 60, "timestamp": 2000}',
+            '{"input_length": 300, "output_length": 70, "timestamp": 3000}',
+        ]
+        filename = create_jsonl_file(content)
+
+        user_config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(synthesis=SynthesisConfig(max_isl=150)),
+        )
+        loader = MooncakeTraceDatasetLoader(
+            filename=filename,
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        loader.load_dataset()
+
+        # Should skip 2 traces (input_length=200 and 300 exceed max_isl=150)
+        assert (
+            "Skipped 2 traces because input_length exceeded max_isl of 150"
+            in caplog.text
+        )
+
+    def test_load_dataset_max_isl_combined_with_offset_filtering(
+        self, create_jsonl_file, mock_prompt_generator
+    ):
+        """Test that max_isl and offset filtering work together."""
+        content = [
+            '{"input_length": 100, "output_length": 50, "timestamp": 500}',   # Before start offset
+            '{"input_length": 100, "output_length": 50, "timestamp": 1500}',  # In range, passes max_isl
+            '{"input_length": 300, "output_length": 60, "timestamp": 2000}',  # In range, exceeds max_isl
+            '{"input_length": 100, "output_length": 70, "timestamp": 3500}',  # After end offset
+        ]  # fmt: skip
+        filename = create_jsonl_file(content)
+
+        user_config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                file=filename,
+                fixed_schedule=True,
+                fixed_schedule_start_offset=1000,
+                fixed_schedule_end_offset=3000,
+                synthesis=SynthesisConfig(max_isl=200),
+            ),
+        )
+        loader = MooncakeTraceDatasetLoader(
+            filename=filename,
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        dataset = loader.load_dataset()
+
+        # Only one trace should pass: timestamp=1500, input_length=100
+        assert len(dataset) == 1
+        traces = list(dataset.values())
+        assert traces[0][0].input_length == 100
+        assert traces[0][0].timestamp == 1500
+
+    @pytest.mark.parametrize(
+        "max_osl,expected_output_lengths,description",
+        [
+            (None, [50, 100, 150, 200], "no capping when max_osl is None"),
+            (500, [50, 100, 150, 200], "no capping when max_osl is high enough"),
+            (200, [50, 100, 150, 200], "output_length=200 not capped when max_osl=200"),
+            (150, [50, 100, 150, 150], "caps output_length > 150 to 150"),
+            (75, [50, 75, 75, 75], "caps output_length > 75 to 75"),
+            (25, [25, 25, 25, 25], "caps all output_lengths to 25"),
+        ],
+    )  # fmt: skip
+    def test_load_dataset_with_max_osl_capping(
+        self,
+        create_jsonl_file,
+        mock_prompt_generator,
+        max_osl,
+        expected_output_lengths,
+        description,
+    ):
+        """Test dataset loading with max_osl capping (not filtering)."""
+        content = [
+            '{"input_length": 100, "output_length": 50, "timestamp": 1000}',
+            '{"input_length": 100, "output_length": 100, "timestamp": 2000}',
+            '{"input_length": 100, "output_length": 150, "timestamp": 3000}',
+            '{"input_length": 100, "output_length": 200, "timestamp": 4000}',
+        ]
+        filename = create_jsonl_file(content)
+
+        user_config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(synthesis=SynthesisConfig(max_osl=max_osl)),
+        )
+        loader = MooncakeTraceDatasetLoader(
+            filename=filename,
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        dataset = loader.load_dataset()
+
+        # All traces should be kept (capping, not filtering)
+        assert len(dataset) == 4, f"Failed for {description}"
+
+        # Check output_lengths are capped correctly
+        traces = list(dataset.values())
+        actual_output_lengths = [t[0].output_length for t in traces]
+        assert actual_output_lengths == expected_output_lengths, (
+            f"Failed for {description}"
+        )
+
+    def test_load_dataset_max_osl_does_not_cap_none_output_length(
+        self, create_jsonl_file, mock_prompt_generator
+    ):
+        """Test that max_osl does not affect traces without output_length."""
+        content = [
+            '{"input_length": 100, "timestamp": 1000}',
+            '{"input_length": 100, "output_length": 200, "timestamp": 2000}',
+            '{"text_input": "Hello world", "timestamp": 3000}',
+        ]
+        filename = create_jsonl_file(content)
+
+        user_config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(synthesis=SynthesisConfig(max_osl=50)),
+        )
+        loader = MooncakeTraceDatasetLoader(
+            filename=filename,
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        dataset = loader.load_dataset()
+
+        # All 3 traces should be kept
+        assert len(dataset) == 3
+        traces = list(dataset.values())
+
+        # First trace: no output_length, should remain None
+        assert traces[0][0].output_length is None
+
+        # Second trace: output_length=200 should be capped to 50
+        assert traces[1][0].output_length == 50
+
+        # Third trace: text_input, no output_length, should remain None
+        assert traces[2][0].output_length is None
+
+    def test_load_dataset_max_osl_logs_capped_traces(
+        self, create_jsonl_file, mock_prompt_generator, caplog
+    ):
+        """Test that capped traces due to max_osl are properly logged."""
+        caplog.set_level(logging.INFO)
+
+        content = [
+            '{"input_length": 100, "output_length": 50, "timestamp": 1000}',
+            '{"input_length": 100, "output_length": 100, "timestamp": 2000}',
+            '{"input_length": 100, "output_length": 150, "timestamp": 3000}',
+        ]
+        filename = create_jsonl_file(content)
+
+        user_config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(synthesis=SynthesisConfig(max_osl=75)),
+        )
+        loader = MooncakeTraceDatasetLoader(
+            filename=filename,
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        loader.load_dataset()
+
+        # Should cap 2 traces (output_length=100 and 150 exceed max_osl=75)
+        assert "2 traces exceeded max_osl of 75 and were capped to 75" in caplog.text
+
+    def test_load_dataset_max_isl_and_max_osl_combined(
+        self, create_jsonl_file, mock_prompt_generator
+    ):
+        """Test that max_isl filtering and max_osl capping work together."""
+        content = [
+            '{"input_length": 100, "output_length": 200, "timestamp": 1000}',  # Passes max_isl, capped by max_osl
+            '{"input_length": 300, "output_length": 50, "timestamp": 2000}',   # Filtered by max_isl
+            '{"input_length": 150, "output_length": 150, "timestamp": 3000}',  # Passes max_isl, capped by max_osl
+            '{"input_length": 50, "output_length": 50, "timestamp": 4000}',    # Passes both, no capping
+        ]  # fmt: skip
+        filename = create_jsonl_file(content)
+
+        user_config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(synthesis=SynthesisConfig(max_isl=200, max_osl=100)),
+        )
+        loader = MooncakeTraceDatasetLoader(
+            filename=filename,
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        dataset = loader.load_dataset()
+
+        # 3 traces should remain (one filtered by max_isl)
+        assert len(dataset) == 3
+
+        traces = list(dataset.values())
+        # First: input_length=100 passes, output_length=200 capped to 100
+        assert traces[0][0].input_length == 100
+        assert traces[0][0].output_length == 100
+
+        # Second: input_length=150 passes, output_length=150 capped to 100
+        assert traces[1][0].input_length == 150
+        assert traces[1][0].output_length == 100
+
+        # Third: input_length=50 passes, output_length=50 not capped
+        assert traces[2][0].input_length == 50
+        assert traces[2][0].output_length == 50
+
 
 class TestMooncakeTraceReproducibility:
     """Tests for reproducibility of Mooncake trace prompt generation.
