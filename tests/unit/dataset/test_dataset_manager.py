@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -13,8 +13,111 @@ from aiperf.common.enums import (
     DatasetSamplingStrategy,
     PublicDatasetType,
 )
+from aiperf.common.exceptions import ServiceError
+from aiperf.common.messages import (
+    ConversationRequestMessage,
+    ConversationTurnRequestMessage,
+    DatasetConfiguredNotification,
+)
 from aiperf.common.messages.command_messages import ProfileConfigureCommand
+from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.dataset_manager import DatasetManager
+
+# ============================================================================
+# Shared Fixtures
+# ============================================================================
+
+
+@pytest.fixture(autouse=True)
+async def cleanup_communication_factory():
+    """Clean up CommunicationFactory after each test to prevent shared state issues."""
+    yield
+    from aiperf.common.factories import CommunicationFactory
+
+    if hasattr(CommunicationFactory, "_instances"):
+        CommunicationFactory._instances.clear()
+
+
+@pytest.fixture
+def mock_tokenizer(mock_tokenizer_cls):
+    """Fixture to mock tokenizer creation."""
+    with patch("aiperf.common.tokenizer.Tokenizer.from_pretrained") as mock:
+        mock.return_value = mock_tokenizer_cls.from_pretrained("test-model")
+        yield mock
+
+
+@pytest.fixture
+def base_user_config():
+    """Create a basic UserConfig for testing."""
+    return UserConfig(
+        endpoint=EndpointConfig(model_names=["test-model"]),
+        input=InputConfig(),
+    )
+
+
+@pytest.fixture
+async def initialized_dataset_manager(mock_tokenizer, base_user_config):
+    """Create an initialized DatasetManager with mocked publish."""
+    service_config = ServiceConfig()
+    dataset_manager = DatasetManager(service_config, base_user_config)
+
+    await dataset_manager.initialize()
+    dataset_manager.publish = AsyncMock()
+
+    return dataset_manager
+
+
+@pytest.fixture
+async def configured_dataset_manager(initialized_dataset_manager, base_user_config):
+    """Create a fully configured DatasetManager ready for request handling."""
+    await initialized_dataset_manager._profile_configure_command(
+        ProfileConfigureCommand(config=base_user_config, service_id="test_service")
+    )
+    return initialized_dataset_manager
+
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+
+def create_mock_conversations(session_ids: list[str]) -> list[Conversation]:
+    """Create mock conversations with specified session IDs."""
+    return [
+        Conversation(
+            session_id=session_id,
+            turns=[Turn(texts=[Text(contents=["Hello"])], model="test-model")],
+        )
+        for session_id in session_ids
+    ]
+
+
+async def capture_published_messages(dataset_manager, user_config):
+    """Configure dataset and capture published messages."""
+    published_messages = []
+
+    async def mock_publish(msg):
+        published_messages.append(msg)
+
+    dataset_manager.publish = AsyncMock(side_effect=mock_publish)
+
+    await dataset_manager._profile_configure_command(
+        ProfileConfigureCommand(config=user_config, service_id="test_service")
+    )
+
+    return published_messages
+
+
+def extract_dataset_notifications(
+    messages: list,
+) -> list[DatasetConfiguredNotification]:
+    """Extract DatasetConfiguredNotification messages from a list."""
+    return [msg for msg in messages if isinstance(msg, DatasetConfiguredNotification)]
+
+
+# ============================================================================
+# Test Classes
+# ============================================================================
 
 
 class TestDatasetManager:
@@ -24,24 +127,11 @@ class TestDatasetManager:
     since sampling is now handled by timing strategies, not DatasetManager.
     """
 
-    @pytest.fixture(autouse=True)
-    async def teardown(self):
-        """Clean up after each test to prevent shared state issues."""
-        yield
-        # Reset any global state if needed
-        # Clear communication factory state
-        from aiperf.common.factories import CommunicationFactory
-
-        if hasattr(CommunicationFactory, "_instances"):
-            CommunicationFactory._instances.clear()
-
     @pytest.mark.asyncio
-    @patch("aiperf.common.tokenizer.Tokenizer.from_pretrained")
     async def test_dataset_configured_notification_for_multi_turn_conversations(
         self,
-        mock_tokenizer_from_pretrained,
+        mock_tokenizer,
         create_mooncake_trace_file,
-        mock_tokenizer_cls,
     ):
         """Test that dataset configured notification includes correct metadata for multi-turn conversations.
 
@@ -50,11 +140,6 @@ class TestDatasetManager:
         - Include the first_turn_timestamp and turn_delays for each conversation
         - Have the correct turn count for each conversation
         """
-        # Mock the tokenizer to avoid HTTP requests
-        mock_tokenizer_from_pretrained.return_value = (
-            mock_tokenizer_cls.from_pretrained("test-model")
-        )
-
         # Create a file with multi-turn conversations
         entries = [
             '{"session_id": "sess-1", "timestamp": 0, "input_length": 50, "output_length": 10}',
@@ -78,29 +163,12 @@ class TestDatasetManager:
 
             await dataset_manager.initialize()
 
-            # Mock the publish method to capture notifications
-            from unittest.mock import AsyncMock
-
-            from aiperf.common.messages import DatasetConfiguredNotification
-
-            published_messages = []
-
-            async def mock_publish(msg):
-                published_messages.append(msg)
-
-            dataset_manager.publish = AsyncMock(side_effect=mock_publish)
-
-            # Configure the dataset to load conversations
-            await dataset_manager._profile_configure_command(
-                ProfileConfigureCommand(config=user_config, service_id="test_service")
+            published_messages = await capture_published_messages(
+                dataset_manager, user_config
             )
 
             # Verify the notification was published
-            published_notifications = [
-                msg
-                for msg in published_messages
-                if isinstance(msg, DatasetConfiguredNotification)
-            ]
+            published_notifications = extract_dataset_notifications(published_messages)
             assert len(published_notifications) == 1
 
             notification = published_notifications[0]
@@ -130,23 +198,16 @@ class TestDatasetManager:
             Path(filename).unlink(missing_ok=True)
 
     @pytest.mark.asyncio
-    @patch("aiperf.common.tokenizer.Tokenizer.from_pretrained")
     async def test_dataset_configured_notification_preserves_float_timestamps(
         self,
-        mock_tokenizer_from_pretrained,
+        mock_tokenizer,
         create_mooncake_trace_file,
-        mock_tokenizer_cls,
     ):
         """Test that floating point timestamps are preserved exactly in dataset notifications.
 
         This test verifies that high-precision floating point timestamps from trace data
         are maintained throughout the dataset loading and notification process.
         """
-        # Mock the tokenizer to avoid HTTP requests
-        mock_tokenizer_from_pretrained.return_value = (
-            mock_tokenizer_cls.from_pretrained("test-model")
-        )
-
         # Create a file with floating point timestamps (in milliseconds)
         entries = [
             '{"session_id": "sess-1", "timestamp": 0.123, "input_length": 50, "output_length": 10}',
@@ -169,29 +230,12 @@ class TestDatasetManager:
 
             await dataset_manager.initialize()
 
-            # Mock the publish method to capture notifications
-            from unittest.mock import AsyncMock
-
-            from aiperf.common.messages import DatasetConfiguredNotification
-
-            published_messages = []
-
-            async def mock_publish(msg):
-                published_messages.append(msg)
-
-            dataset_manager.publish = AsyncMock(side_effect=mock_publish)
-
-            # Configure the dataset to load conversations
-            await dataset_manager._profile_configure_command(
-                ProfileConfigureCommand(config=user_config, service_id="test_service")
+            published_messages = await capture_published_messages(
+                dataset_manager, user_config
             )
 
             # Verify the notification was published
-            published_notifications = [
-                msg
-                for msg in published_messages
-                if isinstance(msg, DatasetConfiguredNotification)
-            ]
+            published_notifications = extract_dataset_notifications(published_messages)
             assert len(published_notifications) == 1
 
             notification = published_notifications[0]
@@ -216,46 +260,21 @@ class TestDatasetManager:
 class TestDatasetManagerSamplingStrategyDefaults:
     """Test default sampling strategy behavior for different dataset types."""
 
-    @pytest.fixture(autouse=True)
-    async def teardown(self):
-        """Clean up after each test to prevent shared state issues."""
-        yield
-        from aiperf.common.factories import CommunicationFactory
-
-        if hasattr(CommunicationFactory, "_instances"):
-            CommunicationFactory._instances.clear()
-
     @pytest.mark.asyncio
-    @patch("aiperf.common.tokenizer.Tokenizer.from_pretrained")
     @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.load_dataset")
     @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.convert_to_conversations")
     async def test_public_dataset_uses_loader_recommended_strategy(
         self,
         mock_convert,
         mock_load,
-        mock_tokenizer_from_pretrained,
-        mock_tokenizer_cls,
+        mock_tokenizer,
     ):
         """Test that public datasets use the loader's recommended sampling strategy."""
-        from aiperf.common.models import Conversation, Text, Turn
-
-        # Mock tokenizer
-        mock_tokenizer_from_pretrained.return_value = (
-            mock_tokenizer_cls.from_pretrained("test-model")
-        )
-
         # Mock dataset loading
         mock_load.return_value = {}
-        mock_convert.return_value = [
-            Conversation(
-                session_id="session-1",
-                turns=[Turn(texts=[Text(contents=["Hello"])], model="test-model")],
-            ),
-            Conversation(
-                session_id="session-2",
-                turns=[Turn(texts=[Text(contents=["World"])], model="test-model")],
-            ),
-        ]
+        mock_convert.return_value = create_mock_conversations(
+            ["session-1", "session-2"]
+        )
 
         # Create config with public dataset and NO explicit sampling strategy
         user_config = UserConfig(
@@ -273,30 +292,22 @@ class TestDatasetManagerSamplingStrategyDefaults:
         )
 
         # Verify the loader's recommended strategy was used (SEQUENTIAL for ShareGPT)
-        # Note: The actual sampler is now created in TimingManager, not DatasetManager
         assert (
             user_config.input.dataset_sampling_strategy
             == DatasetSamplingStrategy.SEQUENTIAL
         )
 
     @pytest.mark.asyncio
-    @patch("aiperf.common.tokenizer.Tokenizer.from_pretrained")
     async def test_fallback_default_when_strategy_not_set(
         self,
-        mock_tokenizer_from_pretrained,
-        mock_tokenizer_cls,
+        mock_tokenizer,
     ):
         """Test that InputDefaults.DATASET_SAMPLING_STRATEGY is used as fallback."""
-        # Mock tokenizer
-        mock_tokenizer_from_pretrained.return_value = (
-            mock_tokenizer_cls.from_pretrained("test-model")
-        )
-
         # Create config with NO public dataset and NO explicit sampling strategy
         # This will use synthetic dataset generation
         user_config = UserConfig(
             endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(),  # No public_dataset, no file - uses synthetic
+            input=InputConfig(),
         )
 
         service_config = ServiceConfig()
@@ -315,32 +326,18 @@ class TestDatasetManagerSamplingStrategyDefaults:
         )
 
     @pytest.mark.asyncio
-    @patch("aiperf.common.tokenizer.Tokenizer.from_pretrained")
     @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.load_dataset")
     @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.convert_to_conversations")
     async def test_explicit_strategy_overrides_loader_recommendation(
         self,
         mock_convert,
         mock_load,
-        mock_tokenizer_from_pretrained,
-        mock_tokenizer_cls,
+        mock_tokenizer,
     ):
         """Test that explicitly set strategy is not overridden by loader recommendation."""
-        from aiperf.common.models import Conversation, Text, Turn
-
-        # Mock tokenizer
-        mock_tokenizer_from_pretrained.return_value = (
-            mock_tokenizer_cls.from_pretrained("test-model")
-        )
-
         # Mock dataset loading
         mock_load.return_value = {}
-        mock_convert.return_value = [
-            Conversation(
-                session_id="session-1",
-                turns=[Turn(texts=[Text(contents=["Hello"])], model="test-model")],
-            ),
-        ]
+        mock_convert.return_value = create_mock_conversations(["session-1"])
 
         # Create config with explicit SHUFFLE strategy (different from loader's SEQUENTIAL)
         user_config = UserConfig(
@@ -360,8 +357,191 @@ class TestDatasetManagerSamplingStrategyDefaults:
         )
 
         # Verify the explicit strategy was preserved, not overwritten by loader's SEQUENTIAL
-        # Note: The actual sampler is now created in TimingManager, not DatasetManager
         assert (
             user_config.input.dataset_sampling_strategy
             == DatasetSamplingStrategy.SHUFFLE
         )
+
+
+class TestDatasetManagerMemoryAndClient:
+    """Test dataset client initialization and memory freeing after configuration."""
+
+    @pytest.mark.asyncio
+    async def test_dataset_client_initialized_after_configuration(
+        self,
+        initialized_dataset_manager,
+        base_user_config,
+    ):
+        """Test that dataset client is initialized after profile configuration."""
+        dataset_manager = initialized_dataset_manager
+
+        # Before configuration, client should be None
+        assert dataset_manager._dataset_client is None
+
+        await dataset_manager._profile_configure_command(
+            ProfileConfigureCommand(config=base_user_config, service_id="test_service")
+        )
+
+        # After configuration, client should be initialized
+        assert dataset_manager._dataset_client is not None
+
+    @pytest.mark.asyncio
+    async def test_in_memory_dataset_freed_after_client_initialization(
+        self,
+        mock_tokenizer,
+    ):
+        """Test that in-memory dataset is freed after dataset client is initialized."""
+        user_config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(num_dataset_entries=5),
+        )
+        service_config = ServiceConfig()
+        dataset_manager = DatasetManager(service_config, user_config)
+
+        await dataset_manager.initialize()
+        dataset_manager.publish = AsyncMock()
+
+        await dataset_manager._profile_configure_command(
+            ProfileConfigureCommand(config=user_config, service_id="test_service")
+        )
+
+        # After configuration, in-memory dataset should be empty
+        assert dataset_manager.dataset == {}
+        assert dataset_manager._conversation_ids_cache == []
+
+    @pytest.mark.asyncio
+    async def test_dataset_configured_event_set_after_client_initialization(
+        self,
+        initialized_dataset_manager,
+        base_user_config,
+    ):
+        """Test that dataset_configured event is set after client initialization."""
+        dataset_manager = initialized_dataset_manager
+
+        # Before configuration, event should not be set
+        assert not dataset_manager.dataset_configured.is_set()
+
+        await dataset_manager._profile_configure_command(
+            ProfileConfigureCommand(config=base_user_config, service_id="test_service")
+        )
+
+        # After configuration, event should be set
+        assert dataset_manager.dataset_configured.is_set()
+
+
+class TestDatasetManagerFallbackHandlers:
+    """Test fallback request handlers that use the dataset client."""
+
+    @pytest.fixture
+    async def dataset_manager_with_entries(self, mock_tokenizer):
+        """Create a configured dataset manager with multiple entries."""
+        user_config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(num_dataset_entries=3),
+        )
+        service_config = ServiceConfig()
+        dataset_manager = DatasetManager(service_config, user_config)
+
+        await dataset_manager.initialize()
+        dataset_manager.publish = AsyncMock()
+
+        await dataset_manager._profile_configure_command(
+            ProfileConfigureCommand(config=user_config, service_id="test_service")
+        )
+
+        return dataset_manager
+
+    @pytest.mark.asyncio
+    async def test_handle_conversation_request_uses_dataset_client(
+        self,
+        dataset_manager_with_entries,
+    ):
+        """Test that conversation request handler uses dataset client, not in-memory dict."""
+        dataset_manager = dataset_manager_with_entries
+
+        # Get a valid conversation ID from the metadata
+        conversation_id = dataset_manager.dataset_metadata.conversations[
+            0
+        ].conversation_id
+
+        # Verify in-memory dataset is empty (freed)
+        assert dataset_manager.dataset == {}
+
+        # Request should still work via dataset client
+        request = ConversationRequestMessage(
+            service_id="test_worker",
+            conversation_id=conversation_id,
+        )
+        response = await dataset_manager._handle_conversation_request(request)
+
+        assert response.conversation is not None
+        assert response.conversation.session_id == conversation_id
+
+    @pytest.mark.asyncio
+    async def test_handle_conversation_turn_request_uses_dataset_client(
+        self,
+        dataset_manager_with_entries,
+    ):
+        """Test that turn request handler uses dataset client, not in-memory dict."""
+        dataset_manager = dataset_manager_with_entries
+
+        # Get a valid conversation ID from the metadata
+        conversation_id = dataset_manager.dataset_metadata.conversations[
+            0
+        ].conversation_id
+
+        # Verify in-memory dataset is empty (freed)
+        assert dataset_manager.dataset == {}
+
+        # Request should still work via dataset client
+        request = ConversationTurnRequestMessage(
+            service_id="test_worker",
+            conversation_id=conversation_id,
+            turn_index=0,
+        )
+        response = await dataset_manager._handle_conversation_turn_request(request)
+
+        assert response.turn is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "conversation_id,expected_error_match",
+        [
+            ("nonexistent-conversation-id", "not found in dataset"),
+        ],
+    )
+    async def test_handle_conversation_request_not_found(
+        self,
+        dataset_manager_with_entries,
+        conversation_id,
+        expected_error_match,
+    ):
+        """Test that conversation request handler raises error for unknown conversation."""
+        request = ConversationRequestMessage(
+            service_id="test_worker",
+            conversation_id=conversation_id,
+        )
+
+        with pytest.raises(ServiceError, match=expected_error_match):
+            await dataset_manager_with_entries._handle_conversation_request(request)
+
+    @pytest.mark.asyncio
+    async def test_handle_turn_request_invalid_turn_index(
+        self,
+        dataset_manager_with_entries,
+    ):
+        """Test that turn request handler raises error for invalid turn index."""
+        dataset_manager = dataset_manager_with_entries
+
+        conversation_id = dataset_manager.dataset_metadata.conversations[
+            0
+        ].conversation_id
+
+        request = ConversationTurnRequestMessage(
+            service_id="test_worker",
+            conversation_id=conversation_id,
+            turn_index=999,  # Invalid index
+        )
+
+        with pytest.raises(ServiceError, match="out of range"):
+            await dataset_manager._handle_conversation_turn_request(request)

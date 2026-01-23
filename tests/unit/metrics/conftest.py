@@ -1,22 +1,57 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 Shared fixtures for testing AIPerf metrics.
 
 """
 
-from aiperf.common.enums import MetricType
+from aiperf.common.enums import (
+    CreditPhase,
+    EndpointType,
+    MetricType,
+    ModelSelectionStrategy,
+)
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import (
     ErrorDetails,
     ParsedResponse,
     ParsedResponseRecord,
+    RequestInfo,
     RequestRecord,
+)
+from aiperf.common.models.model_endpoint_info import (
+    EndpointInfo,
+    ModelEndpointInfo,
+    ModelInfo,
+    ModelListInfo,
 )
 from aiperf.common.models.record_models import TextResponseData, TokenCounts
 from aiperf.common.types import MetricTagT
 from aiperf.metrics.metric_dicts import MetricArray, MetricRecordDict, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
+
+
+def _create_test_request_info(model_name: str = "test-model") -> RequestInfo:
+    """Create a RequestInfo for testing metrics."""
+    return RequestInfo(
+        model_endpoint=ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name=model_name)],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_url="http://localhost:8000/v1/test",
+            ),
+        ),
+        turns=[],
+        turn_index=0,
+        credit_num=0,
+        credit_phase=CreditPhase.PROFILING,
+        x_request_id="test-request-id",
+        x_correlation_id="test-correlation-id",
+        conversation_id="test-conversation",
+    )
 
 
 def create_record(
@@ -38,8 +73,7 @@ def create_record(
     responses = responses or [start_ns + 50]  # Single response 50ns later
 
     request = RequestRecord(
-        conversation_id="test-conversation",
-        turn_index=0,
+        request_info=_create_test_request_info(),
         model_name="test-model",
         start_perf_ns=start_ns,
         timestamp_ns=start_ns,
