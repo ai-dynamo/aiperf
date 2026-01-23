@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -221,7 +221,7 @@ def compute_config_hash(plot_config: dict) -> str:
 
     cache_dict = {k: plot_config.get(k) for k in relevant_keys}
     json_str = json.dumps(cache_dict, sort_keys=True, default=str)
-    return hashlib.md5(json_str.encode()).hexdigest()[:12]
+    return hashlib.md5(json_str.encode(), usedforsecurity=False).hexdigest()[:12]
 
 
 def compute_runs_hash(selected_runs: list[int] | None) -> str:
@@ -239,4 +239,4 @@ def compute_runs_hash(selected_runs: list[int] | None) -> str:
 
     sorted_runs = sorted(selected_runs)
     runs_str = ",".join(str(r) for r in sorted_runs)
-    return hashlib.md5(runs_str.encode()).hexdigest()[:8]
+    return hashlib.md5(runs_str.encode(), usedforsecurity=False).hexdigest()[:8]
