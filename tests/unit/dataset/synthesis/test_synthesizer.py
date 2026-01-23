@@ -275,6 +275,57 @@ class TestSynthesizer:
         for trace in synthetic:
             assert len(trace["hash_ids"]) == 2
 
+    def test_root_multiplier_with_prefix_multiplier_no_collisions(self) -> None:
+        """Test that prefix_root_multiplier doesn't collide when prefix_len_multiplier extends hash_ids.
+
+        When prefix_len_multiplier > 1, new hash IDs are generated beyond _max_hash_id.
+        The root multiplier offsets must account for these extended IDs to prevent collisions.
+        """
+        traces = [
+            {"input_length": 100, "output_length": 20, "hash_ids": [1, 2]}
+            for _ in range(100)
+        ]
+        params = SynthesisParams(prefix_len_multiplier=2.0, prefix_root_multiplier=3)
+        synthesizer = Synthesizer(params=params)
+        synthetic = synthesizer.synthesize_traces(traces)
+
+        # Each trace now has 4 hash_ids: [1, 2] extended to [1, 2, 3, 4]
+        # With prefix_root_multiplier=3, we have 3 independent trees
+        # Tree 0: offset 0 -> IDs 1-4
+        # Tree 1: offset 5 (max_hash_id=4, so offset=5) -> IDs 6-9
+        # Tree 2: offset 10 -> IDs 11-14
+        # Key: offsets must be > 4 to avoid collision with extended IDs
+
+        # Collect all hash_ids across all synthetic traces
+        all_hash_id_sets: list[set[int]] = []
+        for trace in synthetic:
+            all_hash_id_sets.append(set(trace["hash_ids"]))
+
+        # Verify each trace has 4 hash_ids (2 original + 2 from multiplier)
+        for trace in synthetic:
+            assert len(trace["hash_ids"]) == 4
+
+        # Check for collisions: no two traces from different trees should share hash_ids
+        # Group traces by their first hash_id (tree root indicator)
+        from collections import defaultdict
+
+        trees: dict[int, list[set[int]]] = defaultdict(list)
+        for trace in synthetic:
+            root = trace["hash_ids"][0]
+            trees[root].append(set(trace["hash_ids"]))
+
+        # Verify trees don't overlap
+        tree_roots = sorted(trees.keys())
+        for i, root_i in enumerate(tree_roots):
+            all_ids_in_tree_i = set().union(*trees[root_i])
+            for root_j in tree_roots[i + 1 :]:
+                all_ids_in_tree_j = set().union(*trees[root_j])
+                # No hash_id should appear in both trees
+                overlap = all_ids_in_tree_i & all_ids_in_tree_j
+                assert not overlap, (
+                    f"Trees {root_i} and {root_j} share hash_ids: {overlap}"
+                )
+
     # ============================================================================
     # Incomplete Block Handling Tests
     # ============================================================================
