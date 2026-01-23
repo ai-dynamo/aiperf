@@ -12,13 +12,17 @@ from aiperf.common.models import (
     TextResponseData,
     Usage,
 )
-from tests.unit.records.conftest import create_invalid_record
+from tests.unit.records.conftest import create_invalid_record, create_test_request_info
 
 
 @pytest.fixture
-def request_record():
-    """Basic request record for testing."""
-    return RequestRecord(conversation_id="cid", turn_index=0, model_name="test-model")
+def request_record(sample_turn):
+    """Basic request record for testing with sample turn included."""
+    return RequestRecord(
+        request_info=create_test_request_info(turns=[sample_turn]),
+        model_name="test-model",
+        turns=[sample_turn],
+    )
 
 
 @pytest.fixture
@@ -80,10 +84,7 @@ class TestInvalidRecords:
         [
             ({"no_responses": True}, ["No responses were received"]),
             ({"bad_start_timestamp": True}, ["Start perf ns timestamp is invalid: -1"]),
-            (
-                {"bad_response_timestamps": [-1]},
-                ["Response 0 perf ns timestamp is invalid: -1"],
-            ),
+            ({"bad_response_timestamps": [-1]}, ["Response 0 perf ns timestamp is invalid: -1"]),
             (
                 {"bad_start_timestamp": True, "bad_response_timestamps": [-100, 0]},
                 [
@@ -94,13 +95,12 @@ class TestInvalidRecords:
             ),
         ],
         ids=["no_responses", "bad_start", "bad_response_ts", "multiple_errors"],
-    )
+    )  # fmt: skip
     async def test_converted_to_errors(
         self, setup_inference_parser, sample_turn, invalid_config, expected_notes
     ):
         """Invalid records are converted to error records with appropriate notes."""
-        record = create_invalid_record(**invalid_config)
-        record.turns = [sample_turn]
+        record = create_invalid_record(**invalid_config, turns=[sample_turn])
 
         result = await setup_inference_parser.parse_request_record(record)
 
@@ -122,8 +122,7 @@ class TestInvalidRecords:
         self, inference_result_parser, mock_tokenizer, sample_turn
     ):
         """Records with responses but no content are converted to error records."""
-        record = create_invalid_record(no_content_responses=True)
-        record.turns = [sample_turn]
+        record = create_invalid_record(no_content_responses=True, turns=[sample_turn])
 
         inference_result_parser.get_tokenizer = AsyncMock(return_value=mock_tokenizer)
         inference_result_parser.get_turn = AsyncMock(return_value=sample_turn)
@@ -148,8 +147,9 @@ class TestInvalidRecords:
         self, setup_inference_parser, sample_turn
     ):
         """Records with existing errors are not overwritten by create_error_from_invalid."""
-        record = create_invalid_record(has_error=True, no_responses=True)
-        record.turns = [sample_turn]
+        record = create_invalid_record(
+            has_error=True, no_responses=True, turns=[sample_turn]
+        )
 
         result = await setup_inference_parser.parse_request_record(record)
 
@@ -168,21 +168,21 @@ class TestInvalidRecords:
         """Input token count is computed for all error scenarios."""
         if record_type == "error":
             record = RequestRecord(
-                conversation_id="cid",
-                turn_index=0,
+                request_info=create_test_request_info(turns=[sample_turn]),
                 model_name="test-model",
+                turns=[sample_turn],
                 error=ErrorDetails(
                     code=500, message="Server error", type="ServerError"
                 ),
             )
         elif record_type == "invalid":
-            record = create_invalid_record(no_responses=True)
+            record = create_invalid_record(no_responses=True, turns=[sample_turn])
         else:
             record = RequestRecord(
-                conversation_id="cid", turn_index=0, model_name="test-model"
+                request_info=create_test_request_info(turns=[sample_turn]),
+                model_name="test-model",
+                turns=[sample_turn],
             )
-
-        record.turns = [sample_turn]
 
         inference_result_parser.get_tokenizer = AsyncMock(return_value=mock_tokenizer)
         inference_result_parser.get_turn = AsyncMock(return_value=sample_turn)
@@ -206,10 +206,9 @@ class TestServerTokenCount:
     """Tests for --use-server-token-count flag functionality."""
 
     async def test_uses_server_values(
-        self, server_token_parser, sample_turn, request_record, spy_tokenizer
+        self, server_token_parser, request_record, spy_tokenizer
     ):
         """Server token counts are used when flag is enabled."""
-        request_record.turns = [sample_turn]
         server_token_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
         setup_parser_responses(
             server_token_parser,
@@ -228,13 +227,11 @@ class TestServerTokenCount:
         spy_tokenizer.encode.assert_not_called()
 
     async def test_missing_usage_returns_none(
-        self, server_token_parser, sample_turn, request_record
+        self, server_token_parser, request_record
     ):
         """None is returned when server doesn't provide usage."""
-        request_record.turns = [sample_turn]
         setup_parser_responses(
-            server_token_parser,
-            [make_parsed_response(include_usage=False)],
+            server_token_parser, [make_parsed_response(include_usage=False)]
         )
 
         result = await server_token_parser.process_valid_record(request_record)
@@ -243,14 +240,10 @@ class TestServerTokenCount:
         assert result.token_counts.output is None
         assert result.token_counts.reasoning is None
 
-    async def test_partial_usage(
-        self, server_token_parser, sample_turn, request_record
-    ):
+    async def test_partial_usage(self, server_token_parser, request_record):
         """Partial usage information is handled correctly."""
-        request_record.turns = [sample_turn]
         setup_parser_responses(
-            server_token_parser,
-            [make_parsed_response(prompt_tokens=150)],
+            server_token_parser, [make_parsed_response(prompt_tokens=150)]
         )
 
         result = await server_token_parser.process_valid_record(request_record)
@@ -259,11 +252,8 @@ class TestServerTokenCount:
         assert result.token_counts.output is None
         assert result.token_counts.reasoning is None
 
-    async def test_streaming_uses_last_value(
-        self, server_token_parser, sample_turn, request_record
-    ):
+    async def test_streaming_uses_last_value(self, server_token_parser, request_record):
         """Last non-None usage value is used for streaming responses."""
-        request_record.turns = [sample_turn]
         setup_parser_responses(
             server_token_parser,
             [
@@ -283,12 +273,11 @@ class TestServerTokenCount:
         assert result.token_counts.output == 50
 
     async def test_client_tokenization_when_disabled(
-        self, setup_inference_parser, sample_turn, request_record, spy_tokenizer
+        self, setup_inference_parser, request_record, spy_tokenizer
     ):
         """Client-side tokenization works when flag is disabled."""
         assert not setup_inference_parser.user_config.endpoint.use_server_token_count
 
-        request_record.turns = [sample_turn]
         setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
         setup_parser_responses(
             setup_inference_parser,
@@ -311,7 +300,7 @@ class TestServerTokenCount:
             (50, 10, 40),
             (50, None, 50),
             (50, 0, 50),
-            (10, 20, 0),  # Negative case: reasoning > completion, should clamp to 0
+            (10, 20, 0),
         ],
         ids=["with_reasoning", "no_reasoning", "zero_reasoning", "negative_clamped"],
     )  # fmt: skip
@@ -325,8 +314,7 @@ class TestServerTokenCount:
         """Output count excludes reasoning tokens."""
         responses = [
             make_parsed_response(
-                completion_tokens=completion_tokens,
-                reasoning_tokens=reasoning_tokens,
+                completion_tokens=completion_tokens, reasoning_tokens=reasoning_tokens
             )
         ]
         reasoning_count = setup_inference_parser._extract_server_reasoning_token_count(
@@ -339,13 +327,11 @@ class TestServerTokenCount:
         assert result == expected_output
 
     async def test_warning_when_no_usage_provided(
-        self, server_token_parser, sample_turn, request_record
+        self, server_token_parser, request_record
     ):
         """Warning is logged when server provides no usage information."""
-        request_record.turns = [sample_turn]
         setup_parser_responses(
-            server_token_parser,
-            [make_parsed_response(include_usage=False)],
+            server_token_parser, [make_parsed_response(include_usage=False)]
         )
 
         with patch.object(server_token_parser, "warning") as mock_warning:
@@ -358,148 +344,71 @@ class TestServerTokenCount:
 
 @pytest.mark.asyncio
 class TestContextPromptISL:
-    """Tests for ISL computation including context prompts (system_message and user_context_message)."""
+    """Tests for ISL computation including context prompts."""
 
-    async def test_isl_includes_system_message(
-        self, setup_inference_parser, sample_turn, spy_tokenizer, sample_request_info
+    @pytest.mark.parametrize(
+        "system_message,user_context_message,expected_tokens",
+        [
+            ("You are a helpful assistant", None, 13),
+            (None, "This is user context for session", 14),
+            ("You are a helpful assistant", "This is user context for session", 19),
+            (None, None, 8),
+            ("", "", 8),
+        ],
+        ids=[
+            "system_only",
+            "user_context_only",
+            "both_context_messages",
+            "no_context",
+            "empty_context",
+        ],
+    )  # fmt: skip
+    async def test_isl_with_context_messages(
+        self,
+        setup_inference_parser,
+        sample_turn,
+        spy_tokenizer,
+        sample_request_info,
+        system_message,
+        user_context_message,
+        expected_tokens,
     ):
-        """ISL computation includes system_message tokens."""
-        sample_request_info.system_message = "You are a helpful assistant"  # 5 words
-        sample_request_info.turns = []  # Clear default turns
+        """ISL computation includes context prompts correctly."""
+        if system_message is not None:
+            sample_request_info.system_message = system_message
+        if user_context_message is not None:
+            sample_request_info.user_context_message = user_context_message
+        sample_request_info.turns = [sample_turn]
+
         record = RequestRecord(
-            conversation_id="test-conversation",
-            turn_index=0,
             model_name="test-model",
             request_info=sample_request_info,
+            turns=[sample_turn],
         )
-        record.turns = [sample_turn]  # 8 words
-
         setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
 
         result = await setup_inference_parser.compute_input_token_count(record)
 
-        # 5 words (system) + 8 words (turn) = 13 tokens
-        assert result == 13
-        assert spy_tokenizer.encode.call_count == 3  # system + 2 text objects
-
-    async def test_isl_includes_user_context_message(
-        self, setup_inference_parser, sample_turn, spy_tokenizer, sample_request_info
-    ):
-        """ISL computation includes user_context_message tokens."""
-        sample_request_info.user_context_message = (
-            "This is user context for session"  # 6 words
-        )
-        sample_request_info.turns = []  # Clear default turns
-        record = RequestRecord(
-            conversation_id="test-conversation",
-            turn_index=0,
-            model_name="test-model",
-            request_info=sample_request_info,
-        )
-        record.turns = [sample_turn]  # 8 words
-
-        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
-
-        result = await setup_inference_parser.compute_input_token_count(record)
-
-        # 6 words (user context) + 8 words (turn) = 14 tokens
-        assert result == 14
-        assert spy_tokenizer.encode.call_count == 3  # user context + 2 text objects
-
-    async def test_isl_includes_both_context_messages(
-        self, setup_inference_parser, sample_turn, spy_tokenizer, sample_request_info
-    ):
-        """ISL computation includes both system_message and user_context_message tokens."""
-        sample_request_info.system_message = "You are a helpful assistant"  # 5 words
-        sample_request_info.user_context_message = (
-            "This is user context for session"  # 6 words
-        )
-        sample_request_info.turns = []  # Clear default turns
-        record = RequestRecord(
-            conversation_id="test-conversation",
-            turn_index=0,
-            model_name="test-model",
-            request_info=sample_request_info,
-        )
-        record.turns = [sample_turn]  # 8 words
-
-        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
-
-        result = await setup_inference_parser.compute_input_token_count(record)
-
-        # 5 words (system) + 6 words (user context) + 8 words (turn) = 19 tokens
-        assert result == 19
-        assert (
-            spy_tokenizer.encode.call_count == 4
-        )  # system + user context + 2 text objects
-
-    async def test_isl_without_context_messages(
-        self, setup_inference_parser, sample_turn, spy_tokenizer, sample_request_info
-    ):
-        """ISL computation works correctly when no context messages are present."""
-        # sample_request_info already has no context messages by default
-        sample_request_info.turns = []  # Clear default turns
-        record = RequestRecord(
-            conversation_id="test-conversation",
-            turn_index=0,
-            model_name="test-model",
-            request_info=sample_request_info,
-        )
-        record.turns = [sample_turn]  # 8 words
-
-        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
-
-        result = await setup_inference_parser.compute_input_token_count(record)
-
-        # 8 words (turn only) = 8 tokens
-        assert result == 8
-        assert spy_tokenizer.encode.call_count == 2  # 2 text objects only
-
-    async def test_isl_with_empty_context_messages(
-        self, setup_inference_parser, sample_turn, spy_tokenizer, sample_request_info
-    ):
-        """ISL computation handles empty context message strings correctly."""
-        sample_request_info.system_message = ""  # Empty string should be skipped
-        sample_request_info.user_context_message = ""  # Empty string should be skipped
-        sample_request_info.turns = []  # Clear default turns
-        record = RequestRecord(
-            conversation_id="test-conversation",
-            turn_index=0,
-            model_name="test-model",
-            request_info=sample_request_info,
-        )
-        record.turns = [sample_turn]  # 8 words
-
-        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
-
-        result = await setup_inference_parser.compute_input_token_count(record)
-
-        # 8 words (turn only) = 8 tokens (empty strings are falsy and skipped)
-        assert result == 8
-        assert spy_tokenizer.encode.call_count == 2  # 2 text objects only
+        assert result == expected_tokens
+        assert spy_tokenizer.encode.call_count == 1
 
     async def test_isl_context_prompts_for_error_records(
         self, setup_inference_parser, sample_turn, spy_tokenizer, sample_request_info
     ):
         """ISL computation includes context prompts even for error records."""
-        sample_request_info.system_message = "You are a helpful assistant"  # 5 words
-        sample_request_info.user_context_message = (
-            "This is user context for session"  # 6 words
-        )
-        sample_request_info.turns = []  # Clear default turns
+        sample_request_info.system_message = "You are a helpful assistant"
+        sample_request_info.user_context_message = "This is user context for session"
+        sample_request_info.turns = [sample_turn]
+
         record = RequestRecord(
-            conversation_id="test-conversation",
-            turn_index=0,
             model_name="test-model",
             request_info=sample_request_info,
+            turns=[sample_turn],
             error=ErrorDetails(code=500, message="Server error", type="ServerError"),
         )
-        record.turns = [sample_turn]  # 8 words
-
         setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
 
         parsed_record = await setup_inference_parser.parse_request_record(record)
 
-        # 5 words (system) + 6 words (user context) + 8 words (turn) = 19 tokens
         assert parsed_record.token_counts.input == 19
         assert parsed_record.responses == []

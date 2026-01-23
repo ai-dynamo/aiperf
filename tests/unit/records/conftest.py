@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Shared fixtures for records tests."""
 
@@ -7,16 +7,52 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.config import ServiceConfig
+from aiperf.common.enums import CreditPhase, EndpointType, ModelSelectionStrategy
 from aiperf.common.models import (
     ErrorDetails,
+    RequestInfo,
     RequestRecord,
     SSEMessage,
     Text,
     TextResponse,
     Turn,
 )
+from aiperf.common.models.model_endpoint_info import (
+    EndpointInfo,
+    ModelEndpointInfo,
+    ModelInfo,
+    ModelListInfo,
+)
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.records.inference_result_parser import InferenceResultParser
+
+
+def create_test_request_info(
+    model_name: str = "test-model",
+    conversation_id: str = "cid",
+    turn_index: int = 0,
+    turns: list[Turn] | None = None,
+) -> RequestInfo:
+    """Create a RequestInfo for testing."""
+    return RequestInfo(
+        model_endpoint=ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name=model_name)],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_url="http://localhost:8000/v1/test",
+            ),
+        ),
+        turns=turns or [],
+        turn_index=turn_index,
+        credit_num=0,
+        credit_phase=CreditPhase.PROFILING,
+        x_request_id="test-request-id",
+        x_correlation_id="test-correlation-id",
+        conversation_id=conversation_id,
+    )
 
 
 @pytest.fixture
@@ -84,6 +120,7 @@ def create_invalid_record(
     has_error: bool = False,
     no_content_responses: bool = False,
     model_name: str = "test-model",
+    turns: list[Turn] | None = None,
 ) -> RequestRecord:
     """Create an invalid RequestRecord for testing.
 
@@ -94,11 +131,16 @@ def create_invalid_record(
         has_error: If True, adds an existing error to the record
         no_content_responses: If True, creates responses without content (e.g., [DONE] markers)
         model_name: Model name for the record
+        turns: Optional list of turns to include in the record
 
     Returns:
         RequestRecord with the specified invalid configuration
     """
-    record = RequestRecord(conversation_id="cid", turn_index=0, model_name=model_name)
+    record = RequestRecord(
+        request_info=create_test_request_info(model_name=model_name, turns=turns),
+        model_name=model_name,
+        turns=turns or [],
+    )
 
     if has_error:
         record.error = ErrorDetails(

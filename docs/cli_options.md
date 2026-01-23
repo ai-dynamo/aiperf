@@ -485,7 +485,7 @@ Multiplier for core prefix branch lengths in radix tree.
 
 #### `--synthesis-prefix-root-multiplier` `<int>`
 
-Number of times to replicate the radix tree structure.
+Number of independent radix trees to distribute traces across.
 <br>_Default: `1`_
 
 #### `--synthesis-prompt-len-multiplier` `<float>`
@@ -495,7 +495,11 @@ Multiplier for leaf path (unique prompt) lengths.
 
 #### `--synthesis-max-isl` `<int>`
 
-Maximum input sequence length to include in synthesis.
+Maximum input sequence length for filtering. Traces with input_length > max_isl are skipped.
+
+#### `--synthesis-max-osl` `<int>`
+
+Maximum output sequence length cap. Traces with output_length > max_osl are capped to max_osl.
 
 ### Conversation Input
 

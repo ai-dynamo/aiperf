@@ -107,7 +107,6 @@ class InferenceClient(AIPerfLifecycleMixin):
                 self.debug(
                     f"pre_send_perf_ns to start_perf_ns latency: {result.start_perf_ns - pre_send_perf_ns} ns"
                 )
-            result.turns = request_info.turns
             return result
         except Exception as e:
             self.error(
@@ -115,7 +114,6 @@ class InferenceClient(AIPerfLifecycleMixin):
             )
             return RequestRecord(
                 request_info=request_info,
-                turns=request_info.turns,
                 timestamp_ns=pre_send_timestamp_ns or time.time_ns(),
                 # Try and use the pre_send_perf_ns if it is available, otherwise use the current time.
                 start_perf_ns=pre_send_perf_ns or time.perf_counter_ns(),
@@ -156,11 +154,17 @@ class InferenceClient(AIPerfLifecycleMixin):
             or self.model_endpoint.primary_model_name
         )
         record.request_info = request_info
+
+        # Copy turns with stripped multimodal data to avoid mutating original session
+        # and reduce memory usage (placeholders instead of large image/audio/video data)
+        record.turns = [turn.copy_with_stripped_media() for turn in request_info.turns]
+
         # If this is the first turn, calculate the credit drop latency
         if request_info.turn_index == 0 and request_info.drop_perf_ns is not None:
             record.credit_drop_latency = (
                 record.start_perf_ns - request_info.drop_perf_ns
             )
+
         # Preserve headers set by transport; only use endpoint headers if not set
         if record.request_headers is None:
             record.request_headers = request_info.endpoint_headers

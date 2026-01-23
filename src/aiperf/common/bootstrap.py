@@ -79,6 +79,17 @@ def bootstrap_and_run_service(
 
         ensure_modules_loaded()
 
+        if service_class.__name__ in ("Worker", "TimingManager"):
+            # Disable garbage collection in child processes to prevent unpredictable latency spikes.
+            # Only required in timing critical services such as Worker and TimingManager.
+            import gc
+
+            for _ in range(3):  # Run 3 times to ensure all objects are collected
+                gc.collect()
+            gc.freeze()
+            gc.set_threshold(0)
+            gc.disable()
+
         # Load and apply custom GPU metrics in child process
         if user_config.gpu_telemetry_metrics_file:
             from aiperf.gpu_telemetry import constants
