@@ -67,7 +67,9 @@ class SynthesisParams(AIPerfBaseModel):
         default=1.0, ge=0.0, description="Multiplier for core prefix branch lengths"
     )
     prefix_root_multiplier: int = Field(
-        default=1, ge=1, description="Number of times to replicate the radix tree"
+        default=1,
+        ge=1,
+        description="Number of independent radix trees to distribute traces across",
     )
     prompt_len_multiplier: float = Field(
         default=1.0,

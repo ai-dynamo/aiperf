@@ -53,8 +53,12 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
         super().__init__(filename=filename, user_config=user_config, **kwargs)
         self.prompt_generator = prompt_generator
         self._skipped_traces = 0
+        self._skipped_max_isl = 0
+        self._capped_max_osl = 0
         self._start_offset = user_config.input.fixed_schedule_start_offset
         self._end_offset = user_config.input.fixed_schedule_end_offset
+        self._max_isl = user_config.input.synthesis.max_isl
+        self._max_osl = user_config.input.synthesis.max_osl
 
         # Store tokenizer name and block size for parallel decode
         self._tokenizer_name = (
@@ -100,12 +104,32 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
 
                 trace_data = MooncakeTrace.model_validate_json(line)
 
+                # Skip traces before or after the fixed schedule offset
                 if (
                     trace_data.timestamp is not None
                     and not self._timestamp_within_offsets(trace_data.timestamp)
                 ):
                     self._skipped_traces += 1
-                    continue  # Skip traces before or after the fixed schedule offset
+                    continue
+
+                # Filter by max_isl if configured
+                if (
+                    self._max_isl is not None
+                    and trace_data.input_length is not None
+                    and trace_data.input_length > self._max_isl
+                ):
+                    self._skipped_max_isl += 1
+                    continue
+
+                # Cap by max_osl if configured
+                if (
+                    self._max_osl is not None
+                    and trace_data.output_length is not None
+                    and trace_data.output_length > self._max_osl
+                ):
+                    self._capped_max_osl += 1
+                    # Only cap it, do not skip the trace
+                    trace_data.output_length = self._max_osl
 
                 session_id = trace_data.session_id or self.session_id_generator.next()
                 data[session_id].append(trace_data)
@@ -115,6 +139,15 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
                 f"Skipped {self._skipped_traces:,} traces because they were "
                 f"before the start offset of {self._start_offset} or "
                 f"after the end offset of {self._end_offset}"
+            )
+        if self._skipped_max_isl > 0:
+            self.info(
+                f"Skipped {self._skipped_max_isl:,} traces because input_length "
+                f"exceeded max_isl of {self._max_isl}"
+            )
+        if self._capped_max_osl > 0:
+            self.info(
+                f"{self._capped_max_osl:,} traces exceeded max_osl of {self._max_osl} and were capped to {self._max_osl}"
             )
         self.debug(lambda: f"Loaded {len(data):,} traces from {self.filename}")
 

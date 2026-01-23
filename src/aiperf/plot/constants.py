@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -71,8 +71,8 @@ OUTLIER_RED = "#E74C3C"
 # Direction indicators for derived metrics (not in MetricRegistry)
 # Maps metric name to direction: True = ↑ (higher is better), False = ↓ (lower is better)
 DERIVED_METRIC_DIRECTIONS = {
-    "output_token_throughput_per_gpu": True,
-    "output_token_throughput_per_user": True,
+    "output_token_throughput_per_gpu": True,  # nosec
+    "output_token_throughput_per_user": True,  # nosec
 }
 
 
