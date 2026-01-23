@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Synthesizer."""
 
+from collections import defaultdict
+
 import pytest
 
 from aiperf.dataset.synthesis import Synthesizer
@@ -307,8 +309,6 @@ class TestSynthesizer:
 
         # Check for collisions: no two traces from different trees should share hash_ids
         # Group traces by their first hash_id (tree root indicator)
-        from collections import defaultdict
-
         trees: dict[int, list[set[int]]] = defaultdict(list)
         for trace in synthetic:
             root = trace["hash_ids"][0]
