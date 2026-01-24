@@ -131,6 +131,21 @@ RUN uv pip install /dist/aiperf-*.whl \
     && rm -rf /dist /workspace/pyproject.toml
 
 ############################################
+############### Test Image #################
+############################################
+# Test stage: env-builder has aiperf, just add curl
+FROM env-builder AS test
+
+RUN apt-get update -y && \
+    apt-get install -y curl && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV VIRTUAL_ENV=/opt/aiperf/venv \
+    PATH="/opt/aiperf/venv/bin:${PATH}"
+
+ENTRYPOINT ["/bin/bash", "-c"]
+
+############################################
 ############# Runtime Image ################
 ############################################
 FROM nvcr.io/nvidia/distroless/python:3.13-v3.1.2-dev AS runtime

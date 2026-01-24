@@ -89,8 +89,7 @@ class EndToEndTestRunner:
         # Get repo root using centralized function
         repo_root = get_repo_root()
 
-        # Build the container
-        build_command = f"cd {repo_root} && docker build -t aiperf:test ."
+        build_command = f"cd {repo_root} && docker build --target test -t aiperf:test ."
 
         logger.info("Building AIPerf Docker image...")
         logger.info(f"Build command: {build_command}")
@@ -143,9 +142,9 @@ class EndToEndTestRunner:
         self.aiperf_container_id = container_name
         logger.info(f"AIPerf container ready: {container_name}")
 
-        # Verify aiperf works by checking the virtual environment
+        # Verify aiperf works
         verify_result = subprocess.run(
-            f"docker exec {container_name} bash -c 'source /opt/aiperf/venv/bin/activate && aiperf --version'",
+            f"docker exec {container_name} aiperf --version",
             shell=True,
             capture_output=True,
             text=True,
@@ -323,12 +322,12 @@ class EndToEndTestRunner:
                 f"Running AIPerf test {i + 1}/{len(server.aiperf_commands)} for {server.name}"
             )
 
-            # Execute aiperf command in the container with verbose output (use the virtual environment)
+            # Execute aiperf command in the container with verbose output
             # Add --ui-type simple to all aiperf commands
             aiperf_command_with_ui = aiperf_cmd.command.replace(
                 "aiperf profile", f"aiperf profile --ui-type {AIPERF_UI_TYPE}"
             )
-            exec_command = f"docker exec {self.aiperf_container_id} bash -c 'source /opt/aiperf/venv/bin/activate && {aiperf_command_with_ui}'"
+            exec_command = f"docker exec {self.aiperf_container_id} bash -c '{aiperf_command_with_ui}'"
 
             logger.info(
                 f"Executing AIPerf command {i + 1}/{len(server.aiperf_commands)} against {server.name}:"
