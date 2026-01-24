@@ -14,6 +14,28 @@ from tests.harness.utils import VideoDetails
 logger = AIPerfLogger(__name__)
 
 
+def create_mooncake_trace_file(
+    tmp_path: Path,
+    traces: list[dict],
+    filename: str = "traces.jsonl",
+) -> Path:
+    """Create a Mooncake trace JSONL file for testing.
+
+    Args:
+        tmp_path: Temporary directory path
+        traces: List of trace dictionaries to write
+        filename: Name of the trace file
+
+    Returns:
+        Path to the created trace file
+    """
+    trace_file = tmp_path / filename
+    with open(trace_file, "wb") as f:
+        for trace in traces:
+            f.write(orjson.dumps(trace) + b"\n")
+    return trace_file
+
+
 def create_rankings_dataset(tmp_path: Path, num_entries: int) -> Path:
     """Create a rankings dataset for testing.
 
