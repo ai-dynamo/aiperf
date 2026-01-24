@@ -44,7 +44,7 @@ class TestMooncakeTraceIntegration:
                 --input-file {trace_file} \
                 --custom-dataset-type mooncake_trace \
                 --request-count {request_count} \
-                --concurrency {defaults.concurrency} \
+                --fixed-schedule \
                 --workers-max {defaults.workers_max} \
                 --ui {defaults.ui}
             """
@@ -60,14 +60,16 @@ class TestMooncakeTraceIntegration:
         tmp_path: Path,
     ):
         """Test Mooncake trace with literal text inputs instead of input_length."""
+        # Each trace is a single-turn conversation; timestamp required for --fixed-schedule
         traces = [
-            {"text_input": "What is the capital of France?", "output_length": 20},
-            {"text_input": "Explain quantum computing briefly.", "output_length": 30},
-            {"text_input": "Write a haiku about programming.", "output_length": 25},
-            {"text_input": "What is machine learning?", "output_length": 40},
-            {"text_input": "Describe the solar system.", "output_length": 35},
-        ]
+            {"timestamp": 0, "text_input": "What is the capital of France?", "output_length": 20},
+            {"timestamp": 100, "text_input": "Explain quantum computing briefly.", "output_length": 30},
+            {"timestamp": 200, "text_input": "Write a haiku about programming.", "output_length": 25},
+            {"timestamp": 300, "text_input": "What is machine learning?", "output_length": 40},
+            {"timestamp": 400, "text_input": "Describe the solar system.", "output_length": 35},
+        ]  # fmt: skip
         trace_file = create_mooncake_trace_file(tmp_path, traces)
+        request_count = len(traces)
 
         result = await cli.run(
             f"""
@@ -77,14 +79,14 @@ class TestMooncakeTraceIntegration:
                 --endpoint-type chat \
                 --input-file {trace_file} \
                 --custom-dataset-type mooncake_trace \
-                --request-count {defaults.request_count} \
-                --concurrency {defaults.concurrency} \
+                --request-count {request_count} \
+                --fixed-schedule \
                 --workers-max {defaults.workers_max} \
                 --ui {defaults.ui}
             """
         )
 
-        assert result.request_count == defaults.request_count
+        assert result.request_count == request_count
         assert result.has_all_outputs
 
     async def test_mooncake_trace_multi_turn_with_session_id(
@@ -94,33 +96,20 @@ class TestMooncakeTraceIntegration:
         tmp_path: Path,
     ):
         """Test Mooncake trace with session_id for multi-turn conversations."""
+        # First turn of each session needs timestamp; subsequent turns use delay
         traces = [
-            # Session 1: Two-turn conversation
-            {"session_id": "session-1", "input_length": 100, "output_length": 40},
-            {
-                "session_id": "session-1",
-                "delay": 500,
-                "input_length": 150,
-                "output_length": 50,
-            },
-            # Session 2: Single-turn
-            {"session_id": "session-2", "input_length": 200, "output_length": 60},
-            # Session 3: Three-turn conversation
-            {"session_id": "session-3", "input_length": 80, "output_length": 30},
-            {
-                "session_id": "session-3",
-                "delay": 300,
-                "input_length": 120,
-                "output_length": 45,
-            },
-            {
-                "session_id": "session-3",
-                "delay": 400,
-                "input_length": 90,
-                "output_length": 35,
-            },
-        ]
+            # Session 1: Two-turn conversation (starts at t=0)
+            {"session_id": "session-1", "timestamp": 0, "input_length": 100, "output_length": 40},
+            {"session_id": "session-1", "delay": 500, "input_length": 150, "output_length": 50},
+            # Session 2: Single-turn (starts at t=100)
+            {"session_id": "session-2", "timestamp": 100, "input_length": 200, "output_length": 60},
+            # Session 3: Three-turn conversation (starts at t=200)
+            {"session_id": "session-3", "timestamp": 200, "input_length": 80, "output_length": 30},
+            {"session_id": "session-3", "delay": 300, "input_length": 120, "output_length": 45},
+            {"session_id": "session-3", "delay": 400, "input_length": 90, "output_length": 35},
+        ]  # fmt: skip
         trace_file = create_mooncake_trace_file(tmp_path, traces)
+        request_count = len(traces)  # Each turn is a request
 
         result = await cli.run(
             f"""
@@ -130,12 +119,12 @@ class TestMooncakeTraceIntegration:
                 --endpoint-type chat \
                 --input-file {trace_file} \
                 --custom-dataset-type mooncake_trace \
-                --request-count {defaults.request_count} \
-                --concurrency {defaults.concurrency} \
+                --request-count {request_count} \
+                --fixed-schedule \
                 --workers-max {defaults.workers_max} \
                 --ui {defaults.ui}
             """
         )
 
-        assert result.request_count == defaults.request_count
+        assert result.request_count == request_count
         assert result.has_all_outputs

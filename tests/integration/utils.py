@@ -30,9 +30,9 @@ def create_mooncake_trace_file(
         Path to the created trace file
     """
     trace_file = tmp_path / filename
-    with open(trace_file, "w") as f:
+    with open(trace_file, "wb") as f:
         for trace in traces:
-            f.write(orjson.dumps(trace).decode("utf-8") + "\n")
+            f.write(orjson.dumps(trace) + b"\n")
     return trace_file
 
 
