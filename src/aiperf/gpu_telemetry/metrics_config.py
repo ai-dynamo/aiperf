@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """GPU telemetry metrics configuration utilities."""
@@ -136,7 +136,9 @@ class MetricsConfigLoader(AIPerfLoggerMixin):
             GenericMetricUnit.PERCENT
         """
         # Extract unit from "(in UNIT)" pattern
-        match = re.search(r"\(in\s+([^)]+)\)", help_msg, re.IGNORECASE)
+        # Use [^\s)]+ instead of [^)]+ to avoid ReDoS from overlapping quantifiers
+        # (whitespace matches both \s+ and [^)]+, causing O(n²) backtracking)
+        match = re.search(r"\(in\s+([^\s)]+)\)", help_msg, re.IGNORECASE)
         if not match:
             return GenericMetricUnit.COUNT
 

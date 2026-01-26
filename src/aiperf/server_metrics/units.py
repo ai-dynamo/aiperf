@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Detect units from prometheus metric descriptions and names"""
 
@@ -267,7 +267,8 @@ _UNIT_TAG_TO_UNIT: dict[str, BaseMetricUnit] = {
 
 # Regex to match "(in <unit>)" pattern and capture the unit.
 # Examples: "(in MiB)", "(in W)", "(in mJ)", "(in C)"
-_PARENTHETICAL_IN_UNIT_PATTERN = re.compile(r"\(in\s+([^)]+)\)")
+# Use [^\s)]+ instead of [^)]+ to avoid ReDoS from overlapping quantifiers
+_PARENTHETICAL_IN_UNIT_PATTERN = re.compile(r"\(in\s+([^\s)]+)\)")
 
 
 def _parse_parenthetical_unit(description: str | None) -> BaseMetricUnit | None:
