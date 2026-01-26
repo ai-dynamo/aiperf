@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -11,7 +11,9 @@ from aiperf.common.factories import EndpointFactory
 from aiperf.common.models import (
     ParsedResponse,
 )
+from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.metadata import EndpointMetadata
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import EmbeddingResponseData, RequestInfo
 from aiperf.common.protocols import EndpointProtocol, InferenceServerResponse
 from aiperf.common.types import RequestOutputT
@@ -46,24 +48,53 @@ class EmbeddingsEndpoint(BaseEndpoint):
         Returns:
             OpenAI Embeddings API payload
         """
+        turn = self._validate_and_get_turn(request_info)
+
+        # Extract text contents
+        inputs = [
+            content for text in turn.texts for content in text.contents if content
+        ]
+
+        return self._build_payload(turn, request_info.model_endpoint, inputs)
+
+    def _validate_and_get_turn(self, request_info: RequestInfo):
+        """Validate request and return the single turn.
+
+        Args:
+            request_info: Request context including turns
+
+        Returns:
+            The single turn from the request
+
+        Raises:
+            ValueError: If request doesn't contain exactly one turn
+        """
         if len(request_info.turns) != 1:
             raise ValueError("Embeddings endpoint only supports one turn.")
 
-        # Use first turn (hardcoded for now)
         turn = request_info.turns[0]
 
         if turn.max_tokens:
             self.error("Max_tokens is provided but is not supported for embeddings.")
 
-        # Extract all text contents as input
-        prompts = [
-            content for text in turn.texts for content in text.contents if content
-        ]
-        model_endpoint = request_info.model_endpoint
+        return turn
 
+    def _build_payload(
+        self, turn: Turn, model_endpoint: ModelEndpointInfo, inputs: list[str]
+    ) -> dict[str, Any]:
+        """Build the final payload dictionary.
+
+        Args:
+            turn: The validated turn containing model override
+            model_endpoint: Model endpoint info with primary model name and extra config
+            inputs: List of input strings to embed
+
+        Returns:
+            OpenAI Embeddings API payload
+        """
         payload: dict[str, Any] = {
             "model": turn.model or model_endpoint.primary_model_name,
-            "input": prompts,
+            "input": inputs,
         }
 
         if model_endpoint.endpoint.extra:
