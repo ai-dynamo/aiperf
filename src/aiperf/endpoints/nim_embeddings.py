@@ -77,7 +77,7 @@ class NIMEmbeddingsEndpoint(EmbeddingsEndpoint):
             modality = None
 
         # Build base payload using parent
-        payload = self._build_payload(request_info, inputs)  # type: ignore[arg-type]
+        payload = self._build_payload(turn, request_info.model_endpoint, inputs)
 
         # Add modality for image/multimodal requests (only if not already specified)
         if modality and "modality" not in payload:

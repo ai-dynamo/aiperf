@@ -11,7 +11,9 @@ from aiperf.common.factories import EndpointFactory
 from aiperf.common.models import (
     ParsedResponse,
 )
+from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.metadata import EndpointMetadata
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import EmbeddingResponseData, RequestInfo
 from aiperf.common.protocols import EndpointProtocol, InferenceServerResponse
 from aiperf.common.types import RequestOutputT
@@ -53,7 +55,7 @@ class EmbeddingsEndpoint(BaseEndpoint):
             content for text in turn.texts for content in text.contents if content
         ]
 
-        return self._build_payload(request_info, inputs)
+        return self._build_payload(turn, request_info.model_endpoint, inputs)
 
     def _validate_and_get_turn(self, request_info: RequestInfo):
         """Validate request and return the single turn.
@@ -78,20 +80,18 @@ class EmbeddingsEndpoint(BaseEndpoint):
         return turn
 
     def _build_payload(
-        self, request_info: RequestInfo, inputs: list[str]
-    ) -> RequestOutputT:
+        self, turn: Turn, model_endpoint: ModelEndpointInfo, inputs: list[str]
+    ) -> dict[str, Any]:
         """Build the final payload dictionary.
 
         Args:
-            request_info: Request context including model endpoint and turns
+            turn: The validated turn containing model override
+            model_endpoint: Model endpoint info with primary model name and extra config
             inputs: List of input strings to embed
 
         Returns:
             OpenAI Embeddings API payload
         """
-        turn = request_info.turns[0]
-        model_endpoint = request_info.model_endpoint
-
         payload: dict[str, Any] = {
             "model": turn.model or model_endpoint.primary_model_name,
             "input": inputs,
