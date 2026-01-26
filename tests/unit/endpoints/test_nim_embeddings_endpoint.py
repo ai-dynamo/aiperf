@@ -169,3 +169,29 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
             "data:image/png;base64,img2",
         ]
         assert payload["modality"] == "image"
+
+    def test_format_payload_preserves_user_provided_modality(self):
+        """Test that user-provided modality via extra-inputs is preserved."""
+        # Create endpoint with user-specified modality in extra inputs
+        model_endpoint_with_extra = create_model_endpoint(
+            EndpointType.NIM_EMBEDDINGS,
+            model_name="nim-embeddings-model",
+            extra=[("modality", "text")],
+        )
+        endpoint = create_endpoint_with_mock_transport(
+            NIMEmbeddingsEndpoint, model_endpoint_with_extra
+        )
+
+        # Provide images which would normally set modality to "image"
+        turn = Turn(
+            images=[Image(contents=["data:image/png;base64,img1"])],
+            model="nim-embeddings-model",
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint_with_extra, turns=[turn]
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        # User-provided modality should be preserved, not overwritten
+        assert payload["modality"] == "text"
