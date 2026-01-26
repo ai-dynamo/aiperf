@@ -52,7 +52,6 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
 
         assert payload["model"] == "nim-embeddings-model"
         assert payload["input"] == [image_data_url]
-        assert payload["modality"] == "image"
 
     def test_format_payload_multiple_images(self, endpoint, model_endpoint):
         """Test embedding request with multiple images."""
@@ -67,7 +66,6 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
         payload = endpoint.format_payload(request_info)
 
         assert payload["input"] == [image1, image2]
-        assert payload["modality"] == "image"
 
     def test_format_payload_text_and_image_combined(self, endpoint, model_endpoint):
         """Test embedding request with both text and images combined."""
@@ -84,7 +82,6 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
 
         assert payload["model"] == "nim-embeddings-model"
         assert payload["input"] == [f"{text} {image_data_url}"]
-        assert payload["modality"] == "text_image"
 
     def test_format_payload_multiple_text_and_images(self, endpoint, model_endpoint):
         """Test embedding request with multiple texts and images paired together."""
@@ -103,7 +100,6 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
             f"{texts[0]} {images[0]}",
             f"{texts[1]} {images[1]}",
         ]
-        assert payload["modality"] == "text_image"
 
     def test_format_payload_text_image_count_mismatch(self, endpoint, model_endpoint):
         """Test that mismatched text and image counts raise an error."""
@@ -139,7 +135,6 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
             "data:image/png;base64,valid",
             "data:image/png;base64,another",
         ]
-        assert payload["modality"] == "image"
 
     def test_metadata_returns_nim_specific_title(self, endpoint):
         """Test that metadata returns NIM-specific metrics title."""
@@ -168,30 +163,3 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
             "data:image/png;base64,img1",
             "data:image/png;base64,img2",
         ]
-        assert payload["modality"] == "image"
-
-    def test_format_payload_preserves_user_provided_modality(self):
-        """Test that user-provided modality via extra-inputs is preserved."""
-        # Create endpoint with user-specified modality in extra inputs
-        model_endpoint_with_extra = create_model_endpoint(
-            EndpointType.NIM_EMBEDDINGS,
-            model_name="nim-embeddings-model",
-            extra=[("modality", "text")],
-        )
-        endpoint = create_endpoint_with_mock_transport(
-            NIMEmbeddingsEndpoint, model_endpoint_with_extra
-        )
-
-        # Provide images which would normally set modality to "image"
-        turn = Turn(
-            images=[Image(contents=["data:image/png;base64,img1"])],
-            model="nim-embeddings-model",
-        )
-        request_info = create_request_info(
-            model_endpoint=model_endpoint_with_extra, turns=[turn]
-        )
-
-        payload = endpoint.format_payload(request_info)
-
-        # User-provided modality should be preserved, not overwritten
-        assert payload["modality"] == "text"

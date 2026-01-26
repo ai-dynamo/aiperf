@@ -58,7 +58,7 @@ class NIMEmbeddingsEndpoint(EmbeddingsEndpoint):
             if image_content
         ]
 
-        # Determine inputs and modality
+        # Determine inputs based on content type
         if texts and images:
             if len(texts) != len(images):
                 raise ValueError(
@@ -68,19 +68,9 @@ class NIMEmbeddingsEndpoint(EmbeddingsEndpoint):
             inputs: list[Any] = [
                 f"{text} {image}" for text, image in zip(texts, images, strict=False)
             ]
-            modality = "text_image"
         elif images:
             inputs = images
-            modality = "image"
         else:
             inputs = texts
-            modality = None
 
-        # Build base payload using parent
-        payload = self._build_payload(turn, request_info.model_endpoint, inputs)
-
-        # Add modality for image/multimodal requests (only if not already specified)
-        if modality and "modality" not in payload:
-            payload["modality"] = modality
-
-        return payload
+        return self._build_payload(turn, request_info.model_endpoint, inputs)
