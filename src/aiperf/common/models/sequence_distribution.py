@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 Sequence length distribution models for AIPerf benchmarking.
@@ -266,11 +266,14 @@ class DistributionParser:
     """Parser for various sequence length distribution string formats."""
 
     # Regex patterns for different formats (allow whitespace and optional stddev)
+    # Use unambiguous numeric pattern to avoid ReDoS: (?:\d+(?:\.\d+)?|\.\d+)
+    # This matches: integers (123), decimals (123.45), or leading-dot decimals (.45)
+    _NUM = r"(?:\d+(?:\.\d+)?|\.\d+)"
     SEMICOLON_PATTERN = re.compile(
-        r"(\d+)(?:\|([0-9]*\.?[0-9]+))?\s*,\s*(\d+)(?:\|([0-9]*\.?[0-9]+))?\s*:\s*([0-9]*\.?[0-9]+)"
+        rf"(\d+)(?:\|({_NUM}))?\s*,\s*(\d+)(?:\|({_NUM}))?\s*:\s*({_NUM})"
     )
     BRACKET_PATTERN = re.compile(
-        r"\(\s*(\d+)(?:\|([0-9]*\.?[0-9]+))?\s*,\s*(\d+)(?:\|([0-9]*\.?[0-9]+))?\s*\)\s*:\s*([0-9]*\.?[0-9]+)"
+        rf"\(\s*(\d+)(?:\|({_NUM}))?\s*,\s*(\d+)(?:\|({_NUM}))?\s*\)\s*:\s*({_NUM})"
     )
 
     @classmethod

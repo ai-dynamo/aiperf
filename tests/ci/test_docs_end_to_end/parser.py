@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 Markdown parser for extracting server setup and AIPerf run commands.
@@ -55,7 +55,9 @@ class MarkdownParser:
 
             # Look for HTML comment tags
             if line.startswith("<!--") and line.endswith("-->"):
-                tag_match = re.match(r"<!--\s*([^-\s]+.*?)\s*-->", line)
+                # Use [^-\s]\S* instead of [^-\s]+.*? to avoid ReDoS
+                # (both quantifiers can match the same chars, causing O(n²) backtracking)
+                tag_match = re.match(r"<!--\s*([^-\s]\S*)\s*-->", line)
                 if tag_match:
                     tag_name = tag_match.group(1).strip()
 
