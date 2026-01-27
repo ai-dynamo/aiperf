@@ -120,10 +120,20 @@ The API endpoint type to benchmark. Determines request/response format and suppo
 Enable streaming responses. When enabled, the server streams tokens incrementally as they are generated. Automatically disabled if the selected endpoint type does not support streaming. Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.
 <br>_Flag (no value required)_
 
-#### `-u`, `--url` `<str>`
+#### `-u`, `--url` `<list>`
 
-Base URL of the API server to benchmark (e.g., `http://localhost:8000`, `https://api.example.com`). The endpoint path is automatically appended based on `--endpoint-type` (e.g., `/v1/chat/completions` for `chat`).
-<br>_Default: `localhost:8000`_
+Base URL(s) of the API server(s) to benchmark. Multiple URLs can be specified for load balancing across multiple instances (e.g., `--url http://server1:8000 --url http://server2:8000`). The endpoint path is automatically appended based on `--endpoint-type` (e.g., `/v1/chat/completions` for `chat`).
+<br>_Default: `['localhost:8000']`_
+
+#### `--url-strategy` `<str>`
+
+Strategy for selecting URLs when multiple `--url` values are provided. 'round_robin' (default): distribute requests evenly across URLs in sequential order.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `round_robin` | _default_ | Distribute requests evenly across URLs in sequential order. Each request goes to the next URL in the list, wrapping around when the end is reached. |
 
 #### `--request-timeout-seconds` `<float>`
 

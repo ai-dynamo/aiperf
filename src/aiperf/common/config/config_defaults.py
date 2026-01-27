@@ -18,6 +18,7 @@ from aiperf.common.enums import (
     ModelSelectionStrategy,
     ServerMetricsFormat,
     ServiceRunType,
+    URLSelectionStrategy,
     VideoFormat,
     VideoSynthType,
 )
@@ -37,6 +38,7 @@ class EndpointDefaults:
     TYPE = EndpointType.CHAT
     STREAMING = False
     URL = "localhost:8000"
+    URL_STRATEGY = URLSelectionStrategy.ROUND_ROBIN
     TIMEOUT = 6 * 60 * 60  # 6 hours, match vLLM benchmark default
     API_KEY = None
     USE_LEGACY_MAX_TOKENS = False

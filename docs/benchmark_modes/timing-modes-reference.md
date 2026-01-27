@@ -339,3 +339,12 @@ With `--num-users 15` and `--user-centric-rate 1.0`, each user has 15 seconds be
 | `--session-turns-mean` | float | 1.0 | Mean turns per session (`--user-centric-rate` requires ≥ 2) |
 | `--session-turns-stddev` | float | 0.0 | Standard deviation of turns |
 | `--dataset-sampling-strategy` | enum | shuffle | Dataset sampling: `sequential`, `shuffle` (not with `--fixed-schedule`) |
+
+### Multi-URL Load Balancing
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--url` | list | localhost:8000 | One or more endpoint URLs; multiple URLs enable load balancing |
+| `--url-strategy` | enum | round_robin | Strategy for distributing requests across multiple URLs |
+
+> **See also**: [Multi-URL Load Balancing Tutorial](../tutorials/multi-url-load-balancing.md) for detailed configuration and examples.

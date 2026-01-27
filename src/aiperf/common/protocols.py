@@ -881,3 +881,31 @@ class TransportProtocol(AIPerfLifecycleProtocol, Protocol):
     async def send_request(
         self, request_info: RequestInfo, payload: RequestInputT
     ) -> RequestRecord: ...
+
+
+@runtime_checkable
+class URLSelectionStrategyProtocol(Protocol):
+    """Protocol for URL selection strategies.
+
+    Used for load balancing across multiple endpoint URLs when multiple
+    `--url` values are provided. Any class implementing this protocol must
+    provide a `next_url_index` method that returns the next URL index.
+
+    Thread Safety:
+        Safe for asyncio single-threaded concurrency.
+    """
+
+    def __init__(self, urls: list[str], **kwargs) -> None: ...
+
+    def next_url_index(self) -> int:
+        """Return the index of the next URL to use.
+
+        Returns:
+            Index into the urls list (0 to len(urls)-1)
+        """
+        ...
+
+    @property
+    def urls(self) -> list[str]:
+        """The list of URLs being sampled."""
+        ...

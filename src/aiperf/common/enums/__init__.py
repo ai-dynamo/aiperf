@@ -87,6 +87,7 @@ from aiperf.common.enums.plugin_enums import (
     ConnectionReuseStrategy,
     EndpointType,
     TransportType,
+    URLSelectionStrategy,
 )
 from aiperf.common.enums.post_processor_enums import (
     RecordProcessorType,
@@ -190,6 +191,7 @@ __all__ = [
     "TemperatureMetricUnitInfo",
     "TimingMode",
     "TransportType",
+    "URLSelectionStrategy",
     "VideoFormat",
     "VideoSynthType",
     "WorkerStatus",

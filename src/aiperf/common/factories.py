@@ -24,6 +24,7 @@ from aiperf.common.enums import (
     ServiceRunType,
     ServiceType,
     TransportType,
+    URLSelectionStrategy,
     ZMQProxyType,
 )
 from aiperf.common.enums.dataset_enums import DatasetSamplingStrategy
@@ -66,6 +67,7 @@ if TYPE_CHECKING:
         ResultsProcessorProtocol,
         ServiceManagerProtocol,
         TransportProtocol,
+        URLSelectionStrategyProtocol,
     )
     from aiperf.dataset import (
         CustomDatasetLoaderProtocol,
@@ -701,6 +703,25 @@ class TransportFactory(AIPerfFactory[TransportType, "TransportProtocol"]):
                 return transport_type
 
         return None
+
+
+class URLSelectionStrategyFactory(
+    AIPerfFactory[URLSelectionStrategy, "URLSelectionStrategyProtocol"]
+):
+    """Factory for registering and creating URLSelectionStrategyProtocol instances based on the specified URL selection strategy.
+
+    Used for load balancing across multiple endpoint URLs when multiple `--url` values are provided.
+    see: :class:`aiperf.common.factories.AIPerfFactory` for more details.
+    """
+
+    @classmethod
+    def create_instance(  # type: ignore[override]
+        cls,
+        class_type: URLSelectionStrategy | str,
+        urls: list[str],
+        **kwargs,
+    ) -> URLSelectionStrategyProtocol:
+        return super().create_instance(class_type, urls=urls, **kwargs)
 
 
 class ZMQProxyFactory(AIPerfFactory[ZMQProxyType, "BaseZMQProxy"]):

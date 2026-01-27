@@ -58,6 +58,7 @@ Features
 | **[Warmup Phase](docs/tutorials/warmup.md)** | Configure pre-benchmark warmup to eliminate cold-start effects | Accurate measurements, JIT warm-up, cache priming |
 | **[User-Centric Timing](docs/tutorials/user-centric-timing.md)** | Per-user rate limiting with precise timing for KV cache benchmarking | KV cache effectiveness, multi-user simulation, cache TTL testing |
 | **[Request Cancellation](docs/tutorials/request-cancellation.md)** | Test timeout behavior and service resilience | SLA validation, cancellation modeling |
+| **[Multi-URL Load Balancing](docs/tutorials/multi-url-load-balancing.md)** | Distribute requests across multiple inference server instances | Multi-GPU scaling, distributed inference, high-throughput benchmarking |
 
 ### Workloads & Data
 

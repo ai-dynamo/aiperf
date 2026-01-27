@@ -535,6 +535,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             system_message=system_message,
             user_context_message=user_context_message,
             is_final_turn=credit.is_final_turn,
+            url_index=credit.url_index,
         )
 
     async def _retrieve_conversation(

@@ -438,6 +438,12 @@ class RequestInfo(AIPerfBaseModel):
         description="Whether this is the final turn in the conversation. "
         "Used by per-conversation connection strategy to release the connection lease.",
     )
+    url_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Index of the URL to use when multiple --url values are configured. "
+        "None means use the default (first) URL. Used for round-robin load balancing.",
+    )
 
 
 class RequestRecord(AIPerfBaseModel):

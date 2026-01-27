@@ -24,8 +24,11 @@ from tests.unit.timing.conftest import make_dataset_with_schedule
 
 @pytest.fixture
 def user_config() -> UserConfig:
+    mock_endpoint = MagicMock()
+    mock_endpoint.urls = ["http://localhost:8000"]
+    mock_endpoint.url_selection_strategy = "round_robin"
     return UserConfig.model_construct(
-        endpoint=MagicMock(), _timing_mode=TimingMode.REQUEST_RATE
+        endpoint=mock_endpoint, _timing_mode=TimingMode.REQUEST_RATE
     )
 
 
@@ -62,6 +65,14 @@ def mock_metadata() -> DatasetMetadata:
     )
 
 
+def _create_mock_endpoint() -> MagicMock:
+    """Create a mock endpoint with required URL attributes."""
+    mock_endpoint = MagicMock()
+    mock_endpoint.urls = ["http://localhost:8000"]
+    mock_endpoint.url_selection_strategy = "round_robin"
+    return mock_endpoint
+
+
 class TestTimingManagerDatasetConfiguration:
     @pytest.mark.parametrize(
         "timing_mode", [TimingMode.FIXED_SCHEDULE, TimingMode.REQUEST_RATE]
@@ -70,7 +81,9 @@ class TestTimingManagerDatasetConfiguration:
     async def test_profile_configure_waits_for_dataset_notification(
         self, create_manager, mock_metadata, timing_mode
     ) -> None:
-        cfg = UserConfig.model_construct(endpoint=MagicMock(), _timing_mode=timing_mode)
+        cfg = UserConfig.model_construct(
+            endpoint=_create_mock_endpoint(), _timing_mode=timing_mode
+        )
         mgr = create_manager(cfg)
         mock_engine = MagicMock()
         mock_engine.initialize = lambda *a, **kw: asyncio.sleep(0)
@@ -105,7 +118,7 @@ class TestTimingManagerDatasetConfiguration:
     @pytest.mark.asyncio
     async def test_dataset_configuration_timeout(self, create_manager) -> None:
         cfg = UserConfig.model_construct(
-            endpoint=MagicMock(), _timing_mode=TimingMode.FIXED_SCHEDULE
+            endpoint=_create_mock_endpoint(), _timing_mode=TimingMode.FIXED_SCHEDULE
         )
         mgr = create_manager(cfg)
         with (
@@ -123,7 +136,7 @@ class TestTimingManagerDatasetConfiguration:
         self, create_manager, mock_metadata
     ) -> None:
         cfg = UserConfig.model_construct(
-            endpoint=MagicMock(), _timing_mode=TimingMode.FIXED_SCHEDULE
+            endpoint=_create_mock_endpoint(), _timing_mode=TimingMode.FIXED_SCHEDULE
         )
         mgr = create_manager(cfg)
         await mgr._on_dataset_configured_notification(

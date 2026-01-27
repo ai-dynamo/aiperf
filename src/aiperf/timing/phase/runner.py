@@ -16,6 +16,7 @@ from aiperf.common.enums import CreditPhase, TimingMode
 from aiperf.common.environment import Environment
 from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.mixins import TaskManagerMixin
+from aiperf.common.protocols import URLSelectionStrategyProtocol
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
@@ -75,6 +76,7 @@ class PhaseRunner(TaskManagerMixin):
         concurrency_manager: ConcurrencyManager,
         cancellation_policy: RequestCancellationSimulator,
         callback_handler: CreditCallbackHandler,
+        url_selection_strategy: URLSelectionStrategyProtocol | None = None,
         **kwargs,
     ) -> None:
         """Initialize phase runner.
@@ -87,6 +89,8 @@ class PhaseRunner(TaskManagerMixin):
             concurrency_manager: Manages session and prefill concurrency slots.
             cancellation_policy: Determines credit cancellation delays.
             callback_handler: Handles credit returns and TTFT events.
+            url_selection_strategy: Optional URL selection strategy for multi-URL
+                load balancing. Passed to CreditIssuer.
         """
         super().__init__(**kwargs)
         self._config = config
@@ -127,6 +131,7 @@ class PhaseRunner(TaskManagerMixin):
             credit_router=self._credit_router,
             cancellation_policy=self._cancellation_policy,
             lifecycle=self._lifecycle,
+            url_selection_strategy=url_selection_strategy,
         )
 
         # Execution state

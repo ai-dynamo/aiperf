@@ -33,6 +33,8 @@ class Credit(
         issued_at_ns: Wall clock timestamp when issued (time.time_ns).
         cancel_after_ns: Delay in nanoseconds after which the request should be cancelled for simulated client disconnections (optional).
                          Note: this is NOT the same as the credit being cancelled!
+        url_index: Index of the URL to use when multiple --url values are configured (optional).
+                   None means use the default (first) URL.
     """
 
     id: int
@@ -43,6 +45,7 @@ class Credit(
     num_turns: int
     issued_at_ns: int
     cancel_after_ns: int | None = None
+    url_index: int | None = None
 
     @property
     def is_final_turn(self) -> bool:

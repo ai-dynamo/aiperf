@@ -165,6 +165,9 @@ class AioHttpTransport(BaseTransport):
         Constructs the full URL by combining the base URL with the endpoint path
         from metadata or custom endpoint. Adds http:// scheme if missing.
 
+        When multiple URLs are configured, uses request_info.url_index to select
+        the appropriate URL for load balancing.
+
         Args:
             request_info: Request context with model endpoint info
 
@@ -173,8 +176,8 @@ class AioHttpTransport(BaseTransport):
         """
         endpoint_info = request_info.model_endpoint.endpoint
 
-        # Start with base URL
-        base_url = endpoint_info.base_url.rstrip("/")
+        # Start with base URL - use url_index for multi-URL load balancing
+        base_url = endpoint_info.get_url(request_info.url_index).rstrip("/")
 
         # Determine the endpoint path
         if endpoint_info.custom_endpoint:

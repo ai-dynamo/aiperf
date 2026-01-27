@@ -18,6 +18,7 @@ import time
 from typing import TYPE_CHECKING
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.protocols import URLSelectionStrategyProtocol
 from aiperf.credit.structs import Credit, TurnToSend
 
 if TYPE_CHECKING:
@@ -58,6 +59,7 @@ class CreditIssuer:
         credit_router: CreditRouterProtocol,
         cancellation_policy: RequestCancellationSimulator,
         lifecycle: PhaseLifecycle,
+        url_selection_strategy: URLSelectionStrategyProtocol | None = None,
     ) -> None:
         """Initialize credit issuer.
 
@@ -69,6 +71,8 @@ class CreditIssuer:
             credit_router: Routes credits to workers.
             cancellation_policy: Determines cancellation delays.
             lifecycle: Phase lifecycle for timestamp data.
+            url_selection_strategy: Optional URL selection strategy for multi-URL load
+                balancing. If None, url_index will be None in credits.
         """
         self._phase = phase
         self._stop_checker = stop_checker
@@ -77,6 +81,7 @@ class CreditIssuer:
         self._credit_router = credit_router
         self._cancellation_policy = cancellation_policy
         self._lifecycle = lifecycle
+        self._url_selection_strategy = url_selection_strategy
 
     def can_acquire_and_start_new_session(self) -> bool:
         """Check if a session slot can be acquired and a new session can be started."""
@@ -202,6 +207,13 @@ class CreditIssuer:
             time.perf_counter_ns() - self._lifecycle.started_at_perf_ns
         )
 
+        # Get URL index from strategy (for multi-URL load balancing)
+        url_index = (
+            self._url_selection_strategy.next_url_index()
+            if self._url_selection_strategy
+            else None
+        )
+
         credit = Credit(
             id=credit_index,
             phase=self._phase,
@@ -211,6 +223,7 @@ class CreditIssuer:
             num_turns=turn.num_turns,
             issued_at_ns=issued_at_ns,
             cancel_after_ns=cancel_after_ns,
+            url_index=url_index,
         )
 
         await self._credit_router.send_credit(credit=credit)

@@ -66,9 +66,10 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointDefaults.TYPE,
         description="The type of request payload to use for the endpoint.",
     )
-    base_url: str = Field(
-        default=EndpointDefaults.URL,
-        description="URL of the endpoint.",
+    base_urls: list[str] = Field(
+        default=[EndpointDefaults.URL],
+        min_length=1,
+        description="URL(s) of the endpoint. Multiple URLs enable load balancing across servers.",
     )
     custom_endpoint: str | None = Field(
         default=None,
@@ -116,6 +117,24 @@ class EndpointInfo(AIPerfBaseModel):
         description="Transport connection reuse strategy.",
     )
 
+    @property
+    def base_url(self) -> str:
+        """Return the first URL for backward compatibility."""
+        return self.base_urls[0]
+
+    def get_url(self, index: int | None = None) -> str:
+        """Get a URL by index with wrap-around.
+
+        Args:
+            index: Index into the URLs list. If None, returns the first URL.
+
+        Returns:
+            The URL at the given index (with modulo wrap-around).
+        """
+        if index is None:
+            return self.base_urls[0]
+        return self.base_urls[index % len(self.base_urls)]
+
     @classmethod
     def from_user_config(cls, user_config: UserConfig) -> "EndpointInfo":
         """Create an EndpointInfo from a UserConfig."""
@@ -123,7 +142,7 @@ class EndpointInfo(AIPerfBaseModel):
             type=user_config.endpoint.type,
             custom_endpoint=user_config.endpoint.custom_endpoint,
             streaming=user_config.endpoint.streaming,
-            base_url=user_config.endpoint.url,
+            base_urls=user_config.endpoint.urls,
             headers=user_config.input.headers,
             extra=user_config.input.extra,
             timeout=user_config.endpoint.timeout_seconds,

@@ -24,6 +24,13 @@ from aiperf.transports.base_transports import BaseTransport, TransportMetadata
 AIPERF_USER_AGENT = f"aiperf/{importlib_metadata.version('aiperf')}"
 
 
+def _ensure_scheme(url: str) -> str:
+    """Ensure URL has a scheme prefix."""
+    if not url.startswith(("http://", "https://")):
+        return f"http://{url}"
+    return url
+
+
 class FakeTransport(BaseTransport):
     """Concrete implementation of BaseTransport for testing."""
 
@@ -36,7 +43,9 @@ class FakeTransport(BaseTransport):
 
     def get_url(self, request_info: RequestInfo) -> str:
         endpoint_info = request_info.model_endpoint.endpoint
-        base_url = endpoint_info.base_url or ""
+        base_url = (
+            _ensure_scheme(endpoint_info.base_url) if endpoint_info.base_url else ""
+        )
         if endpoint_info.custom_endpoint:
             return f"{base_url}{endpoint_info.custom_endpoint}"
         return base_url
@@ -60,7 +69,7 @@ class TestBaseTransport:
             ),
             endpoint=EndpointInfo(
                 type=EndpointType.CHAT,
-                base_url="http://localhost:8000",
+                base_urls=["http://localhost:8000"],
                 custom_endpoint="/v1/chat/completions",
             ),
         )
@@ -200,11 +209,20 @@ class TestBaseTransport:
         assert "timeout=30" in url
         assert url.startswith("http://localhost:8000/v1/chat/completions?")
 
-    def test_build_url_preserves_existing_params(self, transport, model_endpoint):
+    def test_build_url_preserves_existing_params(self, transport):
         """Test that existing URL params are preserved."""
-        model_endpoint.endpoint.base_url = (
-            "http://localhost:8000/v1/chat/completions?existing=param"
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_urls=["http://localhost:8000/v1/chat/completions?existing=param"],
+                custom_endpoint=None,
+            ),
         )
+        transport = FakeTransport(model_endpoint=model_endpoint)
         request_info = RequestInfo(
             model_endpoint=model_endpoint,
             turns=[],
@@ -222,13 +240,20 @@ class TestBaseTransport:
         assert "existing=param" in url
         assert "new=value" in url
 
-    def test_build_url_endpoint_params_override_existing(
-        self, transport, model_endpoint
-    ):
+    def test_build_url_endpoint_params_override_existing(self, transport):
         """Test that endpoint params override existing URL params."""
-        model_endpoint.endpoint.base_url = (
-            "http://localhost:8000/v1/chat/completions?key=original"
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_urls=["http://localhost:8000/v1/chat/completions?key=original"],
+                custom_endpoint=None,
+            ),
         )
+        transport = FakeTransport(model_endpoint=model_endpoint)
         request_info = RequestInfo(
             model_endpoint=model_endpoint,
             turns=[],
@@ -267,9 +292,20 @@ class TestBaseTransport:
         assert "?" not in url
         assert url == "http://localhost:8000/v1/chat/completions"
 
-    def test_build_url_complex_query_string(self, transport, model_endpoint):
+    def test_build_url_complex_query_string(self, transport):
         """Test complex query string handling."""
-        model_endpoint.endpoint.base_url = "http://localhost:8000/api?a=1&b=2&c=3"
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_urls=["http://localhost:8000/api?a=1&b=2&c=3"],
+                custom_endpoint=None,
+            ),
+        )
+        transport = FakeTransport(model_endpoint=model_endpoint)
         request_info = RequestInfo(
             model_endpoint=model_endpoint,
             turns=[],

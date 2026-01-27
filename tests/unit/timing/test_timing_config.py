@@ -6,7 +6,12 @@ import pytest
 from pydantic import ValidationError
 
 from aiperf.common.config import UserConfig
-from aiperf.common.enums import ArrivalPattern, CreditPhase, TimingMode
+from aiperf.common.enums import (
+    ArrivalPattern,
+    CreditPhase,
+    TimingMode,
+    URLSelectionStrategy,
+)
 from aiperf.timing.config import (
     CreditPhaseConfig,
     RequestCancellationConfig,
@@ -72,10 +77,16 @@ def make_user_config(**overrides) -> UserConfig:
     input_config.fixed_schedule_end_offset = overrides.get("fixed_schedule_end_offset")
     input_config.conversation = MagicMock()
     input_config.conversation.num = overrides.get("num_sessions")
+    endpoint_config = MagicMock()
+    endpoint_config.urls = overrides.get("urls", ["localhost:8000"])
+    endpoint_config.url_selection_strategy = overrides.get(
+        "url_selection_strategy", URLSelectionStrategy.ROUND_ROBIN
+    )
     user_config = MagicMock(spec=UserConfig)
     user_config.timing_mode = overrides.get("timing_mode", TimingMode.REQUEST_RATE)
     user_config.loadgen = loadgen
     user_config.input = input_config
+    user_config.endpoint = endpoint_config
     return user_config
 
 

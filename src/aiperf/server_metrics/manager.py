@@ -68,9 +68,13 @@ class ServerMetricsManager(BaseComponentService):
 
         self._collectors: dict[str, ServerMetricsDataCollector] = {}
         self._server_metrics_disabled = user_config.server_metrics_disabled
-        self._server_metrics_endpoints = [
-            normalize_metrics_endpoint_url(user_config.endpoint.url)
-        ]
+
+        # Collect metrics from all endpoint URLs (for multi-URL load balancing)
+        self._server_metrics_endpoints: list[str] = []
+        for url in user_config.endpoint.urls:
+            normalized_url = normalize_metrics_endpoint_url(url)
+            if normalized_url not in self._server_metrics_endpoints:
+                self._server_metrics_endpoints.append(normalized_url)
         self.info(
             f"Server Metrics: Discovered {len(self._server_metrics_endpoints)} endpoints: {self._server_metrics_endpoints}"
         )

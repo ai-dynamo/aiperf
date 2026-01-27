@@ -17,9 +17,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from aiperf.common.factories import DatasetSamplingStrategyFactory
+from aiperf.common.factories import (
+    DatasetSamplingStrategyFactory,
+    URLSelectionStrategyFactory,
+)
 from aiperf.common.hooks import on_init, on_start
 from aiperf.common.mixins import AIPerfLifecycleMixin
+from aiperf.common.protocols import URLSelectionStrategyProtocol
 from aiperf.credit.callback_handler import CreditCallbackHandler
 from aiperf.timing.concurrency import ConcurrencyManager
 from aiperf.timing.conversation_source import ConversationSource
@@ -117,6 +121,13 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             config.request_cancellation
         )
 
+        # URL sampler for multi-URL load balancing (None if single URL)
+        self._url_sampler: URLSelectionStrategyProtocol | None = None
+        if len(config.urls) > 1:
+            self._url_sampler = URLSelectionStrategyFactory.create_instance(
+                config.url_selection_strategy, urls=config.urls
+            )
+
         # Callback handler registered directly with router (no orchestrator in middle)
         self._callback_handler = CreditCallbackHandler(self._concurrency_manager)
         self._credit_router.set_return_callback(self._callback_handler.on_credit_return)
@@ -183,6 +194,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 concurrency_manager=self._concurrency_manager,
                 cancellation_policy=self._cancellation_policy,
                 callback_handler=self._callback_handler,
+                url_selection_strategy=self._url_sampler,
             )
 
             # For seamless non-final phases, set callback to remove from active runners
