@@ -33,7 +33,7 @@ Features
 
 - Scalable via multiprocess support
 - Modular design for easy user modification
-- **3 UI modes**: `--ui-type dashboard` (default, real-time TUI), `--ui-type simple` (progress bars), `--ui-type none` (no UI). See [CLI Options](docs/cli_options.md) for details.
+- **3 UI types**: `--ui-type dashboard` (default, real-time TUI), `--ui-type simple` (progress bars), `--ui-type none` (no UI). See [CLI Options](docs/cli_options.md) for details.
 - Several benchmarking modes:
   - concurrency
   - request-rate
@@ -47,7 +47,7 @@ Features
 
 ### Getting Started
 - **[Basic Tutorial](docs/tutorial.md)** - Learn the fundamentals with Dynamo and vLLM examples
-- **[UI Modes](docs/tutorials/ui-modes.md)** - Choose between dashboard, simple, or none for displaying progress
+- **[User Interface](docs/tutorials/ui-types.md)** - Choose between dashboard, simple, or none for displaying progress
 
 ### Load Control & Timing
 
