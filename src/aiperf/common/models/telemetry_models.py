@@ -43,6 +43,10 @@ class TelemetryMetrics(AIPerfBaseModel):
         default=None,
         description="Throttling duration due to power constraints in microseconds",
     )
+    dram_active: float | None = Field(
+        default=None,
+        description="DRAM bandwidth utilization percentage",
+    )
 
 
 class GpuMetadata(AIPerfBaseModel):

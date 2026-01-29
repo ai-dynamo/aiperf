@@ -28,6 +28,7 @@ DCGM_TO_FIELD_MAPPING = {
     "DCGM_FI_DEV_GPU_TEMP": "gpu_temperature",
     "DCGM_FI_DEV_XID_ERRORS": "xid_errors",
     "DCGM_FI_DEV_POWER_VIOLATION": "power_violation",
+    "DCGM_FI_PROF_DRAM_ACTIVE": "dram_active",
 }
 
 # GPU Telemetry Metrics Configuration
@@ -43,6 +44,7 @@ GPU_TELEMETRY_METRICS_CONFIG: list[tuple[str, str, MetricUnitT]] = [
     ("GPU Temperature", "gpu_temperature", TemperatureMetricUnit.CELSIUS),
     ("XID Errors", "xid_errors", GenericMetricUnit.COUNT),
     ("Power Violation", "power_violation", MetricTimeUnit.MICROSECONDS),
+    ("DRAM Active", "dram_active", GenericMetricUnit.PERCENT),
 ]
 
 
