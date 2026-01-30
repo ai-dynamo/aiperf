@@ -454,8 +454,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     conversation_id=credit_context.credit.conversation_id,
                     credit_context=credit_context,
                 )
+                # Store url_index from first turn so all turns hit the same backend
                 session = self.session_manager.create_and_store(
-                    x_correlation_id, _conversation, credit_context.credit.num_turns
+                    x_correlation_id,
+                    _conversation,
+                    credit_context.credit.num_turns,
+                    url_index=credit_context.credit.url_index,
                 )
 
             session.advance_turn(credit_context.credit.turn_index)
@@ -535,7 +539,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             system_message=system_message,
             user_context_message=user_context_message,
             is_final_turn=credit.is_final_turn,
-            url_index=credit.url_index,
+            # Use session's url_index to ensure all turns hit the same backend
+            url_index=session.url_index,
         )
 
     async def _retrieve_conversation(
