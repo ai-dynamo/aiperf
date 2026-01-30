@@ -12,8 +12,8 @@ import importlib.util
 import re
 from collections.abc import Iterator
 from importlib.metadata import Distribution, entry_points
-from importlib.resources.abc import Traversable
 from pathlib import Path
+
 from typing import TYPE_CHECKING, Any, TypeAlias
 from weakref import WeakKeyDictionary
 
@@ -44,6 +44,8 @@ _yaml = YAML(typ="safe")
 
 # Type alias to reduce repetition throughout the module
 if TYPE_CHECKING:
+    from importlib.resources.abc import Traversable
+
     from aiperf.plugin.enums import PluginType, PluginTypeStr
 
     CategoryT: TypeAlias = PluginType | PluginTypeStr
