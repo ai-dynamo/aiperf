@@ -208,9 +208,12 @@ class CreditIssuer:
         )
 
         # Get URL index from strategy (for multi-URL load balancing)
+        # Only advance the round-robin on the first turn of a conversation.
+        # Subsequent turns will use the url_index stored in the worker's UserSession.
+        is_first_turn = turn.turn_index == 0
         url_index = (
             self._url_selection_strategy.next_url_index()
-            if self._url_selection_strategy
+            if self._url_selection_strategy and is_first_turn
             else None
         )
 

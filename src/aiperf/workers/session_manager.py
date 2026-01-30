@@ -21,6 +21,11 @@ class UserSession(AIPerfBaseModel):
         ..., description="X-Correlation-ID header value. Used for sticky routing."
     )
     num_turns: int = Field(..., ge=0, description="Number of turns in the conversation")
+    url_index: int | None = Field(
+        default=None,
+        description="URL index for multi-URL load balancing. "
+        "Set on first turn to ensure all turns in a conversation hit the same backend.",
+    )
     conversation: Conversation = Field(
         ..., description="Full conversation data from DatasetManager"
     )
@@ -70,7 +75,11 @@ class UserSessionManager:
         self._cache: dict[str, UserSession] = {}
 
     def create_and_store(
-        self, x_correlation_id: str, conversation: Conversation, num_turns: int
+        self,
+        x_correlation_id: str,
+        conversation: Conversation,
+        num_turns: int,
+        url_index: int | None = None,
     ) -> UserSession:
         """
         Create and store user session.
@@ -80,6 +89,8 @@ class UserSessionManager:
             conversation: Conversation
             num_turns: Number of turns to execute (from Credit.num_turns). May be less than
                 len(conversation.turns) for ramp-up users who start mid-session.
+            url_index: URL index for multi-URL load balancing. All turns in this session
+                will use this index to ensure they hit the same backend server.
 
         Raises:
             ValueError: If num_turns exceeds the actual conversation length.
@@ -91,6 +102,7 @@ class UserSessionManager:
         user_session = UserSession(
             x_correlation_id=x_correlation_id,
             num_turns=num_turns,
+            url_index=url_index,
             conversation=conversation,
             turn_list=[],
         )
