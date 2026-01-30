@@ -1,0 +1,244 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=schema/categories.schema.json
+
+# =============================================================================
+# AIPerf Plugin Category Definitions
+# =============================================================================
+# This file defines all plugin categories supported by AIPerf.
+# Each category specifies:
+#   - protocol: Fully qualified class path (module:ClassName) for the Protocol/ABC
+#   - metadata_class: (optional) Class path for the metadata model (Pydantic/dataclass).
+#                     Schema is introspected dynamically from the class.
+#   - enum: The dynamic enum generated from registered plugins
+#   - description: Human-readable description of the category's purpose
+#   - internal: (optional) Boolean indicating this category is internal infrastructure,
+#               not user-facing. Defaults to false if not specified.
+#
+# Used by tools/generate_plugin_artifacts.py to generate type stubs.
+# =============================================================================
+
+schema_version: "1.0"
+
+# =============================================================================
+# Timing Categories
+# =============================================================================
+
+timing_strategy:
+  protocol: aiperf.timing.strategies.core:TimingStrategyProtocol
+  enum: TimingMode
+  description: |
+    Timing strategies control request scheduling and credit issuance.
+    Determines when requests are sent based on fixed schedules, request rates,
+    or user-centric patterns. One-to-one mapping per benchmark run.
+
+arrival_pattern:
+  protocol: aiperf.timing.intervals:IntervalGeneratorProtocol
+  enum: ArrivalPattern
+  description: |
+    Interval generators determine inter-arrival times for request rate strategy.
+    Controls the distribution of request timing (constant, Poisson, gamma, etc.).
+    One-to-one mapping when using request_rate timing mode.
+
+ramp:
+  protocol: aiperf.timing.ramping:RampStrategyProtocol
+  enum: RampType
+  description: |
+    Ramp strategies control how values are gradually transitioned over time.
+    Used for ramping concurrency limits, request rates, and other numeric parameters.
+    Supports linear, exponential, and stochastic ramping patterns.
+
+# =============================================================================
+# Dataset Categories
+# =============================================================================
+
+dataset_backing_store:
+  protocol: aiperf.common.protocols:DatasetBackingStoreProtocol
+  enum: DatasetBackingStoreType
+  description: |
+    Dataset backing stores manage conversation data on the DatasetManager side.
+    Provides efficient storage for dataset distribution to workers.
+    Handles streaming writes and finalization for client access.
+
+dataset_client_store:
+  protocol: aiperf.common.protocols:DatasetClientStoreProtocol
+  enum: DatasetClientStoreType
+  description: |
+    Dataset client stores read conversation data on the Worker side.
+    Provides efficient access to datasets from backing stores.
+    Supports zero-copy reads and O(1) lookup performance.
+
+dataset_sampler:
+  protocol: aiperf.common.protocols:DatasetSamplingStrategyProtocol
+  enum: DatasetSamplingStrategy
+  description: |
+    Dataset samplers control how conversations are selected from the dataset.
+    Supports random, sequential, and shuffle sampling strategies.
+    One-to-one mapping based on sampling strategy configuration.
+
+dataset_composer:
+  protocol: aiperf.dataset.composer:BaseDatasetComposer
+  enum: ComposerType
+  description: |
+    Dataset composers create conversation datasets from various sources.
+    Handles synthetic generation, custom file loading, and specialized formats.
+    One-to-one mapping based on composer_type configuration.
+
+custom_dataset_loader:
+  protocol: aiperf.common.protocols:CustomDatasetLoaderProtocol
+  enum: CustomDatasetType
+  description: |
+    Custom dataset loaders parse different JSONL file formats into conversations.
+    Supports single-turn, multi-turn, random-pool, and trace formats.
+    Auto-detection: loaders are tried in priority order based on can_load().
+
+# =============================================================================
+# Endpoint and Transport Categories
+# =============================================================================
+
+endpoint:
+  protocol: aiperf.common.protocols:EndpointProtocol
+  metadata_class: aiperf.plugin.schema.schemas:EndpointMetadata
+  enum: EndpointType
+  description: |
+    Endpoints define how to format requests and parse responses for different APIs.
+    Supports OpenAI-compatible, HuggingFace, Cohere, NIM, and custom API formats.
+    One-to-one mapping based on endpoint_type configuration.
+
+transport:
+  protocol: aiperf.common.protocols:TransportProtocol
+  metadata_class: aiperf.plugin.schema.schemas:TransportMetadata
+  enum: TransportType
+  description: |
+    Transports handle the network layer for sending requests to inference servers.
+    Manages connection pooling, streaming, error handling, and TCP configuration.
+    One-to-one mapping based on transport_type configuration.
+
+# =============================================================================
+# Processing Categories
+# =============================================================================
+
+record_processor:
+  protocol: aiperf.common.protocols:RecordProcessorProtocol
+  enum: RecordProcessorType
+  description: |
+    Record processors stream records and compute metrics in a distributed manner.
+    First stage of metrics pipeline, handling per-record computations.
+    One-to-many mapping: multiple processors can be loaded simultaneously.
+
+results_processor:
+  protocol: aiperf.post_processors:BaseMetricsProcessor
+  enum: ResultsProcessorType
+  description: |
+    Results processors aggregate results from record processors and compute derived metrics.
+    Final stage of metrics pipeline for aggregated statistics and summaries.
+    One-to-many mapping: multiple processors can be loaded simultaneously.
+
+# =============================================================================
+# Export Categories
+# =============================================================================
+
+data_exporter:
+  protocol: aiperf.common.protocols:DataExporterProtocol
+  enum: DataExporterType
+  description: |
+    Data exporters write benchmark results to files in various formats.
+    Supports CSV, JSON, Parquet, and specialized export formats.
+    One-to-many mapping: multiple exporters can be loaded simultaneously.
+
+console_exporter:
+  protocol: aiperf.common.protocols:ConsoleExporterProtocol
+  enum: ConsoleExporterType
+  description: |
+    Console exporters display benchmark results and diagnostics to stdout.
+    Provides formatted output for metrics, errors, telemetry, and traces.
+    One-to-many mapping: multiple console exporters can be loaded simultaneously.
+
+# =============================================================================
+# UI Category
+# =============================================================================
+
+ui:
+  protocol: aiperf.common.protocols:AIPerfUIProtocol
+  enum: UIType
+  description: |
+    UI components provide progress tracking and visualization during benchmark execution.
+    Supports rich terminal dashboards, simple progress bars, or headless execution.
+    One-to-one mapping based on ui configuration.
+
+# =============================================================================
+# URL Selection Strategy Categories
+# =============================================================================
+
+url_selection_strategy:
+  protocol: aiperf.common.protocols:URLSelectionStrategyProtocol
+  enum: URLSelectionStrategy
+  description: |
+    URL selection strategies control how requests are distributed across multiple endpoints.
+    Supports round-robin, random, and custom distribution patterns.
+    One-to-one mapping based on url_selection_strategy configuration.
+
+# =============================================================================
+# Service Categories
+# =============================================================================
+
+service:
+  protocol: aiperf.common.protocols:ServiceProtocol
+  metadata_class: aiperf.plugin.schema.schemas:ServiceMetadata
+  enum: ServiceType
+  description: |
+    Services are the core processes that make up the AIPerf distributed system.
+    Each service runs in a separate process and communicates via ZMQ message bus.
+    Includes SystemController, Workers, Managers, and processing services.
+
+service_manager:
+  protocol: aiperf.common.protocols:ServiceManagerProtocol
+  enum: ServiceRunType
+  description: |
+    Service managers orchestrate how services are launched and managed.
+    Supports multiprocessing (single-node) and Kubernetes (multi-node) deployments.
+    One-to-one mapping based on run_mode configuration.
+
+# =============================================================================
+# Communication Categories
+# =============================================================================
+
+communication:
+  protocol: aiperf.common.protocols:CommunicationProtocol
+  enum: CommunicationBackend
+  internal: true
+  description: |
+    Communication backends provide the underlying transport for inter-service messaging.
+    Supports ZMQ IPC (single-node) and ZMQ TCP (multi-node) communication.
+    One-to-one mapping based on deployment configuration.
+
+communication_client:
+  protocol: aiperf.common.protocols:CommunicationClientProtocol
+  enum: CommClientType
+  internal: true
+  description: |
+    Communication clients implement different ZMQ socket patterns for messaging.
+    Includes PUB/SUB, PUSH/PULL, REQUEST/REPLY, and streaming patterns.
+    Internal infrastructure: automatically created by framework based on usage.
+
+zmq_proxy:
+  protocol: aiperf.zmq:BaseZMQProxy
+  enum: ZMQProxyType
+  internal: true
+  description: |
+    ZMQ proxies provide message routing between different socket patterns.
+    Includes XPUB/XSUB, DEALER/ROUTER, and PUSH/PULL proxy types.
+    Internal infrastructure: automatically created by framework based on configuration.
+
+# =============================================================================
+# Visualization Category
+# =============================================================================
+
+plot:
+  protocol: aiperf.plot.core.plot_type_handlers:PlotTypeHandlerProtocol
+  metadata_class: aiperf.plugin.schema.schemas:PlotMetadata
+  enum: PlotType
+  description: |
+    Plot handlers create different types of visualizations from benchmark data.
+    Supports scatter, histogram, timeline, percentile bands, and multi-run comparisons.
+    One-to-one mapping based on plot type selection.
