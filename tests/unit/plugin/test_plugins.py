@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock, patch
 
 import pytest
+from pytest import param
 
 from aiperf.plugin.extensible_enums import ExtensibleStrEnum
 from aiperf.plugin.plugins import _PluginRegistry
@@ -141,15 +143,17 @@ def make_mock_dist(
     return mock_dist
 
 
-def create_temp_module(
-    tmp_path: Path, module_name: str, content: str
-) -> tuple[Path, Any]:
+@contextmanager
+def temp_module(tmp_path: Path, module_name: str, content: str) -> Any:
     """Create a temporary Python module and add it to sys.path."""
     module_dir = tmp_path / module_name
     module_dir.mkdir()
     (module_dir / "__init__.py").write_text(content)
     sys.path.insert(0, str(tmp_path))
-    return module_dir, lambda: sys.path.remove(str(tmp_path))
+    try:
+        yield module_dir
+    finally:
+        sys.path.remove(str(tmp_path))
 
 
 def write_manifest(tmp_path: Path, content: str) -> Path:
@@ -290,9 +294,9 @@ class TestConflictResolution:
     @pytest.mark.parametrize(
         ("first_cls", "first_priority", "second_cls", "second_priority", "expected_cls"),
         [
-            (DummyClass, 0, HighPriorityClass, 10, HighPriorityClass),  # Higher priority wins
-            (HighPriorityClass, 10, DummyClass, 0, HighPriorityClass),  # Lower priority loses
-            (DummyClass, 5, AnotherDummyClass, 5, DummyClass),  # Equal priority - first wins
+            param(DummyClass, 0, HighPriorityClass, 10, HighPriorityClass, id="higher priority wins"),
+            param(HighPriorityClass, 10, DummyClass, 0, HighPriorityClass, id="lower priority loses"),
+            param(DummyClass, 5, AnotherDummyClass, 5, DummyClass, id="equal priority first wins"),
         ],
     )  # fmt: skip
     def test_priority_resolution(
@@ -521,10 +525,10 @@ class TestIteration:
     @pytest.mark.parametrize(
         ("category", "expected_count"),
         [
-            ("test_category", 2),
-            ("other_category", 1),
-            ("nonexistent", 0),
-            (None, 3),  # All categories
+            param("test_category", 2, id="test category"),
+            param("other_category", 1, id="other category"),
+            param("nonexistent", 0, id="nonexistent"),
+            param(None, 3, id="all categories"),
         ],
     )
     def test_iter_entries(
@@ -579,10 +583,13 @@ class TestFindRegisteredName:
         )
 
     @pytest.mark.parametrize(
-        ("category", "cls", "expected"),
+        ("category", "cls"),
         [
-            ("test_category", type("Unregistered", (), {}), None),  # Unregistered class
-            ("other_category", AnotherDummyClass, None),  # Wrong category
+            param(
+                "test_category", type("Unregistered", (), {}), id="unregistered class"
+            ),
+            param("other_category", AnotherDummyClass, id="wrong category"),
+            param("nonexistent_category", DummyClass, id="nonexistent category"),
         ],
     )
     def test_find_returns_none(
@@ -590,10 +597,22 @@ class TestFindRegisteredName:
         registry_with_types: _PluginRegistry,
         category: str,
         cls: type,
-        expected: None,
     ) -> None:
         """find_registered_name() returns None when not found."""
-        assert registry_with_types.find_registered_name(category, cls) is expected
+        assert registry_with_types.find_registered_name(category, cls) is None
+
+    def test_find_uses_class_to_name_cache(
+        self, registry_with_types: _PluginRegistry
+    ) -> None:
+        """find_registered_name() uses _class_to_name cache for loaded classes."""
+        # Load the class to populate _class_to_name
+        cls = registry_with_types.get_class("test_category", "type_a")
+        # Verify cache is populated
+        assert cls in registry_with_types._class_to_name
+        # Fast path should find it
+        assert (
+            registry_with_types.find_registered_name("test_category", cls) == "type_a"
+        )
 
     def test_find_uses_cache(self, empty_registry: _PluginRegistry) -> None:
         """find_registered_name() caches results."""
@@ -682,7 +701,7 @@ class TestLoadManifest:
     ) -> None:
         """load_manifest() raises for invalid schema."""
         manifest = write_manifest(tmp_path, "schema_version: [invalid, list]")
-        with pytest.raises(ValueError, match="Invalid plugins.yaml schema"):
+        with pytest.raises(ValueError, match=r"Invalid plugins\.yaml schema"):
             empty_registry.load_manifest(manifest)
 
     def test_load_manifest_respects_priority(
@@ -710,12 +729,40 @@ class TestLoadManifest:
             empty_registry.load_manifest("nonexistent.package:plugins.yaml")
 
     @pytest.mark.parametrize(
-        ("yaml_content", "description"),
+        ("yaml_content", "expected_package"),
         [
-            ('schema_version: "1.0"\ninvalid_category: "not a dict"', "invalid category type"),
-            ('schema_version: "1.0"\ntest_category:\n  invalid_type: "not a dict"', "invalid type spec"),
-            ('schema_version: "1.0"\ntest_category:\n  missing_class:\n    description: "No class"', "missing class field"),
-            ('schema_version: "99.0"\ntest_category:\n  test_type:\n    class: tests.unit.plugin.test_plugins:DummyClass', "unsupported schema"),
+            param(
+                'schema_version: "1.0"\nplugin:\n  name: yaml-defined\ntest_category:\n  t:\n    class: tests.unit.plugin.test_plugins:DummyClass',
+                "yaml-defined",
+                id="from plugin block",
+            ),
+            param(
+                'schema_version: "1.0"\ntest_category:\n  t:\n    class: tests.unit.plugin.test_plugins:DummyClass',
+                "unknown",
+                id="fallback to unknown",
+            ),
+        ],
+    )  # fmt: skip
+    def test_load_manifest_package_name_fallback(
+        self,
+        empty_registry: _PluginRegistry,
+        tmp_path: Path,
+        yaml_content: str,
+        expected_package: str,
+    ) -> None:
+        """load_manifest() uses plugin.name or falls back to 'unknown'."""
+        manifest = write_manifest(tmp_path, yaml_content)
+        empty_registry.load_manifest(manifest)  # No plugin_name arg
+        entry = empty_registry.get_entry("test_category", "t")
+        assert entry.package == expected_package
+
+    @pytest.mark.parametrize(
+        "yaml_content",
+        [
+            param('schema_version: "1.0"\ninvalid_category: "not a dict"', id="invalid category type"),
+            param('schema_version: "1.0"\ntest_category:\n  invalid_type: "not a dict"', id="invalid type spec"),
+            param('schema_version: "1.0"\ntest_category:\n  missing_class:\n    description: "No class"', id="missing class field"),
+            param('schema_version: "99.0"\ntest_category:\n  test_type:\n    class: tests.unit.plugin.test_plugins:DummyClass', id="unsupported schema"),
         ],
     )  # fmt: skip
     def test_load_manifest_warnings(
@@ -723,7 +770,6 @@ class TestLoadManifest:
         empty_registry: _PluginRegistry,
         tmp_path: Path,
         yaml_content: str,
-        description: str,
     ) -> None:
         """load_manifest() handles various invalid content gracefully."""
         manifest = write_manifest(tmp_path, yaml_content)
@@ -909,8 +955,8 @@ class TestPluginDiscovery:
     @pytest.mark.parametrize(
         ("find_spec_return", "find_spec_effect"),
         [
-            (None, None),  # Module not found
-            (None, Exception("Import failed")),  # Exception during import
+            param(None, None, id="module not found"),
+            param(None, Exception("Import failed"), id="import exception"),
         ],
     )
     def test_discover_plugins_error_handling(
@@ -931,6 +977,25 @@ class TestPluginDiscovery:
             ),
         ):
             empty_registry.discover_plugins()  # Should not raise
+
+    def test_discover_plugins_skips_already_loaded(
+        self, empty_registry: _PluginRegistry
+    ) -> None:
+        """discover_plugins() skips already-loaded plugins."""
+        # Pre-populate loaded plugins
+        empty_registry._loaded_plugins["already-loaded"] = PackageInfo(
+            name="already-loaded"
+        )
+        mock_ep = Mock()
+        mock_ep.name = "already-loaded"
+        mock_ep.value = "some.module:plugins.yaml"
+
+        with (
+            patch("aiperf.plugin.plugins.entry_points", return_value=[mock_ep]),
+            patch.object(empty_registry, "load_manifest") as mock_load,
+        ):
+            empty_registry.discover_plugins()
+            mock_load.assert_not_called()
 
 
 # =============================================================================
@@ -960,8 +1025,8 @@ class TestRegistryFileReading:
     @pytest.mark.parametrize(
         ("path_or_error", "match"),
         [
-            ("/nonexistent/file.yaml", "not found"),
-            ("directory", "Failed to read"),  # Directory path
+            param("/nonexistent/file.yaml", "not found", id="file not found"),
+            param("directory", "Failed to read", id="directory path"),
         ],
     )
     def test_read_errors(
@@ -1024,17 +1089,13 @@ class TestPluginEntry:
     @pytest.mark.parametrize(
         ("class_path", "error_type", "match"),
         [
-            ("no_colon_in_path", ValueError, "Invalid class_path format"),
-            (":ClassName", ValueError, "Invalid class_path format"),
-            ("module.path:", ValueError, "Invalid class_path format"),
-            ("nonexistent.module:Class", ImportError, "Failed to import"),
-            (
-                "tests.unit.plugin.test_plugins:NonexistentClass",
-                AttributeError,
-                "not found",
-            ),
+            param("no_colon_in_path", ValueError, "Invalid class_path format", id="no colon"),
+            param(":ClassName", ValueError, "Invalid class_path format", id="empty module"),
+            param("module.path:", ValueError, "Invalid class_path format", id="empty class"),
+            param("nonexistent.module:Class", ImportError, "Failed to import", id="module not found"),
+            param("tests.unit.plugin.test_plugins:NonexistentClass", AttributeError, "not found", id="class not found"),
         ],
-    )
+    )  # fmt: skip
     def test_load_errors(
         self, class_path: str, error_type: type[Exception], match: str
     ) -> None:
@@ -1116,15 +1177,12 @@ class TestPluginEntryValidation:
     def test_validate_with_check_class_valid(self) -> None:
         """validate(check_class=True) validates class existence."""
         entry = make_entry()
-        valid, error = entry.validate(check_class=True)
+        valid, _error = entry.validate(check_class=True)
         assert valid is True
 
     def test_validate_with_check_class_syntax_error(self, tmp_path: Path) -> None:
         """validate(check_class=True) handles syntax errors."""
-        _, cleanup = create_temp_module(
-            tmp_path, "syntax_error_mod", "def broken(:\n    pass"
-        )
-        try:
+        with temp_module(tmp_path, "syntax_error_mod", "def broken(:\n    pass"):
             entry = make_entry(
                 package="syntax_error_mod",
                 class_path="syntax_error_mod:SomeClass",
@@ -1132,13 +1190,10 @@ class TestPluginEntryValidation:
             valid, error = entry.validate(check_class=True)
             assert valid is False
             assert "Syntax error" in error
-        finally:
-            cleanup()
 
     def test_validate_with_check_class_missing(self, tmp_path: Path) -> None:
         """validate(check_class=True) detects missing class in module."""
-        _, cleanup = create_temp_module(tmp_path, "empty_mod", "# No class here")
-        try:
+        with temp_module(tmp_path, "empty_mod", "# No class here"):
             entry = make_entry(
                 package="empty_mod",
                 class_path="empty_mod:MissingClass",
@@ -1146,14 +1201,20 @@ class TestPluginEntryValidation:
             valid, error = entry.validate(check_class=True)
             assert valid is False
             assert "MissingClass" in error
-        finally:
-            cleanup()
 
     @pytest.mark.parametrize(
         ("content", "class_name"),
         [
-            ("from collections import OrderedDict as AliasedClass", "AliasedClass"),
-            ("DynamicClass = type('DynamicClass', (), {})", "DynamicClass"),
+            param(
+                "from collections import OrderedDict as AliasedClass",
+                "AliasedClass",
+                id="aliased import",
+            ),
+            param(
+                "DynamicClass = type('DynamicClass', (), {})",
+                "DynamicClass",
+                id="dynamic type",
+            ),
         ],
     )
     def test_validate_with_check_class_dynamic(
@@ -1161,16 +1222,13 @@ class TestPluginEntryValidation:
     ) -> None:
         """validate(check_class=True) handles imports and assignments."""
         mod_name = f"dynamic_mod_{class_name.lower()}"
-        _, cleanup = create_temp_module(tmp_path, mod_name, content)
-        try:
+        with temp_module(tmp_path, mod_name, content):
             entry = make_entry(
                 package=mod_name,
                 class_path=f"{mod_name}:{class_name}",
             )
-            valid, error = entry.validate(check_class=True)
+            valid, _error = entry.validate(check_class=True)
             assert valid is True
-        finally:
-            cleanup()
 
 
 # =============================================================================
