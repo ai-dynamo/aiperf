@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
-from aiperf.common.enums import CreditPhase, TimingMode
+from aiperf.common.enums import CreditPhase
+from aiperf.plugin.enums import TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.phase.lifecycle import PhaseLifecycle, PhaseState
 

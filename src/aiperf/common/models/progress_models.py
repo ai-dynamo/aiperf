@@ -4,7 +4,7 @@
 
 from pydantic import Field
 
-from aiperf.common.enums.worker_enums import WorkerStatus
+from aiperf.common.enums import WorkerStatus
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.credit_models import ProcessingStats
 from aiperf.common.models.health_models import ProcessHealth

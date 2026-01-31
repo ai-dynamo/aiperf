@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
 from typing import ClassVar
@@ -6,7 +6,7 @@ from typing import ClassVar
 import orjson
 from pydantic import Field
 
-from aiperf.common.enums.message_enums import MessageType
+from aiperf.common.enums import MessageType
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.types import MessageTypeT

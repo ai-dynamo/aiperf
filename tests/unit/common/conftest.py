@@ -12,6 +12,7 @@ from aiperf.common.base_service import BaseService
 from aiperf.common.config import ServiceConfig
 from aiperf.timing.manager import TimingManager
 from aiperf.workers.worker import Worker
+from tests.harness import mock_plugin
 
 
 class DummyService(BaseService):
@@ -50,6 +51,36 @@ class DummyTimingManager(DummyService):
 
 # Override the class name to simulate the TimingManager service
 DummyTimingManager.__name__ = TimingManager.__name__
+
+
+@pytest.fixture
+def register_dummy_services():
+    """Register dummy services in the plugin registry for testing.
+
+    This allows bootstrap tests to use service names instead of classes.
+    """
+    # Use mock_plugin context managers to register with metadata
+    with (
+        mock_plugin(
+            "service",
+            "test_dummy",
+            DummyService,
+            metadata={"required": False, "auto_start": False, "disable_gc": False},
+        ),
+        mock_plugin(
+            "service",
+            "test_worker",
+            DummyWorker,
+            metadata={"required": False, "auto_start": False, "disable_gc": True},
+        ),
+        mock_plugin(
+            "service",
+            "test_timing_manager",
+            DummyTimingManager,
+            metadata={"required": False, "auto_start": False, "disable_gc": True},
+        ),
+    ):
+        yield
 
 
 @pytest.fixture

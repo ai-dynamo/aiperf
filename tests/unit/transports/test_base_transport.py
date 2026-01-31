@@ -6,12 +6,7 @@ import importlib.metadata as importlib_metadata
 
 import pytest
 
-from aiperf.common.enums import (
-    CreditPhase,
-    EndpointType,
-    ModelSelectionStrategy,
-    TransportType,
-)
+from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -19,7 +14,10 @@ from aiperf.common.models.model_endpoint_info import (
     ModelListInfo,
 )
 from aiperf.common.models.record_models import RequestInfo, RequestRecord
-from aiperf.transports.base_transports import BaseTransport, TransportMetadata
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import EndpointType, TransportType
+from aiperf.plugin.schema.schemas import TransportMetadata
+from aiperf.transports.base_transports import BaseTransport
 
 AIPERF_USER_AGENT = f"aiperf/{importlib_metadata.version('aiperf')}"
 
@@ -97,7 +95,8 @@ class TestBaseTransport:
 
     def test_metadata(self, transport):
         """Test metadata method returns correct information."""
-        metadata = transport.metadata()
+        metadata = plugins.get_transport_metadata(TransportType.HTTP)
+        assert isinstance(metadata, TransportMetadata)
         assert metadata.transport_type == TransportType.HTTP
         assert "http" in metadata.url_schemes
         assert "https" in metadata.url_schemes

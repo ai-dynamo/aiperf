@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
@@ -6,14 +6,8 @@ from datetime import datetime
 import orjson
 
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import (
-    DataExporterType,
-    PrometheusMetricType,
-    ServerMetricsFormat,
-)
+from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled
-from aiperf.common.factories import DataExporterFactory
 from aiperf.common.models.server_metrics_models import (
     CounterMetricData,
     GaugeMetricData,
@@ -22,14 +16,11 @@ from aiperf.common.models.server_metrics_models import (
     ServerMetricsExportData,
     ServerMetricsSummary,
 )
-from aiperf.common.protocols import DataExporterProtocol
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
 from aiperf.server_metrics.units import infer_unit
 
 
-@DataExporterFactory.register(DataExporterType.SERVER_METRICS_JSON)
-@implements_protocol(DataExporterProtocol)
 class ServerMetricsJsonExporter(MetricsBaseExporter):
     """Export server metrics to a separate JSON file in hybrid format.
 

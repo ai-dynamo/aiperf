@@ -18,8 +18,8 @@ import time
 from typing import TYPE_CHECKING
 
 from aiperf.common.enums import CreditPhase
-from aiperf.common.protocols import URLSelectionStrategyProtocol
 from aiperf.credit.structs import Credit, TurnToSend
+from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
     from aiperf.credit.sticky_router import CreditRouterProtocol

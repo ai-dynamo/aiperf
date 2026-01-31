@@ -1,67 +1,33 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
-from collections.abc import Callable, Coroutine
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from __future__ import annotations
 
-from aiperf.common.enums import CommClientType, LifecycleState
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
 from aiperf.common.environment import Environment
-from aiperf.common.hooks import Hook, HookType
-from aiperf.common.models import (
-    Conversation,
-    MetricRecordMetadata,
-    ParsedResponse,
-    ParsedResponseRecord,
-    RequestInfo,
-    RequestRecord,
-    ServiceRunInfo,
-    TelemetryExportData,
-    TelemetryRecord,
-)
-from aiperf.common.types import (
-    CommAddressType,
-    JsonObject,
-    MessageCallbackMapT,
-    MessageOutputT,
-    MessageT,
-    MessageTypeT,
-    RequestInputT,
-    RequestOutputT,
-    ServiceTypeT,
-)
 
 if TYPE_CHECKING:
-    import multiprocessing
-    from pathlib import Path
-
-    from rich.console import Console
+    import asyncio
+    from collections.abc import Callable, Coroutine
+    from typing import Any
 
     from aiperf.common.config import ServiceConfig, UserConfig
-    from aiperf.common.enums import DatasetSamplingStrategy
-    from aiperf.common.messages.inference_messages import MetricRecordsData
-    from aiperf.common.models.dataset_models import DatasetClientMetadata
-    from aiperf.common.models.metadata import EndpointMetadata, TransportMetadata
-    from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
-    from aiperf.common.models.record_models import MetricResult
-    from aiperf.common.models.server_metrics_models import (
-        ErrorDetailsCount,
-        ServerMetricsRecord,
-        ServerMetricsResults,
-        TimeRangeFilter,
+    from aiperf.common.enums import LifecycleState
+    from aiperf.common.models import (
+        MessageCallbackMapT,
+        MessageOutputT,
+        MessageT,
+        MessageTypeT,
     )
-    from aiperf.dataset.loader.models import CustomDatasetT
-    from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
-    from aiperf.metrics.metric_dicts import MetricRecordDict
-
-
-################################################################################
-# Core Base Protocols (Cannot be sorted)
-################################################################################
+    from aiperf.common.types import CommAddressType, ServiceTypeT
+    from aiperf.plugin.enums import CommClientType
 
 
 @runtime_checkable
 class AIPerfLoggerProtocol(Protocol):
+    """Protocol for AIPerf logger methods."""
+
     @property
     def is_trace_enabled(self) -> bool: ...
     @property
@@ -70,6 +36,11 @@ class AIPerfLoggerProtocol(Protocol):
     def __init__(self, logger_name: str | None = None, **kwargs) -> None: ...
     def log(
         self, level: int, message: str | Callable[..., str], *args, **kwargs
+    ) -> None: ...
+    def trace_or_debug(
+        self,
+        trace_msg: str | Callable[..., str],
+        debug_msg: str | Callable[..., str],
     ) -> None: ...
     def trace(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
     def debug(self, message: str | Callable[..., str], *args, **kwargs) -> None: ...
@@ -85,6 +56,8 @@ class AIPerfLoggerProtocol(Protocol):
 
 @runtime_checkable
 class TaskManagerProtocol(AIPerfLoggerProtocol, Protocol):
+    """Protocol for TaskManager methods."""
+
     def execute_async(self, coro: Coroutine) -> asyncio.Task: ...
 
     async def cancel_all_tasks(self, timeout: float) -> None: ...
@@ -94,7 +67,7 @@ class TaskManagerProtocol(AIPerfLoggerProtocol, Protocol):
     def start_background_task(
         self,
         method: Callable,
-        interval: float | Callable[["TaskManagerProtocol"], float] | None = None,
+        interval: float | Callable[[TaskManagerProtocol], float] | None = None,
         immediate: bool = False,
         stop_on_error: bool = False,
     ) -> None: ...
@@ -102,9 +75,7 @@ class TaskManagerProtocol(AIPerfLoggerProtocol, Protocol):
 
 @runtime_checkable
 class AIPerfLifecycleProtocol(TaskManagerProtocol, Protocol):
-    """Protocol for AIPerf lifecycle methods.
-    see :class:`aiperf.common.mixins.aiperf_lifecycle_mixin.AIPerfLifecycleMixin` for more details.
-    """
+    """Protocol for AIPerf lifecycle methods."""
 
     @property
     def was_initialized(self) -> bool: ...
@@ -114,6 +85,10 @@ class AIPerfLifecycleProtocol(TaskManagerProtocol, Protocol):
     def was_stopped(self) -> bool: ...
     @property
     def is_running(self) -> bool: ...
+    @property
+    def stop_requested(self) -> bool: ...
+    @stop_requested.setter
+    def stop_requested(self, value: bool) -> None: ...
 
     initialized_event: asyncio.Event
     started_event: asyncio.Event
@@ -366,6 +341,11 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         ...
 
 
+################################################################################
+# Service Protocols
+################################################################################
+
+
 @runtime_checkable
 class MessageBusClientProtocol(PubClientProtocol, SubClientProtocol, Protocol):
     """A message bus client is a client that can publish and subscribe to messages
@@ -376,536 +356,17 @@ class MessageBusClientProtocol(PubClientProtocol, SubClientProtocol, Protocol):
     pub_client: PubClientProtocol
 
 
-################################################################################
-# General Protocols (sorted alphabetically)
-################################################################################
-
-
-@runtime_checkable
-class AIPerfUIProtocol(AIPerfLifecycleProtocol, Protocol):
-    """Protocol interface definition for AIPerf UI implementations.
-
-    Basically a UI can be any class that implements the AIPerfLifecycleProtocol. However, in order to provide
-    progress tracking and worker tracking, the simplest way would be to inherit from the :class:`aiperf.ui.base_ui.BaseAIPerfUI`.
-    """
-
-
-@runtime_checkable
-class ConsoleExporterProtocol(Protocol):
-    """Protocol for console exporters.
-    Any class implementing this protocol will be provided an ExporterConfig and must provide an
-    `export` method that takes a rich Console and handles exporting them appropriately.
-    """
-
-    def __init__(self, exporter_config: "ExporterConfig") -> None: ...
-
-    async def export(self, console: "Console") -> None: ...
-
-
-@runtime_checkable
-class CustomDatasetLoaderProtocol(Protocol):
-    """Protocol for custom dataset loaders that load dataset from a file and convert it to a list of Conversation objects."""
-
-    @classmethod
-    def can_load(
-        cls, data: dict[str, Any] | None = None, filename: "str | Path | None" = None
-    ) -> bool:
-        """Check if this loader can handle the given data format.
-
-        Args:
-            data: Optional dictionary representing a single line from the JSONL file.
-                  None indicates path-based detection only (e.g., for directories).
-            filename: Optional path to the input file/directory for path-based detection
-
-        Returns:
-            True if this loader can handle the data format, False otherwise
-        """
-        ...
-
-    @classmethod
-    def get_preferred_sampling_strategy(cls) -> "DatasetSamplingStrategy":
-        """Get the preferred dataset sampling strategy for this loader.
-
-        Returns:
-            DatasetSamplingStrategy: The preferred sampling strategy
-        """
-        ...
-
-    def load_dataset(self) -> dict[str, list["CustomDatasetT"]]: ...
-
-    def convert_to_conversations(
-        self, custom_data: dict[str, list["CustomDatasetT"]]
-    ) -> list[Conversation]: ...
-
-
-@runtime_checkable
-class DataExporterProtocol(Protocol):
-    """
-    Protocol for data exporters.
-    Any class implementing this protocol will be provided an ExporterConfig and must provide an
-    `export` method that handles exporting the data appropriately.
-    """
-
-    def __init__(self, exporter_config: "ExporterConfig") -> None: ...
-
-    def get_export_info(self) -> "FileExportInfo": ...
-
-    async def export(self) -> None: ...
-
-
-@runtime_checkable
-class DatasetSamplingStrategyProtocol(Protocol):
-    """
-    Protocol for dataset sampling strategies.
-    Any class implementing this protocol will be provided a list of conversation ids, and must
-    provide a `next_conversation_id` method that returns the next conversation id, ensuring reproducibility.
-    """
-
-    def __init__(self, conversation_ids: list[str], **kwargs) -> None: ...
-    def next_conversation_id(self) -> str: ...
-
-
-@runtime_checkable
-class DatasetBackingStoreProtocol(AIPerfLifecycleProtocol, Protocol):
-    """Protocol for creating and managing dataset storage (DatasetManager side).
-
-    Extends AIPerfLifecycleProtocol for lifecycle management, logging, and task management.
-
-    **Usage Pattern**:
-    1. Create backing store with __init__
-    2. Call initialize()
-    3. Add conversations with add_conversation() or add_conversations()
-    4. Call finalize() to make data available to clients
-
-    **ORDER GUARANTEE**: Conversation insertion order MUST be preserved.
-    This is critical for:
-    - Datasets with timing data (fixed schedule)
-    - Reproducibility
-    - Sequential sampling strategies
-
-    Implementations MUST maintain insertion order using dict (Python 3.7+) or OrderedDict.
-    All implementations MUST support the streaming API.
-    """
-
-    def __init__(self, **kwargs) -> None:
-        """Initialize backing store.
-
-        Args:
-            **kwargs: Implementation-specific configuration
-                     (e.g., shared_mount_path, redis_url)
-        """
-        ...
-
-    async def add_conversation(
-        self, conversation_id: str, conversation: Conversation
-    ) -> None:
-        """Add a single conversation (streaming mode).
-
-        Conversations are added in the order this method is called.
-        Order MUST be preserved for sequential access and timing data.
-
-        Args:
-            conversation_id: Session ID of the conversation
-            conversation: Conversation object to add
-
-        Raises:
-            RuntimeError: If store not initialized or already finalized
-        """
-        ...
-
-    async def add_conversations(self, conversations: dict[str, Conversation]) -> None:
-        """Add multiple conversations (streaming mode).
-
-        More efficient than individual add_conversation() calls.
-        Insertion order from the dict MUST be preserved.
-
-        Args:
-            conversations: Dictionary mapping session IDs to Conversation objects.
-                          Dict insertion order is preserved (Python 3.7+).
-
-        Raises:
-            RuntimeError: If store not initialized or already finalized
-        """
-        ...
-
-    async def finalize(self) -> None:
-        """Finalize streaming and make data available to clients.
-
-        Call after all add_conversation/add_conversations calls.
-        Creates indexes, flushes buffers, closes files, etc.
-
-        Raises:
-            RuntimeError: If store not initialized
-        """
-        ...
-
-    def get_client_metadata(self) -> "DatasetClientMetadata":
-        """Get metadata needed by clients to connect to this storage.
-
-        Returns:
-            DatasetClientMetadata subclass with connection information
-
-        Raises:
-            RuntimeError: If additions not finalized (streaming mode)
-        """
-        ...
-
-
-@runtime_checkable
-class DatasetClientStoreProtocol(AIPerfLifecycleProtocol, Protocol):
-    """Protocol for accessing dataset storage (Worker side).
-
-    Extends AIPerfLifecycleProtocol for lifecycle management, logging, and task management.
-    """
-
-    def __init__(self, client_metadata: "DatasetClientMetadata", **kwargs) -> None:
-        """Initialize client store from backing store metadata.
-
-        Args:
-            client_metadata: Typed metadata from DatasetBackingStore.get_client_metadata()
-            **kwargs: Additional client-specific configuration
-        """
-        ...
-
-    async def get_conversation(self, conversation_id: str) -> Conversation:
-        """Retrieve a conversation by ID (always async).
-
-        Args:
-            conversation_id: The session ID of the conversation
-
-        Returns:
-            Conversation object
-
-        Raises:
-            KeyError: If conversation_id not found
-        """
-        ...
-
-
-@runtime_checkable
-class InferenceServerResponse(Protocol):
-    """Protocol for inference server response objects.
-
-    Defines the interface for response objects that can parse themselves
-    into different formats. Any object implementing these methods can be
-    used as a response in the inference pipeline.
-
-    This protocol-based approach allows for:
-    - Duck typing (structural subtyping)
-    - Easier testing with mocks
-    - Flexibility in implementation
-    - No concrete inheritance required
-    """
-
-    perf_ns: int
-    """Timestamp of the response in nanoseconds (perf_counter_ns)."""
-
-    def get_raw(self) -> Any | None:
-        """Get the raw representation of the response.
-
-        Returns:
-            Raw response data or None
-        """
-        ...
-
-    def get_text(self) -> str | None:
-        """Get the text representation of the response.
-
-        Returns:
-            Text content or None
-        """
-        ...
-
-    def get_json(self) -> JsonObject | None:
-        """Get the JSON representation of the response.
-
-        Automatically parses text content as JSON if applicable.
-
-        Returns:
-            Parsed JSON dict or None if parsing fails
-        """
-        ...
-
-
-@runtime_checkable
-class EndpointProtocol(Protocol):
-    """Protocol for an endpoint."""
-
-    def __init__(self, model_endpoint: "ModelEndpointInfo", **kwargs) -> None: ...
-
-    @classmethod
-    def metadata(cls) -> "EndpointMetadata": ...
-
-    def format_payload(self, request_info: RequestInfo) -> RequestOutputT: ...
-    def extract_response_data(self, record: RequestRecord) -> list[ParsedResponse]: ...
-    def get_endpoint_headers(self, request_info: RequestInfo) -> dict[str, str]: ...
-    def get_endpoint_params(self, request_info: RequestInfo) -> dict[str, str]: ...
-
-    def parse_response(
-        self, response: InferenceServerResponse
-    ) -> ParsedResponse | None:
-        """Parse response. Return None to skip."""
-
-
-@runtime_checkable
-class HooksProtocol(Protocol):
-    """Protocol for hooks methods provided by the HooksMixin."""
-
-    def get_hooks(self, *hook_types: HookType, reversed: bool = False) -> list[Hook]:
-        """Get the hooks for the given hook type(s), optionally reversed."""
-        ...
-
-    async def run_hooks(
-        self, *hook_types: HookType, reversed: bool = False, **kwargs
-    ) -> None:
-        """Run the hooks for the given hook type, waiting for each hook to complete before running the next one.
-        If reversed is True, the hooks will be run in reverse order. This is useful for stop/cleanup starting with
-        the children and ending with the parent.
-        """
-        ...
-
-
-@runtime_checkable
-class ServiceManagerProtocol(AIPerfLifecycleProtocol, Protocol):
-    """Protocol for a service manager that manages the running of services using the specific ServiceRunType.
-    Abstracts away the details of service deployment and management.
-    see :class:`aiperf.controller.base_service_manager.BaseServiceManager` for more details.
-    """
-
-    def __init__(
-        self,
-        required_services: dict[ServiceTypeT, int],
-        service_config: "ServiceConfig",
-        user_config: "UserConfig",
-        log_queue: "multiprocessing.Queue | None" = None,
-    ): ...
-
-    required_services: dict[ServiceTypeT, int]
-    service_map: dict[ServiceTypeT, list[ServiceRunInfo]]
-    service_id_map: dict[str, ServiceRunInfo]
-
-    async def run_service(
-        self, service_type: ServiceTypeT, num_replicas: int = 1
-    ) -> None: ...
-
-    async def run_services(self, service_types: dict[ServiceTypeT, int]) -> None: ...
-    async def run_required_services(self) -> None: ...
-    async def shutdown_all_services(self) -> list[BaseException | None]: ...
-    async def kill_all_services(self) -> list[BaseException | None]: ...
-    async def stop_service(
-        self, service_type: ServiceTypeT, service_id: str | None = None
-    ) -> list[BaseException | None]: ...
-    async def stop_services_by_type(
-        self, service_types: list[ServiceTypeT]
-    ) -> list[BaseException | None]: ...
-    async def wait_for_all_services_registration(
-        self,
-        stop_event: asyncio.Event,
-        timeout_seconds: float = Environment.SERVICE.REGISTRATION_TIMEOUT,
-    ) -> None: ...
-
-    async def wait_for_all_services_start(
-        self,
-        stop_event: asyncio.Event,
-        timeout_seconds: float = Environment.SERVICE.START_TIMEOUT,
-    ) -> None: ...
-
-
 @runtime_checkable
 class ServiceProtocol(MessageBusClientProtocol, Protocol):
     """Protocol for a service. Essentially a MessageBusClientProtocol with a service_type and service_id attributes."""
 
     def __init__(
         self,
-        user_config: "UserConfig",
-        service_config: "ServiceConfig",
+        user_config: UserConfig,
+        service_config: ServiceConfig,
         service_id: str | None = None,
         **kwargs,
     ) -> None: ...
 
     service_type: ServiceTypeT
     service_id: str
-
-
-@runtime_checkable
-class RecordProcessorProtocol(AIPerfLifecycleProtocol, Protocol):
-    """Protocol for a record processor that processes the incoming records and returns the results of the post processing."""
-
-    async def process_record(
-        self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
-    ) -> "MetricRecordDict": ...
-
-
-@runtime_checkable
-class ResultsProcessorProtocol(AIPerfLifecycleProtocol, Protocol):
-    """Protocol for a results processor that processes the results of multiple
-    record processors, and provides the ability to summarize the results."""
-
-    async def process_result(self, record_data: "MetricRecordsData") -> None: ...
-
-    async def summarize(self) -> list["MetricResult"]: ...
-
-
-@runtime_checkable
-class ServerMetricsProcessorProtocol(Protocol):
-    """Protocol for server metrics results processors that handle ServerMetricsRecord objects.
-
-    This protocol is separate from ResultsProcessorProtocol because server metrics data
-    has fundamentally different structure (hierarchical Prometheus snapshots) compared
-    to inference metrics (flat key-value pairs).
-    """
-
-    async def process_server_metrics_record(
-        self, record: "ServerMetricsRecord"
-    ) -> None:
-        """Process individual server metrics record with complete Prometheus snapshot.
-
-        Args:
-            record: ServerMetricsRecord containing Prometheus metrics snapshot and metadata
-        """
-        ...
-
-    async def summarize(self) -> list["MetricResult"]: ...
-
-
-@runtime_checkable
-class ServerMetricsAccumulatorProtocol(ServerMetricsProcessorProtocol, Protocol):
-    """Protocol for server metrics accumulators that accumulate server metrics data and export aggregated results.
-
-    Extends ServerMetricsProcessorProtocol to provide result export functionality with time filtering
-    and error summary support. Implementations should accumulate Prometheus snapshot data and compute
-    aggregated statistics (mean, p50, p90, p95, p99) for configured metrics across collection windows.
-    """
-
-    async def export_results(
-        self,
-        start_ns: int,
-        end_ns: int,
-        time_filter: "TimeRangeFilter | None" = None,
-        error_summary: list["ErrorDetailsCount"] | None = None,
-    ) -> "ServerMetricsResults | None":
-        """Export accumulated server metrics as results.
-
-        Args:
-            start_ns: Start time of collection in nanoseconds
-            end_ns: End time of collection in nanoseconds
-            time_filter: Optional time filter for aggregation (excludes warmup/buffer)
-            error_summary: Optional list of error counts
-
-        Returns:
-            ServerMetricsResults if data was collected, None otherwise
-        """
-        ...
-
-
-@runtime_checkable
-class GPUTelemetryProcessorProtocol(Protocol):
-    """Protocol for GPU telemetry results processors that handle TelemetryRecord objects.
-
-    This protocol is separate from ResultsProcessorProtocol because GPU telemetry data
-    has fundamentally different structure (hierarchical with metadata) compared
-    to inference metrics (flat key-value pairs).
-    """
-
-    async def process_telemetry_record(self, record: TelemetryRecord) -> None:
-        """Process individual telemetry record with rich metadata.
-
-        Args:
-            record: TelemetryRecord containing GPU metrics and hierarchical metadata
-        """
-        ...
-
-
-@runtime_checkable
-class GPUTelemetryAccumulatorProtocol(GPUTelemetryProcessorProtocol, Protocol):
-    """Protocol for GPU telemetry accumulators that accumulate GPU telemetry data and export pre-computed metrics.
-
-    Extends GPUTelemetryProcessorProtocol to provide result export, realtime telemetry, and summarization
-    capabilities. Implementations should accumulate DCGM metrics, compute aggregated statistics per GPU,
-    and support dynamic dashboard enablement for realtime monitoring.
-    """
-
-    def export_results(
-        self,
-        start_ns: int,
-        end_ns: int,
-        error_summary: list["ErrorDetailsCount"] | None = None,
-    ) -> "TelemetryExportData | None":
-        """Export accumulated telemetry data as a TelemetryExportData object.
-
-        Args:
-            start_ns: Start time of collection in nanoseconds
-            end_ns: End time of collection in nanoseconds
-            error_summary: Optional list of error counts
-
-        Returns:
-            TelemetryExportData object with pre-computed metrics for each GPU
-        """
-        ...
-
-    def start_realtime_telemetry(self) -> None:
-        """Start the realtime telemetry background task.
-
-        This is called when the user dynamically enables the telemetry dashboard
-        by pressing the telemetry option in the UI without having passed the 'dashboard' parameter
-        at startup.
-        """
-
-    async def summarize(self) -> list["MetricResult"]:
-        """Generate MetricResult list with hierarchical tags for telemetry data.
-
-        Returns:
-            List of MetricResult objects with hierarchical tags that preserve
-            dcgm_url -> gpu_uuid grouping structure for dashboard filtering.
-        """
-        ...
-
-
-@runtime_checkable
-class TransportProtocol(AIPerfLifecycleProtocol, Protocol):
-    """Protocol for a transport that sends requests to an inference server."""
-
-    def __init__(self, **kwargs) -> None: ...
-
-    @classmethod
-    def metadata(cls) -> "TransportMetadata": ...
-
-    def get_transport_headers(self, request_info: RequestInfo) -> dict[str, str]: ...
-
-    def build_headers(self, request_info: RequestInfo) -> dict[str, str]: ...
-
-    def build_url(self, request_info: RequestInfo) -> str: ...
-
-    def get_url(self, request_info: RequestInfo) -> str: ...
-
-    async def send_request(
-        self, request_info: RequestInfo, payload: RequestInputT
-    ) -> RequestRecord: ...
-
-
-@runtime_checkable
-class URLSelectionStrategyProtocol(Protocol):
-    """Protocol for URL selection strategies.
-
-    Used for load balancing across multiple endpoint URLs when multiple
-    `--url` values are provided. Any class implementing this protocol must
-    provide a `next_url_index` method that returns the next URL index.
-
-    Thread Safety:
-        Safe for asyncio single-threaded concurrency.
-    """
-
-    def __init__(self, urls: list[str], **kwargs) -> None: ...
-
-    def next_url_index(self) -> int:
-        """Return the index of the next URL to use.
-
-        Returns:
-            Index into the urls list (0 to len(urls)-1)
-        """
-        ...
-
-    @property
-    def urls(self) -> list[str]:
-        """The list of URLs being sampled."""
-        ...

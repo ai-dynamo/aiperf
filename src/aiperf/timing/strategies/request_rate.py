@@ -9,12 +9,12 @@ import time
 from typing import TYPE_CHECKING
 
 from aiperf.common.constants import MILLIS_PER_SECOND, NANOS_PER_SECOND
-from aiperf.common.enums import TimingMode
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.credit.structs import Credit, TurnToSend
-from aiperf.timing.intervals import IntervalGeneratorConfig, IntervalGeneratorFactory
-from aiperf.timing.strategies.core import TimingStrategyFactory
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PluginType
+from aiperf.timing.intervals import IntervalGeneratorConfig
 
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
 
 
-@TimingStrategyFactory.register(TimingMode.REQUEST_RATE)
 class RequestRateStrategy(AIPerfLoggerMixin):
     """Issues credits at a target average rate with configurable arrival patterns.
 
@@ -113,7 +112,10 @@ class RequestRateStrategy(AIPerfLoggerMixin):
             f"Creating interval generator: pattern={interval_config.arrival_pattern}, "
             f"rate={interval_config.request_rate}, smoothness={interval_config.arrival_smoothness}"
         )
-        self._rate_generator = IntervalGeneratorFactory.create_instance(interval_config)
+        GeneratorClass = plugins.get_class(
+            PluginType.ARRIVAL_PATTERN, interval_config.arrival_pattern
+        )
+        self._rate_generator = GeneratorClass(interval_config)
 
     async def setup_phase(self) -> None:
         """Setup the phase."""

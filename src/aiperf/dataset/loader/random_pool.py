@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from collections import defaultdict
@@ -9,18 +9,17 @@ from pydantic import ValidationError
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.enums import CustomDatasetType, DatasetSamplingStrategy, MediaType
-from aiperf.common.factories import CustomDatasetFactory
+from aiperf.common.enums import MediaType
 from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import RandomPool
+from aiperf.plugin.enums import CustomDatasetType, DatasetSamplingStrategy
 
 # Type aliases
 Filename: TypeAlias = str
 
 
-@CustomDatasetFactory.register(CustomDatasetType.RANDOM_POOL)
 class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
     """A dataset loader that loads data from a single file or a directory.
 

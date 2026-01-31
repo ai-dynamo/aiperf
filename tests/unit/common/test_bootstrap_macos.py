@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Tests for macOS-specific terminal FD closing in bootstrap.py"""
 
@@ -8,7 +8,6 @@ import pytest
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config import ServiceConfig, UserConfig
-from tests.unit.common.conftest import DummyService
 
 
 class TestBootstrapMacOSFixes:
@@ -19,6 +18,7 @@ class TestBootstrapMacOSFixes:
         self,
         mock_psutil_process,
         mock_setup_child_process_logging,
+        register_dummy_services,
     ):
         """Combine common bootstrap mocks that are used but not called in tests."""
         pass
@@ -34,6 +34,7 @@ class TestBootstrapMacOSFixes:
     ):
         """Test that terminal FDs are closed in child processes on macOS."""
         # Disable pytest capture to avoid conflicts with FD mocking
+        # Use the disabled context around the patches to ensure proper cleanup
         with (
             capsys.disabled(),
             patch("sys.stdin") as mock_stdin,
@@ -46,7 +47,7 @@ class TestBootstrapMacOSFixes:
             mock_stderr.fileno.return_value = 2
 
             bootstrap_and_run_service(
-                DummyService,
+                "test_dummy",
                 service_config=service_config_no_uvloop,
                 user_config=user_config,
                 log_queue=mock_log_queue,
@@ -68,7 +69,7 @@ class TestBootstrapMacOSFixes:
         """Test that terminal FDs are NOT closed in the main process on macOS."""
         with patch("sys.stdin") as mock_stdin:
             bootstrap_and_run_service(
-                DummyService,
+                "test_dummy",
                 service_config=service_config_no_uvloop,
                 user_config=user_config,
                 log_queue=mock_log_queue,
@@ -88,7 +89,7 @@ class TestBootstrapMacOSFixes:
         """Test that terminal FDs are NOT closed on Linux."""
         with patch("sys.stdin") as mock_stdin:
             bootstrap_and_run_service(
-                DummyService,
+                "test_dummy",
                 service_config=service_config_no_uvloop,
                 user_config=user_config,
                 log_queue=mock_log_queue,
@@ -109,6 +110,7 @@ class TestBootstrapMacOSFixes:
     ):
         """Test that exceptions during FD closing are handled gracefully."""
         # Disable pytest capture to avoid conflicts with FD mocking
+        # Use the disabled context around the patches to ensure proper cleanup
         with (
             capsys.disabled(),
             patch("sys.stdin") as mock_stdin,
@@ -126,7 +128,7 @@ class TestBootstrapMacOSFixes:
             # Should not raise an exception despite the error
             try:
                 bootstrap_and_run_service(
-                    DummyService,
+                    "test_dummy",
                     service_config=service_config_no_uvloop,
                     user_config=user_config,
                     log_queue=mock_log_queue,

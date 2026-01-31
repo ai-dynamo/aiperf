@@ -134,7 +134,7 @@ class CategoriesManifest(BaseModel):
     schema_version: "1.0"
 
     endpoint:
-      protocol: aiperf.common.protocols:EndpointProtocol
+      protocol: aiperf.endpoints.protocols:EndpointProtocol
       metadata_class: aiperf.plugin.schema.schemas:EndpointMetadata
       enum: EndpointType
       description: HTTP endpoint handlers for LLM APIs
@@ -168,7 +168,7 @@ class CategorySpec(BaseModel):
     Example::
 
         endpoint:
-          protocol: aiperf.common.protocols:EndpointProtocol
+          protocol: aiperf.endpoints.protocols:EndpointProtocol
           metadata_class: aiperf.plugin.schema.schemas:EndpointMetadata
           enum: EndpointType
           description: HTTP endpoint handlers for different LLM APIs.
@@ -177,7 +177,7 @@ class CategorySpec(BaseModel):
     protocol: str = Field(
         description=(
             "The interface that plugins in this category must implement. "
-            "Use 'module.path:ClassName' format, e.g., 'aiperf.common.protocols:EndpointProtocol'."
+            "Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.protocols:EndpointProtocol'."
         )
     )
     metadata_class: str | None = Field(
@@ -331,4 +331,8 @@ class ServiceMetadata(BaseModel):
     disable_gc: bool = Field(
         default=False,
         description="Whether to disable garbage collection in the service for timing-critical operations.",
+    )
+    replicable: bool = Field(
+        default=False,
+        description="Whether the service can have multiple instances running in parallel.",
     )

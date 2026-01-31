@@ -7,12 +7,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.common.enums import ServiceType
 from aiperf.common.exceptions import AIPerfError
 from aiperf.controller.multiprocess_service_manager import (
     MultiProcessRunInfo,
     MultiProcessServiceManager,
 )
+from aiperf.plugin.enums import ServiceType
 
 
 class TestMultiProcessServiceManager:

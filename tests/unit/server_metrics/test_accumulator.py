@@ -1,11 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
 import pytest
 
 from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.enums import EndpointType, PrometheusMetricType
+from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.models.error_models import ErrorDetailsCount
 from aiperf.common.models.server_metrics_models import (
     MetricFamily,
@@ -13,6 +13,7 @@ from aiperf.common.models.server_metrics_models import (
     ServerMetricsRecord,
     ServerMetricsResults,
 )
+from aiperf.plugin.enums import EndpointType
 from aiperf.server_metrics.accumulator import ServerMetricsAccumulator
 from aiperf.server_metrics.storage import ServerMetricsHierarchy
 

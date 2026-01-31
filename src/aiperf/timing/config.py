@@ -6,13 +6,13 @@ from __future__ import annotations
 from pydantic import ConfigDict, Field
 
 from aiperf.common.config import InputDefaults, UserConfig
-from aiperf.common.enums import (
+from aiperf.common.enums import CreditPhase
+from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.plugin.enums import (
     ArrivalPattern,
-    CreditPhase,
     TimingMode,
     URLSelectionStrategy,
 )
-from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.timing.request_cancellation import RequestCancellationConfig
 
 

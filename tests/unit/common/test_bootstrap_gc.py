@@ -6,12 +6,7 @@ import pytest
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.config import ServiceConfig, UserConfig
-from tests.unit.common.conftest import (
-    DummyService,
-    DummyTimingManager,
-    DummyWorker,
-    MockGC,
-)
+from tests.unit.common.conftest import MockGC
 
 
 class TestBootstrapGarbageCollection:
@@ -22,6 +17,7 @@ class TestBootstrapGarbageCollection:
         self,
         mock_psutil_process,
         mock_setup_child_process_logging,
+        register_dummy_services,
     ):
         """Combine common bootstrap mocks that are used but not called in tests."""
         pass
@@ -35,7 +31,7 @@ class TestBootstrapGarbageCollection:
     ):
         """Test that GC is disabled for Worker service."""
         bootstrap_and_run_service(
-            DummyWorker,
+            "test_worker",
             service_config=service_config_no_uvloop,
             user_config=user_config,
             log_queue=mock_log_queue,
@@ -57,7 +53,7 @@ class TestBootstrapGarbageCollection:
     ):
         """Test that GC is disabled for TimingManager service."""
         bootstrap_and_run_service(
-            DummyTimingManager,
+            "test_timing_manager",
             service_config=service_config_no_uvloop,
             user_config=user_config,
             log_queue=mock_log_queue,
@@ -79,7 +75,7 @@ class TestBootstrapGarbageCollection:
     ):
         """Test that GC is NOT disabled for services other than Worker and TimingManager."""
         bootstrap_and_run_service(
-            DummyService,
+            "test_dummy",
             service_config=service_config_no_uvloop,
             user_config=user_config,
             log_queue=mock_log_queue,
@@ -101,7 +97,7 @@ class TestBootstrapGarbageCollection:
     ):
         """Test that GC operations occur in the correct order: collect -> freeze -> set_threshold -> disable."""
         bootstrap_and_run_service(
-            DummyWorker,
+            "test_worker",
             service_config=service_config_no_uvloop,
             user_config=user_config,
             log_queue=mock_log_queue,

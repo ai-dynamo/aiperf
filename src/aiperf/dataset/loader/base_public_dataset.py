@@ -1,15 +1,15 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
 from typing import Any, ClassVar
 
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.enums.dataset_enums import DatasetSamplingStrategy
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation, RequestRecord
 from aiperf.dataset.loader.base_loader import BaseLoader
+from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.transports.aiohttp_client import AioHttpClient
 
 AIPERF_DATASET_CACHE_DIR = Path(".cache/aiperf/datasets")

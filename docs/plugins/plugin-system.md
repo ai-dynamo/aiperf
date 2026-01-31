@@ -194,7 +194,7 @@ endpoint_meta = plugins.get_endpoint_metadata("chat")  # Returns EndpointMetadat
 
 | Step | File | Action |
 |------|------|--------|
-| 1 | `my_endpoint.py` | Create class extending `BaseEndpoint` with `@implements_protocol` |
+| 1 | `my_endpoint.py` | Create class extending `BaseEndpoint` |
 | 2 | `plugins.yaml` | Register with class path, description, and metadata |
 | 3 | `pyproject.toml` | Add entry point: `my-package = "my_package:plugins.yaml"` |
 | 4 | Terminal | `uv pip install -e . && aiperf plugins endpoint my_custom` |
@@ -203,7 +203,6 @@ endpoint_meta = plugins.get_endpoint_metadata("chat")  # Returns EndpointMetadat
 
 ```python
 # my_package/endpoints/custom_endpoint.py
-@implements_protocol(EndpointProtocol)
 class MyCustomEndpoint(BaseEndpoint):
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         turn = request_info.turns[-1]
@@ -237,7 +236,7 @@ Defines plugin categories with their protocols and metadata schemas:
 schema_version: "1.0"
 
 endpoint:
-  protocol: aiperf.common.protocols:EndpointProtocol
+  protocol: aiperf.endpoints.protocols:EndpointProtocol
   metadata_class: aiperf.plugin.schema.schemas:EndpointMetadata
   enum: EndpointType
   description: |

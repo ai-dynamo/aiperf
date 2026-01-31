@@ -6,11 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
-from aiperf.common.enums import CommandType, EndpointType
+from aiperf.common.enums import CommandType
 from aiperf.common.messages import ProfileConfigureCommand, ProfileStartCommand
 from aiperf.common.messages.server_metrics_messages import ServerMetricsRecordMessage
 from aiperf.common.models import ErrorDetails
 from aiperf.common.models.server_metrics_models import ServerMetricsRecord
+from aiperf.plugin.enums import EndpointType
 from aiperf.server_metrics.manager import ServerMetricsManager
 
 

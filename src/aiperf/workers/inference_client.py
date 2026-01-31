@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import time
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
-from aiperf.common.factories import EndpointFactory, TransportFactory
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
     ErrorDetails,
@@ -14,9 +14,39 @@ from aiperf.common.models import (
     RequestInfo,
     RequestRecord,
 )
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PluginType
 
 if TYPE_CHECKING:
     from aiperf.transports.base_transports import FirstTokenCallback
+
+
+def detect_transport_from_url(url: str) -> str:
+    """Detect transport type from URL scheme.
+
+    Looks up registered transports and matches their url_schemes metadata
+    against the URL's scheme.
+
+    Args:
+        url: URL to detect transport for.
+
+    Returns:
+        Transport plugin name (e.g., 'http').
+
+    Raises:
+        ValueError: If no transport supports the URL scheme.
+    """
+    parsed = urlparse(url)
+    # urlparse mishandles URLs without schemes (e.g., 'localhost:8765')
+    if parsed.scheme and not parsed.netloc:
+        parsed = urlparse(f"http://{url}")
+    scheme = parsed.scheme.lower() if parsed.scheme else "http"
+
+    for entry in plugins.list_entries(PluginType.TRANSPORT):
+        if scheme in entry.metadata.get("url_schemes", []):
+            return entry.name
+
+    raise ValueError(f"No transport found for URL scheme '{scheme}' in: {url}")
 
 
 class InferenceClient(AIPerfLifecycleMixin):
@@ -29,23 +59,19 @@ class InferenceClient(AIPerfLifecycleMixin):
 
         # Detect and set transport type if not explicitly set
         if not model_endpoint.transport:
-            model_endpoint.transport = TransportFactory.detect_from_url(
-                model_endpoint.endpoint.base_url
+            model_endpoint.transport = detect_transport_from_url(
+                model_endpoint.endpoint.base_url,
             )
-            if not model_endpoint.transport:
-                raise ValueError(
-                    f"No transport found for URL: {model_endpoint.endpoint.base_url}"
-                )
 
         # Create endpoint and transport instances
-        self.endpoint = EndpointFactory.create_instance(
-            self.model_endpoint.endpoint.type,
-            model_endpoint=self.model_endpoint,
+        EndpointClass = plugins.get_class(
+            PluginType.ENDPOINT, self.model_endpoint.endpoint.type
         )
-        self.transport = TransportFactory.create_instance(
-            self.model_endpoint.transport,
-            model_endpoint=self.model_endpoint,
+        self.endpoint = EndpointClass(model_endpoint=self.model_endpoint)
+        TransportClass = plugins.get_class(
+            PluginType.TRANSPORT, str(self.model_endpoint.transport)
         )
+        self.transport = TransportClass(model_endpoint=self.model_endpoint)
         self.attach_child_lifecycle(self.transport)
 
     async def _send_request_to_transport(

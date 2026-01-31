@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import csv
@@ -8,11 +8,7 @@ from collections.abc import Mapping, Sequence
 from decimal import Decimal
 
 from aiperf.common.constants import STAT_KEYS
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums.data_exporter_enums import DataExporterType
-from aiperf.common.factories import DataExporterFactory
 from aiperf.common.models import GpuSummary, MetricResult
-from aiperf.common.protocols import DataExporterProtocol
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
 from aiperf.gpu_telemetry.constants import get_gpu_telemetry_metrics_config
@@ -23,8 +19,6 @@ def _percentile_keys_from(stat_keys: Sequence[str]) -> list[str]:
     return [k for k in stat_keys if len(k) >= 2 and k[0] == "p" and k[1:].isdigit()]
 
 
-@DataExporterFactory.register(DataExporterType.CSV)
-@implements_protocol(DataExporterProtocol)
 class MetricsCsvExporter(MetricsBaseExporter):
     """Exports records to a CSV file in a legacy, two-section format."""
 

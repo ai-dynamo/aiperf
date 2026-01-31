@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 Shared fixtures for testing AIPerf controller.
@@ -34,19 +34,30 @@ def system_controller(
     mock_service_manager: AsyncMock,
 ) -> SystemController:
     """Create a SystemController instance with mocked dependencies."""
-    with (
-        patch("aiperf.controller.system_controller.ServiceManagerFactory") as mock_factory,
-        patch("aiperf.controller.system_controller.ProxyManager") as mock_proxy,
-        patch("aiperf.controller.system_controller.AIPerfUIFactory") as mock_ui_factory,
-        patch("aiperf.common.factories.CommunicationFactory") as mock_comm_factory,
-    ):  # fmt: skip
-        mock_factory.create_instance.return_value = mock_service_manager
-        mock_proxy.return_value = AsyncMock()
-        mock_ui_factory.create_instance.return_value = AsyncMock()
+    mock_ui = AsyncMock()
+    mock_comm = AsyncMock()
 
-        # Mock the communication factory to return a mock communication object
-        mock_comm = AsyncMock()
-        mock_comm_factory.get_or_create_instance.return_value = mock_comm
+    def mock_get_class(protocol, name):
+        if protocol == "service_manager":
+            return lambda **kwargs: mock_service_manager
+        if protocol == "ui":
+            return lambda **kwargs: mock_ui
+        if protocol == "communication":
+            return lambda **kwargs: mock_comm
+        raise ValueError(f"Unknown protocol: {protocol}")
+
+    with (
+        patch(
+            "aiperf.controller.system_controller.plugins.get_class",
+            side_effect=mock_get_class,
+        ),
+        patch("aiperf.controller.system_controller.ProxyManager") as mock_proxy,
+        patch(
+            "aiperf.common.mixins.communication_mixin.plugins.get_class",
+            side_effect=mock_get_class,
+        ),
+    ):  # fmt: skip
+        mock_proxy.return_value = AsyncMock()
 
         controller = SystemController(
             user_config=user_config,

@@ -7,11 +7,12 @@ import pytest
 
 from aiperf.common.config import UserConfig
 from aiperf.common.constants import GOOD_REQUEST_COUNT_TAG
-from aiperf.common.enums import EndpointType, MetricFlags, MetricType
+from aiperf.common.enums import MetricFlags, MetricType
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
+from aiperf.plugin.enums import EndpointType
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 from tests.unit.post_processors.conftest import (
     setup_mock_registry_for_metrics,

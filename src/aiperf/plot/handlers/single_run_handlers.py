@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -27,10 +27,8 @@ from aiperf.plot.core.plot_specs import (
     DataSource,
     MetricSpec,
     PlotSpec,
-    PlotType,
     TimeSlicePlotSpec,
 )
-from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerFactory
 from aiperf.plot.exceptions import (
     DataUnavailableError,
     PlotGenerationError,
@@ -221,7 +219,6 @@ class BaseSingleRunHandler:
             raise PlotGenerationError(f"Unsupported data source: {source}")
 
 
-@PlotTypeHandlerFactory.register(PlotType.SCATTER)
 class ScatterHandler(BaseSingleRunHandler):
     """Handler for scatter plot type (supports REQUESTS and SERVER_METRICS sources)."""
 
@@ -302,7 +299,6 @@ class ScatterHandler(BaseSingleRunHandler):
         )
 
 
-@PlotTypeHandlerFactory.register(PlotType.AREA)
 class AreaHandler(BaseSingleRunHandler):
     """Handler for area plot type (supports REQUESTS and SERVER_METRICS sources)."""
 
@@ -419,7 +415,6 @@ class AreaHandler(BaseSingleRunHandler):
         return df[["timestamp_s", base_metric]].copy()
 
 
-@PlotTypeHandlerFactory.register(PlotType.TIMESLICE)
 class TimeSliceHandler(BaseSingleRunHandler):
     """Handler for timeslice scatter plot type (supports TIMESLICES and SERVER_METRICS sources)."""
 
@@ -798,7 +793,6 @@ class TimeSliceHandler(BaseSingleRunHandler):
         return avg, label, std
 
 
-@PlotTypeHandlerFactory.register(PlotType.HISTOGRAM)
 class HistogramHandler(BaseSingleRunHandler):
     """Handler for histogram/bar chart plots.
 
@@ -1034,7 +1028,6 @@ class HistogramHandler(BaseSingleRunHandler):
         )
 
 
-@PlotTypeHandlerFactory.register(PlotType.DUAL_AXIS)
 class DualAxisHandler(BaseSingleRunHandler):
     """Handler for dual-axis plot type."""
 
@@ -1171,7 +1164,6 @@ class DualAxisHandler(BaseSingleRunHandler):
         )
 
 
-@PlotTypeHandlerFactory.register(PlotType.SCATTER_WITH_PERCENTILES)
 class ScatterWithPercentilesHandler(BaseSingleRunHandler):
     """Handler for scatter plot with percentile overlays."""
 
@@ -1218,7 +1210,6 @@ class ScatterWithPercentilesHandler(BaseSingleRunHandler):
         )
 
 
-@PlotTypeHandlerFactory.register(PlotType.PERCENTILE_BANDS)
 class PercentileBandsHandler(BaseSingleRunHandler):
     """Handler for percentile bands visualization over time.
 
@@ -1388,7 +1379,6 @@ class PercentileBandsHandler(BaseSingleRunHandler):
         )
 
 
-@PlotTypeHandlerFactory.register(PlotType.REQUEST_TIMELINE)
 class RequestTimelineHandler(BaseSingleRunHandler):
     """Handler for request timeline visualization with phase breakdown."""
 

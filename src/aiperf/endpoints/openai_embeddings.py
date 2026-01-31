@@ -5,39 +5,23 @@ from __future__ import annotations
 
 from typing import Any
 
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import EndpointType
-from aiperf.common.factories import EndpointFactory
 from aiperf.common.models import (
+    EmbeddingResponseData,
+    InferenceServerResponse,
+    ModelEndpointInfo,
     ParsedResponse,
+    RequestInfo,
+    Turn,
 )
-from aiperf.common.models.dataset_models import Turn
-from aiperf.common.models.metadata import EndpointMetadata
-from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
-from aiperf.common.models.record_models import EmbeddingResponseData, RequestInfo
-from aiperf.common.protocols import EndpointProtocol, InferenceServerResponse
 from aiperf.common.types import RequestOutputT
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 
-@implements_protocol(EndpointProtocol)
-@EndpointFactory.register(EndpointType.EMBEDDINGS)
 class EmbeddingsEndpoint(BaseEndpoint):
     """OpenAI Embeddings endpoint.
 
     Generates vector embeddings for text inputs.
     """
-
-    @classmethod
-    def metadata(cls) -> EndpointMetadata:
-        """Return Embeddings endpoint metadata."""
-        return EndpointMetadata(
-            endpoint_path="/v1/embeddings",
-            supports_streaming=False,
-            produces_tokens=False,
-            tokenizes_input=True,
-            metrics_title="Embeddings Metrics",
-        )
 
     def format_payload(self, request_info: RequestInfo) -> RequestOutputT:
         """Format payload for an embeddings request.

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Tests for ServerMetricsParquetExporter using mocked data structures.
@@ -18,10 +18,10 @@ import pyarrow.parquet as pq
 import pytest
 
 from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.enums import EndpointType, PrometheusMetricType
-from aiperf.common.enums.data_exporter_enums import ServerMetricsFormat
+from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.models import TimeRangeFilter
+from aiperf.plugin.enums import EndpointType
 from aiperf.server_metrics.parquet_exporter import ServerMetricsParquetExporter
 from aiperf.server_metrics.storage import (
     HistogramTimeSeries,

@@ -1,11 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pytest import param
 
-from aiperf.common.enums import EndpointType, ModelSelectionStrategy
+from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -13,7 +15,94 @@ from aiperf.common.models.model_endpoint_info import (
     ModelListInfo,
 )
 from aiperf.common.models.record_models import RequestRecord
-from aiperf.workers.inference_client import InferenceClient
+from aiperf.plugin.enums import EndpointType, TransportType
+from aiperf.workers.inference_client import InferenceClient, detect_transport_from_url
+
+
+@pytest.fixture
+def mock_http_transport_entry():
+    """Create a mock transport entry with http/https url_schemes."""
+    entry = MagicMock()
+    entry.name = TransportType.HTTP.value
+    entry.metadata = {"url_schemes": ["http", "https"]}
+    return entry
+
+
+class TestDetectTransportFromUrl:
+    """Tests for detect_transport_from_url function."""
+
+    @pytest.fixture(autouse=True)
+    def mock_transport_entries(self, mock_http_transport_entry):
+        """Mock plugins.list_entries to return http transport with url_schemes."""
+        with patch(
+            "aiperf.workers.inference_client.plugins.list_entries",
+            return_value=[mock_http_transport_entry],
+        ):
+            yield
+
+    @pytest.mark.parametrize(
+        "url,expected_transport",
+        [
+            param("http://api.example.com:8000", TransportType.HTTP.value, id="http_with_port"),
+            param("https://api.example.com:8443", TransportType.HTTP.value, id="https_with_port"),
+            param("http://localhost:8000", TransportType.HTTP.value, id="http_localhost"),
+            param("http://127.0.0.1:8000", TransportType.HTTP.value, id="http_localhost_ip"),
+            param("http://[::1]:8000", TransportType.HTTP.value, id="http_ipv6"),
+            param("http://api.example.com", TransportType.HTTP.value, id="http_no_port"),
+            param("https://api.example.com", TransportType.HTTP.value, id="https_no_port"),
+            param("http://localhost:8000/api/v1/chat", TransportType.HTTP.value, id="with_path"),
+            param("http://api.example.com?model=gpt-4&key=value", TransportType.HTTP.value, id="with_query"),
+            param("http://user:password@api.example.com:8000", TransportType.HTTP.value, id="with_credentials"),
+            param("http://api.example.com#section", TransportType.HTTP.value, id="with_fragment"),
+            param("http://api.example.com/path/with%20spaces", TransportType.HTTP.value, id="with_encoded_spaces"),
+            param("https://api.openai.com/v1/chat/completions", TransportType.HTTP.value, id="openai_api"),
+        ],
+    )  # fmt: skip
+    def test_http_https_detection(self, url, expected_transport):
+        """Test detection of HTTP/HTTPS URLs with various components."""
+        result = detect_transport_from_url(url)
+        assert result == expected_transport
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            param("HTTP://api.example.com", id="uppercase_scheme"),
+            param("Http://api.example.com", id="mixed_case_scheme"),
+            param("hTTp://api.example.com", id="random_case_scheme"),
+        ],
+    )
+    def test_scheme_case_insensitive(self, url):
+        """Test that scheme detection is case-insensitive."""
+        assert detect_transport_from_url(url) == TransportType.HTTP.value
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            param("", id="empty_string"),
+            param("http://", id="scheme_only"),
+            param("api.example.com:8000", id="no_scheme_with_port"),
+            param("api.example.com", id="no_scheme_no_port"),
+            param("localhost", id="localhost_no_scheme"),
+            param("/path/to/file.sock", id="file_path"),
+        ],
+    )
+    def test_edge_cases_default_to_http_or_raise(self, url):
+        """Test edge cases return HTTP or raise ValueError."""
+        with contextlib.suppress(ValueError):
+            assert detect_transport_from_url(url) == TransportType.HTTP.value
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            param("unknown://api.example.com", id="unknown_scheme"),
+            param("ftp://files.example.com", id="ftp_scheme"),
+            param("grpc://localhost:50051", id="grpc_scheme"),
+        ],
+    )
+    def test_unregistered_schemes_raise_error(self, url):
+        """Test that unregistered schemes raise ValueError."""
+        with pytest.raises(ValueError):
+            detect_transport_from_url(url)
 
 
 class TestInferenceClient:
@@ -34,23 +123,31 @@ class TestInferenceClient:
         )
 
     @pytest.fixture
-    def inference_client(self, model_endpoint):
+    def inference_client(self, model_endpoint, mock_http_transport_entry):
         """Create an InferenceClient instance."""
+        mock_transport = MagicMock()
+        mock_endpoint = MagicMock()
+        mock_endpoint.get_endpoint_headers.return_value = {}
+        mock_endpoint.get_endpoint_params.return_value = {}
+        mock_endpoint.format_payload.return_value = {}
+
+        def mock_get_class(protocol, name):
+            if protocol == "endpoint":
+                return lambda **kwargs: mock_endpoint
+            if protocol == "transport":
+                return lambda **kwargs: mock_transport
+            raise ValueError(f"Unknown protocol: {protocol}")
+
         with (
             patch(
-                "aiperf.common.factories.TransportFactory.create_instance"
-            ) as mock_transport_factory,
+                "aiperf.workers.inference_client.plugins.get_class",
+                side_effect=mock_get_class,
+            ),
             patch(
-                "aiperf.common.factories.EndpointFactory.create_instance"
-            ) as mock_endpoint_factory,
+                "aiperf.workers.inference_client.plugins.list_entries",
+                return_value=[mock_http_transport_entry],
+            ),
         ):
-            mock_transport = MagicMock()
-            mock_endpoint = MagicMock()
-            mock_endpoint.get_endpoint_headers.return_value = {}
-            mock_endpoint.get_endpoint_params.return_value = {}
-            mock_endpoint.format_payload.return_value = {}
-            mock_transport_factory.return_value = mock_transport
-            mock_endpoint_factory.return_value = mock_endpoint
             return InferenceClient(
                 model_endpoint=model_endpoint, service_id="test-service-id"
             )

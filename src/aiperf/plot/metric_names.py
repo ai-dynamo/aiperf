@@ -11,7 +11,7 @@ derived metrics.
 
 from collections.abc import Mapping
 
-from aiperf.common.enums.metric_enums import MetricFlags, MetricType
+from aiperf.common.enums import MetricFlags, MetricType
 from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
 from aiperf.metrics.metric_registry import MetricRegistry
 

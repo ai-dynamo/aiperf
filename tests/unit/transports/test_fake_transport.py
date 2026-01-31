@@ -5,11 +5,7 @@
 import pytest
 from aiperf_mock_server.config import MockServerConfig
 
-from aiperf.common.enums import (
-    CreditPhase,
-    EndpointType,
-    ModelSelectionStrategy,
-)
+from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
 from aiperf.common.models import RequestInfo, RequestRecord, SSEMessage, TextResponse
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
@@ -17,6 +13,7 @@ from aiperf.common.models.model_endpoint_info import (
     ModelInfo,
     ModelListInfo,
 )
+from aiperf.plugin.enums import EndpointType
 from tests.harness.fake_transport import FakeTransport as FakeTransport
 
 

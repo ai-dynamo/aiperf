@@ -25,6 +25,7 @@ from aiperf.plugin.constants import (
     DEFAULT_ENTRY_POINT_GROUP,
     SUPPORTED_SCHEMA_VERSIONS,
 )
+from aiperf.plugin.extensible_enums import ExtensibleStrEnum
 from aiperf.plugin.schema import (
     EndpointMetadata,
     PlotMetadata,
@@ -541,7 +542,9 @@ class _PluginRegistry:
             return False
         return meta.get("internal", False)
 
-    def create_enum(self, category: CategoryT, enum_name: str) -> type:
+    def create_enum(
+        self, category: CategoryT, enum_name: str
+    ) -> type[ExtensibleStrEnum]:
         """Create an ExtensibleStrEnum from registered types in a category.
 
         Dynamically generates an enum class with members for each registered type.
@@ -888,15 +891,23 @@ if TYPE_CHECKING:
     # <generated-imports>
     # fmt: off
     # ruff: noqa: I001
-    from aiperf.common.protocols import AIPerfUIProtocol, CommunicationClientProtocol, CommunicationProtocol, ConsoleExporterProtocol, CustomDatasetLoaderProtocol, DataExporterProtocol, DatasetBackingStoreProtocol, DatasetClientStoreProtocol, DatasetSamplingStrategyProtocol, EndpointProtocol, RecordProcessorProtocol, ServiceManagerProtocol, ServiceProtocol, TransportProtocol, URLSelectionStrategyProtocol
-    from aiperf.dataset.composer import BaseDatasetComposer
+    from aiperf.common.protocols import CommunicationClientProtocol, CommunicationProtocol, ServiceProtocol
+    from aiperf.controller.protocols import ServiceManagerProtocol
+    from aiperf.dataset.composer.base import BaseDatasetComposer
+    from aiperf.dataset.protocols import CustomDatasetLoaderProtocol, DatasetBackingStoreProtocol, DatasetClientStoreProtocol, DatasetSamplingStrategyProtocol
+    from aiperf.endpoints.protocols import EndpointProtocol
+    from aiperf.exporters.protocols import ConsoleExporterProtocol, DataExporterProtocol
     from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerProtocol
     from aiperf.plugin.enums import ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, PlotType, PluginType, PluginTypeStr, RampType, RecordProcessorType, ResultsProcessorType, ServiceRunType, ServiceType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
-    from aiperf.post_processors import BaseMetricsProcessor
+    from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
+    from aiperf.post_processors.protocols import RecordProcessorProtocol
     from aiperf.timing.intervals import IntervalGeneratorProtocol
     from aiperf.timing.ramping import RampStrategyProtocol
     from aiperf.timing.strategies.core import TimingStrategyProtocol
-    from aiperf.zmq import BaseZMQProxy
+    from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
+    from aiperf.transports.base_transports import TransportProtocol
+    from aiperf.ui.protocols import AIPerfUIProtocol
+    from aiperf.zmq.zmq_proxy_base import BaseZMQProxy
     from typing import Literal, overload
     # </generated-imports>
     # <generated-overloads>

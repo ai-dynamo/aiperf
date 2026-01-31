@@ -1,12 +1,12 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
 from aiperf.common.config import ServiceConfig
-from aiperf.common.enums import ZMQProxyType
-from aiperf.common.factories import ZMQProxyFactory
 from aiperf.common.hooks import on_init, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PluginType, ZMQProxyType
 
 
 class ProxyManager(AIPerfLifecycleMixin):
@@ -17,19 +17,17 @@ class ProxyManager(AIPerfLifecycleMixin):
     @on_init
     async def _initialize_proxies(self) -> None:
         comm_config = self.service_config.comm_config
+        XPubXSubClass = plugins.get_class(PluginType.ZMQ_PROXY, ZMQProxyType.XPUB_XSUB)
+        DealerRouterClass = plugins.get_class(
+            PluginType.ZMQ_PROXY, ZMQProxyType.DEALER_ROUTER
+        )
+        PushPullClass = plugins.get_class(PluginType.ZMQ_PROXY, ZMQProxyType.PUSH_PULL)
         self.proxies = [
-            ZMQProxyFactory.create_instance(
-                ZMQProxyType.XPUB_XSUB,
-                zmq_proxy_config=comm_config.event_bus_proxy_config,
+            XPubXSubClass(zmq_proxy_config=comm_config.event_bus_proxy_config),
+            DealerRouterClass(
+                zmq_proxy_config=comm_config.dataset_manager_proxy_config
             ),
-            ZMQProxyFactory.create_instance(
-                ZMQProxyType.DEALER_ROUTER,
-                zmq_proxy_config=comm_config.dataset_manager_proxy_config,
-            ),
-            ZMQProxyFactory.create_instance(
-                ZMQProxyType.PUSH_PULL,
-                zmq_proxy_config=comm_config.raw_inference_proxy_config,
-            ),
+            PushPullClass(zmq_proxy_config=comm_config.raw_inference_proxy_config),
         ]
         for proxy in self.proxies:
             await proxy.initialize()

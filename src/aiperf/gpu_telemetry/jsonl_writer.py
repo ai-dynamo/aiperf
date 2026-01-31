@@ -1,23 +1,17 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
 
 from aiperf.common.config import UserConfig
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import ResultsProcessorType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.common.factories import ResultsProcessorFactory
 from aiperf.common.mixins import BufferedJSONLWriterMixin
 from aiperf.common.models import MetricResult
 from aiperf.common.models.telemetry_models import TelemetryRecord
-from aiperf.common.protocols import GPUTelemetryProcessorProtocol
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 
-@implements_protocol(GPUTelemetryProcessorProtocol)
-@ResultsProcessorFactory.register(ResultsProcessorType.GPU_TELEMETRY_JSONL_WRITER)
 class GPUTelemetryJSONLWriter(
     BaseMetricsProcessor, BufferedJSONLWriterMixin[TelemetryRecord]
 ):

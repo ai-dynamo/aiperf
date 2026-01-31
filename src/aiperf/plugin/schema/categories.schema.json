@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "categories.schema.json",
+  "additionalProperties": {
+    "description": "Specification for a plugin category (extension point).\n\nCategories define extension points in AIPerf where plugins can provide\ncustom implementations. The protocol defines the interface, and the enum\nprovides type-safe selection in configuration files and APIs.\n\nExample::\n\n    endpoint:\n      protocol: aiperf.endpoints.protocols:EndpointProtocol\n      metadata_class: aiperf.plugin.schema.schemas:EndpointMetadata\n      enum: EndpointType\n      description: HTTP endpoint handlers for different LLM APIs.",
+    "properties": {
+      "protocol": {
+        "description": "The interface that plugins in this category must implement. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.protocols:EndpointProtocol'.",
+        "title": "Protocol",
+        "type": "string"
+      },
+      "metadata_class": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional class path for category-specific metadata. When set, plugins can include typed metadata fields validated against this schema. Use 'module.path:ClassName' format.",
+        "title": "Metadata Class"
+      },
+      "enum": {
+        "description": "Name of the enum that will be auto-generated from registered plugins. This enum is used in config files and APIs to select plugin types, e.g., 'EndpointType' generates EndpointType.CHAT, EndpointType.COMPLETIONS, etc.",
+        "title": "Enum",
+        "type": "string"
+      },
+      "description": {
+        "description": "Brief explanation of what this category is for and when to use it.",
+        "title": "Description",
+        "type": "string"
+      },
+      "internal": {
+        "default": false,
+        "description": "Set to true for infrastructure categories not meant for end users. Internal categories are hidden from documentation and plugin listings.",
+        "title": "Internal",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "protocol",
+      "enum",
+      "description"
+    ],
+    "title": "CategorySpec",
+    "type": "object"
+  },
+  "description": "Root model for categories.yaml file.\n\nThis file defines all plugin extension points in AIPerf. Each category\nspecifies a protocol interface and generates an enum for type selection.\n\nExample:\n```yaml\nschema_version: \"1.0\"\n\nendpoint:\n  protocol: aiperf.endpoints.protocols:EndpointProtocol\n  metadata_class: aiperf.plugin.schema.schemas:EndpointMetadata\n  enum: EndpointType\n  description: HTTP endpoint handlers for LLM APIs\n\nservice:\n  protocol: aiperf.common.protocols:ServiceProtocol\n  metadata_class: aiperf.plugin.schema.schemas:ServiceMetadata\n  enum: ServiceType\n  description: Service plugins for AIPerf.\n\n...\n```",
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "description": "Version of the categories.yaml schema format. Used for backwards compatibility.",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "title": "CategoriesManifest",
+  "type": "object"
+}

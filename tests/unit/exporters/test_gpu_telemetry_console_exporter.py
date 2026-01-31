@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Tests for GPUTelemetryConsoleExporter."""
@@ -9,7 +9,6 @@ import pytest
 from rich.console import Console
 
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
-from aiperf.common.enums import EndpointType
 from aiperf.common.models import (
     EndpointData,
     GpuSummary,
@@ -22,6 +21,7 @@ from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.gpu_telemetry_console_exporter import (
     GPUTelemetryConsoleExporter,
 )
+from aiperf.plugin.enums import EndpointType
 
 
 @pytest.fixture

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from aiperf.common.enums.metric_enums import (
+from aiperf.common.enums import (
     FrequencyMetricUnit,
     GenericMetricUnit,
     TemperatureMetricUnit,

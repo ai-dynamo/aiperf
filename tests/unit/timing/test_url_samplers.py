@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
-from aiperf.common.enums import URLSelectionStrategy
-from aiperf.common.factories import URLSelectionStrategyFactory
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PluginType, URLSelectionStrategy
 from aiperf.timing.url_samplers import RoundRobinURLSampler
 
 
@@ -67,30 +67,35 @@ class TestRoundRobinURLSampler:
         assert sampler.urls == ["http://localhost:8000"]
 
 
-class TestURLSelectionStrategyFactory:
-    """Unit tests for URLSelectionStrategyFactory."""
+class TestURLSelectionStrategyPlugin:
+    """Unit tests for URL selection strategy plugin system."""
 
-    def test_factory_creates_round_robin(self):
-        """Factory should create RoundRobinURLSampler for ROUND_ROBIN strategy."""
+    def test_plugin_creates_round_robin(self):
+        """Plugin system should create RoundRobinURLSampler for ROUND_ROBIN strategy."""
         urls = ["http://server1:8000", "http://server2:8000"]
-        sampler = URLSelectionStrategyFactory.create_instance(
-            URLSelectionStrategy.ROUND_ROBIN, urls=urls
+        SamplerClass = plugins.get_class(
+            PluginType.URL_SELECTION_STRATEGY, URLSelectionStrategy.ROUND_ROBIN
         )
+        sampler = SamplerClass(urls=urls)
         assert isinstance(sampler, RoundRobinURLSampler)
         assert sampler.urls == urls
 
-    def test_factory_creates_round_robin_by_string(self):
-        """Factory should accept string strategy name."""
+    def test_plugin_creates_round_robin_by_string(self):
+        """Plugin system should accept string strategy name."""
         urls = ["http://server1:8000", "http://server2:8000"]
-        sampler = URLSelectionStrategyFactory.create_instance("round_robin", urls=urls)
+        SamplerClass = plugins.get_class(
+            PluginType.URL_SELECTION_STRATEGY, "round_robin"
+        )
+        sampler = SamplerClass(urls=urls)
         assert isinstance(sampler, RoundRobinURLSampler)
         assert sampler.urls == urls
 
-    def test_factory_with_enum_value(self):
-        """Factory should accept URLSelectionStrategy enum value."""
+    def test_plugin_with_enum_value(self):
+        """Plugin system should accept URLSelectionStrategy enum value."""
         urls = ["http://server1:8000"]
-        sampler = URLSelectionStrategyFactory.create_instance(
-            URLSelectionStrategy.ROUND_ROBIN, urls=urls
+        SamplerClass = plugins.get_class(
+            PluginType.URL_SELECTION_STRATEGY, URLSelectionStrategy.ROUND_ROBIN
         )
+        sampler = SamplerClass(urls=urls)
         assert isinstance(sampler, RoundRobinURLSampler)
         assert sampler.urls == urls

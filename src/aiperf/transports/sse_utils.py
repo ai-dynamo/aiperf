@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -6,7 +6,7 @@ import time
 from collections.abc import AsyncIterator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.enums.sse_enums import SSEEventType, SSEFieldType
+from aiperf.common.enums import SSEEventType, SSEFieldType
 from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.models import SSEMessage
 

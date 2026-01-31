@@ -27,30 +27,18 @@ from pydantic import Field, field_validator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import BYTES_PER_MIB
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import DatasetBackingStoreType, DatasetClientStoreType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import (
     MemoryMapFileOperationError,
     MemoryMapSerializationError,
 )
-from aiperf.common.factories import (
-    DatasetBackingStoreFactory,
-    DatasetClientStoreFactory,
-)
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import AIPerfBaseModel, Conversation, MemoryMapClientMetadata
-from aiperf.common.protocols import (
-    DatasetBackingStoreProtocol,
-    DatasetClientStoreProtocol,
-)
 
 _logger = AIPerfLogger(__name__)
 
 
-@implements_protocol(DatasetBackingStoreProtocol)
-@DatasetBackingStoreFactory.register(DatasetBackingStoreType.MEMORY_MAP)
 class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
     """Streams conversations to disk as they arrive (DatasetManager side).
 
@@ -206,8 +194,6 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         self.debug("Memory-mapped backing store cleanup complete")
 
 
-@implements_protocol(DatasetClientStoreProtocol)
-@DatasetClientStoreFactory.register(DatasetClientStoreType.MEMORY_MAP)
 class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
     """Reads conversations from memory-mapped files (Worker side).
 

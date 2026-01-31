@@ -1,40 +1,20 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
 from typing import Any
 
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import EndpointType
-from aiperf.common.factories import EndpointFactory
-from aiperf.common.models import ParsedResponse
-from aiperf.common.models.metadata import EndpointMetadata
-from aiperf.common.models.record_models import RequestInfo
-from aiperf.common.protocols import EndpointProtocol, InferenceServerResponse
+from aiperf.common.models import InferenceServerResponse, ParsedResponse, RequestInfo
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 
-@implements_protocol(EndpointProtocol)
-@EndpointFactory.register(EndpointType.HUGGINGFACE_GENERATE)
 class HuggingFaceGenerateEndpoint(BaseEndpoint):
     """Hugging Face TGI (Text Generation Inference) endpoint.
 
     Supports both non-streaming (/ or /generate) and streaming (/generate_stream)
     endpoints automatically, based on the model endpoint's `streaming` flag.
     """
-
-    @classmethod
-    def metadata(cls) -> EndpointMetadata:
-        """Return endpoint metadata for TGI."""
-        return EndpointMetadata(
-            endpoint_path="/generate",
-            streaming_path="/generate_stream",
-            supports_streaming=True,
-            produces_tokens=True,
-            tokenizes_input=True,
-            metrics_title="LLM Metrics",
-        )
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         """Format payload for Hugging Face TGI request."""

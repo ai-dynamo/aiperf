@@ -99,7 +99,7 @@ class MetricRegistry:
         to call it manually.
         """
         if metric.tag in cls._metrics_map:
-            # TODO: Should we consider adding an override_priority parameter to the metric class similar to AIPerfFactory?
+            # TODO: Should we consider adding an override_priority parameter to the metric class similar to the plugin system?
             #       This would allow the user to override built-in metrics with custom implementations, without requiring
             #       them to modify the built-in metric classes.
             raise MetricTypeError(

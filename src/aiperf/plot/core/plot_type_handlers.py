@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -14,8 +14,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 import pandas as pd
 import plotly.graph_objects as go
 
-from aiperf.common.factories import AIPerfFactory
-from aiperf.plot.core.plot_specs import PlotSpec, PlotType
+from aiperf.plot.core.plot_specs import PlotSpec
 
 if TYPE_CHECKING:
     from aiperf.plot.core.data_loader import RunData
@@ -76,13 +75,3 @@ class PlotTypeHandlerProtocol(Protocol):
             Plotly figure object
         """
         ...
-
-
-class PlotTypeHandlerFactory(AIPerfFactory[PlotType, PlotTypeHandlerProtocol]):
-    """
-    Factory for creating plot type handlers.
-
-    Handlers are registered using the @PlotTypeHandlerFactory.register(PlotType.XXX) decorator.
-    """
-
-    pass

@@ -115,8 +115,7 @@ Your endpoint needs two methods: `format_payload()` and `parse_response()`.
 from __future__ import annotations
 from typing import Any
 
-from aiperf.common.models import ParsedResponse, RequestInfo, TextResponseData
-from aiperf.common.protocols import InferenceServerResponse
+from aiperf.common.models import ParsedResponse, RequestInfo, TextResponseData, InferenceServerResponse
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 

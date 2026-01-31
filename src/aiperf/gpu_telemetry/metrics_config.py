@@ -6,7 +6,7 @@
 import re
 from pathlib import Path
 
-from aiperf.common.enums.metric_enums import (
+from aiperf.common.enums import (
     EnergyMetricUnit,
     FrequencyMetricUnit,
     GenericMetricUnit,

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
@@ -6,7 +6,6 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import LifecycleState
 from aiperf.common.exceptions import (
     InvalidStateError,
@@ -33,7 +32,6 @@ from aiperf.common.protocols import AIPerfLifecycleProtocol
     AIPerfHook.ON_STATE_CHANGE,
     AIPerfHook.BACKGROUND_TASK,
 )
-@implements_protocol(AIPerfLifecycleProtocol)
 class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
     """This mixin provides a lifecycle state machine, and is the basis for most components in the AIPerf framework.
     It provides a set of hooks that are run at each state transition, and the ability to define background tasks

@@ -1,12 +1,12 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Tests for ChatEndpoint parse_response functionality."""
 
 import pytest
 
-from aiperf.common.enums import EndpointType
 from aiperf.common.models.record_models import ReasoningResponseData, TextResponseData
 from aiperf.endpoints.openai_chat import ChatEndpoint
+from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_mock_response,

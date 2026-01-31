@@ -1,19 +1,16 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import os
 from collections.abc import Callable, Iterable
 from typing import Any
 
 from aiperf.common import aiperf_logger
-from aiperf.common.decorators import implements_protocol
 from aiperf.common.exceptions import AIPerfMultiError, HookError, UnsupportedHookError
 from aiperf.common.hooks import Hook, HookAttrs, HookType
 from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
-from aiperf.common.protocols import HooksProtocol
 from aiperf.common.types import AnyT, HookParamsT, SelfT
 
 
-@implements_protocol(HooksProtocol)
 class HooksMixin(AIPerfLoggerMixin):
     """Mixin for a class to be able to provide hooks to its subclasses, and to be able to run them. A "hook" is a function
     that is decorated with a hook type (AIPerfHook), and optional parameters.

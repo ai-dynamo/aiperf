@@ -5,10 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase, TimingMode
+from aiperf.common.enums import CreditPhase
 from aiperf.common.models import CreditPhaseStats
 from aiperf.credit.sticky_router import StickyCreditRouter, WorkerLoad
 from aiperf.credit.structs import Credit, TurnToSend
+from aiperf.plugin.enums import TimingMode
 from aiperf.records.records_tracker import RecordsTracker
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.phase.credit_counter import CreditCounter

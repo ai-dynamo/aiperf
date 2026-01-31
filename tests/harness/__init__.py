@@ -5,6 +5,7 @@ from tests.harness.fake_dcgm import DCGMEndpoint, FakeDCGMMocker
 from tests.harness.fake_service_manager import FakeServiceManager
 from tests.harness.fake_tokenizer import FakeTokenizer
 from tests.harness.fake_transport import FakeTransport
+from tests.harness.mock_plugin import mock_plugin
 
 __all__ = [
     "DCGMEndpoint",
@@ -14,4 +15,5 @@ __all__ = [
     "FakeServiceManager",
     "FakeTokenizer",
     "FakeTransport",
+    "mock_plugin",
 ]

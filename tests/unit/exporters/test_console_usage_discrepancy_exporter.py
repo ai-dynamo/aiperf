@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from io import StringIO
@@ -8,13 +8,14 @@ import pytest
 from rich.console import Console
 
 from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.enums import EndpointType, GenericMetricUnit, MetricTimeUnit
+from aiperf.common.enums import GenericMetricUnit, MetricTimeUnit
 from aiperf.common.models import MetricResult, ProfileResults
 from aiperf.exporters.console_usage_discrepancy_exporter import (
     ConsoleUsageDiscrepancyExporter,
 )
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.usage_diff_metrics import UsageDiscrepancyCountMetric
+from aiperf.plugin.enums import EndpointType
 from tests.unit.conftest import create_exporter_config
 
 

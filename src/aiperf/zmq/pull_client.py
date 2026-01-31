@@ -6,21 +6,15 @@ from typing import Any
 
 import zmq.asyncio
 
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import CommClientType
 from aiperf.common.environment import Environment
-from aiperf.common.factories import CommunicationClientFactory
 from aiperf.common.hooks import background_task, on_stop
 from aiperf.common.messages import Message
-from aiperf.common.protocols import PullClientProtocol
 from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.timing.concurrency import DynamicConcurrencyLimit
 from aiperf.zmq.zmq_base_client import BaseZMQClient
 
 
-@implements_protocol(PullClientProtocol)
-@CommunicationClientFactory.register(CommClientType.PULL)
 class ZMQPullClient(BaseZMQClient):
     """
     ZMQ PULL socket client for receiving work from PUSH sockets.

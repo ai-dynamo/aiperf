@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Unit tests for GPU telemetry metrics configuration."""
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from aiperf.common.enums.metric_enums import (
+from aiperf.common.enums import (
     EnergyMetricUnit,
     FrequencyMetricUnit,
     GenericMetricUnit,

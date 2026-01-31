@@ -5,14 +5,8 @@ import asyncio
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import (
-    CommAddress,
-    CommandType,
-    ServiceType,
-)
+from aiperf.common.enums import CommAddress, CommandType
 from aiperf.common.environment import Environment
-from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import on_command, on_init, on_stop
 from aiperf.common.messages import (
     ProfileCancelCommand,
@@ -21,17 +15,12 @@ from aiperf.common.messages import (
     TelemetryStatusMessage,
 )
 from aiperf.common.models import ErrorDetails, TelemetryRecord
-from aiperf.common.protocols import (
-    PushClientProtocol,
-    ServiceProtocol,
-)
+from aiperf.common.protocols import PushClientProtocol
 from aiperf.gpu_telemetry.data_collector import GPUTelemetryDataCollector
 
 __all__ = ["GPUTelemetryManager"]
 
 
-@implements_protocol(ServiceProtocol)
-@ServiceFactory.register(ServiceType.GPU_TELEMETRY_MANAGER)
 class GPUTelemetryManager(BaseComponentService):
     """Coordinates multiple TelemetryDataCollector instances for GPU telemetry collection.
 

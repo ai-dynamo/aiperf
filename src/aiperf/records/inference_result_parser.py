@@ -5,7 +5,6 @@ import time
 from contextlib import suppress
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.factories import EndpointFactory
 from aiperf.common.hooks import on_init
 from aiperf.common.mixins import CommunicationMixin
 from aiperf.common.models import (
@@ -16,8 +15,9 @@ from aiperf.common.models import (
 )
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import ReasoningResponseData, TokenCounts
-from aiperf.common.protocols import EndpointProtocol
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PluginType
 
 
 # TODO: Should we create non-tokenizer based parsers?
@@ -39,11 +39,11 @@ class InferenceResultParser(CommunicationMixin):
         self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_user_config(
             user_config
         )
-        self.endpoint: EndpointProtocol = EndpointFactory.create_instance(
-            self.model_endpoint.endpoint.type,
-            model_endpoint=self.model_endpoint,
+        EndpointClass = plugins.get_class(
+            PluginType.ENDPOINT, self.model_endpoint.endpoint.type
         )
-        endpoint_meta = self.endpoint.metadata()
+        self.endpoint = EndpointClass(model_endpoint=self.model_endpoint)
+        endpoint_meta = plugins.get_endpoint_metadata(self.model_endpoint.endpoint.type)
         # Disable tokenization if the endpoint doesn't produce tokens and doesn't tokenize input, or
         # if the user config is set to use server token counts.
         self.disable_tokenization: bool = (

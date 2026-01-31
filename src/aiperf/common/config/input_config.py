@@ -24,9 +24,12 @@ from aiperf.common.config.prompt_config import PromptConfig
 from aiperf.common.config.rankings_config import RankingsConfig
 from aiperf.common.config.synthesis_config import SynthesisConfig
 from aiperf.common.config.video_config import VideoConfig
-from aiperf.common.enums import CustomDatasetType, PublicDatasetType
-from aiperf.common.enums.dataset_enums import DatasetSamplingStrategy
+from aiperf.common.enums import PublicDatasetType
 from aiperf.common.exceptions import InvalidStateError, MetricTypeError
+from aiperf.plugin.enums import (
+    CustomDatasetType,
+    DatasetSamplingStrategy,
+)
 
 _logger = AIPerfLogger(__name__)
 

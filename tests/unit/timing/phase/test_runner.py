@@ -6,12 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import (
-    ArrivalPattern,
-    CreditPhase,
-    DatasetSamplingStrategy,
-    TimingMode,
-)
+from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
     ConversationMetadata,
     CreditPhaseStats,
@@ -19,6 +14,7 @@ from aiperf.common.models import (
     TurnMetadata,
 )
 from aiperf.credit.structs import Credit
+from aiperf.plugin.enums import ArrivalPattern, DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.phase.runner import PhaseRunner
 
@@ -204,20 +200,25 @@ class TestPhaseRunnerLifecycle:
     ) -> None:
         r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
         strategy = MockStrategy()
+        captured_kwargs = {}
+
+        def mock_class(**kwargs):
+            captured_kwargs.update(kwargs)
+            return strategy
+
         with patch(
-            "aiperf.timing.phase.runner.TimingStrategyFactory.create_instance",
-            return_value=strategy,
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=mock_class,
         ) as f:
             r._progress.all_credits_sent_event.set()
             r._progress.all_credits_returned_event.set()
             await r.run(is_final_phase=True)
             f.assert_called_once()
-            kw = f.call_args.kwargs
             assert (
-                "scheduler" in kw
-                and "stop_checker" in kw
-                and "credit_issuer" in kw
-                and "lifecycle" in kw
+                "scheduler" in captured_kwargs
+                and "stop_checker" in captured_kwargs
+                and "credit_issuer" in captured_kwargs
+                and "lifecycle" in captured_kwargs
             )
 
     async def test_run_registers_phase_with_callback_handler(
@@ -232,8 +233,8 @@ class TestPhaseRunnerLifecycle:
         r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
         strategy = MockStrategy()
         with patch(
-            "aiperf.timing.phase.runner.TimingStrategyFactory.create_instance",
-            return_value=strategy,
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: strategy,
         ):
             r._progress.all_credits_sent_event.set()
             r._progress.all_credits_returned_event.set()
@@ -253,8 +254,8 @@ class TestPhaseRunnerLifecycle:
         c = cfg(conc=10)
         r = make_runner(c, conv_src, pub, router, conc, cancel, cb)
         with patch(
-            "aiperf.timing.phase.runner.TimingStrategyFactory.create_instance",
-            return_value=MockStrategy(),
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
         ):
             r._progress.all_credits_sent_event.set()
             r._progress.all_credits_returned_event.set()
@@ -274,8 +275,8 @@ class TestPhaseRunnerLifecycle:
     ) -> None:
         r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
         with patch(
-            "aiperf.timing.phase.runner.TimingStrategyFactory.create_instance",
-            return_value=MockStrategy(),
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
         ):
             r._progress.all_credits_sent_event.set()
             r._progress.all_credits_returned_event.set()
@@ -294,8 +295,8 @@ class TestPhaseRunnerLifecycle:
     ) -> None:
         r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
         with patch(
-            "aiperf.timing.phase.runner.TimingStrategyFactory.create_instance",
-            return_value=MockStrategy(),
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
         ):
             r._progress.all_credits_sent_event.set()
             r._progress.all_credits_returned_event.set()
@@ -320,8 +321,8 @@ class TestRamperCreation:
             cfg(conc=10, rate=100.0), conv_src, pub, router, conc, cancel, cb
         )
         with patch(
-            "aiperf.timing.phase.runner.TimingStrategyFactory.create_instance",
-            return_value=MockStrategy(),
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
         ):
             r._progress.all_credits_sent_event.set()
             r._progress.all_credits_returned_event.set()
@@ -341,8 +342,8 @@ class TestRamperCreation:
             cfg(conc=10, conc_ramp=5.0), conv_src, pub, router, conc, cancel, cb
         )
         with patch(
-            "aiperf.timing.phase.runner.TimingStrategyFactory.create_instance",
-            return_value=MockStrategy(),
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
         ):
             r._progress.all_credits_sent_event.set()
             r._progress.all_credits_returned_event.set()
@@ -368,8 +369,8 @@ class TestRamperCreation:
             cb,
         )
         with patch(
-            "aiperf.timing.phase.runner.TimingStrategyFactory.create_instance",
-            return_value=MockStrategy(),
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
         ):
             r._progress.all_credits_sent_event.set()
             r._progress.all_credits_returned_event.set()
@@ -389,8 +390,8 @@ class TestRamperCreation:
             cfg(rate=100.0, rate_ramp=10.0), conv_src, pub, router, conc, cancel, cb
         )
         with patch(
-            "aiperf.timing.phase.runner.TimingStrategyFactory.create_instance",
-            return_value=MockStrategy(),
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
         ):
             r._progress.all_credits_sent_event.set()
             r._progress.all_credits_returned_event.set()
@@ -552,8 +553,8 @@ class TestSeamlessMode:
     ) -> None:
         r = make_runner(cfg(seamless=True), conv_src, pub, router, conc, cancel, cb)
         with patch(
-            "aiperf.timing.phase.runner.TimingStrategyFactory.create_instance",
-            return_value=MockStrategy(),
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
         ):
             r._progress.all_credits_sent_event.set()
             result = await asyncio.wait_for(r.run(is_final_phase=False), timeout=1.0)
@@ -570,8 +571,8 @@ class TestSeamlessMode:
     ) -> None:
         r = make_runner(cfg(seamless=True), conv_src, pub, router, conc, cancel, cb)
         with patch(
-            "aiperf.timing.phase.runner.TimingStrategyFactory.create_instance",
-            return_value=MockStrategy(),
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
         ):
             r._progress.all_credits_sent_event.set()
             r._progress.all_credits_returned_event.set()
@@ -598,8 +599,8 @@ class TestPhaseTypes:
     ) -> None:
         r = make_runner(cfg(phase=phase), conv_src, pub, router, conc, cancel, cb)
         with patch(
-            "aiperf.timing.phase.runner.TimingStrategyFactory.create_instance",
-            return_value=MockStrategy(),
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
         ):
             r._progress.all_credits_sent_event.set()
             r._progress.all_credits_returned_event.set()
@@ -619,8 +620,8 @@ class TestEdgeCases:
     ) -> None:
         r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
         with patch(
-            "aiperf.timing.phase.runner.TimingStrategyFactory.create_instance",
-            return_value=MockStrategy(),
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
         ):
             r._progress.all_credits_sent_event.set()
             r._progress.all_credits_returned_event.set()
@@ -643,8 +644,8 @@ class TestEdgeCases:
         strategy = MagicMock()
         strategy.setup_phase = AsyncMock(side_effect=RuntimeError("Test error"))
         with patch(
-            "aiperf.timing.phase.runner.TimingStrategyFactory.create_instance",
-            return_value=strategy,
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: strategy,
         ):
             with pytest.raises(RuntimeError):
                 await r.run(is_final_phase=True)

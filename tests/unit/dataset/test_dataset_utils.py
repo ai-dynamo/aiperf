@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
@@ -38,6 +38,7 @@ class TestOpenImage:
             opened_img = utils.open_image(tmp_path)
             assert opened_img.size == (10, 10)
             assert opened_img.format == "PNG"
+            opened_img.close()
         finally:
             Path(tmp_path).unlink()  # Clean up
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -18,6 +18,21 @@ from aiperf.plot.core.mode_detector import ModeDetector
 
 logging.getLogger("choreographer").setLevel(logging.WARNING)
 logging.getLogger("kaleido").setLevel(logging.WARNING)
+
+
+@pytest.fixture(autouse=True)
+def cleanup_logging_handlers():
+    """Clean up logging handlers after each test to prevent ResourceWarnings.
+
+    This fixture runs after each test and closes all handlers on the root logger,
+    ensuring file handles are properly released.
+    """
+    yield
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        handler.close()
+        root_logger.removeHandler(handler)
+
 
 # Path constants for static fixture data (shared across tests for speed)
 FIXTURES_DIR = Path(__file__).parent / "fixtures"

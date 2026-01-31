@@ -1,40 +1,23 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import EndpointType
-from aiperf.common.factories import EndpointFactory
 from aiperf.common.models import (
     BaseResponseData,
+    InferenceServerResponse,
     ParsedResponse,
+    RequestInfo,
 )
-from aiperf.common.models.metadata import EndpointMetadata
-from aiperf.common.models.record_models import RequestInfo
-from aiperf.common.protocols import EndpointProtocol, InferenceServerResponse
 from aiperf.common.types import JsonObject, RequestOutputT
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 
-@implements_protocol(EndpointProtocol)
-@EndpointFactory.register(EndpointType.COMPLETIONS)
 class CompletionsEndpoint(BaseEndpoint):
     """OpenAI Completions endpoint.
 
     Supports text completions with streaming.
     """
-
-    @classmethod
-    def metadata(cls) -> EndpointMetadata:
-        """Return Completions endpoint metadata."""
-        return EndpointMetadata(
-            endpoint_path="/v1/completions",
-            supports_streaming=True,
-            produces_tokens=True,
-            tokenizes_input=True,
-            metrics_title="LLM Metrics",
-        )
 
     def format_payload(self, request_info: RequestInfo) -> RequestOutputT:
         """Format payload for a completions request.

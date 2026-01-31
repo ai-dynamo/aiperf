@@ -1,17 +1,14 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config import InputDefaults, UserConfig
-from aiperf.common.enums import ComposerType
-from aiperf.common.factories import ComposerFactory
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.composer.base import BaseDatasetComposer
 
 
-@ComposerFactory.register(ComposerType.SYNTHETIC_RANKINGS)
 class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
     """Composer that generates synthetic data for the Rankings endpoint.
 

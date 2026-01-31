@@ -13,10 +13,8 @@ import uuid
 from typing import TYPE_CHECKING, NamedTuple
 
 from aiperf.common.constants import MILLIS_PER_SECOND
-from aiperf.common.enums import TimingMode
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.credit.structs import Credit, TurnToSend
-from aiperf.timing.strategies.core import TimingStrategyFactory
 
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
@@ -34,7 +32,6 @@ class ScheduleEntry(NamedTuple):
     turn: TurnToSend
 
 
-@TimingStrategyFactory.register(TimingMode.FIXED_SCHEDULE)
 class FixedScheduleStrategy(AIPerfLoggerMixin):
     """Timing strategy for replaying conversation traces with absolute timestamps.
 

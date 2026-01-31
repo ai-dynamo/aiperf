@@ -5,10 +5,8 @@ from collections.abc import Callable
 from tqdm import tqdm
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import AIPerfUIType, CreditPhase
+from aiperf.common.enums import CreditPhase
 from aiperf.common.environment import Environment
-from aiperf.common.factories import AIPerfUIFactory
 from aiperf.common.hooks import (
     on_profiling_progress,
     on_records_progress,
@@ -16,7 +14,6 @@ from aiperf.common.hooks import (
     on_warmup_progress,
 )
 from aiperf.common.mixins import CombinedPhaseStats
-from aiperf.common.protocols import AIPerfUIProtocol
 from aiperf.ui.base_ui import BaseAIPerfUI
 
 _logger = AIPerfLogger(__name__)
@@ -90,8 +87,6 @@ class ProgressBar:
         self.bar.disable = True
 
 
-@implements_protocol(AIPerfUIProtocol)
-@AIPerfUIFactory.register(AIPerfUIType.SIMPLE)
 class TQDMProgressUI(BaseAIPerfUI):
     """A UI that shows progress bars for the records and requests phases."""
 

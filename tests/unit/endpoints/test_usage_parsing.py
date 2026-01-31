@@ -1,14 +1,14 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Consolidated tests for usage field parsing across endpoints."""
 
 import pytest
 
-from aiperf.common.enums import EndpointType
 from aiperf.common.models.record_models import ReasoningResponseData
 from aiperf.common.models.usage_models import Usage
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.endpoints.openai_completions import CompletionsEndpoint
+from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_mock_response,

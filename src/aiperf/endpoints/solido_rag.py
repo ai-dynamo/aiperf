@@ -1,25 +1,21 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
 from typing import Any
 
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import EndpointType
-from aiperf.common.factories import EndpointFactory
 from aiperf.common.models import (
+    InferenceServerResponse,
     ParsedResponse,
+    RAGSources,
+    RequestInfo,
+    TextResponseData,
 )
-from aiperf.common.models.metadata import EndpointMetadata
-from aiperf.common.models.record_models import RAGSources, RequestInfo, TextResponseData
-from aiperf.common.protocols import EndpointProtocol, InferenceServerResponse
 from aiperf.common.types import JsonObject, RequestOutputT
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 
-@implements_protocol(EndpointProtocol)
-@EndpointFactory.register(EndpointType.SOLIDO_RAG)
 class SolidoEndpoint(BaseEndpoint):
     """SOLIDO RAG endpoint.
 
@@ -27,17 +23,6 @@ class SolidoEndpoint(BaseEndpoint):
     queries with filters and inference model specifications. Supports streaming
     responses.
     """
-
-    @classmethod
-    def metadata(cls) -> EndpointMetadata:
-        """Return SOLIDO endpoint metadata."""
-        return EndpointMetadata(
-            endpoint_path="/rag/api/prompt",
-            supports_streaming=True,
-            produces_tokens=True,
-            tokenizes_input=True,
-            metrics_title="SOLIDO RAG Metrics",
-        )
 
     def format_payload(self, request_info: RequestInfo) -> RequestOutputT:
         """Format SOLIDO RAG request payload from RequestInfo.

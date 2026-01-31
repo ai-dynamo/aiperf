@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -37,6 +37,7 @@ def setup_console_only_logging(log_level: str = "INFO") -> None:
     root_logger.setLevel(level)
 
     for existing_handler in root_logger.handlers[:]:
+        existing_handler.close()
         root_logger.removeHandler(existing_handler)
 
     rich_handler = RichHandler(
@@ -74,6 +75,7 @@ def setup_plot_logging(output_dir: Path, log_level: str = "INFO") -> None:
     root_logger.setLevel(level)
 
     for existing_handler in root_logger.handlers[:]:
+        existing_handler.close()
         root_logger.removeHandler(existing_handler)
 
     # Console handler: WARNING+ by default, DEBUG+ when log_level is DEBUG

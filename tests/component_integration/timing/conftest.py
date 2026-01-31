@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import pytest
 from aiperf_mock_server.config import MockServerConfig
 
-from aiperf.common.enums import ArrivalPattern
+from aiperf.plugin.enums import ArrivalPattern
 from tests.component_integration.conftest import (
     AIPerfRunnerResultWithSharedBus,
 )

@@ -59,9 +59,10 @@ def parser():
             "aiperf.common.models.model_endpoint_info.ModelEndpointInfo.from_user_config"
         ),
         patch(
-            "aiperf.common.factories.EndpointFactory.create_instance",
+            "aiperf.plugin.plugins.get_class",
             return_value=mock_endpoint,
         ),
+        patch("aiperf.plugin.plugins.get_endpoint_metadata"),
     ):
         parser = InferenceResultParser(
             service_config=ServiceConfig(),

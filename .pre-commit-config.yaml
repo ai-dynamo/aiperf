@@ -4,6 +4,9 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0  # Use the latest stable version
     hooks:
+      - id: check-ast
+      - id: debug-statements
+      - id: detect-private-key
       - id: check-added-large-files
         args: ['--maxkb=5000']
       - id: check-case-conflict
@@ -39,21 +42,35 @@ repos:
         name: mkinit
         entry: bash tools/generate_init_files.sh
         language: system
-        types: [python]
+        files: (\.py$|^tools/generate_init_files\.sh$)
         pass_filenames: false
         args: []
       - id: generate-cli-docs
         name: generate-cli-docs
         entry: make generate-cli-docs
         language: python
-        types: [python]
+        files: (\.py$|^tools/generate_cli_docs\.py$)
         pass_filenames: false
         args: []
       - id: generate-env-vars-docs
         name: generate-env-vars-docs
         entry: make generate-env-vars-docs
         language: python
-        files: ^src/aiperf/common/environment\.py$
+        files: ^(src/aiperf/common/environment\.py|tools/generate_env_vars_docs\.py)$
+        pass_filenames: false
+        args: []
+      - id: generate-plugin-artifacts
+        name: generate-plugin-artifacts
+        entry: make generate-all-plugin-files
+        language: python
+        files: (\.py$|^src/aiperf/plugin/(categories|plugins)\.yaml|src/aiperf/plugin/schema/schemas\.py|tools/generate_plugin_artifacts\.py)$
+        pass_filenames: false
+        args: []
+      - id: validate-plugin-schemas
+        name: validate-plugin-schemas
+        entry: make validate-plugin-schemas
+        language: python
+        files: (\.py$|^src/aiperf/plugin/(categories|plugins)\.yaml|tools/validate_plugin_schemas\.py)$
         pass_filenames: false
         args: []
   - repo: https://github.com/astral-sh/ruff-pre-commit

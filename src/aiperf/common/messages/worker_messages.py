@@ -1,10 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from pydantic import Field
 
-from aiperf.common.enums import MessageType
-from aiperf.common.enums.worker_enums import WorkerStatus
+from aiperf.common.enums import MessageType, WorkerStatus
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import ProcessHealth, WorkerTaskStats
 from aiperf.common.types import MessageTypeT

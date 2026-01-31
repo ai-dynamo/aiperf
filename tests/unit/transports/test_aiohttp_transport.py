@@ -7,8 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import ConnectionReuseStrategy, CreditPhase, TransportType
+from aiperf.common.enums import ConnectionReuseStrategy, CreditPhase
 from aiperf.common.models.record_models import RequestInfo, RequestRecord
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import TransportType
 from aiperf.transports.aiohttp_transport import (
     AioHttpTransport,
     ConnectionLeaseManager,
@@ -121,7 +123,7 @@ class TestAioHttpTransport:
 
     def test_metadata(self, transport):
         """Test metadata returns correct transport info."""
-        metadata = transport.metadata()
+        metadata = plugins.get_transport_metadata(TransportType.HTTP)
         assert metadata.transport_type == TransportType.HTTP
         assert "http" in metadata.url_schemes
         assert "https" in metadata.url_schemes

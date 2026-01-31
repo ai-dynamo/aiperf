@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import tempfile
 from pathlib import Path
@@ -6,11 +6,11 @@ from pathlib import Path
 import pytest
 from pytest import param
 
-from aiperf.common.enums import CustomDatasetType
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
 from aiperf.dataset.loader.single_turn import SingleTurnDatasetLoader
+from aiperf.plugin.enums import CustomDatasetType
 
 
 class TestSingleTurnCanLoad:

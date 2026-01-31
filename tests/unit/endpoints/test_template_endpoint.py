@@ -3,11 +3,13 @@
 
 import pytest
 
-from aiperf.common.enums import EndpointType
 from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.models import Image, Text, Turn
 from aiperf.common.models.record_models import TextResponseData
 from aiperf.endpoints.template_endpoint import TemplateEndpoint
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import EndpointType
+from aiperf.plugin.schema.schemas import EndpointMetadata
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_mock_response,
@@ -397,8 +399,8 @@ class TestTemplateEndpointParseResponse:
 
 def test_metadata():
     """Test endpoint metadata."""
-    metadata = TemplateEndpoint.metadata()
-
+    metadata = plugins.get_endpoint_metadata(EndpointType.TEMPLATE)
+    assert isinstance(metadata, EndpointMetadata)
     assert metadata.endpoint_path is None
     assert metadata.supports_streaming is True
     assert metadata.produces_tokens is True

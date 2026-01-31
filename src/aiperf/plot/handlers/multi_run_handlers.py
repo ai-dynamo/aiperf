@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -12,8 +12,7 @@ import plotly.graph_objects as go
 
 from aiperf.plot.constants import DEFAULT_PERCENTILE
 from aiperf.plot.core.plot_generator import PlotGenerator
-from aiperf.plot.core.plot_specs import PlotSpec, PlotType
-from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerFactory
+from aiperf.plot.core.plot_specs import PlotSpec
 
 
 class BaseMultiRunHandler:
@@ -125,7 +124,6 @@ class BaseMultiRunHandler:
         return display_names
 
 
-@PlotTypeHandlerFactory.register(PlotType.PARETO)
 class ParetoHandler(BaseMultiRunHandler):
     """Handler for Pareto curve plots."""
 
@@ -171,7 +169,6 @@ class ParetoHandler(BaseMultiRunHandler):
         )
 
 
-@PlotTypeHandlerFactory.register(PlotType.SCATTER_LINE)
 class ScatterLineHandler(BaseMultiRunHandler):
     """Handler for scatter line plots."""
 

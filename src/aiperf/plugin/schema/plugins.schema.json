@@ -1,0 +1,1225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "plugins.schema.json",
+  "additionalProperties": false,
+  "description": "Root model for plugins.yaml file.\n\nThis file registers plugin implementations for AIPerf. Each top-level section\ncorresponds to a category from categories.yaml and maps type names to their\nimplementing classes.\n\nNote: Package metadata (name, version, author) comes from pyproject.toml\nvia importlib.metadata, not from this file.\n\nExample:\n```yaml\nschema_version: \"1.0\"\n\nendpoint:\n  my_custom:\n    class: my_package.endpoints.my_custom:MyCustomEndpoint\n    description: Custom endpoint for my API.\n    metadata:\n      endpoint_path: /v1/generate\n      supports_streaming: true\n      produces_tokens: true\n      tokenizes_input: true\n      metrics_title: My Custom Metrics\n\ncustom_dataset_loader:\n  my_jsonl:\n    class: my_package.dataset_loaders.my_jsonl:MyJSONLDatasetLoader\n    description: Custom dataset loader for my API.\n```",
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "description": "Version of the plugins.yaml schema format. Use '1.0' for current format.",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "timing_strategy": {
+      "title": "Timing Strategy Plugins",
+      "type": "object",
+      "description": "Timing strategies control request scheduling and credit issuance.\nDetermines when requests are sent based on fixed schedules, request rates,\nor user-centric patterns. One-to-one mapping per benchmark run.",
+      "additionalProperties": {
+        "$ref": "#/$defs/TimingStrategyPlugin"
+      }
+    },
+    "arrival_pattern": {
+      "title": "Arrival Pattern Plugins",
+      "type": "object",
+      "description": "Interval generators determine inter-arrival times for request rate strategy.\nControls the distribution of request timing (constant, Poisson, gamma, etc.).\nOne-to-one mapping when using request_rate timing mode.",
+      "additionalProperties": {
+        "$ref": "#/$defs/ArrivalPatternPlugin"
+      }
+    },
+    "ramp": {
+      "title": "Ramp Plugins",
+      "type": "object",
+      "description": "Ramp strategies control how values are gradually transitioned over time.\nUsed for ramping concurrency limits, request rates, and other numeric parameters.\nSupports linear, exponential, and stochastic ramping patterns.",
+      "additionalProperties": {
+        "$ref": "#/$defs/RampPlugin"
+      }
+    },
+    "dataset_backing_store": {
+      "title": "Dataset Backing Store Plugins",
+      "type": "object",
+      "description": "Dataset backing stores manage conversation data on the DatasetManager side.\nProvides efficient storage for dataset distribution to workers.\nHandles streaming writes and finalization for client access.",
+      "additionalProperties": {
+        "$ref": "#/$defs/DatasetBackingStorePlugin"
+      }
+    },
+    "dataset_client_store": {
+      "title": "Dataset Client Store Plugins",
+      "type": "object",
+      "description": "Dataset client stores read conversation data on the Worker side.\nProvides efficient access to datasets from backing stores.\nSupports zero-copy reads and O(1) lookup performance.",
+      "additionalProperties": {
+        "$ref": "#/$defs/DatasetClientStorePlugin"
+      }
+    },
+    "dataset_sampler": {
+      "title": "Dataset Sampler Plugins",
+      "type": "object",
+      "description": "Dataset samplers control how conversations are selected from the dataset.\nSupports random, sequential, and shuffle sampling strategies.\nOne-to-one mapping based on sampling strategy configuration.",
+      "additionalProperties": {
+        "$ref": "#/$defs/DatasetSamplerPlugin"
+      }
+    },
+    "dataset_composer": {
+      "title": "Dataset Composer Plugins",
+      "type": "object",
+      "description": "Dataset composers create conversation datasets from various sources.\nHandles synthetic generation, custom file loading, and specialized formats.\nOne-to-one mapping based on composer_type configuration.",
+      "additionalProperties": {
+        "$ref": "#/$defs/DatasetComposerPlugin"
+      }
+    },
+    "custom_dataset_loader": {
+      "title": "Custom Dataset Loader Plugins",
+      "type": "object",
+      "description": "Custom dataset loaders parse different JSONL file formats into conversations.\nSupports single-turn, multi-turn, random-pool, and trace formats.\nAuto-detection: loaders are tried in priority order based on can_load().",
+      "additionalProperties": {
+        "$ref": "#/$defs/CustomDatasetLoaderPlugin"
+      }
+    },
+    "endpoint": {
+      "title": "Endpoint Plugins",
+      "type": "object",
+      "description": "Endpoints define how to format requests and parse responses for different APIs.\nSupports OpenAI-compatible, HuggingFace, Cohere, NIM, and custom API formats.\nOne-to-one mapping based on endpoint_type configuration.",
+      "additionalProperties": {
+        "$ref": "#/$defs/EndpointPlugin"
+      }
+    },
+    "transport": {
+      "title": "Transport Plugins",
+      "type": "object",
+      "description": "Transports handle the network layer for sending requests to inference servers.\nManages connection pooling, streaming, error handling, and TCP configuration.\nOne-to-one mapping based on transport_type configuration.",
+      "additionalProperties": {
+        "$ref": "#/$defs/TransportPlugin"
+      }
+    },
+    "record_processor": {
+      "title": "Record Processor Plugins",
+      "type": "object",
+      "description": "Record processors stream records and compute metrics in a distributed manner.\nFirst stage of metrics pipeline, handling per-record computations.\nOne-to-many mapping: multiple processors can be loaded simultaneously.",
+      "additionalProperties": {
+        "$ref": "#/$defs/RecordProcessorPlugin"
+      }
+    },
+    "results_processor": {
+      "title": "Results Processor Plugins",
+      "type": "object",
+      "description": "Results processors aggregate results from record processors and compute derived metrics.\nFinal stage of metrics pipeline for aggregated statistics and summaries.\nOne-to-many mapping: multiple processors can be loaded simultaneously.",
+      "additionalProperties": {
+        "$ref": "#/$defs/ResultsProcessorPlugin"
+      }
+    },
+    "data_exporter": {
+      "title": "Data Exporter Plugins",
+      "type": "object",
+      "description": "Data exporters write benchmark results to files in various formats.\nSupports CSV, JSON, Parquet, and specialized export formats.\nOne-to-many mapping: multiple exporters can be loaded simultaneously.",
+      "additionalProperties": {
+        "$ref": "#/$defs/DataExporterPlugin"
+      }
+    },
+    "console_exporter": {
+      "title": "Console Exporter Plugins",
+      "type": "object",
+      "description": "Console exporters display benchmark results and diagnostics to stdout.\nProvides formatted output for metrics, errors, telemetry, and traces.\nOne-to-many mapping: multiple console exporters can be loaded simultaneously.",
+      "additionalProperties": {
+        "$ref": "#/$defs/ConsoleExporterPlugin"
+      }
+    },
+    "ui": {
+      "title": "UI Plugins",
+      "type": "object",
+      "description": "UI components provide progress tracking and visualization during benchmark execution.\nSupports rich terminal dashboards, simple progress bars, or headless execution.\nOne-to-one mapping based on ui configuration.",
+      "additionalProperties": {
+        "$ref": "#/$defs/UiPlugin"
+      }
+    },
+    "url_selection_strategy": {
+      "title": "Url Selection Strategy Plugins",
+      "type": "object",
+      "description": "URL selection strategies control how requests are distributed across multiple endpoints.\nSupports round-robin, random, and custom distribution patterns.\nOne-to-one mapping based on url_selection_strategy configuration.",
+      "additionalProperties": {
+        "$ref": "#/$defs/UrlSelectionStrategyPlugin"
+      }
+    },
+    "service": {
+      "title": "Service Plugins",
+      "type": "object",
+      "description": "Services are the core processes that make up the AIPerf distributed system.\nEach service runs in a separate process and communicates via ZMQ message bus.\nIncludes SystemController, Workers, Managers, and processing services.",
+      "additionalProperties": {
+        "$ref": "#/$defs/ServicePlugin"
+      }
+    },
+    "service_manager": {
+      "title": "Service Manager Plugins",
+      "type": "object",
+      "description": "Service managers orchestrate how services are launched and managed.\nSupports multiprocessing (single-node) and Kubernetes (multi-node) deployments.\nOne-to-one mapping based on run_mode configuration.",
+      "additionalProperties": {
+        "$ref": "#/$defs/ServiceManagerPlugin"
+      }
+    },
+    "communication": {
+      "title": "Communication Plugins",
+      "type": "object",
+      "description": "Communication backends provide the underlying transport for inter-service messaging.\nSupports ZMQ IPC (single-node) and ZMQ TCP (multi-node) communication.\nOne-to-one mapping based on deployment configuration.",
+      "additionalProperties": {
+        "$ref": "#/$defs/CommunicationPlugin"
+      }
+    },
+    "communication_client": {
+      "title": "Communication Client Plugins",
+      "type": "object",
+      "description": "Communication clients implement different ZMQ socket patterns for messaging.\nIncludes PUB/SUB, PUSH/PULL, REQUEST/REPLY, and streaming patterns.\nInternal infrastructure: automatically created by framework based on usage.",
+      "additionalProperties": {
+        "$ref": "#/$defs/CommunicationClientPlugin"
+      }
+    },
+    "zmq_proxy": {
+      "title": "ZMQ Proxy Plugins",
+      "type": "object",
+      "description": "ZMQ proxies provide message routing between different socket patterns.\nIncludes XPUB/XSUB, DEALER/ROUTER, and PUSH/PULL proxy types.\nInternal infrastructure: automatically created by framework based on configuration.",
+      "additionalProperties": {
+        "$ref": "#/$defs/ZmqProxyPlugin"
+      }
+    },
+    "plot": {
+      "title": "Plot Plugins",
+      "type": "object",
+      "description": "Plot handlers create different types of visualizations from benchmark data.\nSupports scatter, histogram, timeline, percentile bands, and multi-run comparisons.\nOne-to-one mapping based on plot type selection.",
+      "additionalProperties": {
+        "$ref": "#/$defs/PlotPlugin"
+      }
+    }
+  },
+  "title": "PluginsManifest",
+  "type": "object",
+  "$defs": {
+    "TimingStrategyPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Timing Strategy Plugin",
+      "description": "Timing strategies control request scheduling and credit issuance.\nDetermines when requests are sent based on fixed schedules, request rates,\nor user-centric patterns. One-to-one mapping per benchmark run."
+    },
+    "ArrivalPatternPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Arrival Pattern Plugin",
+      "description": "Interval generators determine inter-arrival times for request rate strategy.\nControls the distribution of request timing (constant, Poisson, gamma, etc.).\nOne-to-one mapping when using request_rate timing mode."
+    },
+    "RampPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Ramp Plugin",
+      "description": "Ramp strategies control how values are gradually transitioned over time.\nUsed for ramping concurrency limits, request rates, and other numeric parameters.\nSupports linear, exponential, and stochastic ramping patterns."
+    },
+    "DatasetBackingStorePlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Dataset Backing Store Plugin",
+      "description": "Dataset backing stores manage conversation data on the DatasetManager side.\nProvides efficient storage for dataset distribution to workers.\nHandles streaming writes and finalization for client access."
+    },
+    "DatasetClientStorePlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Dataset Client Store Plugin",
+      "description": "Dataset client stores read conversation data on the Worker side.\nProvides efficient access to datasets from backing stores.\nSupports zero-copy reads and O(1) lookup performance."
+    },
+    "DatasetSamplerPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Dataset Sampler Plugin",
+      "description": "Dataset samplers control how conversations are selected from the dataset.\nSupports random, sequential, and shuffle sampling strategies.\nOne-to-one mapping based on sampling strategy configuration."
+    },
+    "DatasetComposerPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Dataset Composer Plugin",
+      "description": "Dataset composers create conversation datasets from various sources.\nHandles synthetic generation, custom file loading, and specialized formats.\nOne-to-one mapping based on composer_type configuration."
+    },
+    "CustomDatasetLoaderPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Custom Dataset Loader Plugin",
+      "description": "Custom dataset loaders parse different JSONL file formats into conversations.\nSupports single-turn, multi-turn, random-pool, and trace formats.\nAuto-detection: loaders are tried in priority order based on can_load()."
+    },
+    "EndpointPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "description": "Metadata schema for endpoint plugins.\n\nDefines API capabilities, paths, and multimodal support for endpoint implementations.\nUsed by the framework to route requests, configure streaming, and enable\nmultimodal inputs/outputs (images, audio, video).\n\nReferenced by: categories.yaml endpoint.metadata_class\nUsed in: plugins.yaml endpoint entries",
+          "properties": {
+            "metrics_title": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Display title for metrics dashboard.",
+              "title": "Metrics Title"
+            },
+            "endpoint_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "API path (e.g., /v1/chat/completions).",
+              "title": "Endpoint Path"
+            },
+            "streaming_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Streaming API path if different from the endpoint path (e.g., /generate_stream).",
+              "title": "Streaming Path"
+            },
+            "service_kind": {
+              "default": "openai",
+              "description": "The service kind of the endpoint (used for artifact naming).",
+              "title": "Service Kind",
+              "type": "string"
+            },
+            "supports_streaming": {
+              "description": "Whether endpoint supports streaming responses.",
+              "title": "Supports Streaming",
+              "type": "boolean"
+            },
+            "tokenizes_input": {
+              "description": "Whether endpoint tokenizes text inputs.",
+              "title": "Tokenizes Input",
+              "type": "boolean"
+            },
+            "produces_tokens": {
+              "description": "Whether endpoint produces token-based output.",
+              "title": "Produces Tokens",
+              "type": "boolean"
+            },
+            "supports_audio": {
+              "default": false,
+              "description": "Whether endpoint accepts audio input.",
+              "title": "Supports Audio",
+              "type": "boolean"
+            },
+            "supports_images": {
+              "default": false,
+              "description": "Whether endpoint accepts image input.",
+              "title": "Supports Images",
+              "type": "boolean"
+            },
+            "supports_videos": {
+              "default": false,
+              "description": "Whether endpoint accepts video input.",
+              "title": "Supports Videos",
+              "type": "boolean"
+            },
+            "produces_audio": {
+              "default": false,
+              "description": "Whether endpoint produces audio-based outputs.",
+              "title": "Produces Audio",
+              "type": "boolean"
+            },
+            "produces_images": {
+              "default": false,
+              "description": "Whether endpoint produces image-based outputs.",
+              "title": "Produces Images",
+              "type": "boolean"
+            },
+            "produces_videos": {
+              "default": false,
+              "description": "Whether endpoint produces video-based outputs.",
+              "title": "Produces Videos",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "metrics_title",
+            "endpoint_path",
+            "supports_streaming",
+            "tokenizes_input",
+            "produces_tokens"
+          ],
+          "title": "EndpointMetadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Endpoint Plugin",
+      "description": "Endpoints define how to format requests and parse responses for different APIs.\nSupports OpenAI-compatible, HuggingFace, Cohere, NIM, and custom API formats.\nOne-to-one mapping based on endpoint_type configuration."
+    },
+    "TransportPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "description": "Metadata schema for transport plugins.\n\nDefines network layer configuration including transport type and URL schemes.\nUsed by the framework to auto-detect appropriate transport based on URL scheme.\n\nReferenced by: categories.yaml transport.metadata_class\nUsed in: plugins.yaml transport entries",
+          "properties": {
+            "transport_type": {
+              "description": "Transport type identifier for this transport",
+              "title": "Transport Type",
+              "type": "string"
+            },
+            "url_schemes": {
+              "description": "URL schemes this transport handles (for auto-detection and validation).",
+              "items": {
+                "type": "string"
+              },
+              "title": "Url Schemes",
+              "type": "array"
+            }
+          },
+          "required": [
+            "transport_type"
+          ],
+          "title": "TransportMetadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Transport Plugin",
+      "description": "Transports handle the network layer for sending requests to inference servers.\nManages connection pooling, streaming, error handling, and TCP configuration.\nOne-to-one mapping based on transport_type configuration."
+    },
+    "RecordProcessorPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Record Processor Plugin",
+      "description": "Record processors stream records and compute metrics in a distributed manner.\nFirst stage of metrics pipeline, handling per-record computations.\nOne-to-many mapping: multiple processors can be loaded simultaneously."
+    },
+    "ResultsProcessorPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Results Processor Plugin",
+      "description": "Results processors aggregate results from record processors and compute derived metrics.\nFinal stage of metrics pipeline for aggregated statistics and summaries.\nOne-to-many mapping: multiple processors can be loaded simultaneously."
+    },
+    "DataExporterPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Data Exporter Plugin",
+      "description": "Data exporters write benchmark results to files in various formats.\nSupports CSV, JSON, Parquet, and specialized export formats.\nOne-to-many mapping: multiple exporters can be loaded simultaneously."
+    },
+    "ConsoleExporterPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Console Exporter Plugin",
+      "description": "Console exporters display benchmark results and diagnostics to stdout.\nProvides formatted output for metrics, errors, telemetry, and traces.\nOne-to-many mapping: multiple console exporters can be loaded simultaneously."
+    },
+    "UiPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "UI Plugin",
+      "description": "UI components provide progress tracking and visualization during benchmark execution.\nSupports rich terminal dashboards, simple progress bars, or headless execution.\nOne-to-one mapping based on ui configuration."
+    },
+    "UrlSelectionStrategyPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Url Selection Strategy Plugin",
+      "description": "URL selection strategies control how requests are distributed across multiple endpoints.\nSupports round-robin, random, and custom distribution patterns.\nOne-to-one mapping based on url_selection_strategy configuration."
+    },
+    "ServicePlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "description": "Metadata schema for service plugins.\n\nDefines lifecycle and runtime configuration for AIPerf distributed services.\nUsed by SystemController to manage service startup order and optimize\nlatency-sensitive services (timing, workers) by disabling garbage collection.\n\nReferenced by: categories.yaml service.metadata_class\nUsed in: plugins.yaml service entries",
+          "properties": {
+            "required": {
+              "description": "Whether the service is required for benchmark execution.",
+              "title": "Required",
+              "type": "boolean"
+            },
+            "auto_start": {
+              "description": "Whether the service is automatically started by the system controller.",
+              "title": "Auto Start",
+              "type": "boolean"
+            },
+            "disable_gc": {
+              "default": false,
+              "description": "Whether to disable garbage collection in the service for timing-critical operations.",
+              "title": "Disable Gc",
+              "type": "boolean"
+            },
+            "replicable": {
+              "default": false,
+              "description": "Whether the service can have multiple instances running in parallel.",
+              "title": "Replicable",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "required",
+            "auto_start"
+          ],
+          "title": "ServiceMetadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Service Plugin",
+      "description": "Services are the core processes that make up the AIPerf distributed system.\nEach service runs in a separate process and communicates via ZMQ message bus.\nIncludes SystemController, Workers, Managers, and processing services."
+    },
+    "ServiceManagerPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Service Manager Plugin",
+      "description": "Service managers orchestrate how services are launched and managed.\nSupports multiprocessing (single-node) and Kubernetes (multi-node) deployments.\nOne-to-one mapping based on run_mode configuration."
+    },
+    "CommunicationPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Communication Plugin",
+      "description": "Communication backends provide the underlying transport for inter-service messaging.\nSupports ZMQ IPC (single-node) and ZMQ TCP (multi-node) communication.\nOne-to-one mapping based on deployment configuration."
+    },
+    "CommunicationClientPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Communication Client Plugin",
+      "description": "Communication clients implement different ZMQ socket patterns for messaging.\nIncludes PUB/SUB, PUSH/PULL, REQUEST/REPLY, and streaming patterns.\nInternal infrastructure: automatically created by framework based on usage."
+    },
+    "ZmqProxyPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "ZMQ Proxy Plugin",
+      "description": "ZMQ proxies provide message routing between different socket patterns.\nIncludes XPUB/XSUB, DEALER/ROUTER, and PUSH/PULL proxy types.\nInternal infrastructure: automatically created by framework based on configuration."
+    },
+    "PlotPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "description": "Metadata schema for plot plugins.\n\nDefines display properties and categorization for visualization handlers.\nUsed by the framework to group plots and generate selection interfaces.\n\nReferenced by: categories.yaml plot.metadata_class\nUsed in: plugins.yaml plot entries",
+          "properties": {
+            "display_name": {
+              "description": "Human-readable name for UI display.",
+              "title": "Display Name",
+              "type": "string"
+            },
+            "category": {
+              "description": "Plot category (per_request, aggregated, combined, comparison).",
+              "title": "Category",
+              "type": "string"
+            }
+          },
+          "required": [
+            "display_name",
+            "category"
+          ],
+          "title": "PlotMetadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Plot Plugin",
+      "description": "Plot handlers create different types of visualizations from benchmark data.\nSupports scatter, histogram, timeline, percentile bands, and multi-run comparisons.\nOne-to-one mapping based on plot type selection."
+    }
+  }
+}

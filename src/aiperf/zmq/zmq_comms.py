@@ -1,32 +1,36 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+"""ZeroMQ-based implementation of the CommunicationProtocol."""
+
+from __future__ import annotations
+
 import errno
 import glob
 import os
 from abc import ABC
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import zmq.asyncio
 
 from aiperf.common.base_comms import BaseCommunication
-from aiperf.common.config import BaseZMQCommunicationConfig, ZMQIPCConfig, ZMQTCPConfig
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import (
-    CommAddress,
-    CommClientType,
-    CommunicationBackend,
-    LifecycleState,
-)
+from aiperf.common.config import ZMQIPCConfig, ZMQTCPConfig
+from aiperf.common.enums import CommAddress, LifecycleState
 from aiperf.common.exceptions import InvalidStateError
-from aiperf.common.factories import CommunicationClientFactory, CommunicationFactory
 from aiperf.common.hooks import on_stop
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.common.protocols import CommunicationClientProtocol, CommunicationProtocol
-from aiperf.common.types import CommAddressType
+from aiperf.common.singleton import Singleton
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PluginType
+
+if TYPE_CHECKING:
+    from aiperf.common.config import BaseZMQCommunicationConfig
+    from aiperf.common.protocols import CommunicationClientProtocol
+    from aiperf.common.types import CommAddressType
+    from aiperf.plugin.enums import CommClientType
 
 
-@implements_protocol(CommunicationProtocol)
-class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC):
+class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC, Singleton):
     """ZeroMQ-based implementation of the CommunicationProtocol.
 
     Uses ZeroMQ for publish/subscribe, request/reply, and pull/push patterns to
@@ -82,8 +86,8 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC):
                 f"class is initialized: {self.state!r}"
             )
 
-        client = CommunicationClientFactory.create_instance(
-            client_type,
+        ClientClass = plugins.get_class(PluginType.COMMUNICATION_CLIENT, client_type)
+        client = ClientClass(
             address=self.get_address(address),
             bind=bind,
             socket_ops=socket_ops,
@@ -96,9 +100,7 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC):
         return client
 
 
-@CommunicationFactory.register(CommunicationBackend.ZMQ_TCP)
-@implements_protocol(CommunicationProtocol)
-class ZMQTCPCommunication(BaseZMQCommunication):
+class ZMQTCPCommunication(BaseZMQCommunication, Singleton):
     """ZeroMQ-based implementation of the Communication interface using TCP transport."""
 
     def __init__(self, config: ZMQTCPConfig | None = None) -> None:
@@ -110,9 +112,7 @@ class ZMQTCPCommunication(BaseZMQCommunication):
         super().__init__(config or ZMQTCPConfig())
 
 
-@CommunicationFactory.register(CommunicationBackend.ZMQ_IPC)
-@implements_protocol(CommunicationProtocol)
-class ZMQIPCCommunication(BaseZMQCommunication):
+class ZMQIPCCommunication(BaseZMQCommunication, Singleton):
     """ZeroMQ-based implementation of the Communication interface using IPC transport."""
 
     def __init__(self, config: ZMQIPCConfig | None = None) -> None:

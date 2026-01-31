@@ -53,7 +53,7 @@ ramp:
 # =============================================================================
 
 dataset_backing_store:
-  protocol: aiperf.common.protocols:DatasetBackingStoreProtocol
+  protocol: aiperf.dataset.protocols:DatasetBackingStoreProtocol
   enum: DatasetBackingStoreType
   description: |
     Dataset backing stores manage conversation data on the DatasetManager side.
@@ -61,7 +61,7 @@ dataset_backing_store:
     Handles streaming writes and finalization for client access.
 
 dataset_client_store:
-  protocol: aiperf.common.protocols:DatasetClientStoreProtocol
+  protocol: aiperf.dataset.protocols:DatasetClientStoreProtocol
   enum: DatasetClientStoreType
   description: |
     Dataset client stores read conversation data on the Worker side.
@@ -69,7 +69,7 @@ dataset_client_store:
     Supports zero-copy reads and O(1) lookup performance.
 
 dataset_sampler:
-  protocol: aiperf.common.protocols:DatasetSamplingStrategyProtocol
+  protocol: aiperf.dataset.protocols:DatasetSamplingStrategyProtocol
   enum: DatasetSamplingStrategy
   description: |
     Dataset samplers control how conversations are selected from the dataset.
@@ -77,7 +77,7 @@ dataset_sampler:
     One-to-one mapping based on sampling strategy configuration.
 
 dataset_composer:
-  protocol: aiperf.dataset.composer:BaseDatasetComposer
+  protocol: aiperf.dataset.composer.base:BaseDatasetComposer
   enum: ComposerType
   description: |
     Dataset composers create conversation datasets from various sources.
@@ -85,7 +85,7 @@ dataset_composer:
     One-to-one mapping based on composer_type configuration.
 
 custom_dataset_loader:
-  protocol: aiperf.common.protocols:CustomDatasetLoaderProtocol
+  protocol: aiperf.dataset.protocols:CustomDatasetLoaderProtocol
   enum: CustomDatasetType
   description: |
     Custom dataset loaders parse different JSONL file formats into conversations.
@@ -97,7 +97,7 @@ custom_dataset_loader:
 # =============================================================================
 
 endpoint:
-  protocol: aiperf.common.protocols:EndpointProtocol
+  protocol: aiperf.endpoints.protocols:EndpointProtocol
   metadata_class: aiperf.plugin.schema.schemas:EndpointMetadata
   enum: EndpointType
   description: |
@@ -106,7 +106,7 @@ endpoint:
     One-to-one mapping based on endpoint_type configuration.
 
 transport:
-  protocol: aiperf.common.protocols:TransportProtocol
+  protocol: aiperf.transports.base_transports:TransportProtocol
   metadata_class: aiperf.plugin.schema.schemas:TransportMetadata
   enum: TransportType
   description: |
@@ -119,7 +119,7 @@ transport:
 # =============================================================================
 
 record_processor:
-  protocol: aiperf.common.protocols:RecordProcessorProtocol
+  protocol: aiperf.post_processors.protocols:RecordProcessorProtocol
   enum: RecordProcessorType
   description: |
     Record processors stream records and compute metrics in a distributed manner.
@@ -127,7 +127,7 @@ record_processor:
     One-to-many mapping: multiple processors can be loaded simultaneously.
 
 results_processor:
-  protocol: aiperf.post_processors:BaseMetricsProcessor
+  protocol: aiperf.post_processors.base_metrics_processor:BaseMetricsProcessor
   enum: ResultsProcessorType
   description: |
     Results processors aggregate results from record processors and compute derived metrics.
@@ -139,7 +139,7 @@ results_processor:
 # =============================================================================
 
 data_exporter:
-  protocol: aiperf.common.protocols:DataExporterProtocol
+  protocol: aiperf.exporters.protocols:DataExporterProtocol
   enum: DataExporterType
   description: |
     Data exporters write benchmark results to files in various formats.
@@ -147,7 +147,7 @@ data_exporter:
     One-to-many mapping: multiple exporters can be loaded simultaneously.
 
 console_exporter:
-  protocol: aiperf.common.protocols:ConsoleExporterProtocol
+  protocol: aiperf.exporters.protocols:ConsoleExporterProtocol
   enum: ConsoleExporterType
   description: |
     Console exporters display benchmark results and diagnostics to stdout.
@@ -159,7 +159,7 @@ console_exporter:
 # =============================================================================
 
 ui:
-  protocol: aiperf.common.protocols:AIPerfUIProtocol
+  protocol: aiperf.ui.protocols:AIPerfUIProtocol
   enum: UIType
   description: |
     UI components provide progress tracking and visualization during benchmark execution.
@@ -171,7 +171,7 @@ ui:
 # =============================================================================
 
 url_selection_strategy:
-  protocol: aiperf.common.protocols:URLSelectionStrategyProtocol
+  protocol: aiperf.timing.url_samplers:URLSelectionStrategyProtocol
   enum: URLSelectionStrategy
   description: |
     URL selection strategies control how requests are distributed across multiple endpoints.
@@ -192,7 +192,7 @@ service:
     Includes SystemController, Workers, Managers, and processing services.
 
 service_manager:
-  protocol: aiperf.common.protocols:ServiceManagerProtocol
+  protocol: aiperf.controller.protocols:ServiceManagerProtocol
   enum: ServiceRunType
   description: |
     Service managers orchestrate how services are launched and managed.
@@ -222,7 +222,7 @@ communication_client:
     Internal infrastructure: automatically created by framework based on usage.
 
 zmq_proxy:
-  protocol: aiperf.zmq:BaseZMQProxy
+  protocol: aiperf.zmq.zmq_proxy_base:BaseZMQProxy
   enum: ZMQProxyType
   internal: true
   description: |

@@ -19,8 +19,8 @@ import uuid
 from dataclasses import dataclass
 
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
-from aiperf.common.protocols import DatasetSamplingStrategyProtocol
 from aiperf.credit.structs import Credit, TurnToSend
+from aiperf.dataset.protocols import DatasetSamplingStrategyProtocol
 
 
 @dataclass(slots=True)

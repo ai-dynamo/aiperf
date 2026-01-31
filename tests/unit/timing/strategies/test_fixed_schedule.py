@@ -6,9 +6,10 @@ import pytest
 from pydantic import ValidationError
 
 from aiperf.common.constants import MILLIS_PER_SECOND
-from aiperf.common.enums import CreditPhase, DatasetSamplingStrategy, TimingMode
+from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.credit.structs import Credit
+from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.conversation_source import ConversationSource
 from aiperf.timing.strategies.fixed_schedule import FixedScheduleStrategy

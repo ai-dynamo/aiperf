@@ -1,21 +1,15 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import DataExporterType
 from aiperf.common.exceptions import DataExporterDisabled
-from aiperf.common.factories import DataExporterFactory
 from aiperf.common.models.export_models import (
     TimesliceCollectionExportData,
     TimesliceData,
 )
-from aiperf.common.protocols import DataExporterProtocol
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.metrics_json_exporter import MetricsJsonExporter
 
 
-@DataExporterFactory.register(DataExporterType.TIMESLICE_JSON)
-@implements_protocol(DataExporterProtocol)
 class TimesliceMetricsJsonExporter(MetricsJsonExporter):
     """Exports all timeslice metrics to a single JSON file.
 

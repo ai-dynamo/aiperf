@@ -4,125 +4,87 @@
 -->
 # AIPerf Dev Guide
 
-Python 3.10+ async AI Benchmarking Tool. 9 services via ZMQ. Update this guide only for major architectural shifts.
+Python 3.10+ async AI Benchmarking Tool for measuring LLM inference server performance. 9 services communicate via ZMQ message bus. Update this guide only for major architectural shifts.
 
 **Principles**: KISS + DRY. Extensibility + Usability + Accuracy + Scalability. One concern per PR. Review own diff first.
 
+## Rules (Read First)
+**CRITICAL (YOU MUST):**
+- async/await for ALL I/O (no `time.sleep`, no blocking calls)
+- `Field(description="...")` on EVERY Pydantic field
+- Type hints on ALL functions (params and return)
+- KISS + DRY: minimal code, optimize for reader
+
+**Architecture:**
+- BaseComponentService for services (BaseService for SystemController only)
+- AIPerfBaseModel for data; BaseConfig for configuration
+- Message bus for inter-service communication (no shared mutable state)
+- YAML plugin registry for extensible features (plugins.yaml)
+
+**Code Quality:**
+- Lambda for expensive logs: `self.debug(lambda: f"{self._x()}")`
+- Tests: fixtures + helpers + `@pytest.mark.parametrize`
+
 ## Patterns
 
-**Service** (stateless, separate process, bootstrap.py):
-```python
-from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.factories import ServiceFactory
-from aiperf.common.enums import ServiceType
+See [docs/dev/patterns.md](docs/dev/patterns.md) for detailed code examples.
 
-@ServiceFactory.register(ServiceType.MY_SERVICE)
-class MyService(BaseComponentService):
-    def __init__(self, service_config: ServiceConfig, user_config: UserConfig,
-                 service_id: str | None = None, **kwargs) -> None:
-        super().__init__(service_config, user_config, service_id, **kwargs)
+| Pattern | Key Points |
+|---------|------------|
+| **Service** | `BaseComponentService` + `@on_message` + `plugins.yaml` registration |
+| **Models** | `AIPerfBaseModel` for data, `BaseConfig` for config, `Field(description=...)` always |
+| **Messages** | Set `message_type`, use `@on_message(MessageType.X)`, auto-subscribes at `@on_init` |
+| **Plugin** | YAML registry, `plugins.get_class(PluginType.X, 'name')`, lazy-loaded |
+| **Errors** | `self.error(f"msg: {e!r}")` + `ErrorDetails.from_exception(e)` in response |
+| **Logging** | Lambda for expensive: `self.debug(lambda: f"{len(x)}")`, direct for cheap |
+| **JSON** | Always `orjson.loads(s)`, `orjson.dumps(d)` |
 
-    @on_message(MessageType.MY_MSG)
-    async def _handle_my_msg(self, msg: MyMsg) -> None:
-        await self.publish(ResponseMsg(data=msg.data))
-```
-ServiceConfig: infrastructure (ZMQ, logging). UserConfig: benchmark params (endpoints, loadgen).
+## Base Classes & Mixins
 
-**Models**: AIPerfBaseModel=data, BaseConfig=config, Field(description=...) always
-```python
-from pydantic import Field
-from aiperf.common.models import AIPerfBaseModel
-from aiperf.common.config import BaseConfig
+- **BaseComponentService**: For 8 services (heartbeat + registration with SystemController)
+- **BaseService**: For SystemController only (no heartbeat/registration)
+- **AIPerfLifecycleMixin**: For standalone components (`CREATED`→`INITIALIZING`→`INITIALIZED`→`STARTING`→`RUNNING`→`STOPPING`→`STOPPED`; `FAILED` terminal)
 
-class Record(AIPerfBaseModel):
-    ts_ns: int = Field(description="Timestamp")
-```
+**Decorators:** `@on_init`, `@on_start`, `@on_stop`, `@on_message`, `@on_command`, `@background_task`, `@on_pull_message`, `@on_request`
 
-**Messages**: Set `message_type`, subscribe with `@on_message(MessageType.X)`. Framework auto-subscribes during `@on_init` by introspecting decorators.
-```python
-from aiperf.common.messages import Message
-from aiperf.common.hooks import on_message
-
-class MyMsg(Message):
-    message_type: MessageType = MessageType.MY_MSG
-    data: list[Record] = Field(description="Records")
-
-@on_message(MessageType.MY_MSG)
-async def _handle(self, msg: MyMsg) -> None:
-    await self.publish(OtherMsg(data=msg.data))
-```
-
-**Protocol+Factory** (extensibility): Protocol `protocols.py` → Factory `factories.py` → Enum `plugin_enums.py` → `@Factory.register(Enum.TYPE)`
-```python
-# Registration
-@implements_protocol(EndpointProtocol)
-@EndpointFactory.register(EndpointType.CHAT)
-class ChatEndpoint(BaseEndpoint):
-    def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs) -> None: ...
-
-# Usage
-endpoint = EndpointFactory.create_instance(
-    EndpointType.CHAT,
-    model_endpoint=model_endpoint,
-)
-```
-
-**Error Handling**: Log with `self.error()`, publish `ErrorDetails` models in messages. Catch exceptions.
-```python
-try:
-    await risky_operation()
-except Exception as e:
-    self.error(f"Operation failed: {e!r}")
-    await self.publish(ResultMsg(error=ErrorDetails.from_exception(e)))
-```
-
-**Logging**: Lambda for expensive logs: `self.debug(lambda: f"{len(self._x())}")`. Direct string: `self.info("Starting")`.
-
-**JSON**: Always orjson: `orjson.loads(s)`, `orjson.dumps(d)`
-
-## Mixins & Base Classes
-
-**Base Classes:**
-- **BaseComponentService**: Services only. Includes lifecycle, message bus, commands, health. Use for all 9 services.
-- **BaseService**: Abstract base for services. Use BaseComponentService instead unless creating new service type.
-
-**Core Mixins** (usually via base class):
-- **AIPerfLifecycleMixin**: State machine (`CREATED`→`INITIALIZING`→`INITIALIZED`→`STARTING`→`RUNNING`→`STOPPING`→`STOPPED`; `FAILED` is an additional terminal state). Provides `initialize()`, `start()`, `stop()`. Components may enter `FAILED` via `_fail()` when transitions error. Use for components with lifecycle.
-- **HooksMixin**: Hook registration. Enables `@on_init`, `@on_start`, `@on_stop`, etc.
-- **TaskManagerMixin**: Async task management. Provides `execute_async()`, `start_background_task()`. Auto-cancels tasks on stop.
-- **AIPerfLoggerMixin**: Logging. Provides `self.debug()`, `self.info()`, `self.warning()`, `self.error()`.
-
-**Communication Mixins:**
-- **MessageBusClientMixin**: Pub/Sub. Provides `publish()`, `subscribe()`, `@on_message`. For async broadcast.
-- **CommandHandlerMixin**: Command pattern. Provides `@on_command`, `send_command_and_wait_for_response()`. For control messages.
-- **PullClientMixin**: Pull pattern. Provides `@on_pull_message`, creates pull client. For high-throughput streams.
-- **ReplyClientMixin**: Request-reply. Provides `@on_request`. For synchronous responses.
-
-**Specialized Mixins:**
-- **ProcessHealthMixin**: System metrics (CPU, memory). Use for services needing health reporting.
-- **BufferedJSONLWriterMixin**: Buffered JSONL file writer. Use for high-volume file output.
-- **ProgressTrackerMixin**: UI progress tracking. Use for UI components subscribing to progress updates.
-
-**Usage:** BaseComponentService includes everything. Other components compose mixins as needed.
-```python
-# Component with lifecycle + message bus
-class MyComponent(MessageBusClientMixin):
-    @on_init
-    async def _setup(self) -> None:
-        self._client = aiohttp.ClientSession()
-
-    @on_stop
-    async def _cleanup(self) -> None:
-        await self._client.close()
-
-    @on_message(MessageType.DATA)
-    async def _handle(self, msg: DataMsg) -> None:
-        await self.publish(ResponseMsg(data=msg.data))
-```
+**Communication:** `publish()` for broadcast, `@on_message` to subscribe, `send_command_and_wait_for_response()` for sync
 
 ## Anti-Patterns
-One PR=one goal | Comments only for "why?" not "what" | No persistent mutable state | No blocking I/O
+- One PR = one goal (no scope creep)
+- Comments only for "why?" not "what"
+- No shared mutable state between services
+- No blocking I/O (use async alternatives)
+- No `Optional[X]` or `Union[X, Y]` (use `X | Y`)
+
+## Key Directories
+```
+src/aiperf/
+├── cli_commands/      # CLI command handlers
+├── common/            # Base classes, mixins, models, messages
+├── controller/        # SystemController service
+├── credit/            # Credit system for flow control
+├── dataset/           # DatasetManager service
+├── endpoints/         # API endpoint implementations
+├── exporters/         # Results export (CSV, JSON, console)
+├── gpu_telemetry/     # GPUTelemetryManager service
+├── metrics/           # Metric definitions and calculations
+├── plot/              # Plotting and visualization
+├── plugin/            # Plugin system (plugins.py, plugins.yaml)
+├── post_processors/   # Record and results processors
+├── records/           # RecordProcessor, RecordsManager services
+├── server_metrics/    # ServerMetricsManager service
+├── timing/            # TimingManager service
+├── transports/        # HTTP transport implementations
+├── ui/                # Textual UI components
+├── workers/           # Worker, WorkerManager services
+└── zmq/               # ZMQ communication layer
+tests/
+├── harness/               # Test harness for mocking plugins and services
+├── aiperf_mock_server/    # Mock server for integration tests
+├── unit/                  # Fast isolated tests
+├── component_integration/ # Integration tests with mocked communication and single process
+└── integration/           # End-to-end tests with real communication and multiple processes
+```
 
 ## Services
 **SystemController**: orchestration, lifecycle management
@@ -137,33 +99,61 @@ One PR=one goal | Comments only for "why?" not "what" | No persistent mutable st
 
 Communication: ZMQ message bus via `await self.publish(msg)`. Services auto-subscribe based on `@on_message` decorators during `@on_init`.
 
+## Enums
+All enums use `ExtensibleStrEnum` or `CaseInsensitiveStrEnum`:
+- **DO**: `MessageType.MY_MSG` (use directly)
+- **DON'T**: `MessageType.MY_MSG.value` (no `.value` needed)
+
 ## Testing
-pytest. Auto-fixtures: time mocked, RNG=42, singletons reset. Use fixtures+helpers+parametrization: `@pytest.mark.parametrize("x,y", [(1,2)])`. Put import statements at the top of the test file. Use `# fmt: skip` for long parameterize blocks.
 
-## Python 3.10
-`|` unions: `str | int | None`
-`match/case`: `match x: case A: ...; case _: ...`
-`@dataclass(slots=True)`
+**Auto-fixtures** (always active): asyncio.sleep runs instantly, RNG=42, singletons reset between tests.
 
-## Pre-Commit
-1. Diff: all lines required? 2. `ruff format . && ruff check --fix .` 3. `pytest` 4. Type hints 5. `Field(description=...)` 6. `pytest -m integration` 7. `pre-commit run` 8. `git commit -s`
+**Commands:**
+- `uv run pytest tests/unit/ -n auto` - Fast, isolated, mock dependencies
+- `uv run pytest -m integration -n auto` - Full system, real services in multiple processes
+- `uv run pytest -m component_integration -n auto` - Component integration and cli tests in single process
+
+**Conventions:**
+- `@pytest.mark.asyncio` for async tests, `@pytest.mark.parametrize` for data-driven
+- `from tests.harness import mock_plugin` for plugin mocking in tests
+- Name: `test_<function>_<scenario>_<expected>` e.g. `test_parse_config_missing_field_raises_error`
+- Imports at file top, fixtures for setup, one focus per test
+
+See [docs/dev/patterns.md](docs/dev/patterns.md) for code examples.
+
+## Package Management
+Always use `uv` (never pip): `uv add package`, `uv run pytest`
+- `make first-time-setup` - Initial environment setup
+- `make install` - When dependencies are missing
+
+## Verification Commands
+```bash
+ruff format . && ruff check --fix .   # Format and lint
+uv run pytest tests/unit/ -n auto    # Unit tests in parallel
+uv run pytest -m integration -n auto   # Integration tests in multiple processes
+uv run pytest -m component_integration -n auto # Component integration and cli tests in single process
+make validate-plugin-schemas           # Validate plugin registry
+pre-commit run                         # Pre-commit on staged files
+```
+
+## Pre-Commit Checklist
+1. Review diff: all lines required?
+2. `ruff format . && ruff check --fix .`
+3. `uv run pytest tests/unit/ -n auto`
+4. Type hints on all functions
+5. `Field(description=...)` on all Pydantic fields
+6. `git commit -s`
+
+## Gotchas
+- **SystemController uses BaseService** (not BaseComponentService) - it's the orchestrator
+- **Worker/TimingManager disable GC** for latency - see `service_metadata.disable_gc`
+- **macOS child processes** close terminal FDs to prevent Textual UI corruption
+- **Plugin priority** resolves conflicts: higher wins, external beats built-in at equal priority
+- **Enums are string-based** - use `MessageType.X` directly, never `.value`
 
 ## Common Tasks
-**Service**: BaseComponentService → enum `service_enums.py` → `@ServiceFactory.register()`
-**Message**: Enum `message_enums.py` → class `messages/` → `@on_message()`
-**Factory**: Protocol `protocols.py` → Factory `factories.py` → Enum `plugin_enums.py` → `@implements_protocol` + `@Factory.register()`
-
-## Rules
-1. BaseComponentService for services; AIPerfLifecycleMixin for components only
-2. AIPerfBaseModel for data models; BaseConfig for configuration classes
-3. Field(description="...") always for Pydantic fields
-4. async/await for all I/O (no time.sleep, no blocking calls)
-5. Message bus for communication (publish/push/pull, request-reply for sync operations)
-6. Lambda for expensive logs: `self.debug(lambda: f"{self._x()}")`
-7. No persistent mutable state in services (instance variables for config/deps are fine)
-8. Type hints required on all functions (params and return)
-9. Protocol + Factory + Enum for all extensible features
-10. Tests use fixtures, helpers, and @pytest.mark.parametrize
-11. KISS + DRY - optimize for reader
+**Service**: BaseComponentService → add to `plugins.yaml` under `service` category
+**Message**: Enum `common/enums/enums.py` → class `messages/` → `@on_message()`
+**Plugin**: Create class → add to `plugins.yaml` with `class`, `description`, `metadata` → validate with `aiperf plugins --validate`
 
 **Build systems that scale. Write code that lasts.**

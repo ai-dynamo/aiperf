@@ -7,6 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 
 ## `aiperf` Commands
 
+### [`plugins`](#aiperf-plugins)
+
+Explore AIPerf plugins: aiperf plugins [category] [type]
+
 ### [`analyze-trace`](#aiperf-analyze-trace)
 
 Analyze mooncake trace for prefix statistics
@@ -20,6 +24,29 @@ Run the Profile subcommand.
 ### [`plot`](#aiperf-plot)
 
 Generate visualizations from AIPerf profiling data.
+
+<hr>
+
+## `aiperf plugins`
+
+Explore AIPerf plugins: aiperf plugins [category] [type]
+
+#### `--category` `<str>`
+
+Category to explore.
+<br>_Choices: [`arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `plot`, `ramp`, `record_processor`, `results_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+
+#### `--name` `<str>`
+
+Type name for details.
+
+#### `-a`, `--all`, `--no-all`
+
+Show all categories and plugins.
+
+#### `-v`, `--validate`, `--no-validate`
+
+Validate plugins.yaml.
 
 <hr>
 
@@ -98,22 +125,8 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 #### `--endpoint-type` `<str>`
 
 The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-
-**Choices:**
-
-| | | |
-|-------|:-------:|-------------|
-| `chat` | _default_ | OpenAI Chat Completions API. Supports multi-modal inputs (text, images, audio, video) and streaming. |
-| `completions` |  | OpenAI Completions API. Legacy text completion endpoint with streaming support. |
-| `cohere_rankings` |  | Cohere Rerank API. Ranks passages by relevance to a query. |
-| `embeddings` |  | OpenAI Embeddings API. Generates vector embeddings for text inputs. |
-| `hf_tei_rankings` |  | HuggingFace Text Embeddings Inference (TEI) Rankings API. Reranks passages based on query relevance. |
-| `huggingface_generate` |  | HuggingFace Text Generation Inference (TGI) API. Supports both /generate and /generate_stream endpoints. |
-| `image_generation` |  | OpenAI Image Generation API. Generates images from text prompts (e.g., FLUX.1). |
-| `nim_embeddings` |  | NVIDIA NIM Embeddings API. Generates vector embeddings for text (and image inputs). |
-| `nim_rankings` |  | NVIDIA NIM Rankings API. Ranks passages by relevance scores for a given query. |
-| `solido_rag` |  | SOLIDO RAG API. Retrieval-Augmented Generation endpoint with filter and inference model support. |
-| `template` |  | Custom template endpoint. Uses Jinja2 templates for flexible payload formatting. |
+<br>_Choices: [`chat`, `cohere_rankings`, `completions`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
+<br>_Default: `chat`_
 
 #### `--streaming`
 
@@ -128,12 +141,8 @@ Base URL(s) of the API server(s) to benchmark. Multiple URLs can be specified fo
 #### `--url-strategy` `<str>`
 
 Strategy for selecting URLs when multiple `--url` values are provided. 'round_robin' (default): distribute requests evenly across URLs in sequential order.
-
-**Choices:**
-
-| | | |
-|-------|:-------:|-------------|
-| `round_robin` | _default_ | Distribute requests evenly across URLs in sequential order. Each request goes to the next URL in the list, wrapping around when the end is reached. |
+<br>_Choices: [`round_robin`]_
+<br>_Default: `round_robin`_
 
 #### `--request-timeout-seconds` `<float>`
 
@@ -147,12 +156,7 @@ API authentication key for the endpoint. When provided, automatically included i
 #### `--transport`, `--transport-type` `<str>`
 
 Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` → `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.
-
-**Choices:**
-
-| | | |
-|-------|:-------:|-------------|
-| `http` |  | HTTP/1.1 transport using aiohttp. Supports connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. |
+<br>_Choices: [`http`]_
 
 #### `--use-legacy-max-tokens`
 
@@ -225,27 +229,12 @@ Pre-configured public dataset to download and use for benchmarking (e.g., `share
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace` (timestamped trace files), `random_pool` (directory of reusable prompts). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-
-**Choices:**
-
-| | | |
-|-------|:-------:|-------------|
-| `single_turn` |  | JSONL file with one request per line. Supports multi-modal data and client-side batching. Does not support multi-turn features. |
-| `multi_turn` |  | JSONL file with conversation histories. Each line contains an array of messages. Supports multi-modal data, multi-turn features, and client-side batching. |
-| `random_pool` |  | JSONL file with a pool of prompts randomly sampled to construct multi-turn conversations. Single file creates one pool; directory creates multiple pools. |
-| `mooncake_trace` |  | JSONL file in Mooncake trace format. Each line contains timestamp, input/output lengths, and optional session_id for replaying production workloads. |
+<br>_Choices: [`mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 
 Strategy for selecting entries from dataset during benchmarking. `sequential`: Iterate through dataset in order, wrapping to start after end. `random`: Randomly sample with replacement (entries may repeat before all are used). `shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. Default behavior depends on dataset type (e.g., `sequential` for traces, `shuffle` for synthetic).
-
-**Choices:**
-
-| | | |
-|-------|:-------:|-------------|
-| `sequential` |  | Iterate through the dataset sequentially, then wrap around to the beginning. |
-| `random` |  | Randomly select a conversation from the dataset. Will randomly sample with replacement. |
-| `shuffle` |  | Shuffle the dataset and iterate through it. Will randomly sample without replacement. Once the end of the dataset is reached, shuffle the dataset again and start over. |
+<br>_Choices: [`random`, `sequential`, `shuffle`]_
 
 #### `--random-seed` `<int>`
 
@@ -633,15 +622,8 @@ Target request rate in requests per second. AIPerf generates request timing acco
 #### `--arrival-pattern`, `--request-rate-mode` `<str>`
 
 Sets the arrival pattern for the load generated by AIPerf. Valid values: constant, poisson, gamma. `constant`: Generate requests at a fixed rate. `poisson`: Generate requests using a poisson distribution. `gamma`: Generate requests using a gamma distribution with tunable smoothness.
-
-**Choices:**
-
-| | | |
-|-------|:-------:|-------------|
-| `constant` |  | Generate intervals at a constant rate. |
-| `poisson` | _default_ | Generate intervals using a poisson process. |
-| `gamma` |  | Generate intervals using a gamma distribution with tunable smoothness. Use --arrival-smoothness to control the shape parameter: - smoothness = 1.0: Equivalent to Poisson (exponential inter-arrivals) - smoothness < 1.0: More bursty/clustered arrivals - smoothness > 1.0: More regular/smooth arrivals |
-| `concurrency_burst` |  | Generate intervals as soon as possible, up to a max concurrency limit. Only allowed when a request rate is not specified. |
+<br>_Choices: [`concurrency_burst`, `constant`, `gamma`, `poisson`]_
+<br>_Default: `poisson`_
 
 #### `--arrival-smoothness`, `--vllm-burstiness` `<float>`
 
@@ -829,14 +811,8 @@ Number of `RecordProcessor` services to spawn for parallel metric computation. H
 #### `--ui-type`, `--ui` `<str>`
 
 Select the user interface type for displaying benchmark progress. `dashboard` (default) shows real-time metrics in a Textual TUI, `simple` uses TQDM progress bars, `none` disables UI completely. Automatically set to `simple` when using `--verbose` or `--extra-verbose`.
-
-**Choices:**
-
-| | | |
-|-------|:-------:|-------------|
-| `none` |  | No UI |
-| `simple` |  | Simple UI type using progress bars. |
-| `dashboard` | _default_ | Complete dashboard UI with real-time metrics and telemetry. |
+<br>_Choices: [`dashboard`, `none`, `simple`]_
+<br>_Default: `dashboard`_
 
 <hr>
 

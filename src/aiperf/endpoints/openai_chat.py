@@ -1,49 +1,30 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
 from typing import Any
 
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import EndpointType
-from aiperf.common.factories import EndpointFactory
 from aiperf.common.models import (
     BaseResponseData,
+    InferenceServerResponse,
     ParsedResponse,
+    ReasoningResponseData,
+    RequestInfo,
     Turn,
 )
-from aiperf.common.models.metadata import EndpointMetadata
-from aiperf.common.models.record_models import ReasoningResponseData, RequestInfo
-from aiperf.common.protocols import EndpointProtocol, InferenceServerResponse
 from aiperf.common.types import JsonObject
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 _DEFAULT_ROLE: str = "user"
 
 
-@implements_protocol(EndpointProtocol)
-@EndpointFactory.register(EndpointType.CHAT)
 class ChatEndpoint(BaseEndpoint):
     """OpenAI Chat Completions endpoint.
 
     Supports multi-modal inputs (text, images, audio, video) and both
     streaming and non-streaming responses.
     """
-
-    @classmethod
-    def metadata(cls) -> EndpointMetadata:
-        """Return Chat Completions endpoint metadata."""
-        return EndpointMetadata(
-            endpoint_path="/v1/chat/completions",
-            supports_streaming=True,
-            produces_tokens=True,
-            tokenizes_input=True,
-            supports_audio=True,
-            supports_images=True,
-            supports_videos=True,
-            metrics_title="LLM Metrics",
-        )
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         """Format OpenAI Chat Completions request payload from RequestInfo.

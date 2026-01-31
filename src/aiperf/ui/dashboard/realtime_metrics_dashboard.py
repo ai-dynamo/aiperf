@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import sys
@@ -15,7 +15,7 @@ from textual.widgets.data_table import ColumnKey, RowDoesNotExist, RowKey
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.enums.metric_enums import MetricFlags, MetricUnitT
+from aiperf.common.enums import MetricFlags, MetricUnitT
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import MetricUnitError
 from aiperf.common.models.record_models import MetricResult

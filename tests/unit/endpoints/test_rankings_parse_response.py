@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -6,18 +6,21 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from aiperf.common.enums import EndpointType, ModelSelectionStrategy
+from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.common.models.record_models import RankingsResponseData
-from aiperf.common.protocols import InferenceServerResponse
+from aiperf.common.models.record_models import (
+    InferenceServerResponse,
+    RankingsResponseData,
+)
 from aiperf.endpoints.cohere_rankings import CohereRankingsEndpoint
 from aiperf.endpoints.hf_tei_rankings import HFTeiRankingsEndpoint
 from aiperf.endpoints.nim_rankings import NIMRankingsEndpoint
+from aiperf.plugin.enums import EndpointType
 
 
 def mock_response_nim(rankings):
@@ -75,9 +78,7 @@ class TestRankingsEndpointParseResponse:
                 base_url="http://localhost:8000",
             ),
         )
-        with patch(
-            "aiperf.common.factories.TransportFactory.create_instance"
-        ) as mock_transport:
+        with patch("aiperf.plugin.plugins.get_class") as mock_transport:
             mock_transport.return_value = MagicMock()
             endpoint_instance = endpoint_cls(model_endpoint=model_endpoint)
             # Attach mock builder to endpoint for easy access in tests

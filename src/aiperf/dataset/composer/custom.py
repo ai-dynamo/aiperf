@@ -5,19 +5,15 @@ from pathlib import Path
 from typing import Any
 
 from aiperf.common.config import UserConfig
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import ComposerType, CustomDatasetType
-from aiperf.common.factories import ComposerFactory, CustomDatasetFactory
 from aiperf.common.models import Conversation
-from aiperf.common.protocols import ServiceProtocol
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
 from aiperf.dataset.composer.base import BaseDatasetComposer
 from aiperf.dataset.utils import check_file_exists
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import CustomDatasetType, PluginType
 
 
-@implements_protocol(ServiceProtocol)
-@ComposerFactory.register(ComposerType.CUSTOM)
 class CustomDatasetComposer(BaseDatasetComposer):
     def __init__(self, config: UserConfig, tokenizer: Tokenizer):
         super().__init__(config, tokenizer)
@@ -115,10 +111,12 @@ class CustomDatasetComposer(BaseDatasetComposer):
             try:
                 # Try to convert the type string to enum
                 explicit_type = CustomDatasetType(data["type"])
-                loader_class = CustomDatasetFactory.get_class_from_type(explicit_type)
-                if not loader_class.can_load(data, filename):
+                LoaderClass = plugins.get_class(
+                    PluginType.CUSTOM_DATASET_LOADER, explicit_type
+                )
+                if not LoaderClass.can_load(data, filename):
                     raise ValueError(
-                        f"Explicit type field {explicit_type} specified, but loader {loader_class.__name__} "
+                        f"Explicit type field {explicit_type} specified, but loader {LoaderClass.__name__} "
                         "cannot handle the data format. Please specify --custom-dataset-type explicitly."
                     )
                 self.info(f"Using explicit type field: {explicit_type}")
@@ -129,14 +127,12 @@ class CustomDatasetComposer(BaseDatasetComposer):
                 ) from e
 
         detected_type = None
-        for (
-            loader_class,
-            dataset_type,
-        ) in CustomDatasetFactory.get_all_classes_and_types():
-            if loader_class.can_load(data, filename):
+        for entry, LoaderClass in plugins.iter_all(PluginType.CUSTOM_DATASET_LOADER):
+            if LoaderClass.can_load(data, filename):
                 self.info(
-                    f"Loader {loader_class.__name__} can handle the input file data format."
+                    f"Loader {LoaderClass.__name__} can handle the input file data format."
                 )
+                dataset_type = CustomDatasetType(entry.name)
                 if detected_type is not None:
                     raise ValueError(
                         f"Multiple loaders can handle the data format: {detected_type} and {dataset_type}. "
@@ -161,8 +157,10 @@ class CustomDatasetComposer(BaseDatasetComposer):
             dataset_type: The type of custom dataset
         """
         if self.config.input.dataset_sampling_strategy is None:
-            loader_class = CustomDatasetFactory.get_class_from_type(dataset_type)
-            preferred_strategy = loader_class.get_preferred_sampling_strategy()
+            LoaderClass = plugins.get_class(
+                PluginType.CUSTOM_DATASET_LOADER, dataset_type
+            )
+            preferred_strategy = LoaderClass.get_preferred_sampling_strategy()
             self.config.input.dataset_sampling_strategy = preferred_strategy
             self.info(
                 f"Using preferred sampling strategy for {dataset_type}: {preferred_strategy}"
@@ -200,8 +198,8 @@ class CustomDatasetComposer(BaseDatasetComposer):
         elif dataset_type == CustomDatasetType.RANDOM_POOL:
             kwargs["num_conversations"] = self.config.input.conversation.num
 
-        self.loader = CustomDatasetFactory.create_instance(
-            dataset_type,
+        LoaderClass = plugins.get_class(PluginType.CUSTOM_DATASET_LOADER, dataset_type)
+        self.loader = LoaderClass(
             filename=self.config.input.file,
             user_config=self.config,
             **kwargs,

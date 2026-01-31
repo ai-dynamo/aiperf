@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Any
@@ -6,11 +6,11 @@ from typing import Any
 from aiperf.common import random_generator as rng
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import ModelSelectionStrategy
-from aiperf.common.enums.dataset_enums import DatasetSamplingStrategy
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
+from aiperf.plugin.enums import DatasetSamplingStrategy
 
 
 class ShareGPTLoader(BasePublicDatasetLoader):

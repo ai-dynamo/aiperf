@@ -5,7 +5,7 @@ import sys
 import time
 from abc import ABC, abstractmethod
 from functools import cached_property
-from typing import Any, AnyStr
+from typing import Any, AnyStr, Protocol, runtime_checkable
 
 import orjson
 from pydantic import (
@@ -18,8 +18,7 @@ from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import STAT_KEYS
-from aiperf.common.enums import CreditPhase, SSEFieldType
-from aiperf.common.enums.metric_enums import MetricValueTypeT
+from aiperf.common.enums import CreditPhase, MetricValueTypeT, SSEFieldType
 from aiperf.common.exceptions import InvalidInferenceResultError
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Turn
@@ -196,6 +195,51 @@ class ProcessRecordsResult(AIPerfBaseModel):
 ################################################################################
 # Inference Client Response Models
 ################################################################################
+
+
+@runtime_checkable
+class InferenceServerResponse(Protocol):
+    """Protocol for inference server response objects.
+
+    Defines the interface for response objects that can parse themselves
+    into different formats. Any object implementing these methods can be
+    used as a response in the inference pipeline.
+
+    This protocol-based approach allows for:
+    - Duck typing (structural subtyping)
+    - Easier testing with mocks
+    - Flexibility in implementation
+    - No concrete inheritance required
+    """
+
+    perf_ns: int
+    """Timestamp of the response in nanoseconds (perf_counter_ns)."""
+
+    def get_raw(self) -> Any | None:
+        """Get the raw representation of the response.
+
+        Returns:
+            Raw response data or None
+        """
+        ...
+
+    def get_text(self) -> str | None:
+        """Get the text representation of the response.
+
+        Returns:
+            Text content or None
+        """
+        ...
+
+    def get_json(self) -> JsonObject | None:
+        """Get the JSON representation of the response.
+
+        Automatically parses text content as JSON if applicable.
+
+        Returns:
+            Parsed JSON dict or None if parsing fails
+        """
+        ...
 
 
 class BaseInferenceServerResponse(AIPerfBaseModel, ABC):

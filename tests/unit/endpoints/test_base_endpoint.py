@@ -3,12 +3,14 @@
 
 import pytest
 
-from aiperf.common.enums import EndpointType
 from aiperf.common.models import ParsedResponse, TextResponse, TextResponseData
-from aiperf.common.models.metadata import EndpointMetadata
-from aiperf.common.models.record_models import RequestInfo, RequestRecord
-from aiperf.common.protocols import InferenceServerResponse
+from aiperf.common.models.record_models import (
+    InferenceServerResponse,
+    RequestInfo,
+    RequestRecord,
+)
 from aiperf.endpoints.base_endpoint import BaseEndpoint
+from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_model_endpoint,
@@ -18,16 +20,6 @@ from tests.unit.endpoints.conftest import (
 
 class MockEndpoint(BaseEndpoint):
     """Concrete implementation of BaseEndpoint for testing."""
-
-    @classmethod
-    def metadata(cls) -> EndpointMetadata:
-        return EndpointMetadata(
-            endpoint_path="/v1/test",
-            supports_streaming=True,
-            produces_tokens=True,
-            tokenizes_input=True,
-            metrics_title="Test Metrics",
-        )
 
     def format_payload(self, request_info: RequestInfo) -> dict:
         return {"test": "payload"}
@@ -56,15 +48,6 @@ class TestBaseEndpoint:
     def endpoint(self, model_endpoint):
         """Create a MockEndpoint instance."""
         return create_endpoint_with_mock_transport(MockEndpoint, model_endpoint)
-
-    def test_metadata(self, endpoint):
-        """Test metadata method returns correct information."""
-        metadata = endpoint.metadata()
-        assert metadata.endpoint_path == "/v1/test"
-        assert metadata.supports_streaming is True
-        assert metadata.produces_tokens is True
-        assert metadata.tokenizes_input is True
-        assert metadata.metrics_title == "Test Metrics"
 
     @pytest.mark.parametrize(
         "api_key,custom_headers,expected_headers",
@@ -252,29 +235,10 @@ class TestBaseEndpointAbstractMethods:
         with pytest.raises(TypeError, match="Can't instantiate abstract class"):
             BaseEndpoint(model_endpoint=test_model_endpoint)
 
-    def test_must_implement_metadata(self, test_model_endpoint):
-        """Test that subclasses must implement metadata()."""
-
-        class IncompleteEndpoint(BaseEndpoint):
-            def format_payload(self, request_info: RequestInfo) -> dict:
-                return {}
-
-            def parse_response(
-                self, response: InferenceServerResponse
-            ) -> ParsedResponse | None:
-                return None
-
-        with pytest.raises(TypeError):
-            IncompleteEndpoint(model_endpoint=test_model_endpoint)
-
     def test_must_implement_format_payload(self, test_model_endpoint):
         """Test that subclasses must implement format_payload()."""
 
         class IncompleteEndpoint(BaseEndpoint):
-            @classmethod
-            def metadata(cls) -> EndpointMetadata:
-                return EndpointMetadata(endpoint_path="/test")
-
             def parse_response(
                 self, response: InferenceServerResponse
             ) -> ParsedResponse | None:
@@ -288,9 +252,6 @@ class TestBaseEndpointAbstractMethods:
 
         class IncompleteEndpoint(BaseEndpoint):
             @classmethod
-            def metadata(cls) -> EndpointMetadata:
-                return EndpointMetadata(endpoint_path="/test")
-
             def format_payload(self, request_info: RequestInfo) -> dict:
                 return {}
 

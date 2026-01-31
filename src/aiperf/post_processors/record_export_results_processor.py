@@ -2,22 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import ExportLevel, ResultsProcessorType
+from aiperf.common.enums import ExportLevel
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.common.factories import ResultsProcessorFactory
 from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.mixins import BufferedJSONLWriterMixin
 from aiperf.common.models.record_models import MetricRecordInfo, MetricResult
-from aiperf.common.protocols import ResultsProcessorProtocol
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 
-@implements_protocol(ResultsProcessorProtocol)
-@ResultsProcessorFactory.register(ResultsProcessorType.RECORD_EXPORT)
 class RecordExportResultsProcessor(
     BaseMetricsProcessor, BufferedJSONLWriterMixin[MetricRecordInfo]
 ):

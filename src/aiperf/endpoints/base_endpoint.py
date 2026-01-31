@@ -6,12 +6,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from aiperf.common.decorators import implements_protocol
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     BaseResponseData,
     EmbeddingResponseData,
-    EndpointMetadata,
+    InferenceServerResponse,
     Media,
     ModelEndpointInfo,
     ParsedResponse,
@@ -20,14 +19,9 @@ from aiperf.common.models import (
     RequestRecord,
     TextResponseData,
 )
-from aiperf.common.protocols import (
-    EndpointProtocol,
-    InferenceServerResponse,
-    RequestOutputT,
-)
+from aiperf.common.types import RequestOutputT
 
 
-@implements_protocol(EndpointProtocol)
 class BaseEndpoint(AIPerfLoggerMixin, ABC):
     """Base for all endpoints.
 
@@ -37,11 +31,6 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
     def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs):
         super().__init__(**kwargs)
         self.model_endpoint = model_endpoint
-
-    @classmethod
-    @abstractmethod
-    def metadata(cls) -> EndpointMetadata:
-        """Return endpoint metadata."""
 
     def get_endpoint_headers(self, request_info: RequestInfo) -> dict[str, str]:
         """Get endpoint headers (auth + user custom). Override to customize."""

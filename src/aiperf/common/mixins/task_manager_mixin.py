@@ -1,17 +1,20 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import asyncio
 import inspect
 from collections.abc import Callable, Coroutine
+from typing import TYPE_CHECKING
 
-from aiperf.common.decorators import implements_protocol
 from aiperf.common.environment import Environment
 from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
-from aiperf.common.protocols import TaskManagerProtocol
 from aiperf.common.utils import yield_to_event_loop
 
+if TYPE_CHECKING:
+    from aiperf.common.protocols import TaskManagerProtocol
 
-@implements_protocol(TaskManagerProtocol)
+
 class TaskManagerMixin(AIPerfLoggerMixin):
     """Mixin to manage a set of async tasks, and provide background task loop capabilities.
     Can be used standalone, but it is most useful as part of the :class:`AIPerfLifecycleMixin`

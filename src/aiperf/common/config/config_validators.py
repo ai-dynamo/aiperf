@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from enum import Enum
@@ -7,8 +7,8 @@ from typing import Any
 
 import orjson
 
-from aiperf.common.enums.service_enums import ServiceType
 from aiperf.common.utils import load_json_str
+from aiperf.plugin.enums import ServiceType
 
 """
 This module provides utility functions for validating and parsing configuration inputs.

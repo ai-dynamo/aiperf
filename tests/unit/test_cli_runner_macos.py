@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Tests for macOS-specific terminal corruption fixes in cli_runner.py"""
@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import AIPerfUIType
+from aiperf.plugin.enums import UIType
 
 
 class TestMacOSTerminalFixes:
@@ -19,14 +19,14 @@ class TestMacOSTerminalFixes:
     def service_config_dashboard(self) -> ServiceConfig:
         """Create a ServiceConfig with Dashboard UI type."""
         config = ServiceConfig()
-        config.ui_type = AIPerfUIType.DASHBOARD
+        config.ui_type = UIType.DASHBOARD
         return config
 
     @pytest.fixture
     def service_config_simple(self) -> ServiceConfig:
         """Create a ServiceConfig with Simple UI type."""
         config = ServiceConfig()
-        config.ui_type = AIPerfUIType.SIMPLE
+        config.ui_type = UIType.SIMPLE
         return config
 
     def test_spawn_method_set_on_macos_dashboard(

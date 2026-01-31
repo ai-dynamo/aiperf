@@ -24,3 +24,6 @@ profile.html
 coverage.xml
 *.egg-info/
 coverage.json
+
+# Generated plugin stubs (not committed, regenerate with: make generate-plugin-enums)
+src/aiperf/plugin/enums.pyi

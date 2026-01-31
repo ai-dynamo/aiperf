@@ -17,7 +17,7 @@ from aiperf.common.config import (
     LoadGeneratorConfig,
     UserConfig,
 )
-from aiperf.common.enums import CustomDatasetType
+from aiperf.plugin.enums import CustomDatasetType
 
 
 class TestMooncakeTraceRequestCount:
