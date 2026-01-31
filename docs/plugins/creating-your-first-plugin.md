@@ -41,7 +41,7 @@ Package (my-aiperf-plugins)
             └── Metadata (supports_streaming: true, ...)
 ```
 
-For complete plugin system documentation, see the [Plugin System Reference](../plugin-system.md).
+For complete plugin system documentation, see the [Plugin System Reference](./plugin-system.md).
 
 ## Project Structure
 
@@ -337,5 +337,5 @@ ImportError: Failed to import module for endpoint:echo
 
 ## Reference
 
-- [Plugin System Documentation](../plugin-system.md) - Complete plugin system reference
-- [Template Endpoint Tutorial](./template-endpoint.md) - Using templates for custom payloads
+- [Plugin System Documentation](./plugin-system.md) - Complete plugin system reference
+- [Template Endpoint Tutorial](../tutorials/template-endpoint.md) - Using templates for custom payloads
