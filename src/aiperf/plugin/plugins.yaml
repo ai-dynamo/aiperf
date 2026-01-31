@@ -1,0 +1,906 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=schema/plugins.schema.json
+
+# =============================================================================
+# AIPerf Plugin Definitions
+# =============================================================================
+# This file defines all plugin implementations registered with AIPerf.
+# Each plugin belongs to a category (defined in categories.yaml) and specifies:
+#   - class: Fully qualified class path (module:ClassName) for the implementation
+#   - description: Human-readable description of the plugin's purpose
+#   - metadata: (optional) Plugin-specific metadata fields defined by the category's
+#               metadata_class schema
+#
+# Plugins are organized by category and loaded dynamically at runtime.
+# Used by the plugin registry to discover and instantiate implementations.
+# =============================================================================
+
+schema_version: "1.0"
+
+# =============================================================================
+# Services
+# =============================================================================
+# Services are the core processes that make up the AIPerf distributed system.
+# Each service runs in a separate process and communicates via ZMQ message bus.
+# =============================================================================
+service:
+  dataset_manager:
+    class: aiperf.dataset.dataset_manager:DatasetManager
+    description: |
+      Dataset management service. Handles prompt/token generation, dataset loading
+      and composition, conversation sampling, and distribution to timing manager.
+    metadata:
+      required: true
+      auto_start: true
+
+  gpu_telemetry_manager:
+    class: aiperf.gpu_telemetry.manager:GPUTelemetryManager
+    description: |
+      GPU telemetry collection service using DCGM. Monitors GPU metrics
+      (utilization, memory, power, temperature) during benchmark execution
+      for performance analysis.
+    metadata:
+      required: false
+      auto_start: true
+
+  record_processor:
+    class: aiperf.records.record_processor_service:RecordProcessor
+    description: |
+      Record processing service for metric computation. Scales with load to process
+      streaming records and compute per-record and aggregate metrics in a
+      distributed manner.
+    metadata:
+      required: true
+      auto_start: false
+
+  records_manager:
+    class: aiperf.records.records_manager:RecordsManager
+    description: |
+      Record aggregation and results management service. Aggregates metrics from all
+      record processors, manages results processors, and coordinates final results
+      export.
+    metadata:
+      required: true
+      auto_start: true
+
+  server_metrics_manager:
+    class: aiperf.server_metrics.manager:ServerMetricsManager
+    description: |
+      Server metrics collection service using Prometheus. Monitors server-side
+      metrics from inference servers during benchmark execution.
+    metadata:
+      required: false
+      auto_start: true
+
+  system_controller:
+    class: aiperf.controller.system_controller:SystemController
+    description: |
+      System orchestration and lifecycle management service. Coordinates all other
+      services, manages benchmark phases (warmup/profiling), and controls overall
+      execution flow.
+    metadata:
+      required: true
+      auto_start: false
+
+  timing_manager:
+    class: aiperf.timing.manager:TimingManager
+    description: |
+      Request scheduling and credit issuance service. Controls timing of requests
+      using fixed schedule or request rate strategies with credit-based flow control.
+    metadata:
+      required: true
+      auto_start: true
+      disable_gc: true
+
+  worker:
+    class: aiperf.workers.worker:Worker
+    description: |
+      Worker service that executes LLM API calls and maintains conversation state.
+      Scaled horizontally for throughput. Handles sticky routing for multi-turn
+      conversations.
+    metadata:
+      required: true
+      auto_start: false
+      disable_gc: true
+
+  worker_manager:
+    class: aiperf.workers.worker_manager:WorkerManager
+    description: |
+      Worker lifecycle and health monitoring service. Manages worker pool, monitors
+      health metrics, handles worker failures, and coordinates worker scaling.
+    metadata:
+      required: true
+      auto_start: true
+
+# =============================================================================
+# Service Managers
+# =============================================================================
+# Service managers orchestrate how services are launched and managed.
+# One-to-one mapping: exactly one service manager is selected based on run_mode.
+# =============================================================================
+service_manager:
+  kubernetes:
+    class: aiperf.controller.kubernetes_service_manager:KubernetesServiceManager
+    description: |
+      Kubernetes service manager for multi-node deployments. Runs each service as
+      a Kubernetes pod with ZMQ TCP communication for distributed cloud execution.
+
+  multiprocessing:
+    class: aiperf.controller.multiprocess_service_manager:MultiProcessServiceManager
+    description: |
+      Multiprocess service manager for single-node deployments. Runs each service
+      as a separate process with ZMQ IPC communication for high-performance local
+      execution.
+
+# =============================================================================
+# Endpoints
+# =============================================================================
+# Endpoints define how to format requests and parse responses for different APIs.
+# One-to-one mapping: exactly one endpoint is selected based on endpoint_type config.
+# =============================================================================
+endpoint:
+  chat:
+    class: aiperf.endpoints.openai_chat:ChatEndpoint
+    description: |
+      OpenAI Chat Completions endpoint. Supports multi-modal inputs (text, images,
+      audio, video) and both streaming and non-streaming responses. Uses
+      /v1/chat/completions path.
+    metadata:
+      endpoint_path: /v1/chat/completions
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      supports_audio: true
+      supports_images: true
+      supports_videos: true
+      metrics_title: LLM Metrics
+
+  cohere_rankings:
+    class: aiperf.endpoints.cohere_rankings:CohereRankingsEndpoint
+    description: |
+      Cohere Rankings endpoint. Provides document ranking capabilities using
+      Cohere's reranking API.
+    metadata:
+      endpoint_path: /v2/rerank
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: true
+      metrics_title: Ranking Metrics
+
+  completions:
+    class: aiperf.endpoints.openai_completions:CompletionsEndpoint
+    description: |
+      OpenAI Completions endpoint. Supports text completions with streaming for
+      legacy completion-based models. Uses /v1/completions path.
+    metadata:
+      endpoint_path: /v1/completions
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      metrics_title: LLM Metrics
+
+  embeddings:
+    class: aiperf.endpoints.openai_embeddings:EmbeddingsEndpoint
+    description: |
+      OpenAI Embeddings endpoint. Generates vector embeddings for text inputs using
+      embedding models. Uses /v1/embeddings path. Non-streaming only.
+    metadata:
+      endpoint_path: /v1/embeddings
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: true
+      metrics_title: Embeddings Metrics
+
+  hf_tei_rankings:
+    class: aiperf.endpoints.hf_tei_rankings:HFTeiRankingsEndpoint
+    description: |
+      Hugging Face TEI (Text Embeddings Inference) Rankings endpoint. Provides
+      ranking using TEI reranking models.
+    metadata:
+      endpoint_path: /rerank
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: true
+      metrics_title: Ranking Metrics
+
+  huggingface_generate:
+    class: aiperf.endpoints.huggingface_generate:HuggingFaceGenerateEndpoint
+    description: |
+      Hugging Face TGI (Text Generation Inference) endpoint. Supports both streaming
+      (/generate_stream) and non-streaming (/generate) text generation.
+    metadata:
+      endpoint_path: /generate
+      streaming_path: /generate_stream
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      metrics_title: LLM Metrics
+
+  image_generation:
+    class: aiperf.endpoints.openai_image_generation:ImageGenerationEndpoint
+    description: |
+      OpenAI Image Generation endpoint. Generates images from text prompts using
+      models like DALL-E. Supports streaming responses. Uses /v1/images/generations
+      path.
+    metadata:
+      endpoint_path: /v1/images/generations
+      supports_streaming: true
+      produces_tokens: false
+      produces_images: true
+      tokenizes_input: true
+      metrics_title: Image Generation Metrics
+
+  nim_embeddings:
+    class: aiperf.endpoints.nim_embeddings:NIMEmbeddingsEndpoint
+    description: |
+      NVIDIA NIM Embeddings endpoint. Generates vector embeddings for text and/or images using
+      NIM's embeddings API. Uses /v1/embeddings path. Non-streaming only.
+    metadata:
+      endpoint_path: /v1/embeddings
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: true
+      supports_images: true
+      metrics_title: NIM Embeddings Metrics
+
+  nim_rankings:
+    class: aiperf.endpoints.nim_rankings:NIMRankingsEndpoint
+    description: |
+      NVIDIA NIM Rankings endpoint. Processes ranking requests by taking a query
+      and passages, returning relevance scores. Uses /v1/ranking path.
+    metadata:
+      endpoint_path: /v1/ranking
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: true
+      metrics_title: Rankings Metrics
+
+  solido_rag:
+    class: aiperf.endpoints.solido_rag:SolidoEndpoint
+    description: |
+      Solido RAG endpoint. Custom endpoint for Solido RAG pipeline integration with
+      retrieval-augmented generation.
+    metadata:
+      endpoint_path: /rag/api/prompt
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      metrics_title: SOLIDO RAG Metrics
+
+  template:
+    class: aiperf.endpoints.template_endpoint:TemplateEndpoint
+    description: |
+      Template endpoint for creating custom endpoint implementations. Serves as a
+      starting point for plugin developers to implement new API formats.
+    metadata:
+      endpoint_path: null
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      supports_audio: true
+      supports_images: true
+      supports_videos: true
+      metrics_title: LLM Metrics
+
+# =============================================================================
+# Transports
+# =============================================================================
+# Transports handle the network layer for sending requests to inference servers.
+# One-to-one mapping: exactly one transport is selected based on transport_type.
+# =============================================================================
+transport:
+  http:
+    class: aiperf.transports.aiohttp_transport:AioHttpTransport
+    description: |
+      HTTP/1.1 transport implementation using aiohttp.
+      Provides high-performance async HTTP client with connection pooling,
+      SSE streaming support, automatic error handling, and custom TCP connector configuration.
+    metadata:
+      transport_type: http
+      url_schemes: [http, https]
+
+# =============================================================================
+# Dataset Composers
+# =============================================================================
+# Dataset composers create conversation datasets from various sources.
+# One-to-one mapping: exactly one composer is selected based on composer_type config.
+# =============================================================================
+dataset_composer:
+  custom:
+    class: aiperf.dataset.composer.custom:CustomDatasetComposer
+    description: |
+      Custom dataset composer that loads conversations from JSONL files. Supports
+      single-turn, multi-turn, random-pool, and mooncake-trace formats with
+      automatic format detection.
+
+  synthetic:
+    class: aiperf.dataset.composer.synthetic:SyntheticDatasetComposer
+    description: |
+      Synthetic dataset composer that generates multi-turn conversations with
+      synthetic text, image, and audio payloads using configurable distributions.
+      Supports variable turn counts and delays.
+
+  synthetic_rankings:
+    class: aiperf.dataset.composer.synthetic_rankings:SyntheticRankingsDatasetComposer
+    description: |
+      Synthetic rankings dataset composer that generates ranking tasks with query
+      and passage pairs for ranking model evaluation and benchmarking.
+
+# =============================================================================
+# Custom Dataset Loaders
+# =============================================================================
+# Custom dataset loaders parse different JSONL file formats into conversations.
+# Auto-detection: the custom composer tries loaders in priority order based on can_load().
+# =============================================================================
+custom_dataset_loader:
+  mooncake_trace:
+    class: aiperf.dataset.loader.mooncake_trace:MooncakeTraceDatasetLoader
+    description: |
+      Mooncake trace dataset loader for loading Alibaba Mooncake trace format with
+      timestamp-based replay support. Designed for fixed_schedule timing mode.
+
+  multi_turn:
+    class: aiperf.dataset.loader.multi_turn:MultiTurnDatasetLoader
+    description: |
+      Multi-turn dataset loader supporting conversation sessions with turn delays
+      and multi-modal content. Enables realistic multi-turn conversation replay
+      with session management.
+
+  random_pool:
+    class: aiperf.dataset.loader.random_pool:RandomPoolDatasetLoader
+    description: |
+      Random pool dataset loader that creates conversations by randomly sampling
+      from predefined pools of system/user/assistant messages with configurable
+      distributions.
+
+  single_turn:
+    class: aiperf.dataset.loader.single_turn:SingleTurnDatasetLoader
+    description: |
+      Single-turn dataset loader supporting multi-modal data and client-side
+      batching. Supports text, images, audio with optional timestamps or delays.
+      Does NOT support multi-turn features.
+
+# =============================================================================
+# Dataset Samplers
+# =============================================================================
+# Dataset samplers control how conversations are selected from the dataset.
+# One-to-one mapping: exactly one sampler is selected based on sampling strategy.
+# =============================================================================
+dataset_sampler:
+  random:
+    class: aiperf.dataset.dataset_samplers:RandomSampler
+    description: |
+      Random sampler that randomly selects conversation IDs with replacement. Can
+      return the same conversation ID multiple times before seeing all IDs. Uses
+      derived RNG for reproducibility.
+
+  sequential:
+    class: aiperf.dataset.dataset_samplers:SequentialSampler
+    description: |
+      Sequential sampler that iterates through conversation IDs in order. When
+      reaching the end, wraps around to the beginning indefinitely. Completely
+      deterministic with no randomness.
+
+  shuffle:
+    class: aiperf.dataset.dataset_samplers:ShuffleSampler
+    description: |
+      Shuffle sampler that randomly samples without replacement, then repeats.
+      Ensures all conversations are seen before any repetition, similar to music
+      shuffle. Uses derived RNG for reproducibility.
+
+# =============================================================================
+# Dataset Backing Store
+# =============================================================================
+# Dataset backing stores manage conversation data on the DatasetManager side.
+# Provides efficient storage and retrieval for dataset distribution to workers.
+# =============================================================================
+dataset_backing_store:
+  memory_map:
+    class: aiperf.dataset.memory_map_utils:MemoryMapDatasetBackingStore
+    description: |
+      Memory-mapped file backing store for zero-copy worker access. Stores dataset
+      in memory-mapped files for efficient sharing across processes.
+
+# =============================================================================
+# Dataset Client Store
+# =============================================================================
+# Dataset client stores read conversation data on the Worker side.
+# Provides efficient access to dataset from memory-mapped backing stores.
+# =============================================================================
+dataset_client_store:
+  memory_map:
+    class: aiperf.dataset.memory_map_utils:MemoryMapDatasetClientStore
+    description: |
+      Memory-mapped file client store for zero-copy reads. Reads from memory-mapped
+      files with O(1) lookup performance.
+
+# =============================================================================
+# Timing Strategies
+# =============================================================================
+# Timing strategies control request scheduling and credit issuance.
+# Determines when requests are sent based on fixed schedules, request rates,
+# or user-centric patterns. One-to-one mapping per benchmark phase.
+# =============================================================================
+timing_strategy:
+  fixed_schedule:
+    class: aiperf.timing.strategies.fixed_schedule:FixedScheduleStrategy
+    description: |
+      A mode where the TimingManager will send requests according to a fixed schedule.
+      Requests are sent at exact timestamps defined in the dataset.
+      Useful for trace replay or exact timing requirements.
+
+  request_rate:
+    class: aiperf.timing.strategies.request_rate:RequestRateStrategy
+    description: |
+      A mode where the TimingManager will send requests using a request rate generator based on various modes.
+      Optionally, a max concurrency limit can be specified as well.
+
+  user_centric_rate:
+    class: aiperf.timing.strategies.user_centric_rate:UserCentricStrategy
+    description: |
+      A mode where each session acts as a separate user with gap = num_users / request_rate between turns.
+      Users block on their previous turn (no interleaving within a user).
+      Matches LMBenchmark behavior for KV cache benchmarking.
+
+# =============================================================================
+# Arrival Pattern (Interval Generators)
+# =============================================================================
+# Interval generators determine inter-arrival times for request rate strategy.
+# One-to-one mapping: exactly one generator is selected based on arrival_pattern.
+# =============================================================================
+arrival_pattern:
+  concurrency_burst:
+    class: aiperf.timing.intervals:ConcurrencyBurstIntervalGenerator
+    description: |
+      Generate intervals as soon as possible, up to a max concurrency limit.
+      Only allowed when a request rate is not specified.
+      Useful for saturation/throughput testing.
+
+  constant:
+    class: aiperf.timing.intervals:ConstantIntervalGenerator
+    description: |
+      Generate intervals at a constant rate.
+      Useful for controlled request rate testing.
+
+  gamma:
+    class: aiperf.timing.intervals:GammaIntervalGenerator
+    description: |
+      Generate intervals using a gamma distribution with tunable smoothness.
+      Use --arrival-smoothness to control the shape parameter:
+      - smoothness = 1.0: Equivalent to Poisson (exponential inter-arrivals)
+      - smoothness < 1.0: More bursty/clustered arrivals
+      - smoothness > 1.0: More regular/smooth arrivals
+
+  poisson:
+    class: aiperf.timing.intervals:PoissonIntervalGenerator
+    description: |
+      Generate intervals using a poisson process.
+      Useful for realistic traffic patterns.
+
+# =============================================================================
+# Ramp (Ramp Strategies)
+# =============================================================================
+# Ramp strategies control how values are gradually transitioned over time.
+# Used for ramping concurrency limits, request rates, and other numeric parameters.
+# =============================================================================
+ramp:
+  exponential:
+    class: aiperf.timing.ramping:ExponentialStrategy
+    description: |
+      Exponential ease-in ramp strategy. Starts slow and accelerates toward target,
+      providing gradual warmup before full load.
+
+  linear:
+    class: aiperf.timing.ramping:LinearStrategy
+    description: |
+      Linear ramp strategy with configurable step size. Steps at evenly spaced intervals
+      for predictable, uniform value transitions.
+
+  poisson:
+    class: aiperf.timing.ramping:PoissonStrategy
+    description: |
+      Poisson ramp strategy with exponentially-distributed intervals.
+      Provides stochastic burstiness while guaranteeing completion within duration.
+
+# =============================================================================
+# Record Processors
+# =============================================================================
+# Record processors stream records and compute metrics in a distributed manner.
+# One-to-many mapping: multiple processors can be loaded simultaneously.
+# =============================================================================
+record_processor:
+  metric_record:
+    class: aiperf.post_processors.metric_record_processor:MetricRecordProcessor
+    description: |
+      Streaming record processor that computes metrics from MetricType.RECORD and
+      MetricType.AGGREGATE. First stage of distributed processing pipeline.
+      Always loaded.
+
+  raw_record_writer:
+    class: aiperf.post_processors.raw_record_writer_processor:RawRecordWriterProcessor
+    description: |
+      Raw record writer that streams raw request/response data to JSONL files
+      for detailed analysis and debugging. Enabled when export_level is RAW.
+
+# =============================================================================
+# Results Processors
+# =============================================================================
+# Results processors aggregate results from record processors and compute derived metrics.
+# One-to-many mapping: multiple processors can be loaded simultaneously.
+# =============================================================================
+results_processor:
+  gpu_telemetry_accumulator:
+    class: aiperf.gpu_telemetry.accumulator:GPUTelemetryAccumulator
+    description: |
+      GPU telemetry accumulator that aggregates GPU telemetry records and computes
+      metrics in a hierarchical structure. Loaded when telemetry is enabled.
+
+  gpu_telemetry_jsonl_writer:
+    class: aiperf.gpu_telemetry.jsonl_writer:GPUTelemetryJSONLWriter
+    description: |
+      GPU telemetry JSONL writer that exports per-record GPU telemetry data to
+      JSONL files as it arrives from GPUTelemetryManager. Enabled with telemetry
+      export config.
+
+  metric_results:
+    class: aiperf.post_processors.metric_results_processor:MetricResultsProcessor
+    description: |
+      Results processor that computes metrics from MetricType.DERIVED and
+      aggregates results from all record processors. Final stage of metrics
+      pipeline. Always loaded.
+
+  record_export:
+    class: aiperf.post_processors.record_export_results_processor:RecordExportResultsProcessor
+    description: |
+      Record export processor that writes per-record metrics to JSONL files with
+      display unit conversion and filtering. Enabled when export_level is RECORDS.
+
+  server_metrics_accumulator:
+    class: aiperf.server_metrics.accumulator:ServerMetricsAccumulator
+    description: |
+      Server metrics accumulator that aggregates Prometheus server metrics records
+      and computes summary statistics. Supports Gauge, Counter, and Histogram metrics.
+
+  server_metrics_jsonl_writer:
+    class: aiperf.server_metrics.jsonl_writer:ServerMetricsJSONLWriter
+    description: |
+      Server metrics JSONL writer that exports per-record server metrics data to
+      JSONL files in slim format.
+
+  timeslice:
+    class: aiperf.post_processors.timeslice_metric_results_processor:TimesliceMetricResultsProcessor
+    description: |
+      Timeslice results processor that computes metrics for user-configurable
+      time slices, enabling time-series analysis of benchmark performance.
+      Enabled when timeslice config is set.
+
+# =============================================================================
+# Data Exporters
+# =============================================================================
+# Data exporters write benchmark results to files in various formats.
+# One-to-many mapping: multiple exporters can be loaded simultaneously.
+# =============================================================================
+data_exporter:
+  csv:
+    class: aiperf.exporters.metrics_csv_exporter:MetricsCsvExporter
+    description: |
+      CSV exporter for aggregated metrics. Exports benchmark results to CSV format
+      for spreadsheet analysis and data processing. Always loaded.
+
+  json:
+    class: aiperf.exporters.metrics_json_exporter:MetricsJsonExporter
+    description: |
+      JSON exporter for aggregated metrics. Exports benchmark results to JSON
+      format with full metric details and structured data. Always loaded.
+
+  raw_record_aggregator:
+    class: aiperf.post_processors.raw_record_writer_processor:RawRecordAggregator
+    description: |
+      Raw record aggregator that consolidates raw JSONL files from multiple
+      record processors into final output files. Enabled when export_level is RAW.
+
+  server_metrics_csv:
+    class: aiperf.server_metrics.csv_exporter:ServerMetricsCsvExporter
+    description: |
+      CSV exporter for server metrics. Exports Prometheus server metrics to CSV
+      format for spreadsheet analysis.
+
+  server_metrics_json:
+    class: aiperf.server_metrics.json_exporter:ServerMetricsJsonExporter
+    description: |
+      JSON exporter for server metrics. Exports Prometheus server metrics to JSON
+      format with full metric details.
+
+  server_metrics_parquet:
+    class: aiperf.server_metrics.parquet_exporter:ServerMetricsParquetExporter
+    description: |
+      Parquet exporter for server metrics. Exports Prometheus server metrics to
+      Parquet format for efficient columnar storage and analysis.
+
+  timeslice_csv:
+    class: aiperf.exporters.timeslice_metrics_csv_exporter:TimesliceMetricsCsvExporter
+    description: |
+      CSV exporter for timeslice metrics. Exports time-series metric data to CSV
+      format for spreadsheet analysis and plotting.
+
+  timeslice_json:
+    class: aiperf.exporters.timeslice_metrics_json_exporter:TimesliceMetricsJsonExporter
+    description: |
+      JSON exporter for timeslice metrics. Exports time-series metric data to JSON
+      format for temporal analysis and visualization.
+
+# =============================================================================
+# Console Exporters
+# =============================================================================
+# Console exporters display benchmark results and diagnostics to stdout.
+# One-to-many mapping: multiple console exporters can be loaded simultaneously.
+# =============================================================================
+console_exporter:
+  api_errors:
+    class: aiperf.exporters.console_api_error_exporter:ConsoleApiErrorExporter
+    description: |
+      Console exporter for API error details. Displays detailed error information
+      for API request failures with grouped error analysis.
+
+  errors:
+    class: aiperf.exporters.console_error_exporter:ConsoleErrorExporter
+    description: |
+      Console exporter for error summary. Displays error counts and details to
+      help diagnose failures during benchmark execution. Always loaded.
+
+  experimental_metrics:
+    class: aiperf.exporters.experimental_metrics_console_exporter:ConsoleExperimentalMetricsExporter
+    description: |
+      Console exporter for experimental metrics. Displays metrics under development
+      or evaluation that may change in future releases. Not loaded by default.
+
+  http_trace:
+    class: aiperf.exporters.http_trace_console_exporter:HttpTraceConsoleExporter
+    description: |
+      Console exporter for HTTP trace information. Displays detailed HTTP
+      request/response traces for debugging network issues.
+
+  internal_metrics:
+    class: aiperf.exporters.internal_metrics_console_exporter:ConsoleInternalMetricsExporter
+    description: |
+      Console exporter for internal system metrics. Displays AIPerf framework
+      performance metrics for debugging and optimization. Loaded by default.
+
+  metrics:
+    class: aiperf.exporters.console_metrics_exporter:ConsoleMetricsExporter
+    description: |
+      Console exporter for primary benchmark metrics. Displays formatted metric
+      tables to stdout for user-facing results. Always loaded.
+
+  telemetry:
+    class: aiperf.exporters.gpu_telemetry_console_exporter:GPUTelemetryConsoleExporter
+    description: |
+      Console exporter for GPU telemetry metrics. Displays GPU utilization,
+      memory, power, and temperature metrics to stdout. Loaded when telemetry
+      is enabled.
+
+  usage_discrepancy_warning:
+    class: aiperf.exporters.console_usage_discrepancy_exporter:ConsoleUsageDiscrepancyExporter
+    description: |
+      Console exporter for usage discrepancy warnings. Alerts when token counts
+      from server differ significantly from client calculations. Always loaded.
+
+# =============================================================================
+# UI Implementations
+# =============================================================================
+# UI implementations provide progress tracking and visualization during benchmark execution.
+# One-to-one mapping: exactly one UI is selected based on ui config.
+# =============================================================================
+ui:
+  dashboard:
+    class: aiperf.ui.dashboard.aiperf_dashboard_ui:AIPerfDashboardUI
+    description: |
+      Rich terminal dashboard UI with real-time progress tracking, metric updates,
+      and visual components using Textual framework. Provides interactive TUI
+      experience.
+
+  none:
+    class: aiperf.ui.no_ui:NoUI
+    description: |
+      No-op UI implementation. Disables all UI output for headless execution,
+      automation scripts, or when output is not desired.
+
+  simple:
+    class: aiperf.ui.tqdm_ui:TQDMProgressUI
+    description: |
+      Simple progress bar UI using tqdm. Provides lightweight progress tracking
+      suitable for simple terminals and logs with minimal resource overhead.
+
+# =============================================================================
+# URL Selection Strategies
+# =============================================================================
+# URL selection strategies control how requests are distributed across multiple endpoints.
+# One-to-one mapping: exactly one strategy is selected based on url_selection_strategy.
+# =============================================================================
+url_selection_strategy:
+  round_robin:
+    class: aiperf.timing.url_samplers:RoundRobinURLSampler
+    description: |
+      Round-robin URL sampler for even distribution across endpoints.
+      Distributes requests evenly across URLs in sequential order.
+      Each call to next_url_index() returns the next URL index in the list, wrapping around
+      when the end is reached.
+
+# =============================================================================
+# Plot
+# =============================================================================
+# Plot handlers create different types of visualizations from benchmark data.
+# One-to-one mapping: exactly one handler is selected based on plot type.
+# =============================================================================
+plot:
+  area:
+    class: aiperf.plot.handlers.single_run_handlers:AreaHandler
+    description: Filled area showing token throughput distribution.
+    metadata:
+      display_name: Throughput Over Time
+      category: combined
+
+  dual_axis:
+    class: aiperf.plot.handlers.single_run_handlers:DualAxisHandler
+    description: Two metrics on separate Y-axes (e.g., throughput + GPU util).
+    metadata:
+      display_name: Dual Metric Overlay
+      category: combined
+
+  histogram:
+    class: aiperf.plot.handlers.single_run_handlers:HistogramHandler
+    description: Bar chart of aggregated values per time window.
+    metadata:
+      display_name: Time Window Bars
+      category: aggregated
+
+  pareto:
+    class: aiperf.plot.handlers.multi_run_handlers:ParetoHandler
+    description: Trade-off frontier showing optimal configurations.
+    metadata:
+      display_name: Pareto Curve
+      category: comparison
+
+  percentile_bands:
+    class: aiperf.plot.handlers.single_run_handlers:PercentileBandsHandler
+    description: p50 line with p95/p99 shaded uncertainty bands for SLA monitoring.
+    metadata:
+      display_name: Percentile Bands Over Time
+      category: aggregated
+
+  request_timeline:
+    class: aiperf.plot.handlers.single_run_handlers:RequestTimelineHandler
+    description: Gantt-style view showing TTFT vs generation time per request.
+    metadata:
+      display_name: Request Phase Breakdown
+      category: per_request
+
+  scatter:
+    class: aiperf.plot.handlers.single_run_handlers:ScatterHandler
+    description: Individual data points for each request.
+    metadata:
+      display_name: Per-Request Scatter
+      category: per_request
+
+  scatter_line:
+    class: aiperf.plot.handlers.multi_run_handlers:ScatterLineHandler
+    description: Points connected by lines, grouped by configuration.
+    metadata:
+      display_name: Scatter + Trend Line
+      category: comparison
+
+  scatter_with_percentiles:
+    class: aiperf.plot.handlers.single_run_handlers:ScatterWithPercentilesHandler
+    description: Per-request points with rolling p50/p95/p99 trend lines.
+    metadata:
+      display_name: Scatter with Trends
+      category: per_request
+
+  timeslice:
+    class: aiperf.plot.handlers.single_run_handlers:TimeSliceHandler
+    description: Aggregated averages per time window (e.g., every 10s).
+    metadata:
+      display_name: Time Window Summary
+      category: aggregated
+
+# =============================================================================
+# Communication Backends
+# =============================================================================
+# Communication backends provide the underlying transport for inter-service messaging.
+# One-to-one mapping: exactly one communication backend is selected based on deployment.
+# =============================================================================
+communication:
+  zmq_ipc:
+    class: aiperf.zmq.zmq_comms:ZMQIPCCommunication
+    description: |
+      ZMQ IPC communication backend for single-node deployments. Provides
+      high-performance message passing over Unix domain sockets for same-machine
+      communication.
+
+  zmq_tcp:
+    class: aiperf.zmq.zmq_comms:ZMQTCPCommunication
+    description: |
+      ZMQ TCP communication backend for distributed multi-node deployments. Provides
+      reliable message passing over TCP sockets for cross-machine communication.
+
+# =============================================================================
+# Communication Clients
+# =============================================================================
+# Communication clients implement different ZMQ socket patterns for messaging.
+# Internal infrastructure: automatically created by framework based on usage patterns.
+# =============================================================================
+communication_client:
+  pub:
+    class: aiperf.zmq.pub_client:ZMQPubClient
+    description: |
+      ZMQ PUB client for publish-subscribe messaging pattern. Broadcasts messages
+      to multiple subscribers with topic-based filtering support.
+
+  pull:
+    class: aiperf.zmq.pull_client:ZMQPullClient
+    description: |
+      ZMQ PULL client for pipeline messaging pattern. Receives messages from pushers
+      in fair-queued fashion for work processing.
+
+  push:
+    class: aiperf.zmq.push_client:ZMQPushClient
+    description: |
+      ZMQ PUSH client for pipeline messaging pattern. Sends messages to workers in
+      load-balanced fashion for distributed work distribution.
+
+  reply:
+    class: aiperf.zmq.router_reply_client:ZMQRouterReplyClient
+    description: |
+      ZMQ ROUTER client for request-reply messaging pattern. Receives commands and
+      sends responses to specific requesters with identity-based routing.
+
+  request:
+    class: aiperf.zmq.dealer_request_client:ZMQDealerRequestClient
+    description: |
+      ZMQ DEALER client for request-reply messaging pattern. Sends commands and
+      waits for responses with timeout support and retry logic.
+
+  streaming_dealer:
+    class: aiperf.zmq.streaming_dealer_client:ZMQStreamingDealerClient
+    description: |
+      ZMQ DEALER client for streaming messaging pattern. Provides high-throughput
+      streaming with flow control and backpressure management.
+
+  streaming_router:
+    class: aiperf.zmq.streaming_router_client:ZMQStreamingRouterClient
+    description: |
+      ZMQ ROUTER client for streaming messaging pattern. Receives high-throughput
+      streams with identity-based routing and connection management.
+
+  sub:
+    class: aiperf.zmq.sub_client:ZMQSubClient
+    description: |
+      ZMQ SUB client for publish-subscribe messaging pattern. Receives broadcasts
+      from publishers with topic filtering and subscription management.
+
+# =============================================================================
+# ZMQ Proxies
+# =============================================================================
+# ZMQ proxies provide message routing between different socket patterns.
+# Internal infrastructure: automatically created by framework based on configuration.
+# =============================================================================
+zmq_proxy:
+  dealer_router:
+    class: aiperf.zmq.zmq_proxy_sockets:ZMQDealerRouterProxy
+    description: |
+      DEALER/ROUTER proxy for request-reply pattern. Routes messages between DEALER
+      clients and ROUTER services with identity-based routing and response
+      forwarding.
+
+  push_pull:
+    class: aiperf.zmq.zmq_proxy_sockets:ZMQPushPullProxy
+    description: |
+      PUSH/PULL proxy for pipeline pattern. Routes messages from PUSH clients to
+      PULL services with load-balanced work distribution.
+
+  xpub_xsub:
+    class: aiperf.zmq.zmq_proxy_sockets:ZMQXPubXSubProxy
+    description: |
+      XPUB/XSUB proxy for publish-subscribe pattern. Routes messages from PUB
+      clients to SUB services with subscription management and message broadcasting.

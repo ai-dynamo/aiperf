@@ -531,3 +531,148 @@ class TestIssuedAtTimestamp:
         assert before <= sent_credit.issued_at_ns <= after
         # Should be within 1 second
         assert (after - sent_credit.issued_at_ns) < 1_000_000_000
+
+
+# =============================================================================
+# Test: URL Selection Strategy Integration
+# =============================================================================
+
+
+class TestURLSelectionStrategy:
+    """Tests for URL selection in multi-URL mode.
+
+    When multiple --url endpoints are configured, the URL selection strategy
+    (round-robin) should only be invoked on the first turn of a conversation.
+    Subsequent turns get url_index=None and rely on the worker's session cache.
+    """
+
+    async def test_first_turn_gets_url_index_from_strategy(
+        self,
+        mock_stop_checker,
+        mock_progress,
+        mock_concurrency,
+        mock_router,
+        mock_cancellation,
+        mock_lifecycle,
+    ):
+        """First turn should get url_index from URL selection strategy."""
+        mock_url_strategy = MagicMock()
+        mock_url_strategy.next_url_index.return_value = 2
+
+        issuer = CreditIssuer(
+            phase=CreditPhase.PROFILING,
+            stop_checker=mock_stop_checker,
+            progress=mock_progress,
+            concurrency_manager=mock_concurrency,
+            credit_router=mock_router,
+            cancellation_policy=mock_cancellation,
+            lifecycle=mock_lifecycle,
+            url_selection_strategy=mock_url_strategy,
+        )
+
+        turn = make_turn(turn_index=0, num_turns=3)  # First turn
+        await issuer.issue_credit(turn)
+
+        # Strategy should be called for first turn
+        mock_url_strategy.next_url_index.assert_called_once()
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.url_index == 2
+
+    async def test_subsequent_turns_get_none_url_index(
+        self,
+        mock_stop_checker,
+        mock_progress,
+        mock_concurrency,
+        mock_router,
+        mock_cancellation,
+        mock_lifecycle,
+    ):
+        """Subsequent turns should get url_index=None (worker uses session cache)."""
+        mock_url_strategy = MagicMock()
+        mock_url_strategy.next_url_index.return_value = 5  # Should NOT be used
+
+        issuer = CreditIssuer(
+            phase=CreditPhase.PROFILING,
+            stop_checker=mock_stop_checker,
+            progress=mock_progress,
+            concurrency_manager=mock_concurrency,
+            credit_router=mock_router,
+            cancellation_policy=mock_cancellation,
+            lifecycle=mock_lifecycle,
+            url_selection_strategy=mock_url_strategy,
+        )
+
+        turn = make_turn(turn_index=1, num_turns=3)  # NOT first turn
+        await issuer.issue_credit(turn)
+
+        # Strategy should NOT be called for subsequent turns
+        mock_url_strategy.next_url_index.assert_not_called()
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.url_index is None
+
+    async def test_multi_turn_conversation_only_first_turn_advances_round_robin(
+        self,
+        mock_stop_checker,
+        mock_progress,
+        mock_concurrency,
+        mock_router,
+        mock_cancellation,
+        mock_lifecycle,
+    ):
+        """Multi-turn conversation: only first turn should advance round-robin.
+
+        This ensures all turns in a conversation hit the same backend server.
+        The worker stores url_index from first turn in UserSession and uses
+        that for all subsequent turns.
+        """
+        mock_url_strategy = MagicMock()
+        call_count = [0]
+
+        def next_url():
+            idx = call_count[0]
+            call_count[0] += 1
+            return idx
+
+        mock_url_strategy.next_url_index.side_effect = next_url
+
+        issuer = CreditIssuer(
+            phase=CreditPhase.PROFILING,
+            stop_checker=mock_stop_checker,
+            progress=mock_progress,
+            concurrency_manager=mock_concurrency,
+            credit_router=mock_router,
+            cancellation_policy=mock_cancellation,
+            lifecycle=mock_lifecycle,
+            url_selection_strategy=mock_url_strategy,
+        )
+
+        # Simulate 3-turn conversation
+        for turn_index in range(3):
+            turn = make_turn(
+                conversation_id="multi-turn-conv",
+                turn_index=turn_index,
+                num_turns=3,
+            )
+            await issuer.issue_credit(turn)
+
+        # Round-robin should only advance once (for first turn)
+        assert mock_url_strategy.next_url_index.call_count == 1
+
+        # Check credits: first turn has url_index=0, others have None
+        sent_credits = [
+            call.kwargs["credit"] for call in mock_router.send_credit.call_args_list
+        ]
+        assert sent_credits[0].url_index == 0  # First turn gets index
+        assert sent_credits[1].url_index is None  # Subsequent turns: None
+        assert sent_credits[2].url_index is None
+
+    async def test_no_url_strategy_means_none_url_index(
+        self, credit_issuer, mock_router
+    ):
+        """Without URL strategy, all credits should have url_index=None."""
+        turn = make_turn(turn_index=0, num_turns=1)
+
+        await credit_issuer.issue_credit(turn)
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.url_index is None

@@ -63,6 +63,10 @@ dependencies = [
 [project.scripts]
 aiperf = "aiperf.cli:app"
 
+# Plugin entry point definition to discover plugins at runtime
+[project.entry-points."aiperf.plugins"]
+aiperf = "aiperf.plugin:plugins.yaml"
+
 [project.optional-dependencies]
 dev = [
   "black>=25.1.0",

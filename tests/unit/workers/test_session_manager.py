@@ -140,3 +140,42 @@ class TestUserSessionManager:
         # Turn 3 should fail (out of range)
         with pytest.raises(ValueError, match="out of range"):
             session.advance_turn(3)
+
+    def test_url_index_stored_for_multi_url_load_balancing(
+        self, session_manager, sample_conversation
+    ):
+        """Test that url_index is stored in session for multi-URL load balancing.
+
+        When using multiple --url endpoints with multi-turn conversations, the first
+        turn gets a url_index from the round-robin sampler. All subsequent turns must
+        use the same url_index to ensure the entire conversation hits the same backend.
+        """
+        # First turn: Credit provides url_index=2 from round-robin
+        session = session_manager.create_and_store(
+            x_correlation_id="multi-url-session",
+            conversation=sample_conversation,
+            num_turns=3,
+            url_index=2,  # From Credit on first turn
+        )
+
+        # Session stores the url_index for subsequent turns
+        assert session.url_index == 2
+
+        # All turns should use this stored url_index (worker reads from session)
+        for turn_idx in range(3):
+            session.advance_turn(turn_idx)
+            # Worker would use session.url_index (2) for every turn
+            assert session.url_index == 2
+
+    def test_url_index_none_for_single_url_mode(
+        self, session_manager, sample_conversation
+    ):
+        """Test that url_index can be None when only one URL is configured."""
+        session = session_manager.create_and_store(
+            x_correlation_id="single-url-session",
+            conversation=sample_conversation,
+            num_turns=2,
+            url_index=None,  # No multi-URL load balancing
+        )
+
+        assert session.url_index is None
