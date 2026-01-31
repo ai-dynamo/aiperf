@@ -6,8 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase, DatasetSamplingStrategy, TimingMode
+from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
+from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import TimingConfig
 from aiperf.timing.phase_orchestrator import PhaseOrchestrator
 from tests.unit.timing.conftest import make_phase_config, make_timing_config

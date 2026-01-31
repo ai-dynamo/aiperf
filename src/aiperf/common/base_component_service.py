@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
@@ -6,8 +6,7 @@ import uuid
 
 from aiperf.common.base_service import BaseService
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import CommandType, LifecycleState, ServiceType
+from aiperf.common.enums import CommandType, LifecycleState
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import (
     background_task,
@@ -25,10 +24,9 @@ from aiperf.common.messages.command_messages import (
     RegisterServiceCommand,
 )
 from aiperf.common.models.error_models import ErrorDetails
-from aiperf.common.protocols import ServiceProtocol
+from aiperf.plugin.enums import ServiceType
 
 
-@implements_protocol(ServiceProtocol)
 class BaseComponentService(BaseService):
     """Base class for all Component services.
 

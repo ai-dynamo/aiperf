@@ -1,9 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import os
 import signal
 from contextlib import suppress
+from typing import TYPE_CHECKING
 
 from rich.console import RenderableType
 from textual.app import App, ComposeResult
@@ -17,7 +20,6 @@ from aiperf.common.environment import Environment
 from aiperf.common.messages import StartRealtimeTelemetryCommand
 from aiperf.common.mixins import CombinedPhaseStats
 from aiperf.common.models import MetricResult, WorkerStats
-from aiperf.controller.system_controller import SystemController
 from aiperf.ui.dashboard.aiperf_theme import AIPERF_THEME
 from aiperf.ui.dashboard.progress_dashboard import ProgressDashboard
 from aiperf.ui.dashboard.progress_header import ProgressHeader
@@ -25,6 +27,9 @@ from aiperf.ui.dashboard.realtime_metrics_dashboard import RealtimeMetricsDashbo
 from aiperf.ui.dashboard.realtime_telemetry_dashboard import RealtimeTelemetryDashboard
 from aiperf.ui.dashboard.rich_log_viewer import RichLogViewer
 from aiperf.ui.dashboard.worker_dashboard import WorkerDashboard
+
+if TYPE_CHECKING:
+    from aiperf.controller.system_controller import SystemController
 
 
 class AIPerfTextualApp(App):

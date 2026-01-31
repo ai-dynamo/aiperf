@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from unittest.mock import Mock, patch
@@ -22,7 +22,7 @@ from aiperf.common.config import (
     TurnDelayConfig,
     UserConfig,
 )
-from aiperf.common.enums import CustomDatasetType
+from aiperf.plugin.enums import CustomDatasetType
 
 
 @pytest.fixture(autouse=True)

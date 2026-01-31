@@ -7,11 +7,12 @@ import multiprocessing
 import os
 import platform
 import sys
+import uuid
 import warnings
 
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.environment import Environment
-from aiperf.common.protocols import ServiceProtocol
+from aiperf.plugin.enums import ServiceType
 
 # Suppress ZMQ RuntimeWarning about dropped messages during shutdown.
 # This is expected behavior when async tasks are cancelled while ZMQ messages are in-flight.
@@ -34,7 +35,7 @@ warnings.filterwarnings(
 
 
 def bootstrap_and_run_service(
-    service_class: type[ServiceProtocol],
+    service_type: ServiceType,
     service_config: ServiceConfig | None = None,
     user_config: UserConfig | None = None,
     service_id: str | None = None,
@@ -47,8 +48,8 @@ def bootstrap_and_run_service(
     create an instance of the service, and run it.
 
     Args:
-        service_class: The python class of the service to run. This should be a subclass of
-            BaseService. This should be a type and not an instance.
+        service_type: The type of the service to run.
+            ServiceType. This should be a string or enum value.
         service_config: The service configuration to use. If not provided, the service
             configuration will be loaded from the environment variables.
         user_config: The user configuration to use. If not provided, the user configuration
@@ -57,6 +58,17 @@ def bootstrap_and_run_service(
             the child process logging will be set up.
         kwargs: Additional keyword arguments to pass to the service constructor.
     """
+    from aiperf.plugin import plugins
+    from aiperf.plugin.enums import PluginType
+
+    ServiceClass = plugins.get_class(PluginType.SERVICE, service_type)
+    service_metadata = plugins.get_service_metadata(service_type)
+    if not service_id:
+        service_id = (
+            f"{service_type}_{uuid.uuid4().hex[:8]}"
+            if service_metadata.replicable
+            else str(service_type)
+        )
 
     # Load the service configuration
     if service_config is None:
@@ -75,11 +87,7 @@ def bootstrap_and_run_service(
         if Environment.DEV.ENABLE_YAPPI:
             _start_yappi_profiling()
 
-        from aiperf.module_loader import ensure_modules_loaded
-
-        ensure_modules_loaded()
-
-        if service_class.__name__ in ("Worker", "TimingManager"):
+        if service_metadata.disable_gc:
             # Disable garbage collection in child processes to prevent unpredictable latency spikes.
             # Only required in timing critical services such as Worker and TimingManager.
             import gc
@@ -103,7 +111,7 @@ def bootstrap_and_run_service(
             constants.GPU_TELEMETRY_METRICS_CONFIG.extend(custom_metrics)
             constants.DCGM_TO_FIELD_MAPPING.update(new_dcgm_mappings)
 
-        service = service_class(
+        service = ServiceClass(
             service_config=service_config,
             user_config=user_config,
             service_id=service_id,

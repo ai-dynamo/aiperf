@@ -8,7 +8,7 @@ from scipy import stats
 
 from aiperf.common import random_generator as rng
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import ArrivalPattern
+from aiperf.plugin.enums import ArrivalPattern
 from aiperf.timing.intervals import (
     ConcurrencyBurstIntervalGenerator,
     ConstantIntervalGenerator,

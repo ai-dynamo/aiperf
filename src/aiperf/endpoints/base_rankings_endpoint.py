@@ -1,13 +1,16 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
 from abc import abstractmethod
 from typing import Any
 
-from aiperf.common.models import ParsedResponse
-from aiperf.common.models.record_models import RankingsResponseData, RequestInfo
-from aiperf.common.protocols import InferenceServerResponse
+from aiperf.common.models import (
+    InferenceServerResponse,
+    ParsedResponse,
+    RankingsResponseData,
+    RequestInfo,
+)
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 

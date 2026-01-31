@@ -6,21 +6,23 @@ from pathlib import Path
 
 from aiperf.common.enums import (
     AIPerfLogLevel,
-    AIPerfUIType,
-    ArrivalPattern,
     AudioFormat,
-    CommunicationBackend,
     ConnectionReuseStrategy,
-    DatasetSamplingStrategy,
-    EndpointType,
     ExportLevel,
     ImageFormat,
     ModelSelectionStrategy,
     ServerMetricsFormat,
-    ServiceRunType,
-    URLSelectionStrategy,
     VideoFormat,
     VideoSynthType,
+)
+from aiperf.plugin.enums import (
+    ArrivalPattern,
+    CommunicationBackend,
+    DatasetSamplingStrategy,
+    EndpointType,
+    ServiceRunType,
+    UIType,
+    URLSelectionStrategy,
 )
 
 
@@ -194,7 +196,7 @@ class ServiceDefaults:
     EXTRA_VERBOSE = False
     LOG_PATH = None
     RECORD_PROCESSOR_SERVICE_COUNT = None
-    UI_TYPE = AIPerfUIType.DASHBOARD
+    UI_TYPE = UIType.DASHBOARD
 
 
 @dataclass(frozen=True)

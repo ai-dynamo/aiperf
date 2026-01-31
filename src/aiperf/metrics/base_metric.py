@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import inspect
@@ -8,10 +8,10 @@ from typing import ClassVar, Generic, get_args, get_origin
 from aiperf.common.enums import (
     MetricFlags,
     MetricType,
+    MetricUnitT,
     MetricValueType,
     MetricValueTypeVarT,
 )
-from aiperf.common.enums.metric_enums import MetricUnitT
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.types import MetricTagT

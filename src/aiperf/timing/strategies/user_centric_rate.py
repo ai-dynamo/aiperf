@@ -64,10 +64,8 @@ from dataclasses import dataclass
 from math import gcd
 from typing import TYPE_CHECKING
 
-from aiperf.common.enums import TimingMode
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.credit.structs import Credit, TurnToSend
-from aiperf.timing.strategies.core import TimingStrategyFactory
 
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
@@ -120,7 +118,6 @@ class User:
         return self.sampled.build_first_turn(max_turns=self.max_turns)
 
 
-@TimingStrategyFactory.register(TimingMode.USER_CENTRIC_RATE)
 class UserCentricStrategy(AIPerfLoggerMixin):
     """User-centric timing strategy for KV cache benchmarking with realistic multi-user patterns."""
 

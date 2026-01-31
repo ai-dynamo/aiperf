@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from aiperf.common.enums import CustomDatasetType
 from aiperf.common.models import Text
 from aiperf.dataset.loader.models import RandomPool
 from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
+from aiperf.plugin.enums import CustomDatasetType
 
 
 class TestRandomPool:

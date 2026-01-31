@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.config import ServiceConfig
-from aiperf.common.enums import CreditPhase, EndpointType, ModelSelectionStrategy
+from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
 from aiperf.common.models import (
     ErrorDetails,
     RequestInfo,
@@ -24,6 +24,7 @@ from aiperf.common.models.model_endpoint_info import (
     ModelListInfo,
 )
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.plugin.enums import EndpointType
 from aiperf.records.inference_result_parser import InferenceResultParser
 
 
@@ -94,7 +95,8 @@ def inference_result_parser(user_config):
         patch(
             "aiperf.common.models.model_endpoint_info.ModelEndpointInfo.from_user_config"
         ),
-        patch("aiperf.common.factories.EndpointFactory.create_instance"),
+        patch("aiperf.plugin.plugins.get_class"),
+        patch("aiperf.plugin.plugins.get_endpoint_metadata"),
     ):
         parser = InferenceResultParser(
             service_config=ServiceConfig(),

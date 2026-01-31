@@ -1,15 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 
 from pydantic import BaseModel
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import ServiceRunType
 from aiperf.common.environment import Environment
-from aiperf.common.factories import ServiceManagerFactory
-from aiperf.common.protocols import ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
 from aiperf.controller.base_service_manager import BaseServiceManager
 
@@ -22,8 +18,6 @@ class ServiceKubernetesRunInfo(BaseModel):
     namespace: str
 
 
-@implements_protocol(ServiceManagerProtocol)
-@ServiceManagerFactory.register(ServiceRunType.KUBERNETES)
 class KubernetesServiceManager(BaseServiceManager):
     """
     Service Manager for starting and stopping services in a Kubernetes cluster.

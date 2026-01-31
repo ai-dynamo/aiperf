@@ -23,9 +23,13 @@ from aiperf.common.config import (
     UserConfig,
 )
 from aiperf.common.config.prompt_config import InputTokensConfig
-from aiperf.common.enums import EndpointType, GPUTelemetryMode
-from aiperf.common.enums.dataset_enums import DatasetSamplingStrategy
-from aiperf.common.enums.timing_enums import ArrivalPattern, TimingMode
+from aiperf.common.enums import GPUTelemetryMode
+from aiperf.plugin.enums import (
+    ArrivalPattern,
+    DatasetSamplingStrategy,
+    EndpointType,
+    TimingMode,
+)
 
 # =============================================================================
 # Test Helpers

@@ -12,12 +12,11 @@ import pytest
 from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CreditPhase,
-    EndpointType,
     ExportLevel,
     MessageType,
+    MetricValueTypeT,
     ModelSelectionStrategy,
 )
-from aiperf.common.enums.metric_enums import MetricValueTypeT
 from aiperf.common.messages import MetricRecordsMessage
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
@@ -44,6 +43,7 @@ from aiperf.common.models.record_models import (
 from aiperf.common.types import MetricTagT
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.metrics.base_metric import BaseMetric
+from aiperf.plugin.enums import EndpointType
 from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from aiperf.post_processors.raw_record_writer_processor import RawRecordWriterProcessor
 from tests.unit.conftest import (

@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aiperf.common.config import UserConfig
-from aiperf.common.enums import TimingMode
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.messages import (
@@ -18,6 +17,7 @@ from aiperf.common.messages import (
     ProfileConfigureCommand,
 )
 from aiperf.common.models import DatasetMetadata, MemoryMapClientMetadata
+from aiperf.plugin.enums import TimingMode
 from aiperf.timing.manager import TimingManager
 from tests.unit.timing.conftest import make_dataset_with_schedule
 

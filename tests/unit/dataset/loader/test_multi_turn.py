@@ -5,10 +5,10 @@ import json
 
 import pytest
 
-from aiperf.common.enums import CustomDatasetType
 from aiperf.common.models import Image, Text
-from aiperf.dataset import MultiTurn, SingleTurn
+from aiperf.dataset.loader.models import MultiTurn, SingleTurn
 from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
+from aiperf.plugin.enums import CustomDatasetType
 
 
 class TestMultiTurn:

@@ -8,16 +8,9 @@ import aiofiles
 
 from aiperf.common.config import UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums.data_exporter_enums import DataExporterType, ExportLevel
-from aiperf.common.enums.post_processor_enums import RecordProcessorType
+from aiperf.common.enums import ExportLevel
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
-from aiperf.common.factories import (
-    DataExporterFactory,
-    EndpointFactory,
-    RecordProcessorFactory,
-)
 from aiperf.common.mixins import AIPerfLoggerMixin, BufferedJSONLWriterMixin
 from aiperf.common.models import (
     MetricRecordMetadata,
@@ -26,12 +19,11 @@ from aiperf.common.models import (
     RawRecordInfo,
 )
 from aiperf.common.models.record_models import RequestInfo
-from aiperf.common.protocols import DataExporterProtocol, RecordProcessorProtocol
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PluginType
 
 
-@implements_protocol(RecordProcessorProtocol)
-@RecordProcessorFactory.register(RecordProcessorType.RAW_RECORD_WRITER)
 class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
     """Writes raw request/response data with per-record metrics to JSONL files.
 
@@ -68,10 +60,10 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
         output_file = output_dir / f"raw_records_{safe_id}.jsonl"
 
         self._model_endpoint = ModelEndpointInfo.from_user_config(user_config)
-        self._endpoint = EndpointFactory.create_instance(
-            self._model_endpoint.endpoint.type,
-            model_endpoint=self._model_endpoint,
+        EndpointClass = plugins.get_class(
+            PluginType.ENDPOINT, self._model_endpoint.endpoint.type
         )
+        self._endpoint = EndpointClass(model_endpoint=self._model_endpoint)
 
         # Initialize the buffered writer mixin
         super().__init__(
@@ -131,8 +123,6 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
         await self.buffered_write(record_export)
 
 
-@implements_protocol(DataExporterProtocol)
-@DataExporterFactory.register(DataExporterType.RAW_RECORD_AGGREGATOR)
 class RawRecordAggregator(AIPerfLoggerMixin):
     """Aggregator for raw records."""
 

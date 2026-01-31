@@ -107,10 +107,6 @@ class DatasetGeneratorError(AIPerfError):
     """Generic dataset generator error."""
 
 
-class FactoryCreationError(AIPerfError):
-    """Exception raised when a factory encounters an error while creating a class."""
-
-
 class InitializationError(AIPerfError):
     """Exception raised when something fails to initialize."""
 

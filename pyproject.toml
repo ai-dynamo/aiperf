@@ -131,11 +131,12 @@ verbosity_assertions = 2
 # To run them: pytest -m performance, pytest -m ffmpeg, pytest -m stress, pytest -m statistical
 # IDE note: When running a specific test file/function from IDE, markers are often bypassed
 addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit'"
-# Filter out known warnings from third-party libraries
+# Filter out known warnings from third-party libraries and test infrastructure
 filterwarnings = [
-    "ignore:Fixture.*has the empty cache of scopes.*:RuntimeWarning:looptime.plugin",
-    "ignore:Fixture.*not found in the cache of scopes.*:RuntimeWarning:looptime.plugin",
-    "ignore:There is no current event loop:DeprecationWarning:looptime.plugin",
+    "ignore::RuntimeWarning:looptime",
+    "ignore:There is no current event loop:DeprecationWarning",
+    "ignore:coroutine.*was never awaited:RuntimeWarning",
+    "ignore:unclosed file:ResourceWarning",
 ]
 
 [tool.codespell]

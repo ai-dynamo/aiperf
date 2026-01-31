@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import csv
@@ -8,18 +8,14 @@ from collections import defaultdict
 from decimal import Decimal
 from typing import NamedTuple
 
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import DataExporterType, PrometheusMetricType
-from aiperf.common.enums.data_exporter_enums import ServerMetricsFormat
+from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled
-from aiperf.common.factories import DataExporterFactory
 from aiperf.common.models.server_metrics_models import (
     CounterSeries,
     GaugeSeries,
     HistogramSeries,
     ServerMetricsEndpointSummary,
 )
-from aiperf.common.protocols import DataExporterProtocol
 from aiperf.exporters.display_units_utils import normalize_endpoint_display
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
@@ -77,8 +73,6 @@ class CsvMetricInfo(NamedTuple):
         return self.metric_name.endswith("_info")
 
 
-@DataExporterFactory.register(DataExporterType.SERVER_METRICS_CSV)
-@implements_protocol(DataExporterProtocol)
 class ServerMetricsCsvExporter(MetricsBaseExporter):
     """Export server metrics to a separate CSV file organized by metric type.
 

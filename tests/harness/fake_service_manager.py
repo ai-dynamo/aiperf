@@ -2,11 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """In-process fake service manager for component testing.
 
-This module registers FakeServiceManager with ServiceManagerFactory using maximum
-priority, automatically replacing the production multiprocessing manager when
-imported. No configuration changes are needed - simply importing this module
-hot-swaps the implementation.
-
 Runs all services in the current process/event loop instead of spawning
 subprocesses, enabling fast isolated testing of the full service mesh.
 """
@@ -16,37 +11,20 @@ import sys
 import uuid
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import (
-    LifecycleState,
-    ServiceRegistrationStatus,
-    ServiceRunType,
-)
+from aiperf.common.enums import LifecycleState, ServiceRegistrationStatus
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import AIPerfError
-from aiperf.common.factories import (
-    CommunicationFactory,
-    ServiceFactory,
-    ServiceManagerFactory,
-)
 from aiperf.common.models import ServiceRunInfo
-from aiperf.common.protocols import ServiceManagerProtocol, ServiceProtocol
+from aiperf.common.protocols import ServiceProtocol
 from aiperf.common.types import ServiceTypeT
 from aiperf.controller.base_service_manager import BaseServiceManager
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PluginType, ServiceRunType
 from tests.harness.fake_communication import FakeCommunication
 
 
-@implements_protocol(ServiceManagerProtocol)
-@ServiceManagerFactory.register(
-    ServiceRunType.MULTIPROCESSING, override_priority=sys.maxsize
-)
 class FakeServiceManager(BaseServiceManager):
     """In-process service manager replacing multiprocessing (test double: Fake).
-
-    Registered with ServiceManagerFactory at maximum priority, automatically
-    replacing the production MultiprocessingServiceManager when this module is
-    imported. Production code using ServiceManagerFactory.create() will receive
-    this fake without any configuration changes.
 
     Instead of spawning subprocesses, creates service instances directly in the
     current event loop. Combined with FakeCommunication, enables fast isolated
@@ -70,19 +48,14 @@ class FakeServiceManager(BaseServiceManager):
         self, service_type: ServiceTypeT, num_replicas: int = 1
     ) -> None:
         """Run a service with the given number of replicas in the current process."""
-        service_class = ServiceFactory.get_class_from_type(service_type)
-        comm_backend = self.service_config.comm_config.comm_backend
+        ServiceClass = plugins.get_class(PluginType.SERVICE, service_type)
 
         for _ in range(num_replicas):
             service_id = f"{service_type}_{uuid.uuid4().hex[:8]}"
 
-            # Clear singleton cache to force new FakeCommunication per service
-            # Each instance will connect to the shared_bus set above
-            CommunicationFactory._instances.pop(comm_backend, None)
-
             # Deep copy configs to simulate separate process behavior
             # (in production each process deserializes its own copy)
-            service = service_class(
+            service = ServiceClass(
                 service_config=self.service_config.model_copy(deep=True),
                 user_config=self.user_config.model_copy(deep=True),
                 service_id=service_id,
@@ -218,3 +191,16 @@ class FakeServiceManager(BaseServiceManager):
         except Exception as e:
             self.error(f"Error stopping service {service.service_id}: {e!r}")
             return e
+
+
+# =============================================================================
+# Plugin Registration - Hot-swap production implementations when imported
+# =============================================================================
+
+# Register FakeServiceManager for multiprocessing run type at max priority
+plugins.register(
+    PluginType.SERVICE_MANAGER,
+    ServiceRunType.MULTIPROCESSING,
+    FakeServiceManager,
+    priority=sys.maxsize,
+)

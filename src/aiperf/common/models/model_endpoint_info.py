@@ -12,13 +12,9 @@ from typing import Any
 from pydantic import Field
 
 from aiperf.common.config import EndpointDefaults, UserConfig
-from aiperf.common.enums import (
-    ConnectionReuseStrategy,
-    EndpointType,
-    ModelSelectionStrategy,
-    TransportType,
-)
+from aiperf.common.enums import ConnectionReuseStrategy, ModelSelectionStrategy
 from aiperf.common.models import AIPerfBaseModel
+from aiperf.plugin.enums import EndpointType, TransportType
 
 
 class ModelInfo(AIPerfBaseModel):

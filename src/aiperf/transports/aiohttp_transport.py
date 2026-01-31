@@ -11,12 +11,12 @@ from typing import Any
 import aiohttp
 import orjson
 
-from aiperf.common.enums import ConnectionReuseStrategy, TransportType
+from aiperf.common.enums import ConnectionReuseStrategy
 from aiperf.common.exceptions import NotInitializedError
-from aiperf.common.factories import TransportFactory
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import ErrorDetails, RequestInfo, RequestRecord
+from aiperf.plugin.enums import TransportType
 from aiperf.transports.aiohttp_client import AioHttpClient, create_tcp_connector
 from aiperf.transports.base_transports import (
     BaseTransport,
@@ -85,7 +85,6 @@ class ConnectionLeaseManager(AIPerfLoggerMixin):
             await lease.close()
 
 
-@TransportFactory.register(TransportType.HTTP)
 class AioHttpTransport(BaseTransport):
     """HTTP/1.1 transport implementation using aiohttp.
 
@@ -186,9 +185,9 @@ class AioHttpTransport(BaseTransport):
             url = f"{base_url}/{path}"
         else:
             # Get endpoint path from endpoint metadata
-            from aiperf.common.factories import EndpointFactory
+            from aiperf.plugin import plugins
 
-            endpoint_metadata = EndpointFactory.get_metadata(endpoint_info.type)
+            endpoint_metadata = plugins.get_endpoint_metadata(endpoint_info.type)
             endpoint_path = endpoint_metadata.endpoint_path
             if (
                 self.model_endpoint.endpoint.streaming

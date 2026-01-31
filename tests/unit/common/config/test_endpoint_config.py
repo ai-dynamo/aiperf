@@ -5,11 +5,8 @@ from enum import Enum
 import pytest
 
 from aiperf.common.config import EndpointConfig, EndpointDefaults
-from aiperf.common.enums import (
-    EndpointType,
-    ModelSelectionStrategy,
-    URLSelectionStrategy,
-)
+from aiperf.common.enums import ModelSelectionStrategy
+from aiperf.plugin.enums import EndpointType, URLSelectionStrategy
 
 
 def test_endpoint_config_defaults():

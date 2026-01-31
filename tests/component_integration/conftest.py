@@ -27,17 +27,16 @@ import pytest
 
 from aiperf.cli import app
 from aiperf.common import random_generator as rng
-from aiperf.common.enums import CommClientType
 from aiperf.common.environment import Environment
-from aiperf.common.factories import CommunicationFactory
+from aiperf.plugin.enums import CommClientType
 
-# Import fakes for factory registration side effects (they register themselves on import)
+# Import fakes for test harness
 from tests.harness import (
     FakeCommunication,
     FakeCommunicationBus,
-    FakeServiceManager,  # noqa: F401 - imported for factory registration
-    FakeTokenizer,  # noqa: F401 - imported for factory registration
-    FakeTransport,  # noqa: F401 - imported for factory registration
+    FakeServiceManager,  # noqa: F401 - imported for test harness
+    FakeTokenizer,  # noqa: F401 - imported for test harness
+    FakeTransport,  # noqa: F401 - imported for test harness
 )
 from tests.harness.fake_communication import CapturedPayload
 from tests.harness.fake_tokenizer import TOKEN, TOKEN_LEN
@@ -181,23 +180,15 @@ def reset_singleton_factories():
     """Reset singleton factory instances between tests to prevent state leakage.
 
     This fixture runs automatically for every test and clears the singleton
-    instances in factories like CommunicationFactory. This prevents tests from
-    interfering with each other when they create services that use singleton
-    communication instances.
+    instances managed by the Singleton metaclass. This prevents tests from interfering
+    with each other when they create services that use singleton communication instances.
     """
     yield  # Run the test first
 
-    # Clean up after test completes
-    from aiperf.common.factories import AIPerfUIFactory
+    # Clean up after test completes - clear per-process singleton instances
+    from aiperf.common.singleton import SingletonMeta
 
-    if hasattr(CommunicationFactory, "_instances"):
-        CommunicationFactory._instances.clear()
-    if hasattr(CommunicationFactory, "_instances_pid"):
-        CommunicationFactory._instances_pid.clear()
-    if hasattr(AIPerfUIFactory, "_instances"):
-        AIPerfUIFactory._instances.clear()
-    if hasattr(AIPerfUIFactory, "_instances_pid"):
-        AIPerfUIFactory._instances_pid.clear()
+    SingletonMeta._instances.clear()
 
 
 @pytest.fixture(autouse=True)

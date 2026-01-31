@@ -6,8 +6,7 @@ from typing import Any
 from pydantic import Field, SerializeAsAny, field_validator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.enums import MessageType
-from aiperf.common.enums.metric_enums import MetricValueTypeT
+from aiperf.common.enums import MessageType, MetricValueTypeT
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import ErrorDetails, RequestRecord
 from aiperf.common.models.base_models import AIPerfBaseModel

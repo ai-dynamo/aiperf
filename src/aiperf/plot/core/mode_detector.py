@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -8,15 +8,15 @@ This module provides functionality to detect whether the input represents
 a single profiling run or multiple runs based on directory structure.
 """
 
-from enum import Enum
 from pathlib import Path
 
+from aiperf.common.enums import CaseInsensitiveStrEnum
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.plot.constants import PROFILE_EXPORT_AIPERF_JSON, PROFILE_EXPORT_JSONL
 from aiperf.plot.exceptions import ModeDetectionError
 
 
-class VisualizationMode(Enum):
+class VisualizationMode(CaseInsensitiveStrEnum):
     """Enumeration of visualization modes."""
 
     SINGLE_RUN = "single_run"

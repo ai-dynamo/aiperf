@@ -2,16 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
-from aiperf.common.enums import DatasetSamplingStrategy
-from aiperf.common.factories import DatasetSamplingStrategyFactory
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import DatasetSamplingStrategy, PluginType
 from aiperf.timing.conversation_source import ConversationSource, SampledSession
 from tests.unit.timing.conftest import make_credit
 
 
 def _mk_source(ds: DatasetMetadata) -> ConversationSource:
-    sampler = DatasetSamplingStrategyFactory.create_instance(
-        ds.sampling_strategy,
+    SamplerClass = plugins.get_class(PluginType.DATASET_SAMPLER, ds.sampling_strategy)
+    sampler = SamplerClass(
         conversation_ids=[c.conversation_id for c in ds.conversations],
     )
     return ConversationSource(ds, sampler)

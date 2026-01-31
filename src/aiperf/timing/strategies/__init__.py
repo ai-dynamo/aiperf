@@ -11,7 +11,6 @@ __ignore__ = []
 
 from aiperf.timing.strategies.core import (
     RateSettableProtocol,
-    TimingStrategyFactory,
     TimingStrategyProtocol,
 )
 from aiperf.timing.strategies.fixed_schedule import (
@@ -31,7 +30,6 @@ __all__ = [
     "RateSettableProtocol",
     "RequestRateStrategy",
     "ScheduleEntry",
-    "TimingStrategyFactory",
     "TimingStrategyProtocol",
     "User",
     "UserCentricStrategy",

@@ -12,7 +12,7 @@ from aiperf.common.config import (
     ZMQIPCConfig,
     ZMQTCPConfig,
 )
-from aiperf.common.enums import AIPerfUIType, CommunicationBackend
+from aiperf.plugin.enums import CommunicationBackend, UIType
 
 
 @pytest.fixture
@@ -213,10 +213,10 @@ class TestUITypeFromVerboseFlags:
     @pytest.mark.parametrize(
         "verbose,extra_verbose,expected_ui_type",
         [
-            (False, False, AIPerfUIType.DASHBOARD),
-            (True, False, AIPerfUIType.SIMPLE),
-            (False, True, AIPerfUIType.SIMPLE),
-            (True, True, AIPerfUIType.SIMPLE),
+            (False, False, UIType.DASHBOARD),
+            (True, False, UIType.SIMPLE),
+            (False, True, UIType.SIMPLE),
+            (True, True, UIType.SIMPLE),
         ],
     )
     def test_ui_type_from_verbose_flags(self, verbose, extra_verbose, expected_ui_type):
@@ -227,14 +227,14 @@ class TestUITypeFromVerboseFlags:
     @pytest.mark.parametrize(
         "explicit_ui_type,verbose,extra_verbose",
         [
-            (AIPerfUIType.DASHBOARD, True, False),
-            (AIPerfUIType.DASHBOARD, False, True),
-            (AIPerfUIType.DASHBOARD, True, True),
-            (AIPerfUIType.SIMPLE, True, False),
-            (AIPerfUIType.SIMPLE, False, True),
-            (AIPerfUIType.NONE, True, False),
-            (AIPerfUIType.NONE, False, True),
-            (AIPerfUIType.NONE, True, True),
+            (UIType.DASHBOARD, True, False),
+            (UIType.DASHBOARD, False, True),
+            (UIType.DASHBOARD, True, True),
+            (UIType.SIMPLE, True, False),
+            (UIType.SIMPLE, False, True),
+            (UIType.NONE, True, False),
+            (UIType.NONE, False, True),
+            (UIType.NONE, True, True),
         ],
     )
     def test_explicit_ui_type_overrides_verbose_flags(

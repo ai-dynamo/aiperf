@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Tests for MetricsBaseExporter base class."""
@@ -10,11 +10,11 @@ from unittest.mock import Mock, patch
 import pytest
 
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
-from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
 from aiperf.metrics.metric_registry import MetricRegistry
+from aiperf.plugin.enums import EndpointType
 
 
 class ConcreteExporter(MetricsBaseExporter):

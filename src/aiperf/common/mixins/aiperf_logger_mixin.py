@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import os
 from collections.abc import Callable
@@ -15,12 +15,9 @@ from aiperf.common.aiperf_logger import (
     _WARNING,
     AIPerfLogger,
 )
-from aiperf.common.decorators import implements_protocol
 from aiperf.common.mixins.base_mixin import BaseMixin
-from aiperf.common.protocols import AIPerfLoggerProtocol
 
 
-@implements_protocol(AIPerfLoggerProtocol)
 class AIPerfLoggerMixin(BaseMixin):
     """Mixin to provide lazy evaluated logging for f-strings.
 

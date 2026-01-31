@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -30,7 +30,6 @@ from aiperf.plot.constants import (
 from aiperf.plot.core.data_loader import RunData
 from aiperf.plot.core.mode_detector import VisualizationMode
 from aiperf.plot.core.plot_generator import PlotGenerator
-from aiperf.plot.core.plot_specs import PlotType, get_plot_type_info
 from aiperf.plot.core.swept_params import detect_swept_parameters
 from aiperf.plot.dashboard.components import (
     create_button,
@@ -60,6 +59,8 @@ from aiperf.plot.metric_names import (
     get_metric_display_name_with_unit,
 )
 from aiperf.plot.utils import get_server_metrics_summary
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PlotType
 
 CATEGORY_HEADERS = {
     "per_request": "── Per-Request Plots ──",
@@ -83,8 +84,8 @@ def _build_plot_type_options_with_headers(
     """
     by_category: dict[str, list[PlotType]] = {}
     for pt in plot_types:
-        info = get_plot_type_info(pt)
-        by_category.setdefault(info.category, []).append(pt)
+        meta = plugins.get_plot_metadata(pt)
+        by_category.setdefault(meta.category, []).append(pt)
 
     options = []
     category_order = ["per_request", "aggregated", "combined", "comparison"]
@@ -99,35 +100,55 @@ def _build_plot_type_options_with_headers(
             }
         )
         for pt in by_category[category]:
-            info = get_plot_type_info(pt)
+            entry = plugins.get_entry("plot", pt)
+            meta = plugins.get_plot_metadata(pt)
             options.append(
                 {
-                    "label": f"  {info.display_name}",
-                    "value": pt.value,
-                    "title": info.description,
+                    "label": f"  {meta.display_name}",
+                    "value": pt,
+                    "title": entry.description,
                 }
             )
     return options
 
 
+def _build_multi_run_plot_types() -> list[dict]:
+    """Build multi-run plot type options using plugin metadata."""
+    pareto_meta = plugins.get_plot_metadata(PlotType.PARETO)
+    pareto_entry = plugins.get_entry("plot", PlotType.PARETO)
+    scatter_line_meta = plugins.get_plot_metadata(PlotType.SCATTER_LINE)
+    scatter_line_entry = plugins.get_entry("plot", PlotType.SCATTER_LINE)
+    return [
+        {
+            "label": pareto_meta.display_name,
+            "value": PlotType.PARETO,
+            "title": pareto_entry.description,
+        },
+        {
+            "label": scatter_line_meta.display_name,
+            "value": PlotType.SCATTER_LINE,
+            "title": scatter_line_entry.description,
+        },
+        {
+            "label": "Scatter Only",
+            "value": PlotType.SCATTER,
+            "title": "Data points without connecting lines",
+        },
+    ]
+
+
 # Multi-run plot types (all are comparison plots, no section headers needed)
-MULTI_RUN_PLOT_TYPES = [
-    {
-        "label": get_plot_type_info(PlotType.PARETO).display_name,
-        "value": PlotType.PARETO.value,
-        "title": get_plot_type_info(PlotType.PARETO).description,
-    },
-    {
-        "label": get_plot_type_info(PlotType.SCATTER_LINE).display_name,
-        "value": PlotType.SCATTER_LINE.value,
-        "title": get_plot_type_info(PlotType.SCATTER_LINE).description,
-    },
-    {
-        "label": "Scatter Only",
-        "value": "scatter",
-        "title": "Data points without connecting lines",
-    },
-]
+# Lazy-loaded to avoid import-time plugin access
+MULTI_RUN_PLOT_TYPES: list[dict] | None = None
+
+
+def get_multi_run_plot_types() -> list[dict]:
+    """Get multi-run plot types, building lazily on first access."""
+    global MULTI_RUN_PLOT_TYPES
+    if MULTI_RUN_PLOT_TYPES is None:
+        MULTI_RUN_PLOT_TYPES = _build_multi_run_plot_types()
+    return MULTI_RUN_PLOT_TYPES
+
 
 # Columns to exclude from y-axis metric options in single-run plots
 EXCLUDED_METRIC_COLUMNS = [
@@ -452,7 +473,7 @@ class DashboardBuilder:
                 ),
             ],
             id="app-root-container",
-            className=f"theme-{self.theme.value}",
+            className=f"theme-{self.theme}",
             style={
                 "font-family": PLOT_FONT_FAMILY,
                 "height": "100vh",
@@ -492,7 +513,7 @@ class DashboardBuilder:
 
                 if x_metric_spec and y_metric_spec:
                     plot_type_val = (
-                        spec.plot_type.value if spec.plot_type else "scatter_line"
+                        spec.plot_type if spec.plot_type else PlotType.SCATTER_LINE
                     )
                     plot_configs[spec.name] = {
                         "mode": "multi_run",
@@ -526,18 +547,18 @@ class DashboardBuilder:
         plot_configs = {}
 
         plot_type_map = {
-            "timeslice": "timeslice",
-            "scatter": "scatter",
-            "area": "area",
-            "dual_axis": "dual_axis",
-            "scatter_with_percentiles": "scatter",
-            "request_timeline": "scatter",
+            PlotType.TIMESLICE: PlotType.TIMESLICE,
+            PlotType.SCATTER: PlotType.SCATTER,
+            PlotType.AREA: PlotType.AREA,
+            PlotType.DUAL_AXIS: PlotType.DUAL_AXIS,
+            PlotType.SCATTER_WITH_PERCENTILES: PlotType.SCATTER,
+            PlotType.REQUEST_TIMELINE: PlotType.SCATTER,
         }
 
         for spec in plot_specs:
-            plot_type_val = plot_type_map.get(spec.plot_type.value, "scatter")
+            plot_type_val = plot_type_map.get(spec.plot_type, PlotType.SCATTER)
 
-            if plot_type_val == "timeslice":
+            if plot_type_val == PlotType.TIMESLICE:
                 x_axis = "Timeslice"
             else:
                 x_metric = next((m for m in spec.metrics if m.axis == "x"), None)
@@ -555,7 +576,7 @@ class DashboardBuilder:
                 "y_metric": y_metric.name if y_metric else "",
                 "y_metric_base": y_metric.name if y_metric else "",
                 "stat": y_metric.stat if y_metric and y_metric.stat else "avg",
-                "source": y_metric.source.value if y_metric else "requests",
+                "source": y_metric.source if y_metric else "requests",
                 "title": stored_title,
             }
 
@@ -589,7 +610,7 @@ class DashboardBuilder:
 
                 if x_metric_spec and y_metric_spec:
                     plot_type_val = (
-                        spec.plot_type.value if spec.plot_type else "scatter_line"
+                        spec.plot_type if spec.plot_type else PlotType.SCATTER_LINE
                     )
                     plot_configs[spec.name] = {
                         "mode": "multi_run",
@@ -611,19 +632,19 @@ class DashboardBuilder:
 
             # Map YAML plot types to dashboard internal values
             plot_type_map = {
-                "timeslice": "timeslice",
-                "scatter": "scatter",
-                "area": "area",
-                "dual_axis": "dual_axis",
-                "scatter_with_percentiles": "scatter",
-                "request_timeline": "scatter",
+                PlotType.TIMESLICE: PlotType.TIMESLICE,
+                PlotType.SCATTER: PlotType.SCATTER,
+                PlotType.AREA: PlotType.AREA,
+                PlotType.DUAL_AXIS: PlotType.DUAL_AXIS,
+                PlotType.SCATTER_WITH_PERCENTILES: PlotType.SCATTER,
+                PlotType.REQUEST_TIMELINE: PlotType.SCATTER,
             }
 
             for spec in plot_specs:
-                plot_type_val = plot_type_map.get(spec.plot_type.value, "scatter")
+                plot_type_val = plot_type_map.get(spec.plot_type, PlotType.SCATTER)
 
                 # Determine x_axis based on plot type
-                if plot_type_val == "timeslice":
+                if plot_type_val == PlotType.TIMESLICE:
                     x_axis = "Timeslice"
                 else:
                     x_metric = next((m for m in spec.metrics if m.axis == "x"), None)
@@ -642,7 +663,7 @@ class DashboardBuilder:
                     "y_metric": y_metric.name if y_metric else "",
                     "y_metric_base": y_metric.name if y_metric else "",
                     "stat": y_metric.stat if y_metric and y_metric.stat else "avg",
-                    "source": y_metric.source.value if y_metric else "requests",
+                    "source": y_metric.source if y_metric else "requests",
                     "title": stored_title,
                 }
 
@@ -666,7 +687,7 @@ class DashboardBuilder:
                 dcc.Store(
                     id="mode-store",
                     storage_type="session",
-                    data={"mode": self.mode.value},
+                    data={"mode": self.mode},
                 ),
                 dcc.Store(
                     id="plot-state-store",
@@ -687,7 +708,7 @@ class DashboardBuilder:
                 dcc.Store(
                     id="theme-store",
                     storage_type="session",
-                    data={"theme": self.theme.value},
+                    data={"theme": self.theme},
                 ),
                 dcc.Store(id="sidebar-collapsed", storage_type="memory", data=True),
                 dcc.Store(id="plot-warnings-store", storage_type="memory", data=[]),
@@ -1036,7 +1057,7 @@ class DashboardBuilder:
                         for g in df[group_col].unique()
                     }
 
-            if spec.plot_type.value == "pareto":
+            if spec.plot_type == PlotType.PARETO:
                 fig = self.plot_generator.create_pareto_plot(
                     df,
                     x_metric_spec.name,
@@ -1046,14 +1067,14 @@ class DashboardBuilder:
                     title=title,
                     experiment_types=experiment_types,
                 )
-            elif spec.plot_type.value in ["scatter_line", "scatter"]:
+            elif spec.plot_type in [PlotType.SCATTER_LINE, PlotType.SCATTER]:
                 fig = self.plot_generator.create_scatter_line_plot(
                     df,
                     x_metric_spec.name,
                     y_metric_spec.name,
                     label_by=label_by,
                     group_by=group_by
-                    if spec.plot_type.value == "scatter_line"
+                    if spec.plot_type == PlotType.SCATTER_LINE
                     else None,
                     title=title,
                     experiment_types=experiment_types,
@@ -1329,7 +1350,7 @@ class DashboardBuilder:
             size="lg",
             is_open=False,
             backdrop=False,
-            className=f"config-modal-{self.theme.value}",
+            className=f"config-modal-{self.theme}",
             style={"color": self.colors["text"]},
         )
 
@@ -1432,7 +1453,7 @@ class DashboardBuilder:
                         create_label("Plot Type", self.theme),
                         dcc.Dropdown(
                             id="custom-plot-type",
-                            options=MULTI_RUN_PLOT_TYPES,
+                            options=get_multi_run_plot_types(),
                             placeholder="Select plot type",
                             style={"font-size": "12px", "margin-bottom": "12px"},
                         ),
@@ -1655,7 +1676,7 @@ class DashboardBuilder:
             id="custom-plot-modal",
             size="md",
             is_open=False,
-            className=f"theme-{self.theme.value}",
+            className=f"theme-{self.theme}",
             style={"color": self.colors["text"]},
         )
 
@@ -1962,7 +1983,7 @@ class DashboardBuilder:
             id="single-run-custom-plot-modal",
             size="md",
             is_open=False,
-            className=f"theme-{self.theme.value}",
+            className=f"theme-{self.theme}",
             style={"color": self.colors["text"]},
         )
 
@@ -2048,7 +2069,7 @@ class DashboardBuilder:
                         dcc.Dropdown(
                             id="edit-sr-plot-type",
                             options=plot_type_options,
-                            value="scatter",
+                            value=PlotType.SCATTER,
                             clearable=False,
                             style={"font-size": "12px", "margin-bottom": "12px"},
                         ),
@@ -2317,7 +2338,7 @@ class DashboardBuilder:
             id="edit-single-run-plot-modal",
             size="md",
             is_open=False,
-            className=f"theme-{self.theme.value}",
+            className=f"theme-{self.theme}",
             style={"color": self.colors["text"]},
         )
 
@@ -2418,7 +2439,7 @@ class DashboardBuilder:
                                 create_label("Plot Type", self.theme),
                                 dcc.Dropdown(
                                     id="edit-plot-type",
-                                    options=MULTI_RUN_PLOT_TYPES,
+                                    options=get_multi_run_plot_types(),
                                     clearable=False,
                                     style={
                                         "font-size": "12px",
@@ -2661,7 +2682,7 @@ class DashboardBuilder:
             id="edit-plot-modal",
             size="md",
             is_open=False,
-            className=f"theme-{self.theme.value}",
+            className=f"theme-{self.theme}",
             style={"color": self.colors["text"]},
         )
 

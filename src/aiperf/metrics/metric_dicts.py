@@ -1,13 +1,13 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from typing import TYPE_CHECKING, Generic, TypeVar
 
 import numpy as np
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.enums import MetricType
-from aiperf.common.enums.metric_enums import (
+from aiperf.common.enums import (
     MetricDictValueTypeT,
+    MetricType,
     MetricUnitT,
     MetricValueTypeT,
     MetricValueTypeVarT,

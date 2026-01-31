@@ -12,7 +12,7 @@ import pytest
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.worker_config import WorkersConfig
-from aiperf.common.enums.worker_enums import WorkerStatus
+from aiperf.common.enums import WorkerStatus
 from aiperf.common.environment import Environment
 from aiperf.common.messages import WorkerHealthMessage
 from aiperf.common.models import ProcessHealth, WorkerTaskStats

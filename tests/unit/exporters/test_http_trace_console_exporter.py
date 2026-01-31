@@ -5,10 +5,9 @@ import pytest
 from rich.console import Console
 
 from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
-from aiperf.common.enums import EndpointType
 from aiperf.common.exceptions import ConsoleExporterDisabled
 from aiperf.common.models import MetricResult, ProfileResults
-from aiperf.exporters import ExporterConfig
+from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.http_trace_console_exporter import HttpTraceConsoleExporter
 from aiperf.metrics.types.http_trace_metrics import (
     HttpBlockedMetric,
@@ -28,6 +27,7 @@ from aiperf.metrics.types.http_trace_metrics import (
 )
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.ttft_metric import TTFTMetric
+from aiperf.plugin.enums import EndpointType
 
 
 @pytest.fixture

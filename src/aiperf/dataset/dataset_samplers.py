@@ -1,17 +1,12 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Dataset sampling strategy implementations."""
 
 from abc import ABC, abstractmethod
 
 from aiperf.common import random_generator as rng
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums.dataset_enums import DatasetSamplingStrategy
-from aiperf.common.factories import DatasetSamplingStrategyFactory
-from aiperf.common.protocols import DatasetSamplingStrategyProtocol
 
 
-@implements_protocol(DatasetSamplingStrategyProtocol)
 class BaseDatasetSampler(ABC):
     """
     Base class for dataset samplers.
@@ -34,7 +29,6 @@ class BaseDatasetSampler(ABC):
         ...
 
 
-@DatasetSamplingStrategyFactory.register(DatasetSamplingStrategy.RANDOM)
 class RandomSampler(BaseDatasetSampler):
     """
     Random sampler that randomly selects conversation IDs with replacement.
@@ -49,7 +43,6 @@ class RandomSampler(BaseDatasetSampler):
         return self._rng.choice(self._conversation_ids)
 
 
-@DatasetSamplingStrategyFactory.register(DatasetSamplingStrategy.SEQUENTIAL)
 class SequentialSampler(BaseDatasetSampler):
     """
     Sequential sampler that iterates through conversation IDs in order.
@@ -70,7 +63,6 @@ class SequentialSampler(BaseDatasetSampler):
         return conversation_id
 
 
-@DatasetSamplingStrategyFactory.register(DatasetSamplingStrategy.SHUFFLE)
 class ShuffleSampler(BaseDatasetSampler):
     """
     Shuffle sampler that randomly samples without replacement, then repeats.

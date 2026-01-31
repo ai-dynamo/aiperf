@@ -6,10 +6,10 @@ import json
 
 import pytest
 
-from aiperf.common.enums import CustomDatasetType
 from aiperf.common.models import Image, Text
-from aiperf.dataset import SingleTurn
+from aiperf.dataset.loader.models import SingleTurn
 from aiperf.dataset.loader.single_turn import SingleTurnDatasetLoader
+from aiperf.plugin.enums import CustomDatasetType
 
 
 class TestSingleTurn:

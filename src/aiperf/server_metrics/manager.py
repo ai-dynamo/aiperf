@@ -5,14 +5,8 @@ import asyncio
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import (
-    CommAddress,
-    CommandType,
-    ServiceType,
-)
+from aiperf.common.enums import CommAddress, CommandType
 from aiperf.common.environment import Environment
-from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import on_command, on_stop
 from aiperf.common.messages import (
     ProfileCancelCommand,
@@ -24,12 +18,10 @@ from aiperf.common.messages import (
 )
 from aiperf.common.metric_utils import normalize_metrics_endpoint_url
 from aiperf.common.models import ErrorDetails, ServerMetricsRecord
-from aiperf.common.protocols import PushClientProtocol, ServiceProtocol
+from aiperf.common.protocols import PushClientProtocol
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
 
 
-@implements_protocol(ServiceProtocol)
-@ServiceFactory.register(ServiceType.SERVER_METRICS_MANAGER)
 class ServerMetricsManager(BaseComponentService):
     """Coordinates multiple ServerMetricsDataCollector instances for server metrics collection.
 

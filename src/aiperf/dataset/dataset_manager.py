@@ -1,32 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import asyncio
 import gc
 import time
+from typing import TYPE_CHECKING
 
 import orjson
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import OutputDefaults, ServiceConfig, UserConfig
-from aiperf.common.decorators import implements_protocol
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
-    ComposerType,
     CreditPhase,
-    DatasetBackingStoreType,
     MessageType,
     PublicDatasetType,
-    ServiceType,
 )
 from aiperf.common.environment import Environment
-from aiperf.common.factories import (
-    ComposerFactory,
-    DatasetBackingStoreFactory,
-    DatasetClientStoreFactory,
-    EndpointFactory,
-    ServiceFactory,
-)
 from aiperf.common.hooks import on_command, on_request, on_stop
 from aiperf.common.messages import (
     ConversationRequestMessage,
@@ -45,18 +37,23 @@ from aiperf.common.models import (
     RequestInfo,
     SessionPayloads,
 )
-from aiperf.common.protocols import (
-    DatasetBackingStoreProtocol,
-    DatasetClientStoreProtocol,
-    EndpointProtocol,
-    ServiceProtocol,
-)
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.loader import ShareGPTLoader
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import (
+    ComposerType,
+    DatasetBackingStoreType,
+    PluginType,
+)
+
+if TYPE_CHECKING:
+    from aiperf.dataset.protocols import (
+        DatasetBackingStoreProtocol,
+        DatasetClientStoreProtocol,
+    )
+    from aiperf.endpoints.protocols import EndpointProtocol
 
 
-@implements_protocol(ServiceProtocol)
-@ServiceFactory.register(ServiceType.DATASET_MANAGER)
 class DatasetManager(ReplyClientMixin, BaseComponentService):
     """Manages dataset generation/acquisition and provides mmap access for workers.
 
@@ -91,11 +88,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._conversation_ids_cache: list[str] = []
         self.dataset_configured = asyncio.Event()
 
-        self._backing_store: DatasetBackingStoreProtocol = (
-            DatasetBackingStoreFactory.create_instance(
-                DatasetBackingStoreType.MEMORY_MAP,
-                benchmark_id=user_config.benchmark_id,
-            )
+        BackingStoreClass = plugins.get_class(
+            PluginType.DATASET_BACKING_STORE, DatasetBackingStoreType.MEMORY_MAP
+        )
+        self._backing_store: DatasetBackingStoreProtocol = BackingStoreClass(
+            benchmark_id=user_config.benchmark_id,
         )
         self._dataset_client: DatasetClientStoreProtocol | None = None
 
@@ -124,9 +121,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         """Configure the dataset client for serving fallback requests."""
         # Create dataset client for serving fallback requests, then free in-memory dataset
         client_metadata = self._backing_store.get_client_metadata()
-        self._dataset_client = DatasetClientStoreFactory.create_instance(
-            client_metadata=client_metadata,
+        ClientStoreClass = plugins.get_class(
+            PluginType.DATASET_CLIENT_STORE, client_metadata.client_type
         )
+        self._dataset_client = ClientStoreClass(client_metadata=client_metadata)
         await self._dataset_client.initialize()
         # Now that the client is ready, signal that fallback requests can be served
         self.dataset_configured.set()
@@ -163,10 +161,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         """Generate input payloads from the dataset for use in the inputs.json file."""
         inputs = InputsFile()
 
-        endpoint: EndpointProtocol = EndpointFactory.create_instance(
-            model_endpoint.endpoint.type,
-            model_endpoint=model_endpoint,
+        EndpointClass = plugins.get_class(
+            PluginType.ENDPOINT, model_endpoint.endpoint.type
         )
+        endpoint: EndpointProtocol = EndpointClass(model_endpoint=model_endpoint)
         self.debug(
             lambda: f"Created endpoint protocol for {model_endpoint.endpoint.type}, "
             f"class: {endpoint.__class__.__name__}",
@@ -265,11 +263,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         return await loader.convert_to_conversations(dataset)
 
     def _load_custom_dataset(self) -> list[Conversation]:
-        composer = ComposerFactory.create_instance(
-            ComposerType.CUSTOM,
-            config=self.user_config,
-            tokenizer=self.tokenizer,
+        ComposerClass = plugins.get_class(
+            PluginType.DATASET_COMPOSER, ComposerType.CUSTOM
         )
+        composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
         return composer.create_dataset()
 
     def _is_rankings_endpoint(self, endpoint_type: str) -> bool:
@@ -283,11 +280,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         else:
             composer_type = ComposerType.SYNTHETIC
 
-        composer = ComposerFactory.create_instance(
-            composer_type,
-            config=self.user_config,
-            tokenizer=self.tokenizer,
-        )
+        ComposerClass = plugins.get_class(PluginType.DATASET_COMPOSER, composer_type)
+        composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
         return composer.create_dataset()
 
     async def _configure_dataset(self) -> None:
@@ -442,8 +436,9 @@ def main() -> None:
     """Main entry point for the dataset manager."""
 
     from aiperf.common.bootstrap import bootstrap_and_run_service
+    from aiperf.plugin.enums import ServiceType
 
-    bootstrap_and_run_service(DatasetManager)
+    bootstrap_and_run_service(ServiceType.DATASET_MANAGER)
 
 
 if __name__ == "__main__":

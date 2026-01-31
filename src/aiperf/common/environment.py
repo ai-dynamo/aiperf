@@ -44,7 +44,7 @@ from aiperf.common.config.config_validators import (
     parse_service_types,
     parse_str_or_csv_list,
 )
-from aiperf.common.enums.service_enums import ServiceType
+from aiperf.plugin.enums import ServiceType
 
 _logger = AIPerfLogger(__name__)
 

@@ -12,8 +12,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 from aiperf.common.config.config_defaults import OutputDefaults
-from aiperf.common.factories import EndpointFactory
 from aiperf.common.models import InputsFile, SessionPayloads
+from aiperf.plugin import plugins
 
 
 def _validate_chat_payload_structure(payload: dict) -> None:
@@ -152,18 +152,18 @@ class TestDatasetManagerInputsJsonGeneration:
         assert all(isinstance(session, SessionPayloads) for session in inputs_file.data)
 
     @pytest.mark.asyncio
-    async def test_generate_inputs_json_factory_creation_error(
+    async def test_generate_inputs_json_plugin_creation_error(
         self,
         populated_dataset_manager,
         caplog,
     ):
-        """Test error handling when EndpointFactory creation fails."""
+        """Test error handling when plugin class creation fails."""
         with patch.object(
-            EndpointFactory,
-            "create_instance",
-            side_effect=Exception("Factory error"),
+            plugins,
+            "get_class",
+            side_effect=Exception("Plugin error"),
         ):
-            with pytest.raises(Exception, match="Factory error"):
+            with pytest.raises(Exception, match="Plugin error"):
                 await populated_dataset_manager._generate_inputs_json_file()
             assert any(
                 "Error generating inputs.json file" in record.message
@@ -202,9 +202,9 @@ class TestDatasetManagerInputsJsonGeneration:
         mock_converter.get_endpoint_params = Mock(return_value={})
 
         with patch.object(
-            EndpointFactory,
-            "create_instance",
-            return_value=mock_converter,
+            plugins,
+            "get_class",
+            return_value=lambda **kwargs: mock_converter,
         ):
             with pytest.raises(Exception, match="Payload conversion error"):
                 await populated_dataset_manager._generate_inputs_json_file()

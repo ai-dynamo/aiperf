@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Tests for server metrics format selection feature."""
@@ -8,8 +8,7 @@ from pydantic import ValidationError
 
 from aiperf.common.config import UserConfig
 from aiperf.common.config.endpoint_config import EndpointConfig
-from aiperf.common.enums.data_exporter_enums import ServerMetricsFormat
-from aiperf.common.enums.plugin_enums import EndpointType
+from aiperf.common.enums import ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
 from aiperf.common.models.server_metrics_models import (
     ServerMetricsEndpointInfo,
@@ -17,6 +16,7 @@ from aiperf.common.models.server_metrics_models import (
     ServerMetricsResults,
 )
 from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.plugin.enums import EndpointType
 from aiperf.server_metrics.csv_exporter import ServerMetricsCsvExporter
 from aiperf.server_metrics.json_exporter import ServerMetricsJsonExporter
 from aiperf.server_metrics.jsonl_writer import ServerMetricsJSONLWriter

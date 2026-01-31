@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from aiperf.common.enums import CreditPhase, EndpointType, ModelSelectionStrategy
+from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
 from aiperf.common.models import Text, Turn
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
@@ -15,8 +15,8 @@ from aiperf.common.models.model_endpoint_info import (
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.common.models.record_models import RequestInfo
-from aiperf.common.protocols import InferenceServerResponse
+from aiperf.common.models.record_models import InferenceServerResponse, RequestInfo
+from aiperf.plugin.enums import EndpointType
 
 
 def create_model_endpoint(
@@ -45,11 +45,7 @@ def create_model_endpoint(
 
 def create_endpoint_with_mock_transport(endpoint_class, model_endpoint):
     """Helper to create an endpoint instance with mocked transport."""
-    with patch(
-        "aiperf.common.factories.TransportFactory.create_instance"
-    ) as mock_transport:
-        mock_transport.return_value = MagicMock()
-        return endpoint_class(model_endpoint=model_endpoint)
+    return endpoint_class(model_endpoint=model_endpoint)
 
 
 def create_request_info(
@@ -114,8 +110,8 @@ def create_mock_response(
 
 
 @pytest.fixture
-def mock_transport_factory():
-    """Mock the TransportFactory to return a MagicMock."""
-    with patch("aiperf.common.factories.TransportFactory.create_instance") as mock:
-        mock.return_value = MagicMock()
+def mock_transport_plugin():
+    """Mock the plugin transport class to return a MagicMock."""
+    with patch("aiperf.plugin.plugins.get_class") as mock:
+        mock.return_value = MagicMock
         yield mock

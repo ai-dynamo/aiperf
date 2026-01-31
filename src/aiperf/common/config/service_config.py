@@ -16,11 +16,8 @@ from aiperf.common.config.zmq_config import (
     ZMQIPCConfig,
     ZMQTCPConfig,
 )
-from aiperf.common.enums import (
-    AIPerfLogLevel,
-    AIPerfUIType,
-    ServiceRunType,
-)
+from aiperf.common.enums import AIPerfLogLevel
+from aiperf.plugin.enums import ServiceRunType, UIType
 
 _logger = AIPerfLogger(__name__)
 
@@ -50,7 +47,7 @@ class ServiceConfig(BaseConfig):
         # If the user selected verbose or extra verbose flags, set the UI type to simple.
         # This will allow the user to see the verbose output in the console easier.
         if self.verbose or self.extra_verbose:
-            self.ui_type = AIPerfUIType.SIMPLE
+            self.ui_type = UIType.SIMPLE
         return self
 
     @model_validator(mode="after")
@@ -156,7 +153,7 @@ class ServiceConfig(BaseConfig):
     ] = ServiceDefaults.RECORD_PROCESSOR_SERVICE_COUNT
 
     ui_type: Annotated[
-        AIPerfUIType,
+        UIType,
         Field(
             description="Select the user interface type for displaying benchmark progress. "
             "`dashboard` (default) shows real-time metrics in a Textual TUI, `simple` uses TQDM progress bars, "

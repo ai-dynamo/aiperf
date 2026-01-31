@@ -6,16 +6,10 @@ import asyncio
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import (
-    CommandType,
-    MessageType,
-    ServiceType,
-)
+from aiperf.common.enums import CommandType, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.event_loop_monitor import EventLoopMonitor
 from aiperf.common.exceptions import InvalidStateError
-from aiperf.common.factories import ServiceFactory
 from aiperf.common.hooks import (
     on_command,
     on_message,
@@ -28,15 +22,12 @@ from aiperf.common.messages import (
     ProfileConfigureCommand,
 )
 from aiperf.common.models import DatasetMetadata
-from aiperf.common.protocols import ServiceProtocol
 from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.timing.config import TimingConfig
 from aiperf.timing.phase.publisher import PhasePublisher
 from aiperf.timing.phase_orchestrator import PhaseOrchestrator
 
 
-@implements_protocol(ServiceProtocol)
-@ServiceFactory.register(ServiceType.TIMING_MANAGER)
 class TimingManager(BaseComponentService):
     """Service orchestrating credit issuance and request timing.
 
@@ -161,8 +152,9 @@ class TimingManager(BaseComponentService):
 def main() -> None:
     """Main entry point for the timing manager."""
     from aiperf.common.bootstrap import bootstrap_and_run_service
+    from aiperf.plugin.enums import ServiceType
 
-    bootstrap_and_run_service(TimingManager)
+    bootstrap_and_run_service(ServiceType.TIMING_MANAGER)
 
 
 if __name__ == "__main__":

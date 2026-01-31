@@ -6,11 +6,39 @@ Provides URL selection strategies for distributing requests across multiple
 endpoint URLs when multiple `--url` values are provided.
 """
 
-from aiperf.common.enums import URLSelectionStrategy
-from aiperf.common.factories import URLSelectionStrategyFactory
+from __future__ import annotations
+
+from typing import Protocol, runtime_checkable
 
 
-@URLSelectionStrategyFactory.register(URLSelectionStrategy.ROUND_ROBIN)
+@runtime_checkable
+class URLSelectionStrategyProtocol(Protocol):
+    """Protocol for URL selection strategies.
+
+    Used for load balancing across multiple endpoint URLs when multiple
+    `--url` values are provided. Any class implementing this protocol must
+    provide a `next_url_index` method that returns the next URL index.
+
+    Thread Safety:
+        Safe for asyncio single-threaded concurrency.
+    """
+
+    def __init__(self, urls: list[str], **kwargs) -> None: ...
+
+    def next_url_index(self) -> int:
+        """Return the index of the next URL to use.
+
+        Returns:
+            Index into the urls list (0 to len(urls)-1)
+        """
+        ...
+
+    @property
+    def urls(self) -> list[str]:
+        """The list of URLs being sampled."""
+        ...
+
+
 class RoundRobinURLSampler:
     """Round-robin URL sampler for even distribution across endpoints.
 

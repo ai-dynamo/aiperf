@@ -1,25 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.config import UserConfig
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import ResultsProcessorType
-from aiperf.common.enums.data_exporter_enums import ServerMetricsFormat
+from aiperf.common.enums import ServerMetricsFormat
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.common.factories import ResultsProcessorFactory
 from aiperf.common.mixins import BufferedJSONLWriterMixin
 from aiperf.common.models.record_models import MetricResult
 from aiperf.common.models.server_metrics_models import (
     ServerMetricsRecord,
     SlimRecord,
 )
-from aiperf.common.protocols import ServerMetricsProcessorProtocol
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 
-@implements_protocol(ServerMetricsProcessorProtocol)
-@ResultsProcessorFactory.register(ResultsProcessorType.SERVER_METRICS_JSONL_WRITER)
 class ServerMetricsJSONLWriter(
     BaseMetricsProcessor,
     BufferedJSONLWriterMixin[SlimRecord],

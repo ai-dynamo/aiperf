@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import re
@@ -10,10 +10,10 @@ import pytest
 
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
-from aiperf.common.enums import EndpointType
 from aiperf.common.models import MetricResult
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.metrics_csv_exporter import MetricsCsvExporter
+from aiperf.plugin.enums import EndpointType
 
 
 @pytest.fixture

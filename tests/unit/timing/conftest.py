@@ -10,14 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from aiperf.common.config import ServiceConfig
-from aiperf.common.enums import (
-    ArrivalPattern,
-    CommAddress,
-    CreditPhase,
-    DatasetSamplingStrategy,
-    TimingMode,
-)
-from aiperf.common.factories import DatasetSamplingStrategyFactory
+from aiperf.common.enums import CommAddress, CreditPhase
 from aiperf.common.models import (
     ConversationMetadata,
     CreditPhaseStats,
@@ -27,6 +20,13 @@ from aiperf.common.models import (
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.credit.messages import CreditReturn, FirstToken
 from aiperf.credit.structs import Credit, CreditContext, TurnToSend
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import (
+    ArrivalPattern,
+    DatasetSamplingStrategy,
+    PluginType,
+    TimingMode,
+)
 from aiperf.timing.concurrency import ConcurrencyStats
 from aiperf.timing.config import (
     CreditPhaseConfig,
@@ -35,7 +35,7 @@ from aiperf.timing.config import (
 )
 from aiperf.timing.phase.publisher import PhasePublisher
 from aiperf.timing.phase_orchestrator import PhaseOrchestrator
-from aiperf.workers import Worker
+from aiperf.workers.worker import Worker
 from tests.harness.fake_communication import FakeCommunication, FakeCommunicationBus
 
 
@@ -422,9 +422,8 @@ def make_sampler(
     conv_ids: list[str] | None = None,
     strategy: DatasetSamplingStrategy = DatasetSamplingStrategy.SEQUENTIAL,
 ):
-    return DatasetSamplingStrategyFactory.create_instance(
-        strategy, conversation_ids=conv_ids or ["conv1", "conv2", "conv3"]
-    )
+    SamplerClass = plugins.get_class(PluginType.DATASET_SAMPLER, strategy)
+    return SamplerClass(conversation_ids=conv_ids or ["conv1", "conv2", "conv3"])
 
 
 class InstantWorker(Worker):

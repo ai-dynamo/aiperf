@@ -1,22 +1,16 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from rich.console import Console, Group, RenderableType
 from rich.table import Table
 from rich.text import Text
 
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums.data_exporter_enums import ConsoleExporterType
-from aiperf.common.factories import ConsoleExporterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.common.protocols import ConsoleExporterProtocol
 from aiperf.exporters.display_units_utils import normalize_endpoint_display
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.gpu_telemetry.constants import get_gpu_telemetry_metrics_config
 
 
-@implements_protocol(ConsoleExporterProtocol)
-@ConsoleExporterFactory.register(ConsoleExporterType.TELEMETRY)
 class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
     """Console exporter for GPU telemetry data.
 

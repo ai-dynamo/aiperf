@@ -3,12 +3,14 @@
 
 import pytest
 
-from aiperf.common.enums import EndpointType
 from aiperf.common.models import Text, Turn
 from aiperf.common.models.record_models import (
     TextResponseData,
 )
 from aiperf.endpoints.solido_rag import SolidoEndpoint
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import EndpointType
+from aiperf.plugin.schema.schemas import EndpointMetadata
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_mock_response,
@@ -22,7 +24,8 @@ class TestSolidoEndpointMetadata:
 
     def test_metadata_returns_correct_values(self):
         """Test that metadata returns expected configuration."""
-        metadata = SolidoEndpoint.metadata()
+        metadata = plugins.get_endpoint_metadata(EndpointType.SOLIDO_RAG)
+        assert isinstance(metadata, EndpointMetadata)
 
         assert metadata.endpoint_path == "/rag/api/prompt"
         assert metadata.supports_streaming is True

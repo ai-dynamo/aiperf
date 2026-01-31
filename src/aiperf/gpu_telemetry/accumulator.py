@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
@@ -7,11 +7,9 @@ from typing import Any
 
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import AIPerfUIType, GPUTelemetryMode, ResultsProcessorType
+from aiperf.common.enums import GPUTelemetryMode
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue, PostProcessorDisabled
-from aiperf.common.factories import ResultsProcessorFactory
 from aiperf.common.hooks import background_task
 from aiperf.common.messages import RealtimeTelemetryMetricsMessage
 from aiperf.common.models import (
@@ -23,14 +21,13 @@ from aiperf.common.models import (
     TelemetrySummary,
 )
 from aiperf.common.models.telemetry_models import TelemetryHierarchy, TelemetryRecord
-from aiperf.common.protocols import GPUTelemetryAccumulatorProtocol, PubClientProtocol
+from aiperf.common.protocols import PubClientProtocol
 from aiperf.exporters.display_units_utils import normalize_endpoint_display
 from aiperf.gpu_telemetry.constants import get_gpu_telemetry_metrics_config
+from aiperf.plugin.enums import UIType
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 
-@implements_protocol(GPUTelemetryAccumulatorProtocol)
-@ResultsProcessorFactory.register(ResultsProcessorType.GPU_TELEMETRY_ACCUMULATOR)
 class GPUTelemetryAccumulator(BaseMetricsProcessor):
     """Accumulate GPU telemetry records and compute metrics in a hierarchical structure.
 
@@ -101,7 +98,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
     @background_task(interval=None, immediate=True)
     async def _report_realtime_telemetry_metrics_task(self) -> None:
         """Report GPU telemetry metrics - sleeps when disabled, resumes on command."""
-        if self.service_config.ui_type != AIPerfUIType.DASHBOARD:
+        if self.service_config.ui_type != UIType.DASHBOARD:
             return
 
         while not self.stop_requested:

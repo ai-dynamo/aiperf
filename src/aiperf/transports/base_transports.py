@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.metadata as importlib_metadata
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
+from typing import Protocol, runtime_checkable
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from aiperf.common.mixins import AIPerfLifecycleMixin
@@ -13,10 +14,11 @@ from aiperf.common.models import (
     RequestInfo,
     RequestRecord,
     SSEMessage,
-    TransportMetadata,
 )
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+from aiperf.common.protocols import AIPerfLifecycleProtocol
 from aiperf.common.types import RequestInputT
+from aiperf.plugin.schema.schemas import TransportMetadata
 
 FirstTokenCallback = Callable[[int, SSEMessage], Awaitable[bool]]
 """
@@ -32,6 +34,28 @@ Returns:
 This callback is used to determine if the first token has been received and can be released.
 It is used to release prefill concurrency.
 """
+
+
+@runtime_checkable
+class TransportProtocol(AIPerfLifecycleProtocol, Protocol):
+    """Protocol for a transport that sends requests to an inference server."""
+
+    def __init__(self, **kwargs) -> None: ...
+
+    @classmethod
+    def metadata(cls) -> TransportMetadata: ...
+
+    def get_transport_headers(self, request_info: RequestInfo) -> dict[str, str]: ...
+
+    def build_headers(self, request_info: RequestInfo) -> dict[str, str]: ...
+
+    def build_url(self, request_info: RequestInfo) -> str: ...
+
+    def get_url(self, request_info: RequestInfo) -> str: ...
+
+    async def send_request(
+        self, request_info: RequestInfo, payload: RequestInputT
+    ) -> RequestRecord: ...
 
 
 class BaseTransport(AIPerfLifecycleMixin, ABC):

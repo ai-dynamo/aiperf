@@ -1,10 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from abc import ABC
 from typing import ClassVar, Generic, TypeVar, get_args, get_origin
 
-from aiperf.common.enums import MetricValueTypeVarT
-from aiperf.common.enums.metric_enums import MetricFlags
+from aiperf.common.enums import MetricFlags, MetricValueTypeVarT
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.base_record_metric import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
-from aiperf.common.enums import EndpointType, ModelSelectionStrategy
+from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -10,6 +10,7 @@ from aiperf.common.models.model_endpoint_info import (
     ModelListInfo,
 )
 from aiperf.endpoints.openai_chat import ChatEndpoint
+from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import create_request_info
 
 

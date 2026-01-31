@@ -5,18 +5,19 @@ from unittest.mock import Mock
 
 import pytest
 
-from aiperf.common.enums import EndpointType, ModelSelectionStrategy
+from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models import ParsedResponse
-from aiperf.common.models.metadata import EndpointMetadata
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.common.models.record_models import Turn
-from aiperf.common.protocols import InferenceServerResponse
+from aiperf.common.models.record_models import InferenceServerResponse, Turn
 from aiperf.endpoints.huggingface_generate import HuggingFaceGenerateEndpoint
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import EndpointType
+from aiperf.plugin.schema.schemas import EndpointMetadata
 from tests.unit.endpoints.conftest import create_request_info
 
 
@@ -44,7 +45,7 @@ class TestHuggingFaceGenerateEndpoint:
         return ep
 
     def test_metadata_values(self):
-        meta = HuggingFaceGenerateEndpoint.metadata()
+        meta = plugins.get_endpoint_metadata(EndpointType.HUGGINGFACE_GENERATE)
         assert isinstance(meta, EndpointMetadata)
         assert meta.endpoint_path == "/generate"
         assert meta.streaming_path == "/generate_stream"

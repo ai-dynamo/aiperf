@@ -5,36 +5,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import EndpointType
-from aiperf.common.factories import EndpointFactory
-from aiperf.common.models.metadata import EndpointMetadata
-from aiperf.common.models.record_models import RequestInfo
-from aiperf.common.protocols import EndpointProtocol
+from aiperf.common.models import RequestInfo
 from aiperf.common.types import RequestOutputT
 from aiperf.endpoints.openai_embeddings import EmbeddingsEndpoint
 
 
-@implements_protocol(EndpointProtocol)
-@EndpointFactory.register(EndpointType.NIM_EMBEDDINGS)
 class NIMEmbeddingsEndpoint(EmbeddingsEndpoint):
     """NVIDIA NIM Embeddings endpoint.
 
     Extends the OpenAI Embeddings endpoint with multimodal support for images.
     NIM Embeddings API is a superset of the OpenAI Embeddings API.
     """
-
-    @classmethod
-    def metadata(cls) -> EndpointMetadata:
-        """Return NIM Embeddings endpoint metadata."""
-        return EndpointMetadata(
-            endpoint_path="/v1/embeddings",
-            supports_streaming=False,
-            supports_images=True,
-            produces_tokens=False,
-            tokenizes_input=True,
-            metrics_title="NIM Embeddings Metrics",
-        )
 
     def format_payload(self, request_info: RequestInfo) -> RequestOutputT:
         """Format payload for a NIM embeddings request with multimodal support.

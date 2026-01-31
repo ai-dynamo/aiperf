@@ -15,16 +15,12 @@ from aiperf.common.config import (
     PromptConfig,
     SynthesisConfig,
 )
-from aiperf.common.enums import (
-    CustomDatasetType,
-    MetricFlags,
-    MetricTimeUnit,
-    MetricType,
-)
+from aiperf.common.enums import MetricFlags, MetricTimeUnit, MetricType
 from aiperf.common.exceptions import MetricTypeError
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
+from aiperf.plugin.enums import CustomDatasetType
 
 
 def test_input_config_defaults():

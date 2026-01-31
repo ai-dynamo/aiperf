@@ -9,7 +9,7 @@ from aiperf.common.config import (
     LoadGeneratorConfig,
     UserConfig,
 )
-from aiperf.common.enums import CustomDatasetType, TimingMode
+from aiperf.plugin.enums import CustomDatasetType, TimingMode
 from aiperf.timing.config import TimingConfig
 
 

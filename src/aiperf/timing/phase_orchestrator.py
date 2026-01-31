@@ -17,18 +17,16 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from aiperf.common.factories import (
-    DatasetSamplingStrategyFactory,
-    URLSelectionStrategyFactory,
-)
 from aiperf.common.hooks import on_init, on_start
 from aiperf.common.mixins import AIPerfLifecycleMixin
-from aiperf.common.protocols import URLSelectionStrategyProtocol
 from aiperf.credit.callback_handler import CreditCallbackHandler
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PluginType
 from aiperf.timing.concurrency import ConcurrencyManager
 from aiperf.timing.conversation_source import ConversationSource
 from aiperf.timing.phase.runner import PhaseRunner
 from aiperf.timing.request_cancellation import RequestCancellationSimulator
+from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
     from aiperf.common.models import DatasetMetadata
@@ -105,8 +103,11 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         self._dataset_metadata = dataset_metadata
 
         # Create dataset sampler
-        self._dataset_sampler = DatasetSamplingStrategyFactory.create_instance(
+        SamplerClass = plugins.get_class(
+            PluginType.DATASET_SAMPLER,
             self._dataset_metadata.sampling_strategy,
+        )
+        self._dataset_sampler = SamplerClass(
             conversation_ids=[
                 c.conversation_id for c in self._dataset_metadata.conversations
             ],
@@ -124,9 +125,10 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         # URL sampler for multi-URL load balancing (None if single URL)
         self._url_sampler: URLSelectionStrategyProtocol | None = None
         if len(config.urls) > 1:
-            self._url_sampler = URLSelectionStrategyFactory.create_instance(
-                config.url_selection_strategy, urls=config.urls
+            StrategyClass = plugins.get_class(
+                PluginType.URL_SELECTION_STRATEGY, config.url_selection_strategy
             )
+            self._url_sampler = StrategyClass(urls=config.urls)
 
         # Callback handler registered directly with router (no orchestrator in middle)
         self._callback_handler = CreditCallbackHandler(self._concurrency_manager)

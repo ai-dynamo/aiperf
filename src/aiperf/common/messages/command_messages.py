@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import uuid
 from typing import Any, ClassVar
@@ -9,9 +9,9 @@ from typing_extensions import Self
 from aiperf.common.enums import (
     CommandResponseStatus,
     CommandType,
+    LifecycleState,
     MessageType,
 )
-from aiperf.common.enums.service_enums import LifecycleState
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import (
     ErrorDetails,

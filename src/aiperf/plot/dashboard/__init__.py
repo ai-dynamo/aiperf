@@ -15,6 +15,7 @@ from aiperf.plot.dashboard.builder import (
     EXCLUDED_METRIC_COLUMNS,
     MULTI_RUN_PLOT_TYPES,
     DashboardBuilder,
+    get_multi_run_plot_types,
 )
 from aiperf.plot.dashboard.cache import (
     CachedPlot,
@@ -157,6 +158,7 @@ __all__ = [
     "get_header_style",
     "get_label_style",
     "get_main_area_style",
+    "get_multi_run_plot_types",
     "get_plot_cache",
     "get_plot_title",
     "get_scoped_theme_css",

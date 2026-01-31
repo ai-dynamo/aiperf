@@ -14,8 +14,8 @@ complex interaction patterns and edge cases.
 import pytest
 from aiperf_mock_server.config import MockServerConfig
 
-from aiperf.common.enums import ArrivalPattern
 from aiperf.credit.messages import CreditReturn
+from aiperf.plugin.enums import ArrivalPattern
 from tests.component_integration.timing.conftest import (
     TimingTestConfig,
     build_timing_command,

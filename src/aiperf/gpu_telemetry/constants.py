@@ -1,9 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Constants specific to GPU telemetry collection."""
 
-from aiperf.common.enums.metric_enums import (
+from aiperf.common.enums import (
     EnergyMetricUnit,
     GenericMetricUnit,
     MetricSizeUnit,

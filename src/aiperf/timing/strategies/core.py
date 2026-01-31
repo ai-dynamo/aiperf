@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from aiperf.common.enums import TimingMode
-from aiperf.common.factories import AIPerfFactory
-
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.credit.issuer import CreditIssuer
@@ -108,43 +105,3 @@ class RateSettableProtocol(Protocol):
             rate: New request rate in requests per second (must be > 0).
         """
         ...
-
-
-# =============================================================================
-# TimingStrategyFactory - Factory for creating timing strategies based on TimingMode
-# =============================================================================
-
-
-class TimingStrategyFactory(AIPerfFactory[TimingMode, TimingStrategyProtocol]):
-    """Factory for creating timing strategies based on TimingMode.
-
-    Timing strategies control WHEN credits are issued (rate-based, schedule-based, etc.)
-    and are executed by PhaseRunner.
-
-    Fresh strategy instances are created per-phase with all dependencies injected
-    via __init__. This ensures clean state isolation between phases.
-    """
-
-    @classmethod
-    def create_instance(  # type: ignore[override]
-        cls,
-        timing_mode: TimingMode,
-        *,
-        config: CreditPhaseConfig,
-        conversation_source: ConversationSource,
-        scheduler: LoopScheduler,
-        stop_checker: StopConditionChecker,
-        credit_issuer: CreditIssuer,
-        lifecycle: PhaseLifecycle,
-        **kwargs,
-    ) -> TimingStrategyProtocol:
-        return super().create_instance(
-            timing_mode,
-            config=config,
-            conversation_source=conversation_source,
-            scheduler=scheduler,
-            stop_checker=stop_checker,
-            credit_issuer=credit_issuer,
-            lifecycle=lifecycle,
-            **kwargs,
-        )

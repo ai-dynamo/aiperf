@@ -18,15 +18,9 @@ from aiperf.common.enums import (
     CommandType,
     MessageType,
     ServiceRegistrationStatus,
-    ServiceType,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
-from aiperf.common.factories import (
-    AIPerfUIFactory,
-    ServiceFactory,
-    ServiceManagerFactory,
-)
 from aiperf.common.hooks import on_command, on_init, on_message, on_start, on_stop
 from aiperf.common.logging import cleanup_global_log_queue, get_global_log_queue
 from aiperf.common.messages import (
@@ -57,16 +51,18 @@ from aiperf.common.models import (
 from aiperf.common.models.error_models import ExitErrorInfo
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
-from aiperf.common.protocols import AIPerfUIProtocol, ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
 from aiperf.controller.controller_utils import print_exit_errors
+from aiperf.controller.protocols import ServiceManagerProtocol
 from aiperf.controller.proxy_manager import ProxyManager
 from aiperf.controller.system_mixins import SignalHandlerMixin
 from aiperf.credit.messages import CreditsCompleteMessage
 from aiperf.exporters.exporter_manager import ExporterManager
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PluginType, ServiceType
+from aiperf.ui.protocols import AIPerfUIProtocol
 
 
-@ServiceFactory.register(ServiceType.SYSTEM_CONTROLLER)
 class SystemController(SignalHandlerMixin, BaseService):
     """System Controller service.
 
@@ -110,17 +106,17 @@ class SystemController(SignalHandlerMixin, BaseService):
         self.proxy_manager: ProxyManager = ProxyManager(
             service_config=self.service_config
         )
-        self.service_manager: ServiceManagerProtocol = (
-            ServiceManagerFactory.create_instance(
-                self.service_config.service_run_type.value,
-                required_services=self.required_services,
-                user_config=self.user_config,
-                service_config=self.service_config,
-                log_queue=get_global_log_queue(),
-            )
+        ServiceManagerClass = plugins.get_class(
+            PluginType.SERVICE_MANAGER, self.service_config.service_run_type
         )
-        self.ui: AIPerfUIProtocol = AIPerfUIFactory.create_instance(
-            self.service_config.ui_type,
+        self.service_manager: ServiceManagerProtocol = ServiceManagerClass(
+            required_services=self.required_services,
+            user_config=self.user_config,
+            service_config=self.service_config,
+            log_queue=get_global_log_queue(),
+        )
+        UIClass = plugins.get_class(PluginType.UI, self.service_config.ui_type)
+        self.ui: AIPerfUIProtocol = UIClass(
             service_config=self.service_config,
             user_config=self.user_config,
             log_queue=get_global_log_queue(),
@@ -926,8 +922,9 @@ def main() -> None:
     """Main entry point for the system controller."""
 
     from aiperf.common.bootstrap import bootstrap_and_run_service
+    from aiperf.plugin.enums import ServiceType
 
-    bootstrap_and_run_service(SystemController)
+    bootstrap_and_run_service(ServiceType.SYSTEM_CONTROLLER)
 
 
 if __name__ == "__main__":

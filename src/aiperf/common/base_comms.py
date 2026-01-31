@@ -1,14 +1,13 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from typing import Any, cast
 
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import CommClientType
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.protocols import (
     CommunicationClientProtocol,
-    CommunicationProtocol,
     PubClientProtocol,
     PullClientProtocol,
     PushClientProtocol,
@@ -19,9 +18,9 @@ from aiperf.common.protocols import (
     SubClientProtocol,
 )
 from aiperf.common.types import CommAddressType
+from aiperf.plugin.enums import CommClientType
 
 
-@implements_protocol(CommunicationProtocol)
 class BaseCommunication(AIPerfLifecycleMixin, ABC):
     """Base class for specifying the base communication layer for AIPerf components."""
 

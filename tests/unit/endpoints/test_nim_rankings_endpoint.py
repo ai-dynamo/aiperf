@@ -5,9 +5,9 @@ import logging
 
 import pytest
 
-from aiperf.common.enums import EndpointType
 from aiperf.common.models import Text, Turn
 from aiperf.endpoints.nim_rankings import NIMRankingsEndpoint
+from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_model_endpoint,

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
@@ -14,7 +14,6 @@ from aiperf.common.config import (
     ServiceConfig,
     UserConfig,
 )
-from aiperf.common.enums import EndpointType
 from aiperf.common.environment import Environment
 from aiperf.common.models.telemetry_models import (
     TelemetryMetrics,
@@ -23,6 +22,7 @@ from aiperf.common.models.telemetry_models import (
 from aiperf.gpu_telemetry.jsonl_writer import (
     GPUTelemetryJSONLWriter,
 )
+from aiperf.plugin.enums import EndpointType
 from tests.unit.post_processors.conftest import aiperf_lifecycle, make_telemetry_record
 
 
@@ -140,12 +140,15 @@ class TestGPUTelemetryJSONLWriterInitialization:
         )
         await processor.initialize()
 
-        # File should be cleared or not exist
-        if processor.output_file.exists():
-            content = processor.output_file.read_text()
-            assert content == ""
-        else:
-            assert not processor.output_file.exists()
+        try:
+            # File should be cleared or not exist
+            if processor.output_file.exists():
+                content = processor.output_file.read_text()
+                assert content == ""
+            else:
+                assert not processor.output_file.exists()
+        finally:
+            await processor.stop()
 
     def test_sets_batch_size_from_environment(
         self,

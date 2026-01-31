@@ -4,16 +4,13 @@ import asyncio
 from abc import ABC, abstractmethod
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.decorators import implements_protocol
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import ServiceRunInfo
-from aiperf.common.protocols import ServiceManagerProtocol
 from aiperf.common.types import ServiceTypeT
 
 
-@implements_protocol(ServiceManagerProtocol)
 class BaseServiceManager(AIPerfLifecycleMixin, ABC):
     """
     Base class for service managers. It provides a common interface for managing services.

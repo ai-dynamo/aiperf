@@ -3,9 +3,11 @@
 
 import pytest
 
-from aiperf.common.enums import EndpointType
 from aiperf.common.models import Image, Text, Turn
 from aiperf.endpoints.nim_embeddings import NIMEmbeddingsEndpoint
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import EndpointType
+from aiperf.plugin.schema.schemas import EndpointMetadata
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_model_endpoint,
@@ -138,11 +140,15 @@ class TestNIMEmbeddingsEndpoint(TestEmbeddingsEndpoint):
 
     def test_metadata_returns_nim_specific_title(self, endpoint):
         """Test that metadata returns NIM-specific metrics title."""
-        metadata = endpoint.metadata()
+        metadata = plugins.get_endpoint_metadata(EndpointType.NIM_EMBEDDINGS)
+        assert isinstance(metadata, EndpointMetadata)
 
         assert metadata.metrics_title == "NIM Embeddings Metrics"
         assert metadata.endpoint_path == "/v1/embeddings"
         assert metadata.supports_streaming is False
+        assert metadata.produces_tokens is False
+        assert metadata.tokenizes_input is True
+        assert metadata.supports_images is True
 
     def test_format_payload_images_from_multiple_image_objects(
         self, endpoint, model_endpoint

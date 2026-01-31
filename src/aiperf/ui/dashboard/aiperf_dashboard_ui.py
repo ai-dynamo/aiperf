@@ -1,27 +1,26 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import multiprocessing
+from __future__ import annotations
 
-from aiperf.common.config import ServiceConfig
-from aiperf.common.config.user_config import UserConfig
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import AIPerfUIType
-from aiperf.common.factories import AIPerfUIFactory
+from typing import TYPE_CHECKING
+
 from aiperf.common.hooks import (
     AIPerfHook,
     on_start,
     on_stop,
 )
-from aiperf.common.protocols import AIPerfUIProtocol
-from aiperf.controller.system_controller import SystemController
 from aiperf.ui.base_ui import BaseAIPerfUI
 from aiperf.ui.dashboard.aiperf_textual_app import AIPerfTextualApp
 from aiperf.ui.dashboard.rich_log_viewer import LogConsumer
 
+if TYPE_CHECKING:
+    import multiprocessing
 
-@implements_protocol(AIPerfUIProtocol)
-@AIPerfUIFactory.register(AIPerfUIType.DASHBOARD)
+    from aiperf.common.config import ServiceConfig, UserConfig
+    from aiperf.controller.system_controller import SystemController
+
+
 class AIPerfDashboardUI(BaseAIPerfUI):
     """
     AIPerf Dashboard UI.

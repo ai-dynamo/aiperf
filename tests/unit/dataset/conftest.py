@@ -12,9 +12,9 @@ import pytest
 import aiperf.endpoints  # noqa: F401  # Import to register endpoints
 import aiperf.transports  # noqa: F401  # Import to register transports
 from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
-from aiperf.common.enums import EndpointType
 from aiperf.common.models import Conversation
 from aiperf.dataset.dataset_manager import DatasetManager
+from aiperf.plugin.enums import EndpointType
 
 
 @pytest.fixture

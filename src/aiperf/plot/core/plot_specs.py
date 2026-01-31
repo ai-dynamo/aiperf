@@ -1,16 +1,16 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Plot specifications for configurable plot generation."""
 
-from dataclasses import dataclass
-from enum import Enum
 from typing import Literal
 
 from pydantic import Field, field_validator
 
 from aiperf.common.config import BaseConfig
+from aiperf.common.enums import CaseInsensitiveStrEnum
 from aiperf.common.models import AIPerfBaseModel
+from aiperf.plugin.enums import PlotType
 
 
 class Style(AIPerfBaseModel):
@@ -74,7 +74,7 @@ class ExperimentClassificationConfig(BaseConfig):
     )
 
 
-class DataSource(Enum):
+class DataSource(CaseInsensitiveStrEnum):
     """Data sources for plot metrics."""
 
     REQUESTS = "requests"
@@ -83,100 +83,6 @@ class DataSource(Enum):
     AGGREGATED = "aggregated"
     SERVER_METRICS = "server_metrics"
     SERVER_METRICS_AGGREGATED = "server_metrics_aggregated"
-
-
-class PlotType(Enum):
-    """Types of plots that can be generated."""
-
-    SCATTER = "scatter"
-    AREA = "area"
-    HISTOGRAM = "histogram"
-    TIMESLICE = "timeslice"
-    PARETO = "pareto"
-    SCATTER_LINE = "scatter_line"
-    DUAL_AXIS = "dual_axis"
-    SCATTER_WITH_PERCENTILES = "scatter_with_percentiles"
-    REQUEST_TIMELINE = "request_timeline"
-    PERCENTILE_BANDS = "percentile_bands"
-
-
-@dataclass
-class PlotTypeInfo:
-    """Metadata for a plot type including display name and description."""
-
-    display_name: str
-    description: str
-    category: str
-
-
-PLOT_TYPE_METADATA: dict[PlotType, PlotTypeInfo] = {
-    PlotType.SCATTER: PlotTypeInfo(
-        display_name="Per-Request Scatter",
-        description="Individual data points for each request",
-        category="per_request",
-    ),
-    PlotType.SCATTER_WITH_PERCENTILES: PlotTypeInfo(
-        display_name="Scatter with Trends",
-        description="Per-request points with rolling p50/p95/p99 trend lines",
-        category="per_request",
-    ),
-    PlotType.REQUEST_TIMELINE: PlotTypeInfo(
-        display_name="Request Phase Breakdown",
-        description="Gantt-style view showing TTFT vs generation time per request",
-        category="per_request",
-    ),
-    PlotType.TIMESLICE: PlotTypeInfo(
-        display_name="Time Window Summary",
-        description="Aggregated averages per time window (e.g., every 10s)",
-        category="aggregated",
-    ),
-    PlotType.HISTOGRAM: PlotTypeInfo(
-        display_name="Time Window Bars",
-        description="Bar chart of aggregated values per time window",
-        category="aggregated",
-    ),
-    PlotType.AREA: PlotTypeInfo(
-        display_name="Throughput Over Time",
-        description="Filled area showing token throughput distribution",
-        category="combined",
-    ),
-    PlotType.DUAL_AXIS: PlotTypeInfo(
-        display_name="Dual Metric Overlay",
-        description="Two metrics on separate Y-axes (e.g., throughput + GPU util)",
-        category="combined",
-    ),
-    PlotType.PARETO: PlotTypeInfo(
-        display_name="Pareto Curve",
-        description="Trade-off frontier showing optimal configurations",
-        category="comparison",
-    ),
-    PlotType.SCATTER_LINE: PlotTypeInfo(
-        display_name="Scatter + Trend Line",
-        description="Points connected by lines, grouped by configuration",
-        category="comparison",
-    ),
-    PlotType.PERCENTILE_BANDS: PlotTypeInfo(
-        display_name="Percentile Bands Over Time",
-        description="p50 line with p95/p99 shaded uncertainty bands for SLA monitoring",
-        category="aggregated",
-    ),
-}
-
-
-def get_plot_type_info(plot_type: PlotType) -> PlotTypeInfo:
-    """
-    Get metadata for a plot type.
-
-    Args:
-        plot_type: The PlotType enum value
-
-    Returns:
-        PlotTypeInfo with display name, description, and category
-    """
-    return PLOT_TYPE_METADATA.get(
-        plot_type,
-        PlotTypeInfo(plot_type.value, "", "other"),
-    )
 
 
 class MetricSpec(AIPerfBaseModel):

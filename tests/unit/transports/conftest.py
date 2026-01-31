@@ -8,11 +8,7 @@ import aiohttp
 import pytest
 
 from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.enums import (
-    ConnectionReuseStrategy,
-    EndpointType,
-    ModelSelectionStrategy,
-)
+from aiperf.common.enums import ConnectionReuseStrategy, ModelSelectionStrategy
 from aiperf.common.models import RequestRecord, SSEMessage, TextResponse
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
@@ -20,6 +16,7 @@ from aiperf.common.models.model_endpoint_info import (
     ModelInfo,
     ModelListInfo,
 )
+from aiperf.plugin.enums import EndpointType
 from aiperf.transports.aiohttp_client import AioHttpClient, create_tcp_connector
 
 

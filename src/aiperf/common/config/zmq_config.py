@@ -11,7 +11,8 @@ from typing_extensions import Self
 
 from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
 from aiperf.common.config.groups import Groups
-from aiperf.common.enums import CommAddress, CommunicationBackend
+from aiperf.common.enums import CommAddress
+from aiperf.plugin.enums import CommunicationBackend
 
 
 class BaseZMQProxyConfig(BaseModel, ABC):

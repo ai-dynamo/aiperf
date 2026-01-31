@@ -28,7 +28,6 @@ class BaseAIPerfUI(
 
     Example:
     ```python
-    @AIPerfUIFactory.register("custom")
     class MyUI(BaseAIPerfUI):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)

@@ -1,23 +1,17 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from rich.console import Console
 from rich.panel import Panel
 
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import ConsoleExporterType
 from aiperf.common.environment import Environment
-from aiperf.common.factories import ConsoleExporterFactory
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult
-from aiperf.common.protocols import ConsoleExporterProtocol
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.usage_diff_metrics import UsageDiscrepancyCountMetric
 
 
-@implements_protocol(ConsoleExporterProtocol)
-@ConsoleExporterFactory.register(ConsoleExporterType.USAGE_DISCREPANCY_WARNING)
 class ConsoleUsageDiscrepancyExporter(AIPerfLoggerMixin):
     """Display warning panel when API usage tokens differ significantly from client token counts.
 

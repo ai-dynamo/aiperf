@@ -1,10 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
 
-from aiperf.common.enums import EndpointType
-from aiperf.common.factories import EndpointFactory
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import EndpointType
 
 
 class TestEndpointType:
@@ -84,7 +84,7 @@ class TestEndpointType:
         assert str(endpoint_type) == expected_tag
         assert endpoint_type.value == expected_tag
 
-        metadata = EndpointFactory.get_metadata(endpoint_type)
+        metadata = plugins.get_endpoint_metadata(endpoint_type)
         assert metadata.endpoint_path == expected_path
         assert metadata.supports_streaming == expected_streaming
         assert metadata.produces_tokens == expected_tokens
@@ -124,7 +124,7 @@ class TestEndpointType:
     def test_all_endpoint_types_have_valid_metadata(self):
         """Ensure all EndpointType members have valid metadata via factory."""
         for endpoint_type in EndpointType:
-            metadata = EndpointFactory.get_metadata(endpoint_type)
+            metadata = plugins.get_endpoint_metadata(endpoint_type)
             assert isinstance(metadata.supports_streaming, bool)
             assert isinstance(metadata.produces_tokens, bool)
             assert metadata.metrics_title

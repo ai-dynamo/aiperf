@@ -4,7 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase, TimingMode
+from aiperf.common.enums import CreditPhase
+from aiperf.plugin.enums import TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.phase.credit_counter import CreditCounter
 from aiperf.timing.phase.lifecycle import PhaseLifecycle

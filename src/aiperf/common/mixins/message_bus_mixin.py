@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
@@ -7,9 +7,7 @@ from collections.abc import Callable, Coroutine
 from typing import Any
 
 from aiperf.common.config import ServiceConfig
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import CommAddress
-from aiperf.common.enums.message_enums import MessageType
+from aiperf.common.enums import CommAddress, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import (
     AIPerfHook,
@@ -21,13 +19,11 @@ from aiperf.common.hooks import (
 from aiperf.common.messages import Message
 from aiperf.common.messages.command_messages import ConnectionProbeMessage
 from aiperf.common.mixins.communication_mixin import CommunicationMixin
-from aiperf.common.protocols import MessageBusClientProtocol
 from aiperf.common.types import MessageCallbackMapT, MessageTypeT
 from aiperf.common.utils import yield_to_event_loop
 
 
 @provides_hooks(AIPerfHook.ON_MESSAGE)
-@implements_protocol(MessageBusClientProtocol)
 class MessageBusClientMixin(CommunicationMixin, ABC):
     """Mixin to provide message bus clients (pub and sub)for AIPerf components, as well as
     a hook to handle messages: @on_message."""

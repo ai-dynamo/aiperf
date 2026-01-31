@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 This module defines common used alias types for AIPerf. This both helps prevent circular imports and
@@ -16,17 +16,15 @@ from aiperf.common.enums import (
     MediaType,
     MessageType,
     MetricType,
-    ServiceType,
-    TransportType,
 )
+from aiperf.plugin.enums import ServiceType, TransportType
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from aiperf.common.messages import CommandMessage, Message
     from aiperf.common.mixins import AIPerfLifecycleMixin, HooksMixin
-    from aiperf.common.models import AIPerfBaseModel, Media
-    from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+    from aiperf.common.models import AIPerfBaseModel, Media, ModelEndpointInfo
     from aiperf.common.protocols import ServiceProtocol
 
 

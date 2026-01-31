@@ -1,19 +1,17 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from typing import Any
 
-from aiperf.common.decorators import implements_protocol
-from aiperf.common.enums import EndpointType
-from aiperf.common.factories import EndpointFactory
-from aiperf.common.models import ImageDataItem, ImageResponseData, ParsedResponse
-from aiperf.common.models.metadata import EndpointMetadata
-from aiperf.common.models.record_models import RequestInfo
-from aiperf.common.protocols import EndpointProtocol, InferenceServerResponse
+from aiperf.common.models import (
+    ImageDataItem,
+    ImageResponseData,
+    InferenceServerResponse,
+    ParsedResponse,
+    RequestInfo,
+)
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 
-@implements_protocol(EndpointProtocol)
-@EndpointFactory.register(EndpointType.IMAGE_GENERATION)
 class ImageGenerationEndpoint(BaseEndpoint):
     """OpenAI Image Generation endpoint.
 
@@ -23,20 +21,6 @@ class ImageGenerationEndpoint(BaseEndpoint):
     See: https://platform.openai.com/docs/api-reference/images/create
     See: https://github.com/sgl-project/sglang/blob/main/python/sglang/multimodal_gen/docs/cli.md
     """
-
-    @classmethod
-    def metadata(cls) -> EndpointMetadata:
-        """Return Image Generation endpoint metadata."""
-        # NOTE: Currently, the sglang generate does not support streaming responses, however
-        #       the OpenAI Image Generation API does support streaming responses.
-        return EndpointMetadata(
-            endpoint_path="/v1/images/generations",
-            supports_streaming=True,
-            produces_tokens=False,
-            produces_images=True,
-            tokenizes_input=True,
-            metrics_title="Image Generation Metrics",
-        )
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         """Format OpenAI Image Generation request payload from RequestInfo.

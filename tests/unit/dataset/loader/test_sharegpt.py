@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from aiperf.common.enums import DatasetSamplingStrategy
 from aiperf.common.models import Conversation
 from aiperf.dataset.loader import ShareGPTLoader
+from aiperf.plugin.enums import DatasetSamplingStrategy
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -17,8 +17,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import seaborn as sns
 
-from aiperf.common.enums import PlotMetricDirection
-from aiperf.common.enums.metric_enums import MetricFlags
+from aiperf.common.enums import MetricFlags, PlotMetricDirection
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.plot.constants import (
     ALL_STAT_KEYS,

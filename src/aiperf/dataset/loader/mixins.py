@@ -4,8 +4,7 @@
 from collections.abc import Iterable
 from urllib.parse import urlparse
 
-from aiperf.common.enums.dataset_enums import AudioFormat
-from aiperf.common.enums.media_enums import MediaType
+from aiperf.common.enums import AudioFormat, MediaType
 from aiperf.common.models import Media
 from aiperf.common.types import MediaT, MediaTypeT
 from aiperf.dataset import utils

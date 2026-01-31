@@ -7,13 +7,10 @@ from typing import Any, ClassVar
 
 from pydantic import Field
 
-from aiperf.common.enums import (
-    DatasetClientStoreType,
-    DatasetSamplingStrategy,
-    MediaType,
-)
+from aiperf.common.enums import MediaType
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.types import MediaTypeT
+from aiperf.plugin.enums import DatasetClientStoreType, DatasetSamplingStrategy
 
 
 class DatasetClientMetadata(AIPerfBaseModel):

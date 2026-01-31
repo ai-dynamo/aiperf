@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from unittest.mock import AsyncMock, Mock, patch
@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
-from aiperf.common.enums import EndpointType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
 from aiperf.common.models.telemetry_models import (
@@ -18,6 +17,7 @@ from aiperf.common.models.telemetry_models import (
 from aiperf.gpu_telemetry.accumulator import (
     GPUTelemetryAccumulator,
 )
+from aiperf.plugin.enums import EndpointType
 from tests.unit.post_processors.conftest import make_telemetry_record
 
 

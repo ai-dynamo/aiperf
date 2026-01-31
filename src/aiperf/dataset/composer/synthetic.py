@@ -1,18 +1,15 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config import UserConfig
 from aiperf.common.config.config_defaults import InputDefaults
-from aiperf.common.enums import ComposerType
-from aiperf.common.factories import ComposerFactory
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn, Video
 from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.composer.base import BaseDatasetComposer
 
 
-@ComposerFactory.register(ComposerType.SYNTHETIC)
 class SyntheticDatasetComposer(BaseDatasetComposer):
     def __init__(self, config: UserConfig, tokenizer: Tokenizer):
         super().__init__(config, tokenizer)
