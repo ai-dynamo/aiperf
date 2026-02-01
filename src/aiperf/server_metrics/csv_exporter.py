@@ -16,9 +16,9 @@ from aiperf.common.models.server_metrics_models import (
     HistogramSeries,
     ServerMetricsEndpointSummary,
 )
-from aiperf.exporters.display_units_utils import normalize_endpoint_display
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
+from aiperf.exporters.utils import normalize_endpoint_display
 from aiperf.server_metrics.units import infer_unit
 
 # Base headers at the start of each row

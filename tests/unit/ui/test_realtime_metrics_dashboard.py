@@ -15,7 +15,6 @@ from aiperf.metrics.types.output_token_count import (
     OutputTokenCountMetric,
 )
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
-from aiperf.metrics.types.thinking_efficiency_metrics import ThinkingEfficiencyMetric
 from aiperf.metrics.types.ttft_metric import TTFTMetric
 from aiperf.ui.dashboard.realtime_metrics_dashboard import RealtimeMetricsTable
 
@@ -27,10 +26,7 @@ class TestRealtimeMetricsTable:
             # ERROR_ONLY metrics - always skipped
             (ErrorRequestCountMetric.tag, False, True),
             (ErrorRequestCountMetric.tag, True, True),
-            # EXPERIMENTAL metrics - skipped if show_internal_metrics is False
-            (ThinkingEfficiencyMetric.tag, False, True),
-            (ThinkingEfficiencyMetric.tag, True, False),
-            # NO_CONSOLE metrics - skipped if show_internal_metrics is False
+            # NO_CONSOLE metrics - skipped unless SHOW_INTERNAL_METRICS is True
             (BenchmarkDurationMetric.tag, False, True),
             (BenchmarkDurationMetric.tag, True, False),
             (OutputTokenCountMetric.tag, False, True),

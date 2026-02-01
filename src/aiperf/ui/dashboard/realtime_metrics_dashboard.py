@@ -15,11 +15,9 @@ from textual.widgets.data_table import ColumnKey, RowDoesNotExist, RowKey
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.enums import MetricFlags, MetricUnitT
+from aiperf.common.enums import MetricFlags
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import MetricUnitError
 from aiperf.common.models.record_models import MetricResult
-from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.ui.dashboard.custom_widgets import MaximizableWidget, NonFocusableDataTable
 
@@ -61,14 +59,16 @@ class RealtimeMetricsTable(Widget):
                 self.update(self.metrics)
 
     def _should_skip(self, metric: MetricResult) -> bool:
-        """Determine if a metric should be skipped."""
+        """Determine if a metric should be skipped.
+
+        INTERNAL and EXPERIMENTAL metrics are already filtered upstream by
+        summarize(), so only ERROR_ONLY and NO_CONSOLE need filtering here.
+        """
         metric_class = MetricRegistry.get_class(metric.tag)
         if metric_class.has_flags(MetricFlags.ERROR_ONLY):
             return True
         return (
-            metric_class.has_any_flags(
-                MetricFlags.NO_CONSOLE | MetricFlags.INTERNAL | MetricFlags.EXPERIMENTAL
-            )
+            metric_class.has_flags(MetricFlags.NO_CONSOLE)
             and not Environment.DEV.SHOW_INTERNAL_METRICS
         )
 
@@ -129,12 +129,16 @@ class RealtimeMetricsTable(Widget):
                 )
 
     def _format_metric_row(self, metric: MetricResult) -> list[Text]:
-        """Format worker data into table row cells."""
+        """Format worker data into table row cells.
+
+        Note: Metrics are pre-converted to display units by summarize(),
+        so values can be used directly without conversion.
+        """
         metric_class = MetricRegistry.get_class(metric.tag)
-        display_unit = metric_class.display_unit or metric_class.unit
         short_header = metric_class.short_header or metric_class.header
-        if not metric_class.short_header_hide_unit:
-            short_header = f"{short_header} ({display_unit})"
+        # Use the metric's unit directly (already converted to display unit)
+        if not metric_class.short_header_hide_unit and metric.unit:
+            short_header = f"{short_header} ({metric.unit})"
         return [
             Text(
                 short_header,
@@ -142,28 +146,19 @@ class RealtimeMetricsTable(Widget):
                 justify="right",
             ),
             *[
-                self._format_metric_value(
-                    getattr(metric, field), display_unit, metric_class
-                )
+                self._format_metric_value(getattr(metric, field))
                 for field in self.STATS_FIELDS
             ],
         ]
 
-    def _format_metric_value(
-        self,
-        value: Any | None,
-        display_unit: MetricUnitT,
-        metric_class: type[BaseMetric],
-    ) -> Text:
-        """Format a metric value."""
+    def _format_metric_value(self, value: Any | None) -> Text:
+        """Format a metric value.
+
+        Note: Values are pre-converted to display units by summarize(),
+        so no unit conversion is needed here.
+        """
         if value is None:
             return Text("N/A", justify="right", style="dim")
-
-        if display_unit != metric_class.unit:
-            try:
-                value = metric_class.unit.convert_to(display_unit, value)
-            except MetricUnitError as e:
-                _logger.warning(f"Error during unit conversion: {e}")
 
         if isinstance(value, datetime):
             value_str = value.strftime("%Y-%m-%d %H:%M:%S")

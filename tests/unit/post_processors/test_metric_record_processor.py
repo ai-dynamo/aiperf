@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from unittest.mock import Mock, patch
@@ -8,7 +8,6 @@ import pytest
 from aiperf.common.config import UserConfig
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
-from aiperf.metrics.base_record_metric import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
@@ -22,45 +21,6 @@ from tests.unit.post_processors.conftest import (
     create_metric_metadata,
     setup_mock_registry_sequences,
 )
-
-
-class FailingMetricNoValue(BaseRecordMetric[int]):
-    """Test metric that raises NoMetricValue exception."""
-
-    tag = "failing_metric_no_value"
-
-    def _parse_record(
-        self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
-    ) -> int:
-        raise NoMetricValue("No value available")
-
-
-class FailingMetricValueError(BaseRecordMetric[int]):
-    """Test metric that raises ValueError exception."""
-
-    tag = "failing_metric_value_error"
-
-    def _parse_record(
-        self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
-    ) -> int:
-        raise ValueError("Something went wrong")
-
-
-class DoubleLatencyTestMetric(BaseRecordMetric[int]):
-    """Test metric that depends on other metrics' results."""
-
-    tag = "double_latency_test_metric"
-
-    def __init__(self):
-        super().__init__()
-        self.base_metric_tag = RequestLatencyMetric.tag
-
-    def _parse_record(
-        self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
-    ) -> int:
-        # Use the base metric result and multiply by 2
-        base_value = record_metrics.get(RequestLatencyMetric.tag, 0)
-        return base_value * 2  # type: ignore
 
 
 class TestMetricRecordProcessor:
@@ -165,9 +125,12 @@ class TestMetricRecordProcessor:
         mock_metric_registry: Mock,
         mock_user_config: UserConfig,
         sample_parsed_record: ParsedResponseRecord,
+        failing_metric_no_value_cls,
     ) -> None:
         """Test graceful handling of NoMetricValue exception by logging as a debug message."""
-        setup_mock_registry_sequences(mock_metric_registry, [FailingMetricNoValue], [])
+        setup_mock_registry_sequences(
+            mock_metric_registry, [failing_metric_no_value_cls], []
+        )
 
         processor = MetricRecordProcessor(mock_user_config)
         metadata = create_metric_metadata()
@@ -176,11 +139,15 @@ class TestMetricRecordProcessor:
             result = await processor.process_record(sample_parsed_record, metadata)
 
             assert isinstance(result, MetricRecordDict)
-            assert FailingMetricNoValue.tag not in result
+            assert failing_metric_no_value_cls.tag not in result
             mock_trace.assert_called_once()
-            assert f"No metric value for metric '{FailingMetricNoValue.tag}'" in str(
-                mock_trace.call_args[0][0](
-                    tag=FailingMetricNoValue.tag, e=NoMetricValue("No value available")
+            assert (
+                f"No metric value for metric '{failing_metric_no_value_cls.tag}'"
+                in str(
+                    mock_trace.call_args[0][0](
+                        tag=failing_metric_no_value_cls.tag,
+                        e=NoMetricValue("No value available"),
+                    )
                 )
             )
 
@@ -190,10 +157,11 @@ class TestMetricRecordProcessor:
         mock_metric_registry: Mock,
         mock_user_config: UserConfig,
         sample_parsed_record: ParsedResponseRecord,
+        failing_metric_value_error_cls,
     ) -> None:
         """Test graceful handling of ValueError exceptions during metric parsing by logging as a warning message."""
         setup_mock_registry_sequences(
-            mock_metric_registry, [FailingMetricValueError], []
+            mock_metric_registry, [failing_metric_value_error_cls], []
         )
 
         processor = MetricRecordProcessor(mock_user_config)
@@ -203,10 +171,10 @@ class TestMetricRecordProcessor:
             result = await processor.process_record(sample_parsed_record, metadata)
 
             assert isinstance(result, MetricRecordDict)
-            assert FailingMetricValueError.tag not in result
+            assert failing_metric_value_error_cls.tag not in result
             mock_warning.assert_called_once()
             assert (
-                f"Error parsing record for metric '{FailingMetricValueError.tag}'"
+                f"Error parsing record for metric '{failing_metric_value_error_cls.tag}'"
                 in str(mock_warning.call_args)
             )
 
@@ -216,10 +184,11 @@ class TestMetricRecordProcessor:
         mock_metric_registry: Mock,
         mock_user_config: UserConfig,
         sample_parsed_record: ParsedResponseRecord,
+        failing_metric_no_value_cls,
     ) -> None:
         """Test processing record with mix of successful and failing metrics."""
         setup_mock_registry_sequences(
-            mock_metric_registry, [RequestLatencyMetric], [FailingMetricNoValue]
+            mock_metric_registry, [RequestLatencyMetric], [failing_metric_no_value_cls]
         )
 
         processor = MetricRecordProcessor(mock_user_config)
@@ -230,7 +199,7 @@ class TestMetricRecordProcessor:
 
             assert len(result) == 1
             assert RequestLatencyMetric.tag in result
-            assert FailingMetricNoValue.tag not in result
+            assert failing_metric_no_value_cls.tag not in result
 
             expected_latency = DEFAULT_LAST_RESPONSE_NS - DEFAULT_START_TIME_NS
             assert result[RequestLatencyMetric.tag] == expected_latency
@@ -241,10 +210,13 @@ class TestMetricRecordProcessor:
         mock_metric_registry: Mock,
         mock_user_config: UserConfig,
         sample_parsed_record: ParsedResponseRecord,
+        double_latency_test_metric_cls,
     ) -> None:
         """Test processing record with dependent metrics executes sequentially."""
         setup_mock_registry_sequences(
-            mock_metric_registry, [RequestLatencyMetric, DoubleLatencyTestMetric], []
+            mock_metric_registry,
+            [RequestLatencyMetric, double_latency_test_metric_cls],
+            [],
         )
 
         processor = MetricRecordProcessor(mock_user_config)
@@ -253,11 +225,12 @@ class TestMetricRecordProcessor:
 
         assert len(result) == 2
         assert RequestLatencyMetric.tag in result
-        assert DoubleLatencyTestMetric.tag in result
+        assert double_latency_test_metric_cls.tag in result
 
-        # Dependent metric value is 2x the base metric value (see DoubleLatencyTestMetric)
+        # Dependent metric value is 2x the base metric value
         assert (
-            result[DoubleLatencyTestMetric.tag] == result[RequestLatencyMetric.tag] * 2
+            result[double_latency_test_metric_cls.tag]
+            == result[RequestLatencyMetric.tag] * 2
         )
 
     @pytest.mark.asyncio

@@ -53,7 +53,7 @@ class MetricResult(JsonMetricResult):
 
     def to_display_unit(self) -> "MetricResult":
         """Convert the metric result to its display unit."""
-        from aiperf.exporters.display_units_utils import to_display_unit
+        from aiperf.metrics.display_units import to_display_unit
         from aiperf.metrics.metric_registry import MetricRegistry
 
         return to_display_unit(self, MetricRegistry)
