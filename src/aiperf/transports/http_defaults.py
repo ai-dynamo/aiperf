@@ -89,6 +89,9 @@ class AioHttpDefaults:
     HAPPY_EYEBALLS_DELAY = None  # Happy eyeballs delay (None = disabled)
     SOCKET_FAMILY = _get_socket_family()  # Family of the socket based on IP_VERSION
     SSL_VERIFY = Environment.HTTP.SSL_VERIFY  # Enable SSL certificate verification
+    TRUST_ENV = (
+        Environment.HTTP.TRUST_ENV
+    )  # Trust environment variables for proxy config
 
     @classmethod
     def get_default_kwargs(cls) -> dict[str, Any]:

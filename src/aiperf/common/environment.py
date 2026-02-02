@@ -284,6 +284,12 @@ class _HTTPSettings(BaseSettings):
         description="IP version for HTTP socket connections. "
         "Options: '4' (AF_INET, default), '6' (AF_INET6), or 'auto' (AF_UNSPEC, system chooses).",
     )
+    TRUST_ENV: bool = Field(
+        default=False,
+        description="Trust environment variables for HTTP client configuration. "
+        "When enabled, aiohttp will read proxy settings from HTTP_PROXY, HTTPS_PROXY, "
+        "and NO_PROXY environment variables.",
+    )
 
 
 class _LoggingSettings(BaseSettings):
