@@ -35,14 +35,14 @@ repos:
     hooks:
       - id: add-license
         name: add-license
-        entry: python tools/add_copyright.py
+        entry: make add-copyright
         language: python
         require_serial: true
       - id: mkinit
         name: mkinit
-        entry: bash tools/generate_init_files.sh
-        language: system
-        files: (\.py$|^tools/generate_init_files\.sh$)
+        entry: make init-files
+        language: python
+        files: (\.py$|^tools/generate_init_files\.py$)
         pass_filenames: false
         args: []
       - id: generate-cli-docs
@@ -70,7 +70,7 @@ repos:
         name: validate-plugin-schemas
         entry: make validate-plugin-schemas
         language: python
-        files: (\.py$|^src/aiperf/plugin/(categories|plugins)\.yaml|tools/validate_plugin_schemas\.py)$
+        files: (\.py$|^src/aiperf/plugin/(categories|plugins)\.yaml|tools/generate_plugin_artifacts\.py)$
         pass_filenames: false
         args: []
   - repo: https://github.com/astral-sh/ruff-pre-commit

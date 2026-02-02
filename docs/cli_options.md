@@ -73,8 +73,7 @@ Optional output path for analysis report (JSON).
 
 Run the Profile subcommand.
 
-Benchmark generative AI models and measure performance metrics including throughput,
-latency, token statistics, and resource utilization.
+Benchmark generative AI models and measure performance metrics including throughput, latency, token statistics, and resource utilization.
 
 **Examples:**
 
@@ -820,9 +819,7 @@ Select the user interface type for displaying benchmark progress. `dashboard` (d
 
 Generate visualizations from AIPerf profiling data.
 
-On first run, automatically creates ~/.aiperf/plot_config.yaml which you can edit to
-customize plots, including experiment classification (baseline vs treatment runs).
-Use --config to specify a different config file.
+On first run, automatically creates ~/.aiperf/plot_config.yaml which you can edit to customize plots, including experiment classification (baseline vs treatment runs). Use --config to specify a different config file.
 
 **Examples:**
 

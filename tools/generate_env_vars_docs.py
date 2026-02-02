@@ -1,17 +1,54 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Generate environment variable documentation for AIPerf."""
+"""Generate environment variable documentation from Pydantic Settings classes.
+
+Usage:
+    ./tools/generate_env_vars_docs.py
+    ./tools/generate_env_vars_docs.py --check
+    ./tools/generate_env_vars_docs.py --verbose
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+# Allow direct execution: add repo root to path for 'tools' package imports
+if __name__ == "__main__" and "tools" not in sys.modules:
+    sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import ast
 import re
 from dataclasses import dataclass
-from pathlib import Path
+
+from tools._core import (
+    CONSTRAINT_SYMBOLS,
+    SPDX_HEADER_MD,
+    GeneratedFile,
+    Generator,
+    GeneratorResult,
+    ParseError,
+    main,
+    normalize_text,
+    print_step,
+)
+
+# =============================================================================
+# Configuration
+# =============================================================================
+
+ENV_FILE = Path("src/aiperf/common/environment.py")
+OUTPUT_FILE = Path("docs/environment_variables.md")
+
+# =============================================================================
+# Data Models
+# =============================================================================
 
 
 @dataclass
-class FieldDefinition:
-    """Represents a Pydantic field definition."""
+class Field:
+    """A Pydantic field definition."""
 
     name: str
     default: str
@@ -20,98 +57,69 @@ class FieldDefinition:
 
 
 @dataclass
-class SettingsClass:
-    """Represents a settings class."""
+class Settings:
+    """A Pydantic Settings class."""
 
     name: str
     docstring: str
     env_prefix: str
-    fields: list[FieldDefinition]
+    fields: list[Field]
 
 
-def _normalize_text(text: str) -> str:
-    """Normalize text by replacing newlines with spaces and stripping whitespace."""
-    return " ".join(text.strip().split())
+# =============================================================================
+# AST Parsing
+# =============================================================================
 
 
-def _extract_field_call_args(
-    node: ast.Call,
-) -> tuple[str | None, list[str], str | None]:
-    """Extract default, constraints, and description from a Field() call.
-
-    Returns:
-        Tuple of (default, constraints, description)
-    """
-    default = None
-    constraints = []
-    description = None
-
-    # First positional argument is the default
-    if node.args:
-        default = ast.unparse(node.args[0])
-
-    # Process keyword arguments
-    for keyword in node.keywords:
-        if keyword.arg == "default":
-            default = ast.unparse(keyword.value)
-        elif keyword.arg == "description":
-            # Extract string literal
-            if isinstance(keyword.value, ast.Constant):
-                description = keyword.value.value
-        elif keyword.arg in ["ge", "le", "gt", "lt", "min_length", "max_length"]:
-            # Extract constraint
-            constraint_val = ast.unparse(keyword.value)
-            symbol_map = {
-                "ge": "≥",
-                "le": "≤",
-                "gt": ">",
-                "lt": "<",
-                "min_length": "min length:",
-                "max_length": "max length:",
-            }
-            symbol = symbol_map.get(keyword.arg, keyword.arg)
-            constraints.append(f"{symbol} {constraint_val}")
-
-    return default, constraints, description
-
-
-def _parse_field_definition(node: ast.AnnAssign) -> FieldDefinition | None:
-    """Parse a field definition from an annotated assignment."""
+def _parse_field(node: ast.AnnAssign) -> Field | None:
+    """Parse a Pydantic Field() definition."""
     if not isinstance(node.target, ast.Name):
         return None
 
-    field_name = node.target.id
+    name = node.target.id
     default = "—"
     constraints = []
     description = "—"
 
-    # Check if the value is a Field() call
     if isinstance(node.value, ast.Call):
-        if isinstance(node.value.func, ast.Name) and node.value.func.id == "Field":
-            default_val, field_constraints, field_desc = _extract_field_call_args(
-                node.value
-            )
-            if default_val:
-                default = default_val
-            if field_constraints:
-                constraints = field_constraints
-            if field_desc:
-                description = _normalize_text(field_desc)
+        func = node.value.func
+        if isinstance(func, ast.Name) and func.id == "Field":
+            # First positional arg is default
+            if node.value.args:
+                default = ast.unparse(node.value.args[0])
+
+            # Extract keyword args - extend shared symbols with verbose length format
+            constraint_map = {
+                **CONSTRAINT_SYMBOLS,
+                "min_length": "min length:",
+                "max_length": "max length:",
+            }
+            for kw in node.value.keywords:
+                if kw.arg == "default":
+                    default = ast.unparse(kw.value)
+                elif kw.arg == "description" and isinstance(kw.value, ast.Constant):
+                    description = normalize_text(kw.value.value)
+                elif kw.arg in constraint_map:
+                    constraints.append(
+                        f"{constraint_map[kw.arg]} {ast.unparse(kw.value)}"
+                    )
     elif node.value:
-        # Direct assignment without Field()
         default = ast.unparse(node.value)
 
-    return FieldDefinition(
-        name=field_name,
-        default=default,
-        description=description,
-        constraints=constraints,
-    )
+    return Field(name, default, description, constraints)
 
 
-def _extract_env_prefix(class_node: ast.ClassDef) -> str:
-    """Extract the env_prefix from the model_config."""
-    for item in class_node.body:
+def _parse_settings_class(node: ast.ClassDef) -> Settings | None:
+    """Parse a Pydantic BaseSettings class."""
+    # Must inherit from BaseSettings
+    if not any(isinstance(b, ast.Name) and b.id == "BaseSettings" for b in node.bases):
+        return None
+
+    docstring = normalize_text(ast.get_docstring(node) or "")
+    env_prefix = "AIPERF_"
+
+    # Extract env_prefix from model_config
+    for item in node.body:
         if isinstance(item, ast.Assign):
             for target in item.targets:
                 if (
@@ -119,111 +127,64 @@ def _extract_env_prefix(class_node: ast.ClassDef) -> str:
                     and target.id == "model_config"
                     and isinstance(item.value, ast.Call)
                 ):
-                    # Find env_prefix in the SettingsConfigDict call
-                    for keyword in item.value.keywords:
-                        if keyword.arg == "env_prefix" and isinstance(
-                            keyword.value, ast.Constant
+                    for kw in item.value.keywords:
+                        if kw.arg == "env_prefix" and isinstance(
+                            kw.value, ast.Constant
                         ):
-                            return keyword.value.value
-    return "AIPERF_"
-
-
-def _parse_settings_class(class_node: ast.ClassDef) -> SettingsClass | None:
-    """Parse a settings class definition."""
-    # Skip non-settings classes (must inherit from BaseSettings)
-    is_settings = False
-    for base in class_node.bases:
-        if isinstance(base, ast.Name) and base.id == "BaseSettings":
-            is_settings = True
-            break
-
-    if not is_settings:
-        return None
-
-    # Extract docstring
-    docstring = ast.get_docstring(class_node) or ""
-    docstring = _normalize_text(docstring) if docstring else ""
-
-    # Extract env_prefix
-    env_prefix = _extract_env_prefix(class_node)
+                            env_prefix = kw.value.value
 
     # Extract fields
     fields = []
-    for node in class_node.body:
-        if isinstance(node, ast.AnnAssign):
-            field_def = _parse_field_definition(node)
-            if (
-                field_def
-                and not field_def.name.startswith("_")
-                and "default_factory" not in field_def.default
-            ):
-                # Skip private fields and nested settings fields (they use default_factory)
-                fields.append(field_def)
+    for item in node.body:
+        if (
+            isinstance(item, ast.AnnAssign)
+            and (field := _parse_field(item))
+            and not field.name.startswith("_")
+            and "default_factory" not in field.default
+        ):
+            fields.append(field)
 
-    return SettingsClass(
-        name=class_node.name,
-        docstring=docstring,
-        env_prefix=env_prefix,
-        fields=fields,
-    )
+    return Settings(node.name, docstring, env_prefix, fields) if fields else None
 
 
-def _parse_environment_file(file_path: Path) -> list[SettingsClass]:
-    """Parse the environment.py file and extract settings classes."""
-    content = file_path.read_text()
-    tree = ast.parse(content)
+def parse_settings_file(path: Path) -> list[Settings]:
+    """Parse all Settings classes from a Python file."""
+    tree = ast.parse(path.read_text())
+    settings = []
 
-    settings_classes = []
-
-    # Find all class definitions
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.ClassDef)
             and node.name.startswith("_")
             and node.name.endswith("Settings")
+            and (parsed := _parse_settings_class(node))
         ):
-            # Parse the settings class
-            settings_class = _parse_settings_class(node)
-            if settings_class and settings_class.fields:
-                settings_classes.append(settings_class)
+            settings.append(parsed)
 
-    return settings_classes
+    return settings
 
 
-def _format_default_value(default: str) -> str:
-    """Format default value for display in markdown."""
+# =============================================================================
+# Markdown Generation
+# =============================================================================
+
+
+def _format_default(default: str) -> str:
+    """Format a default value for markdown."""
     if default == "—":
         return default
-
-    # Clean up some common patterns
     if default.startswith("[") and default.endswith("]"):
-        # Format lists
         items = re.findall(r'"([^"]*)"', default)
         if items:
-            if len(items) <= 3:
-                return "[" + ", ".join(f"`{item}`" for item in items) + "]"
-            else:
-                return "[" + ", ".join(f"`{item}`" for item in items[:3]) + ", ...]"
-        return f"`{default}`"
-
-    # Wrap in backticks
+            formatted = ", ".join(f"`{i}`" for i in items[:3])
+            return f"[{formatted}{', ...' if len(items) > 3 else ''}]"
     return f"`{default}`"
 
 
-def _format_constraints(constraints: list[str]) -> str:
-    """Format constraints for display in markdown."""
-    if not constraints:
-        return "—"
-    return ", ".join(constraints)
-
-
-def generate_markdown_docs(settings_classes: list[SettingsClass]) -> str:
-    """Generate markdown documentation for environment variables."""
+def generate_markdown(settings_list: list[Settings]) -> str:
+    """Generate markdown documentation."""
     lines = [
-        "<!--",
-        "SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
-        "SPDX-License-Identifier: Apache-2.0",
-        "-->",
+        *SPDX_HEADER_MD,
         "",
         "# Environment Variables",
         "",
@@ -241,64 +202,87 @@ def generate_markdown_docs(settings_classes: list[SettingsClass]) -> str:
         "",
         "> [!WARNING]",
         "> Environment variable names, default values, and definitions are subject to change.",
-        "> These settings may be modified, renamed, or removed in future releases. Always refer to the",
-        "> documentation for your specific release version and test thoroughly when upgrading AIPerf.",
+        "> These settings may be modified, renamed, or removed in future releases.",
         "",
     ]
-    # Sort by env_prefix for consistent output, except DEV which should be last (least important to end users)
-    settings_classes = sorted(
-        settings_classes,
-        key=lambda x: x.env_prefix if x.env_prefix != "AIPERF_DEV_" else "Z" * 100,
+
+    # Sort by prefix, DEV last
+    sorted_settings = sorted(
+        settings_list,
+        key=lambda s: s.env_prefix if s.env_prefix != "AIPERF_DEV_" else "ZZZZ",
     )
 
-    for settings_class in settings_classes:
-        # Extract section name from env_prefix (e.g., AIPERF_DATASET_ -> DATASET)
-        section_name = settings_class.env_prefix.replace("AIPERF_", "").replace("_", "")
-
-        # Add section header
-        lines.append(f"## {section_name}")
+    for settings in sorted_settings:
+        section = settings.env_prefix.replace("AIPERF_", "").replace("_", "")
+        lines.append(f"## {section}")
         lines.append("")
-        if settings_class.docstring:
-            lines.append(settings_class.docstring)
+        if settings.docstring:
+            lines.append(settings.docstring)
             lines.append("")
 
-        # Create table
         lines.append("| Environment Variable | Default | Constraints | Description |")
         lines.append("|----------------------|---------|-------------|-------------|")
 
-        for field in settings_class.fields:
-            env_var = f"{settings_class.env_prefix}{field.name}"
-            default = _format_default_value(field.default)
-            constraints = _format_constraints(field.constraints)
-            description = field.description.replace("|", "\\|")  # Escape pipes
-
-            lines.append(f"| `{env_var}` | {default} | {constraints} | {description} |")
+        for field in settings.fields:
+            env_var = f"{settings.env_prefix}{field.name}"
+            default = _format_default(field.default)
+            constraints = ", ".join(field.constraints) or "—"
+            desc = field.description.replace("|", "\\|")
+            lines.append(f"| `{env_var}` | {default} | {constraints} | {desc} |")
 
         lines.append("")
 
     return "\n".join(line.rstrip() for line in lines)
 
 
-def main():
+# =============================================================================
+# Generator
+# =============================================================================
+
+
+class EnvVarsDocsGenerator(Generator):
     """Generate environment variable documentation."""
-    env_file = Path("src/aiperf/common/environment.py")
-    if not env_file.exists():
-        print(f"Error: {env_file} not found")
-        return
 
-    settings_classes = _parse_environment_file(env_file)
+    name = "Environment Variables Documentation"
+    description = "Generate environment variable documentation for AIPerf"
 
-    if not settings_classes:
-        print("Warning: No settings classes found")
-        return
+    def generate(self) -> GeneratorResult:
+        if not ENV_FILE.exists():
+            raise ParseError(
+                f"Source file not found: {ENV_FILE}",
+                {
+                    "hint": "Run from the project root directory",
+                },
+            )
 
-    markdown_content = generate_markdown_docs(settings_classes)
+        try:
+            settings_list = parse_settings_file(ENV_FILE)
+        except SyntaxError as e:
+            raise ParseError(
+                "Failed to parse environment.py",
+                {
+                    "error": str(e),
+                    "line": e.lineno,
+                },
+            ) from e
 
-    output_file = Path("docs/environment_variables.md")
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-    output_file.write_text(markdown_content)
-    print(f"Documentation written to {output_file}")
+        if not settings_list:
+            raise ParseError("No settings classes found", {"file": str(ENV_FILE)})
+
+        total_fields = sum(len(s.fields) for s in settings_list)
+
+        if self.verbose:
+            print_step(
+                f"Found {len(settings_list)} settings classes ({total_fields} fields)"
+            )
+            for s in settings_list:
+                print_step(f"  {s.name}: {len(s.fields)} fields ({s.env_prefix}*)")
+
+        return GeneratorResult(
+            files=[GeneratedFile(OUTPUT_FILE, generate_markdown(settings_list))],
+            summary=f"[bold]{len(settings_list)}[/] subsystems with [bold]{total_fields}[/] environment variables",
+        )
 
 
 if __name__ == "__main__":
-    main()
+    main(EnvVarsDocsGenerator)
