@@ -21,7 +21,7 @@
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
 		test-component-integration test-component-integration-ci test-component-integration-verbose \
-		generate-cli-docs generate-env-vars-docs generate-plugin-enums \
+		add-copyright init-files generate-cli-docs generate-env-vars-docs generate-plugin-enums \
 		generate-plugin-overloads check-plugin-overloads generate-plugin-schemas \
 		generate-all-plugin-files generate-all-docs test-stress stress-tests internal-help help
 
@@ -96,7 +96,7 @@ internal-help:
 	@printf "────────────────────────────────────────────────────────────────────────────\n"
 
 init-files: #? run mkinit to generate the __init__.py files.
-	$(activate_venv) && tools/generate_init_files.sh
+	$(activate_venv) && ./tools/generate_init_files.py
 
 ruff lint: #? run the ruff linters
 	$(activate_venv) && ruff check . $(args)
@@ -252,29 +252,32 @@ component-integration-tests-verbose test-component-integration-verbose: #? run c
 	@printf "$(bold)$(green)AIPerf Fake Component Integration tests passed!$(reset)\n"
 
 generate-cli-docs: #? generate the CLI documentation.
-	$(activate_venv) && tools/generate_cli_docs.py
+	$(activate_venv) && ./tools/generate_cli_docs.py
 
 generate-env-vars-docs: #? generate the environment variables documentation.
-	$(activate_venv) && tools/generate_env_vars_docs.py
+	$(activate_venv) && ./tools/generate_env_vars_docs.py
 
 generate-plugin-enums: #? generate the plugin enum stubs (enums.py and enums.pyi).
-	$(activate_venv) && python tools/generate_plugin_artifacts.py --enums
+	$(activate_venv) && ./tools/generate_plugin_artifacts.py --enums
 
 generate-plugin-overloads: #? generate the get_class() overloads in plugins.py.
-	$(activate_venv) && python tools/generate_plugin_artifacts.py --overloads
+	$(activate_venv) && ./tools/generate_plugin_artifacts.py --overloads
 
 check-plugin-overloads: #? check if the get_class() overloads are up-to-date.
-	$(activate_venv) && python tools/generate_plugin_artifacts.py --overloads --check
+	$(activate_venv) && ./tools/generate_plugin_artifacts.py --overloads --check
 
 generate-plugin-schemas: #? generate JSON schemas for categories.yaml and plugins.yaml.
-	$(activate_venv) && python tools/generate_plugin_artifacts.py --schemas
+	$(activate_venv) && ./tools/generate_plugin_artifacts.py --schemas
 
 validate-plugin-schemas: #? validate categories.yaml and plugins.yaml against their schemas.
-	$(activate_venv) && python tools/validate_plugin_schemas.py
+	$(activate_venv) && ./tools/generate_plugin_artifacts.py --validate
 
 generate-all-plugin-files: #? generate all plugin files (enums, overloads, schemas).
-	$(activate_venv) && python tools/generate_plugin_artifacts.py
+	$(activate_venv) && ./tools/generate_plugin_artifacts.py
 
 generate-all-docs: #? generate all documentation files.
-	$(activate_venv) && tools/generate_cli_docs.py
-	$(activate_venv) && tools/generate_env_vars_docs.py
+	$(activate_venv) && ./tools/generate_cli_docs.py
+	$(activate_venv) && ./tools/generate_env_vars_docs.py
+
+add-copyright: #? add the copyright header to the files.
+	$(activate_venv) && ./tools/add_copyright.py

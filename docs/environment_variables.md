@@ -19,8 +19,7 @@ export AIPERF_ZMQ_RCVTIMEO=600000
 
 > [!WARNING]
 > Environment variable names, default values, and definitions are subject to change.
-> These settings may be modified, renamed, or removed in future releases. Always refer to the
-> documentation for your specific release version and test thoroughly when upgrading AIPerf.
+> These settings may be modified, renamed, or removed in future releases.
 
 ## DATASET
 
