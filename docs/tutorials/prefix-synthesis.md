@@ -108,6 +108,33 @@ aiperf profile \
 
 This runs a benchmark using the original trace characteristics. Adjust the multipliers to scale different aspects.
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Loaded mooncake trace with 10,000 requests
+INFO     Synthesis parameters: speedup=1.0, prefix_len=1.0, root=1, prompt_len=1.0
+INFO     AIPerf System is PROFILING
+
+Profiling: 10000/10000 |████████████████████████| 100% [15:34<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency1/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃                         Metric ┃     avg ┃    min ┃     max ┃     p99 ┃     p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│           Request Latency (ms) │ 1234.56 │ 456.78 │ 3456.89 │ 3123.45 │ 1189.23 │
+│       Time to First Token (ms) │  156.78 │  89.34 │  345.67 │  321.45 │  145.23 │
+│       Inter Token Latency (ms) │   13.45 │  10.23 │   18.90 │   18.34 │   13.12 │
+│ Input Sequence Length (tokens) │ 1920.30 │ 512.00 │ 4096.00 │ 3876.54 │ 1920.00 │
+│    Output Token Count (tokens) │  156.80 │  64.00 │  512.00 │  487.23 │  144.00 │
+│     Request Throughput (req/s) │   10.78 │      - │       - │       - │       - │
+└────────────────────────────────┴─────────┴────────┴─────────┴─────────┴─────────┘
+
+JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency1/profile_export_aiperf.json
+```
+
 ### Understanding Synthesis Parameters
 
 #### `--synthesis-speedup-ratio` (default: 1.0)

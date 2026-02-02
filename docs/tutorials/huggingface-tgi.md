@@ -51,6 +51,29 @@ aiperf profile \
     --request-count 10
 ```
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Using Hugging Face TGI /generate endpoint (non-streaming)
+INFO     AIPerf System is PROFILING
+
+Profiling: 10/10 |████████████████████████| 100% [00:08<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/TinyLlama_TinyLlama-1.1B-Chat-v1.0-generate-concurrency1/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃                      Metric ┃     avg ┃    min ┃     max ┃     p99 ┃     p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│        Request Latency (ms) │ 1234.56 │ 987.34 │ 1567.89 │ 1567.89 │ 1198.45 │
+│ Output Token Count (tokens) │  256.00 │ 200.00 │  300.00 │  300.00 │  254.00 │
+│  Request Throughput (req/s) │    2.34 │      - │       - │       - │       - │
+└─────────────────────────────┴─────────┴────────┴─────────┴─────────┴─────────┘
+
+JSON Export: artifacts/TinyLlama_TinyLlama-1.1B-Chat-v1.0-generate-concurrency1/profile_export_aiperf.json
+```
+
 #### Profile with custom input file
 
 You can also provide your own text prompts using the
@@ -88,6 +111,31 @@ aiperf profile \
     --url localhost:8080 \
     --streaming \
     --request-count 10
+```
+
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Using Hugging Face TGI /generate_stream endpoint (streaming)
+INFO     AIPerf System is PROFILING
+
+Profiling: 10/10 |████████████████████████| 100% [00:09<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/TinyLlama_TinyLlama-1.1B-Chat-v1.0-generate-concurrency1/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃                      Metric ┃     avg ┃    min ┃     max ┃     p99 ┃     p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│        Request Latency (ms) │ 1189.45 │ 945.67 │ 1498.34 │ 1498.34 │ 1156.78 │
+│    Time to First Token (ms) │  234.56 │ 189.34 │  298.45 │  298.45 │  228.90 │
+│    Inter Token Latency (ms) │   14.23 │  11.45 │   18.90 │   18.90 │   13.89 │
+│ Output Token Count (tokens) │  256.00 │ 200.00 │  300.00 │  300.00 │  254.00 │
+│  Request Throughput (req/s) │    2.56 │      - │       - │       - │       - │
+└─────────────────────────────┴─────────┴────────┴─────────┴─────────┴─────────┘
+
+JSON Export: artifacts/TinyLlama_TinyLlama-1.1B-Chat-v1.0-generate-concurrency1/profile_export_aiperf.json
 ```
 
 #### Profile with custom input file

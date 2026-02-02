@@ -50,6 +50,25 @@ aiperf profile \
     --request-count 500
 ```
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Using Request_Rate strategy
+INFO     AIPerf System is WARMING UP
+
+Warming Up: 50/50 |████████████████████████| 100% [00:05<00:00]
+
+INFO     Warmup completed, starting profiling phase
+INFO     AIPerf System is PROFILING
+
+Profiling: 500/500 |████████████████████████| 100% [00:50<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/your-model-chat-rate10/
+
+JSON Export: artifacts/your-model-chat-rate10/profile_export_aiperf.json
+```
+
 This sends 50 warmup requests before the 500 profiling requests begin. Warmup metrics are discarded.
 
 ## Warmup Trigger Options
@@ -99,6 +118,25 @@ aiperf profile \
     --request-count 500
 ```
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     AIPerf System is WARMING UP
+INFO     Warmup concurrency: 20 (profiling will use: 100)
+
+Warming Up: 50/50 |████████████████████████| 100% [00:12<00:00]
+
+INFO     Warmup completed, starting profiling phase
+INFO     AIPerf System is PROFILING
+
+Profiling: 500/500 |████████████████████████| 100% [01:15<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/your-model-chat-concurrency100/
+
+JSON Export: artifacts/your-model-chat-concurrency100/profile_export_aiperf.json
+```
+
 Warmup runs at 20 concurrent requests, then profiling runs at 100.
 
 ### Different Request Rate
@@ -113,6 +151,25 @@ aiperf profile \
     --warmup-request-rate 10 \
     --warmup-duration 30 \
     --benchmark-duration 120
+```
+
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     AIPerf System is WARMING UP
+INFO     Warmup rate: 10.0 req/s (profiling will use: 50.0 req/s)
+
+Warming Up: [00:30] - Running for 30 seconds...
+
+INFO     Warmup completed, starting profiling phase
+INFO     AIPerf System is PROFILING
+
+Profiling: [02:00] - Running for 120 seconds...
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/your-model-chat-rate50/
+
+JSON Export: artifacts/your-model-chat-rate50/profile_export_aiperf.json
 ```
 
 Warmup sends at 10 QPS, then profiling runs at 50 QPS.
@@ -133,6 +190,25 @@ aiperf profile \
     --benchmark-duration 120
 ```
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     AIPerf System is WARMING UP
+INFO     Warmup pattern: constant (profiling will use: gamma with smoothness 2.0)
+
+Warming Up: [00:30] - Running for 30 seconds...
+
+INFO     Warmup completed, starting profiling phase
+INFO     AIPerf System is PROFILING
+
+Profiling: [02:00] - Running for 120 seconds...
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/your-model-chat-rate20/
+
+JSON Export: artifacts/your-model-chat-rate20/profile_export_aiperf.json
+```
+
 Warmup uses predictable constant arrivals; profiling uses gamma arrivals with reduced variance (smoothness > 1 = smoother than Poisson).
 
 ## Warmup with Ramping
@@ -151,6 +227,26 @@ aiperf profile \
     --warmup-concurrency-ramp-duration 10 \
     --warmup-request-count 200 \
     --benchmark-duration 120
+```
+
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     AIPerf System is WARMING UP
+INFO     Warmup ramping from 1 to 50 over 10 seconds
+
+Warming Up: 200/200 |████████████████████████| 100% [00:15<00:00]
+
+INFO     Warmup completed, starting profiling phase
+INFO     AIPerf System is PROFILING
+INFO     Profiling ramping from 1 to 100 over 30 seconds
+
+Profiling: [02:00] - Running for 120 seconds...
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/your-model-chat-concurrency100/
+
+JSON Export: artifacts/your-model-chat-concurrency100/profile_export_aiperf.json
 ```
 
 **Timeline:**

@@ -104,6 +104,30 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Multi-turn mode: 10 conversations, 3 turns each (30 total requests)
+INFO     AIPerf System is PROFILING
+
+Profiling: 30/30 |████████████████████████| 100% [00:45<00:00]
+  Conversations: 10/10 complete
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency2/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
+┃                      Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
+│        Request Latency (ms) │ 234.56 │ 198.23 │ 287.45 │ 276.12 │ 232.45 │
+│    Time to First Token (ms) │  52.34 │  45.12 │  68.23 │  65.45 │  51.89 │
+│ Output Token Count (tokens) │ 150.00 │ 150.00 │ 150.00 │ 150.00 │ 150.00 │
+└─────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
+
+JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency2/profile_export_aiperf.json
+```
+
 This command will:
 - Execute 10 separate conversation sessions
 - Each conversation will have exactly 3 turns (requests)

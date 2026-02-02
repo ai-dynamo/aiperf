@@ -60,10 +60,17 @@ aiperf profile \
   --ui-type simple
 ```
 
-**Example output:**
+**Sample Output (Successful Run):**
 ```
-Profiling: 3/5 |████████████████        | 60% [00:03<00:02]
-Processing Records: 5/5 |████████████████████| 100% [00:04<00:00]
+INFO     Starting AIPerf System
+INFO     Registered Dataset Manager (id: 'dataset_manager_abc123')
+INFO     AIPerf System is PROFILING
+
+Profiling: 100/100 |████████████████████████| 100% [01:45<00:00]
+Processing Records: 100/100 |███████████████| 100% [00:01<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/
 ```
 
 **When to use:**
@@ -84,6 +91,19 @@ aiperf profile \
   --request-count 100 \
   --streaming \
   --ui-type none
+```
+
+**Sample Output (Successful Run):**
+```
+23:07:28.809795 INFO     Starting AIPerf System
+23:07:31.580751 INFO     Registered Dataset Manager (id: 'dataset_manager_abc123')
+23:07:31.586297 INFO     Registered Worker Manager (id: 'worker_manager_def456')
+23:07:31.595391 INFO     Registered Timing Manager (id: 'timing_manager_ghi789')
+23:07:31.987169 INFO     AIPerf System is CONFIGURING
+23:07:32.594891 INFO     AIPerf System is CONFIGURED
+23:07:32.597896 INFO     AIPerf System is PROFILING
+23:09:18.123456 INFO     Benchmark completed successfully
+23:09:18.234567 INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/
 ```
 
 **When to use:**

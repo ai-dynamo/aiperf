@@ -62,6 +62,30 @@ aiperf profile \
     --request-count 1000
 ```
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Concurrency ramping from 1 to 100 over 30 seconds
+INFO     AIPerf System is PROFILING
+
+Profiling: 1000/1000 |████████████████████████| 100% [02:15<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/your-model-chat-concurrency100/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
+┃                     Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
+│       Request Latency (ms) │ 234.56 │ 156.23 │ 387.45 │ 356.78 │ 228.90 │
+│   Time to First Token (ms) │  52.34 │  38.12 │  78.23 │  72.45 │  50.67 │
+│   Inter Token Latency (ms) │  12.45 │   9.12 │  19.34 │  17.89 │  12.01 │
+│ Request Throughput (req/s) │  12.45 │      - │      - │      - │      - │
+└────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
+
+JSON Export: artifacts/your-model-chat-concurrency100/profile_export_aiperf.json
+```
+
 **What happens:**
 ```
 Concurrency
@@ -85,6 +109,30 @@ aiperf profile \
     --request-rate 100 \
     --request-rate-ramp-duration 60 \
     --benchmark-duration 120
+```
+
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Request rate ramping from ~0.17 to 100.0 req/s over 60 seconds
+INFO     AIPerf System is PROFILING
+
+Profiling: [02:00] - Running for 120 seconds...
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/your-model-chat-rate100/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
+┃                     Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
+│       Request Latency (ms) │ 187.34 │ 134.56 │ 298.12 │ 276.45 │ 182.67 │
+│   Time to First Token (ms) │  48.23 │  35.67 │  72.34 │  68.90 │  47.12 │
+│   Inter Token Latency (ms) │  11.89 │   8.45 │  17.23 │  16.12 │  11.34 │
+│ Request Throughput (req/s) │  91.23 │      - │      - │      - │      - │
+└────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
+
+JSON Export: artifacts/your-model-chat-rate100/profile_export_aiperf.json
 ```
 
 **What happens:**
@@ -116,6 +164,31 @@ aiperf profile \
     --benchmark-duration 120
 ```
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Request rate ramping from ~0.67 to 200.0 req/s over 30 seconds
+INFO     Concurrency ramping from 1 to 100 over 30 seconds
+INFO     AIPerf System is PROFILING
+
+Profiling: [02:00] - Running for 120 seconds...
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/your-model-chat-concurrency100-rate200/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
+┃                     Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
+│       Request Latency (ms) │ 245.67 │ 167.89 │ 412.34 │ 378.90 │ 238.45 │
+│   Time to First Token (ms) │  56.78 │  42.34 │  89.12 │  82.67 │  54.90 │
+│   Inter Token Latency (ms) │  13.45 │   9.67 │  21.34 │  19.45 │  13.01 │
+│ Request Throughput (req/s) │ 178.34 │      - │      - │      - │      - │
+└────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
+
+JSON Export: artifacts/your-model-chat-concurrency100-rate200/profile_export_aiperf.json
+```
+
 Both ramp in parallel, reaching their targets at 30 seconds.
 
 ## Prefill Concurrency Ramping
@@ -130,6 +203,30 @@ aiperf profile \
     --prefill-concurrency 20 \
     --prefill-concurrency-ramp-duration 20 \
     --synthetic-input-tokens-mean 8000
+```
+
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Prefill concurrency ramping from 1 to 20 over 20 seconds
+INFO     AIPerf System is PROFILING
+
+Profiling: 500/500 |████████████████████████| 100% [05:30<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/your-model-chat-concurrency100/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃                     Metric ┃     avg ┃     min ┃     max ┃     p99 ┃     p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│       Request Latency (ms) │ 3456.78 │ 2890.12 │ 4567.89 │ 4321.45 │ 3398.23 │
+│   Time to First Token (ms) │ 1234.56 │  987.34 │ 1678.90 │ 1598.67 │ 1201.45 │
+│   Inter Token Latency (ms) │   14.23 │   10.45 │   22.67 │   20.89 │   13.89 │
+│ Request Throughput (req/s) │    2.89 │       - │       - │       - │       - │
+└────────────────────────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+
+JSON Export: artifacts/your-model-chat-concurrency100/profile_export_aiperf.json
 ```
 
 This limits prefill to 20 concurrent requests (ramped over 20 seconds), while allowing up to 100 total concurrent requests.

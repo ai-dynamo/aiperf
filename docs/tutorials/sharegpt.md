@@ -46,3 +46,29 @@ aiperf profile \
     --concurrency 4
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Downloading ShareGPT dataset from HuggingFace
+INFO     Cached ShareGPT dataset loaded
+INFO     AIPerf System is PROFILING
+
+Profiling: 20/20 |████████████████████████| 100% [00:45<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency4/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃                      Metric ┃     avg ┃     min ┃     max ┃     p99 ┃     p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│        Request Latency (ms) │ 1456.78 │ 1089.34 │ 1978.90 │ 1898.45 │ 1423.67 │
+│    Time to First Token (ms) │  267.89 │  198.34 │  389.12 │  367.45 │  262.12 │
+│    Inter Token Latency (ms) │   13.45 │   10.67 │   18.90 │   17.89 │   13.12 │
+│ Output Token Count (tokens) │  187.00 │  142.00 │  245.00 │  239.00 │  184.00 │
+│  Request Throughput (req/s) │    8.45 │       - │       - │       - │       - │
+└─────────────────────────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+
+JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency4/profile_export_aiperf.json
+```

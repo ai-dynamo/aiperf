@@ -44,6 +44,29 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     AIPerf System is PROFILING
+
+Profiling: 20/20 |████████████████████████| 100% [00:35<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency1/
+
+            NVIDIA AIPerf | LLM Metrics
+┃                      Metric ┃     avg ┃     min ┃     max ┃     p99 ┃     p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│        Request Latency (ms) │ 1678.90 │ 1456.34 │ 1923.45 │ 1923.45 │ 1667.23 │
+│    Time to First Token (ms) │  234.56 │  198.34 │  289.12 │  289.12 │  231.45 │
+│    Inter Token Latency (ms) │   13.89 │   11.23 │   17.45 │   17.45 │   13.67 │
+│ Output Token Count (tokens) │  200.00 │  200.00 │  200.00 │  200.00 │  200.00 │
+│  Request Throughput (req/s) │    5.67 │       - │       - │       - │       - │
+└─────────────────────────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+
+JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency1/profile_export_aiperf.json
+```
+
 ### Profile with custom input file
 
 Create a JSONL input file:
@@ -90,6 +113,30 @@ aiperf profile \
     --request-count 32
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Using /v1/completions endpoint
+INFO     AIPerf System is PROFILING
+
+Profiling: 32/32 |████████████████████████| 100% [00:28<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-completions-concurrency1/
+
+            NVIDIA AIPerf | LLM Metrics
+┃                      Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
+│        Request Latency (ms) │ 876.45 │ 789.34 │ 987.12 │ 978.90 │ 871.23 │
+│    Time to First Token (ms) │ 156.78 │ 134.56 │ 189.23 │ 185.67 │ 155.12 │
+│    Inter Token Latency (ms) │  12.34 │  10.23 │  15.67 │  15.34 │  12.12 │
+│ Output Token Count (tokens) │ 128.00 │ 120.00 │ 136.00 │ 135.00 │ 128.00 │
+│  Request Throughput (req/s) │  10.89 │      - │      - │      - │      - │
+└─────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
+
+JSON Export: artifacts/Qwen_Qwen3-0.6B-completions-concurrency1/profile_export_aiperf.json
+```
 
 ### Profile with custom input file
 

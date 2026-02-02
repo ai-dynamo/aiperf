@@ -96,6 +96,30 @@ aiperf profile \
     --request-count 100
 ```
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Prefill concurrency limited to 3 (session concurrency: 30)
+INFO     AIPerf System is PROFILING
+
+Profiling: 100/100 |████████████████████████| 100% [08:45<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen2.5-7B-Instruct-chat-concurrency30/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃                     Metric ┃     avg ┃     min ┃     max ┃     p99 ┃     p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│       Request Latency (ms) │ 4567.89 │ 3890.12 │ 5678.34 │ 5523.45 │ 4498.23 │
+│   Time to First Token (ms) │ 2345.67 │ 1987.34 │ 2890.45 │ 2798.67 │ 2312.89 │
+│   Inter Token Latency (ms) │   18.45 │   14.23 │   26.78 │   25.34 │   18.01 │
+│ Request Throughput (req/s) │    3.89 │       - │       - │       - │       - │
+└────────────────────────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+
+JSON Export: artifacts/Qwen_Qwen2.5-7B-Instruct-chat-concurrency30/profile_export_aiperf.json
+```
+
 **What happens:**
 
 - 30 total concurrent sessions allowed
@@ -117,6 +141,30 @@ aiperf profile \
     --synthetic-input-tokens-mean 32000 \
     --output-tokens-mean 200 \
     --benchmark-duration 120
+```
+
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Prefill concurrency ramping from 1 to 5 over 30 seconds
+INFO     AIPerf System is PROFILING
+
+Profiling: [02:00] - Running for 120 seconds...
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen2.5-7B-Instruct-chat-concurrency50/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃                     Metric ┃     avg ┃     min ┃     max ┃     p99 ┃     p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│       Request Latency (ms) │ 5678.34 │ 4567.89 │ 6789.12 │ 6598.45 │ 5612.67 │
+│   Time to First Token (ms) │ 3456.78 │ 2890.45 │ 4123.67 │ 3998.23 │ 3423.12 │
+│   Inter Token Latency (ms) │   21.34 │   16.78 │   29.45 │   28.12 │   21.01 │
+│ Request Throughput (req/s) │    2.34 │       - │       - │       - │       - │
+└────────────────────────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+
+JSON Export: artifacts/Qwen_Qwen2.5-7B-Instruct-chat-concurrency50/profile_export_aiperf.json
 ```
 
 **Ramp behavior:**
@@ -148,6 +196,31 @@ aiperf profile \
     --synthetic-input-tokens-mean 8000 \
     --output-tokens-mean 300 \
     --benchmark-duration 60
+```
+
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Using Request_Rate strategy (10.0 req/s)
+INFO     Prefill concurrency limited to 10 (session concurrency: 100)
+INFO     AIPerf System is PROFILING
+
+Profiling: [01:00] - Running for 60 seconds...
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen2.5-7B-Instruct-chat-concurrency100-rate10/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃                     Metric ┃     avg ┃     min ┃     max ┃     p99 ┃     p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│       Request Latency (ms) │ 2890.45 │ 2345.67 │ 3567.89 │ 3456.12 │ 2867.34 │
+│   Time to First Token (ms) │ 1234.56 │  987.34 │ 1567.89 │ 1498.23 │ 1223.45 │
+│   Inter Token Latency (ms) │   16.78 │   13.45 │   23.12 │   22.01 │   16.45 │
+│ Request Throughput (req/s) │    9.87 │       - │       - │       - │       - │
+└────────────────────────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+
+JSON Export: artifacts/Qwen_Qwen2.5-7B-Instruct-chat-concurrency100-rate10/profile_export_aiperf.json
 ```
 
 Requests arrive at 10 QPS, up to 100 can be active, but only 10 can prefill at once.
