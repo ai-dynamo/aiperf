@@ -51,7 +51,7 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
-Example output:
+**Sample Output (Successful Run):**
 
 ```
                                              NVIDIA AIPerf | LLM Metrics
@@ -66,9 +66,9 @@ Example output:
 │                    (tokens/sec/user) │          │          │          │          │          │          │          │
 │      Output Sequence Length (tokens) │ 1,058.45 │   660.00 │ 1,676.00 │ 1,649.78 │ 1,457.90 │   949.00 │   297.94 │
 │       Input Sequence Length (tokens) │   550.00 │   550.00 │   550.00 │   550.00 │   550.00 │   550.00 │     0.00 │
-│ Output Token Throughput (tokens/sec) │   287.44 │      N/A │      N/A │      N/A │      N/A │      N/A │      N/A │
-│    Request Throughput (requests/sec) │     0.27 │      N/A │      N/A │      N/A │      N/A │      N/A │      N/A │
-│             Request Count (requests) │    20.00 │      N/A │      N/A │      N/A │      N/A │      N/A │      N/A │
-│               Goodput (requests/sec) │     0.14 │      N/A │      N/A │      N/A │      N/A │      N/A │      N/A │
+│ Output Token Throughput (tokens/sec) │   287.44 │        - │        - │        - │        - │        - │        - │
+│    Request Throughput (requests/sec) │     0.27 │        - │        - │        - │        - │        - │        - │
+│             Request Count (requests) │    20.00 │        - │        - │        - │        - │        - │        - │
+│               Goodput (requests/sec) │     0.14 │        - │        - │        - │        - │        - │        - │
 └──────────────────────────────────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┘
 ```

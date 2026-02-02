@@ -164,6 +164,30 @@ aiperf profile \
     --benchmark-duration 60 \
     --output-dir results/constant
 
+**Expected Output (Run 1):**
+```
+INFO     Starting AIPerf System
+INFO     Using Request_Rate strategy with constant arrival pattern
+INFO     AIPerf System is PROFILING
+
+Profiling: [01:00] - Running for 60 seconds...
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: results/constant/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
+┃                     Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
+│       Request Latency (ms) │ 178.45 │ 156.23 │ 212.34 │ 205.67 │ 176.89 │
+│   Time to First Token (ms) │  45.67 │  38.12 │  58.34 │  56.23 │  44.90 │
+│   Inter Token Latency (ms) │  11.23 │   9.45 │  14.67 │  14.12 │  11.01 │
+│ Request Throughput (req/s) │  98.45 │      - │      - │      - │      - │
+└────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
+
+JSON Export: results/constant/profile_export_aiperf.json
+```
+
 # Run 2: Poisson (realistic)
 aiperf profile \
     --model your-model \
@@ -174,6 +198,30 @@ aiperf profile \
     --arrival-pattern poisson \
     --benchmark-duration 60 \
     --output-dir results/poisson
+```
+
+**Expected Output (Run 2):**
+```
+INFO     Starting AIPerf System
+INFO     Using Request_Rate strategy with poisson arrival pattern
+INFO     AIPerf System is PROFILING
+
+Profiling: [01:00] - Running for 60 seconds...
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: results/poisson/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
+┃                     Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
+│       Request Latency (ms) │ 182.34 │ 148.56 │ 267.89 │ 245.67 │ 179.12 │
+│   Time to First Token (ms) │  47.89 │  35.67 │  78.23 │  72.45 │  46.34 │
+│   Inter Token Latency (ms) │  11.67 │   8.90 │  19.34 │  17.89 │  11.23 │
+│ Request Throughput (req/s) │  96.78 │      - │      - │      - │      - │
+└────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
+
+JSON Export: results/poisson/profile_export_aiperf.json
 ```
 
 Compare TTFT and throughput between runs. Higher variance under Poisson indicates sensitivity to traffic patterns.
@@ -194,6 +242,30 @@ aiperf profile \
     --benchmark-duration 120
 ```
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Using Request_Rate strategy with gamma arrival pattern (smoothness: 0.3)
+INFO     AIPerf System is PROFILING
+
+Profiling: [02:00] - Running for 120 seconds...
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/your-model-chat-rate100/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
+┃                     Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
+│       Request Latency (ms) │ 198.67 │ 142.34 │ 398.12 │ 356.78 │ 189.45 │
+│   Time to First Token (ms) │  52.34 │  34.56 │ 112.34 │  98.67 │  49.23 │
+│   Inter Token Latency (ms) │  12.89 │   8.23 │  28.45 │  24.67 │  12.01 │
+│ Request Throughput (req/s) │  93.45 │      - │      - │      - │      - │
+└────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
+
+JSON Export: artifacts/your-model-chat-rate100/profile_export_aiperf.json
+```
+
 Smoothness of 0.3 creates highly bursty traffic—several requests arrive nearly simultaneously, then quiet periods.
 
 ### Smooth Traffic for Noise Reduction
@@ -210,6 +282,30 @@ aiperf profile \
     --arrival-pattern gamma \
     --arrival-smoothness 5.0 \
     --benchmark-duration 60
+```
+
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Using Request_Rate strategy with gamma arrival pattern (smoothness: 5.0)
+INFO     AIPerf System is PROFILING
+
+Profiling: [01:00] - Running for 60 seconds...
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/your-model-chat-rate50/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
+┃                     Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
+│       Request Latency (ms) │ 165.23 │ 148.90 │ 189.45 │ 184.56 │ 164.12 │
+│   Time to First Token (ms) │  42.67 │  36.89 │  52.34 │  50.12 │  42.01 │
+│   Inter Token Latency (ms) │  10.89 │   9.23 │  13.45 │  13.01 │  10.67 │
+│ Request Throughput (req/s) │  49.23 │      - │      - │      - │      - │
+└────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
+
+JSON Export: artifacts/your-model-chat-rate50/profile_export_aiperf.json
 ```
 
 Smoothness of 5.0 produces very regular arrivals, reducing measurement noise while still having some natural variance.

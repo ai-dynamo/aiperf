@@ -93,6 +93,29 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Registered Dataset Manager (id: 'dataset_manager_abc123')
+INFO     Registered Worker Manager (id: 'worker_manager_def456')
+INFO     Registered Timing Manager (id: 'timing_manager_ghi789')
+INFO     AIPerf System is CONFIGURING
+INFO     Using Request_Rate strategy with poisson arrival pattern
+INFO     Credit issuing strategy RequestRateStrategy initialized
+         Rate: 200.0 req/s, Pattern: poisson, Max concurrency: 100
+INFO     AIPerf System is PROFILING
+
+Profiling: 500/500 |████████████████████████| 100% [02:30<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency100-rate200/
+
+CLI Command: aiperf profile --model "Qwen/Qwen3-0.6B" --endpoint-type "chat" ...
+JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency100-rate200/profile_export_aiperf.json
+```
+
+The Poisson distribution creates natural request spacing. You'll notice requests don't complete at exactly even intervals, but maintain the 200 req/s average rate. With max concurrency set to 100, the system reaches that ceiling after ~0.5 seconds (100 requests / 200 req/s).
+
 ### Constant Mode: Deterministic Timing
 
 This example uses evenly-spaced requests with a moderate ramp-up (1 second). Requests arrive at exactly 20ms intervals (50 req/s), making results highly reproducible for benchmarking and regression testing.
@@ -113,6 +136,29 @@ aiperf profile \
     --output-tokens-mean 400
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Registered Dataset Manager (id: 'dataset_manager_jkl012')
+INFO     Registered Worker Manager (id: 'worker_manager_mno345')
+INFO     Registered Timing Manager (id: 'timing_manager_pqr678')
+INFO     AIPerf System is CONFIGURING
+INFO     Using Request_Rate strategy with constant arrival pattern
+INFO     Credit issuing strategy RequestRateStrategy initialized
+         Rate: 50.0 req/s, Pattern: constant, Max concurrency: 50
+INFO     AIPerf System is PROFILING
+
+Profiling: 300/300 |████████████████████████| 100% [06:00<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency50-rate50/
+
+CLI Command: aiperf profile --model "Qwen/Qwen3-0.6B" --endpoint-type "chat" ...
+JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency50-rate50/profile_export_aiperf.json
+```
+
+With constant mode, requests arrive at precisely 20ms intervals (1 / 50 req/s = 20ms). This creates predictable, reproducible load patterns ideal for regression testing. The system reaches max concurrency of 50 after exactly 1 second (50 requests / 50 req/s).
 
 ## Common Use Cases
 
