@@ -4,16 +4,17 @@
 -->
 # AIPerf: Comprehensive LLM Benchmarking
 
-**Presentation Date**: November 13, 2025
-**Tool**: [AIPerf v0.3.0](https://github.com/ai-dynamo/aiperf)
+**Presentation Date**: November 13, 2025<br>
+**Updated**: February 2, 2026<br>
+**Tool**: [AIPerf v0.5.0](https://github.com/ai-dynamo/aiperf) | [Architecture Overview](architecture.md) | [Full Documentation](index.md)
 
 ---
 
 ## Table of Contents
 
-1. [Setup: Installing AIPerf 0.3.0](#setup-installing-aiperf-030)
+1. [Setup: Installing AIPerf 0.5.0](#setup-installing-aiperf-050)
 2. [Test Endpoint Details](#test-endpoint-details)
-3. [Use Case 1: Simple Profiling with Static ISL/OSL](#use-case-1-simple-profiling-with-static-islosl)
+3. [Use Case 1: Simple Profiling with Static ISL/OSL](#use-case-1-simple-profiling-with-static-isl-osl)
    - [Evolution: Pareto Curve Analysis](#evolution-pareto-curve-analysis)
 4. [Use Case 2: Auditing Raw Results - Custom Percentile Analysis](#use-case-2-auditing-raw-results---custom-percentile-analysis)
 5. [Use Case 3: Trace-Based Benchmarking with Mooncake](#use-case-3-trace-based-benchmarking-with-mooncake)
@@ -23,34 +24,31 @@
 9. [Advanced Topics](#advanced-topics)
    - [In-Cluster Benchmarking](#in-cluster-benchmarking)
    - [Request Cancellation Testing](#request-cancellation-testing)
-10. [Coming Soon](#coming-soon)
-    - [Server-Side Metrics](#server-side-metrics)
-    - [Synthetic Load for KV Cache Efficiency Testing](#synthetic-load-for-kv-cache-efficiency-testing)
+10. [Additional Features (v0.5.0)](#additional-features-v050)
+    - [Server-Side Metrics Collection](#server-side-metrics-collection)
+    - [Automatic Plot Generation](#automatic-plot-generation)
+    - [KV Cache Efficiency Testing](#kv-cache-efficiency-testing)
+    - [User-Centric Timing Mode](#user-centric-timing-mode)
+11. [Coming Soon](#coming-soon)
+    - [Kubernetes-Native Benchmarking](#kubernetes-native-benchmarking)
 
 ---
 
-## Setup: Installing AIPerf 0.3.0
-
-**Note**: AIPerf 0.3.0 is not yet available on PyPI. Install from the GitHub repository:
+## Setup: Installing AIPerf 0.5.0
 
 ```bash
-# Create a virtual environment (recommended)
-python -m venv venv
-source venv/bin/activate
-
-# Install AIPerf from release/0.3.0 branch
-pip install --upgrade git+https://github.com/ai-dynamo/aiperf.git@release/0.3.0
-
-# Verify installation
-aiperf --version
-# Expected output: 0.3.0
+pip install aiperf
 ```
 
-**Why 0.3.0?**
-- ✅ Fixed dashboard UI bug with tokenizer downloads
-- ✅ Improved stability and performance
-- ✅ Enhanced reporting features
-- ✅ Direct `aiperf` command (no need for `python -m aiperf`)
+**Key Features in 0.5.0**:
+- ✅ [Server-side metrics collection](server_metrics/server-metrics.md) via Prometheus
+- ✅ [Automatic plot generation](tutorials/plot.md) (`aiperf plot` command)
+- ✅ [KV cache efficiency testing](tutorials/prefix-synthesis.md) with trace synthesis
+- ✅ [User-centric timing mode](tutorials/user-centric-timing.md) for multi-turn KV cache TTL testing
+- ✅ [Goodput analysis](tutorials/goodput.md) for SLA compliance measurement
+- ✅ [Time-sliced analysis](tutorials/timeslices.md) for performance trends over time
+
+**📚 Documentation**: See the full [CLI Options Reference](cli_options.md) for all available parameters.
 
 ---
 
@@ -58,17 +56,11 @@ aiperf --version
 
 **Note**: This was a demo endpoint used for the November 13, 2025 presentation. The cluster has been taken down.
 
-**Model**: Qwen3-0.6B (Qwen/Qwen3-0.6B)
-**Inference Engine**: vLLM v0.11.0
-**Architecture**: 8-way data parallelism (8 independent vLLM replicas)
-**Hardware**: 8x NVIDIA H200 GPUs (1 GPU per replica)
+**Model**: Qwen3-0.6B (Qwen/Qwen3-0.6B)<br>
+**Inference Engine**: vLLM v0.11.0<br>
+**Architecture**: 8-way data parallelism (8 independent vLLM replicas)<br>
+**Hardware**: 8x NVIDIA H200 GPUs (1 GPU per replica)<br>
 **Deployment**: Kubernetes on Nebius Cloud
-
-**Demo Endpoint** (no longer active):
-```bash
-# This endpoint was available during the demo:
-# export ENDPOINT_URL="http://89.169.112.187:8000"
-```
 
 **Why this endpoint was chosen for the demo:**
 - Small model (~600M parameters) = high throughput for benchmarking
@@ -114,7 +106,7 @@ aiperf profile \
 
 ### Results
 
-```
+```text
                           NVIDIA AIPerf | LLM Metrics
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┓
 ┃ Metric                  ┃      avg ┃    min ┃    max ┃    p99 ┃    p90 ┃    p50 ┃   std ┃
@@ -135,10 +127,10 @@ Success Rate: 100% (0 errors)
 
 ### Key Takeaways
 
-✅ **TTFT = 347ms**: Fast first token delivery - users see responses quickly
-✅ **Request Latency = 2.1s**: Total time to generate 500 tokens per request
-✅ **System Throughput = 22.5K tokens/sec**: High capacity with 100 concurrent users
-✅ **ITL = 3.57ms**: Smooth, consistent token streaming
+✅ **TTFT = 347ms**: Fast first token delivery - users see responses quickly<br>
+✅ **Request Latency = 2.1s**: Total time to generate 500 tokens per request<br>
+✅ **System Throughput = 22.5K tokens/sec**: High capacity with 100 concurrent users<br>
+✅ **ITL = 3.57ms**: Smooth, consistent token streaming<br>
 ✅ **P99 Latency = 3.6s**: Even worst-case requests complete reasonably fast
 
 **What we learned**:
@@ -231,9 +223,9 @@ The Pareto frontier shows the inverse relationship between resource efficiency a
 
 #### What We Learned
 
-🔍 **Performance is non-linear**: Doubling concurrency doesn't double throughput
-📊 **The U-shaped curve**: TPS/GPU rises, peaks at c=200, then falls due to queuing overhead
-⚖️ **No free lunch**: Higher concurrency = better GPU utilization BUT worse user experience
+🔍 **Performance is non-linear**: Doubling concurrency doesn't double throughput<br>
+📊 **The U-shaped curve**: TPS/GPU rises, peaks at c=200, then falls due to queuing overhead<br>
+⚖️ **No free lunch**: Higher concurrency = better GPU utilization BUT worse user experience<br>
 🎯 **Know your SLA**: Choose concurrency based on your latency vs. throughput priorities
 
 **Pro tip**: Run this analysis on YOUR endpoint with YOUR request patterns to find YOUR sweet spot!
@@ -248,7 +240,7 @@ The Pareto frontier shows the inverse relationship between resource efficiency a
 
 ### Understanding the Raw Data: profile_export.jsonl
 
-AIPerf outputs detailed per-request data in `profile_export.jsonl`. Each line is a JSON record:
+AIPerf outputs detailed per-request data in `profile_export.jsonl`. Each line is a JSON record. See the [Working with Profile Exports](tutorials/working-with-profile-exports.md) tutorial for more analysis techniques.
 
 ```json
 {
@@ -258,7 +250,9 @@ AIPerf outputs detailed per-request data in `profile_export.jsonl`. Each line is
     "turn_index": 0,
     "request_start_ns": 1763066701865462000,
     "request_end_ns": 1763066703082535666,
-    "worker_id": "worker_b431129c"
+    "worker_id": "worker_b431129c",
+    "record_processor_id": "record_processor_a1b2c3d4",
+    "benchmark_phase": "profiling"
   },
   "metrics": {
     "time_to_first_token": {
@@ -291,6 +285,8 @@ AIPerf outputs detailed per-request data in `profile_export.jsonl`. Each line is
 
 **Key fields**: Every request has `time_to_first_token`, `request_latency`, ISL, OSL, and more.
 
+**Note**: The metadata section may contain additional optional fields including `was_cancelled`, `cancellation_time_ns`, `conversation_id`, `x_correlation_id`, and timing fields like `credit_issued_ns` and `request_ack_ns`. The `benchmark_phase` field is either `"warmup"` or `"profiling"`.
+
 ### Calculating P75 TTFT
 
 ```python
@@ -300,7 +296,7 @@ from pathlib import Path
 
 # Read all TTFT values
 ttft_values = []
-with open("artifacts/.../profile_export.jsonl", 'r') as f:
+with open("./artifacts/profile_export.jsonl", 'r') as f:
     for line in f:
         record = json.loads(line)
         ttft = record['metrics']['time_to_first_token']['value']
@@ -313,7 +309,7 @@ print(f"P75 TTFT: {p75_ttft:.2f} ms")
 
 ### Results from Our Benchmark
 
-```
+```text
 ============================================================
 TTFT Percentile Analysis
 ============================================================
@@ -330,9 +326,9 @@ Percentiles (ms):
 
 ### Key Takeaways
 
-✅ **P75 = 422.87ms**: 75% of requests get first token within this time
-✅ **Raw data access**: Calculate ANY custom metric your org needs
-✅ **Full transparency**: Every request is logged with complete metrics
+✅ **P75 = 422.87ms**: 75% of requests get first token within this time<br>
+✅ **Raw data access**: Calculate ANY custom metric your org needs<br>
+✅ **Full transparency**: Every request is logged with complete metrics<br>
 ✅ **Easy parsing**: Standard JSON format, one record per line
 
 **Why this matters**:
@@ -346,6 +342,8 @@ Percentiles (ms):
 ## Use Case 3: Trace-Based Benchmarking with Mooncake
 
 **Goal**: Test your system under realistic production workload patterns using privacy-preserving traces.
+
+**📚 Documentation**: See [Benchmark Datasets](benchmark_datasets.md) for supported dataset formats and [Trace Replay Mode](benchmark_modes/trace_replay.md) for detailed configuration.
 
 ### What is Mooncake Trace Data?
 
@@ -362,7 +360,7 @@ Percentiles (ms):
 
 **Example: Multi-turn conversation**
 
-```
+```text
 Turn 1: User uploads paper (7,500 tokens) + question (500 tokens)
 ├─ Total: 8,000 tokens = 16 blocks
 └─ Hash IDs: [46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61]
@@ -382,7 +380,7 @@ Turn 3: Same paper + another question (9,000 tokens)
 
 ### The Mooncake arXiv Trace Dataset
 
-```
+```text
 ======================================================================
 MOONCAKE ARXIV TRACE - DATASET CHARACTERISTICS
 ======================================================================
@@ -431,9 +429,9 @@ MOONCAKE ARXIV TRACE - DATASET CHARACTERISTICS
 
 **Key characteristics of real production traffic**:
 
-✅ **Highly Variable Request Sizes**: 49% of requests are 5K-10K tokens, but tail extends to 125K
-✅ **Long-Context Dominant**: Median of 6,402 tokens vs. typical benchmarks using 1K-2K
-✅ **Consistent Load**: ~393 requests/minute with relatively steady arrival rate
+✅ **Highly Variable Request Sizes**: 49% of requests are 5K-10K tokens, but tail extends to 125K<br>
+✅ **Long-Context Dominant**: Median of 6,402 tokens vs. typical benchmarks using 1K-2K<br>
+✅ **Consistent Load**: ~393 requests/minute with relatively steady arrival rate<br>
 ✅ **Heavy Tail Distribution**: 2% of requests exceed 40K tokens (production reality!)
 
 This represents **real-world patterns** you won't get from synthetic benchmarks:
@@ -479,14 +477,16 @@ aiperf profile \
 | **KV Cache** | No reuse patterns | Real cache-sharing patterns |
 | **Use Case** | Steady-state capacity | Production validation |
 
+**📚 Documentation**: See the [Timing Modes Reference](benchmark_modes/timing-modes-reference.md) for all supported timing modes.
+
 ### Why Trace-Based Benchmarking Matters
 
-✅ **Realistic Load Testing**: Test how your system handles actual production patterns, not idealized synthetic load
-✅ **KV Cache Validation**: If you implement cache sharing (like Mooncake), trace data shows real hit rates
-✅ **Capacity Planning**: See performance under bursty traffic with variable request sizes
+✅ **Realistic Load Testing**: Test how your system handles actual production patterns, not idealized synthetic load<br>
+✅ **KV Cache Validation**: If you implement cache sharing (like Mooncake), trace data shows real hit rates<br>
+✅ **Capacity Planning**: See performance under bursty traffic with variable request sizes<br>
 ✅ **Privacy-Preserving**: Hash-based traces enable sharing without exposing sensitive data
 
-**Pro tip**: Use `--fixed-schedule` for end-to-end system validation (respects timing), or remove it to stress-test maximum throughput capacity.
+**Pro tip**: Use `--fixed-schedule` for end-to-end system validation (respects timing), or remove it to stress-test maximum throughput capacity. See the [Fixed Schedule Tutorial](tutorials/fixed-schedule.md) for more details.
 
 ### Real Benchmark Results: 5-Minute Mooncake Trace (5x Speed)
 
@@ -507,7 +507,7 @@ aiperf profile \
 
 **Results**:
 
-```
+```text
                           NVIDIA AIPerf | LLM Metrics
 ┏━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┓
 ┃ Metric                ┃     avg ┃    min ┃     max ┃     p99 ┃     p90 ┃    p50 ┃     std ┃
@@ -567,6 +567,8 @@ Trace-based testing exposes real-world challenges that synthetic benchmarks hide
 
 **Goal**: Measure what percentage of requests meet your defined Service Level Objectives (SLOs), not just average performance.
 
+**📚 Documentation**: See the [Goodput Tutorial](tutorials/goodput.md) for additional examples and SLO configuration options.
+
 ### What is Goodput?
 
 **Goodput** = The fraction of requests that meet ALL specified SLA thresholds.
@@ -609,7 +611,7 @@ aiperf profile \
 
 ### Goodput Results
 
-```
+```text
                           NVIDIA AIPerf | LLM Metrics
 ┏━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┓
 ┃ Metric                ┃     avg ┃    min ┃     max ┃     p99 ┃     p90 ┃    p50 ┃     std ┃
@@ -630,7 +632,7 @@ Success Rate: 96% (75 requests exceeded 32K context window)
 ### Key Insights from Goodput Analysis
 
 **Goodput vs. Throughput**:
-```
+```text
 Total Throughput: 26.67 requests/sec (100%)
 Goodput:           7.43 requests/sec (28%)  ⚠️
 ────────────────────────────────────────────
@@ -698,6 +700,8 @@ Different use cases need different SLOs:
 
 **Goal**: Understand how performance metrics evolve during a benchmark to detect warm-up effects, degradation patterns, or load-dependent behavior.
 
+**📚 Documentation**: See the [Timeslices Tutorial](tutorials/timeslices.md) for configuration options and the [Warmup Tutorial](tutorials/warmup.md) for managing cold-start effects.
+
 ### What is Time-Slicing?
 
 **Time-slicing** divides your benchmark into sequential time windows, computing metrics independently for each window.
@@ -731,7 +735,7 @@ aiperf profile \
 
 ### Time-Sliced Results
 
-```
+```text
 ==========================================================================================
 TIME-SLICED PERFORMANCE ANALYSIS (10-second slices)
 ==========================================================================================
@@ -760,7 +764,7 @@ TREND ANALYSIS:
 ### Key Insights from Time-Sliced Analysis
 
 **1. Warm-Up Effect Detected**:
-```
+```text
 Slice 0 (0-10s):   TTFT = 545ms  ⚠️  Cold start
 Slice 1 (10-20s):  TTFT = 381ms  ✅  30% improvement after warm-up
 Slices 2-6:        TTFT = 344-388ms  ✅  Stable steady-state
@@ -795,21 +799,21 @@ Slices 2-6:        TTFT = 344-388ms  ✅  Stable steady-state
 ### Use Cases for Time-Slicing
 
 **Scenario 1: Detecting Warm-Up Effects**
-```
+```text
 Problem: SLA violations in first minute of operation
 Solution: Use time-slicing to quantify warm-up penalty
 Action: Pre-warm servers or set longer health check delays
 ```
 
 **Scenario 2: Finding Memory Leaks**
-```
+```text
 Problem: Performance degrades after hours of operation
 Solution: Run long benchmark with time-slicing (--benchmark-duration 3600 --slice-duration 300)
 Look for: Increasing TTFT/latency in later slices
 ```
 
 **Scenario 3: Load Pattern Validation**
-```
+```text
 Problem: Trace-based tests with varying load
 Solution: Time-slice to see if performance varies with request density
 Look for: Correlation between requests/slice and latency
@@ -863,7 +867,7 @@ Deploy a load-tester pod in the same cluster as your inference endpoint and use 
 
 ### Request Cancellation Testing
 
-Simulate real-world user behavior where requests are cancelled mid-flight (e.g., users navigating away, timeouts):
+Simulate real-world user behavior where requests are cancelled mid-flight (e.g., users navigating away, timeouts). See the [Request Cancellation Tutorial](tutorials/request-cancellation.md) for detailed configuration.
 
 ```bash
 aiperf profile \
@@ -891,31 +895,137 @@ aiperf profile \
 
 ---
 
+## Additional Features (v0.5.0)
+
+### Server-Side Metrics Collection
+
+AIPerf can collect server-side metrics from Prometheus endpoints exposed by your inference server (e.g., vLLM, TensorRT-LLM). See the [Server Metrics Guide](server_metrics/server-metrics.md) for detailed configuration and the [Server Metrics Reference](server_metrics/server_metrics_reference.md) for supported metrics.
+
+```bash
+# Auto-discovers Prometheus metrics endpoint from your server URL
+aiperf profile \
+  --model qwen3-0.6b \
+  --url $ENDPOINT_URL \
+  --endpoint-type chat \
+  --streaming \
+  --concurrency 100 \
+  --request-count 1000
+
+# Or specify additional metrics endpoints
+aiperf profile \
+  --model qwen3-0.6b \
+  --url $ENDPOINT_URL \
+  --server-metrics "http://server1:9090/metrics" "http://server2:9090/metrics"
+```
+
+**Capabilities:**
+- **Prometheus integration**: Automatically scrape metrics from `/metrics` endpoints
+- **Multi-server support**: Collect from multiple inference replicas
+- **Resource utilization**: Track GPU memory, request queuing, and batch sizes
+- **GPU telemetry**: See the [GPU Telemetry Tutorial](tutorials/gpu-telemetry.md) for DCGM integration
+
+### Automatic Plot Generation
+
+Generate visualizations from your profiling results with the `aiperf plot` command. See the [Plot Tutorial](tutorials/plot.md) for all available plot types and configuration options.
+
+```bash
+# Generate plots from default ./artifacts directory
+aiperf plot
+
+# Generate plots from specific directories
+aiperf plot --paths ./run1 ./run2
+
+# Launch interactive dashboard
+aiperf plot --dashboard
+
+# Use dark theme
+aiperf plot --theme dark
+
+# Specify output directory
+aiperf plot --output ./my_plots
+```
+
+**Available Plot Types:**
+- **Latency distributions**: Histograms and percentile bands for TTFT, ITL, request latency
+- **Throughput curves**: Token throughput and request throughput over time
+- **Pareto analysis**: TPS/GPU vs TPS/User trade-off visualization
+- **Time-series analysis**: Performance metrics over time slices
+- **Scatter plots**: Request-level latency vs. sequence length
+- **Comparison views**: Side-by-side analysis of multiple benchmark runs
+
+**Interactive Dashboard:**
+```bash
+# Launch on localhost:8050
+aiperf plot --dashboard
+
+# Custom port (default 8050)
+aiperf plot --dashboard --port 8080
+
+# Custom host (coming soon)
+# aiperf plot --dashboard --host 0.0.0.0 --port 8080
+```
+
+### KV Cache Efficiency Testing
+
+Test prefix caching and KV cache reuse patterns with trace synthesis and user-centric timing. See the [Prefix Synthesis Tutorial](tutorials/prefix-synthesis.md) for detailed configuration.
+
+**Trace Synthesis** - Generate synthetic traces with controlled prefix-sharing patterns:
+
+```bash
+# Analyze existing trace for prefix statistics
+aiperf analyze-trace mooncake_trace.jsonl --output-file analysis.json
+
+# Synthesize new traces with controlled scaling
+aiperf profile \
+  --model qwen3-0.6b \
+  --url $ENDPOINT_URL \
+  --input-file mooncake_trace.jsonl \
+  --custom-dataset-type mooncake_trace \
+  --synthesis-speedup-ratio 2.0 \
+  --synthesis-prefix-len-multiplier 1.5 \
+  --tokenizer Qwen/Qwen3-0.6B
+```
+
+**Synthesis Options:**
+- `--synthesis-speedup-ratio`: Scale trace timing (2.0 = 2x faster replay)
+- `--synthesis-prefix-len-multiplier`: Scale shared prefix lengths
+- `--synthesis-prefix-root-multiplier`: Distribute traces across N independent prefix trees
+- `--synthesis-prompt-len-multiplier`: Scale unique prompt lengths
+- `--synthesis-max-isl`: Filter out traces exceeding max input length
+- `--synthesis-max-osl`: Cap output length for traces exceeding max
+
+### User-Centric Timing Mode
+
+Simulate realistic multi-turn conversations with controlled per-user timing for KV cache TTL testing. See the [User-Centric Timing Tutorial](tutorials/user-centric-timing.md) for detailed configuration.
+
+```bash
+aiperf profile \
+  --model qwen3-0.6b \
+  --url $ENDPOINT_URL \
+  --endpoint-type chat \
+  --streaming \
+  --user-centric-rate 1.0 \
+  --num-users 15 \
+  --session-turns-mean 20 \
+  --shared-system-prompt-length 1000 \
+  --tokenizer Qwen/Qwen3-0.6B
+```
+
+**Key Features:**
+- **Controlled per-user turn gaps**: Each user waits exactly `num_users / QPS` seconds between turns
+- **Shared system prompt**: Test prefix caching benefits with `--shared-system-prompt-length`
+- **Virtual history**: Immediate steady-state without cold-start transient
+- **Cache TTL testing**: Verify KV cache retention at specific time intervals
+
+---
+
 ## Coming Soon
 
 AIPerf is actively developing new capabilities:
-
-### Server-Side Metrics
-- **Internal queuing metrics**: Measure time spent in scheduling queues, KV cache wait times, and batching delays
-- **Engine telemetry**: Deep visibility into request lifecycle within the inference engine
-- **Resource utilization**: Track memory pressure, GPU utilization, and scheduling efficiency
-
-### Synthetic Load for KV Cache Efficiency Testing
-- **Block reuse patterns**: Generate synthetic traces that test prefix caching and attention reuse
-- **Cache hit rate benchmarks**: Measure performance gains from shared KV cache blocks
-- **Memory efficiency testing**: Validate PagedAttention and other cache optimization strategies
 
 ### Kubernetes-Native Benchmarking
 - **Distributed load generation**: Deploy multiple load-tester pods to simulate thousands of concurrent users
 - **Large-scale workloads**: Test production-scale traffic patterns without client-side bottlenecks
 - **Automated orchestration**: Kubernetes operators to manage benchmark lifecycles and resource allocation
 
-### Automatic Plot Generation
-- **Post-profiling analysis**: Automatically generate visualizations after each benchmark run
-- **Server-side metrics**: Plot GPU utilization, memory usage, and queuing patterns over time
-- **Client-side results**: Visualize latency distributions, throughput curves, and goodput trends
-- **Comparison views**: Side-by-side charts for multiple benchmark runs
-
 ---
-
-**GitHub Gist**: https://gist.github.com/BenHamm/31c648f7d7331c94c1f3a45859db6677
