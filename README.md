@@ -12,13 +12,64 @@ SPDX-License-Identifier: Apache-2.0
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ai-dynamo/aiperf)
 
 
-**[Architecture](docs/architecture.md)** | **[Design Proposals](https://github.com/ai-dynamo/enhancements)** | **[Migrating from Genai-Perf](docs/migrating.md)** | **[CLI Options](docs/cli_options.md)** | **[Metrics Reference](docs/metrics_reference.md)**
+**[Getting Started](docs/getting-started.md)** | **[Documentation](docs/index.md)** | **[Examples](docs/examples.md)** | **[Troubleshooting](docs/troubleshooting.md)** | **[FAQ](docs/faq.md)** | **[Discord](https://discord.gg/D92uqZRjCZ)**
 
+AIPerf is a production-grade benchmarking tool for measuring the performance of generative AI models. It provides comprehensive metrics, scalable architecture, and flexible load patterns for LLM inference servers.
 
-AIPerf is a comprehensive benchmarking tool that measures the performance of generative AI models served by your preferred inference solution.
-It provides detailed metrics using a command line display as well as extensive benchmark performance reports.
+## What is AIPerf?
 
-AIPerf provides multiprocess support out of the box for a single scalable solution.
+AIPerf is the next-generation evolution of GenAI-Perf, purpose-built for modern LLM benchmarking:
+
+- **Accurate Metrics**: Measure TTFT, ITL, throughput, latency, token statistics, and resource utilization
+- **Scalable Architecture**: Multi-process design with distributed workers handles high request rates
+- **Flexible Load Patterns**: Concurrency, request-rate, trace replay, user-centric timing, and more
+- **Production Ready**: Real-time dashboard, comprehensive exports, GPU/server telemetry integration
+- **Extensible**: Plugin system for custom endpoints, datasets, timing strategies, and exporters
+
+## Quick Start
+
+**Install:**
+```bash
+pip install aiperf
+```
+
+**Run your first benchmark:**
+```bash
+aiperf profile \
+  --model Qwen/Qwen3-0.6B \
+  --url http://localhost:8000 \
+  --endpoint-type chat \
+  --streaming \
+  --concurrency 10 \
+  --request-count 100
+```
+
+See **[Getting Started Guide](docs/getting-started.md)** for detailed installation and first benchmark walkthrough.
+
+## When to Use AIPerf
+
+Use AIPerf when you need:
+- **LLM-Specific Metrics**: TTFT, ITL, token throughput, goodput (SLO-based)
+- **High Request Rates**: Distributed workers and connection pooling for sustained load
+- **Realistic Traffic**: Poisson/gamma arrival patterns, multi-turn conversations
+- **Deep Analysis**: Per-request metrics, timeslices, HTTP traces, GPU/server telemetry
+- **Production Validation**: SLA testing, A/B comparisons, long-duration stability tests
+
+## Documentation
+
+- **[Getting Started](docs/getting-started.md)** - Installation, first benchmark, common issues
+- **[Tutorial](docs/tutorial.md)** - Step-by-step examples
+- **[Examples Gallery](docs/examples.md)** - Real-world benchmark scenarios
+- **[Best Practices](docs/best-practices.md)** - Guidelines for effective benchmarking
+- **[Performance Tuning](docs/performance-tuning.md)** - Optimize for maximum throughput
+- **[Deployment Guide](docs/deployment.md)** - Docker, Kubernetes, production setups
+- **[Troubleshooting](docs/troubleshooting.md)** - Common issues and solutions
+- **[FAQ](docs/faq.md)** - Frequently asked questions
+- **[CLI Options](docs/cli_options.md)** - Complete command reference
+- **[Metrics Reference](docs/metrics_reference.md)** - All available metrics
+- **[Architecture](docs/architecture.md)** - System design
+- **[Plugin System](docs/plugins/plugin-system.md)** - Extend AIPerf
+- **[Complete Documentation](docs/index.md)** - Full documentation hub
 
 
 <!--
@@ -324,6 +375,34 @@ Low-level HTTP timing metrics following k6 and HAR conventions. Requires HTTP tr
 
 </br>
 
+## Community & Support
+
+### Get Help
+
+- **[Getting Started Guide](docs/getting-started.md)** - Installation and first benchmark walkthrough
+- **[Troubleshooting Guide](docs/troubleshooting.md)** - Solutions to common issues
+- **[FAQ](docs/faq.md)** - Frequently asked questions
+- **[Examples Gallery](docs/examples.md)** - Real-world benchmark scenarios
+- **[Complete Documentation](docs/index.md)** - Full documentation hub
+
+### Connect with Us
+
+- **GitHub Issues**: [Report bugs and feature requests](https://github.com/ai-dynamo/aiperf/issues)
+- **GitHub Discussions**: [Ask questions and share experiences](https://github.com/ai-dynamo/aiperf/discussions)
+- **Discord**: [Join our community](https://discord.gg/D92uqZRjCZ)
+- **DeepWiki**: [Browse comprehensive docs](https://deepwiki.com/ai-dynamo/aiperf)
+
+### Contributing
+
+Interested in contributing? We welcome contributions of all kinds:
+
+- Bug fixes and feature implementations
+- Documentation improvements
+- New plugins and integrations
+- Performance optimizations
+- Test coverage improvements
+
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for guidelines and development setup.
 
 ## Known Issues
 
