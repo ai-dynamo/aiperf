@@ -27,6 +27,9 @@ class AnalysisStats(AIPerfBaseModel):
 
     total_requests: int = Field(description="Total number of requests in trace")
     unique_prefixes: int = Field(description="Number of unique prefix patterns")
+    num_prefix_groups: int = Field(
+        description="Number of distinct shared first blocks (prefix groups)"
+    )
     cache_hit_rate: float = Field(
         description="Theoretical cache hit rate (0.0 to 1.0) assuming infinite cache"
     )
