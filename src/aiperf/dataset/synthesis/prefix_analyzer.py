@@ -192,6 +192,7 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
         return AnalysisStats(
             total_requests=total,
             unique_prefixes=len(self._prefix_counter),
+            num_prefix_groups=self._compute_num_prefix_groups(),
             cache_hit_rate=cache_hit_rate,
             min_isl=min(self.isls) if self.isls else 0,
             max_isl=max(self.isls) if self.isls else 0,
@@ -244,6 +245,22 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
             seen_hash_ids.update(hash_ids)
 
         return hit_rates
+
+    def _compute_num_prefix_groups(self) -> int:
+        """Compute number of prefix groups (shared first blocks).
+
+        Counts distinct first blocks that appear in 2+ sequences.
+        A first block is "shared" if multiple sequences start with it.
+
+        Returns:
+            Count of unique shared first blocks.
+        """
+        first_blocks = [h[0] for h in self.hash_ids_per_trace if h]
+        if not first_blocks:
+            return 0
+
+        first_block_counts = Counter(first_blocks)
+        return sum(1 for count in first_block_counts.values() if count > 1)
 
     def _compute_prefix_reuse(self) -> float:
         """Compute ratio of reused prefixes to total prefixes.
