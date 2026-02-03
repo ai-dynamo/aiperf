@@ -152,7 +152,6 @@ Workers execute the benchmark workload by sending requests to the inference serv
 
 **Performance Optimizations:**
 - Async I/O for non-blocking HTTP calls
-- GC disabled for latency-sensitive operations
 - Connection pooling for HTTP reuse
 - Minimal processing (offload to Record Processors)
 
@@ -174,11 +173,11 @@ The Timing Manager uses a **credit-based flow control system** to precisely cont
 - Allows accurate measurement without artificial delays
 
 **Credit Distribution:**
-- Credits are routed to workers via ZMQ ROUTER/DEALER pattern through the StickyCreditRouter
+- Credits are routed to workers via ROUTER/DEALER pattern through a credit router
 - Router selects workers based on sticky sessions (multi-turn conversations) or least-loaded worker selection
 - No coordination required between workers
 - Scales to large numbers of workers without bottlenecks
-- Zero-copy messaging ensures minimal overhead
+- Efficient message routing minimizes overhead
 
 ### Data Flow & Messaging
 
@@ -240,15 +239,15 @@ Record Processors transform raw timing data into meaningful performance metrics.
 
 ## Communication Architecture
 
-All components communicate via a **ZeroMQ (ZMQ) message bus**, which provides microsecond-level timing accuracy and high-throughput message passing.
+All components communicate via a **ZeroMQ (ZMQ) message bus**, designed for low-latency, high-throughput message passing.
 
 ### Why ZMQ?
 
 AIPerf uses ZMQ to maintain **measurement accuracy** by decoupling orchestration logic from execution:
 
-- **Zero-copy messaging**: Credits are routed directly to workers via ROUTER/DEALER pattern with minimal overhead
+- **Low-overhead messaging**: Credits are routed directly to workers via ROUTER/DEALER pattern
 - **Asynchronous by design**: No blocking calls between services, ensuring workers spend maximum time on I/O and timing
-- **Minimal overhead**: ZMQ's efficient transport is faster than HTTP/gRPC for inter-process communication
+- **Efficient transport**: ZMQ is designed for low-overhead inter-process communication
 - **Scalability**: Supports distributed workers across multiple nodes without code changes
 
 ### Communication Patterns
@@ -256,11 +255,10 @@ AIPerf uses ZMQ to maintain **measurement accuracy** by decoupling orchestration
 AIPerf uses **ZMQ proxies** for message routing between services and workers:
 
 - Services publish strongly-typed messages to specific topics (Pub/Sub pattern)
-- Services subscribe to relevant message types via `@on_message` decorators
+- Services subscribe to relevant message types
 - Router/Dealer patterns for credit distribution to workers
 - Request/Reply patterns for synchronous operations
 - Asynchronous, decoupled communication (no shared mutable state)
-- Automatic subscription setup during service initialization
 
 ### State Management
 
