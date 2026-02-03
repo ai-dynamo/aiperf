@@ -43,6 +43,7 @@ Trace Analysis Report
 ============================================================
 Total requests:        10,000
 Unique prefixes:       2,543
+Prefix groups:         156
 Cache hit rate:        68.5%
 Prefix reuse ratio:    45.2%
 
@@ -71,6 +72,7 @@ OSL (Output Sequence Length):
 **Summary metrics:**
 - **Total requests**: Number of individual requests in the trace
 - **Unique prefixes**: How many distinct prefix patterns were observed
+- **Prefix groups**: Number of distinct shared first blocks (first blocks appearing in 2+ sequences)
 - **Cache hit rate**: Percentage of tokens that could be reused (assuming infinite cache)
 - **Prefix reuse ratio**: How many prefixes appear more than once
 
