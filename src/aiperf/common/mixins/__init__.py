@@ -34,6 +34,13 @@ from aiperf.common.mixins.command_handler_mixin import (
 from aiperf.common.mixins.communication_mixin import (
     CommunicationMixin,
 )
+from aiperf.common.mixins.health_check_mixin import (
+    HealthCheckMixin,
+    HealthCheckResult,
+)
+from aiperf.common.mixins.health_server_mixin import (
+    HealthServerMixin,
+)
 from aiperf.common.mixins.hooks_mixin import (
     HooksMixin,
 )
@@ -77,6 +84,9 @@ __all__ = [
     "CommandHandlerMixin",
     "CommunicationMixin",
     "FetchResult",
+    "HealthCheckMixin",
+    "HealthCheckResult",
+    "HealthServerMixin",
     "HooksMixin",
     "HttpTraceTiming",
     "MessageBusClientMixin",
