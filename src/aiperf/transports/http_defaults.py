@@ -4,7 +4,18 @@ import socket
 from dataclasses import dataclass
 from typing import Any
 
+from aiperf.common.enums.enums import IPVersion
 from aiperf.common.environment import Environment
+
+
+def _get_socket_family() -> socket.AddressFamily:
+    """Map IP_VERSION setting to socket address family."""
+    ip_version = Environment.HTTP.IP_VERSION.lower()
+    if ip_version == IPVersion.V6:
+        return socket.AF_INET6
+    elif ip_version == IPVersion.AUTO:
+        return socket.AF_UNSPEC
+    return socket.AF_INET  # Default to IPv4
 
 
 @dataclass(frozen=True)
@@ -76,8 +87,11 @@ class AioHttpDefaults:
     FORCE_CLOSE = Environment.HTTP.FORCE_CLOSE  # Disable force close connections
     KEEPALIVE_TIMEOUT = Environment.HTTP.KEEPALIVE_TIMEOUT  # Keepalive timeout
     HAPPY_EYEBALLS_DELAY = None  # Happy eyeballs delay (None = disabled)
-    SOCKET_FAMILY = socket.AF_INET  # Family of the socket (IPv4)
+    SOCKET_FAMILY = _get_socket_family()  # Family of the socket based on IP_VERSION
     SSL_VERIFY = Environment.HTTP.SSL_VERIFY  # Enable SSL certificate verification
+    TRUST_ENV = (
+        Environment.HTTP.TRUST_ENV
+    )  # Trust environment variables for proxy config
 
     @classmethod
     def get_default_kwargs(cls) -> dict[str, Any]:
