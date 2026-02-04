@@ -73,8 +73,7 @@ Optional output path for analysis report (JSON).
 
 Run the Profile subcommand.
 
-Benchmark generative AI models and measure performance metrics including throughput,
-latency, token statistics, and resource utilization.
+Benchmark generative AI models and measure performance metrics including throughput, latency, token statistics, and resource utilization.
 
 **Examples:**
 
@@ -125,7 +124,7 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 #### `--endpoint-type` `<str>`
 
 The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br>_Choices: [`chat`, `cohere_rankings`, `completions`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
+<br>_Choices: [`chat`, `cohere_rankings`, `completions`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
 <br>_Default: `chat`_
 
 #### `--streaming`
@@ -820,9 +819,7 @@ Select the user interface type for displaying benchmark progress. `dashboard` (d
 
 Generate visualizations from AIPerf profiling data.
 
-On first run, automatically creates ~/.aiperf/plot_config.yaml which you can edit to
-customize plots, including experiment classification (baseline vs treatment runs).
-Use --config to specify a different config file.
+On first run, automatically creates ~/.aiperf/plot_config.yaml which you can edit to customize plots, including experiment classification (baseline vs treatment runs). Use --config to specify a different config file.
 
 **Examples:**
 

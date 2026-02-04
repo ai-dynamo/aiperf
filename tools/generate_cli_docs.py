@@ -1,196 +1,168 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Generate CLI docs for AIPerf."""
+"""Generate CLI documentation by introspecting the cyclopts application.
+
+Usage:
+    ./tools/generate_cli_docs.py
+    ./tools/generate_cli_docs.py --check
+    ./tools/generate_cli_docs.py --verbose
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+# Allow direct execution: add repo root to path for 'tools' package imports
+if __name__ == "__main__" and "tools" not in sys.modules:
+    sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import ast
 import inspect
-import sys
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
 from inspect import isclass
 from io import StringIO
-from pathlib import Path
 from typing import Any, get_origin
 
-from cyclopts.argument import Argument, ArgumentCollection
-from cyclopts.bind import normalize_tokens
-from cyclopts.field_info import FieldInfo
-from cyclopts.help import InlineText
 from rich.console import Console
 
-# Add src to path so we can import aiperf.cli
-sys.path.append("src")
+from tools._core import (
+    CONSTRAINT_SYMBOLS,
+    SPDX_HEADER_MD,
+    CLIExtractionError,
+    GeneratedFile,
+    Generator,
+    GeneratorResult,
+    main,
+    normalize_text,
+    print_step,
+    print_warning,
+)
 
-from pydantic import BaseModel
+# =============================================================================
+# Configuration
+# =============================================================================
 
-from aiperf.cli import app
+OUTPUT_FILE = Path("docs/cli_options.md")
+
+# =============================================================================
+# Data Models
+# =============================================================================
 
 
 @dataclass
-class ParameterInfo:
-    """Information about a CLI parameter."""
+class Param:
+    """CLI parameter info."""
 
-    display_name: str
-    long_options: str
+    name: str
+    long_opts: str
     short: str
     description: str
     required: bool
     type_suffix: str
-    default_value: str = ""
+    default: str = ""
     choices: list[str] | None = None
-    choice_descriptions: dict[str, str] | None = None  # Maps choice to its description
+    choice_descs: dict[str, str] | None = None
     constraints: list[str] | None = None
 
 
-def _normalize_text(text: str) -> str:
-    """Normalize text by replacing newlines with spaces and stripping whitespace."""
-    return " ".join(text.strip().split())
+# =============================================================================
+# Extraction Helpers
+# =============================================================================
 
 
-def _extract_enum_member_docstrings(enum_class: type[Enum]) -> dict[str, str]:
-    """Extract docstrings for enum members by parsing the source code.
-
-    Args:
-        enum_class: The enum class to extract docstrings from
-
-    Returns:
-        Dictionary mapping enum member names to their docstrings
-    """
+def _get_enum_docstrings(enum_class: type[Enum]) -> dict[str, str]:
+    """Extract docstrings for enum members from source."""
     try:
         source = inspect.getsource(enum_class)
         tree = ast.parse(source)
 
-        # Find the class definition
-        class_def = None
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef) and node.name == enum_class.__name__:
-                class_def = node
-                break
-
-        if not class_def:
-            return {}
-
-        member_docs = {}
-        i = 0
-        while i < len(class_def.body):
-            node = class_def.body[i]
-
-            # Look for assignments (enum members)
-            if isinstance(node, ast.Assign):  # noqa: SIM102
-                # Get the member name
-                if node.targets and isinstance(node.targets[0], ast.Name):
-                    member_name = node.targets[0].id
-
-                    # Check if the next node is a string (docstring)
-                    if i + 1 < len(class_def.body):
-                        next_node = class_def.body[i + 1]
-                        if isinstance(next_node, ast.Expr) and isinstance(  # noqa: SIM102
-                            next_node.value, ast.Constant
-                        ):
-                            if isinstance(next_node.value.value, str):
-                                docstring = next_node.value.value.strip()
-                                member_docs[member_name] = docstring
-            i += 1
-
-        return member_docs
+                docs = {}
+                for i, item in enumerate(node.body):
+                    if (
+                        isinstance(item, ast.Assign)
+                        and item.targets
+                        and isinstance(item.targets[0], ast.Name)
+                    ):
+                        name = item.targets[0].id
+                        # Check next node for docstring
+                        if i + 1 < len(node.body):
+                            next_item = node.body[i + 1]
+                            if (
+                                isinstance(next_item, ast.Expr)
+                                and isinstance(next_item.value, ast.Constant)
+                                and isinstance(next_item.value.value, str)
+                            ):
+                                docs[name] = next_item.value.value.strip()
+                return docs
     except (OSError, TypeError, SyntaxError):
-        # Source not available or can't be parsed
-        return {}
+        pass
+    return {}
 
 
-def _build_constraint_map(
-    model_class: type[BaseModel], _visited: set[type] | None = None
+def _build_constraints(
+    model_class: type, visited: set | None = None
 ) -> dict[str, list[str]]:
-    """Build a map of field names to their constraints from a Pydantic model.
+    """Build constraint map from Pydantic model."""
+    from pydantic import BaseModel
 
-    Args:
-        model_class: A Pydantic BaseModel class
-        _visited: Set of already-visited model classes to prevent infinite recursion
+    # Sort order: lower bounds first (>, ≥), then upper bounds (<, ≤)
+    constraint_order = {">": 0, "≥": 1, "<": 2, "≤": 3, "min:": 4, "max:": 5}
 
-    Returns:
-        Dictionary mapping field names to lists of constraint strings
-    """
-    # Keep track of visited models to prevent infinite recursion
-    if _visited is None:
-        _visited = set()
-    if model_class in _visited:
+    visited = visited or set()
+    if model_class in visited:
         return {}
-    _visited.add(model_class)
+    visited.add(model_class)
 
-    constraint_map_result: dict[str, list[str]] = {}
+    result: dict[str, list[str]] = {}
 
-    # Map Pydantic constraint attribute names to display symbols
-    constraint_symbols = {
-        "ge": "≥",
-        "le": "≤",
-        "gt": ">",
-        "lt": "<",
-        "min_length": "min length:",
-        "max_length": "max length:",
-    }
-
-    # Iterate through model fields
-    for field_name, field_info in model_class.model_fields.items():
+    for name, info in model_class.model_fields.items():
         constraints = []
-
-        # Check for numeric and length constraints
-        for attr_name, symbol in constraint_symbols.items():
-            if hasattr(field_info, attr_name):
-                value = getattr(field_info, attr_name)
-                if value is not None:
-                    constraints.append(f"{symbol} {value}")
-
-        # Also check constraints in metadata (Pydantic v2 Annotated pattern)
-        if hasattr(field_info, "metadata") and field_info.metadata:
-            for metadata_item in field_info.metadata:
-                # Check for Pydantic constraint objects (Ge, Le, Gt, Lt, etc.)
-                for attr_name, symbol in constraint_symbols.items():
-                    if hasattr(metadata_item, attr_name):
-                        value = getattr(metadata_item, attr_name)
-                        if value is not None and f"{symbol} {value}" not in constraints:
-                            constraints.append(f"{symbol} {value}")
-
+        for attr, sym in CONSTRAINT_SYMBOLS.items():
+            val = getattr(info, attr, None)
+            if val is not None:
+                constraints.append(f"{sym} {val}")
+            if hasattr(info, "metadata"):
+                for meta in info.metadata or []:
+                    val = getattr(meta, attr, None)
+                    if val is not None and f"{sym} {val}" not in constraints:
+                        constraints.append(f"{sym} {val}")
         if constraints:
-            constraint_map_result[field_name] = constraints
+            # Sort: lower bounds first, then upper bounds
+            constraints.sort(key=lambda c: constraint_order.get(c.split()[0], 99))
+            result[name] = constraints
 
-    # Recursively process nested BaseModel fields
-    for _field_name, field_info in model_class.model_fields.items():
-        annotation = field_info.annotation
-        # Handle Optional types
-        if hasattr(annotation, "__origin__"):
-            args = getattr(annotation, "__args__", ())
-            for arg in args:
-                if isinstance(arg, type) and issubclass(arg, BaseModel):
-                    nested_constraints = _build_constraint_map(arg, _visited)
-                    # Merge nested constraints with flattened names
-                    for nested_name, nested_vals in nested_constraints.items():
-                        # Use the nested field name directly (cyclopts flattens them)
-                        if nested_name not in constraint_map_result:
-                            constraint_map_result[nested_name] = nested_vals
-        elif isinstance(annotation, type) and issubclass(annotation, BaseModel):
-            nested_constraints = _build_constraint_map(annotation, _visited)
-            for nested_name, nested_vals in nested_constraints.items():
-                if nested_name not in constraint_map_result:
-                    constraint_map_result[nested_name] = nested_vals
+        # Recurse into nested models
+        ann = info.annotation
+        args = getattr(ann, "__args__", ())
+        for arg in [ann, *args]:
+            if isinstance(arg, type) and issubclass(arg, BaseModel):
+                for k, v in _build_constraints(arg, visited).items():
+                    result.setdefault(k, v)
 
-    return constraint_map_result
+    return result
 
 
-def extract_plain_text(obj: Any) -> str:
-    """Extract plain text from cyclopts objects."""
+def _extract_text(obj: Any) -> str:
+    """Extract plain text from cyclopts InlineText."""
+    from cyclopts.help import InlineText
+
     if isinstance(obj, InlineText):
-        console = Console(file=StringIO(), record=True, width=1000)
-        console.print(obj)
-        text = console.export_text(clear=False, styles=False)
-        return _normalize_text(text.replace("\r", ""))
+        buf = StringIO()
+        Console(file=buf, record=True, width=1000).print(obj)
+        return normalize_text(buf.getvalue().replace("\r", ""))
     return str(obj) if obj else ""
 
 
-def get_type_suffix(hint: Any) -> str:
-    """Get type suffix for parameter hints."""
-    type_mapping: dict[type, str] = {
+def _type_suffix(hint: Any) -> str:
+    """Get type suffix for display."""
+    mapping = {
         bool: "",
         int: " <int>",
         float: " <float>",
@@ -198,497 +170,323 @@ def get_type_suffix(hint: Any) -> str:
         tuple: " <list>",
         set: " <list>",
     }
-
-    # Check direct type first, then origin type for generics
-    lookup_type = hint if hint in type_mapping else get_origin(hint)
-    return type_mapping.get(lookup_type, " <str>")
+    return mapping.get(hint, mapping.get(get_origin(hint), " <str>"))
 
 
-def _extract_display_name(arg: Argument) -> str:
-    """Extract display name from argument, following cyclopts convention."""
-    name = arg.names[0].lstrip("-").replace("-", " ").title()
-    return f"{name} _(Required)_" if arg.required else name
+def _extract_param(arg: Any, constraints: dict[str, list[str]]) -> Param:
+    """Extract parameter info from cyclopts argument."""
+    from cyclopts.field_info import FieldInfo
 
+    # Split names
+    long_opts = [n for n in arg.names if n.startswith("--")]
+    short_opts = [n for n in arg.names if n.startswith("-") and n not in long_opts]
 
-def _extract_default_value(arg: Argument) -> str:
-    """Extract default value from argument showing raw values."""
-    if not arg.show_default:
-        return ""
+    # Default value
+    default = ""
+    if arg.show_default:
+        val = arg.field_info.default
+        if val is not FieldInfo.empty and val is not None:
+            default = (
+                str(arg.show_default(val)) if callable(arg.show_default) else str(val)
+            )
 
-    default = arg.field_info.default
-    if default is FieldInfo.empty or default is None:
-        return ""
+    # Choices from enum
+    choices = None
+    choice_descs = None
+    if arg.parameter.show_choices:
+        enum_cls = None
+        if isclass(arg.hint) and issubclass(arg.hint, Enum):
+            enum_cls = arg.hint
+        elif get_origin(arg.hint) in (list, tuple, set):
+            args = getattr(arg.hint, "__args__", ())
+            if args and isclass(args[0]) and issubclass(args[0], Enum):
+                enum_cls = args[0]
 
-    # Handle callable show_default
-    if callable(arg.show_default):
-        return str(arg.show_default(default))
+        if enum_cls:
+            choices = [f"`{m.value}`" for m in enum_cls]
+            docs = _get_enum_docstrings(enum_cls)
+            if docs:
+                choice_descs = {
+                    f"`{m.value}`": normalize_text(docs.get(n, ""))
+                    for n, m in enum_cls.__members__.items()
+                }
 
-    # For all other cases, show the raw value
-    return str(default)
-
-
-def _extract_choices(arg: Argument) -> tuple[list[str] | None, dict[str, str] | None]:
-    """Extract choices and their descriptions from argument.
-
-    Returns:
-        Tuple of (choices, choice_descriptions)
-    """
-    # Check if we should show choices
-    if not arg.parameter.show_choices:
-        return None, None
-
-    # Direct enum type
-    enum_class = None
-    if isclass(arg.hint) and issubclass(arg.hint, Enum):
-        enum_class = arg.hint
-    # Handle list[EnumType] for multi-select parameters
-    elif get_origin(arg.hint) in (list, tuple, set):
-        args = getattr(arg.hint, "__args__", ())
-        if args and isclass(args[0]) and issubclass(args[0], Enum):
-            enum_class = args[0]
-
-    if enum_class:
-        choices = []
-        descriptions = {}
-
-        # Extract docstrings from source code
-        member_docstrings = _extract_enum_member_docstrings(enum_class)
-
-        for member_name, member_value in enum_class.__members__.items():
-            choice_str = f"`{member_value}`"
-            choices.append(choice_str)
-
-            # Get docstring from parsed source code
-            if member_name in member_docstrings:
-                doc = _normalize_text(member_docstrings[member_name])
-                if doc:
-                    descriptions[choice_str] = doc
-
-        return choices, descriptions if descriptions else None
-    return None, None
-
-
-def _extract_constraints(
-    arg: Argument, constraint_map: dict[str, list[str]]
-) -> list[str] | None:
-    """Extract constraints from Pydantic Field annotations using a pre-built constraint map.
-
-    Args:
-        arg: The cyclopts Argument to extract constraints for
-        constraint_map: Pre-built mapping of field names to constraint strings
-
-    Returns:
-        List of constraint strings if any exist, None otherwise
-    """
-    # Get the field name (without leading dashes)
+    # Constraints
     field_name = arg.names[0].lstrip("-").replace("-", "_")
 
-    # Look up constraints in the pre-built map
-    return constraint_map.get(field_name)
-
-
-def _extract_constraints(
-    arg: Argument, constraint_map: dict[str, list[str]]
-) -> list[str] | None:
-    """Extract constraints from Pydantic Field annotations using a pre-built constraint map.
-
-    Args:
-        arg: The cyclopts Argument to extract constraints for
-        constraint_map: Pre-built mapping of field names to constraint strings
-
-    Returns:
-        List of constraint strings if any exist, None otherwise
-    """
-    # Get the field name (without leading dashes)
-    field_name = arg.names[0].lstrip("-").replace("-", "_")
-
-    # Look up constraints in the pre-built map
-    return constraint_map.get(field_name)
-
-
-def _split_argument_names(names: tuple[str, ...]) -> tuple[list[str], list[str]]:
-    """Split argument names into short and long options."""
-    long_opts = [name for name in names if name.startswith("--")]
-    short_opts = [
-        name for name in names if name not in long_opts and name.startswith("-")
-    ]
-    return short_opts, long_opts
-
-
-def _create_parameter_info(
-    arg: Argument, constraint_map: dict[str, list[str]]
-) -> ParameterInfo:
-    """Create ParameterInfo from cyclopts argument using clean property access."""
-    short_opts, long_opts = _split_argument_names(arg.names)
-    choices, choice_descriptions = _extract_choices(arg)
-
-    return ParameterInfo(
-        display_name=_extract_display_name(arg),
-        long_options=" --".join(long_opts),
+    return Param(
+        name=arg.names[0].lstrip("-").replace("-", " ").title()
+        + (" _(Required)_" if arg.required else ""),
+        long_opts=" --".join(long_opts),
         short=" ".join(short_opts),
-        description=extract_plain_text(arg.parameter.help),
+        description=_extract_text(arg.parameter.help),
         required=arg.required,
-        type_suffix=get_type_suffix(arg.hint),
-        default_value=_extract_default_value(arg),
+        type_suffix=_type_suffix(arg.hint),
+        default=default,
         choices=choices,
-        choice_descriptions=choice_descriptions,
-        constraints=_extract_constraints(arg, constraint_map),
+        choice_descs=choice_descs,
+        constraints=constraints.get(field_name),
     )
 
 
-def _extract_parameter_groups(
-    argument_collection: ArgumentCollection, constraint_map: dict[str, list[str]]
-) -> dict[str, list[ParameterInfo]]:
-    """Extract parameter groups from argument collection."""
-    groups: dict[str, list[ParameterInfo]] = defaultdict(list)
-
-    for arg in argument_collection.filter_by(show=True):
-        group_name = arg.parameter.group[0].name
-        param_info = _create_parameter_info(arg, constraint_map)
-        groups[group_name].append(param_info)
-
-    return dict(groups)
-
-
-def extract_command_info() -> list[tuple[str, str]]:
-    """Extract available commands and their descriptions."""
-    skip_commands = {"--help", "-h", "--version"}
+def extract_commands(app: Any) -> list[tuple[str, str]]:
+    """Extract command names and descriptions."""
+    skip = {"--help", "-h", "--version"}
     commands = []
-
-    for name, command_obj in app._commands.items():
-        if name in skip_commands:
+    for name, cmd in app._commands.items():
+        if name in skip:
             continue
-
-        help_text = command_obj.help if hasattr(command_obj, "help") else ""
+        help_text = cmd.help if hasattr(cmd, "help") else ""
         if callable(help_text):
             help_text = help_text()
         if help_text:
-            help_text = extract_plain_text(help_text).split("\n")[0].strip()
-
+            help_text = _extract_text(help_text).split("\n")[0].strip()
         commands.append((name, help_text))
     return commands
 
 
-def extract_help_data(subcommand: str) -> dict[str, list[ParameterInfo]]:
-    """Extract structured help data from the CLI."""
+def extract_params(app: Any, subcommand: str) -> dict[str, list[Param]]:
+    """Extract parameters for a subcommand."""
     from typing import get_type_hints
+
+    from cyclopts.bind import normalize_tokens
+    from pydantic import BaseModel
 
     tokens = normalize_tokens(subcommand)
     _, apps, _ = app.parse_commands(tokens)
 
-    # Build constraint map from Pydantic models in the function signature
-    constraint_map: dict[str, list[str]] = {}
+    # Build constraints from type hints
+    constraints: dict[str, list[str]] = {}
     func = apps[-1].default_command
     if func:
-        hints = get_type_hints(func, include_extras=False)
-        for _param_name, hint_type in hints.items():
-            # Check if the hint is a BaseModel or Optional[BaseModel]
-            if isinstance(hint_type, type) and issubclass(hint_type, BaseModel):
-                constraint_map.update(_build_constraint_map(hint_type))
-            # Handle Union types (e.g., Optional[ServiceConfig], ServiceConfig | None)
-            # Python 3.10+ union syntax (X | Y) creates types.UnionType which has __args__ but no __origin__
-            elif hasattr(hint_type, "__args__"):
-                args = getattr(hint_type, "__args__", ())
-                for arg in args:
-                    if isinstance(arg, type) and issubclass(arg, BaseModel):
-                        constraint_map.update(_build_constraint_map(arg))
+        for hint in get_type_hints(func, include_extras=False).values():
+            if isinstance(hint, type) and issubclass(hint, BaseModel):
+                constraints.update(_build_constraints(hint))
+            for arg in getattr(hint, "__args__", ()):
+                if isinstance(arg, type) and issubclass(arg, BaseModel):
+                    constraints.update(_build_constraints(arg))
 
-    argument_collection = apps[-1].assemble_argument_collection(parse_docstring=True)
-    return _extract_parameter_groups(argument_collection, constraint_map)
+    # Extract params by group
+    groups: dict[str, list[Param]] = defaultdict(list)
+    for arg in (
+        apps[-1].assemble_argument_collection(parse_docstring=True).filter_by(show=True)
+    ):
+        groups[arg.parameter.group[0].name].append(_extract_param(arg, constraints))
+
+    return dict(groups)
 
 
-def _format_parameter_header(param: ParameterInfo) -> str:
-    """Format parameter header and extract aliases."""
-    all_opts = []
+# =============================================================================
+# Markdown Generation
+# =============================================================================
 
+
+def _format_param(param: Param) -> list[str]:
+    """Format a parameter as markdown."""
+    # Header
+    opts = []
     if param.short:
-        all_opts.append(f"`{param.short}`")
+        opts.append(f"`{param.short}`")
+    for opt in param.long_opts.split(" --"):
+        if opt := opt.strip():
+            opts.append(
+                f"`{'--' if not opt.startswith('--') else ''}{opt.lower().replace(' ', '-')}`"
+            )
 
-    for option in param.long_options.split(" --"):
-        if option := option.strip():
-            if not option.startswith("--"):
-                option = f"--{option.lower().replace(' ', '-')}"
-            all_opts.append(f"`{option}`")
+    if not opts:
+        return []
 
-    if not all_opts:
-        return ""
+    type_str = f" `{param.type_suffix.strip()}`" if param.type_suffix else ""
+    req = " _(Required)_" if param.required else ""
+    lines = [f"#### {', '.join(opts)}{type_str}{req}", ""]
 
-    primary = ", ".join(all_opts)
-    type_display = f" `{param.type_suffix.strip()}`" if param.type_suffix else ""
-    required_tag = " _(Required)_" if param.required else ""
+    # Body
+    lines.append(f"{normalize_text(param.description).rstrip('.')}.")
 
-    return f"#### {primary}{type_display}{required_tag}"
-
-
-def _format_parameter_body(param: ParameterInfo) -> list[str]:
-    """Format parameter description and metadata as markdown list."""
-    lines = [f"{_normalize_text(param.description).rstrip('.')}."]
-
-    # Detect boolean flags (no type suffix or explicitly bool)
-    is_bool_flag = param.type_suffix == "" or param.type_suffix == " <bool>"
-    has_negative = "--no-" in param.long_options
-
-    # Add flag indicator for boolean flags
-    if is_bool_flag and not has_negative:
+    if param.type_suffix in ("", " <bool>") and "--no-" not in param.long_opts:
         lines.append("<br>_Flag (no value required)_")
 
     if param.constraints:
         lines.append(f"<br>_Constraints: {', '.join(param.constraints)}_")
 
     if param.choices:
-        # Check if we have descriptions for the choices
-        if param.choice_descriptions:
-            # Format choices with descriptions as a 3-column markdown table
-            lines.append("")
-            lines.append("**Choices:**")
-            lines.append("")
-            lines.append("| | | |")
-            lines.append("|-------|:-------:|-------------|")
+        if param.choice_descs:
+            lines.extend(
+                ["", "**Choices:**", "", "| | | |", "|-------|:-------:|-------------|"]
+            )
             for choice in param.choices:
-                # Keep backticks from original choice formatting
-                desc = param.choice_descriptions.get(choice, "")
-
-                # Check if this is a default value (strip backticks for comparison)
-                choice_value = choice.strip("`")
+                desc = param.choice_descs.get(choice, "")
+                val = choice.strip("`")
                 is_default = False
-
-                if param.default_value and param.default_value != "False":
-                    # Handle list defaults (e.g., [ServerMetricsFormat.JSON, ServerMetricsFormat.CSV])
-                    default_str = str(param.default_value)
-                    if default_str.startswith("[") and default_str.endswith("]"):
-                        # Parse list format, extract enum values
-                        # e.g., "[ServerMetricsFormat.JSON, ServerMetricsFormat.CSV]"
-                        import re
-
-                        # Extract all enum values from the list
-                        enum_values = re.findall(r"\.(\w+)", default_str)
-                        # Also try matching lowercase enum strings (e.g., ['json', 'csv'])
-                        quoted_values = re.findall(r"'([^']+)'", default_str)
-                        all_values = enum_values + quoted_values
-                        # Check if choice_value matches any extracted value (case-insensitive)
-                        is_default = any(
-                            choice_value.lower() == val.lower() for val in all_values
-                        )
+                if param.default and param.default != "False":
+                    ds = str(param.default)
+                    if ds.startswith("[") and ds.endswith("]"):
+                        vals = re.findall(r"\.(\w+)", ds) + re.findall(r"'([^']+)'", ds)
+                        is_default = any(val.lower() == v.lower() for v in vals)
                     else:
-                        # Single default value
-                        is_default = choice_value == param.default_value
-
-                # Add "_default_" text in middle column if this is the default
-                default_marker = "_default_" if is_default else ""
-
-                if desc:
-                    lines.append(f"| {choice} | {default_marker} | {desc} |")
-                else:
-                    lines.append(f"| {choice} | {default_marker} | |")
+                        is_default = val == param.default
+                marker = "_default_" if is_default else ""
+                lines.append(f"| {choice} | {marker} | {desc} |")
         else:
-            # No descriptions - show inline
             lines.append(f"<br>_Choices: [{', '.join(param.choices)}]_")
-
-            # Add default on separate line if no descriptions
-            if param.default_value and param.default_value != "False":
-                lines.append(f"<br>_Default: `{param.default_value}`_")
-    elif param.default_value and param.default_value != "False":
-        # No choices, just default
-        lines.append(f"<br>_Default: `{param.default_value}`_")
+            if param.default and param.default != "False":
+                lines.append(f"<br>_Default: `{param.default}`_")
+    elif param.default and param.default != "False":
+        lines.append(f"<br>_Default: `{param.default}`_")
 
     lines.append("")
     return lines
 
 
-def generate_markdown_docs(
-    commands_data: dict[str, dict[str, list[ParameterInfo]]],
-) -> str:
-    """Generate markdown documentation from help data.
-
-    Args:
-        commands_data: Dictionary mapping command names to their parameter groups
-    """
+def generate_markdown(app: Any, data: dict[str, dict[str, list[Param]]]) -> str:
+    """Generate full markdown documentation."""
     lines = [
-        "<!--",
-        "SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
-        "SPDX-License-Identifier: Apache-2.0",
-        "-->",
+        *SPDX_HEADER_MD,
         "",
         "# Command Line Options",
         "",
     ]
 
-    # Add Commands section with subsections TOC
-    if commands_data:
-        lines.append("## `aiperf` Commands")
-        lines.append("")
-        commands = extract_command_info()
-        for name, description in commands:
-            if name in commands_data:
-                command_anchor = f"aiperf-{name}".lower().replace(" ", "-")
-                lines.append(f"### [`{name}`](#{command_anchor})")
-                lines.append("")
-                lines.append(description)
-                lines.append("")
+    # TOC
+    if data:
+        lines.extend(["## `aiperf` Commands", ""])
+        for name, desc in extract_commands(app):
+            if name in data:
+                lines.extend(
+                    [
+                        f"### [`{name}`](#aiperf-{name.lower().replace(' ', '-')})",
+                        "",
+                        desc,
+                        "",
+                    ]
+                )
+                groups = data[name]
+                if len(groups) > 1 or list(groups.keys())[0] not in (
+                    "Parameters",
+                    "Options",
+                    "General",
+                ):
+                    links = [
+                        f"[{g}](#{g.lower().replace(' ', '-').replace('(', '').replace(')', '')})"
+                        for g in groups
+                    ]
+                    lines.extend([" • ".join(links), ""])
 
-                # Add horizontal TOC for this command's parameter groups
-                parameter_groups = commands_data[name]
-                skip_group_header = len(parameter_groups) == 1 and list(
-                    parameter_groups.keys()
-                )[0] in ("Parameters", "Options", "General")
+    # Command sections
+    for cmd_name, groups in data.items():
+        lines.extend(["<hr>", "", f"## `aiperf {cmd_name}`", ""])
 
-                if not skip_group_header:
-                    # Create horizontal bulleted list for parameter groups
-                    group_links = []
-                    for group_name in parameter_groups:
-                        # Create anchor from group name
-                        group_anchor = (
-                            group_name.lower()
-                            .replace(" ", "-")
-                            .replace("(", "")
-                            .replace(")", "")
-                        )
-                        group_links.append(f"[{group_name}](#{group_anchor})")
-                    # Join with bullet separator
-                    lines.append(" • ".join(group_links))
-                    lines.append("")
-
-    # Generate sections for each command
-    for command_name, parameter_groups in commands_data.items():
-        lines.append("<hr>")
-        lines.append("")
-        lines.append(f"## `aiperf {command_name}`")
-        lines.append("")
-
-        # Add command description if available
-        command_obj = app._commands.get(command_name)
-        if command_obj and hasattr(command_obj, "help"):
-            help_text = command_obj.help
-            if callable(help_text):
-                help_text = help_text()
+        # Command help text
+        cmd = app._commands.get(cmd_name)
+        if cmd and hasattr(cmd, "help"):
+            help_text = cmd.help() if callable(cmd.help) else cmd.help
             if help_text:
-                full_text = extract_plain_text(help_text)
+                text = _extract_text(help_text)
+                text_lines = text.split("\n")
 
-                # Split by lines to properly handle Examples section
-                text_lines = full_text.split("\n")
-
-                # Extract description (everything before Examples: or Args:)
-                description_lines = []
-                examples_start_idx = None
-                examples_end_idx = None
-
+                # Extract description (before Examples:)
+                desc_lines = []
+                examples_idx = None
                 for i, line in enumerate(text_lines):
                     if line.strip().lower().startswith("examples:"):
-                        examples_start_idx = i
+                        examples_idx = i
                         break
-                    elif line.strip().lower().startswith("args:"):
+                    if line.strip().lower().startswith("args:"):
                         break
-                    else:
-                        description_lines.append(line)
+                    desc_lines.append(line)
 
-                # Add description (remove common indentation)
-                description = "\n".join(description_lines).strip()
-                if description:
-                    # Split description into paragraphs and normalize indentation
-                    paragraphs = description.split("\n\n")
-                    for para in paragraphs:
+                desc = "\n".join(desc_lines).strip()
+                if desc:
+                    for para in desc.split("\n\n"):
                         if para.strip():
-                            # Remove common leading whitespace from each line in paragraph
-                            para_lines = para.split("\n")
-                            # Find minimum indentation
-                            min_indent = min(
-                                (
-                                    len(line) - len(line.lstrip())
-                                    for line in para_lines
-                                    if line.strip()
-                                ),
-                                default=0,
-                            )
-                            # Remove common indentation
-                            normalized_lines = [
-                                line[min_indent:] if len(line) > min_indent else line
-                                for line in para_lines
-                            ]
-                            lines.append("\n".join(normalized_lines).strip())
-                            lines.append("")
+                            lines.extend([normalize_text(para), ""])
 
-                # Extract examples if found
-                if examples_start_idx is not None:
-                    # Find where examples end (at Args: or end of text)
-                    for i in range(examples_start_idx + 1, len(text_lines)):
+                # Extract examples
+                if examples_idx is not None:
+                    end_idx = len(text_lines)
+                    for i in range(examples_idx + 1, len(text_lines)):
                         if text_lines[i].strip().lower().startswith("args:"):
-                            examples_end_idx = i
+                            end_idx = i
                             break
-
-                    if examples_end_idx is None:
-                        examples_end_idx = len(text_lines)
-
-                    # Extract example lines (skip the "Examples:" header)
-                    example_lines = text_lines[
-                        examples_start_idx + 1 : examples_end_idx
-                    ]
-
-                    # Filter out empty lines at start and end, but keep internal structure
+                    example_lines = text_lines[examples_idx + 1 : end_idx]
+                    # Strip leading/trailing blank lines but preserve internal ones
                     while example_lines and not example_lines[0].strip():
                         example_lines.pop(0)
                     while example_lines and not example_lines[-1].strip():
                         example_lines.pop()
-
                     if example_lines:
-                        # Remove common indentation from examples
-                        non_empty_lines = [
-                            line for line in example_lines if line.strip()
-                        ]
-                        if non_empty_lines:
-                            min_indent = min(
-                                len(line) - len(line.lstrip())
-                                for line in non_empty_lines
-                            )
-                            normalized_examples = [
-                                line[min_indent:] if len(line) > min_indent else line
-                                for line in example_lines
-                            ]
+                        non_blank = [ln for ln in example_lines if ln.strip()]
+                        min_indent = min(len(ln) - len(ln.lstrip()) for ln in non_blank)
+                        lines.extend(["**Examples:**", "", "```bash"])
+                        lines.extend(
+                            ln[min_indent:] if ln.strip() else ""
+                            for ln in example_lines
+                        )
+                        lines.extend(["```", ""])
 
-                            lines.append("**Examples:**")
-                            lines.append("")
-                            lines.append("```bash")
-                            lines.extend(normalized_examples)
-                            lines.append("```")
-                            lines.append("")
-
-        # For single-group commands with generic group names, skip the group header
-        skip_group_header = len(parameter_groups) == 1 and list(
-            parameter_groups.keys()
-        )[0] in ("Parameters", "Options", "General")
-
-        for group_name, parameters in parameter_groups.items():
-            # Use ### for group headers to create proper hierarchy
-            if not skip_group_header:
-                lines.append(f"### {group_name}")
-                lines.append("")
-
-            for param in parameters:
-                if header := _format_parameter_header(param):
-                    lines.append(header)
-                    lines.append("")
-                    lines.extend(_format_parameter_body(param))
+        # Parameters
+        skip_header = len(groups) == 1 and list(groups.keys())[0] in (
+            "Parameters",
+            "Options",
+            "General",
+        )
+        for group_name, params in groups.items():
+            if not skip_header:
+                lines.extend([f"### {group_name}", ""])
+            for param in params:
+                lines.extend(_format_param(param))
 
     return "\n".join(line.rstrip() for line in lines)
 
 
-def main():
+# =============================================================================
+# Generator
+# =============================================================================
+
+
+class CLIDocsGenerator(Generator):
     """Generate CLI documentation."""
-    commands_data = {}
 
-    for command_name, _ in extract_command_info():
+    name = "CLI Documentation"
+    description = "Generate CLI documentation for AIPerf"
+
+    def generate(self) -> GeneratorResult:
+        # Import app
         try:
-            commands_data[command_name] = extract_help_data(command_name)
-        except Exception as e:
-            print(
-                f"Warning: Could not extract help data for command '{command_name}': {e}"
-            )
+            sys.path.insert(0, "src")
+            from aiperf.cli import app
+        except ImportError as e:
+            raise CLIExtractionError(
+                "Failed to import aiperf.cli",
+                {
+                    "error": str(e),
+                    "hint": "Ensure aiperf is installed: uv pip install -e .",
+                },
+            ) from e
 
-    markdown_content = generate_markdown_docs(commands_data)
+        # Extract commands
+        commands = extract_commands(app)
+        if self.verbose:
+            print_step(f"Found {len(commands)} commands")
 
-    output_file = Path("docs/cli_options.md")
-    output_file.write_text(markdown_content)
-    print(f"Documentation written to {output_file}")
+        # Extract params for each command
+        data: dict[str, dict[str, list[Param]]] = {}
+        for cmd_name, _ in commands:
+            try:
+                data[cmd_name] = extract_params(app, cmd_name)
+                if self.verbose:
+                    count = sum(len(p) for p in data[cmd_name].values())
+                    print_step(f"Extracted `{cmd_name}` ({count} params)")
+            except Exception as e:
+                print_warning(f"Could not extract '{cmd_name}': {e}")
+
+        total_params = sum(sum(len(p) for p in cmd.values()) for cmd in data.values())
+
+        return GeneratorResult(
+            files=[GeneratedFile(OUTPUT_FILE, generate_markdown(app, data))],
+            summary=f"[bold]{len(data)}[/] commands with [bold]{total_params}[/] parameters",
+        )
 
 
 if __name__ == "__main__":
-    main()
+    main(CLIDocsGenerator)

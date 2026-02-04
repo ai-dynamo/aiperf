@@ -19,8 +19,7 @@ export AIPERF_ZMQ_RCVTIMEO=600000
 
 > [!WARNING]
 > Environment variable names, default values, and definitions are subject to change.
-> These settings may be modified, renamed, or removed in future releases. Always refer to the
-> documentation for your specific release version and test thoroughly when upgrading AIPerf.
+> These settings may be modified, renamed, or removed in future releases.
 
 ## DATASET
 
@@ -67,6 +66,8 @@ HTTP client socket and connection configuration. Controls low-level socket optio
 | `AIPERF_HTTP_USE_DNS_CACHE` | `True` | — | Enable DNS cache |
 | `AIPERF_HTTP_SSL_VERIFY` | `True` | — | Enable SSL certificate verification. Set to False to disable verification. WARNING: Disabling this is insecure and should only be used for testing in a trusted environment. |
 | `AIPERF_HTTP_REQUEST_CANCELLATION_SEND_TIMEOUT` | `300.0` | ≥ 10.0, ≤ 3600.0 | Safety net timeout in seconds for waiting for HTTP request to be fully sent when request cancellation is enabled. Used as fallback when no explicit timeout is configured to prevent hanging indefinitely while waiting for the request to be written to the socket. |
+| `AIPERF_HTTP_IP_VERSION` | `'4'` | — | IP version for HTTP socket connections. Options: '4' (AF_INET, default), '6' (AF_INET6), or 'auto' (AF_UNSPEC, system chooses). |
+| `AIPERF_HTTP_TRUST_ENV` | `False` | — | Trust environment variables for HTTP client configuration. When enabled, aiohttp will read proxy settings from HTTP_PROXY, HTTPS_PROXY, and NO_PROXY environment variables. |
 
 ## LOGGING
 

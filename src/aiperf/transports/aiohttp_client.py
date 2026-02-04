@@ -119,6 +119,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                 ],
                 connector_owner=connector_owner,
                 trace_configs=[trace_config],
+                trust_env=AioHttpDefaults.TRUST_ENV,
             ) as session:
                 record.start_perf_ns = time.perf_counter_ns()
                 async with session.request(

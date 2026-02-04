@@ -169,7 +169,10 @@ class TestPrefixAnalyzer:
     # ============================================================================
 
     def test_unique_prefixes_count(self) -> None:
-        """Test unique prefix counting."""
+        """Test unique prefix counting.
+
+        Counts all unique prefix subsequences: (1), (1,2), (1,2,3), etc.
+        """
         traces = [
             {"input_length": 100, "output_length": 20, "hash_ids": [1, 2, 3]},
             {"input_length": 100, "output_length": 20, "hash_ids": [1, 2, 4]},
@@ -178,8 +181,8 @@ class TestPrefixAnalyzer:
         analyzer = PrefixAnalyzer()
         stats = analyzer.analyze_traces(traces)
 
-        # Should have counted all unique prefixes
-        assert stats.unique_prefixes > 0
+        # Prefixes: (1), (1,2), (1,2,3), (1,2,4), (1,5) = 5 unique
+        assert stats.unique_prefixes == 5
 
     def test_unique_prefixes_no_hashes(self, sample_trace_without_hashes) -> None:
         """Test unique prefix counting with no hashes."""
@@ -187,6 +190,73 @@ class TestPrefixAnalyzer:
         stats = analyzer.analyze_traces(sample_trace_without_hashes)
 
         assert stats.unique_prefixes == 0
+
+    # ============================================================================
+    # Prefix Groups Tests
+    # ============================================================================
+
+    def test_num_prefix_groups_single_shared(self) -> None:
+        """Test prefix groups with one shared first block.
+
+        Counts distinct first blocks that appear in 2+ sequences.
+        """
+        traces = [
+            {"input_length": 100, "output_length": 20, "hash_ids": [1, 2, 3]},
+            {"input_length": 100, "output_length": 20, "hash_ids": [1, 2, 4]},
+            {"input_length": 100, "output_length": 20, "hash_ids": [1, 5]},
+        ]
+        analyzer = PrefixAnalyzer()
+        stats = analyzer.analyze_traces(traces)
+
+        # First block 1 appears in all 3 sequences
+        assert stats.num_prefix_groups == 1
+
+    def test_num_prefix_groups_multiple_shared(self) -> None:
+        """Test prefix groups with multiple shared first blocks."""
+        traces = [
+            {"input_length": 100, "output_length": 20, "hash_ids": [1, 2]},
+            {"input_length": 100, "output_length": 20, "hash_ids": [1, 3]},
+            {"input_length": 100, "output_length": 20, "hash_ids": [2, 4]},
+            {"input_length": 100, "output_length": 20, "hash_ids": [2, 5]},
+        ]
+        analyzer = PrefixAnalyzer()
+        stats = analyzer.analyze_traces(traces)
+
+        # First block 1 shared by 2, first block 2 shared by 2
+        assert stats.num_prefix_groups == 2
+
+    def test_num_prefix_groups_no_shared(self) -> None:
+        """Test prefix groups when no first blocks are shared."""
+        traces = [
+            {"input_length": 100, "output_length": 20, "hash_ids": [1, 2]},
+            {"input_length": 100, "output_length": 20, "hash_ids": [3, 4]},
+            {"input_length": 100, "output_length": 20, "hash_ids": [5, 6]},
+        ]
+        analyzer = PrefixAnalyzer()
+        stats = analyzer.analyze_traces(traces)
+
+        # All first blocks are unique (1, 3, 5)
+        assert stats.num_prefix_groups == 0
+
+    def test_num_prefix_groups_identical_sequences(self) -> None:
+        """Test prefix groups when all sequences are identical."""
+        traces = [
+            {"input_length": 100, "output_length": 20, "hash_ids": [1, 2, 3]},
+            {"input_length": 100, "output_length": 20, "hash_ids": [1, 2, 3]},
+            {"input_length": 100, "output_length": 20, "hash_ids": [1, 2, 3]},
+        ]
+        analyzer = PrefixAnalyzer()
+        stats = analyzer.analyze_traces(traces)
+
+        # First block 1 is shared across all 3
+        assert stats.num_prefix_groups == 1
+
+    def test_num_prefix_groups_no_hashes(self, sample_trace_without_hashes) -> None:
+        """Test prefix groups with no hashes."""
+        analyzer = PrefixAnalyzer()
+        stats = analyzer.analyze_traces(sample_trace_without_hashes)
+
+        assert stats.num_prefix_groups == 0
 
     # ============================================================================
     # Edge Cases

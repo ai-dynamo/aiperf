@@ -203,6 +203,33 @@ aiperf profile \
     --random-seed 42
 ```
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     User-centric mode: 15 users, 1.0 req/s (15.0s turn gap per user)
+INFO     Shared system prompt: 1000 tokens
+INFO     User context: 20000 tokens per user
+INFO     AIPerf System is PROFILING
+
+Profiling: [01:40] - Running for 100 seconds...
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-rate1.0/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃                      Metric ┃     avg ┃     min ┃     max ┃     p99 ┃     p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│        Request Latency (ms) │ 3456.78 │ 2890.34 │ 4123.45 │ 3998.67 │ 3423.12 │
+│    Time to First Token (ms) │ 1234.56 │  987.89 │ 1567.90 │ 1498.23 │ 1212.34 │
+│    Inter Token Latency (ms) │   21.45 │   17.89 │   28.34 │   27.12 │   21.01 │
+│ Output Token Count (tokens) │  100.00 │   90.00 │  110.00 │  109.00 │   99.00 │
+│  Request Throughput (req/s) │    0.98 │       - │       - │       - │       - │
+└─────────────────────────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+
+JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-rate1.0/profile_export_aiperf.json
+```
+
 - **15-second gaps** between each user's turns (15 / 1.0 = 15s)
 - **1000-token shared system prompt** (prefix shared across ALL users)
 - **20000-token user context** (unique per user)
@@ -228,6 +255,33 @@ aiperf profile \
     --benchmark-duration 100
 ```
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     User-centric mode: 15 users, 4.0 req/s (3.75s turn gap per user)
+INFO     Shared system prompt: 1000 tokens
+INFO     User context: 20000 tokens per user
+INFO     AIPerf System is PROFILING
+
+Profiling: [01:40] - Running for 100 seconds...
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-rate4.0/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃                      Metric ┃     avg ┃     min ┃     max ┃     p99 ┃     p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│        Request Latency (ms) │ 3234.56 │ 2678.90 │ 3890.12 │ 3798.45 │ 3198.67 │
+│    Time to First Token (ms) │ 1145.67 │  912.34 │ 1456.89 │ 1389.23 │ 1123.45 │
+│    Inter Token Latency (ms) │   20.34 │   16.78 │   26.90 │   25.67 │   20.01 │
+│ Output Token Count (tokens) │  100.00 │   90.00 │  110.00 │  109.00 │   99.00 │
+│  Request Throughput (req/s) │    3.89 │       - │       - │       - │       - │
+└─────────────────────────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+
+JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-rate4.0/profile_export_aiperf.json
+```
+
 Gap = 15 / 4.0 = **3.75 seconds** between each user's requests.
 
 ### Low QPS Cache TTL Test
@@ -249,6 +303,33 @@ aiperf profile \
     --osl 100 \
     --num-dataset-entries 1000 \
     --benchmark-duration 300
+```
+
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     User-centric mode: 15 users, 0.5 req/s (30.0s turn gap per user)
+INFO     Shared system prompt: 1000 tokens
+INFO     User context: 20000 tokens per user
+INFO     AIPerf System is PROFILING
+
+Profiling: [05:00] - Running for 300 seconds...
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-rate0.5/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃                      Metric ┃     avg ┃     min ┃     max ┃     p99 ┃     p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│        Request Latency (ms) │ 3567.89 │ 2956.78 │ 4234.56 │ 4098.23 │ 3512.34 │
+│    Time to First Token (ms) │ 1289.45 │ 1023.67 │ 1598.90 │ 1534.12 │ 1267.89 │
+│    Inter Token Latency (ms) │   21.89 │   18.23 │   29.12 │   28.01 │   21.56 │
+│ Output Token Count (tokens) │  100.00 │   90.00 │  110.00 │  109.00 │   99.00 │
+│  Request Throughput (req/s) │    0.49 │       - │       - │       - │       - │
+└─────────────────────────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+
+JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-rate0.5/profile_export_aiperf.json
 ```
 
 Gap = 15 / 0.5 = **30 seconds** between each user's requests.

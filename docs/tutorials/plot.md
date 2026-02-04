@@ -23,8 +23,34 @@ The `aiperf plot` command automatically detects whether to generate multi-run co
 # Analyze a single profiling run
 aiperf plot <single_run_name>
 
+**Sample Output (Successful Run):**
+```
+INFO     Loading single-run data from: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/
+INFO     Detected mode: SINGLE_RUN
+INFO     Generating 4 time series plots
+INFO     Creating plot: ttft_over_time.png
+INFO     Creating plot: itl_over_time.png
+INFO     Creating plot: latency_over_time.png
+INFO     Creating plot: dispersed_throughput_over_time.png
+INFO     Successfully generated 4 plots
+INFO     Plots saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/plots/
+```
+
 # Compare multiple runs in a directory
 aiperf plot <run_directory>
+
+**Sample Output (Successful Run):**
+```
+INFO     Loading multi-run data from: artifacts/sweep_qwen/
+INFO     Detected mode: MULTI_RUN
+INFO     Found 3 runs to compare
+INFO     Generating 3 comparison plots
+INFO     Creating plot: ttft_vs_throughput.png
+INFO     Creating plot: pareto_curve_throughput_per_gpu_vs_latency.png
+INFO     Creating plot: pareto_curve_throughput_per_gpu_vs_interactivity.png
+INFO     Successfully generated 3 plots
+INFO     Plots saved to: artifacts/sweep_qwen/plots/
+```
 
 # Compare all runs across multiple directories
 aiperf plot <dir1> <dir2> <dir3>
@@ -38,8 +64,31 @@ aiperf plot <path> --output <output_directory>
 # Launch interactive dashboard for exploration
 aiperf plot <path> --dashboard
 
+**Sample Output (Successful Run):**
+```
+INFO     Loading data from: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/
+INFO     Starting interactive dashboard
+INFO     Dash is running on http://localhost:8050/
+
+ * Serving Flask app 'aiperf.plot.dashboard'
+ * Debug mode: off
+INFO     Dashboard ready at http://localhost:8050/
+INFO     Press Ctrl+C to quit
+```
+
 # Use dark theme
 aiperf plot <path> --theme dark
+
+**Sample Output (Successful Run):**
+```
+INFO     Loading data from: artifacts/sweep_qwen/
+INFO     Detected mode: MULTI_RUN
+INFO     Using dark theme
+INFO     Found 3 runs to compare
+INFO     Generating 3 comparison plots
+INFO     Successfully generated 3 plots
+INFO     Plots saved to: artifacts/sweep_qwen/plots/
+```
 ```
 
 **Output directory logic:**

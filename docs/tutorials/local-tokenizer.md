@@ -67,6 +67,30 @@ aiperf profile \
     --concurrency 4
 ```
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Loading local tokenizer from: /home/user/tokenizers/llama-2-7b
+INFO     Tokenizer loaded successfully (offline mode)
+INFO     AIPerf System is PROFILING
+
+Profiling: 20/20 |████████████████████████| 100% [00:42<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/llama-2-7b-chat-concurrency4/
+
+            NVIDIA AIPerf | LLM Metrics
+┃                     Metric ┃     avg ┃     min ┃     max ┃     p99 ┃     p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│       Request Latency (ms) │ 1456.78 │ 1234.56 │ 1789.34 │ 1768.90 │ 1445.67 │
+│   Time to First Token (ms) │  289.34 │  245.67 │  356.78 │  348.90 │  286.12 │
+│   Inter Token Latency (ms) │   15.67 │   12.89 │   19.34 │   18.90 │   15.45 │
+│ Request Throughput (req/s) │    6.78 │       - │       - │       - │       - │
+└────────────────────────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+
+JSON Export: artifacts/llama-2-7b-chat-concurrency4/profile_export_aiperf.json
+```
+
 ### Example: Using a Local Qwen Tokenizer
 
 ```bash

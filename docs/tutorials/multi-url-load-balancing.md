@@ -22,6 +22,30 @@ aiperf profile --model llama \
     --request-rate 20 \
     --request-count 100
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Load balancing enabled: 2 URLs with round_robin strategy
+INFO     Using Request_Rate strategy (20.0 req/s)
+INFO     AIPerf System is PROFILING
+
+Profiling: 100/100 |████████████████████████| 100% [00:05<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/llama-chat-rate20/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
+┃                     Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
+│       Request Latency (ms) │ 234.56 │ 189.34 │ 312.45 │ 298.67 │ 231.23 │
+│   Time to First Token (ms) │  56.78 │  45.12 │  78.90 │  75.34 │  55.67 │
+│ Request Throughput (req/s) │  19.45 │      - │      - │      - │      - │
+└────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
+
+JSON Export: artifacts/llama-chat-rate20/profile_export_aiperf.json
+```
+
 # Multi-GPU scaling on a single node
 aiperf profile --model llama \
     --url http://localhost:8000 \
@@ -30,6 +54,29 @@ aiperf profile --model llama \
     --url http://localhost:8003 \
     --concurrency 32 \
     --benchmark-duration 60
+
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Load balancing enabled: 4 URLs with round_robin strategy
+INFO     AIPerf System is PROFILING
+
+Profiling: [01:00] - Running for 60 seconds...
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/llama-chat-concurrency32/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
+┃                     Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
+│       Request Latency (ms) │ 198.34 │ 145.67 │ 289.12 │ 267.45 │ 194.23 │
+│   Time to First Token (ms) │  48.90 │  37.23 │  69.45 │  65.78 │  47.89 │
+│ Request Throughput (req/s) │  78.90 │      - │      - │      - │      - │
+└────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
+
+JSON Export: artifacts/llama-chat-concurrency32/profile_export_aiperf.json
+```
 ```
 
 ## URL Selection Strategy

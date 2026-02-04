@@ -100,6 +100,37 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Request cancellation enabled: 10.0% rate, 0.5s delay
+INFO     AIPerf System is WARMING UP
+
+Warming Up: 5/5 |████████████████████████| 100% [00:04<00:00]
+
+INFO     Warmup completed, starting profiling phase
+INFO     AIPerf System is PROFILING
+
+Profiling: 50/50 |████████████████████████| 100% [01:15<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Cancelled requests: 5 (10.0%)
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency8/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃                      Metric ┃     avg ┃    min ┃     max ┃     p99 ┃     p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│        Request Latency (ms) │ 1234.56 │ 987.34 │ 1678.90 │ 1598.23 │ 1198.45 │
+│    Time to First Token (ms) │  234.56 │ 187.90 │  298.34 │  289.67 │  228.12 │
+│    Inter Token Latency (ms) │   14.23 │  11.45 │   19.67 │   18.90 │   13.89 │
+│ Output Token Count (tokens) │  400.00 │ 360.00 │  440.00 │  438.00 │  398.00 │
+│  Request Throughput (req/s) │   12.34 │      - │       - │       - │       - │
+└─────────────────────────────┴─────────┴────────┴─────────┴─────────┴─────────┘
+
+JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency8/profile_export_aiperf.json
+```
+
 **Parameters Explained:**
 - `--request-cancellation-rate 10`: Cancel 10% of requests (value between 0.0 and 100.0)
 - `--request-cancellation-delay 0.5`: Wait .5 seconds before cancelling selected requests
@@ -126,6 +157,32 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Request cancellation enabled: 50.0% rate, 1.0s delay
+INFO     AIPerf System is PROFILING
+
+Profiling: 40/40 |████████████████████████| 100% [01:30<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Cancelled requests: 20 (50.0%)
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃                      Metric ┃     avg ┃     min ┃     max ┃     p99 ┃     p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│        Request Latency (ms) │ 1890.45 │ 1456.78 │ 2456.89 │ 2398.12 │ 1867.34 │
+│    Time to First Token (ms) │  345.67 │  278.90 │  456.23 │  445.67 │  338.45 │
+│    Inter Token Latency (ms) │   16.78 │   13.45 │   22.34 │   21.56 │   16.45 │
+│ Output Token Count (tokens) │  600.00 │  540.00 │  660.00 │  658.00 │  598.00 │
+│  Request Throughput (req/s) │    8.90 │       - │       - │       - │       - │
+└─────────────────────────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+
+JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/profile_export_aiperf.json
+```
+
 ### Immediate Cancellation Testing (Delay = 0)
 
 Test immediate disconnection where the client closes the connection right after sending the request:
@@ -147,6 +204,32 @@ aiperf profile \
     --request-count 60
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Request cancellation enabled: 30.0% rate, 0.0s delay (immediate)
+INFO     AIPerf System is PROFILING
+
+Profiling: 60/60 |████████████████████████| 100% [00:45<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Cancelled requests: 18 (30.0%)
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency15/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
+┃                      Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
+│        Request Latency (ms) │ 678.90 │ 534.56 │ 898.12 │ 876.34 │ 667.89 │
+│    Time to First Token (ms) │ 156.78 │ 123.45 │ 198.90 │ 192.34 │ 154.23 │
+│    Inter Token Latency (ms) │  12.45 │   9.89 │  16.78 │  16.12 │  12.23 │
+│ Output Token Count (tokens) │ 100.00 │  90.00 │ 110.00 │ 109.00 │  99.00 │
+│  Request Throughput (req/s) │  23.45 │      - │      - │      - │      - │
+└─────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
+
+JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency15/profile_export_aiperf.json
+```
 
 **What happens with delay=0:**
 - The full request (headers + body) is sent to the server

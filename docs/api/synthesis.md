@@ -313,7 +313,8 @@ Statistics extracted from trace analysis.
 
 **Fields:**
 - `total_requests: int` - Total number of requests in trace
-- `unique_prefixes: int` - Number of unique prefix patterns
+- `unique_prefixes: int` - Number of unique prefix patterns (all prefix subsequences)
+- `num_prefix_groups: int` - Number of distinct shared first blocks (prefix groups)
 - `cache_hit_rate: float` - Theoretical cache hit rate (0.0 to 1.0)
 - `min_isl: int` - Minimum input sequence length
 - `max_isl: int` - Maximum input sequence length
