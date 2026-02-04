@@ -9,7 +9,10 @@ from typing import cast
 from rich.console import Console
 from rich.panel import Panel
 
-from aiperf.cli_utils import print_developer_mode_warning
+from aiperf.cli_utils import (
+    print_developer_mode_warning,
+    warn_osl_without_ignore_eos,
+)
 from aiperf.common.base_service import BaseService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
@@ -86,6 +89,10 @@ class SystemController(SignalHandlerMixin, BaseService):
             # Print a warning message to the console if developer mode is enabled, once at load time
             print_developer_mode_warning()
 
+        # Warn if --osl is used without ignore_eos in extra inputs
+        if self._should_warn_osl_without_ignore_eos():
+            warn_osl_without_ignore_eos()
+
         self._was_cancelled = False
         # List of required service types, in no particular order
         # These are services that must be running before the system controller can start profiling
@@ -139,6 +146,20 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._server_metrics_endpoints_configured: list[str] = []
         self._server_metrics_endpoints_reachable: list[str] = []
         self.debug("System Controller created")
+
+    def _should_warn_osl_without_ignore_eos(self) -> bool:
+        """Check if --osl is used without ignore_eos or min_tokens in extra inputs."""
+        osl_mean = self.user_config.input.prompt.output_tokens.mean
+        if osl_mean is None:
+            return False
+
+        extra_inputs = self.user_config.input.extra
+        if not extra_inputs:
+            return True
+
+        # Check if ignore_eos or min_tokens is set with a truthy value
+        extra_dict = dict(extra_inputs)
+        return not (extra_dict.get("ignore_eos") or extra_dict.get("min_tokens"))
 
     async def request_realtime_metrics(self) -> None:
         """Request real-time metrics from the RecordsManager."""

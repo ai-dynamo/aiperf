@@ -271,6 +271,15 @@ Metrics measuring differences between API-reported and client-computed token cou
 | [**Usage Reasoning Tokens Diff %**](docs/metrics_reference.md#usage-reasoning-tokens-diff-) | `usage_reasoning_tokens_diff_pct` | `abs((usage_reasoning_tokens - reasoning_token_count) / reasoning_token_count) * 100` | `%` |
 | [**Usage Discrepancy Count**](docs/metrics_reference.md#usage-discrepancy-count) | `usage_discrepancy_count` | `sum(1 for r in records if r.any_diff > threshold)` | `requests` |
 
+### OSL Mismatch Metrics
+
+Metrics measuring differences between requested `max_tokens` and actual output length. Negative diff = stopped early (EOS), positive diff = over-generated.
+
+| Metric | Tag | Formula | Unit |
+|--------|-----|---------|------|
+| [**OSL Mismatch Diff %**](docs/metrics_reference.md#osl-mismatch-diff-) | `osl_mismatch_diff_pct` | `((actual_osl - requested_osl) / requested_osl) * 100` | `%` |
+| [**OSL Mismatch Count**](docs/metrics_reference.md#osl-mismatch-count) | `osl_mismatch_count` | `sum(1 for r if abs(actual - requested) > min(requested * pct / 100, token_cap))` | `requests` |
+
 ### Goodput Metrics
 
 Metrics measuring throughput of requests meeting user-defined Service Level Objectives (SLOs).

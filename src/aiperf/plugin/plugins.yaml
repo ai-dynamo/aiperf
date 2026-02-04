@@ -703,6 +703,13 @@ console_exporter:
       Console exporter for usage discrepancy warnings. Alerts when token counts
       from server differ significantly from client calculations. Always loaded.
 
+  osl_mismatch_warning:
+    class: aiperf.exporters.console_osl_mismatch_exporter:ConsoleOSLMismatchExporter
+    description: |
+      Console exporter for output sequence length mismatch warnings. Alerts when
+      actual output length differs significantly from requested --osl value.
+      Typically indicates ignore_eos is not set or not supported by the server.
+
 # =============================================================================
 # UI Implementations
 # =============================================================================
