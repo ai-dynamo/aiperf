@@ -63,6 +63,32 @@ aiperf profile \
 
 **Note:** Video generation is disabled by default (width=0, height=0). You must specify non-zero width and height to enable video generation.
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Generating synthetic videos (640x480 px, 4 fps, 5.0s duration)
+INFO     Video codec: libvpx-vp9 (format: webm)
+INFO     AIPerf System is PROFILING
+
+Profiling: 20/20 |████████████████████████| 100% [01:45<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/your-model-name-chat-concurrency1/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃                      Metric ┃     avg ┃     min ┃     max ┃     p99 ┃     p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│        Request Latency (ms) │ 2456.78 │ 2123.45 │ 2789.34 │ 2765.89 │ 2445.67 │
+│    Time to First Token (ms) │  345.67 │  289.34 │  423.45 │  412.34 │  342.12 │
+│    Inter Token Latency (ms) │   18.45 │   15.23 │   22.34 │   21.89 │   18.12 │
+│ Output Token Count (tokens) │  150.00 │  145.00 │  158.00 │  157.45 │  150.00 │
+│  Request Throughput (req/s) │    4.56 │       - │       - │       - │       - │
+└─────────────────────────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+
+JSON Export: artifacts/your-model-name-chat-concurrency1/profile_export_aiperf.json
+```
+
 ## Configuration Options
 
 ### Video Dimensions

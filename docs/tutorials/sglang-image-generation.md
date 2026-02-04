@@ -93,7 +93,7 @@ aiperf profile \
 
 **Done!** This sends 3 requests to `http://localhost:30000/v1/images/generations`
 
-**View the results:**
+**Sample Output (Successful Run):**
 ```
                                        NVIDIA AIPerf | Image Generation Metrics
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━┓
@@ -101,8 +101,8 @@ aiperf profile \
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━┩
 │              Request Latency (ms) │ 12,617.58 │ 12,251.41 │ 12,954.04 │ 12,947.91 │ 12,892.69 │ 12,647.29 │ 287.62 │
 │    Input Sequence Length (tokens) │      6.67 │      6.00 │      7.00 │      7.00 │      7.00 │      7.00 │   0.47 │
-│ Request Throughput (requests/sec) │      0.08 │       N/A │       N/A │       N/A │       N/A │       N/A │    N/A │
-│          Request Count (requests) │      3.00 │       N/A │       N/A │       N/A │       N/A │       N/A │    N/A │
+│ Request Throughput (requests/sec) │      0.08 │         - │         - │         - │         - │         - │      - │
+│          Request Count (requests) │      3.00 │         - │         - │         - │         - │         - │      - │
 └───────────────────────────────────┴───────────┴───────────┴───────────┴───────────┴───────────┴───────────┴────────┘
 ```
 
@@ -124,7 +124,7 @@ aiperf profile \
 
 **Done!** This sends 3 requests to `http://localhost:30000/v1/images/generations`
 
-**View the results:**
+**Sample Output (Successful Run):**
 ```
                                        NVIDIA AIPerf | Image Generation Metrics
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━┓
@@ -132,8 +132,8 @@ aiperf profile \
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━┩
 │              Request Latency (ms) │ 12,173.18 │ 11,918.37 │ 12,503.38 │ 12,495.27 │ 12,422.26 │ 12,097.79 │ 244.71 │
 │    Input Sequence Length (tokens) │    137.00 │    107.00 │    153.00 │    152.96 │    152.60 │    151.00 │  21.23 │
-│ Request Throughput (requests/sec) │      0.08 │       N/A │       N/A │       N/A │       N/A │       N/A │    N/A │
-│          Request Count (requests) │      3.00 │       N/A │       N/A │       N/A │       N/A │       N/A │    N/A │
+│ Request Throughput (requests/sec) │      0.08 │         - │         - │         - │         - │         - │      - │
+│          Request Count (requests) │      3.00 │         - │         - │         - │         - │         - │      - │
 └───────────────────────────────────┴───────────┴───────────┴───────────┴───────────┴───────────┴───────────┴────────┘
 ```
 
@@ -175,7 +175,7 @@ aiperf profile \
 Copy the following code into a file called `extract_images.py`:
 ```python extract_images.py
 #!/usr/bin/env python3
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Extract base64-encoded images from AIPerf JSONL output file."""
 import base64

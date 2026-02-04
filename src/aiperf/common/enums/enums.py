@@ -155,6 +155,19 @@ class ImageFormat(CaseInsensitiveStrEnum):
     """Randomly select PNG or JPEG for each image."""
 
 
+class IPVersion(CaseInsensitiveStrEnum):
+    """IP version for HTTP socket connections."""
+
+    V4 = "4"
+    """Use IPv4 only (AF_INET). Default for most environments."""
+
+    V6 = "6"
+    """Use IPv6 only (AF_INET6). Use when connecting to IPv6-only servers."""
+
+    AUTO = "auto"
+    """Let the system choose (AF_UNSPEC). Supports both IPv4 and IPv6."""
+
+
 class LifecycleState(CaseInsensitiveStrEnum):
     """This is the various states a service can be in during its lifecycle."""
 

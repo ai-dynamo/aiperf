@@ -49,6 +49,27 @@ aiperf profile \
     --rankings-query-prompt-token-stddev 4
 ```
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     AIPerf System is PROFILING
+
+Profiling: 10/10 |████████████████████████| 100% [00:02<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/BAAI_bge-reranker-base-rankings/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━━┓
+┃                     Metric ┃   avg ┃   min ┃   max ┃   p99 ┃   p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━━┩
+│       Request Latency (ms) │ 52.34 │ 45.12 │ 68.45 │ 65.23 │ 51.89 │
+│ Request Throughput (req/s) │  5.12 │     - │     - │     - │     - │
+└────────────────────────────┴───────┴───────┴───────┴───────┴───────┘
+
+JSON Export: artifacts/BAAI_bge-reranker-base-rankings/profile_export_aiperf.json
+```
+
 > **Note:** The rankings-specific token options cannot be used together with `--prompt-input-tokens-mean` or `--prompt-input-tokens-stddev`. Use the rankings-specific options for controlling token counts in rankings queries and passages.
 
 ### Profile using Custom Inputs

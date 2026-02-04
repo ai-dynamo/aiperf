@@ -33,7 +33,7 @@ Examples:
 
 import platform
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BeforeValidator, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -278,6 +278,17 @@ class _HTTPSettings(BaseSettings):
         description="Safety net timeout in seconds for waiting for HTTP request to be fully sent "
         "when request cancellation is enabled. Used as fallback when no explicit timeout is configured "
         "to prevent hanging indefinitely while waiting for the request to be written to the socket.",
+    )
+    IP_VERSION: Literal["4", "6", "auto"] = Field(
+        default="4",
+        description="IP version for HTTP socket connections. "
+        "Options: '4' (AF_INET, default), '6' (AF_INET6), or 'auto' (AF_UNSPEC, system chooses).",
+    )
+    TRUST_ENV: bool = Field(
+        default=False,
+        description="Trust environment variables for HTTP client configuration. "
+        "When enabled, aiohttp will read proxy settings from HTTP_PROXY, HTTPS_PROXY, "
+        "and NO_PROXY environment variables.",
     )
 
 

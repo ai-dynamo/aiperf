@@ -15,9 +15,10 @@ import pytest
 import trustme
 from aiohttp import web
 
+from aiperf.common.enums import IPVersion
 from aiperf.common.environment import Environment, _HTTPSettings
 from aiperf.transports.aiohttp_client import create_tcp_connector
-from aiperf.transports.http_defaults import AioHttpDefaults
+from aiperf.transports.http_defaults import AioHttpDefaults, _get_socket_family
 
 ################################################################################
 # Test create_tcp_connector
@@ -267,6 +268,25 @@ class TestCreateTcpConnector:
 
             call_kwargs = mock_connector_class.call_args[1]
             assert call_kwargs["ssl"] is False
+
+
+class TestGetSocketFamily:
+    """Test suite for _get_socket_family function."""
+
+    @pytest.mark.parametrize(
+        "ip_version,expected_family",
+        [
+            (IPVersion.V4, socket.AF_INET),
+            (IPVersion.V6, socket.AF_INET6),
+            (IPVersion.AUTO, socket.AF_UNSPEC),
+        ],
+    )
+    def test_get_socket_family_ip_version_maps_to_family(
+        self, ip_version: str, expected_family: int, monkeypatch
+    ) -> None:
+        """Test _get_socket_family returns correct socket family for IP_VERSION."""
+        monkeypatch.setattr(Environment.HTTP, "IP_VERSION", ip_version)
+        assert _get_socket_family() == expected_family
 
 
 class TestAioHttpDefaults:

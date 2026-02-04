@@ -83,6 +83,32 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Using Fixed Schedule mode with auto-offset
+INFO     Loaded 10 entries from precise_schedule.jsonl
+INFO     Schedule duration: 5.0 seconds
+INFO     AIPerf System is PROFILING
+
+Profiling: 10/10 |████████████████████████| 100% [00:05<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-fixed-schedule/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
+┃                     Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
+│       Request Latency (ms) │ 345.67 │ 234.56 │ 498.12 │ 476.34 │ 338.90 │
+│   Time to First Token (ms) │  78.45 │  52.34 │ 112.67 │ 108.23 │  76.12 │
+│   Inter Token Latency (ms) │  15.23 │  11.45 │  22.34 │  21.12 │  14.89 │
+│ Request Throughput (req/s) │   2.89 │      - │      - │      - │      - │
+└────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
+
+JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-fixed-schedule/profile_export_aiperf.json
+```
+
 **Key Parameters:**
 - `--fixed-schedule-auto-offset`: Automatically adjusts timestamps to start from 0
 
@@ -108,6 +134,33 @@ aiperf profile \
     --fixed-schedule-end-offset 4000
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Using Fixed Schedule mode with time window [2000ms - 4000ms]
+INFO     Loaded 10 entries from precise_schedule.jsonl
+INFO     Filtered to 2 entries within time window
+INFO     Schedule duration: 2.0 seconds
+INFO     AIPerf System is PROFILING
+
+Profiling: 2/2 |████████████████████████| 100% [00:02<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-fixed-schedule/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
+┃                     Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
+│       Request Latency (ms) │ 389.45 │ 312.67 │ 466.23 │ 466.23 │ 389.45 │
+│   Time to First Token (ms) │  89.12 │  71.34 │ 106.90 │ 106.90 │  89.12 │
+│   Inter Token Latency (ms) │  16.78 │  14.23 │  19.34 │  19.34 │  16.78 │
+│ Request Throughput (req/s) │   1.45 │      - │      - │      - │      - │
+└────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
+
+JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-fixed-schedule/profile_export_aiperf.json
+```
 
 **Windowing Parameters:**
 - `--fixed-schedule-start-offset 2000`: Start execution at 2000ms timestamp

@@ -72,6 +72,37 @@ aiperf profile \
     --warmup-duration 30
 ```
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     AIPerf System is WARMING UP
+
+Warming Up: [00:30] - Running for 30 seconds...
+
+INFO     Warmup completed, starting profiling phase
+INFO     AIPerf System is PROFILING
+
+Profiling: [05:00] - Running for 300 seconds...
+
+INFO     Benchmark duration reached, draining in-flight requests
+INFO     Grace period: waiting up to 60 seconds for responses
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen2.5-7B-Instruct-chat-concurrency50/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
+┃                     Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
+│       Request Latency (ms) │ 245.67 │ 178.90 │ 398.12 │ 367.89 │ 239.45 │
+│   Time to First Token (ms) │  56.78 │  42.34 │  89.12 │  82.45 │  55.23 │
+│   Inter Token Latency (ms) │  13.45 │  10.23 │  19.67 │  18.45 │  13.12 │
+│ Request Throughput (req/s) │  89.23 │      - │      - │      - │      - │
+└────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
+
+JSON Export: artifacts/Qwen_Qwen2.5-7B-Instruct-chat-concurrency50/profile_export_aiperf.json
+```
+
 ### Soak Test (1 hour)
 
 ```bash
@@ -84,6 +115,37 @@ aiperf profile \
     --benchmark-duration 3600 \
     --benchmark-grace-period 120 \
     --warmup-duration 60
+```
+
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     AIPerf System is WARMING UP
+
+Warming Up: [01:00] - Running for 60 seconds...
+
+INFO     Warmup completed, starting profiling phase
+INFO     AIPerf System is PROFILING
+
+Profiling: [60:00] - Running for 3600 seconds...
+
+INFO     Benchmark duration reached, draining in-flight requests
+INFO     Grace period: waiting up to 120 seconds for responses
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen2.5-7B-Instruct-chat-concurrency20/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
+┃                     Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
+│       Request Latency (ms) │ 198.34 │ 156.78 │ 312.45 │ 289.67 │ 194.23 │
+│   Time to First Token (ms) │  48.90 │  38.45 │  76.34 │  71.23 │  47.89 │
+│   Inter Token Latency (ms) │  12.01 │   9.56 │  17.89 │  16.78 │  11.78 │
+│ Request Throughput (req/s) │  45.67 │      - │      - │      - │      - │
+└────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
+
+JSON Export: artifacts/Qwen_Qwen2.5-7B-Instruct-chat-concurrency20/profile_export_aiperf.json
 ```
 
 ## CLI Reference

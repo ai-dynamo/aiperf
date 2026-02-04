@@ -48,6 +48,30 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     AIPerf System is PROFILING
+
+Profiling: 20/20 |████████████████████████| 100% [00:02<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/BAAI_bge-small-en-v1.5-embeddings-concurrency4/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
+┃                     Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
+│       Request Latency (ms) │  42.15 │  36.24 │  58.32 │  56.78 │  41.89 │
+│  Input Sequence Length (#) │ 100.00 │ 100.00 │ 100.00 │ 100.00 │ 100.00 │
+│ Request Throughput (req/s) │   9.52 │      - │      - │      - │      - │
+└────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
+
+JSON Export: artifacts/BAAI_bge-small-en-v1.5-embeddings-concurrency4/profile_export_aiperf.json
+```
+
+Embeddings endpoints return metrics focused on request latency and throughput. No token-level metrics (TTFT, ITL) since embeddings return a single vector per request.
+
 ### Profile with Custom Input File
 
 Create a JSONL embeddings input file:
@@ -75,3 +99,19 @@ aiperf profile \
     --request-count 5
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Loading custom dataset from inputs.jsonl
+INFO     AIPerf System is PROFILING
+
+Profiling: 5/5 |████████████████████████| 100% [00:01<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/BAAI_bge-small-en-v1.5-embeddings-custom/
+
+JSON Export: artifacts/BAAI_bge-small-en-v1.5-embeddings-custom/profile_export_aiperf.json
+```
+
+When using custom inputs, AIPerf uses your actual text samples instead of synthetic data. The input sequence lengths will vary based on your actual text content.

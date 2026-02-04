@@ -7,6 +7,15 @@ from pydantic import BaseModel, Field
 from typing_extensions import Self
 
 
+def _normalize_name(value: str) -> str:
+    """Normalize a string for comparison: lowercase and convert dashes to underscores.
+
+    This enables flexible matching where 'foo-bar', 'foo_bar', 'FOO_BAR', and 'FOO-BAR'
+    all match each other when used for enum lookups or plugin name resolution.
+    """
+    return value.lower().replace("-", "_")
+
+
 class CaseInsensitiveStrEnum(str, Enum):
     """
     CaseInsensitiveStrEnum is a custom enumeration class that extends `str` and `Enum` to provide case-insensitive
@@ -21,13 +30,13 @@ class CaseInsensitiveStrEnum(str, Enum):
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, str):
-            return self.value.lower() == other.lower()
+            return _normalize_name(self.value) == _normalize_name(other)
         if isinstance(other, Enum):
-            return self.value.lower() == other.value.lower()
+            return _normalize_name(self.value) == _normalize_name(other.value)
         return super().__eq__(other)
 
     def __hash__(self) -> int:
-        return hash(self.value.lower())
+        return hash(_normalize_name(self.value))
 
     @classmethod
     def _missing_(cls, value):
@@ -36,15 +45,16 @@ class CaseInsensitiveStrEnum(str, Enum):
 
         This method is called when an attempt is made to access an enumeration
         member using a value that does not directly match any of the defined
-        members. It provides custom logic to handle such cases.
+        members. Supports case-insensitive matching and dash/underscore normalization.
 
         Returns:
-            The matching enumeration member if a case-insensitive match is found
+            The matching enumeration member if a normalized match is found
             for string values; otherwise, returns None.
         """
         if isinstance(value, str):
+            normalized_value = _normalize_name(value)
             for member in cls:
-                if member.value.lower() == value.lower():
+                if _normalize_name(member.value) == normalized_value:
                     return member
         return None
 

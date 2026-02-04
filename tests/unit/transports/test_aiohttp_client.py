@@ -309,6 +309,32 @@ class TestAioHttpClient:
             assert "Custom-Header" in call_kwargs["skip_auto_headers"]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("trust_env_value", [True, False])
+    async def test_trust_env_passed_to_session(
+        self,
+        aiohttp_client: AioHttpClient,
+        mock_aiohttp_response: Mock,
+        trust_env_value: bool,
+        monkeypatch,
+    ) -> None:
+        """Test that TRUST_ENV setting is passed to ClientSession."""
+        from aiperf.common.environment import Environment
+        from aiperf.transports.http_defaults import AioHttpDefaults
+
+        monkeypatch.setattr(Environment.HTTP, "TRUST_ENV", trust_env_value)
+        monkeypatch.setattr(AioHttpDefaults, "TRUST_ENV", trust_env_value)
+
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            setup_mock_session(mock_session_class, mock_aiohttp_response, ["request"])
+
+            record = await aiohttp_client.post_request("http://test.com", "{}", {})
+
+            assert_successful_request_record(record)
+            mock_session_class.assert_called_once()
+            call_kwargs = mock_session_class.call_args[1]
+            assert call_kwargs["trust_env"] == trust_env_value
+
+    @pytest.mark.asyncio
     async def test_end_to_end_json_request(
         self,
         aiohttp_client: AioHttpClient,

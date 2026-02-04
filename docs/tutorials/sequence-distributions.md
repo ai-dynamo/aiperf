@@ -100,3 +100,29 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Using sequence distribution: 70% (ISL~N(64,10), OSL~N(32,8)), 20% (ISL~N(256,40), OSL~N(128,20)), 10% (ISL~N(1024,100), OSL~N(512,50))
+INFO     AIPerf System is PROFILING
+
+Profiling: 100/100 |████████████████████████| 100% [02:15<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency1/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┓
+┃                         Metric ┃    avg ┃    min ┃     max ┃     p99 ┃    p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━┩
+│           Request Latency (ms) │ 567.34 │ 123.45 │ 4567.89 │ 4234.56 │ 345.67 │
+│       Time to First Token (ms) │  78.90 │  23.45 │  234.56 │  212.34 │  67.89 │
+│       Inter Token Latency (ms) │  14.23 │  11.34 │   19.45 │   18.90 │  13.89 │
+│ Input Sequence Length (tokens) │ 189.45 │  48.00 │ 1234.00 │ 1156.78 │  67.00 │
+│    Output Token Count (tokens) │  89.34 │  24.00 │  634.00 │  589.23 │  34.00 │
+│     Request Throughput (req/s) │   7.45 │      - │       - │       - │      - │
+└────────────────────────────────┴────────┴────────┴─────────┴─────────┴────────┘
+
+JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency1/profile_export_aiperf.json
+```
+

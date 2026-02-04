@@ -65,6 +65,37 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
+**Sample Output (Successful Run):**
+```
+INFO     Starting AIPerf System
+INFO     Loaded 5 entries from production_queries.jsonl
+INFO     Using mooncake_trace dataset type
+INFO     AIPerf System is WARMING UP
+
+Warming Up: 1/1 |████████████████████████| 100% [00:01<00:00]
+
+INFO     Warmup completed, starting profiling phase
+INFO     AIPerf System is PROFILING
+
+Profiling: 5/5 |████████████████████████| 100% [00:12<00:00]
+
+INFO     Benchmark completed successfully
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency2/
+
+            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃                      Metric ┃     avg ┃    min ┃     max ┃     p99 ┃     p50 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│        Request Latency (ms) │ 1234.56 │ 456.78 │ 2345.67 │ 2345.67 │ 1089.34 │
+│    Time to First Token (ms) │   45.67 │  32.34 │   67.89 │   67.89 │   43.12 │
+│    Inter Token Latency (ms) │   12.34 │   9.87 │   16.78 │   16.78 │   11.90 │
+│ Output Token Count (tokens) │  110.00 │  20.00 │  200.00 │  200.00 │  100.00 │
+│  Request Throughput (req/s) │    4.23 │      - │       - │       - │       - │
+└─────────────────────────────┴─────────┴────────┴─────────┴─────────┴─────────┘
+
+JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency2/profile_export_aiperf.json
+```
+
 **Key Points:**
 - Each line in the JSONL file becomes exactly one request
 - Requests are sent in the order they appear in the file
