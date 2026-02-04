@@ -5,7 +5,11 @@
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from aiperf.plugin.extensible_enums import ExtensibleStrEnum, create_enum
+from aiperf.plugin.extensible_enums import (
+    ExtensibleStrEnum,
+    _normalize_name,
+    create_enum,
+)
 
 # =============================================================================
 # Fixtures
@@ -496,3 +500,165 @@ class TestIsolation:
 
         assert EnumA.EXT.value == "ext_a"
         assert EnumB.EXT.value == "ext_b"
+
+
+# =============================================================================
+# Dash/Underscore Normalization Tests
+# =============================================================================
+
+
+class TestNormalizeName:
+    """Tests for _normalize_name helper function."""
+
+    @pytest.mark.parametrize(
+        "input_value,expected",
+        [
+            ("foo_bar", "foo_bar"),
+            ("foo-bar", "foo_bar"),
+            ("FOO_BAR", "foo_bar"),
+            ("FOO-BAR", "foo_bar"),
+            ("Foo_Bar", "foo_bar"),
+            ("Foo-Bar", "foo_bar"),
+            ("foo--bar", "foo__bar"),
+            ("foo__bar", "foo__bar"),
+            ("", ""),
+        ],
+    )  # fmt: skip
+    def test_normalize_name(self, input_value, expected):
+        """_normalize_name converts to lowercase and replaces dashes with underscores."""
+        assert _normalize_name(input_value) == expected
+
+
+class TestDashUnderscoreNormalization:
+    """Tests for dash/underscore normalization in enum operations."""
+
+    @pytest.fixture
+    def enum_with_underscores(self):
+        """Enum with underscore values (common Python convention)."""
+
+        class UnderscoreEnum(ExtensibleStrEnum):
+            FOO_BAR = "foo_bar"
+            BAZ_QUX = "baz_qux"
+
+        return UnderscoreEnum
+
+    @pytest.fixture
+    def enum_with_dashes(self):
+        """Enum with dash values (common CLI convention)."""
+
+        class DashEnum(ExtensibleStrEnum):
+            FOO_BAR = "foo-bar"
+            BAZ_QUX = "baz-qux"
+
+        return DashEnum
+
+    @pytest.mark.parametrize(
+        "input_value",
+        ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR", "Foo_Bar", "Foo-Bar"],
+    )  # fmt: skip
+    def test_construction_with_underscore_value(
+        self, enum_with_underscores, input_value
+    ):
+        """Construction normalizes dashes/underscores and case."""
+        result = enum_with_underscores(input_value)
+        assert result == enum_with_underscores.FOO_BAR
+
+    @pytest.mark.parametrize(
+        "input_value",
+        ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR", "Foo_Bar", "Foo-Bar"],
+    )  # fmt: skip
+    def test_construction_with_dash_value(self, enum_with_dashes, input_value):
+        """Construction normalizes dashes/underscores and case for dash-valued enums."""
+        result = enum_with_dashes(input_value)
+        assert result == enum_with_dashes.FOO_BAR
+
+    @pytest.mark.parametrize(
+        "input_value",
+        ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR"],
+    )  # fmt: skip
+    def test_eq_with_underscore_value(self, enum_with_underscores, input_value):
+        """__eq__ normalizes dashes/underscores and case."""
+        assert input_value == enum_with_underscores.FOO_BAR
+
+    @pytest.mark.parametrize(
+        "input_value",
+        ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR"],
+    )  # fmt: skip
+    def test_eq_with_dash_value(self, enum_with_dashes, input_value):
+        """__eq__ normalizes dashes/underscores for dash-valued enums."""
+        assert input_value == enum_with_dashes.FOO_BAR
+
+    @pytest.mark.parametrize(
+        "input_value",
+        ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR"],
+    )  # fmt: skip
+    def test_contains_normalized(self, enum_with_underscores, input_value):
+        """__contains__ normalizes dashes/underscores and case."""
+        assert input_value in enum_with_underscores
+
+    def test_hash_normalized(self):
+        """Hash is based on normalized value (dashes become underscores)."""
+
+        class EnumA(ExtensibleStrEnum):
+            FOO_BAR = "foo_bar"
+
+        class EnumB(ExtensibleStrEnum):
+            FOO_BAR = "foo-bar"
+
+        # Same normalized value across different enums have same hash
+        assert hash(EnumA.FOO_BAR) == hash(EnumB.FOO_BAR)
+
+    def test_extension_dash_underscore(self):
+        """Extensions work with dash/underscore normalization."""
+
+        class TestEnum(ExtensibleStrEnum):
+            BASE = "base"
+
+        TestEnum.register("FOO_BAR", "foo_bar")
+
+        # Can look up with dashes
+        assert TestEnum("foo-bar") == TestEnum.FOO_BAR
+        assert "foo-bar" in TestEnum
+        assert TestEnum.FOO_BAR == "foo-bar"
+
+    def test_pydantic_coerces_dashes(self):
+        """Pydantic coerces dashed strings to underscore-valued enum."""
+
+        class TestEnum(ExtensibleStrEnum):
+            MY_VALUE = "my_value"
+
+        class Config(BaseModel):
+            field: TestEnum
+
+        # Pydantic should coerce "my-value" to MY_VALUE
+        config = Config(field="my-value")
+        assert config.field == TestEnum.MY_VALUE
+
+    def test_pydantic_coerces_underscores_to_dashed_enum(self):
+        """Pydantic coerces underscored strings to dash-valued enum."""
+
+        class TestEnum(ExtensibleStrEnum):
+            MY_VALUE = "my-value"  # Value has dashes
+
+        class Config(BaseModel):
+            field: TestEnum
+
+        # Pydantic should coerce "my_value" to MY_VALUE
+        config = Config(field="my_value")
+        assert config.field == TestEnum.MY_VALUE
+
+    def test_different_values_same_normalized_form(self):
+        """Enums with different values but same normalized form compare equal."""
+
+        class EnumA(ExtensibleStrEnum):
+            ITEM = "foo_bar"
+
+        class EnumB(ExtensibleStrEnum):
+            ITEM = "foo-bar"
+
+        # These should compare equal because their normalized values match
+        assert EnumA.ITEM == EnumB.ITEM
+        assert EnumA.ITEM == "foo-bar"
+        assert EnumA.ITEM == "foo_bar"
+        assert EnumB.ITEM == "foo-bar"
+        assert EnumB.ITEM == "foo_bar"
