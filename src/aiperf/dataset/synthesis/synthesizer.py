@@ -78,42 +78,33 @@ class Synthesizer(AIPerfLoggerMixin):
             all_hash_ids, all_input_lens
         )
 
-        # Generate synthetic traces
+        # Generate synthetic traces (pass-through all fields, update only what we modify)
         synthetic_traces = []
         for trace, new_hash_ids, isl in zip(
             traces, all_new_hash_ids, all_new_isls, strict=True
         ):
+            # Start with a copy of the original trace to preserve arbitrary fields
+            synthetic_trace = dict(trace)
+
             if not new_hash_ids:
                 isl = trace.get("input_length", self.params.block_size)
+                # Remove hash_ids if we couldn't compute new ones
+                synthetic_trace.pop("hash_ids", None)
+            else:
+                synthetic_trace["hash_ids"] = new_hash_ids
 
             # Apply max_isl filter
             if self.params.max_isl and isl > self.params.max_isl:
                 isl = self.params.max_isl
 
-            # Preserve original OSL
-            osl = trace.get("output_length", 64)
+            synthetic_trace["input_length"] = isl
 
             # Apply timestamp scaling if present
             timestamp = trace.get("timestamp")
             if timestamp is not None and self.params.speedup_ratio > 0:
-                timestamp = int(timestamp / self.params.speedup_ratio)
-
-            synthetic_trace: dict[str, Any] = {
-                "input_length": isl,
-                "output_length": osl,
-            }
-
-            if new_hash_ids:
-                synthetic_trace["hash_ids"] = new_hash_ids
-
-            if timestamp is not None:
-                synthetic_trace["timestamp"] = timestamp
-
-            # Preserve session_id and delay if present
-            if "session_id" in trace:
-                synthetic_trace["session_id"] = trace["session_id"]
-            if "delay" in trace:
-                synthetic_trace["delay"] = trace["delay"]
+                synthetic_trace["timestamp"] = int(
+                    timestamp / self.params.speedup_ratio
+                )
 
             synthetic_traces.append(synthetic_trace)
 
