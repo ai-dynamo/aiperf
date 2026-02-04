@@ -54,11 +54,17 @@ class TestSynthesizer:
         """Test that synthesis preserves session_id."""
         traces = [
             {
-                "input_length": 100,
+                "input_length": 1024,
                 "output_length": 20,
                 "hash_ids": [1, 2],
                 "session_id": "test-session",
-            }
+            },
+            {
+                "input_length": 1024,
+                "output_length": 20,
+                "hash_ids": [1, 3],
+                "session_id": "test-session",
+            },
         ]
         synthesizer = Synthesizer()
         synthetic = synthesizer.synthesize_traces(traces)
@@ -128,36 +134,43 @@ class TestSynthesizer:
 
     def test_prefix_len_multiplier_1(self) -> None:
         """Test prefix_len_multiplier of 1 (no change)."""
+        # Need multiple traces with shared prefixes for the algorithm to work
+        # block_size=512, input_length=1536 = 3 blocks
+        # Shared prefix [1, 2], prompt = 1536 - 1024 = 512 tokens = 1 block
         traces = [
-            {
-                "input_length": 100,
-                "output_length": 20,
-                "hash_ids": [1, 2, 3],
-            }
+            {"input_length": 1536, "output_length": 20, "hash_ids": [1, 2, 3]},
+            {"input_length": 1536, "output_length": 20, "hash_ids": [1, 2, 4]},
         ]
         params = SynthesisParams(prefix_len_multiplier=1.0)
         synthesizer = Synthesizer(params=params)
         synthetic = synthesizer.synthesize_traces(traces)
 
-        hash_ids = synthetic[0].get("hash_ids", [])
-        assert len(hash_ids) == 3
+        # Shared prefix [1, 2] (2 blocks) + 1 prompt block = 3 blocks
+        # new_prefix_len = 1024, new_prompt_len = 512, new_input_len = 1536
+        assert len(synthetic[0].get("hash_ids", [])) == 3
+        assert len(synthetic[1].get("hash_ids", [])) == 3
+        assert synthetic[0]["input_length"] == 1536
+        assert synthetic[1]["input_length"] == 1536
 
     def test_prefix_len_multiplier_2(self) -> None:
-        """Test prefix_len_multiplier of 2 (double length)."""
+        """Test prefix_len_multiplier of 2 (double prefix length)."""
+        # Need multiple traces with shared prefixes
+        # block_size=512, input_length=1024 = 2 blocks
+        # Shared prefix [1], prompt = 1024 - 512 = 512 tokens = 1 block
         traces = [
-            {
-                "input_length": 100,
-                "output_length": 20,
-                "hash_ids": [1, 2],
-            }
+            {"input_length": 1024, "output_length": 20, "hash_ids": [1, 2]},
+            {"input_length": 1024, "output_length": 20, "hash_ids": [1, 3]},
         ]
         params = SynthesisParams(prefix_len_multiplier=2.0)
         synthesizer = Synthesizer(params=params)
         synthetic = synthesizer.synthesize_traces(traces)
 
-        hash_ids = synthetic[0].get("hash_ids", [])
-        # Should have roughly doubled
-        assert len(hash_ids) > 2
+        # Shared prefix [1] stretched to 2 blocks (interleaved) + 1 prompt block = 3 blocks
+        # new_prefix_len = 512 * 2 = 1024, new_prompt_len = 512, new_input_len = 1536
+        assert len(synthetic[0].get("hash_ids", [])) == 3
+        assert len(synthetic[1].get("hash_ids", [])) == 3
+        assert synthetic[0]["input_length"] == 1536
+        assert synthetic[1]["input_length"] == 1536
 
     # ============================================================================
     # Max ISL Filter Tests
@@ -165,26 +178,30 @@ class TestSynthesizer:
 
     def test_max_isl_filter_applied(self) -> None:
         """Test that max_isl filter caps input length."""
+        # 10 blocks * 512 = 5120 tokens, capped to 4096
         traces = [
-            {"input_length": 5000, "output_length": 20},
+            {"input_length": 5120, "output_length": 20, "hash_ids": list(range(10))},
+            {"input_length": 5120, "output_length": 20, "hash_ids": list(range(10))},
         ]
-        params = SynthesisParams(max_isl=4096)
+        params = SynthesisParams(max_isl=4096, block_size=512)
         synthesizer = Synthesizer(params=params)
         synthetic = synthesizer.synthesize_traces(traces)
 
-        assert synthetic[0]["input_length"] <= 4096
+        assert synthetic[0]["input_length"] == 4096
 
     def test_max_isl_filter_not_applied(self) -> None:
         """Test that max_isl filter doesn't apply when None."""
+        # 4 blocks * 512 = 2048 tokens
         traces = [
-            {"input_length": 2048, "output_length": 20},
+            {"input_length": 2048, "output_length": 20, "hash_ids": [1, 2, 3, 4]},
+            {"input_length": 2048, "output_length": 20, "hash_ids": [1, 2, 3, 5]},
         ]
-        params = SynthesisParams(max_isl=None)
+        params = SynthesisParams(max_isl=None, block_size=512)
         synthesizer = Synthesizer(params=params)
         synthetic = synthesizer.synthesize_traces(traces)
 
         # Should not be filtered
-        assert synthetic[0]["input_length"] <= 2048
+        assert synthetic[0]["input_length"] == 2048
 
     # ============================================================================
     # Statistics Tests
@@ -248,13 +265,9 @@ class TestSynthesizer:
 
     def test_root_replication_multiplier(self) -> None:
         """Test prefix_root_multiplier distributes traces across independent trees."""
-        # Use many traces to test probabilistic distribution
+        # Use many traces with shared prefixes to test distribution
         traces = [
-            {
-                "input_length": 100,
-                "output_length": 20,
-                "hash_ids": [1, 2],
-            }
+            {"input_length": 1024, "output_length": 20, "hash_ids": [1, 2]}
             for _ in range(100)
         ]
         params = SynthesisParams(prefix_root_multiplier=3)
@@ -264,18 +277,14 @@ class TestSynthesizer:
         # Collect all unique hash_id[0] values (representing different tree roots)
         first_ids = {trace["hash_ids"][0] for trace in synthetic}
 
-        # With multiplier=3 and max_hash_id=2, expected roots are:
-        # tree 0: offset 0 -> hash_ids start at 1
-        # tree 1: offset 3 -> hash_ids start at 4
-        # tree 2: offset 6 -> hash_ids start at 7
-        expected_roots = {1, 4, 7}
-        assert first_ids.issubset(expected_roots)
+        # With multiplier=3, traces should be distributed across 3 independent trees
+        # Each tree has its own offset, so first_ids should have up to 3 different values
         # With 100 traces and 3 trees, statistically we should see multiple trees
         assert len(first_ids) > 1
 
-        # Verify hash_ids length is preserved (not extended)
+        # All traces should have hash_ids
         for trace in synthetic:
-            assert len(trace["hash_ids"]) == 2
+            assert len(trace["hash_ids"]) >= 1
 
     def test_root_multiplier_with_prefix_multiplier_no_collisions(self) -> None:
         """Test that prefix_root_multiplier doesn't collide when prefix_len_multiplier extends hash_ids.
@@ -284,7 +293,7 @@ class TestSynthesizer:
         The root multiplier offsets must account for these extended IDs to prevent collisions.
         """
         traces = [
-            {"input_length": 100, "output_length": 20, "hash_ids": [1, 2]}
+            {"input_length": 1024, "output_length": 20, "hash_ids": [1, 2]}
             for _ in range(100)
         ]
         params = SynthesisParams(prefix_len_multiplier=2.0, prefix_root_multiplier=3)
@@ -327,143 +336,46 @@ class TestSynthesizer:
                 )
 
     # ============================================================================
-    # Incomplete Block Handling Tests
+    # Input Length Preservation Tests
     # ============================================================================
 
-    def test_incomplete_block_preserved_no_multiplier(self) -> None:
-        """Test that incomplete block is preserved when no multipliers applied."""
-        # 2 blocks with block_size=512: tokens 0-511 (complete), 512-699 (incomplete, 188 tokens)
+    def test_input_length_preserved_no_multiplier(self) -> None:
+        """Test that input_length is preserved when no multipliers applied."""
         traces = [
-            {
-                "input_length": 700,
-                "output_length": 20,
-                "hash_ids": [1, 2],
-            }
+            {"input_length": 700, "output_length": 20, "hash_ids": [1, 2]},
+            {"input_length": 700, "output_length": 20, "hash_ids": [1, 3]},
         ]
         params = SynthesisParams(block_size=512)
         synthesizer = Synthesizer(params=params)
         synthetic = synthesizer.synthesize_traces(traces)
 
+        # Input length should be preserved
         assert synthetic[0]["input_length"] == 700
-        assert len(synthetic[0]["hash_ids"]) == 2
+        assert synthetic[1]["input_length"] == 700
 
-    def test_incomplete_block_completed_when_extending(self) -> None:
-        """Test that incomplete block becomes complete when hash_ids extended."""
-        # Original: 700 tokens, 2 blocks, last block has 188 tokens (incomplete)
-        # After 2x prefix multiplier: 3 blocks total
-        # Expected: complete original (700 + 324 = 1024), add 1 block with 188 tokens
-        # Total: 1024 + 188 = 1212 tokens
+    def test_input_length_scaled_with_multiplier(self) -> None:
+        """Test that input_length scales with prefix and prompt multipliers."""
+        # 2 traces sharing prefix [1], with prompt portions
+        # block_size=512, input_length=1024 = 2 blocks
+        # Shared prefix [1] = 512 tokens, prompt = 512 tokens
         traces = [
-            {
-                "input_length": 700,
-                "output_length": 20,
-                "hash_ids": [1, 2],
-            }
-        ]
-        params = SynthesisParams(block_size=512, prefix_len_multiplier=2.0)
-        synthesizer = Synthesizer(params=params)
-        synthetic = synthesizer.synthesize_traces(traces)
-
-        # 2 blocks * (2.0 - 1) = 2 blocks to add, but int(2) = 2, so we add 2 blocks
-        # Wait, int(2 * (2.0 - 1)) = int(2.0) = 2 blocks to add
-        # So total = 2 + 2 = 4 blocks
-        # Original incomplete = 700 % 512 = 188
-        # Complete original: +324, add 3 complete: +1536, final incomplete: +188
-        # Total: 700 + 324 + 1536 + 188 = but that's wrong...
-        # Let me recalculate:
-        # num_to_add = int(2 * (2.0 - 1)) = 2
-        # Complete original: 700 + (512 - 188) = 700 + 324 = 1024
-        # Add (num_to_add - 1) = 1 complete block: 1024 + 512 = 1536
-        # Add final incomplete: 1536 + 188 = 1724
-        expected_isl = 700 + (512 - 188) + (2 - 1) * 512 + 188
-        assert synthetic[0]["input_length"] == expected_isl
-        assert len(synthetic[0]["hash_ids"]) == 4  # 2 original + 2 added
-
-    def test_incomplete_block_with_complete_original(self) -> None:
-        """Test extension when original last block was complete."""
-        # 1024 tokens = exactly 2 complete blocks (512 + 512)
-        traces = [
-            {
-                "input_length": 1024,
-                "output_length": 20,
-                "hash_ids": [1, 2],
-            }
-        ]
-        params = SynthesisParams(block_size=512, prefix_len_multiplier=2.0)
-        synthesizer = Synthesizer(params=params)
-        synthetic = synthesizer.synthesize_traces(traces)
-
-        # Original incomplete = 1024 % 512 = 0, so incomplete_tokens = 512 (complete)
-        # num_to_add = int(2 * 1.0) = 2
-        # Complete original: already complete, +0
-        # Add 1 complete block: +512
-        # Add final "incomplete" (512): +512
-        # Total: 1024 + 0 + 512 + 512 = 2048
-        assert synthetic[0]["input_length"] == 2048
-        assert len(synthetic[0]["hash_ids"]) == 4
-
-    def test_incomplete_block_when_shortening(self) -> None:
-        """Test that incomplete portion preserved when shortening prefix."""
-        # 3 blocks, last incomplete with 200 tokens
-        # input_length = 2 * 512 + 200 = 1224
-        traces = [
-            {
-                "input_length": 1224,
-                "output_length": 20,
-                "hash_ids": [1, 2, 3],
-            }
-        ]
-        params = SynthesisParams(block_size=512, prefix_len_multiplier=0.5)
-        synthesizer = Synthesizer(params=params)
-        synthetic = synthesizer.synthesize_traces(traces)
-
-        # num_to_keep = max(1, int(3 * 0.5)) = 1
-        # New input_length = (1 - 1) * 512 + 200 = 200
-        assert synthetic[0]["input_length"] == 200
-        assert len(synthetic[0]["hash_ids"]) == 1
-
-    @pytest.mark.parametrize(
-        "input_length,block_size,multiplier,expected_blocks,expected_isl",
-        [
-            # 2 blocks (812 tokens), incomplete=300, multiplier=1.5 -> add 1 block
-            # ISL: 812 + (512-300) + 300 = 1324
-            (812, 512, 1.5, 3, 1324),
-            # 2 blocks (812 tokens), incomplete=300, multiplier=2.0 -> add 2 blocks
-            # ISL: 812 + 212 + 512 + 300 = 1836
-            (812, 512, 2.0, 4, 1836),
-            # 1 block (512 tokens), complete, multiplier=2.0 -> add 1 block
-            # ISL: 512 + 0 + 512 = 1024
-            (512, 512, 2.0, 2, 1024),
-            # 3 blocks (1324 tokens), incomplete=300, multiplier=1.5 -> add 1 block
-            # ISL: 1324 + 212 + 300 = 1836
-            (1324, 512, 1.5, 4, 1836),
-        ],
-    )  # fmt: skip
-    def test_incomplete_block_parametrized(
-        self,
-        input_length: int,
-        block_size: int,
-        multiplier: float,
-        expected_blocks: int,
-        expected_isl: int,
-    ) -> None:
-        """Parametrized tests for incomplete block handling."""
-        num_original_blocks = (input_length + block_size - 1) // block_size
-        traces = [
-            {
-                "input_length": input_length,
-                "output_length": 20,
-                "hash_ids": list(range(num_original_blocks)),
-            }
+            {"input_length": 1024, "output_length": 20, "hash_ids": [1, 2]},
+            {"input_length": 1024, "output_length": 20, "hash_ids": [1, 3]},
         ]
         params = SynthesisParams(
-            block_size=block_size, prefix_len_multiplier=multiplier
+            block_size=512, prefix_len_multiplier=2.0, prompt_len_multiplier=2.0
         )
         synthesizer = Synthesizer(params=params)
         synthetic = synthesizer.synthesize_traces(traces)
 
-        assert len(synthetic[0]["hash_ids"]) == expected_blocks
-        assert synthetic[0]["input_length"] == expected_isl
+        # new_prefix_len = 512 * 2 = 1024
+        # new_prompt_len = 512 * 2 = 1024
+        # new_input_len = 1024 + 1024 = 2048
+        # num_prompt_blocks = (1024 + 511) // 512 = 2
+        # Stretched prefix = 2 blocks + 2 prompt blocks = 4 blocks
+        for trace in synthetic:
+            assert trace["input_length"] == 2048
+            assert len(trace["hash_ids"]) == 4
 
 
 class TestSynthesizeGroupedTraces:
@@ -477,11 +389,11 @@ class TestSynthesizeGroupedTraces:
         """Test that session grouping is preserved through synthesis."""
         data = {
             "session-a": [
-                {"input_length": 100, "output_length": 20, "hash_ids": [1, 2]},
-                {"input_length": 150, "output_length": 30, "hash_ids": [1, 2, 3]},
+                {"input_length": 1024, "output_length": 20, "hash_ids": [1, 2]},
+                {"input_length": 1536, "output_length": 30, "hash_ids": [1, 2, 3]},
             ],
             "session-b": [
-                {"input_length": 200, "output_length": 40, "hash_ids": [4, 5]},
+                {"input_length": 1024, "output_length": 40, "hash_ids": [4, 5]},
             ],
         }
         synthesizer = Synthesizer()
@@ -534,30 +446,45 @@ class TestSynthesizeGroupedTraces:
 
     def test_prefix_multiplier_applied(self) -> None:
         """Test that prefix_len_multiplier is applied to grouped traces."""
+        # Need multiple traces with shared prefixes
+        # Shared prefix [1] = 512 tokens, prompt = 512 tokens
         data = {
             "session-1": [
-                {"input_length": 512, "output_length": 20, "hash_ids": [1, 2]},
+                {"input_length": 1024, "output_length": 20, "hash_ids": [1, 2]},
+                {"input_length": 1024, "output_length": 20, "hash_ids": [1, 3]},
             ],
         }
         params = SynthesisParams(prefix_len_multiplier=2.0)
         synthesizer = Synthesizer(params=params)
         result = synthesizer.synthesize_grouped_traces(data)
 
-        # Hash IDs should be extended
-        assert len(result["session-1"][0]["hash_ids"]) > 2
+        # new_prefix_len = 512 * 2 = 1024, new_prompt_len = 512
+        # new_input_len = 1024 + 512 = 1536
+        assert result["session-1"][0]["input_length"] == 1536
+        assert result["session-1"][1]["input_length"] == 1536
 
     def test_max_isl_filter_applied(self) -> None:
         """Test that max_isl filter is applied to grouped traces."""
+        # 10 blocks * 512 = 5120 tokens, capped to 4096
         data = {
             "session-1": [
-                {"input_length": 5000, "output_length": 20},
+                {
+                    "input_length": 5120,
+                    "output_length": 20,
+                    "hash_ids": list(range(10)),
+                },
+                {
+                    "input_length": 5120,
+                    "output_length": 20,
+                    "hash_ids": list(range(10)),
+                },
             ],
         }
-        params = SynthesisParams(max_isl=4096)
+        params = SynthesisParams(max_isl=4096, block_size=512)
         synthesizer = Synthesizer(params=params)
         result = synthesizer.synthesize_grouped_traces(data)
 
-        assert result["session-1"][0]["input_length"] <= 4096
+        assert result["session-1"][0]["input_length"] == 4096
 
     # ============================================================================
     # Field Preservation

@@ -54,12 +54,20 @@ class TestGpuTelemetry:
                 assert gpu_data.metrics is not None
                 assert len(gpu_data.metrics) > 0
 
-                for metric_value in gpu_data.metrics.values():
+                # Counter metrics only have avg (delta), not min/max
+                counter_metrics = {
+                    "energy_consumption",
+                    "xid_errors",
+                    "power_violation",
+                }
+                for metric_name, metric_value in gpu_data.metrics.items():
                     assert metric_value is not None
                     assert metric_value.avg is not None
-                    assert metric_value.min is not None
-                    assert metric_value.max is not None
                     assert metric_value.unit is not None
+                    # Gauge metrics should have min/max; counter metrics only have avg
+                    if metric_name not in counter_metrics:
+                        assert metric_value.min is not None
+                        assert metric_value.max is not None
 
     async def test_gpu_telemetry_export(
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer

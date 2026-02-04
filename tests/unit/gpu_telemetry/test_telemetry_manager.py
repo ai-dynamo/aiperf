@@ -1,7 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -667,10 +667,22 @@ class TestProfileConfigureCommand:
         """Test that configure phase sends enabled status with reachable endpoints."""
         manager = self._create_test_manager()
         manager.publish = AsyncMock()
+        manager.info = Mock()  # Mock logging method
+        manager.debug = Mock()
 
-        # Mock GPUTelemetryDataCollector to return reachable
-        with patch.object(
-            GPUTelemetryDataCollector, "is_url_reachable", return_value=True
+        # Mock GPUTelemetryDataCollector methods for reachability and baseline capture
+        with (
+            patch.object(
+                GPUTelemetryDataCollector, "is_url_reachable", return_value=True
+            ),
+            patch.object(
+                GPUTelemetryDataCollector, "initialize", new_callable=AsyncMock
+            ),
+            patch.object(
+                GPUTelemetryDataCollector,
+                "collect_and_process_metrics",
+                new_callable=AsyncMock,
+            ),
         ):
             configure_msg = ProfileConfigureCommand(
                 command_id="test", service_id="system_controller", config={}

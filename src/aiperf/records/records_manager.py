@@ -667,12 +667,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
 
         # Get timing from profiling phase stats
+        # Note: end_ns is not passed to include the final telemetry scrape that
+        # occurs after PROFILE_COMPLETE but before export_results is called.
+        # If start_ns is None (no profiling phase), include all data.
         phase_stats = self._records_tracker.create_stats_for_phase(
             CreditPhase.PROFILING
         )
         telemetry_export_data = self._gpu_telemetry_accumulator.export_results(
-            start_ns=phase_stats.start_ns or time.time_ns(),
-            end_ns=phase_stats.requests_end_ns or time.time_ns(),
+            start_ns=phase_stats.start_ns,
             error_summary=error_summary,
         )
 

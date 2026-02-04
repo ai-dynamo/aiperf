@@ -10,6 +10,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_init, on_stop
 from aiperf.common.messages import (
     ProfileCancelCommand,
+    ProfileCompleteCommand,
     ProfileConfigureCommand,
     TelemetryRecordsMessage,
     TelemetryStatusMessage,
@@ -164,6 +165,8 @@ class GPUTelemetryManager(BaseComponentService):
 
         self._collectors.clear()
         self._collector_id_to_url.clear()
+
+        # Phase 1: Test reachability for all endpoints
         for dcgm_url in self._dcgm_endpoints:
             self.debug(f"GPU Telemetry: Testing reachability of {dcgm_url}")
             collector_id = f"collector_{dcgm_url.replace(':', '_').replace('/', '_')}"
@@ -206,6 +209,18 @@ class GPUTelemetryManager(BaseComponentService):
                 endpoints_reachable=[],
             )
             return
+
+        # Phase 2: Capture baseline metrics before profiling starts
+        self.info("GPU Telemetry: Capturing baseline metrics...")
+        for dcgm_url, collector in self._collectors.items():
+            try:
+                await collector.initialize()
+                await collector.collect_and_process_metrics()
+                self.debug(f"GPU Telemetry: Captured baseline from {dcgm_url}")
+            except Exception as e:
+                self.warning(
+                    f"GPU Telemetry: Failed to capture baseline from {dcgm_url}: {e}"
+                )
 
         await self._send_telemetry_status(
             enabled=True,
@@ -261,6 +276,36 @@ class GPUTelemetryManager(BaseComponentService):
         Args:
             message: Profile cancel command from SystemController
         """
+        await self._stop_all_collectors()
+
+    @on_command(CommandType.PROFILE_COMPLETE)
+    async def _handle_profile_complete_command(
+        self, message: ProfileCompleteCommand
+    ) -> None:
+        """Trigger final scrape when profiling completes.
+
+        Ensures GPU telemetry captures final state for accurate counter deltas.
+        This final scrape provides the end-point values needed for metrics like
+        energy_consumption which are computed as (final - baseline).
+
+        Args:
+            message: Profile complete command from SystemController
+        """
+        if not self._collectors:
+            self.debug("GPU Telemetry: Already stopped, skipping final scrape")
+            return
+
+        self.info("GPU Telemetry: Profiling complete, capturing final metrics...")
+
+        for dcgm_url, collector in list(self._collectors.items()):
+            try:
+                await collector.collect_and_process_metrics()
+                self.debug(f"GPU Telemetry: Captured final state from {dcgm_url}")
+            except Exception as e:
+                self.warning(
+                    f"GPU Telemetry: Failed to capture final state from {dcgm_url}: {e}"
+                )
+
         await self._stop_all_collectors()
 
     @on_stop

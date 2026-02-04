@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-import re
 from collections.abc import Iterator
 from importlib.metadata import Distribution, entry_points
 from pathlib import Path
@@ -894,8 +893,15 @@ class _PluginRegistry:
             author_email = pkg_metadata.get("Author-email", "")
             if author_email:
                 # Extract name from "Name <email>" or '"Name" <email>' format
-                if match := re.match(r'^"?([^"<]+)"?\s*<', author_email):
-                    author = match.group(1).strip()
+                if "<" in author_email:
+                    # Get everything before the '<' and strip whitespace
+                    name_part = author_email[: author_email.index("<")].strip()
+                    # Remove surrounding quotes if present
+                    if name_part.startswith('"'):
+                        name_part = name_part[1:]
+                    if name_part.endswith('"'):
+                        name_part = name_part[:-1]
+                    author = name_part.strip()
                 else:
                     author = author_email.split(",")[0].strip()
 

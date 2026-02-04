@@ -27,3 +27,7 @@ coverage.json
 
 # Generated plugin stubs (not committed, regenerate with: make generate-plugin-enums)
 src/aiperf/plugin/enums.pyi
+
+# Claude Code - ignore user settings, keep agent configs
+.claude/*
+!.claude/agents/

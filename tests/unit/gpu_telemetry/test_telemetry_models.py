@@ -1,10 +1,12 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import numpy as np
 import pytest
 from pydantic import ValidationError
 
 from aiperf.common.exceptions import NoMetricValue
+from aiperf.common.models.server_metrics_models import TimeRangeFilter
 from aiperf.common.models.telemetry_models import (
     GpuMetadata,
     GpuMetricTimeSeries,
@@ -13,6 +15,59 @@ from aiperf.common.models.telemetry_models import (
     TelemetryMetrics,
     TelemetryRecord,
 )
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
+
+def _make_record(timestamp_ns: int, **metrics: float) -> TelemetryRecord:
+    """Create TelemetryRecord with minimal boilerplate for testing."""
+    return TelemetryRecord(
+        timestamp_ns=timestamp_ns,
+        dcgm_url="http://localhost:9401/metrics",
+        gpu_index=0,
+        gpu_model_name="Test GPU",
+        gpu_uuid="GPU-test-uuid",
+        telemetry_data=TelemetryMetrics(**metrics),
+    )
+
+
+# =============================================================================
+# Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def gpu_telemetry_data() -> GpuTelemetryData:
+    """GpuTelemetryData with standard test metadata."""
+    return GpuTelemetryData(
+        metadata=GpuMetadata(
+            gpu_index=0, gpu_uuid="GPU-test-uuid", gpu_model_name="Test GPU"
+        )
+    )
+
+
+@pytest.fixture
+def time_series_4pt() -> GpuMetricTimeSeries:
+    """Time series with 4 data points at 1s intervals for filtering tests."""
+    ts = GpuMetricTimeSeries()
+    ts.append_snapshot({"power": 100.0}, 1_000_000_000)
+    ts.append_snapshot({"power": 110.0}, 2_000_000_000)
+    ts.append_snapshot({"power": 120.0}, 3_000_000_000)
+    ts.append_snapshot({"power": 130.0}, 4_000_000_000)
+    return ts
+
+
+@pytest.fixture
+def counter_time_series() -> GpuMetricTimeSeries:
+    """Time series with counter data: baseline at 1s, profiling from 2s-4s."""
+    ts = GpuMetricTimeSeries()
+    ts.append_snapshot({"energy": 1000.0}, 1_000_000_000)  # baseline
+    ts.append_snapshot({"energy": 1200.0}, 2_000_000_000)  # profiling start
+    ts.append_snapshot({"energy": 1500.0}, 3_000_000_000)  # profiling
+    ts.append_snapshot({"energy": 1800.0}, 4_000_000_000)  # profiling end
+    return ts
 
 
 class TestTelemetryRecord:
@@ -281,27 +336,6 @@ class TestGpuMetricTimeSeries:
         assert list(util) == [80.0, 85.0]
         assert unknown is None
 
-    def test_schema_determined_on_first_snapshot(self):
-        """Test that metric schema is determined on the first snapshot.
-
-        DCGM metrics are static per run. The first snapshot determines which
-        metrics are tracked, and all subsequent snapshots should provide the same set.
-        """
-        time_series = GpuMetricTimeSeries()
-
-        # First snapshot determines schema
-        time_series.append_snapshot({"power": 100.0, "util": 80.0}, 1_000_000_000)
-
-        # Subsequent snapshots provide same metrics
-        time_series.append_snapshot({"power": 110.0, "util": 85.0}, 2_000_000_000)
-        time_series.append_snapshot({"power": 120.0, "util": 90.0}, 3_000_000_000)
-
-        power = time_series.get_metric_array("power")
-        util = time_series.get_metric_array("util")
-
-        assert list(power) == [100.0, 110.0, 120.0]
-        assert list(util) == [80.0, 85.0, 90.0]
-
     def test_stats_computation(self):
         """Test stats computation on consistent metric data."""
         time_series = GpuMetricTimeSeries()
@@ -316,6 +350,28 @@ class TestGpuMetricTimeSeries:
         assert result.min == 100.0
         assert result.max == 200.0
         assert result.current == 200.0  # Last value
+
+    @pytest.mark.parametrize(
+        ("values", "expected_std"),
+        [
+            pytest.param([100.0], 0.0, id="single_sample"),
+            pytest.param(
+                [100.0, 150.0, 200.0],
+                np.std([100.0, 150.0, 200.0], ddof=1),
+                id="multiple_samples",
+            ),
+        ],
+    )
+    def test_stats_uses_sample_std(self, values: list[float], expected_std: float):
+        """Test std uses sample std (ddof=1) with edge case handling."""
+        time_series = GpuMetricTimeSeries()
+        for i, val in enumerate(values):
+            time_series.append_snapshot({"power": val}, (i + 1) * 1_000_000_000)
+
+        result = time_series.to_metric_result("power", "tag", "header", "W")
+
+        assert result.std == expected_std
+        assert result.count == len(values)
 
     def test_grow_preserves_data(self):
         """Test array growth preserves existing data."""
@@ -411,92 +467,181 @@ class TestGpuMetricTimeSeries:
         with pytest.raises(NoMetricValue):
             time_series.to_metric_result("unknown", "tag", "header", "unit")
 
+    # Time filtering tests
+
+    @pytest.mark.parametrize(
+        ("time_filter", "expected_mask"),
+        [
+            pytest.param(None, [True, True, True, True], id="no_filter"),
+            pytest.param(TimeRangeFilter(start_ns=2_000_000_000), [False, True, True, True], id="start_only"),
+            pytest.param(TimeRangeFilter(end_ns=2_500_000_000), [True, True, False, False], id="end_only"),
+            pytest.param(TimeRangeFilter(start_ns=1_500_000_000, end_ns=3_500_000_000), [False, True, True, False], id="range"),
+        ],
+    )  # fmt: skip
+    def test_get_time_mask(
+        self,
+        time_series_4pt: GpuMetricTimeSeries,
+        time_filter: TimeRangeFilter | None,
+        expected_mask: list[bool],
+    ):
+        """Test get_time_mask with various filter configurations."""
+        mask = time_series_4pt.get_time_mask(time_filter)
+        assert list(mask) == expected_mask
+
+    @pytest.mark.parametrize(
+        ("time_filter", "expected_idx"),
+        [
+            pytest.param(None, None, id="no_filter"),
+            pytest.param(TimeRangeFilter(end_ns=3_000_000_000), None, id="no_start"),
+            pytest.param(TimeRangeFilter(start_ns=2_000_000_000, end_ns=5_000_000_000), 0, id="baseline_at_0"),
+            pytest.param(TimeRangeFilter(start_ns=3_000_000_000, end_ns=5_000_000_000), 1, id="baseline_at_1"),
+        ],
+    )  # fmt: skip
+    def test_get_reference_idx(
+        self,
+        time_series_4pt: GpuMetricTimeSeries,
+        time_filter: TimeRangeFilter | None,
+        expected_idx: int | None,
+    ):
+        """Test get_reference_idx with various filter configurations."""
+        assert time_series_4pt.get_reference_idx(time_filter) == expected_idx
+
+    def test_get_reference_idx_no_baseline_before_start(self):
+        """Test get_reference_idx returns None when no data before start_ns."""
+        time_series = GpuMetricTimeSeries()
+        time_series.append_snapshot({"power": 100.0}, 2_000_000_000)
+        time_series.append_snapshot({"power": 110.0}, 3_000_000_000)
+
+        time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=4_000_000_000)
+        assert time_series.get_reference_idx(time_filter) is None
+
+    def test_to_metric_result_filtered_gauge(self):
+        """Test gauge stats computed only on filtered data."""
+        time_series = GpuMetricTimeSeries()
+        time_series.append_snapshot({"power": 50.0}, 1_000_000_000)  # warmup - excluded
+        time_series.append_snapshot({"power": 100.0}, 2_000_000_000)  # profiling
+        time_series.append_snapshot({"power": 120.0}, 3_000_000_000)  # profiling
+        time_series.append_snapshot({"power": 80.0}, 4_000_000_000)  # profiling
+
+        time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=5_000_000_000)
+        result = time_series.to_metric_result_filtered(
+            "power", "tag", "header", "W", time_filter, is_counter=False
+        )
+
+        # Stats should only include values 100, 120, 80 (not 50)
+        assert result.count == 3
+        assert result.min == 80.0
+        assert result.max == 120.0
+        assert result.avg == 100.0  # (100 + 120 + 80) / 3
+
+    def test_to_metric_result_filtered_counter_with_baseline(
+        self, counter_time_series: GpuMetricTimeSeries
+    ):
+        """Test counter delta computed from baseline before start_ns."""
+        time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=5_000_000_000)
+        result = counter_time_series.to_metric_result_filtered(
+            "energy", "tag", "header", "MJ", time_filter, is_counter=True
+        )
+
+        # Delta: final (1800) - baseline (1000) = 800
+        # Counters only set avg, other fields are None
+        assert result.avg == 800.0
+        assert result.min is None
+        assert result.max is None
+        assert result.current is None
+
+    def test_to_metric_result_filtered_counter_no_baseline(self):
+        """Test counter delta uses first filtered value when no baseline exists."""
+        time_series = GpuMetricTimeSeries()
+        time_series.append_snapshot({"energy": 1000.0}, 2_000_000_000)
+        time_series.append_snapshot({"energy": 1300.0}, 3_000_000_000)
+        time_series.append_snapshot({"energy": 1600.0}, 4_000_000_000)
+
+        # Filter starts before any data
+        time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=5_000_000_000)
+        result = time_series.to_metric_result_filtered(
+            "energy", "tag", "header", "MJ", time_filter, is_counter=True
+        )
+
+        # No baseline: delta = final (1600) - first filtered (1000) = 600
+        assert result.avg == 600.0
+
+    def test_to_metric_result_filtered_counter_reset_clamped_to_zero(self):
+        """Test counter reset (e.g., DCGM restart) clamps delta to 0."""
+        time_series = GpuMetricTimeSeries()
+        time_series.append_snapshot({"energy": 5000.0}, 1_000_000_000)  # baseline
+        time_series.append_snapshot({"energy": 5500.0}, 2_000_000_000)
+        time_series.append_snapshot({"energy": 100.0}, 3_000_000_000)  # after reset
+        time_series.append_snapshot({"energy": 300.0}, 4_000_000_000)
+
+        time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=5_000_000_000)
+        result = time_series.to_metric_result_filtered(
+            "energy", "tag", "header", "MJ", time_filter, is_counter=True
+        )
+
+        # Raw delta: 300 - 5000 = -4700, clamped to 0
+        assert result.avg == 0.0
+
+    def test_to_metric_result_filtered_empty_range(self):
+        """Test NoMetricValue raised when filtered range has no data."""
+        time_series = GpuMetricTimeSeries()
+        time_series.append_snapshot({"power": 100.0}, 1_000_000_000)
+        time_series.append_snapshot({"power": 110.0}, 2_000_000_000)
+
+        # Filter for range with no data
+        time_filter = TimeRangeFilter(start_ns=5_000_000_000, end_ns=6_000_000_000)
+
+        with pytest.raises(NoMetricValue) as exc_info:
+            time_series.to_metric_result_filtered(
+                "power", "tag", "header", "W", time_filter, is_counter=False
+            )
+        assert "No data in time range" in str(exc_info.value)
+
 
 class TestGpuTelemetryData:
     """Test GpuTelemetryData model with grouped approach."""
 
-    def test_add_record_grouped(self):
+    def test_add_record_grouped(self, gpu_telemetry_data: GpuTelemetryData):
         """Test adding TelemetryRecord creates grouped snapshots."""
-        metadata = GpuMetadata(
-            gpu_index=0, gpu_uuid="GPU-test-uuid", gpu_model_name="Test GPU"
+        record = _make_record(
+            1_000_000_000,
+            gpu_power_usage=100.0,
+            gpu_utilization=80.0,
+            gpu_memory_used=15.0,
         )
+        gpu_telemetry_data.add_record(record)
 
-        telemetry_data = GpuTelemetryData(metadata=metadata)
-
-        record = TelemetryRecord(
-            timestamp_ns=1000000000,
-            dcgm_url="http://localhost:9401/metrics",
-            gpu_index=0,
-            gpu_model_name="Test GPU",
-            gpu_uuid="GPU-test-uuid",
-            telemetry_data=TelemetryMetrics(
-                gpu_power_usage=100.0,
-                gpu_utilization=80.0,
-                gpu_memory_used=15.0,
-            ),
-        )
-
-        telemetry_data.add_record(record)
-
-        ts = telemetry_data.time_series
+        ts = gpu_telemetry_data.time_series
         assert len(ts) == 1
-        assert ts.timestamps[0] == 1000000000
+        assert ts.timestamps[0] == 1_000_000_000
         assert ts.get_metric_array("gpu_power_usage")[0] == 100.0
         assert ts.get_metric_array("gpu_utilization")[0] == 80.0
         assert ts.get_metric_array("gpu_memory_used")[0] == 15.0
 
-    def test_add_record_filters_none_values(self):
+    def test_add_record_filters_none_values(self, gpu_telemetry_data: GpuTelemetryData):
         """Test that None metric values are filtered out."""
-        metadata = GpuMetadata(
-            gpu_index=0, gpu_uuid="GPU-test-uuid", gpu_model_name="Test GPU"
+        record = _make_record(
+            1_000_000_000,
+            gpu_power_usage=100.0,
+            gpu_memory_used=15.0,
+            # gpu_utilization intentionally omitted (will be None)
         )
+        gpu_telemetry_data.add_record(record)
 
-        telemetry_data = GpuTelemetryData(metadata=metadata)
-
-        record = TelemetryRecord(
-            timestamp_ns=1000000000,
-            dcgm_url="http://localhost:9401/metrics",
-            gpu_index=0,
-            gpu_model_name="Test GPU",
-            gpu_uuid="GPU-test-uuid",
-            telemetry_data=TelemetryMetrics(
-                gpu_power_usage=100.0,
-                gpu_utilization=None,  # Should be filtered out
-                gpu_memory_used=15.0,
-            ),
-        )
-
-        telemetry_data.add_record(record)
-
-        ts = telemetry_data.time_series
+        ts = gpu_telemetry_data.time_series
         assert len(ts) == 1
         assert ts.get_metric_array("gpu_power_usage") is not None
         assert ts.get_metric_array("gpu_memory_used") is not None
         assert ts.get_metric_array("gpu_utilization") is None
 
-    def test_get_metric_result(self):
+    def test_get_metric_result(self, gpu_telemetry_data: GpuTelemetryData):
         """Test getting MetricResult for a specific metric."""
-        metadata = GpuMetadata(
-            gpu_index=0, gpu_uuid="GPU-test-uuid", gpu_model_name="Test GPU"
-        )
-
-        telemetry_data = GpuTelemetryData(metadata=metadata)
-
-        # Add multiple records
         for i, power in enumerate([100.0, 120.0, 80.0]):
-            record = TelemetryRecord(
-                timestamp_ns=1000000000 + i * 1000000,
-                dcgm_url="http://localhost:9401/metrics",
-                gpu_index=0,
-                gpu_model_name="Test GPU",
-                gpu_uuid="GPU-test-uuid",
-                telemetry_data=TelemetryMetrics(
-                    gpu_power_usage=power,
-                ),
+            gpu_telemetry_data.add_record(
+                _make_record(1_000_000_000 + i * 1_000_000, gpu_power_usage=power)
             )
-            telemetry_data.add_record(record)
 
-        result = telemetry_data.get_metric_result(
+        result = gpu_telemetry_data.get_metric_result(
             "gpu_power_usage", "power_tag", "GPU Power", "W"
         )
 
@@ -506,3 +651,48 @@ class TestGpuTelemetryData:
         assert result.min == 80.0
         assert result.max == 120.0
         assert result.avg == 100.0
+
+    def test_get_metric_result_with_time_filter(
+        self, gpu_telemetry_data: GpuTelemetryData
+    ):
+        """Test getting MetricResult with time filtering."""
+        # Add records: warmup + profiling
+        for ts, power in [(1, 50.0), (2, 100.0), (3, 120.0), (4, 80.0)]:
+            gpu_telemetry_data.add_record(
+                _make_record(ts * 1_000_000_000, gpu_power_usage=power)
+            )
+
+        # Exclude warmup at 1s
+        time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=5_000_000_000)
+        result = gpu_telemetry_data.get_metric_result(
+            "gpu_power_usage", "power_tag", "GPU Power", "W", time_filter=time_filter
+        )
+
+        # Stats should exclude warmup value of 50.0
+        assert result.count == 3
+        assert result.min == 80.0
+        assert result.max == 120.0
+        assert result.avg == 100.0  # (100 + 120 + 80) / 3
+
+    def test_get_metric_result_counter_with_time_filter(
+        self, gpu_telemetry_data: GpuTelemetryData
+    ):
+        """Test getting MetricResult for counter metric with delta calculation."""
+        # Add records: baseline + profiling
+        for ts, energy in [(1, 1000.0), (2, 1200.0), (3, 1500.0), (4, 1800.0)]:
+            gpu_telemetry_data.add_record(
+                _make_record(ts * 1_000_000_000, energy_consumption=energy)
+            )
+
+        time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=5_000_000_000)
+        result = gpu_telemetry_data.get_metric_result(
+            "energy_consumption",
+            "energy_tag",
+            "Energy",
+            "MJ",
+            time_filter=time_filter,
+            is_counter=True,
+        )
+
+        # Delta: final (1800) - baseline (1000) = 800
+        assert result.avg == 800.0
