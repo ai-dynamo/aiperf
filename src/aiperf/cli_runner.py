@@ -37,6 +37,7 @@ def run_system_controller(
 
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.common.bootstrap import bootstrap_and_run_service
+    from aiperf.common.tokenizer_validator import validate_tokenizer_early
 
     logger = AIPerfLogger(__name__)
 
@@ -72,6 +73,10 @@ def run_system_controller(
 
     # Create and start the system controller
     logger.info("Starting AIPerf System")
+
+    # Validate tokenizer early (before spawning services) to fail fast.
+    # This runs in a subprocess to keep the parent process lightweight.
+    user_config.tokenizer.resolved_names = validate_tokenizer_early(user_config, logger)
 
     # Validate custom GPU metrics CSV file
     if user_config.gpu_telemetry_metrics_file:
