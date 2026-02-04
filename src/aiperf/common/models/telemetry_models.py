@@ -1,13 +1,15 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
+from numpy.typing import NDArray
 from pydantic import ConfigDict, Field
 
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.record_models import MetricResult
+from aiperf.common.models.server_metrics_models import TimeRangeFilter
 
 
 class TelemetryMetrics(AIPerfBaseModel):
@@ -236,6 +238,9 @@ class GpuMetricTimeSeries:
             arr, [1, 5, 10, 25, 50, 75, 90, 95, 99]
         )
 
+        # Use sample std (ddof=1) for unbiased estimate; 0 for single sample
+        std_dev = float(np.std(arr, ddof=1)) if len(arr) > 1 else 0.0
+
         return MetricResult(
             tag=tag,
             header=header,
@@ -243,9 +248,151 @@ class GpuMetricTimeSeries:
             min=float(np.min(arr)),
             max=float(np.max(arr)),
             avg=float(np.mean(arr)),
-            std=float(np.std(arr)),
+            std=std_dev,
             count=len(arr),
             current=float(arr[-1]),
+            p1=p1,
+            p5=p5,
+            p10=p10,
+            p25=p25,
+            p50=p50,
+            p75=p75,
+            p90=p90,
+            p95=p95,
+            p99=p99,
+        )
+
+    def get_time_mask(self, time_filter: TimeRangeFilter | None) -> NDArray[np.bool_]:
+        """Get boolean mask for points within time range.
+
+        Uses np.searchsorted for O(log n) binary search on sorted timestamps,
+        then slice assignment for mask creation (10-100x faster than element-wise
+        boolean comparisons for large arrays).
+
+        Args:
+            time_filter: Time range filter specifying start_ns and/or end_ns bounds.
+                        None returns all-True mask.
+
+        Returns:
+            Boolean mask array where True indicates timestamp within range
+        """
+        if time_filter is None:
+            return np.ones(self._size, dtype=bool)
+
+        timestamps = self.timestamps
+        first_idx = 0
+        last_idx = self._size
+
+        # O(log n) binary search for range boundaries
+        if time_filter.start_ns is not None:
+            first_idx = int(
+                np.searchsorted(timestamps, time_filter.start_ns, side="left")
+            )
+        if time_filter.end_ns is not None:
+            last_idx = int(
+                np.searchsorted(timestamps, time_filter.end_ns, side="right")
+            )
+
+        # Single allocation + slice assignment
+        mask = np.zeros(self._size, dtype=bool)
+        mask[first_idx:last_idx] = True
+        return mask
+
+    def get_reference_idx(self, time_filter: TimeRangeFilter | None) -> int | None:
+        """Get index of last point BEFORE time filter start (for delta calculation).
+
+        Uses np.searchsorted for O(log n) lookup. Returns None if no baseline exists
+        (i.e., time_filter is None, start_ns is None, or no data before start_ns).
+
+        Args:
+            time_filter: Time range filter. Reference point is found before start_ns.
+
+        Returns:
+            Index of last timestamp before start_ns, or None if no baseline exists
+        """
+        if time_filter is None or time_filter.start_ns is None:
+            return None
+        insert_pos = int(
+            np.searchsorted(self.timestamps, time_filter.start_ns, side="left")
+        )
+        return insert_pos - 1 if insert_pos > 0 else None
+
+    def to_metric_result_filtered(
+        self,
+        metric_name: str,
+        tag: str,
+        header: str,
+        unit: str,
+        time_filter: TimeRangeFilter | None = None,
+        is_counter: bool = False,
+    ) -> MetricResult:
+        """Compute stats with time filtering and optional delta for counters.
+
+        For gauges: Uses vectorized NumPy on filtered array (np.mean, np.std, np.percentile)
+        For counters: Computes delta from reference point before profiling start
+
+        Args:
+            metric_name: Name of the metric to analyze
+            tag: Unique identifier for this metric
+            header: Human-readable name for display
+            unit: Unit of measurement
+            time_filter: Optional time range filter to exclude warmup/cooldown periods
+            is_counter: If True, compute delta from baseline instead of statistics
+
+        Returns:
+            MetricResult with min/max/avg/percentiles for gauges, or delta for counters
+
+        Raises:
+            NoMetricValue: If no data for this metric or no data in filtered range
+        """
+        arr = self.get_metric_array(metric_name)
+        if arr is None or len(arr) == 0:
+            raise NoMetricValue(
+                f"No telemetry data available for metric '{metric_name}'"
+            )
+
+        # Common: apply time filter
+        time_mask = self.get_time_mask(time_filter)
+        filtered = arr[time_mask]
+        if len(filtered) == 0:
+            raise NoMetricValue(f"No data in time range for metric '{metric_name}'")
+
+        if is_counter:
+            # Counter: compute delta from baseline
+            reference_idx = self.get_reference_idx(time_filter)
+            reference_value = (
+                arr[reference_idx] if reference_idx is not None else filtered[0]
+            )
+            raw_delta = float(filtered[-1] - reference_value)
+
+            # Handle counter resets (e.g., DCGM restart) by clamping to 0
+            delta = max(raw_delta, 0.0)
+
+            # Counters report a single delta value, not a distribution
+            return MetricResult(
+                tag=tag,
+                header=header,
+                unit=unit,
+                avg=delta,
+            )
+
+        # Gauge: vectorized stats on filtered data
+        p1, p5, p10, p25, p50, p75, p90, p95, p99 = np.percentile(
+            filtered, [1, 5, 10, 25, 50, 75, 90, 95, 99]
+        )
+
+        # Use sample std (ddof=1) for unbiased estimate; 0 for single sample
+        std_dev = float(np.std(filtered, ddof=1)) if len(filtered) > 1 else 0.0
+
+        return MetricResult(
+            tag=tag,
+            header=header,
+            unit=unit,
+            min=float(np.min(filtered)),
+            max=float(np.max(filtered)),
+            avg=float(np.mean(filtered)),
+            std=std_dev,
+            count=len(filtered),
             p1=p1,
             p5=p5,
             p10=p10,
@@ -292,19 +439,31 @@ class GpuTelemetryData(AIPerfBaseModel):
             self.time_series.append_snapshot(valid_metrics, record.timestamp_ns)
 
     def get_metric_result(
-        self, metric_name: str, tag: str, header: str, unit: str
+        self,
+        metric_name: str,
+        tag: str,
+        header: str,
+        unit: str,
+        time_filter: TimeRangeFilter | None = None,
+        is_counter: bool = False,
     ) -> MetricResult:
-        """Get MetricResult for a specific metric.
+        """Get MetricResult for a specific metric with optional time filtering.
 
         Args:
             metric_name: Name of the metric to analyze
             tag: Unique identifier for this metric
             header: Human-readable name for display
             unit: Unit of measurement
+            time_filter: Optional time range filter to exclude warmup/cooldown periods
+            is_counter: If True, compute delta from baseline instead of statistics
 
         Returns:
             MetricResult with statistical summary for the specified metric
         """
+        if time_filter is not None or is_counter:
+            return self.time_series.to_metric_result_filtered(
+                metric_name, tag, header, unit, time_filter, is_counter
+            )
         return self.time_series.to_metric_result(metric_name, tag, header, unit)
 
 
