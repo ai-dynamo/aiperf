@@ -87,7 +87,7 @@ aiperf profile \
 ```
 
 
-                                     NVIDIA AIPerf | LLM Metrics                                     
+                                     NVIDIA AIPerf | LLM Metrics
 ┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
 ┃               Metric ┃      avg ┃      min ┃      max ┃      p99 ┃      p90 ┃      p50 ┃      std ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
@@ -116,13 +116,13 @@ aiperf profile \
 │           (requests) │          │          │          │          │          │          │          │
 └──────────────────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┘
 
-CLI Command: aiperf profile --model 'Qwen/Qwen3-0.6B' --endpoint-type 'chat' --input-file 
-'prompts.jsonl' --custom-dataset-type 'single_turn' --streaming --url 'localhost:8000' --concurrency 
+CLI Command: aiperf profile --model 'Qwen/Qwen3-0.6B' --endpoint-type 'chat' --input-file
+'prompts.jsonl' --custom-dataset-type 'single_turn' --streaming --url 'localhost:8000' --concurrency
 2
 Benchmark Duration: 15.81 sec
-CSV Export: 
+CSV Export:
 /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.csv
-JSON Export: 
+JSON Export:
 /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.json
 Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
 ```
@@ -162,7 +162,7 @@ aiperf profile \
 
 **Output:**
 ```
-                                     NVIDIA AIPerf | LLM Metrics                                     
+                                     NVIDIA AIPerf | LLM Metrics
 ┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━┓
 ┃                 Metric ┃      avg ┃      min ┃      max ┃      p99 ┃      p90 ┃      p50 ┃    std ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━┩
@@ -191,13 +191,13 @@ aiperf profile \
 │             (requests) │          │          │          │          │          │          │        │
 └────────────────────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴────────┘
 
-CLI Command: aiperf profile --model 'Qwen/Qwen3-0.6B' --endpoint-type 'chat' --input-file 
-'conversations.jsonl' --custom-dataset-type 'multi_turn' --streaming --url 'localhost:8000' 
+CLI Command: aiperf profile --model 'Qwen/Qwen3-0.6B' --endpoint-type 'chat' --input-file
+'conversations.jsonl' --custom-dataset-type 'multi_turn' --streaming --url 'localhost:8000'
 --concurrency 2
 Benchmark Duration: 10.60 sec
-CSV Export: 
+CSV Export:
 /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.csv
-JSON Export: 
+JSON Export:
 /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.json
 Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
 ```
@@ -251,7 +251,7 @@ aiperf profile \
 
 **Output:**
 ```
-                                     NVIDIA AIPerf | LLM Metrics                                     
+                                     NVIDIA AIPerf | LLM Metrics
 ┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
 ┃              Metric ┃      avg ┃      min ┃       max ┃      p99 ┃      p90 ┃      p50 ┃      std ┃
 ┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
@@ -281,13 +281,13 @@ aiperf profile \
 │          (requests) │          │          │           │          │          │          │          │
 └─────────────────────┴──────────┴──────────┴───────────┴──────────┴──────────┴──────────┴──────────┘
 
-CLI Command: aiperf profile --model 'Qwen/Qwen3-0.6B' --endpoint-type 'chat' --input-file 
-'pool.jsonl' --custom-dataset-type 'random_pool' --num-conversations 50 --streaming --concurrency 4 
+CLI Command: aiperf profile --model 'Qwen/Qwen3-0.6B' --endpoint-type 'chat' --input-file
+'pool.jsonl' --custom-dataset-type 'random_pool' --num-conversations 50 --streaming --concurrency 4
 --random-seed 42 --url 'localhost:8000'
 Benchmark Duration: 42.74 sec
-CSV Export: 
+CSV Export:
 /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/profile_export_aiperf.csv
-JSON Export: 
+JSON Export:
 /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/profile_export_aiperf.json
 Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/logs/aiperf.log
 ```
