@@ -6,6 +6,15 @@ from enum import Enum
 from typing_extensions import Self
 
 
+def _normalize_name(value: str) -> str:
+    """Normalize a string for comparison: lowercase and convert dashes to underscores.
+
+    This enables flexible matching where 'foo-bar', 'foo_bar', 'FOO_BAR', and 'FOO-BAR'
+    all match each other when used for enum lookups or plugin name resolution.
+    """
+    return value.lower().replace("-", "_")
+
+
 class ExtensibleStrEnumMeta(type(Enum)):
     """Metaclass for extensible enums that support runtime registration.
 
@@ -37,11 +46,12 @@ class ExtensibleStrEnumMeta(type(Enum)):
     def __contains__(cls, item: object) -> bool:
         """Check membership for both base members and extensions."""
         if isinstance(item, str):
+            normalized_item = _normalize_name(item)
             for member in cls.__members__.values():
-                if member.value.lower() == item.lower():
+                if _normalize_name(member.value) == normalized_item:
                     return True
             for ext_member in cls._extensions.values():
-                if ext_member.value.lower() == item.lower():
+                if _normalize_name(ext_member.value) == normalized_item:
                     return True
             return False
         return item in cls.__members__.values() or item in cls._extensions.values()
@@ -100,13 +110,13 @@ class ExtensibleStrEnum(str, Enum, metaclass=ExtensibleStrEnumMeta):
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, str):
-            return self.value.lower() == other.lower()
+            return _normalize_name(self.value) == _normalize_name(other)
         if hasattr(other, "value") and isinstance(other.value, str):
-            return self.value.lower() == other.value.lower()
+            return _normalize_name(self.value) == _normalize_name(other.value)
         return super().__eq__(other)
 
     def __hash__(self) -> int:
-        return hash(self.value.lower())
+        return hash(_normalize_name(self.value))
 
     @property
     def name(self) -> str:
@@ -132,7 +142,7 @@ class ExtensibleStrEnum(str, Enum, metaclass=ExtensibleStrEnumMeta):
             The newly created enum member
 
         Raises:
-            ValueError: If name already exists in base members or extensions
+            ValueError: If name already exists, or if value conflicts with existing member
         """
         if name in cls.__members__:
             raise ValueError(f"'{name}' is already defined in {cls.__name__}")
@@ -170,13 +180,14 @@ class ExtensibleStrEnum(str, Enum, metaclass=ExtensibleStrEnumMeta):
 
     @classmethod
     def _missing_(cls, value: object) -> Self | None:
-        """Handle case-insensitive lookups for string values."""
+        """Handle case-insensitive and dash/underscore-normalized lookups for string values."""
         if isinstance(value, str):
+            normalized_value = _normalize_name(value)
             for member in cls.__members__.values():
-                if member.value.lower() == value.lower():
+                if _normalize_name(member.value) == normalized_value:
                     return member
             for ext_member in cls._extensions.values():
-                if ext_member.value.lower() == value.lower():
+                if _normalize_name(ext_member.value) == normalized_value:
                     return ext_member
         return None
 
