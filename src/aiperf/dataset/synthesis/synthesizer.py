@@ -84,7 +84,7 @@ class Synthesizer(AIPerfLoggerMixin):
             traces, all_new_hash_ids, all_new_isls, strict=True
         ):
             if not new_hash_ids:
-                isl = self.params.block_size  # Default when no hash_ids
+                isl = trace.get("input_length", self.params.block_size)
 
             # Apply max_isl filter
             if self.params.max_isl and isl > self.params.max_isl:
@@ -206,6 +206,11 @@ class Synthesizer(AIPerfLoggerMixin):
             # Compute prefix_len and prompt_len
             prefix_len = len(prefix_ids) * block_size
             prompt_len = input_len - prefix_len
+            if prompt_len < 0:
+                raise ValueError(
+                    f"input_len ({input_len}) < prefix_len ({prefix_len}): "
+                    f"trace has fewer tokens than its shared prefix blocks"
+                )
 
             # Step 3: Apply prefix_len_mult - stretch or squeeze prefix
             if prefix_mult > 1.0:
@@ -256,7 +261,7 @@ class Synthesizer(AIPerfLoggerMixin):
             for i, ids in enumerate(results):
                 if ids:
                     # Treat each hash_id as a unique "block" for rolling hash
-                    results[i] = hasher.hash_token_blocks([tuple([h]) for h in ids])
+                    results[i] = hasher.hash_token_blocks([(h,) for h in ids])
 
         return results, new_input_lens
 
