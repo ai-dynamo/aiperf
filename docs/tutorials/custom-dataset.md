@@ -83,24 +83,48 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
-**Sample Output:**
+**Output:**
 ```
-INFO     Starting AIPerf System
-INFO     Loaded 5 entries from prompts.jsonl
-INFO     Using single_turn dataset type
 
-Profiling: 5/5 |████████████████████████| 100% [00:08<00:00]
 
-            NVIDIA AIPerf | LLM Metrics
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
-┃                      Metric ┃     avg ┃    min ┃     max ┃     p99 ┃     p50 ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
-│        Request Latency (ms) │ 1123.45 │ 789.23 │ 1456.78 │ 1456.78 │ 1098.34 │
-│    Time to First Token (ms) │   42.34 │  31.23 │   58.90 │   58.90 │   40.12 │
-│    Inter Token Latency (ms) │   11.23 │   8.90 │   14.56 │   14.56 │   10.89 │
-│ Output Token Count (tokens) │   95.20 │  78.00 │  120.00 │  120.00 │   92.00 │
-│  Request Throughput (req/s) │    4.56 │      - │       - │       - │       - │
-└─────────────────────────────┴─────────┴────────┴─────────┴─────────┴─────────┘
+                                     NVIDIA AIPerf | LLM Metrics                                     
+┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
+┃               Metric ┃      avg ┃      min ┃      max ┃      p99 ┃      p90 ┃      p50 ┃      std ┃
+┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
+│  Time to First Token │    19.99 │    12.53 │    49.62 │    48.89 │    42.24 │    13.93 │    12.92 │
+│                 (ms) │          │          │          │          │          │          │          │
+│ Time to Second Token │     3.81 │     2.01 │     8.25 │     7.94 │     5.15 │     3.36 │     1.62 │
+│                 (ms) │          │          │          │          │          │          │          │
+│ Time to First Output │    19.99 │    12.53 │    49.62 │    48.89 │    42.24 │    13.93 │    12.92 │
+│           Token (ms) │          │          │          │          │          │          │          │
+│ Request Latency (ms) │ 2,940.39 │ 1,536.67 │ 7,319.35 │ 7,034.86 │ 4,474.42 │ 2,239.67 │ 1,611.04 │
+│  Inter Token Latency │     3.52 │     3.47 │     3.64 │     3.63 │     3.56 │     3.50 │     0.05 │
+│                 (ms) │          │          │          │          │          │          │          │
+│         Output Token │   284.54 │   274.60 │   288.35 │   288.33 │   288.13 │   285.38 │     3.98 │
+│  Throughput Per User │          │          │          │          │          │          │          │
+│    (tokens/sec/user) │          │          │          │          │          │          │          │
+│      Output Sequence │   833.40 │   438.00 │ 2,106.00 │ 2,022.21 │ 1,268.10 │   626.50 │   465.81 │
+│      Length (tokens) │          │          │          │          │          │          │          │
+│       Input Sequence │     5.00 │     4.00 │     7.00 │     7.00 │     7.00 │     5.00 │     1.10 │
+│      Length (tokens) │          │          │          │          │          │          │          │
+│         Output Token │   527.06 │      N/A │      N/A │      N/A │      N/A │      N/A │      N/A │
+│           Throughput │          │          │          │          │          │          │          │
+│         (tokens/sec) │          │          │          │          │          │          │          │
+│   Request Throughput │     0.63 │      N/A │      N/A │      N/A │      N/A │      N/A │      N/A │
+│       (requests/sec) │          │          │          │          │          │          │          │
+│        Request Count │    10.00 │      N/A │      N/A │      N/A │      N/A │      N/A │      N/A │
+│           (requests) │          │          │          │          │          │          │          │
+└──────────────────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┘
+
+CLI Command: aiperf profile --model 'Qwen/Qwen3-0.6B' --endpoint-type 'chat' --input-file 
+'prompts.jsonl' --custom-dataset-type 'single_turn' --streaming --url 'localhost:8000' --concurrency 
+2
+Benchmark Duration: 15.81 sec
+CSV Export: 
+/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.csv
+JSON Export: 
+/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.json
+Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
 ```
 
 ---
@@ -121,21 +145,8 @@ Each entry represents a complete conversation with multiple turns.
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 cat > conversations.jsonl << 'EOF'
-{
-  "session_id": "chat_1",
-  "turns": [
-    {"text": "What is machine learning?"},
-    {"text": "Can you give me an example?"}
-  ]
-}
-{
-  "session_id": "chat_2",
-  "turns": [
-    {"text": "Explain neural networks."},
-    {"text": "How do they differ from traditional algorithms?"},
-    {"text": "Which architecture for image classification?"}
-  ]
-}
+{"session_id": "chat_1", "turns": [{"text": "What is machine learning?"}, {"text": "Can you give me an example?"}]}
+{"session_id": "chat_2", "turns": [{"text": "Explain neural networks."}, {"text": "How do they differ from traditional algorithms?"}, {"text": "Which architecture for image classification?"}]}
 EOF
 
 aiperf profile \
@@ -149,23 +160,46 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
-**Sample Output:**
+**Output:**
 ```
-INFO     Loaded 2 conversations from conversations.jsonl
-INFO     Total turns: 5
+                                     NVIDIA AIPerf | LLM Metrics                                     
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━┓
+┃                 Metric ┃      avg ┃      min ┃      max ┃      p99 ┃      p90 ┃      p50 ┃    std ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━┩
+│    Time to First Token │    23.17 │    11.83 │    56.70 │    55.34 │    43.06 │    18.00 │  13.66 │
+│                   (ms) │          │          │          │          │          │          │        │
+│   Time to Second Token │     4.77 │     2.29 │    15.41 │    14.65 │     7.73 │     3.44 │   3.74 │
+│                   (ms) │          │          │          │          │          │          │        │
+│   Time to First Output │    23.17 │    11.83 │    56.70 │    55.34 │    43.06 │    18.00 │  13.66 │
+│             Token (ms) │          │          │          │          │          │          │        │
+│   Request Latency (ms) │ 2,008.84 │ 1,348.13 │ 3,045.04 │ 3,007.53 │ 2,669.92 │ 2,082.32 │ 572.34 │
+│    Inter Token Latency │     3.50 │     3.13 │     3.67 │     3.67 │     3.62 │     3.52 │   0.14 │
+│                   (ms) │          │          │          │          │          │          │        │
+│           Output Token │   286.03 │   272.35 │   319.58 │   316.89 │   292.60 │   283.77 │  12.33 │
+│    Throughput Per User │          │          │          │          │          │          │        │
+│      (tokens/sec/user) │          │          │          │          │          │          │        │
+│ Output Sequence Length │   565.60 │   380.00 │   838.00 │   826.57 │   723.70 │   581.50 │ 150.96 │
+│               (tokens) │          │          │          │          │          │          │        │
+│  Input Sequence Length │   379.80 │     5.00 │ 1,331.00 │ 1,287.80 │   899.00 │   203.00 │ 438.88 │
+│               (tokens) │          │          │          │          │          │          │        │
+│           Output Token │   533.83 │      N/A │      N/A │      N/A │      N/A │      N/A │    N/A │
+│             Throughput │          │          │          │          │          │          │        │
+│           (tokens/sec) │          │          │          │          │          │          │        │
+│     Request Throughput │     0.94 │      N/A │      N/A │      N/A │      N/A │      N/A │    N/A │
+│         (requests/sec) │          │          │          │          │          │          │        │
+│          Request Count │    10.00 │      N/A │      N/A │      N/A │      N/A │      N/A │    N/A │
+│             (requests) │          │          │          │          │          │          │        │
+└────────────────────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴────────┘
 
-Profiling: 5/5 |████████████████████████| 100% [00:15<00:00]
-
-            NVIDIA AIPerf | LLM Metrics
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
-┃                      Metric ┃     avg ┃    min ┃     max ┃     p99 ┃     p50 ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
-│        Request Latency (ms) │ 1234.56 │ 890.12 │ 1678.90 │ 1678.90 │ 1189.45 │
-│    Time to First Token (ms) │   45.67 │  32.34 │   62.89 │   62.89 │   43.21 │
-│    Inter Token Latency (ms) │   12.34 │   9.45 │   15.67 │   15.67 │   11.89 │
-│ Output Token Count (tokens) │  102.30 │  85.00 │  135.00 │  135.00 │   98.00 │
-│  Request Throughput (req/s) │    3.45 │      - │       - │       - │       - │
-└─────────────────────────────┴─────────┴────────┴─────────┴─────────┴─────────┘
+CLI Command: aiperf profile --model 'Qwen/Qwen3-0.6B' --endpoint-type 'chat' --input-file 
+'conversations.jsonl' --custom-dataset-type 'multi_turn' --streaming --url 'localhost:8000' 
+--concurrency 2
+Benchmark Duration: 10.60 sec
+CSV Export: 
+/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.csv
+JSON Export: 
+/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.json
+Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
 ```
 
 **Key Points:**
@@ -207,30 +241,55 @@ aiperf profile \
     --endpoint-type chat \
     --input-file pool.jsonl \
     --custom-dataset-type random_pool \
-    --request-count 50 \
+    --num-conversations 50 \
+    --streaming \
     --concurrency 4 \
     --random-seed 42 \
     --url localhost:8000
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
-**Sample Output:**
+**Output:**
 ```
-INFO     Loaded 8 entries into random pool
-INFO     Will generate 50 requests by sampling with replacement
+                                     NVIDIA AIPerf | LLM Metrics                                     
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
+┃              Metric ┃      avg ┃      min ┃       max ┃      p99 ┃      p90 ┃      p50 ┃      std ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
+│ Time to First Token │    17.73 │    12.25 │     53.21 │    53.17 │    19.85 │    14.63 │     9.90 │
+│                (ms) │          │          │           │          │          │          │          │
+│      Time to Second │     3.73 │     2.20 │     10.38 │     7.68 │     4.08 │     3.66 │     1.10 │
+│          Token (ms) │          │          │           │          │          │          │          │
+│       Time to First │    17.73 │    12.25 │     53.21 │    53.17 │    19.85 │    14.63 │     9.90 │
+│   Output Token (ms) │          │          │           │          │          │          │          │
+│     Request Latency │ 3,321.54 │ 1,356.57 │ 10,393.82 │ 9,063.81 │ 5,372.92 │ 2,917.73 │ 1,644.46 │
+│                (ms) │          │          │           │          │          │          │          │
+│ Inter Token Latency │     3.81 │     3.53 │      4.17 │     4.15 │     3.97 │     3.79 │     0.12 │
+│                (ms) │          │          │           │          │          │          │          │
+│        Output Token │   262.66 │   239.55 │    283.24 │   279.36 │   270.36 │   264.13 │     8.25 │
+│ Throughput Per User │          │          │           │          │          │          │          │
+│   (tokens/sec/user) │          │          │           │          │          │          │          │
+│     Output Sequence │   861.02 │   369.00 │  2,615.00 │ 2,255.83 │ 1,306.40 │   766.00 │   404.28 │
+│     Length (tokens) │          │          │           │          │          │          │          │
+│      Input Sequence │     5.00 │     4.00 │      7.00 │     7.00 │     6.10 │     5.00 │     0.96 │
+│     Length (tokens) │          │          │           │          │          │          │          │
+│        Output Token │ 1,007.36 │      N/A │       N/A │      N/A │      N/A │      N/A │      N/A │
+│          Throughput │          │          │           │          │          │          │          │
+│        (tokens/sec) │          │          │           │          │          │          │          │
+│  Request Throughput │     1.17 │      N/A │       N/A │      N/A │      N/A │      N/A │      N/A │
+│      (requests/sec) │          │          │           │          │          │          │          │
+│       Request Count │    50.00 │      N/A │       N/A │      N/A │      N/A │      N/A │      N/A │
+│          (requests) │          │          │           │          │          │          │          │
+└─────────────────────┴──────────┴──────────┴───────────┴──────────┴──────────┴──────────┴──────────┘
 
-Profiling: 50/50 |████████████████████████| 100% [00:28<00:00]
-
-            NVIDIA AIPerf | LLM Metrics
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
-┃                      Metric ┃     avg ┃    min ┃     max ┃     p99 ┃     p50 ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
-│        Request Latency (ms) │ 1156.78 │ 845.67 │ 1598.34 │ 1578.90 │ 1123.45 │
-│    Time to First Token (ms) │   43.56 │  29.87 │   64.23 │   62.34 │   41.89 │
-│    Inter Token Latency (ms) │   11.89 │   8.56 │   15.78 │   15.23 │   11.45 │
-│ Output Token Count (tokens) │   98.50 │  76.00 │  128.00 │  125.00 │   96.00 │
-│  Request Throughput (req/s) │   17.86 │      - │       - │       - │       - │
-└─────────────────────────────┴─────────┴────────┴─────────┴─────────┴─────────┘
+CLI Command: aiperf profile --model 'Qwen/Qwen3-0.6B' --endpoint-type 'chat' --input-file 
+'pool.jsonl' --custom-dataset-type 'random_pool' --num-conversations 50 --streaming --concurrency 4 
+--random-seed 42 --url 'localhost:8000'
+Benchmark Duration: 42.74 sec
+CSV Export: 
+/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/profile_export_aiperf.csv
+JSON Export: 
+/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/profile_export_aiperf.json
+Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/logs/aiperf.log
 ```
 
 **Behavior:**
