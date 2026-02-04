@@ -1316,9 +1316,10 @@ class TestMooncakeTraceSynthesisIntegration:
         self, create_jsonl_file, mock_prompt_generator
     ):
         """Test that load_dataset applies synthesis when configured."""
+        # input_length must be >= len(hash_ids) * block_size (512)
         content = [
-            '{"input_length": 512, "output_length": 64, "hash_ids": [1, 2], "timestamp": 1000}',
-            '{"input_length": 768, "output_length": 128, "hash_ids": [1, 2, 3], "timestamp": 2000}',
+            '{"input_length": 1024, "output_length": 64, "hash_ids": [1, 2], "timestamp": 1000}',
+            '{"input_length": 1536, "output_length": 128, "hash_ids": [1, 2, 3], "timestamp": 2000}',
         ]
         filename = create_jsonl_file(content)
 

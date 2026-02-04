@@ -35,8 +35,8 @@ class TestPrefixAnalyzer:
         stats = analyzer.analyze_traces(traces)
 
         assert stats.total_requests == 1
-        assert stats.min_isl == 100
-        assert stats.max_isl == 100
+        assert stats.min_isl == 1024
+        assert stats.max_isl == 1024
 
     def test_analyze_multiple_traces(self, sample_trace_data) -> None:
         """Test analyzing multiple traces."""
@@ -44,8 +44,8 @@ class TestPrefixAnalyzer:
         stats = analyzer.analyze_traces(sample_trace_data)
 
         assert stats.total_requests == 5
-        assert stats.min_isl == 100
-        assert stats.max_isl == 200
+        assert stats.min_isl == 1024
+        assert stats.max_isl == 1536
 
     def test_analyze_file(self, trace_file_simple) -> None:
         """Test analyzing traces from file."""
@@ -63,9 +63,9 @@ class TestPrefixAnalyzer:
         analyzer = PrefixAnalyzer()
         stats = analyzer.analyze_traces(sample_trace_data)
 
-        assert stats.min_isl == 100
-        assert stats.max_isl == 200
-        assert 100 <= stats.avg_isl <= 200
+        assert stats.min_isl == 1024
+        assert stats.max_isl == 1536
+        assert 1024 <= stats.avg_isl <= 1536
 
         assert stats.min_osl == 20
         assert stats.max_osl == 40

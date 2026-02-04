@@ -54,11 +54,17 @@ class TestSynthesizer:
         """Test that synthesis preserves session_id."""
         traces = [
             {
-                "input_length": 100,
+                "input_length": 1024,
                 "output_length": 20,
                 "hash_ids": [1, 2],
                 "session_id": "test-session",
-            }
+            },
+            {
+                "input_length": 1024,
+                "output_length": 20,
+                "hash_ids": [1, 3],
+                "session_id": "test-session",
+            },
         ]
         synthesizer = Synthesizer()
         synthetic = synthesizer.synthesize_traces(traces)
@@ -287,7 +293,7 @@ class TestSynthesizer:
         The root multiplier offsets must account for these extended IDs to prevent collisions.
         """
         traces = [
-            {"input_length": 100, "output_length": 20, "hash_ids": [1, 2]}
+            {"input_length": 1024, "output_length": 20, "hash_ids": [1, 2]}
             for _ in range(100)
         ]
         params = SynthesisParams(prefix_len_multiplier=2.0, prefix_root_multiplier=3)
@@ -383,11 +389,11 @@ class TestSynthesizeGroupedTraces:
         """Test that session grouping is preserved through synthesis."""
         data = {
             "session-a": [
-                {"input_length": 100, "output_length": 20, "hash_ids": [1, 2]},
-                {"input_length": 150, "output_length": 30, "hash_ids": [1, 2, 3]},
+                {"input_length": 1024, "output_length": 20, "hash_ids": [1, 2]},
+                {"input_length": 1536, "output_length": 30, "hash_ids": [1, 2, 3]},
             ],
             "session-b": [
-                {"input_length": 200, "output_length": 40, "hash_ids": [4, 5]},
+                {"input_length": 1024, "output_length": 40, "hash_ids": [4, 5]},
             ],
         }
         synthesizer = Synthesizer()
