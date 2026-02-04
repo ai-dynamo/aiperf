@@ -85,6 +85,12 @@ class SynthesisParams(AIPerfBaseModel):
     block_size: int = Field(
         default=InputTokensDefaults.BLOCK_SIZE, ge=1, description="KV cache page size"
     )
+    # Only used for round-trip testing. Typically leave False as rehashing is
+    # expensive and unnecessary - the output hash_ids are already valid.
+    renormalize_hash_ids: bool = Field(
+        default=False,
+        description="Whether to apply rolling hash renormalization to output hash_ids",
+    )
 
     @classmethod
     def from_synthesis_config(
