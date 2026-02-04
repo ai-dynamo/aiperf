@@ -182,6 +182,21 @@ endpoint:
       tokenizes_input: true
       metrics_title: LLM Metrics
 
+  chat_embeddings:
+    class: aiperf.endpoints.chat_embeddings:ChatEmbeddingsEndpoint
+    description: |
+      Chat-style embeddings endpoint for vLLM multimodal embedding models (e.g., VLM2Vec).
+      This is required for vLLM as it is the only way to obtain multimodal embeddings -
+      the request uses chat messages format (with images/text) while the response returns
+      embeddings. Uses /v1/embeddings path.
+    metadata:
+      endpoint_path: /v1/embeddings
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: true
+      supports_images: true
+      metrics_title: Embeddings Metrics
+
   embeddings:
     class: aiperf.endpoints.openai_embeddings:EmbeddingsEndpoint
     description: |

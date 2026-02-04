@@ -45,6 +45,15 @@ GPU_TELEMETRY_METRICS_CONFIG: list[tuple[str, str, MetricUnitT]] = [
     ("Power Violation", "power_violation", MetricTimeUnit.MICROSECONDS),
 ]
 
+# Metrics that are cumulative counters (need delta calculation).
+# These metrics accumulate over time (e.g., total energy consumed since boot),
+# so we compute the delta between baseline and final values rather than statistics.
+GPU_TELEMETRY_COUNTER_METRICS: set[str] = {
+    "energy_consumption",
+    "xid_errors",
+    "power_violation",
+}
+
 
 def get_gpu_telemetry_metrics_config() -> list[tuple[str, str, MetricUnitT]]:
     """Get the current GPU telemetry metrics configuration."""

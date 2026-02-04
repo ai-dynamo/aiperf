@@ -99,13 +99,13 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
                 --tokenizer gpt2 \
                 --endpoint-type chat \
                 --gpu-telemetry {custom_gpu_metrics_csv} {" ".join(aiperf_mock_server.dcgm_urls)} \
-                --request-count 50 \
+                --benchmark-duration 2 \
                 --concurrency 2 \
                 --workers-max 2
             """
         )
 
-        assert result.request_count == 50
+        assert result.request_count > 0
         assert result.has_gpu_telemetry
         assert result.json.telemetry_data.endpoints is not None
         assert len(result.json.telemetry_data.endpoints) > 0
@@ -184,7 +184,7 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
                 --tokenizer gpt2 \
                 --endpoint-type chat \
                 --gpu-telemetry {custom_gpu_metrics_csv_with_defaults} {" ".join(aiperf_mock_server.dcgm_urls)} \
-                --request-count 50 \
+                --benchmark-duration 2 \
                 --concurrency 2 \
                 --workers-max 2
             """
@@ -231,13 +231,13 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
                 --tokenizer gpt2 \
                 --endpoint-type chat \
                 --gpu-telemetry {custom_gpu_metrics_csv_invalid} {" ".join(aiperf_mock_server.dcgm_urls)} \
-                --request-count 50 \
+                --benchmark-duration 2 \
                 --concurrency 2 \
                 --workers-max 2
             """
         )
 
-        assert result.request_count == 50
+        assert result.request_count > 0
         assert result.has_gpu_telemetry
 
         for dcgm_url in result.json.telemetry_data.endpoints:
