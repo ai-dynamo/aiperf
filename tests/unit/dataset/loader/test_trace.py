@@ -992,11 +992,14 @@ class TestMooncakeTraceSynthesisIntegration:
 
     @pytest.fixture
     def sample_trace_data(self) -> dict[str, list[MooncakeTrace]]:
-        """Sample trace data grouped by session."""
+        """Sample trace data grouped by session.
+
+        Note: input_length must be >= len(hash_ids) * block_size (512) for consistency.
+        """
         return {
             "session-1": [
-                MooncakeTrace(input_length=512, output_length=64, hash_ids=[1, 2]),
-                MooncakeTrace(input_length=768, output_length=128, hash_ids=[1, 2, 3]),
+                MooncakeTrace(input_length=1024, output_length=64, hash_ids=[1, 2]),
+                MooncakeTrace(input_length=1536, output_length=128, hash_ids=[1, 2, 3]),
             ],
             "session-2": [
                 MooncakeTrace(input_length=1024, output_length=256, hash_ids=[4, 5]),
