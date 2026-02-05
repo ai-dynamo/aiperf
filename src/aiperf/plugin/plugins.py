@@ -25,7 +25,7 @@ from aiperf.plugin.constants import (
     SUPPORTED_SCHEMA_VERSIONS,
 )
 from aiperf.plugin.extensible_enums import ExtensibleStrEnum, _normalize_name
-from aiperf.plugin.schema import (
+from aiperf.plugin.schema.schemas import (
     EndpointMetadata,
     PlotMetadata,
     PluginsManifest,
@@ -420,7 +420,9 @@ class _PluginRegistry:
         self.register_type(entry)
 
         _logger.debug(
-            lambda: f"Registered dynamic type {category}:{name} -> {cls.__name__} (priority={priority})"
+            lambda: (
+                f"Registered dynamic type {category}:{name} -> {cls.__name__} (priority={priority})"
+            )
         )
 
     def unregister(
@@ -817,7 +819,9 @@ class _PluginRegistry:
             self._types[category][name] = entry
             self._type_entries_by_class_path[entry.class_path] = entry
             _logger.debug(
-                lambda e=entry: f"Registered {e.category}:{e.name} from {e.package} (priority={e.priority})"
+                lambda e=entry: (
+                    f"Registered {e.category}:{e.name} from {e.package} (priority={e.priority})"
+                )
             )
             return
 

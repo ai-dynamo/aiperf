@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from aiperf.common.config import (
+from aiperf.common.config.config_validators import (
     coerce_value,
     parse_str_as_numeric_dict,
     parse_str_or_dict_as_tuple_list,

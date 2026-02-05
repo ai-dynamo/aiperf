@@ -9,12 +9,10 @@ from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.dataset.generator import (
-    AudioGenerator,
-    ImageGenerator,
-    PromptGenerator,
-    VideoGenerator,
-)
+from aiperf.dataset.generator.audio import AudioGenerator
+from aiperf.dataset.generator.image import ImageGenerator
+from aiperf.dataset.generator.prompt import PromptGenerator
+from aiperf.dataset.generator.video import VideoGenerator
 
 
 class BaseDatasetComposer(AIPerfLoggerMixin, ABC):

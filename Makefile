@@ -17,11 +17,11 @@
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install install-app docker docker-run first-time-setup \
-		test-verbose init-files setup-venv install-mock-server test-ci test-all \
+		test-verbose setup-venv install-mock-server test-ci test-all \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
 		test-component-integration test-component-integration-ci test-component-integration-verbose \
-		add-copyright init-files generate-cli-docs generate-env-vars-docs generate-plugin-enums \
+		add-copyright generate-cli-docs generate-env-vars-docs generate-plugin-enums \
 		generate-plugin-overloads check-plugin-overloads generate-plugin-schemas \
 		generate-all-plugin-files generate-all-docs test-stress stress-tests internal-help help
 
@@ -95,9 +95,6 @@ internal-help:
 	} | sort
 	@printf "────────────────────────────────────────────────────────────────────────────\n"
 
-init-files: #? run mkinit to generate the __init__.py files.
-	$(activate_venv) && ./tools/generate_init_files.py
-
 ruff lint: #? run the ruff linters
 	$(activate_venv) && ruff check . $(args)
 
@@ -115,6 +112,15 @@ test: #? run the tests using pytest-xdist.
 
 test-verbose: #? run the tests using pytest-xdist with DEBUG logging.
 	$(activate_venv) && pytest tests/unit -n auto -v -s --log-cli-level=DEBUG -m 'not integration and not performance and not component_integration'
+
+test-imports: #? verify all modules (src and tests) can be imported.
+	$(activate_venv) && pytest tests/unit/test_imports.py -q $(args)
+
+test-imports-src: #? verify all modules in src/aiperf can be imported.
+	$(activate_venv) && pytest tests/unit/test_imports.py::test_all_aiperf_modules_can_be_imported -q $(args)
+
+test-imports-tests: #? verify all modules in tests/ can be imported.
+	$(activate_venv) && pytest tests/unit/test_imports.py::test_all_test_modules_can_be_imported -q $(args)
 
 coverage: #? run the tests and generate an html coverage report.
 	$(activate_venv) && pytest tests/unit -n auto --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance and not component_integration' $(args)
@@ -216,7 +222,7 @@ stress-tests test-stress: #? run stress tests with with AIPerf Mock Server.
 
 integration-tests test-integration: #? run integration tests with with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running integration tests with AIPerf Mock Server...$(reset)\n"
-	$(activate_venv) && pytest tests/integration/ -m 'integration and not stress and not performance' -n auto -v --tb=short --no-looptime $(args)
+	$(activate_venv) && pytest tests/integration/ -m 'integration and not stress and not performance' -n auto --tb=short --no-looptime $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server integration tests passed!$(reset)\n"
 
 integration-tests-ci test-integration-ci: #? run integration tests with with AIPerf Mock Server for CI (parallel, verbose, no performance and no ffmpeg tests).

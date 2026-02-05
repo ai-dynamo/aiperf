@@ -40,7 +40,7 @@ def _stable_hash(data: str | tuple) -> int:
 
 
 if TYPE_CHECKING:
-    from aiperf.dataset.generator import PromptGenerator
+    from aiperf.dataset.generator.prompt import PromptGenerator
 
 
 class RollingHasher:

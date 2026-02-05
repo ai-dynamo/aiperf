@@ -6,13 +6,11 @@ This package contains tools for generating:
 - Plugin system artifacts (schemas, enums, overloads)
 - CLI documentation
 - Environment variable documentation
-- __init__.py files (via mkinit)
 
 Usage:
     ./tools/generate_plugin_artifacts.py
     ./tools/generate_cli_docs.py
     ./tools/generate_env_vars_docs.py
-    ./tools/generate_init_files.py
 """
 
 from tools._core import (
