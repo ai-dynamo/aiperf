@@ -94,12 +94,11 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
         """Verify that the class is a subclass of BaseRecordMetric, BaseAggregateMetric, or BaseDerivedMetric.
         This is done to ensure that the class is a valid metric type.
         """
-        # Note: this is valid because the below imports are abstract, so they will not get here
-        from aiperf.metrics import (
-            BaseAggregateMetric,
-            BaseDerivedMetric,
-            BaseRecordMetric,
-        )
+        # Use direct imports to avoid circular import issues during metric discovery
+        # (aiperf.metrics.__init__ may not be fully loaded when this is called)
+        from aiperf.metrics.base_aggregate_metric import BaseAggregateMetric
+        from aiperf.metrics.base_derived_metric import BaseDerivedMetric
+        from aiperf.metrics.base_record_metric import BaseRecordMetric
 
         # Enforce that concrete subclasses are a subclass of BaseRecordMetric, BaseAggregateMetric, or BaseDerivedMetric
         valid_base_classes = {
