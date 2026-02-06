@@ -1,12 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from contextlib import nullcontext
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
-from aiperf.common.enums import CommandType
+from aiperf.common.enums import CommandType, ServerMetricsDiscoveryMode
 from aiperf.common.messages import ProfileConfigureCommand, ProfileStartCommand
 from aiperf.common.messages.server_metrics_messages import ServerMetricsRecordMessage
 from aiperf.common.models import ErrorDetails
@@ -843,3 +844,187 @@ class TestCallbackEdgeCases:
             endpoints_configured=[],
             endpoints_reachable=[],
         )
+
+
+class TestMetricsDiscovery:
+    """Test metrics discovery functionality."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "mode, in_k8s, expected, label_selector, namespace",
+        [
+            (ServerMetricsDiscoveryMode.DISABLED, None, [], None, None),
+            (
+                ServerMetricsDiscoveryMode.KUBERNETES,
+                True,
+                ["http://pod-1.default.svc:8080/metrics"],
+                "app=inference",
+                "test-namespace",
+            ),
+            (ServerMetricsDiscoveryMode.KUBERNETES, False, [], None, None),
+            (
+                ServerMetricsDiscoveryMode.AUTO,
+                True,
+                ["http://auto-discovered:8080/metrics"],
+                None,
+                None,
+            ),
+            (ServerMetricsDiscoveryMode.AUTO, False, [], None, None),
+        ],
+    )
+    async def test_server_metrics_discovery_modes(
+        self,
+        service_config: ServiceConfig,
+        mode,
+        in_k8s,
+        expected,
+        label_selector,
+        namespace,
+    ):
+        """Test metrics discovery behavior across modes and environments."""
+        user_config = UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.CHAT,
+                urls=["http://localhost:8000/v1/chat"],
+            ),
+            server_metrics_discovery_mode=mode,
+            server_metrics_label_selector=label_selector,
+            server_metrics_namespace=namespace,
+        )
+
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config,
+        )
+
+        if in_k8s is not None:
+            in_k8s_ctx = patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=in_k8s,
+            )
+            discover_ctx = patch(
+                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                return_value=expected,
+            )
+        else:
+            in_k8s_ctx = nullcontext()
+            discover_ctx = nullcontext()
+
+        with in_k8s_ctx, discover_ctx as mock_discover:
+            result = await manager._run_metrics_discovery()
+            assert result == expected
+            if in_k8s is None:
+                return
+            if in_k8s:
+                mock_discover.assert_called_once()
+                if mode == ServerMetricsDiscoveryMode.KUBERNETES:
+                    call_args = mock_discover.call_args[0][0]
+                    assert call_args.namespace == namespace
+                    assert call_args.label_selector == label_selector
+            else:
+                mock_discover.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_configure_integrates_discovery(
+        self,
+        service_config: ServiceConfig,
+    ):
+        """Test that configure runs discovery and adds endpoints."""
+        user_config = UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.CHAT,
+                urls=["http://localhost:8000/v1/chat"],
+            ),
+            server_metrics_discovery_mode=ServerMetricsDiscoveryMode.KUBERNETES,
+        )
+
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config,
+        )
+
+        initial_count = len(manager._server_metrics_endpoints)
+
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                return_value=["http://discovered:8080/metrics"],
+            ),
+            patch(
+                "aiperf.server_metrics.manager.ServerMetricsDataCollector"
+            ) as mock_collector_class,
+        ):
+            mock_collector = AsyncMock()
+            mock_collector.is_url_reachable = AsyncMock(return_value=True)
+            mock_collector_class.return_value = mock_collector
+
+            await manager._profile_configure_command(
+                ProfileConfigureCommand(
+                    service_id=manager.id,
+                    command=CommandType.PROFILE_CONFIGURE,
+                    config={},
+                )
+            )
+
+            assert len(manager._server_metrics_endpoints) == initial_count + 1
+            assert "http://discovered:8080/metrics" in manager._server_metrics_endpoints
+
+    @pytest.mark.asyncio
+    async def test_configure_handles_discovery_exception(
+        self,
+        service_config: ServiceConfig,
+    ):
+        """Test that configure handles discovery exceptions gracefully."""
+        user_config = UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.CHAT,
+                urls=["http://localhost:8000/v1/chat"],
+            ),
+            server_metrics_discovery_mode=ServerMetricsDiscoveryMode.KUBERNETES,
+        )
+
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config,
+        )
+
+        initial_endpoints = manager._server_metrics_endpoints.copy()
+
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                side_effect=Exception("K8s API error"),
+            ),
+            patch(
+                "aiperf.server_metrics.manager.ServerMetricsDataCollector"
+            ) as mock_collector_class,
+        ):
+            mock_collector = AsyncMock()
+            mock_collector.is_url_reachable = AsyncMock(return_value=True)
+            mock_collector_class.return_value = mock_collector
+
+            await manager._profile_configure_command(
+                ProfileConfigureCommand(
+                    service_id=manager.id,
+                    command=CommandType.PROFILE_CONFIGURE,
+                    config={},
+                )
+            )
+
+            # Should still have initial endpoints and continue
+            assert manager._server_metrics_endpoints == initial_endpoints
+            assert len(manager._collectors) > 0

@@ -25,6 +25,7 @@ from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
 from aiperf.common.enums import (
     GPUTelemetryMode,
+    ServerMetricsDiscoveryMode,
     ServerMetricsFormat,
 )
 from aiperf.common.utils import load_json_str
@@ -562,6 +563,54 @@ class UserConfig(BaseConfig):
             group=Groups.SERVER_METRICS,
         ),
     ] = ServerMetricsDefaults.DEFAULT_FORMATS
+
+    server_metrics_discovery_mode: Annotated[
+        ServerMetricsDiscoveryMode,
+        Field(
+            description=(
+                "Mode for discovering metrics endpoints in distributed environments. "
+                "'auto' detects environment and uses appropriate discovery (K8s if in-cluster). "
+                "'kubernetes' uses K8s API to find pods with prometheus.io/scrape annotations "
+                "or nvidia.com/metrics-enabled labels. "
+                "'disabled' uses only explicitly provided --server-metrics URLs."
+            ),
+        ),
+        CLIParameter(
+            name=("--server-metrics-discovery-mode",),
+            group=Groups.SERVER_METRICS,
+        ),
+    ] = ServerMetricsDiscoveryMode.AUTO
+
+    server_metrics_label_selector: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Kubernetes label selector for metrics endpoint discovery. "
+                "Used when --server-metrics-discovery-mode is 'auto' or 'kubernetes'. "
+                "Example: 'app=vllm,env=prod' to find pods with matching labels. "
+                "Applied in addition to built-in Dynamo and Prometheus discovery."
+            ),
+        ),
+        CLIParameter(
+            name=("--server-metrics-label-selector",),
+            group=Groups.SERVER_METRICS,
+        ),
+    ] = None
+
+    server_metrics_namespace: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Kubernetes namespace for metrics endpoint discovery. "
+                "If not specified, searches all namespaces (requires cluster-wide permissions). "
+                "Example: 'inference' to search only the inference namespace."
+            ),
+        ),
+        CLIParameter(
+            name=("--server-metrics-namespace",),
+            group=Groups.SERVER_METRICS,
+        ),
+    ] = None
 
     _server_metrics_urls: list[str] = []
 

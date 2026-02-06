@@ -5,7 +5,11 @@ import asyncio
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import CommAddress, CommandType
+from aiperf.common.enums import (
+    CommAddress,
+    CommandType,
+    ServerMetricsDiscoveryMode,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_stop
 from aiperf.common.messages import (
@@ -19,6 +23,11 @@ from aiperf.common.messages import (
 from aiperf.common.metric_utils import normalize_metrics_endpoint_url
 from aiperf.common.models import ErrorDetails, ServerMetricsRecord
 from aiperf.common.protocols import PushClientProtocol
+from aiperf.server_metrics.discovery.kubernetes import (
+    KubernetesDiscoveryConfig,
+    discover_kubernetes_endpoints,
+    is_running_in_kubernetes,
+)
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
 
 
@@ -61,6 +70,11 @@ class ServerMetricsManager(BaseComponentService):
         self._collectors: dict[str, ServerMetricsDataCollector] = {}
         self._server_metrics_disabled = user_config.server_metrics_disabled
 
+        # Store discovery configuration
+        self._discovery_mode = user_config.server_metrics_discovery_mode
+        self._label_selector = user_config.server_metrics_label_selector
+        self._namespace = user_config.server_metrics_namespace
+
         # Collect metrics from all endpoint URLs (for multi-URL load balancing)
         self._server_metrics_endpoints: list[str] = []
         for url in user_config.endpoint.urls:
@@ -68,7 +82,7 @@ class ServerMetricsManager(BaseComponentService):
             if normalized_url not in self._server_metrics_endpoints:
                 self._server_metrics_endpoints.append(normalized_url)
         self.info(
-            f"Server Metrics: Discovered {len(self._server_metrics_endpoints)} endpoints: {self._server_metrics_endpoints}"
+            f"Server Metrics: Discovered {len(self._server_metrics_endpoints)} endpoints from inference URLs"
         )
 
         # Add user-specified URLs if provided
@@ -107,6 +121,23 @@ class ServerMetricsManager(BaseComponentService):
                 endpoints_reachable=[],
             )
             return
+
+        # Run auto-discovery if enabled
+        if self._discovery_mode != ServerMetricsDiscoveryMode.DISABLED:
+            try:
+                discovered_urls = await self._run_metrics_discovery()
+            except Exception as e:
+                self.warning(f"Server Metrics: Discovery failed: {e}")
+                discovered_urls = []
+            added = 0
+            for url in discovered_urls:
+                # Discovered URLs are already fully qualified metrics endpoints.
+                discovered_url = url
+                if discovered_url not in self._server_metrics_endpoints:
+                    self._server_metrics_endpoints.append(discovered_url)
+                    added += 1
+            if added > 0:
+                self.info(f"Server Metrics: Auto-discovery added {added} endpoint(s)")
 
         self._collectors.clear()
 
@@ -430,3 +461,37 @@ class ServerMetricsManager(BaseComponentService):
 
         except Exception as e:
             self.error(f"Failed to send server metrics status message: {e}")
+
+    async def _run_metrics_discovery(self) -> list[str]:
+        """Run metrics endpoint auto-discovery based on configuration.
+
+        Returns:
+            List of discovered endpoint URLs.
+        """
+        if self._discovery_mode == ServerMetricsDiscoveryMode.DISABLED:
+            return []
+
+        if self._discovery_mode == ServerMetricsDiscoveryMode.KUBERNETES:
+            if not is_running_in_kubernetes():
+                self.warning(
+                    "Server Metrics: Kubernetes discovery requested but not in K8s cluster"
+                )
+                return []
+            self.info("Server Metrics: Running Kubernetes discovery...")
+            cfg = KubernetesDiscoveryConfig(
+                namespace=self._namespace,
+                label_selector=self._label_selector,
+            )
+            return await discover_kubernetes_endpoints(cfg)
+
+        # AUTO mode: try K8s if available
+        if is_running_in_kubernetes():
+            self.info("Server Metrics: Running Kubernetes auto-discovery...")
+            cfg = KubernetesDiscoveryConfig(
+                namespace=self._namespace,
+                label_selector=self._label_selector,
+            )
+            return await discover_kubernetes_endpoints(cfg)
+
+        self.debug(lambda: "Server Metrics: Not in K8s, skipping auto-discovery")
+        return []

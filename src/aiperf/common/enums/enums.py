@@ -311,6 +311,44 @@ class PublicDatasetType(CaseInsensitiveStrEnum):
     """ShareGPT dataset from HuggingFace. Multi-turn conversational dataset with user/assistant exchanges."""
 
 
+class ServerMetricsDiscoveryMode(CaseInsensitiveStrEnum):
+    """Mode for discovering metrics endpoints in distributed environments.
+
+    Controls how AIPerf discovers Prometheus /metrics endpoints for server metrics collection.
+    """
+
+    AUTO = "auto"
+    """Automatically detect environment and use appropriate discovery method.
+    Tries Kubernetes first (if running in-cluster), then falls back to manual configuration."""
+
+    KUBERNETES = "kubernetes"
+    """Use Kubernetes API to discover pods with prometheus.io/scrape annotations
+    or nvidia.com/metrics-enabled labels."""
+
+    DISABLED = "disabled"
+    """Disable automatic discovery. Only use explicitly provided --server-metrics URLs."""
+
+
+class ServerMetricsDiscoverySource(CaseInsensitiveStrEnum):
+    """Source that discovered a metrics endpoint.
+
+    Indicates which discovery mechanism found the endpoint, useful for debugging
+    and understanding the discovery priority order.
+    """
+
+    DYNAMO = "dynamo"
+    """Discovered via nvidia.com/metrics-enabled label (Dynamo operator)."""
+
+    PROMETHEUS = "prometheus"
+    """Discovered via prometheus.io/scrape annotation (industry standard)."""
+
+    SELECTOR = "selector"
+    """Discovered via user-provided --server-metrics-label-selector."""
+
+    MANUAL = "manual"
+    """Explicitly provided via --server-metrics URL."""
+
+
 class ServerMetricsFormat(CaseInsensitiveStrEnum):
     """Format options for server metrics export.
 

@@ -756,6 +756,26 @@ Specify which output formats to generate for server metrics. Multiple formats ca
 | `jsonl` |  | Export raw time-series records in line-delimited JSON format. Best for: Time-series analysis, debugging, visualizing metric evolution. Warning: Can generate very large files for long-running benchmarks. |
 | `parquet` |  | Export raw time-series data with delta calculations in Parquet columnar format. Best for: Analytics with DuckDB/pandas/Polars, efficient storage, SQL queries. Includes cumulative deltas from reference point for counters and histograms. |
 
+#### `--server-metrics-discovery-mode` `<str>`
+
+Mode for discovering metrics endpoints in distributed environments. 'auto' detects environment and uses appropriate discovery (K8s if in-cluster). 'kubernetes' uses K8s API to find pods with prometheus.io/scrape annotations or nvidia.com/metrics-enabled labels. 'disabled' uses only explicitly provided --server-metrics URLs.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `auto` | _default_ | Automatically detect environment and use appropriate discovery method. Tries Kubernetes first (if running in-cluster), then falls back to manual configuration. |
+| `kubernetes` |  | Use Kubernetes API to discover pods with prometheus.io/scrape annotations or nvidia.com/metrics-enabled labels. |
+| `disabled` |  | Disable automatic discovery. Only use explicitly provided --server-metrics URLs. |
+
+#### `--server-metrics-label-selector` `<str>`
+
+Kubernetes label selector for metrics endpoint discovery. Used when --server-metrics-discovery-mode is 'auto' or 'kubernetes'. Example: 'app=vllm,env=prod' to find pods with matching labels. Applied in addition to built-in Dynamo and Prometheus discovery.
+
+#### `--server-metrics-namespace` `<str>`
+
+Kubernetes namespace for metrics endpoint discovery. If not specified, searches all namespaces (requires cluster-wide permissions). Example: 'inference' to search only the inference namespace.
+
 ### ZMQ Communication
 
 #### `--zmq-host` `<str>`

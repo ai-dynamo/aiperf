@@ -57,6 +57,7 @@ dependencies = [
   "tqdm>=4.67.1",
   "transformers>=4.56.0", # Lowest compatible version for dynamo backends
   "uvloop~=0.21.0; platform_system != 'Windows'",
+  "kubernetes>=31.0.0",  # K8s API client for metrics endpoint discovery
 ]
 
 # CLI Entrypoints
