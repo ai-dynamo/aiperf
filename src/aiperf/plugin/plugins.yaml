@@ -351,6 +351,15 @@ dataset_composer:
 # Auto-detection: the custom composer tries loaders in priority order based on can_load().
 # =============================================================================
 custom_dataset_loader:
+  aa_rwlt:
+    class: aiperf.dataset.loader.aa_rwlt:AARWLTDatasetLoader
+    description: |
+      AA-RWLT agentic benchmark dataset loader for pre-recorded multi-turn
+      trajectories with cumulative message history. Supports tool calls and
+      reasoning content in messages. Each trajectory is processed sequentially
+      with zero inter-turn delay, and LLM responses are discarded since the
+      dataset contains pre-recorded responses for subsequent turns.
+
   mooncake_trace:
     class: aiperf.dataset.loader.mooncake_trace:MooncakeTraceDatasetLoader
     description: |

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Literal, TypeVar
+from typing import Any, Literal, TypeVar
 
 from pydantic import Field, model_validator
 
@@ -251,7 +251,31 @@ class MooncakeTrace(AIPerfBaseModel):
         return self
 
 
+class AARWLTEntry(AIPerfBaseModel):
+    """Schema for AA-RWLT agentic benchmark entries.
+
+    Each entry represents one step in a trajectory with cumulative message history.
+    Entries with the same conversation_id form a trajectory, ordered by conversation_idx.
+    """
+
+    type: Literal[CustomDatasetType.AA_RWLT] = CustomDatasetType.AA_RWLT
+    conversation_id: str = Field(..., description="Trajectory identifier.")
+    conversation_idx: int = Field(
+        ...,
+        ge=0,
+        description="Step index in the trajectory (0-based, sequential, no gaps).",
+    )
+    messages: list[dict[str, Any]] = Field(
+        ..., min_length=1, description="Cumulative message history for this step."
+    )
+    tools: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Tool definitions for this conversation.",
+    )
+
+
 CustomDatasetT = TypeVar(
-    "CustomDatasetT", bound=SingleTurn | MultiTurn | RandomPool | MooncakeTrace
+    "CustomDatasetT",
+    bound=SingleTurn | MultiTurn | RandomPool | MooncakeTrace | AARWLTEntry,
 )
 """A union type of all custom data types."""

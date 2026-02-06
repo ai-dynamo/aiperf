@@ -55,7 +55,7 @@ ComposerType = plugins.create_enum(PluginType.DATASET_COMPOSER, "ComposerType")
 
 CustomDatasetTypeStr: TypeAlias = str
 CustomDatasetType = plugins.create_enum(PluginType.CUSTOM_DATASET_LOADER, "CustomDatasetType")
-"""Dynamic enum for custom dataset loader. Example: CustomDatasetType.MOONCAKE_TRACE, CustomDatasetType.MULTI_TURN, CustomDatasetType.RANDOM_POOL"""
+"""Dynamic enum for custom dataset loader. Example: CustomDatasetType.AA_RWLT, CustomDatasetType.MOONCAKE_TRACE, CustomDatasetType.MULTI_TURN"""
 
 EndpointTypeStr: TypeAlias = str
 EndpointType = plugins.create_enum(PluginType.ENDPOINT, "EndpointType")

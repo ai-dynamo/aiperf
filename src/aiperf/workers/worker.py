@@ -477,7 +477,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             if record.error is not None:
                 credit_context.error = record.error
 
-            if resp_turn := await self._process_response(record):
+            if (
+                resp_turn := await self._process_response(record)
+            ) and not session.conversation.discard_assistant_response:
                 session.store_response(resp_turn)
 
         except asyncio.CancelledError:
@@ -535,6 +537,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             system_message=system_message,
             user_context_message=user_context_message,
             is_final_turn=credit.is_final_turn,
+            tools=session.conversation.tools,
             # Use session's url_index to ensure all turns hit the same backend
             url_index=session.url_index,
         )

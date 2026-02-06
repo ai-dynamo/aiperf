@@ -40,9 +40,14 @@ class ChatEndpoint(BaseEndpoint):
 
         turns = request_info.turns
         model_endpoint = request_info.model_endpoint
-        messages = self._create_messages(
-            turns, request_info.system_message, request_info.user_context_message
-        )
+
+        current_turn = turns[-1]
+        if current_turn.raw_messages is not None:
+            messages = current_turn.raw_messages
+        else:
+            messages = self._create_messages(
+                turns, request_info.system_message, request_info.user_context_message
+            )
 
         payload = {
             "messages": messages,
@@ -57,6 +62,9 @@ class ChatEndpoint(BaseEndpoint):
                 else "max_completion_tokens"
             )
             payload[token_field] = turns[-1].max_tokens
+
+        if request_info.tools:
+            payload["tools"] = request_info.tools
 
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)

@@ -482,6 +482,10 @@ class RequestInfo(AIPerfBaseModel):
         description="Whether this is the final turn in the conversation. "
         "Used by per-conversation connection strategy to release the connection lease.",
     )
+    tools: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Tool definitions to include in the API request payload.",
+    )
     url_index: int | None = Field(
         default=None,
         ge=0,
