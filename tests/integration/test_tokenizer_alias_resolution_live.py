@@ -7,6 +7,8 @@ These tests make REAL network calls to HuggingFace Hub to verify alias resolutio
 Run with: uv run pytest tests/integration/test_tokenizer_alias_resolution_live.py -v
 """
 
+import os
+
 import pytest
 
 from aiperf.common.tokenizer import Tokenizer
@@ -98,7 +100,14 @@ EDGE_CASE_INVALID = ["", "a", "this-model-does-not-exist-xyz-123", "https://evil
 
 @pytest.fixture(autouse=True)
 def ensure_online_mode(monkeypatch):
-    """Ensure HuggingFace offline mode is disabled for these tests."""
+    """Ensure HuggingFace offline mode is disabled for these tests.
+
+    Requires RUN_HF_INTEGRATION_TESTS=1 to opt in to live HF network calls.
+    """
+    if not os.getenv("RUN_HF_INTEGRATION_TESTS"):
+        pytest.skip(
+            "skipping HuggingFace live tests; set RUN_HF_INTEGRATION_TESTS=1 to enable"
+        )
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
     monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
 

@@ -94,6 +94,12 @@ _INSIGHTS: dict[str, TokenizerErrorInsight] = {
         investigation=["Check error message for details"],
         fixes=["Clear cache and retry", "Check network connectivity"],
     ),
+    "AmbiguousTokenizerNameError": TokenizerErrorInsight(
+        title="Ambiguous Tokenizer Name",
+        causes=["Name matched multiple HuggingFace tokenizers"],
+        investigation=["Check error message for suggested matches"],
+        fixes=["Use full ID: [green]--tokenizer org-name/model-name[/green]"],
+    ),
 }
 
 _FALLBACK_INSIGHT = TokenizerErrorInsight(
@@ -122,6 +128,7 @@ _TOKENIZER_EXCEPTION_TYPES = {
     "RepositoryNotFoundError",
     "HfHubHTTPError",
     "TokenizerError",
+    "AmbiguousTokenizerNameError",
 }
 
 _EXPLANATION = (
@@ -238,15 +245,20 @@ def display_tokenizer_ambiguous_name(
         f"  • [cyan]{model_id}[/cyan] [dim]({_format_downloads(downloads)} downloads)[/dim]"
         for model_id, downloads in suggestions[:5]
     )
-    content = (
-        f"[bold]Could not resolve '[white]{name}[/white]' to a HuggingFace tokenizer[/bold]\n\n"
-        f"{_EXPLANATION}\n\n"
-        f"[bold]Possible matches:[/bold]\n{suggestions_text}\n\n"
-        f"[bold]Suggested Fixes:[/bold]\n"
+    specify_fix = (
         f"  • Specify explicitly: [green]--tokenizer {suggestions[0][0]}[/green]\n"
+        if suggestions
+        else ""
+    )
+    content = (
+        f"[bold]'[white]{name}[/white]' matched multiple HuggingFace tokenizers[/bold]\n\n"
+        f"{_EXPLANATION}\n\n"
+        f"[bold]Did you mean one of these?[/bold]\n{suggestions_text or '  [dim]no suggested tokenizers[/dim]'}\n\n"
+        f"[bold]Suggested Fixes:[/bold]\n"
+        f"{specify_fix}"
         f"  • {_SERVER_TOKEN_FIX}"
     )
-    _display_panel("Tokenizer Not Found", content, console)
+    _display_panel("Ambiguous Tokenizer Name", content, console)
 
 
 def display_tokenizer_validation_error(

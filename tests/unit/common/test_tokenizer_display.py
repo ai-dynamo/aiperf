@@ -185,6 +185,13 @@ class TestDisplayTokenizerValidationError:
                 "Tokenizer Configuration Error",
                 ["unexpected"],
             ),
+            # AmbiguousTokenizerNameError
+            (
+                ["AmbiguousTokenizerNameError"],
+                "Ambiguous name",
+                "Ambiguous Tokenizer Name",
+                ["multiple", "org-name/model-name"],
+            ),
             # No cause_chain - fallback
             (
                 None,
@@ -202,6 +209,7 @@ class TestDisplayTokenizerValidationError:
             "permission_error",
             "timeout",
             "unknown_fallback",
+            "ambiguous_name_error",
             "no_cause_chain_fallback",
         ],
     )
@@ -279,10 +287,10 @@ class TestDisplayTokenizerAmbiguousName:
         result = output.getvalue()
         assert_output_contains(
             result,
-            "Tokenizer Not Found",
+            "Ambiguous Tokenizer Name",
             "llama",
-            "Could not resolve",
-            "Possible matches",
+            "matched multiple",
+            "Did you mean",
         )
 
     def test_displays_suggestions(self, console_output):
@@ -355,6 +363,8 @@ class TestIsTokenizerError:
             (["TokenizerError", "EntryNotFoundError"], True),
             (["TokenizerError", "LocalEntryNotFoundError"], True),
             (["TokenizerError", "HfHubHTTPError"], True),
+            (["AmbiguousTokenizerNameError"], True),
+            (["TokenizerError", "AmbiguousTokenizerNameError"], True),
             # Non-tokenizer errors
             (["RuntimeError"], False),
             (["ValueError", "KeyError"], False),
@@ -371,6 +381,8 @@ class TestIsTokenizerError:
             "entry_not_found",
             "local_entry_not_found",
             "hf_hub_error",
+            "ambiguous_name_only",
+            "ambiguous_name_in_chain",
             "runtime_error",
             "value_key_error",
             "connection_timeout",

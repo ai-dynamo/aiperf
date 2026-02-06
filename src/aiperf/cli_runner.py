@@ -75,7 +75,6 @@ def run_system_controller(
     logger.info("Starting AIPerf System")
 
     # Validate tokenizer early (before spawning services) to fail fast.
-    # This runs in a subprocess to keep the parent process lightweight.
     user_config.tokenizer.resolved_names = validate_tokenizer_early(user_config, logger)
 
     # Validate custom GPU metrics CSV file

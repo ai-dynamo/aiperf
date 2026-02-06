@@ -73,15 +73,15 @@ class InferenceResultParser(CommunicationMixin):
         tokenizer_config = self.user_config.tokenizer
 
         async with self.tokenizer_lock:
-            self.tokenizers = {
-                model.name: Tokenizer.from_pretrained(
+            self.tokenizers = {}
+            for model in self.model_endpoint.models.models:
+                self.tokenizers[model.name] = await asyncio.to_thread(
+                    Tokenizer.from_pretrained,
                     tokenizer_config.get_tokenizer_name_for_model(model.name),
                     trust_remote_code=tokenizer_config.trust_remote_code,
                     revision=tokenizer_config.revision,
                     resolve_alias=tokenizer_config.should_resolve_alias,
                 )
-                for model in self.model_endpoint.models.models
-            }
 
         duration = time.perf_counter() - begin
         tokenizer_info = {
@@ -98,7 +98,8 @@ class InferenceResultParser(CommunicationMixin):
         async with self.tokenizer_lock:
             if model not in self.tokenizers:
                 tokenizer_config = self.user_config.tokenizer
-                self.tokenizers[model] = Tokenizer.from_pretrained(
+                self.tokenizers[model] = await asyncio.to_thread(
+                    Tokenizer.from_pretrained,
                     tokenizer_config.get_tokenizer_name_for_model(model),
                     trust_remote_code=tokenizer_config.trust_remote_code,
                     revision=tokenizer_config.revision,
