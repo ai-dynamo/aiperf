@@ -200,7 +200,9 @@ class MarkdownParser:
 
             self.servers[server_name].aiperf_commands.append(command)
 
-    def _extract_hidden_test_block(self, lines: list[str], start_idx: int) -> str | None:
+    def _extract_hidden_test_block(
+        self, lines: list[str], start_idx: int
+    ) -> str | None:
         """Extract content from a multi-line <!-- CI-ONLY ... --> block"""
         content_lines = []
         i = start_idx
@@ -232,7 +234,11 @@ class MarkdownParser:
         # Look for tag patterns within the hidden content
         for i, line in enumerate(content_lines):
             # Look for tag patterns like: setup-vllm-foo-endpoint-server
-            for tag_type in [SETUP_TAG_PREFIX, HEALTH_CHECK_TAG_PREFIX, AIPERF_RUN_TAG_PREFIX]:
+            for tag_type in [
+                SETUP_TAG_PREFIX,
+                HEALTH_CHECK_TAG_PREFIX,
+                AIPERF_RUN_TAG_PREFIX,
+            ]:
                 if tag_type in line and TAG_SUFFIX in line:
                     # Extract tag name
                     tag_pattern = f"{tag_type}[a-zA-Z0-9-]+{TAG_SUFFIX}"
@@ -244,7 +250,9 @@ class MarkdownParser:
                             logger.info(f"Found hidden test tag: {tag_name}")
 
                             # Extract bash content from within the hidden block
-                            bash_content = self._extract_bash_from_hidden(content_lines, i + 1)
+                            bash_content = self._extract_bash_from_hidden(
+                                content_lines, i + 1
+                            )
 
                             if bash_content:
                                 command = Command(
@@ -252,7 +260,10 @@ class MarkdownParser:
                                     command=bash_content,
                                     file_path=file_path,
                                     start_line=start_line + i,
-                                    end_line=start_line + i + len(bash_content.split("\n")) + 2,
+                                    end_line=start_line
+                                    + i
+                                    + len(bash_content.split("\n"))
+                                    + 2,
                                 )
 
                                 self._categorize_command(command)
