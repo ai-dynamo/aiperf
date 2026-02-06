@@ -142,16 +142,17 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
     async def _configure_tokenizer(self) -> None:
         """Configure the tokenizer for the dataset manager."""
-        tokenizer_name = self.user_config.tokenizer.name
-        if tokenizer_name is None:
-            # TODO: What do we do if there are multiple models?
-            # How will we know which tokenizer to use?
-            tokenizer_name = self.user_config.endpoint.model_names[0]
+        model_name = self.user_config.endpoint.model_names[0]
+        tokenizer_config = self.user_config.tokenizer
+        tokenizer_name = tokenizer_config.get_tokenizer_name_for_model(model_name)
 
-        self.tokenizer = Tokenizer.from_pretrained(
+        # Let exceptions propagate - controller_utils will display the error panel
+        self.tokenizer = await asyncio.to_thread(
+            Tokenizer.from_pretrained,
             tokenizer_name,
-            trust_remote_code=self.user_config.tokenizer.trust_remote_code,
-            revision=self.user_config.tokenizer.revision,
+            trust_remote_code=tokenizer_config.trust_remote_code,
+            revision=tokenizer_config.revision,
+            resolve_alias=tokenizer_config.should_resolve_alias,
         )
 
     def _generate_input_payloads(

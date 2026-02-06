@@ -101,7 +101,12 @@ def load_json_str(
         # Refer to https://github.com/ijl/orjson?tab=readme-ov-file#str for details.
         return func(orjson.loads(json_str))
     except orjson.JSONDecodeError as e:
-        snippet = json_str[:200] + ("..." if len(json_str) > 200 else "")
+        raw = (
+            json_str[:200]
+            if isinstance(json_str, str)
+            else json_str[:200].decode("utf-8", errors="replace")
+        )
+        snippet = raw + ("..." if len(json_str) > 200 else "")
         _logger.exception(f"Failed to parse JSON string: '{snippet}' - {e!r}")
         raise
 

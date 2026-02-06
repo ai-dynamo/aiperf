@@ -10,6 +10,7 @@ from rich.console import Console
 from aiperf.common.models import ErrorDetails, ExitErrorInfo
 from aiperf.controller.controller_utils import (
     _group_errors_by_details,
+    _handle_tokenizer_errors,
     print_exit_errors,
 )
 
@@ -340,3 +341,200 @@ class TestPrintExitErrorsDeduplication:
 
         service_label = "Services" if num_services > 1 else "Service"
         assert f"• {service_label}: {expected_display}" in result
+
+
+class TestHandleTokenizerErrors:
+    """Test the _handle_tokenizer_errors function."""
+
+    def test_returns_non_tokenizer_errors(self):
+        """Test that non-tokenizer errors are returned unmodified."""
+        non_tokenizer_error = ExitErrorInfo(
+            error_details=ErrorDetails(
+                type="GenericError", message="Connection refused"
+            ),
+            operation="Start Service",
+            service_id="Worker-1",
+        )
+
+        console, _ = _create_test_console_output()
+        remaining = _handle_tokenizer_errors([non_tokenizer_error], console)
+
+        assert len(remaining) == 1
+        assert remaining[0] == non_tokenizer_error
+
+    def test_filters_tokenizer_errors(self):
+        """Test that tokenizer errors are filtered out and displayed."""
+        tokenizer_error = ExitErrorInfo(
+            error_details=ErrorDetails(
+                type="TokenizerError",
+                message="Failed to load tokenizer 'meta-llama/Llama-3.1-8B'",
+                cause_chain=["TokenizerError", "RepositoryNotFoundError"],
+            ),
+            operation="Configure Profiling",
+            service_id="DatasetManager-1",
+        )
+
+        console, output = _create_test_console_output()
+        remaining = _handle_tokenizer_errors([tokenizer_error], console)
+
+        assert len(remaining) == 0
+        result = output.getvalue()
+        # Should display the specialized tokenizer error panel
+        assert "Repository Not Found" in result
+        assert "meta-llama/Llama-3.1-8B" in result
+
+    def test_mixed_errors_partial_filtering(self):
+        """Test that only tokenizer errors are filtered from mixed errors."""
+        tokenizer_error = ExitErrorInfo(
+            error_details=ErrorDetails(
+                type="TokenizerError",
+                message="Failed to load tokenizer 'my-model'",
+                cause_chain=["TokenizerError", "RepositoryNotFoundError"],
+            ),
+            operation="Configure Profiling",
+            service_id="DatasetManager-1",
+        )
+        generic_error = ExitErrorInfo(
+            error_details=ErrorDetails(type="RuntimeError", message="Worker crashed"),
+            operation="Execute Request",
+            service_id="Worker-1",
+        )
+
+        console, output = _create_test_console_output()
+        remaining = _handle_tokenizer_errors([tokenizer_error, generic_error], console)
+
+        assert len(remaining) == 1
+        assert remaining[0] == generic_error
+        result = output.getvalue()
+        assert "Repository Not Found" in result
+
+    @pytest.mark.parametrize(
+        ("error_message", "cause_chain", "expected_in_output"),
+        [
+            (
+                "No module named 'sentencepiece'",
+                ["TokenizerError", "ModuleNotFoundError"],
+                ["sentencepiece", "pip install"],
+            ),
+            (
+                "You are trying to access a gated repo",
+                ["TokenizerError", "GatedRepoError"],
+                ["Gated", "huggingface-cli login"],
+            ),
+            (
+                "Repository not found",
+                ["TokenizerError", "RepositoryNotFoundError"],
+                ["Repository Not Found", "huggingface.co/models"],
+            ),
+        ],
+        ids=["missing_module", "gated_repo", "repo_not_found"],
+    )
+    def test_displays_appropriate_guidance(
+        self, error_message, cause_chain, expected_in_output
+    ):
+        """Test that tokenizer errors display context-specific guidance."""
+        error = ExitErrorInfo(
+            error_details=ErrorDetails(
+                type="TokenizerError",
+                message=error_message,
+                cause_chain=cause_chain,
+            ),
+            operation="Configure Profiling",
+            service_id="DatasetManager-1",
+        )
+
+        console, output = _create_test_console_output()
+        _handle_tokenizer_errors([error], console)
+
+        result = output.getvalue()
+        for expected in expected_in_output:
+            assert expected in result, f"Expected '{expected}' in output"
+
+    def test_extracts_tokenizer_name_when_available(self):
+        """Test that tokenizer name is extracted and shown in the error panel."""
+        error = ExitErrorInfo(
+            error_details=ErrorDetails(
+                type="TokenizerError",
+                message="Can't load tokenizer for 'org/my-custom-model'",
+                cause_chain=["TokenizerError", "RepositoryNotFoundError"],
+            ),
+            operation="Configure Profiling",
+            service_id="DatasetManager-1",
+        )
+
+        console, output = _create_test_console_output()
+        _handle_tokenizer_errors([error], console)
+
+        result = output.getvalue()
+        # The tokenizer name should be extracted and shown
+        assert "org/my-custom-model" in result
+
+    def test_uses_placeholder_when_name_not_extractable(self):
+        """Test that <unknown> is used when tokenizer name can't be extracted."""
+        error = ExitErrorInfo(
+            error_details=ErrorDetails(
+                type="TokenizerError",
+                message="No module named 'tiktoken'",
+                cause_chain=["TokenizerError", "ModuleNotFoundError"],
+            ),
+            operation="Configure Profiling",
+            service_id="DatasetManager-1",
+        )
+
+        console, output = _create_test_console_output()
+        _handle_tokenizer_errors([error], console)
+
+        result = output.getvalue()
+        # Should show error panel with tiktoken info
+        assert "tiktoken" in result
+
+
+class TestPrintExitErrorsWithTokenizerIntegration:
+    """Test print_exit_errors integration with tokenizer error handling."""
+
+    def test_tokenizer_errors_displayed_first(self):
+        """Test that tokenizer errors are handled before generic error display."""
+        tokenizer_error = ExitErrorInfo(
+            error_details=ErrorDetails(
+                type="TokenizerError",
+                message="Can't load tokenizer for 'broken-model'",
+                cause_chain=["TokenizerError", "RepositoryNotFoundError"],
+            ),
+            operation="Configure Profiling",
+            service_id="DatasetManager-1",
+        )
+        generic_error = ExitErrorInfo(
+            error_details=ErrorDetails(type="RuntimeError", message="Generic error"),
+            operation="Some Operation",
+            service_id="SomeService-1",
+        )
+
+        console, output = _create_test_console_output()
+        print_exit_errors([tokenizer_error, generic_error], console)
+
+        result = output.getvalue()
+        # Both errors should be displayed
+        assert "Repository Not Found" in result
+        assert "AIPerf System Exit Errors" in result
+        assert "Generic error" in result
+
+    def test_only_tokenizer_errors_skips_generic_panel(self):
+        """Test that if only tokenizer errors exist, generic panel is not shown."""
+        tokenizer_error = ExitErrorInfo(
+            error_details=ErrorDetails(
+                type="TokenizerError",
+                message="Failed to load tokenizer 'model'",
+                cause_chain=["TokenizerError", "RepositoryNotFoundError"],
+            ),
+            operation="Configure Profiling",
+            service_id="DatasetManager-1",
+        )
+
+        console, output = _create_test_console_output()
+        print_exit_errors([tokenizer_error], console)
+
+        result = output.getvalue()
+        # Tokenizer error panel should be shown
+        assert "Repository Not Found" in result
+        # Generic panel should NOT be shown
+        assert "AIPerf System Exit Errors" not in result
