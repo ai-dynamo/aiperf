@@ -303,6 +303,10 @@ class EndToEndTestRunner:
         logger.info("=" * 60)
         logger.info(f"Server {server.name} health check passed - ready for testing")
 
+        # Wait for model to fully load (health check only checks basic connectivity)
+        logger.info("Waiting 10 seconds for model to fully load...")
+        time.sleep(10)
+
         # Run all aiperf commands for this server
         all_aiperf_passed = True
         for i, aiperf_cmd in enumerate(server.aiperf_commands):
