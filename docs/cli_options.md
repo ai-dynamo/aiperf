@@ -809,7 +809,7 @@ Number of `RecordProcessor` services to spawn for parallel metric computation. H
 
 #### `--ui-type`, `--ui` `<str>`
 
-Select the user interface type for displaying benchmark progress. `dashboard` (default) shows real-time metrics in a Textual TUI, `simple` uses TQDM progress bars, `none` disables UI completely. Automatically set to `simple` when using `--verbose` or `--extra-verbose`.
+Select the user interface type for displaying benchmark progress. `dashboard` shows real-time metrics in a Textual TUI, `simple` uses TQDM progress bars, `none` disables UI completely. Defaults to `dashboard` in interactive terminals, `none` when not a TTY (e.g., piped or redirected output). Automatically set to `simple` when using `--verbose` or `--extra-verbose` in a TTY.
 <br>_Choices: [`dashboard`, `none`, `simple`]_
 <br>_Default: `dashboard`_
 
