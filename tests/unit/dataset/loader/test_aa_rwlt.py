@@ -252,6 +252,45 @@ class TestAARWLTConvertToConversations:
         conversations = loader.convert_to_conversations(data)
         assert conversations[0].tools is None
 
+    def test_skips_duplicate_entries(self, default_user_config):
+        """Consecutive entries with identical messages produce no turn (empty delta)."""
+        data = {
+            "traj-001": [
+                AARWLTEntry(
+                    conversation_id="traj-001",
+                    conversation_idx=0,
+                    messages=[{"role": "user", "content": "hi"}],
+                ),
+                AARWLTEntry(
+                    conversation_id="traj-001",
+                    conversation_idx=1,
+                    messages=[{"role": "user", "content": "hi"}],  # duplicate
+                ),
+                AARWLTEntry(
+                    conversation_id="traj-001",
+                    conversation_idx=2,
+                    messages=[
+                        {"role": "user", "content": "hi"},
+                        {"role": "assistant", "content": "hello"},
+                        {"role": "user", "content": "next"},
+                    ],
+                ),
+            ]
+        }
+        loader = AARWLTDatasetLoader(
+            filename="dummy.jsonl", user_config=default_user_config
+        )
+        conversations = loader.convert_to_conversations(data)
+        conv = conversations[0]
+
+        # Duplicate entry at idx=1 is skipped, only 2 turns created
+        assert len(conv.turns) == 2
+        assert conv.turns[0].raw_messages == [{"role": "user", "content": "hi"}]
+        assert conv.turns[1].raw_messages == [
+            {"role": "assistant", "content": "hello"},
+            {"role": "user", "content": "next"},
+        ]
+
     def test_multiple_trajectories(self, default_user_config):
         data = {
             "traj-A": [

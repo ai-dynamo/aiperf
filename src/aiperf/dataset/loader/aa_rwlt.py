@@ -92,9 +92,9 @@ class AARWLTDatasetLoader(BaseFileLoader):
             turns = []
             prev_msg_count = 0
             for entry in entries:
-                turns.append(
-                    Turn(raw_messages=entry.messages[prev_msg_count:], delay=0)
-                )
+                delta = entry.messages[prev_msg_count:]
+                if delta:
+                    turns.append(Turn(raw_messages=delta, delay=0))
                 prev_msg_count = len(entry.messages)
             conversations.append(
                 Conversation(
