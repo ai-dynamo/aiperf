@@ -15,12 +15,7 @@ from constants import (
     SETUP_MONITOR_TIMEOUT,
 )
 from data_types import Server
-from utils import (
-    docker_stop_and_remove,
-    force_cleanup_containers,
-    get_all_container_ids,
-    get_repo_root,
-)
+from utils import get_repo_root
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +40,19 @@ class EndToEndTestRunner:
             logger.info(
                 "Cleaning up any leftover containers from previous test runs..."
             )
-            leftover_containers = get_all_container_ids()
-            if leftover_containers:
-                logger.info(f"Found {len(leftover_containers)} containers to clean up")
-                force_cleanup_containers(leftover_containers)
-            else:
-                logger.info("No leftover containers found")
+            subprocess.run(
+                "docker stop $(docker ps -q) 2>/dev/null || true",
+                shell=True,
+                capture_output=True,
+                timeout=30,
+            )
+            subprocess.run(
+                "docker container prune -f",
+                shell=True,
+                capture_output=True,
+                timeout=10,
+            )
+            logger.info("All leftover containers cleaned up")
 
             # Step 1: Build AIPerf container
             if not self._build_aiperf_container():
@@ -214,12 +216,6 @@ class EndToEndTestRunner:
         """Test a single server: setup + health check + aiperf runs"""
         logger.info(f"Setting up server: {server.name}")
 
-        # Snapshot containers before server setup to track what gets created
-        containers_before = get_all_container_ids()
-        logger.info(
-            f"Container snapshot before {server.name} setup: {len(containers_before)} containers"
-        )
-
         # Execute setup command in background
         logger.info(f"Starting server setup for {server.name}:")
         logger.info(f"Command: {server.setup_command.command}")
@@ -270,34 +266,6 @@ class EndToEndTestRunner:
 
         logger.info("=" * 60)
         logger.info(f"Server {server.name} setup started successfully")
-
-        # Poll for Docker containers to be created (with timeout)
-        # This is important when setup commands background docker run with &
-        logger.info("Waiting for Docker containers to be created...")
-        max_wait_time = 15  # seconds
-        poll_interval = 1  # second
-        elapsed_time = 0
-        new_containers = set()
-
-        while elapsed_time < max_wait_time:
-            time.sleep(poll_interval)
-            elapsed_time += poll_interval
-
-            containers_after = get_all_container_ids()
-            new_containers = containers_after - containers_before
-
-            if new_containers:
-                logger.info(
-                    f"Detected {len(new_containers)} new containers after {elapsed_time}s"
-                )
-                break
-
-        # Store tracked containers even if none found (for cleanup safety)
-        self.server_containers[server.name] = new_containers
-        containers_after = get_all_container_ids()
-        logger.info(
-            f"Container snapshot after {server.name} setup: {len(containers_after)} total, {len(new_containers)} new containers created"
-        )
 
         # Start health check immediately in parallel (it has built-in timeout)
         logger.info(f"Starting health check in parallel for server: {server.name}")
@@ -388,19 +356,20 @@ class EndToEndTestRunner:
                 logger.info("=" * 60)
                 logger.info(f"AIPerf test {i + 1} passed for {server.name}")
 
-        # Gracefully shutdown the server after all tests complete
+        # Cleanup: Nuclear option - stop ALL containers to ensure clean state
         logger.info(
-            f"All AIPerf tests completed for {server.name}. Gracefully shutting down server..."
+            f"Test completed for {server.name}. Stopping all containers for clean slate..."
         )
-        self._graceful_server_shutdown(server.name)
-
-        # Cleanup server (basic cleanup - stop any containers)
-        self._cleanup_server(server.name)
-
-        # Force cleanup only the tracked containers for this server
-        logger.info(f"Force cleaning up tracked containers after {server.name} test...")
-        containers = self.server_containers.get(server.name, set())
-        force_cleanup_containers(containers)
+        subprocess.run(
+            "docker stop $(docker ps -q) 2>/dev/null || true",
+            shell=True,
+            capture_output=True,
+            timeout=30,
+        )
+        subprocess.run(
+            "docker container prune -f", shell=True, capture_output=True, timeout=10
+        )
+        logger.info("All containers stopped, ready for next test")
 
         return all_aiperf_passed
 
