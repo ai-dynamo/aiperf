@@ -448,24 +448,15 @@ class EndToEndTestRunner:
         # Server-specific containers are cleaned up via force_cleanup_containers() with tracked IDs
 
     def _cleanup(self):
-        """Cleanup AIPerf container and other resources"""
-        if self.aiperf_container_id:
-            logger.info(f"Cleaning up AIPerf container: {self.aiperf_container_id}")
-            docker_stop_and_remove(self.aiperf_container_id)
-
-        # Final force cleanup of all tracked containers
-        logger.info("Final cleanup of all tracked containers...")
-        all_tracked_containers = set()
-        for server_name, containers in self.server_containers.items():
-            logger.info(
-                f"Adding {len(containers)} containers from {server_name} to cleanup list"
-            )
-            all_tracked_containers.update(containers)
-
-        if all_tracked_containers:
-            logger.info(
-                f"Cleaning up {len(all_tracked_containers)} total tracked containers"
-            )
-            force_cleanup_containers(all_tracked_containers)
-        else:
-            logger.info("No tracked containers to clean up")
+        """Cleanup all containers (nuclear approach)"""
+        logger.info("Final cleanup - stopping all containers...")
+        subprocess.run(
+            "docker stop $(docker ps -q) 2>/dev/null || true",
+            shell=True,
+            capture_output=True,
+            timeout=30,
+        )
+        subprocess.run(
+            "docker container prune -f", shell=True, capture_output=True, timeout=10
+        )
+        logger.info("Final cleanup completed")
