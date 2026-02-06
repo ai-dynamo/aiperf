@@ -130,6 +130,9 @@ COPY --from=wheel-builder /dist /dist
 RUN uv pip install /dist/aiperf-*.whl \
     && rm -rf /dist /workspace/pyproject.toml
 
+# Remove setuptools as it is not needed for the runtime image
+RUN uv pip uninstall setuptools
+
 ############################################
 ############### Test Image #################
 ############################################
@@ -148,7 +151,7 @@ ENTRYPOINT ["/bin/bash", "-c"]
 ############################################
 ############# Runtime Image ################
 ############################################
-FROM nvcr.io/nvidia/distroless/python:3.13-v3.1.2-dev AS runtime
+FROM nvcr.io/nvidia/distroless/python:3.13-v4.0.1-dev AS runtime
 
 # Include license and attribution files
 COPY LICENSE ATTRIBUTIONS*.md /legal/
