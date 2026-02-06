@@ -210,6 +210,11 @@ class TestServiceConfigSerialization:
 class TestUITypeFromVerboseFlags:
     """Test UI type configuration based on verbose flags."""
 
+    @pytest.fixture(autouse=True)
+    def _mock_tty(self, monkeypatch):
+        """Mock stdout as a TTY so verbose flag tests are isolated from TTY detection."""
+        monkeypatch.setattr("aiperf.common.config.service_config.is_tty", lambda: True)
+
     @pytest.mark.parametrize(
         "verbose,extra_verbose,expected_ui_type",
         [
@@ -245,3 +250,35 @@ class TestUITypeFromVerboseFlags:
             ui_type=explicit_ui_type, verbose=verbose, extra_verbose=extra_verbose
         )
         assert config.ui_type == explicit_ui_type
+
+
+class TestUITypeFromTTY:
+    """Test UI type defaults based on TTY detection."""
+
+    def test_non_tty_defaults_to_none(self, monkeypatch):
+        """Should default to NONE when stdout is not a TTY."""
+        monkeypatch.setattr("aiperf.common.config.service_config.is_tty", lambda: False)
+
+        config = ServiceConfig()
+        assert config.ui_type == UIType.NONE
+
+    def test_tty_defaults_to_dashboard(self, monkeypatch):
+        """Should default to DASHBOARD when stdout is a TTY."""
+        monkeypatch.setattr("aiperf.common.config.service_config.is_tty", lambda: True)
+
+        config = ServiceConfig()
+        assert config.ui_type == UIType.DASHBOARD
+
+    def test_non_tty_with_verbose_defaults_to_none(self, monkeypatch):
+        """Should default to NONE when not a TTY, even with verbose flags."""
+        monkeypatch.setattr("aiperf.common.config.service_config.is_tty", lambda: False)
+
+        config = ServiceConfig(verbose=True)
+        assert config.ui_type == UIType.NONE
+
+    def test_explicit_ui_type_overrides_non_tty(self, monkeypatch):
+        """Should preserve explicitly set UI type even when not a TTY."""
+        monkeypatch.setattr("aiperf.common.config.service_config.is_tty", lambda: False)
+
+        config = ServiceConfig(ui_type=UIType.DASHBOARD)
+        assert config.ui_type == UIType.DASHBOARD
