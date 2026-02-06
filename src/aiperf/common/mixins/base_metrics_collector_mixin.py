@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Base mixin for async HTTP metrics data collectors.
@@ -160,7 +160,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         - Precise HTTP timing capture for correlation analysis
 
     Used by:
-        - GPUTelemetryDataCollector (DCGM metrics from GPU monitoring)
+        - DCGMTelemetryCollector (DCGM metrics from GPU monitoring)
         - ServerMetricsDataCollector (Prometheus metrics from inference servers)
 
     Example:

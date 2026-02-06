@@ -185,6 +185,14 @@
       "additionalProperties": {
         "$ref": "#/$defs/PlotPlugin"
       }
+    },
+    "gpu_telemetry_collector": {
+      "title": "GPU Telemetry Collector Plugins",
+      "type": "object",
+      "description": "GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.\nSupports DCGM HTTP endpoints and pynvml Python library.\nOne-to-one mapping based on gpu_telemetry_collector configuration.",
+      "additionalProperties": {
+        "$ref": "#/$defs/GpuTelemetryCollectorPlugin"
+      }
     }
   },
   "title": "PluginsManifest",
@@ -1220,6 +1228,47 @@
       ],
       "title": "Plot Plugin",
       "description": "Plot handlers create different types of visualizations from benchmark data.\nSupports scatter, histogram, timeline, percentile bands, and multi-run comparisons.\nOne-to-one mapping based on plot type selection."
+    },
+    "GpuTelemetryCollectorPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "GPU Telemetry Collector Plugin",
+      "description": "GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.\nSupports DCGM HTTP endpoints and pynvml Python library.\nOne-to-one mapping based on gpu_telemetry_collector configuration."
     }
   }
 }

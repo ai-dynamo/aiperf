@@ -23,19 +23,34 @@ from aiperf.common.config.input_config import InputConfig
 from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
-from aiperf.common.enums import (
-    GPUTelemetryMode,
-    ServerMetricsFormat,
-)
+from aiperf.common.enums import GPUTelemetryMode, ServerMetricsFormat
 from aiperf.common.utils import load_json_str
 from aiperf.plugin.enums import (
     ArrivalPattern,
     CustomDatasetType,
     EndpointType,
+    GPUTelemetryCollectorType,
     TimingMode,
 )
 
 _logger = AIPerfLogger(__name__)
+
+
+def _is_localhost_url(url: str) -> bool:
+    """Check if a URL points to localhost."""
+    from urllib.parse import urlparse
+
+    # Handle IPv6 localhost without brackets (e.g., "::1:8000")
+    if url.startswith("::1:") or url.startswith("[::1]"):
+        return True
+
+    # Add scheme if missing for proper parsing
+    if not url.startswith(("http://", "https://")):
+        url = f"http://{url}"
+
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+    return hostname.lower() in ("localhost", "127.0.0.1", "::1")
 
 
 def _should_quote_arg(x: Any) -> bool:
@@ -421,11 +436,12 @@ class UserConfig(BaseConfig):
         Field(
             description=(
                 "Enable GPU telemetry console display and optionally specify: "
-                "(1) 'dashboard' for realtime dashboard mode, "
-                "(2) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), "
-                "(3) custom metrics CSV file (e.g., custom_gpu_metrics.csv). "
-                "Default endpoints localhost:9400 and localhost:9401 are always attempted. "
-                "Example: --gpu-telemetry dashboard node1:9400 custom.csv"
+                "(1) 'pynvml' to use local pynvml library instead of DCGM HTTP endpoints, "
+                "(2) 'dashboard' for realtime dashboard mode, "
+                "(3) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), "
+                "(4) custom metrics CSV file (e.g., custom_gpu_metrics.csv). "
+                "Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. "
+                "Examples: --gpu-telemetry pynvml | --gpu-telemetry dashboard node1:9400"
             ),
         ),
         BeforeValidator(parse_str_or_list),
@@ -448,12 +464,15 @@ class UserConfig(BaseConfig):
     ] = False
 
     _gpu_telemetry_mode: GPUTelemetryMode = GPUTelemetryMode.SUMMARY
+    _gpu_telemetry_collector_type: GPUTelemetryCollectorType = (
+        GPUTelemetryCollectorType.DCGM
+    )
     _gpu_telemetry_urls: list[str] = []
     _gpu_telemetry_metrics_file: Path | None = None
 
     @model_validator(mode="after")
     def _parse_gpu_telemetry_config(self) -> Self:
-        """Parse gpu_telemetry list into mode, URLs, and metrics file."""
+        """Parse gpu_telemetry list into mode, collector type, URLs, and metrics file."""
         if (
             "no_gpu_telemetry" in self.model_fields_set
             and "gpu_telemetry" in self.model_fields_set
@@ -467,6 +486,7 @@ class UserConfig(BaseConfig):
             return self
 
         mode = GPUTelemetryMode.SUMMARY
+        collector_type = GPUTelemetryCollectorType.DCGM
         urls = []
         metrics_file = None
 
@@ -476,19 +496,51 @@ class UserConfig(BaseConfig):
                 metrics_file = Path(item)
                 if not metrics_file.exists():
                     raise ValueError(f"GPU metrics file not found: {item}")
-                continue
-
+            # Check for pynvml collector type
+            elif item.lower() == "pynvml":
+                collector_type = GPUTelemetryCollectorType.PYNVML
+                try:
+                    import pynvml  # noqa: F401
+                except ImportError as e:
+                    raise ValueError(
+                        "pynvml package not installed. Install with: pip install nvidia-ml-py"
+                    ) from e
             # Check for dashboard mode
-            if item in ["dashboard"]:
+            elif item in ["dashboard"]:
                 mode = GPUTelemetryMode.REALTIME_DASHBOARD
-            # Check for URLs
+            # Check for URLs (only applicable for DCGM collector)
             elif item.startswith("http") or ":" in item:
                 normalized_url = item if item.startswith("http") else f"http://{item}"
                 urls.append(normalized_url)
+            else:
+                raise ValueError(
+                    f"Invalid GPU telemetry item: {item}. Valid options are: 'pynvml', 'dashboard', '.csv' file, and URLs."
+                )
+
+        if collector_type == GPUTelemetryCollectorType.PYNVML and urls:
+            raise ValueError(
+                "Cannot use pynvml with DCGM URLs. Use either 'pynvml' for local "
+                "GPU monitoring or URLs for DCGM endpoints, not both."
+            )
 
         self._gpu_telemetry_mode = mode
+        self._gpu_telemetry_collector_type = collector_type
         self._gpu_telemetry_urls = urls
         self._gpu_telemetry_metrics_file = metrics_file
+
+        # Warn if pynvml is used with non-localhost server URLs
+        if collector_type == GPUTelemetryCollectorType.PYNVML:
+            non_local_urls = [
+                url for url in self.endpoint.urls if not _is_localhost_url(url)
+            ]
+            if non_local_urls:
+                _logger.warning(
+                    f"Using pynvml for GPU telemetry with non-localhost server URL(s): {non_local_urls}. "
+                    "pynvml collects GPU metrics from the local machine only. "
+                    "If the inference server is running remotely, the GPU telemetry will not reflect "
+                    "the server's GPU usage. Consider using DCGM mode with the server's metrics endpoint instead."
+                )
+
         return self
 
     @property
@@ -500,6 +552,11 @@ class UserConfig(BaseConfig):
     def gpu_telemetry_mode(self, value: GPUTelemetryMode) -> None:
         """Set the GPU telemetry display mode."""
         self._gpu_telemetry_mode = value
+
+    @property
+    def gpu_telemetry_collector_type(self) -> GPUTelemetryCollectorType:
+        """Get the GPU telemetry collector type (DCGM or PYNVML)."""
+        return self._gpu_telemetry_collector_type
 
     @property
     def gpu_telemetry_urls(self) -> list[str]:

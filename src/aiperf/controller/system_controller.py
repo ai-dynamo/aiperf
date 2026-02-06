@@ -187,7 +187,6 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         # Start optional services before waiting for registration so they can participate in configuration
         if not self.user_config.gpu_telemetry_disabled:
-            self.debug("Starting optional TelemetryManager service")
             await self.service_manager.run_service(ServiceType.GPU_TELEMETRY_MANAGER)
         else:
             self.info("GPU telemetry disabled via --no-gpu-telemetry")

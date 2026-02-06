@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import inspect
 import os
+import sys
 import traceback
 import types
 from collections.abc import Awaitable, Callable
@@ -14,6 +15,11 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.exceptions import AIPerfMultiError
 
 _logger = AIPerfLogger(__name__)
+
+
+def is_tty() -> bool:
+    """Check if stdout is connected to an interactive terminal."""
+    return sys.stdout is not None and getattr(sys.stdout, "isatty", lambda: False)()
 
 
 async def call_all_functions_self(

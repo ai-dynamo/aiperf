@@ -242,3 +242,15 @@ plot:
     Plot handlers create different types of visualizations from benchmark data.
     Supports scatter, histogram, timeline, percentile bands, and multi-run comparisons.
     One-to-one mapping based on plot type selection.
+
+# =============================================================================
+# GPU Telemetry Categories
+# =============================================================================
+
+gpu_telemetry_collector:
+  protocol: aiperf.gpu_telemetry.protocols:GPUTelemetryCollectorProtocol
+  enum: GPUTelemetryCollectorType
+  description: |
+    GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.
+    Supports DCGM HTTP endpoints and pynvml Python library.
+    One-to-one mapping based on gpu_telemetry_collector configuration.
