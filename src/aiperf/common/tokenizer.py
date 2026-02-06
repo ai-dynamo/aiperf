@@ -85,8 +85,13 @@ def resolve_alias(name: str) -> AliasResolutionResult:
 
     try:
         # Try direct lookup first
-        info = model_info(name)
-        return AliasResolutionResult(resolved_name=info.id)
+        model_info(name)
+        # model_info() succeeded — name is a valid HF identifier (possibly
+        # a redirect like "gpt2" → "openai-community/gpt2"). Keep the
+        # original name so transformers handles the redirect internally and
+        # caches under the original name (models--gpt2/, not
+        # models--openai-community--gpt2/).
+        return AliasResolutionResult(resolved_name=name)
     except (RepositoryNotFoundError, HfHubHTTPError):
         # Search for the model
         try:
@@ -211,6 +216,35 @@ class Tokenizer:
             ) from e
         return tokenizer_cls
 
+    @staticmethod
+    def _find_cached_model_for_alias(name: str) -> str | None:
+        """Scan HF cache for a model whose repo ID ends with /<name>.
+
+        Handles the case where "gpt2" was cached as "openai-community/gpt2"
+        (i.e. models--openai-community--gpt2/).
+
+        Returns:
+            The full model ID (e.g. "openai-community/gpt2") or None.
+        """
+        from huggingface_hub.constants import HF_HUB_CACHE
+
+        cache_dir = Path(HF_HUB_CACHE)
+        if not cache_dir.is_dir():
+            return None
+
+        suffix = f"--{name.lower()}"
+        for entry in cache_dir.iterdir():
+            if (
+                entry.is_dir()
+                and entry.name.startswith("models--")
+                and entry.name.lower().endswith(suffix)
+            ):
+                # Convert "models--openai-community--gpt2" -> "openai-community/gpt2"
+                model_id = entry.name[len("models--") :].replace("--", "/")
+                _logger.debug(f"Found cached model for alias '{name}': {model_id}")
+                return model_id
+        return None
+
     @classmethod
     def _from_pretrained_local(
         cls,
@@ -231,12 +265,26 @@ class Tokenizer:
         huggingface_hub.model_info = lambda *a, **kw: _OfflineModelInfo()
         try:
             tokenizer_cls = cls()
-            tokenizer_cls._tokenizer = from_pretrained_func(
-                name,
-                trust_remote_code=trust_remote_code,
-                revision=revision,
-                local_files_only=True,
-            )
+            try:
+                tokenizer_cls._tokenizer = from_pretrained_func(
+                    name,
+                    trust_remote_code=trust_remote_code,
+                    revision=revision,
+                    local_files_only=True,
+                )
+            except Exception:
+                # Cache may be under a resolved alias name (e.g. "gpt2" cached
+                # as "openai-community/gpt2"). Scan cache for a match.
+                cached_id = cls._find_cached_model_for_alias(name)
+                if cached_id is None:
+                    raise
+                _logger.debug(f"Retrying offline load with cached alias: {cached_id}")
+                tokenizer_cls._tokenizer = from_pretrained_func(
+                    cached_id,
+                    trust_remote_code=trust_remote_code,
+                    revision=revision,
+                    local_files_only=True,
+                )
             return tokenizer_cls
         finally:
             huggingface_hub.model_info = _original_model_info

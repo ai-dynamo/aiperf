@@ -36,13 +36,17 @@ class TestTokenizerAliasResolution:
     """Tests for HuggingFace Hub alias resolution."""
 
     def test_resolve_alias_successful(self, mock_model_info):
-        """Test successful alias resolution via model_info."""
+        """Test successful alias resolution via model_info keeps original name.
+
+        When model_info() succeeds, the name is a valid HF identifier (redirect).
+        We keep the original name so transformers caches under it directly.
+        """
         mock_info = MagicMock()
         mock_info.id = "google-bert/bert-base-uncased"
         mock_model_info.return_value = mock_info
 
         result = Tokenizer.resolve_alias("bert-base-uncased")
-        assert result.resolved_name == "google-bert/bert-base-uncased"
+        assert result.resolved_name == "bert-base-uncased"
         assert not result.is_ambiguous
         mock_model_info.assert_called_once_with("bert-base-uncased")
 
