@@ -4,8 +4,9 @@ import asyncio
 import logging
 import multiprocessing
 import queue
+import sys
 import threading
-from datetime import datetime
+import time
 from pathlib import Path
 
 from rich.console import Console, ConsoleRenderable, Group
@@ -18,6 +19,7 @@ from aiperf.common.aiperf_logger import _DEBUG, _TRACE, AIPerfLogger
 from aiperf.common.config import ServiceConfig, ServiceDefaults, UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.environment import Environment
+from aiperf.common.utils import is_tty
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceType, UIType
 
@@ -35,6 +37,24 @@ _LOG_LEVEL_STYLES = {
     "ERROR": "red",
     "CRITICAL": "bold red",
 }
+
+_BASIC_LOG_FORMAT = (
+    "%(asctime)s.%(msecs)03d %(levelname)-8s %(message)s (%(filename)s:%(lineno)d)"
+)
+_BASIC_DATE_FORMAT = "%H:%M:%S"
+
+
+def _create_basic_handler(level: str | int) -> logging.StreamHandler:
+    """Create a basic non-rich StreamHandler for non-TTY environments.
+
+    Uses sys.stdout to match CustomRichHandler's Console() which also defaults to stdout.
+    """
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(level)
+    handler.setFormatter(
+        logging.Formatter(_BASIC_LOG_FORMAT, datefmt=_BASIC_DATE_FORMAT)
+    )
+    return handler
 
 
 def get_global_log_queue() -> multiprocessing.Queue:
@@ -143,8 +163,8 @@ def setup_child_process_logging(
         queue_handler = MultiProcessLogHandler(log_queue, service_id)
         queue_handler.setLevel(level)
         root_logger.addHandler(queue_handler)
-    else:
-        # For all other cases, set up custom rich logging to the console
+    elif is_tty():
+        # For TTY environments, set up custom rich logging to the console
         rich_handler = CustomRichHandler(
             rich_tracebacks=True,
             show_path=False,
@@ -155,6 +175,9 @@ def setup_child_process_logging(
         )
         rich_handler.setLevel(level)
         root_logger.addHandler(rich_handler)
+    else:
+        # For non-TTY environments, use basic logging without rich formatting
+        root_logger.addHandler(_create_basic_handler(level))
 
     if user_config and user_config.output.artifact_directory:
         file_handler = create_file_handler(
@@ -165,20 +188,23 @@ def setup_child_process_logging(
 
 # TODO: Integrate with the subprocess logging instead of being separate
 def setup_rich_logging(user_config: UserConfig, service_config: ServiceConfig) -> None:
-    """Set up rich logging with appropriate configuration."""
+    """Set up rich logging with appropriate configuration. Falls back to basic logging for non-TTY."""
     # Set logging level for the root logger (affects all loggers)
     level = service_config.log_level.upper()
     logging.root.setLevel(level)
 
-    rich_handler = CustomRichHandler(
-        rich_tracebacks=True,
-        show_path=False,
-        console=Console(),
-        show_time=False,
-        show_level=False,
-        tracebacks_show_locals=False,
-    )
-    logging.root.addHandler(rich_handler)
+    if is_tty():
+        console_handler = CustomRichHandler(
+            rich_tracebacks=True,
+            show_path=False,
+            console=Console(),
+            show_time=False,
+            show_level=False,
+            tracebacks_show_locals=False,
+        )
+    else:
+        console_handler = _create_basic_handler(level)
+    logging.root.addHandler(console_handler)
 
     # Enable file logging for services
     # TODO: Use config to determine if file logging is enabled and the folder path.
@@ -187,7 +213,7 @@ def setup_rich_logging(user_config: UserConfig, service_config: ServiceConfig) -
     file_handler = logging.FileHandler(log_folder / OutputDefaults.LOG_FILE)
     file_handler.setLevel(level)
     file_handler.formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        "%(asctime)s.%(msecs)03d - %(name)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     logging.root.addHandler(file_handler)
@@ -208,7 +234,7 @@ def create_file_handler(
     file_handler.setLevel(level)
     file_handler.setFormatter(
         logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            "%(asctime)s.%(msecs)03d - %(name)s - %(levelname)s - %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
     )
@@ -233,7 +259,7 @@ class CustomRichHandler(RichHandler):
         message_renderable: ConsoleRenderable,
     ) -> ConsoleRenderable:
         """Render log for display with file:line at end, using character-level wrapping."""
-        timestamp = datetime.fromtimestamp(record.created).strftime("%H:%M:%S.%f")[:-3]
+        timestamp = f"{time.strftime('%H:%M:%S', time.localtime(record.created))}.{int(record.msecs):03d}"
         level_style = _LOG_LEVEL_STYLES.get(record.levelname, "white")
         message = record.getMessage()[: self.MAX_MESSAGE_LENGTH]
         log_suffix = f"({record.filename}:{record.lineno})"

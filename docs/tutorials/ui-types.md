@@ -11,15 +11,34 @@ AIPerf provides 3 UI types to display benchmark progress.
 
 Choose the UI type that matches your workflow:
 
-- **Dashboard** (default): Full Textual TUI with real-time metrics and GPU telemetry
+- **Dashboard**: Full Textual TUI with real-time metrics and GPU telemetry (default in interactive terminals)
 - **Simple**: TQDM progress bars for minimal overhead
-- **None**: Application logs only, no progress UI
+- **None**: Application logs only, no progress UI (default in non-interactive environments)
 
 All types display the final metrics table upon completion. UI type only affects progress display during benchmark execution.
 
 **Note:** Both `--ui-type` and `--ui` are supported interchangeably.
 
-## Dashboard (Default)
+### Automatic TTY Detection
+
+AIPerf automatically detects whether it is running in an interactive terminal (TTY):
+
+- **Interactive terminal (TTY)**: Defaults to `dashboard`
+- **Non-interactive (piped, redirected, CI/CD)**: Defaults to `none` with basic non-rich log formatting
+
+This means `aiperf profile ... | tee output.log` or `aiperf profile ... > output.log` will automatically use `--ui-type none` and plain-text logs without Rich formatting.
+
+To override the automatic detection, explicitly pass `--ui-type`:
+
+```bash
+# Force dashboard UI even when piping output
+aiperf profile ... --ui-type dashboard | tee output.log
+
+# Force no UI even in an interactive terminal
+aiperf profile ... --ui-type none
+```
+
+## Dashboard (Default in TTY)
 
 The full-featured TUI provides:
 - Real-time request and record metrics
@@ -43,7 +62,7 @@ aiperf profile \
 - Checking worker status and errors
 - Viewing GPU telemetry
 
-**Note:** Dashboard automatically switches to `simple` when using `--verbose` or `--extra-verbose` for better log visibility.
+**Note:** Dashboard automatically switches to `simple` when using `--verbose` or `--extra-verbose` in a TTY for better log visibility.
 
 ## Simple
 
@@ -78,9 +97,9 @@ INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/
 - Terminal doesn't support rich TUI rendering
 - Running with verbose logging
 
-## None
+## None (Default in Non-TTY)
 
-Shows application logs only, no progress UI:
+Shows application logs only, no progress UI. This is the automatic default when output is piped or redirected:
 
 ```bash
 aiperf profile \
@@ -107,6 +126,6 @@ aiperf profile \
 ```
 
 **When to use:**
-- Automating benchmarks in scripts or CI/CD
-- Piping output to files
+- Automating benchmarks in scripts or CI/CD (auto-selected)
+- Piping output to files (auto-selected)
 - Minimizing UI overhead
