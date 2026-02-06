@@ -9,7 +9,9 @@ from aiperf.common.models import (
     ErrorDetails,
     ParsedResponse,
     RequestRecord,
+    Text,
     TextResponseData,
+    Turn,
     Usage,
 )
 from tests.unit.records.conftest import create_invalid_record, create_test_request_info
@@ -412,3 +414,131 @@ class TestContextPromptISL:
 
         assert parsed_record.token_counts.input == 19
         assert parsed_record.responses == []
+
+
+@pytest.mark.asyncio
+class TestRawMessagesTokenCount:
+    """Tests for input token counting with raw_messages (AA-RWLT format)."""
+
+    async def test_raw_messages_extracts_text_content(
+        self, setup_inference_parser, spy_tokenizer
+    ):
+        """Token counting extracts content strings from raw_messages."""
+        turn = Turn(
+            raw_messages=[
+                {"role": "system", "content": "You are a helpful assistant"},
+                {"role": "user", "content": "Fix the bug"},
+            ]
+        )
+        record = RequestRecord(
+            model_name="test-model",
+            request_info=create_test_request_info(turns=[turn]),
+            turns=[turn],
+        )
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+
+        result = await setup_inference_parser.compute_input_token_count(record)
+
+        # "You are a helpful assistant" (5) + "Fix the bug" (3) = 8 words
+        assert result == 8
+        assert spy_tokenizer.encode.call_count == 1
+
+    async def test_raw_messages_with_tool_calls_and_tool_responses(
+        self, setup_inference_parser, spy_tokenizer
+    ):
+        """Token counting handles assistant tool_calls and tool responses."""
+        turn = Turn(
+            raw_messages=[
+                {"role": "system", "content": "You are an agent"},
+                {"role": "user", "content": "Search for bugs"},
+                {
+                    "role": "assistant",
+                    "content": "I will search now",
+                    "tool_calls": [{"id": "1", "function": {"name": "search"}}],
+                },
+                {"role": "tool", "tool_call_id": "1", "content": "Found 3 bugs"},
+            ]
+        )
+        record = RequestRecord(
+            model_name="test-model",
+            request_info=create_test_request_info(turns=[turn]),
+            turns=[turn],
+        )
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+
+        result = await setup_inference_parser.compute_input_token_count(record)
+
+        # All 4 messages have string content: 4 + 3 + 4 + 3 = 14 words
+        assert result == 14
+
+    async def test_raw_messages_skips_non_string_content(
+        self, setup_inference_parser, spy_tokenizer
+    ):
+        """Messages with list content (multimodal) or None content are skipped."""
+        turn = Turn(
+            raw_messages=[
+                {"role": "user", "content": "Hello world"},
+                {"role": "assistant", "content": None},
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "not extracted"}],
+                },
+                {"role": "assistant"},  # no content key at all
+            ]
+        )
+        record = RequestRecord(
+            model_name="test-model",
+            request_info=create_test_request_info(turns=[turn]),
+            turns=[turn],
+        )
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+
+        result = await setup_inference_parser.compute_input_token_count(record)
+
+        # Only "Hello world" (2 words) has a string content
+        assert result == 2
+
+    async def test_raw_messages_multi_turn_uses_all_turns(
+        self, setup_inference_parser, spy_tokenizer
+    ):
+        """Multi-turn AA-RWLT: token count includes messages from all turns in turn_list."""
+        turn0 = Turn(
+            raw_messages=[
+                {"role": "user", "content": "First request"},
+            ]
+        )
+        turn1 = Turn(
+            raw_messages=[
+                {"role": "user", "content": "First request"},
+                {"role": "assistant", "content": "First response"},
+                {"role": "user", "content": "Second request"},
+            ]
+        )
+        record = RequestRecord(
+            model_name="test-model",
+            request_info=create_test_request_info(turns=[turn0, turn1]),
+            turns=[turn0, turn1],
+        )
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+
+        result = await setup_inference_parser.compute_input_token_count(record)
+
+        # turn0: "First request" (2) + turn1: "First request" (2) + "First response" (2) + "Second request" (2) = 8
+        assert result == 8
+
+    async def test_normal_turns_unaffected_by_raw_messages_path(
+        self, setup_inference_parser, spy_tokenizer
+    ):
+        """Normal turns (without raw_messages) still use the texts path."""
+        turn = Turn(texts=[Text(contents=["Hello world", " Test case"])])
+        record = RequestRecord(
+            model_name="test-model",
+            request_info=create_test_request_info(turns=[turn]),
+            turns=[turn],
+        )
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+
+        result = await setup_inference_parser.compute_input_token_count(record)
+
+        # "Hello world Test case" = 4 words
+        assert result == 4
