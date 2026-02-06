@@ -356,12 +356,14 @@ class EndToEndTestRunner:
                 logger.info("=" * 60)
                 logger.info(f"AIPerf test {i + 1} passed for {server.name}")
 
-        # Cleanup: Nuclear option - stop ALL containers to ensure clean state
+        # Cleanup: Stop all containers EXCEPT the aiperf test container
         logger.info(
-            f"Test completed for {server.name}. Stopping all containers for clean slate..."
+            f"Test completed for {server.name}. Stopping all containers except aiperf test container..."
         )
+        # Stop all containers except the aiperf test container by filtering out its name
+        stop_cmd = f"docker ps --format '{{{{.Names}}}}' | grep -v '^{self.aiperf_container_id}$' | xargs -r docker stop 2>/dev/null || true"
         subprocess.run(
-            "docker stop $(docker ps -q) 2>/dev/null || true",
+            stop_cmd,
             shell=True,
             capture_output=True,
             timeout=30,
@@ -369,7 +371,9 @@ class EndToEndTestRunner:
         subprocess.run(
             "docker container prune -f", shell=True, capture_output=True, timeout=10
         )
-        logger.info("All containers stopped, ready for next test")
+        logger.info(
+            "All server containers stopped, aiperf container preserved for next test"
+        )
 
         return all_aiperf_passed
 
