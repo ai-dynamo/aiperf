@@ -205,9 +205,11 @@ class TestAARWLTConvertToConversations:
         assert conv.turns[0].raw_messages is not None
         assert len(conv.turns[0].raw_messages) == 2
 
-        # Turn 1 has 4 messages (system + user + assistant + tool)
+        # Turn 1 has 2 delta messages (assistant + tool), not the 4 cumulative
         assert conv.turns[1].raw_messages is not None
-        assert len(conv.turns[1].raw_messages) == 4
+        assert len(conv.turns[1].raw_messages) == 2
+        assert conv.turns[1].raw_messages[0]["role"] == "assistant"
+        assert conv.turns[1].raw_messages[1]["role"] == "tool"
 
     def test_zero_delay(self, default_user_config):
         data = {
@@ -268,7 +270,11 @@ class TestAARWLTConvertToConversations:
                 AARWLTEntry(
                     conversation_id="traj-B",
                     conversation_idx=1,
-                    messages=[{"role": "user", "content": "b2"}],
+                    messages=[
+                        {"role": "user", "content": "b"},
+                        {"role": "assistant", "content": "b-reply"},
+                        {"role": "user", "content": "b2"},
+                    ],
                 ),
             ],
         }

@@ -60,6 +60,32 @@ class TestFormatPayloadRawMessages:
         assert payload["messages"] == raw_msgs
         assert len(payload["messages"]) == 1
 
+    def test_multi_turn_concatenates_delta_messages(self, endpoint, model_endpoint):
+        """Multi-turn raw_messages are concatenated from all turns (delta format)."""
+        turn0 = Turn(
+            raw_messages=[
+                {"role": "system", "content": "You are an agent."},
+                {"role": "user", "content": "Fix the bug."},
+            ]
+        )
+        turn1 = Turn(
+            raw_messages=[
+                {"role": "assistant", "content": "I'll look at the code."},
+                {"role": "tool", "tool_call_id": "1", "content": "file contents"},
+            ]
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint, turns=[turn0, turn1]
+        )
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["messages"] == [
+            {"role": "system", "content": "You are an agent."},
+            {"role": "user", "content": "Fix the bug."},
+            {"role": "assistant", "content": "I'll look at the code."},
+            {"role": "tool", "tool_call_id": "1", "content": "file contents"},
+        ]
+
     def test_normal_turns_unaffected(self, endpoint, model_endpoint):
         """Regular turns without raw_messages should work as before."""
         turn = Turn(texts=[Text(contents=["What is AI?"])])

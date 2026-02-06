@@ -80,12 +80,22 @@ class AARWLTDatasetLoader(BaseFileLoader):
         - session_id from conversation_id
         - discard_assistant_response=True (pre-recorded cumulative history)
         - tools from the first entry (consistent across trajectory)
-        - One Turn per entry with raw_messages and zero delay
+        - One Turn per entry with delta raw_messages and zero delay
+
+        The raw AA-RWLT format stores cumulative message history per entry.
+        We de-duplicate by storing only the new messages (delta) per turn,
+        reducing memory from O(N^2) to O(N) for N-turn trajectories.
         """
         conversations = []
         for conv_id, entries in data.items():
             tools = entries[0].tools if entries else None
-            turns = [Turn(raw_messages=entry.messages, delay=0) for entry in entries]
+            turns = []
+            prev_msg_count = 0
+            for entry in entries:
+                turns.append(
+                    Turn(raw_messages=entry.messages[prev_msg_count:], delay=0)
+                )
+                prev_msg_count = len(entry.messages)
             conversations.append(
                 Conversation(
                     session_id=conv_id,

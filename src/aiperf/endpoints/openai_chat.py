@@ -43,7 +43,12 @@ class ChatEndpoint(BaseEndpoint):
 
         current_turn = turns[-1]
         if current_turn.raw_messages is not None:
-            messages = current_turn.raw_messages
+            messages = [
+                msg
+                for turn in turns
+                if turn.raw_messages is not None
+                for msg in turn.raw_messages
+            ]
         else:
             messages = self._create_messages(
                 turns, request_info.system_message, request_info.user_context_message

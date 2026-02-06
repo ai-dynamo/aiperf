@@ -501,7 +501,7 @@ class TestRawMessagesTokenCount:
     async def test_raw_messages_multi_turn_uses_all_turns(
         self, setup_inference_parser, spy_tokenizer
     ):
-        """Multi-turn AA-RWLT: token count includes messages from all turns in turn_list."""
+        """Multi-turn AA-RWLT: token count includes delta messages from all turns in turn_list."""
         turn0 = Turn(
             raw_messages=[
                 {"role": "user", "content": "First request"},
@@ -509,7 +509,6 @@ class TestRawMessagesTokenCount:
         )
         turn1 = Turn(
             raw_messages=[
-                {"role": "user", "content": "First request"},
                 {"role": "assistant", "content": "First response"},
                 {"role": "user", "content": "Second request"},
             ]
@@ -523,8 +522,8 @@ class TestRawMessagesTokenCount:
 
         result = await setup_inference_parser.compute_input_token_count(record)
 
-        # turn0: "First request" (2) + turn1: "First request" (2) + "First response" (2) + "Second request" (2) = 8
-        assert result == 8
+        # turn0: "First request" (2) + turn1: "First response" (2) + "Second request" (2) = 6
+        assert result == 6
 
     async def test_normal_turns_unaffected_by_raw_messages_path(
         self, setup_inference_parser, spy_tokenizer
