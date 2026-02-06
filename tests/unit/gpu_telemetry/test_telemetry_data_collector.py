@@ -8,14 +8,14 @@ import aiohttp
 import pytest
 
 from aiperf.common.models.telemetry_models import TelemetryRecord
-from aiperf.gpu_telemetry.data_collector import GPUTelemetryDataCollector
+from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
 
 
-class TestGPUTelemetryDataCollectorCore:
-    """Test core GPUTelemetryDataCollector functionality.
+class TestDCGMTelemetryCollectorCore:
+    """Test core DCGMTelemetryCollector functionality.
 
     This test class focuses exclusively on the data collection, parsing,
-    and lifecycle management of the GPUTelemetryDataCollector using the new async architecture.
+    and lifecycle management of the DCGMTelemetryCollector using the new async architecture.
 
     Key areas tested:
     - Initialization and configuration
@@ -26,13 +26,13 @@ class TestGPUTelemetryDataCollectorCore:
     """
 
     def test_collector_initialization_complete(self):
-        """Test GPUTelemetryDataCollector initialization with custom parameters.
+        """Test DCGMTelemetryCollector initialization with custom parameters.
 
         Verifies that the collector properly stores configuration parameters
         including DCGM URL, collection interval, and collector ID.
         Also checks that the initial lifecycle state is correct.
         """
-        collector = GPUTelemetryDataCollector(
+        collector = DCGMTelemetryCollector(
             dcgm_url="http://localhost:9401/metrics",
             collection_interval=0.1,
             collector_id="test_collector",
@@ -46,13 +46,13 @@ class TestGPUTelemetryDataCollectorCore:
         assert not collector.was_started
 
     def test_collector_initialization_minimal(self):
-        """Test GPUTelemetryDataCollector initialization with minimal parameters.
+        """Test DCGMTelemetryCollector initialization with minimal parameters.
 
         Verifies that the collector applies correct default values when only
         the required DCGM URL is provided. Tests default collection interval
         and default collector ID generation.
         """
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         assert collector.endpoint_url == "http://localhost:9401/metrics"
         assert collector.collection_interval == 0.333  # Default collection interval
@@ -76,7 +76,7 @@ class TestPrometheusMetricParsing:
         Tests proper unit scaling (MiB→GB for memory, mJ→MJ for energy) and
         that all metadata and metric values are correctly assigned.
         """
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         records = collector._parse_metrics_to_records(sample_dcgm_data)
         assert len(records) == 1
@@ -101,7 +101,7 @@ class TestPrometheusMetricParsing:
         metrics for multiple GPUs and create separate TelemetryRecord objects for each.
         Tests that GPU-specific metadata is correctly associated with the right GPU.
         """
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         records = collector._parse_metrics_to_records(multi_gpu_dcgm_data)
         assert len(records) == 3
@@ -137,7 +137,7 @@ class TestPrometheusMetricParsing:
         Note: For full pipeline testing with empty responses, see
         test_telemetry_integration.py::test_empty_dcgm_response_handling()
         """
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         empty_cases = [
             "",  # Empty
@@ -156,7 +156,7 @@ class TestHttpCommunication:
     @pytest.mark.asyncio
     async def test_endpoint_reachability_success(self):
         """Test DCGM endpoint reachability check with successful HTTP response."""
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         with patch("aiohttp.ClientSession.head") as mock_head:
             # Mock successful HEAD response with Prometheus content-type
@@ -180,7 +180,7 @@ class TestHttpCommunication:
     @pytest.mark.asyncio
     async def test_endpoint_reachability_failures(self, time_traveler):
         """Test DCGM endpoint reachability check with various failure scenarios."""
-        collector = GPUTelemetryDataCollector("http://nonexistent:9401/metrics")
+        collector = DCGMTelemetryCollector("http://nonexistent:9401/metrics")
 
         with (
             patch("aiohttp.ClientSession.head") as mock_head,
@@ -205,7 +205,7 @@ class TestHttpCommunication:
     @pytest.mark.asyncio
     async def test_endpoint_reachability_head_fallback(self):
         """Test that HEAD request falls back to GET when HEAD returns non-200."""
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         with (
             patch("aiohttp.ClientSession.head") as mock_head,
@@ -234,7 +234,7 @@ class TestHttpCommunication:
     @pytest.mark.asyncio
     async def test_endpoint_reachability_without_session(self):
         """Test reachability check creates temporary session when collector not initialized."""
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         # Don't initialize - should create temporary session
         with patch("aiohttp.ClientSession") as mock_session_class:
@@ -266,7 +266,7 @@ class TestHttpCommunication:
     @pytest.mark.asyncio
     async def test_metrics_fetching(self, sample_dcgm_data):
         """Test successful HTTP fetching of DCGM metrics."""
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         with patch("aiohttp.ClientSession.get") as mock_get:
             # Mock successful response with sample data
@@ -287,7 +287,7 @@ class TestHttpCommunication:
     @pytest.mark.asyncio
     async def test_fetch_metrics_session_closed(self):
         """Test fetch_metrics raises error when session is closed."""
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         await collector.initialize()
 
@@ -301,7 +301,7 @@ class TestHttpCommunication:
     @pytest.mark.asyncio
     async def test_fetch_metrics_when_stop_requested(self):
         """Test fetch_metrics raises CancelledError when stop is requested."""
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         await collector.initialize()
 
@@ -319,7 +319,7 @@ class TestHttpCommunication:
     @pytest.mark.asyncio
     async def test_fetch_metrics_no_session(self):
         """Test fetch_metrics raises error when session not initialized."""
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         # Don't initialize - session is None
         with pytest.raises(RuntimeError, match="HTTP session not initialized"):
@@ -334,7 +334,7 @@ class TestCollectionLifecycle:
         """Test successful telemetry collection with proper lifecycle management."""
         mock_callback = AsyncMock()
 
-        collector = GPUTelemetryDataCollector(
+        collector = DCGMTelemetryCollector(
             dcgm_url="http://localhost:9401/metrics",
             collection_interval=0.1,
             record_callback=mock_callback,
@@ -368,7 +368,7 @@ class TestCollectionLifecycle:
         """
         mock_error_callback = AsyncMock()
 
-        collector = GPUTelemetryDataCollector(
+        collector = DCGMTelemetryCollector(
             dcgm_url="http://localhost:9401/metrics",
             collection_interval=0.05,
             error_callback=mock_error_callback,
@@ -398,7 +398,7 @@ class TestCollectionLifecycle:
         """
         mock_callback = AsyncMock(side_effect=ValueError("Callback failed"))
 
-        collector = GPUTelemetryDataCollector(
+        collector = DCGMTelemetryCollector(
             dcgm_url="http://localhost:9401/metrics",
             collection_interval=0.1,
             record_callback=mock_callback,
@@ -431,7 +431,7 @@ class TestCollectionLifecycle:
         Note: For testing multiple start/stop cycles with separate instances
         (real-world usage), see integration test test_telemetry_collector_multiple_start_stop()
         """
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         await collector.initialize()
 
@@ -446,7 +446,7 @@ class TestCollectionLifecycle:
     @pytest.mark.asyncio
     async def test_stop_before_start_safety(self):
         """Test that stopping before starting doesn't cause issues."""
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         # Should handle stop before start gracefully
         await collector.stop()  # Should not raise exceptions
@@ -457,7 +457,7 @@ class TestDataProcessingEdgeCases:
 
     def test_unit_scaling_accuracy(self):
         """Test accuracy of unit scaling factors for different metrics."""
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         test_metrics = {
             "gpu_power_usage": 100.0,  # Should remain unchanged (W)
@@ -475,7 +475,7 @@ class TestDataProcessingEdgeCases:
 
     def test_temporal_consistency_in_batches(self, sample_dcgm_data):
         """Test that all records in a batch have consistent timestamps."""
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         records = collector._parse_metrics_to_records(sample_dcgm_data)
 
@@ -486,7 +486,7 @@ class TestDataProcessingEdgeCases:
 
     def test_mixed_quality_response_resilience(self):
         """Test resilience when DCGM response contains mix of valid/invalid data."""
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         mixed_response = """
         # Valid metric
@@ -506,14 +506,14 @@ class TestDataProcessingEdgeCases:
     @pytest.mark.asyncio
     async def test_empty_url_reachability(self):
         """Test URL reachability check with empty URL."""
-        collector = GPUTelemetryDataCollector("")
+        collector = DCGMTelemetryCollector("")
 
         result = await collector.is_url_reachable()
         assert result is False
 
     def test_invalid_prometheus_format_handling(self):
         """Test handling of completely invalid Prometheus format."""
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         # Invalid format that cannot be parsed
         invalid_data = "invalid prometheus {{{{{ data"
@@ -524,7 +524,7 @@ class TestDataProcessingEdgeCases:
 
     def test_nan_inf_values_filtering(self):
         """Test that NaN and inf values are filtered out during parsing."""
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         metrics_with_invalid_values = """
         # NaN value
@@ -550,7 +550,7 @@ class TestDataProcessingEdgeCases:
 
     def test_invalid_gpu_index_handling(self):
         """Test handling of non-numeric GPU index values."""
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         invalid_gpu_index_data = """
         # Invalid GPU index (not a number)
@@ -571,7 +571,7 @@ class TestDataProcessingEdgeCases:
             side_effect=RuntimeError("Error callback failed")
         )
 
-        collector = GPUTelemetryDataCollector(
+        collector = DCGMTelemetryCollector(
             dcgm_url="http://localhost:9401/metrics",
             collection_interval=0.05,
             error_callback=mock_error_callback,
@@ -590,7 +590,7 @@ class TestDataProcessingEdgeCases:
 
     @pytest.mark.asyncio
     async def test_collection_without_callbacks(self, faker):
-        collector = GPUTelemetryDataCollector(
+        collector = DCGMTelemetryCollector(
             dcgm_url="http://localhost:9401/metrics",
             collection_interval=0.1,
         )
@@ -610,7 +610,7 @@ class TestDataProcessingEdgeCases:
     async def test_collection_with_empty_records(self):
         mock_callback = AsyncMock()
 
-        collector = GPUTelemetryDataCollector(
+        collector = DCGMTelemetryCollector(
             dcgm_url="http://localhost:9401/metrics",
             collection_interval=0.1,
             record_callback=mock_callback,
@@ -631,7 +631,7 @@ class TestDataProcessingEdgeCases:
 
     def test_scaling_factors_with_none_values(self):
         """Test that scaling factors handle None values correctly."""
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         metrics_with_none = {
             "gpu_power_usage": None,
@@ -649,7 +649,7 @@ class TestDataProcessingEdgeCases:
 
     def test_scaling_factors_preserves_unscaled_metrics(self):
         """Test that metrics without scaling factors are preserved as-is."""
-        collector = GPUTelemetryDataCollector("http://localhost:9401/metrics")
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         metrics = {
             "gpu_power_usage": 100.0,

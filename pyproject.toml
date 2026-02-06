@@ -36,6 +36,7 @@ dependencies = [
   "matplotlib>=3.10.0",
   "msgspec>=0.19.0,<1.0.0",
   "numpy>=1.26.4,<3",
+  "nvidia-ml-py",  # Note: No version specified to be most compatible with CUDA version
   "orjson~=3.10.18",
   "pandas~=2.3.3",
   "pillow~=11.1.0",

@@ -822,6 +822,23 @@ plot:
       category: aggregated
 
 # =============================================================================
+# GPU Telemetry Collector
+# =============================================================================
+# GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.
+# Supports DCGM HTTP endpoints and pynvml Python library.
+# One-to-one mapping based on gpu_telemetry_collector configuration.
+# =============================================================================
+gpu_telemetry_collector:
+  dcgm:
+    class: aiperf.gpu_telemetry.dcgm_collector:DCGMTelemetryCollector
+    description: |
+      DCGM telemetry collector that collects GPU telemetry metrics from DCGM HTTP endpoints.
+  pynvml:
+    class: aiperf.gpu_telemetry.pynvml_collector:PyNVMLTelemetryCollector
+    description: |
+      PyNVML telemetry collector that collects GPU telemetry metrics using the pynvml Python library.
+
+# =============================================================================
 # Communication Backends
 # =============================================================================
 # Communication backends provide the underlying transport for inter-service messaging.
