@@ -128,7 +128,12 @@ class EndToEndTestRunner:
 
         # Start the container with bash entrypoint override
         container_name = f"aiperf-test-{os.getpid()}"
-        run_command = f"docker run -d --name {container_name} --network host --entrypoint bash aiperf:test -c 'tail -f /dev/null'"
+
+        # Mount test fixtures directory for audio/image/video file tests
+        repo_root = get_repo_root()
+        fixtures_mount = f"-v {repo_root}/tests/fixtures:/fixtures:ro"
+
+        run_command = f"docker run -d --name {container_name} {fixtures_mount} --network host --entrypoint bash aiperf:test -c 'tail -f /dev/null'"
 
         result = subprocess.run(
             run_command, shell=True, capture_output=True, text=True, timeout=60
@@ -266,15 +271,30 @@ class EndToEndTestRunner:
         logger.info("=" * 60)
         logger.info(f"Server {server.name} setup started successfully")
 
-        # Add delay to allow Docker containers to be fully created
+        # Poll for Docker containers to be created (with timeout)
         # This is important when setup commands background docker run with &
         logger.info("Waiting for Docker containers to be created...")
-        time.sleep(3)
+        max_wait_time = 15  # seconds
+        poll_interval = 1  # second
+        elapsed_time = 0
+        new_containers = set()
 
-        # Snapshot containers after server setup to identify new containers
-        containers_after = get_all_container_ids()
-        new_containers = containers_after - containers_before
+        while elapsed_time < max_wait_time:
+            time.sleep(poll_interval)
+            elapsed_time += poll_interval
+
+            containers_after = get_all_container_ids()
+            new_containers = containers_after - containers_before
+
+            if new_containers:
+                logger.info(
+                    f"Detected {len(new_containers)} new containers after {elapsed_time}s"
+                )
+                break
+
+        # Store tracked containers even if none found (for cleanup safety)
         self.server_containers[server.name] = new_containers
+        containers_after = get_all_container_ids()
         logger.info(
             f"Container snapshot after {server.name} setup: {len(containers_after)} total, {len(new_containers)} new containers created"
         )

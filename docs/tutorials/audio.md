@@ -64,25 +64,23 @@ To add text prompts alongside audio, include `--synthetic-input-tokens-mean 100`
 
 ## Profile with Custom Input File
 
-Create a JSONL file with audio data and optional text prompts.
+AIPerf can automatically load and encode audio files from local paths:
 
-<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 cat <<EOF > inputs.jsonl
-{"texts": ["Transcribe this audio."], "audios": ["wav,UklGRiIFAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0Yf4EAAD..."]}
-{"texts": ["What is being said in this recording?"], "audios": ["mp3,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAA..."]}
-{"texts": ["Summarize the main points from this audio."], "audios": ["wav,UklGRooGAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YWY..."]}
+{"texts": ["Transcribe this audio."], "audios": ["/path/to/audio1.wav"]}
+{"texts": ["What is being said in this recording?"], "audios": ["/path/to/audio2.mp3"]}
+{"texts": ["Summarize the main points from this audio."], "audios": ["/path/to/audio3.wav"]}
 EOF
 ```
-<!-- /aiperf-run-vllm-audio-openai-endpoint-server -->
 
-The audio data format is: `{format},{base64_encoded_audio_data}` where:
-- `format`: Either `wav` or `mp3`
-- `base64_encoded_audio_data`: Base64-encoded audio file content
+AIPerf will automatically:
+- Load the audio files from the specified paths
+- Convert them to base64 format
+- Send them to the model endpoint
 
-Run AIPerf using the custom input file:
+Run AIPerf with the file path input:
 
-<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-Audio-7B-Instruct \
@@ -93,4 +91,22 @@ aiperf profile \
     --url localhost:8000 \
     --request-count 3
 ```
-<!-- /aiperf-run-vllm-audio-openai-endpoint-server -->
+
+<!-- CI-ONLY: Hidden test for file path loading using existing vLLM server
+aiperf-run-vllm-audio-openai-endpoint-server
+```bash
+cat <<EOF > inputs_filepaths.jsonl
+{"texts": ["Transcribe this."], "audios": ["/fixtures/audio/test_audio_1s.wav"]}
+{"texts": ["What is said?"], "audios": ["/fixtures/audio/test_audio_2.wav"]}
+{"texts": ["Summarize."], "audios": ["/fixtures/audio/test_audio_3.wav"]}
+EOF
+aiperf profile \
+    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --endpoint-type chat \
+    --input-file inputs_filepaths.jsonl \
+    --custom-dataset-type single_turn \
+    --streaming \
+    --url localhost:8000 \
+    --request-count 3
+```
+-->

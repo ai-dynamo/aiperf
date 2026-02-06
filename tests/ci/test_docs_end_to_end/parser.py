@@ -53,7 +53,7 @@ class MarkdownParser:
         while i < len(lines):
             line = lines[i].strip()
 
-            # Look for HTML comment tags
+            # Look for single-line HTML comment tags
             if line.startswith("<!--") and line.endswith("-->"):
                 # Use [^-\s]\S* instead of [^-\s]+.*? to avoid ReDoS
                 # (both quantifiers can match the same chars, causing O(n²) backtracking)
@@ -80,6 +80,15 @@ class MarkdownParser:
                             self._categorize_command(command)
                         else:
                             logger.warning(f"No bash block found after tag {tag_name}")
+
+            # Look for multi-line HTML comment blocks with hidden tests
+            elif line.startswith("<!-- CI-ONLY"):
+                # Extract content until closing -->
+                hidden_content = self._extract_hidden_test_block(lines, i)
+                if hidden_content:
+                    # Parse the hidden content for tags and commands
+                    self._parse_hidden_content(hidden_content, file_path, i)
+
             i += 1
 
     def _is_target_tag(self, tag_name: str) -> bool:
@@ -190,3 +199,92 @@ class MarkdownParser:
                 )
 
             self.servers[server_name].aiperf_commands.append(command)
+
+    def _extract_hidden_test_block(self, lines: list[str], start_idx: int) -> str | None:
+        """Extract content from a multi-line <!-- CI-ONLY ... --> block"""
+        content_lines = []
+        i = start_idx
+
+        # Start from the line with <!-- CI-ONLY
+        current_line = lines[i]
+        content_lines.append(current_line)
+
+        # If the opening comment doesn't end with -->, keep reading
+        if not current_line.strip().endswith("-->"):
+            i += 1
+            while i < len(lines):
+                line = lines[i]
+                content_lines.append(line)
+                if line.strip().endswith("-->"):
+                    break
+                i += 1
+
+        # Lines already contain newlines, join with empty string
+        return "".join(content_lines) if content_lines else None
+
+    def _parse_hidden_content(
+        self, content: str, file_path: str, start_line: int
+    ) -> None:
+        """Parse hidden test content for tags and bash blocks"""
+        # Split content into lines
+        content_lines = content.split("\n")
+
+        # Look for tag patterns within the hidden content
+        for i, line in enumerate(content_lines):
+            # Look for tag patterns like: setup-vllm-foo-endpoint-server
+            for tag_type in [SETUP_TAG_PREFIX, HEALTH_CHECK_TAG_PREFIX, AIPERF_RUN_TAG_PREFIX]:
+                if tag_type in line and TAG_SUFFIX in line:
+                    # Extract tag name
+                    tag_pattern = f"{tag_type}[a-zA-Z0-9-]+{TAG_SUFFIX}"
+                    tag_match = re.search(tag_pattern, line)
+                    if tag_match:
+                        tag_name = tag_match.group(0)
+
+                        if self._is_target_tag(tag_name):
+                            logger.info(f"Found hidden test tag: {tag_name}")
+
+                            # Extract bash content from within the hidden block
+                            bash_content = self._extract_bash_from_hidden(content_lines, i + 1)
+
+                            if bash_content:
+                                command = Command(
+                                    tag_name=tag_name,
+                                    command=bash_content,
+                                    file_path=file_path,
+                                    start_line=start_line + i,
+                                    end_line=start_line + i + len(bash_content.split("\n")) + 2,
+                                )
+
+                                self._categorize_command(command)
+                            else:
+                                logger.warning(
+                                    f"No bash block found after hidden tag {tag_name}"
+                                )
+
+    def _extract_bash_from_hidden(self, lines: list[str], start_idx: int) -> str | None:
+        """Extract bash code block from hidden content"""
+        i = start_idx
+
+        # Find ```bash
+        while i < len(lines):
+            line = lines[i].strip()
+            if line == "```bash":
+                break
+            elif "-->" in line:  # Reached end of hidden block
+                return None
+            i += 1
+        else:
+            return None
+
+        # Extract content until closing ``` or -->
+        bash_lines = []
+        i += 1
+        while i < len(lines):
+            line = lines[i]
+            if line.strip() == "```" or line.strip().endswith("-->"):
+                break
+            bash_lines.append(line)
+            i += 1
+
+        # After split("\n"), lines no longer have newlines, so rejoin with \n
+        return "\n".join(bash_lines).strip() if bash_lines else None
