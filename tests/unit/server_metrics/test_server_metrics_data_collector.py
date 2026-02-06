@@ -285,6 +285,18 @@ class TestAsyncLifecycle:
         await collector.stop()
 
     @pytest.mark.asyncio
+    async def test_initialization_creates_connector(self):
+        """Test that initialization creates TCP connector with proper settings."""
+        collector = ServerMetricsDataCollector("http://localhost:8081/metrics")
+
+        await collector.initialize()
+
+        assert collector._connector is not None
+        assert isinstance(collector._connector, aiohttp.TCPConnector)
+
+        await collector.stop()
+
+    @pytest.mark.asyncio
     async def test_stop_closes_session(self):
         """Test that stop closes aiohttp session."""
         collector = ServerMetricsDataCollector("http://localhost:8081/metrics")
@@ -295,6 +307,19 @@ class TestAsyncLifecycle:
         await collector.stop()
 
         assert session.closed
+
+    @pytest.mark.asyncio
+    async def test_stop_closes_connector(self):
+        """Test that stop closes TCP connector."""
+        collector = ServerMetricsDataCollector("http://localhost:8081/metrics")
+
+        await collector.initialize()
+        connector = collector._connector
+
+        await collector.stop()
+
+        assert connector.closed
+        assert collector._connector is None
 
     @pytest.mark.asyncio
     async def test_reachability_check_success(self):
@@ -330,6 +355,31 @@ class TestAsyncLifecycle:
             assert not is_reachable
 
         await collector.stop()
+
+    @pytest.mark.asyncio
+    async def test_reachability_check_without_session_uses_connector(self):
+        """Test reachability check creates temporary connector when no session exists."""
+        collector = ServerMetricsDataCollector("http://localhost:8081/metrics")
+
+        # Don't initialize - no session exists
+        assert collector._session is None
+
+        with patch(
+            "aiperf.common.mixins.base_metrics_collector_mixin.create_tcp_connector"
+        ) as mock_create:
+            mock_connector = AsyncMock()
+            mock_connector.close = AsyncMock()
+            mock_create.return_value = mock_connector
+
+            with patch.object(
+                collector, "_check_reachability_with_session", new_callable=AsyncMock
+            ) as mock_check:
+                mock_check.return_value = True
+                await collector.is_url_reachable()
+
+            # Verify connector was created and closed
+            mock_create.assert_called_once()
+            mock_connector.close.assert_called_once()
 
 
 class TestCollectorCallbackFunctionality:

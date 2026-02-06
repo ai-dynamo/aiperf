@@ -19,6 +19,7 @@ import aiohttp
 from aiperf.common.hooks import background_task, on_init, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import ErrorDetails
+from aiperf.transports.aiohttp_client import create_tcp_connector
 
 
 @dataclass(slots=True)
@@ -204,6 +205,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         self._reachability_timeout = reachability_timeout
         self._record_callback = record_callback
         self._error_callback = error_callback
+        self._connector: aiohttp.TCPConnector | None = None
         self._session: aiohttp.ClientSession | None = None
         # Storage for trace timing data (keyed by trace_request_ctx)
         self._trace_timing: dict[object, HttpTraceTiming] = {}
@@ -237,14 +239,18 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         Creates an aiohttp ClientSession with appropriate timeout settings.
         Uses connect timeout only (no total timeout) to allow long-running scrapes.
         Configures TraceConfig to capture HTTP timing events for precise correlation.
+        Uses create_tcp_connector to apply standard socket settings including IP version.
         """
         timeout = aiohttp.ClientTimeout(
             total=None,  # No total timeout for ongoing scrapes
             connect=self._reachability_timeout,  # Fast connection timeout only
         )
         trace_config = self._create_trace_config()
+        self._connector = create_tcp_connector()
         self._session = aiohttp.ClientSession(
-            timeout=timeout, trace_configs=[trace_config]
+            connector=self._connector,
+            timeout=timeout,
+            trace_configs=[trace_config],
         )
 
     def _create_trace_config(self) -> aiohttp.TraceConfig:
@@ -319,13 +325,16 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
 
     @on_stop
     async def _cleanup_http_client(self) -> None:
-        """Clean up the aiohttp client session.
+        """Clean up the aiohttp client session and connector.
 
         Called automatically during shutdown phase.
         """
         if self._session:
             await self._session.close()
             self._session = None
+        if self._connector:
+            await self._connector.close()
+            self._connector = None
 
     async def is_url_reachable(self) -> bool:
         """Check if metrics endpoint is accessible before starting collection.
@@ -349,10 +358,16 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         if self._session:
             return await self._check_reachability_with_session(self._session)
         else:
-            # Create a temporary session for reachability check
+            # Create a temporary session for reachability check with proper connector
             timeout = aiohttp.ClientTimeout(total=self._reachability_timeout)
-            async with aiohttp.ClientSession(timeout=timeout) as temp_session:
-                return await self._check_reachability_with_session(temp_session)
+            connector = create_tcp_connector()
+            try:
+                async with aiohttp.ClientSession(
+                    connector=connector, timeout=timeout
+                ) as temp_session:
+                    return await self._check_reachability_with_session(temp_session)
+            finally:
+                await connector.close()
 
     async def _check_reachability_with_session(
         self, session: aiohttp.ClientSession
