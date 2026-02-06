@@ -8,6 +8,8 @@
 # will cause a performance penalty during this process.
 ################################################################################
 
+from typing import Literal
+
 from cyclopts import App
 
 from aiperf.cli_commands.plugins_cli import plugins_app
@@ -101,7 +103,7 @@ def profile(
 def plot(
     paths: list[str] | None = None,
     output: str | None = None,
-    theme: str = "light",
+    theme: Literal["light", "dark"] = "light",
     config: str | None = None,
     verbose: bool = False,
     dashboard: bool = False,
@@ -113,6 +115,10 @@ def plot(
     On first run, automatically creates ~/.aiperf/plot_config.yaml which you can edit to
     customize plots, including experiment classification (baseline vs treatment runs).
     Use --config to specify a different config file.
+
+    _**Note:** PNG export requires Chrome or Chromium to be installed on your system, as it is used by kaleido to render Plotly figures to static images._
+
+    _**Note:** The plot command expects default export filenames (e.g., `profile_export.jsonl`). Runs created with `--profile-export-file` or custom `--profile-export-prefix` use different filenames and will not be detected by the plot command._
 
     Examples:
         # Generate plots (auto-creates ~/.aiperf/plot_config.yaml on first run)
