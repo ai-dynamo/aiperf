@@ -143,3 +143,16 @@ def print_developer_mode_warning() -> None:
     )
     console.print(panel)
     console.file.flush()
+
+
+def warn_osl_without_ignore_eos() -> None:
+    """Log a warning when --osl is used without ignore_eos or min_tokens in extra inputs."""
+    import logging
+
+    logger = logging.getLogger("aiperf")
+    logger.warning(
+        "Using --osl without ignore_eos or min_tokens in --extra-inputs. "
+        "Output sequence length cannot be guaranteed unless the server honors these parameters. "
+        "Consider: --extra-inputs ignore_eos:true (generate until max_tokens) "
+        "or --extra-inputs min_tokens:<value> (set minimum output length)."
+    )
