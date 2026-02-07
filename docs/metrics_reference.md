@@ -765,6 +765,7 @@ osl_mismatch_count = sum(1 for r in records if diff_tokens > threshold_tokens)
 - If discrepancy is due to tokenizer mismatch between client and server, use `--use-server-token-count`.
 
 **Server support for `min_tokens`:**
+
 | Server | Parameter | Notes |
 |--------|-----------|-------|
 | [vLLM](https://docs.vllm.ai/en/latest/api/vllm/sampling_params/) | `min_tokens` | Default: 0 |

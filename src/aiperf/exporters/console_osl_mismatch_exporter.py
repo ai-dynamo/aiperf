@@ -27,7 +27,10 @@ class ConsoleOSLMismatchExporter(AIPerfLoggerMixin):
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._metrics_by_tag = {r.tag: r for r in exporter_config.results.records}
+        if exporter_config.results is None:
+            self._metrics_by_tag = {}
+        else:
+            self._metrics_by_tag = {r.tag: r for r in exporter_config.results.records}
         self._pct_threshold = Environment.METRICS.OSL_MISMATCH_PCT_THRESHOLD
         self._max_token_threshold = Environment.METRICS.OSL_MISMATCH_MAX_TOKEN_THRESHOLD
 
@@ -90,7 +93,7 @@ class ConsoleOSLMismatchExporter(AIPerfLoggerMixin):
         avg_diff_str = f"{avg_diff:.1f}%" if avg_diff is not None else "N/A"
         return f"""\
 [bold]{mismatch_count:,} of {total_records:,} requests ({percentage:.1f}%) have output length differing from requested by more than the threshold.[/bold]
-[bold]Threshold (tokens):[/bold] min(requested × {self._pct_threshold:g}%, {self._max_token_threshold})
+[bold]Threshold (tokens):[/bold] min(requested x {self._pct_threshold:g}%, {self._max_token_threshold})
 [bold]Average mismatch:[/bold] {avg_diff_str}
 
 [bold]Why:[/bold] Server hit EOS token before reaching requested output length.

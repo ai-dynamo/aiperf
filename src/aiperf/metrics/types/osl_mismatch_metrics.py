@@ -8,6 +8,8 @@ honoring the requested output sequence length, which typically happens when
 ignore_eos is not set or unsupported by the server.
 """
 
+from typing import ClassVar
+
 from aiperf.common.enums import GenericMetricUnit, MetricFlags
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
@@ -89,7 +91,7 @@ class OSLMismatchDiffMetric(BaseRecordMetric[float]):
     short_header_hide_unit = True
     unit = GenericMetricUnit.PERCENT
     flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.NO_CONSOLE
-    required_metrics = {
+    required_metrics: ClassVar[set[str]] = {
         RequestedOSLMetric.tag,
         OutputSequenceLengthMetric.tag,
     }
@@ -156,7 +158,7 @@ class OSLMismatchCountMetric(BaseAggregateCounterMetric[int]):
         | MetricFlags.NO_CONSOLE
         | MetricFlags.NO_INDIVIDUAL_RECORDS
     )
-    required_metrics = {
+    required_metrics: ClassVar[set[str]] = {
         OSLMismatchDiffMetric.tag,
         RequestedOSLMetric.tag,
         OutputSequenceLengthMetric.tag,

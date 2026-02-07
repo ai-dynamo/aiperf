@@ -115,13 +115,13 @@ class TestRequestedOSLMetric:
         with pytest.raises(NoMetricValue):
             metric.parse_record(record, MetricRecordDict())
 
-    def test_different_max_tokens_values(self):
+    @pytest.mark.parametrize("max_tokens", [50, 100, 500, 1000])
+    def test_different_max_tokens_values(self, max_tokens):
         """Test various max_tokens values."""
-        for max_tokens in [50, 100, 500, 1000]:
-            record = create_record_with_osl(requested_osl=max_tokens)
-            metric = RequestedOSLMetric()
-            result = metric.parse_record(record, MetricRecordDict())
-            assert result == max_tokens
+        record = create_record_with_osl(requested_osl=max_tokens)
+        metric = RequestedOSLMetric()
+        result = metric.parse_record(record, MetricRecordDict())
+        assert result == max_tokens
 
     def test_has_correct_flags(self):
         """Test that the metric has the correct flags."""
@@ -250,8 +250,8 @@ class TestOSLMismatchCountMetric:
         # Should count 2 records with >20% absolute difference
         assert metric_results[OSLMismatchCountMetric.tag] == 2
 
-    def test_counts_negative_mismatches(self, monkeypatch):
-        """Test that negative mismatches (generated more than requested) are also counted."""
+    def test_counts_positive_mismatches(self, monkeypatch):
+        """Test that positive mismatches (generated more than requested) are also counted."""
         monkeypatch.setattr(
             "aiperf.common.environment.Environment.METRICS.OSL_MISMATCH_PCT_THRESHOLD",
             10.0,
@@ -298,6 +298,35 @@ class TestOSLMismatchCountMetric:
         )
 
         assert metric_results[OSLMismatchCountMetric.tag] == 0
+
+    def test_max_token_threshold_caps_large_osl(self, monkeypatch):
+        """Test that max_token_threshold caps the effective threshold for large OSL values."""
+        monkeypatch.setattr(
+            "aiperf.common.environment.Environment.METRICS.OSL_MISMATCH_PCT_THRESHOLD",
+            5.0,
+        )
+        monkeypatch.setattr(
+            "aiperf.common.environment.Environment.METRICS.OSL_MISMATCH_MAX_TOKEN_THRESHOLD",
+            50,
+        )
+
+        records = [
+            # 2000 requested: threshold = min(2000*5%=100, 50) = 50 tokens
+            # actual=1940: diff=60 tokens > 50 → counted
+            create_record_with_osl(requested_osl=2000, actual_output_tokens=1940),
+            # actual=1960: diff=40 tokens < 50 → not counted
+            create_record_with_osl(requested_osl=2000, actual_output_tokens=1960),
+        ]
+
+        metric_results = run_simple_metrics_pipeline(
+            records,
+            RequestedOSLMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            OSLMismatchDiffMetric.tag,
+            OSLMismatchCountMetric.tag,
+        )
+
+        assert metric_results[OSLMismatchCountMetric.tag] == 1
 
     def test_has_correct_flags(self):
         """Test that the metric has the correct flags."""

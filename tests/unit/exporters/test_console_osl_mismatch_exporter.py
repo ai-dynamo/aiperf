@@ -19,6 +19,7 @@ from aiperf.plugin.enums import EndpointType
 from tests.unit.conftest import create_exporter_config
 
 
+@pytest.mark.asyncio
 class TestConsoleOSLMismatchExporter:
     """Tests for ConsoleOSLMismatchExporter."""
 

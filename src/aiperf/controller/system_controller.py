@@ -89,7 +89,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             # Print a warning message to the console if developer mode is enabled, once at load time
             print_developer_mode_warning()
 
-        # Warn if --osl is used without ignore_eos in extra inputs
+        # EOS may cause server to stop early, producing misleading OSL results
         if self._should_warn_osl_without_ignore_eos():
             warn_osl_without_ignore_eos()
 
@@ -315,7 +315,9 @@ class SystemController(SignalHandlerMixin, BaseService):
         """
 
         self.debug(
-            lambda: f"Processing registration from {message.service_type} with ID: {message.service_id}"
+            lambda: (
+                f"Processing registration from {message.service_type} with ID: {message.service_id}"
+            )
         )
 
         service_info = ServiceRunInfo(
@@ -388,13 +390,17 @@ class SystemController(SignalHandlerMixin, BaseService):
         state = message.state
 
         self.debug(
-            lambda: f"Received status update from '{service_type}' (ID: '{service_id}'): {state}"
+            lambda: (
+                f"Received status update from '{service_type}' (ID: '{service_id}'): {state}"
+            )
         )
 
         # Update the component state if the component exists
         if service_id not in self.service_manager.service_id_map:
             self.debug(
-                lambda: f"Received status update from un-registered service: {service_id} ({service_type})"
+                lambda: (
+                    f"Received status update from un-registered service: {service_id} ({service_type})"
+                )
             )
             return
 
@@ -512,7 +518,9 @@ class SystemController(SignalHandlerMixin, BaseService):
         """Handle a profile results message."""
         self.trace_or_debug(
             lambda: f"Received profile results message: {message}",
-            lambda: f"Received profile results message: {len(message.results.results.records) if message.results.results else 0} records",
+            lambda: (
+                f"Received profile results message: {len(message.results.results.records) if message.results.results else 0} records"
+            ),
         )
         if message.results.errors:
             self.error(
@@ -520,7 +528,9 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
 
         self.debug(
-            lambda: f"Error summary: {message.results.results.error_summary if message.results.results else 'N/A'}"
+            lambda: (
+                f"Error summary: {message.results.results.error_summary if message.results.results else 'N/A'}"
+            )
         )
 
         self._profile_results = message.results
@@ -542,7 +552,9 @@ class SystemController(SignalHandlerMixin, BaseService):
         try:
             self.trace_or_debug(
                 lambda: f"Received telemetry results message: {message}",
-                lambda: f"Received telemetry results message: {len(message.telemetry_result.results.endpoints) if message.telemetry_result.results else 0} endpoints",
+                lambda: (
+                    f"Received telemetry results message: {len(message.telemetry_result.results.endpoints) if message.telemetry_result.results else 0} endpoints"
+                ),
             )
 
             telemetry_results = message.telemetry_result.results
@@ -574,11 +586,15 @@ class SystemController(SignalHandlerMixin, BaseService):
         try:
             self.trace_or_debug(
                 lambda: f"Received server metrics results message: {message}",
-                lambda: f"Received server metrics results message: {len(message.server_metrics_result.results.endpoint_summaries or {}) if message.server_metrics_result.results else 0} endpoints",
+                lambda: (
+                    f"Received server metrics results message: {len(message.server_metrics_result.results.endpoint_summaries or {}) if message.server_metrics_result.results else 0} endpoints"
+                ),
             )
 
             self.debug(
-                lambda: f"Server metrics error summary: {message.server_metrics_result.results.error_summary if message.server_metrics_result.results else 'N/A'}"
+                lambda: (
+                    f"Server metrics error summary: {message.server_metrics_result.results.error_summary if message.server_metrics_result.results else 'N/A'}"
+                )
             )
 
             server_metrics_results = message.server_metrics_result.results
@@ -796,7 +812,9 @@ class SystemController(SignalHandlerMixin, BaseService):
                     and isinstance(response.data, ProcessRecordsResult)
                 ):
                     self.debug(
-                        lambda r=response: f"Received ProcessRecordsResult from cancel command: {r.data}"
+                        lambda r=response: (
+                            f"Received ProcessRecordsResult from cancel command: {r.data}"
+                        )
                     )
                     self._profile_results = response.data
                     self._profile_results_received = True
