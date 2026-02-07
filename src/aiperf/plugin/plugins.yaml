@@ -353,7 +353,7 @@ endpoint:
       Configure tensor names: --extra v2_input_name:X --extra v2_output_name:Y
     metadata:
       endpoint_path: /v2/models/{model_name}/infer
-      supports_streaming: false
+      supports_streaming: true
       produces_tokens: true
       tokenizes_input: true
       metrics_title: KServe V2 Metrics
@@ -391,6 +391,17 @@ transport:
     metadata:
       transport_type: http
       url_schemes: [http, https]
+
+  grpc:
+    class: aiperf.transports.grpc.grpc_transport:GrpcTransport
+    description: |
+      gRPC transport for KServe V2 Open Inference Protocol.
+      Uses grpc.aio for async gRPC with HTTP/2 multiplexing.
+      Supports insecure (grpc://) and TLS (grpcs://) channels.
+      Supports unary (ModelInfer) and streaming (ModelStreamInfer) RPCs.
+    metadata:
+      transport_type: grpc
+      url_schemes: [grpc, grpcs]
 
 # =============================================================================
 # Dataset Composers

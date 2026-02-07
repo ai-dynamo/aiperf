@@ -29,6 +29,7 @@ dependencies = [
   "aiohttp~=3.13.3",
   "cyclopts>=4,<5",
   "ffmpeg-python~=0.2.0",
+  "grpcio~=1.71.0",
   "huggingface-hub>=0.34.0,<2.0",
   "jinja2~=3.1.5",  # NOTE: Versions prior to 3.1.5 have vuln exploits
   "jmespath~=1.0.1",
@@ -42,6 +43,7 @@ dependencies = [
   "pandas~=2.3.3",
   "pillow~=11.1.0",
   "plotly~=6.4.0",
+  "protobuf>=5.29.0,<6",
   "dash~=3.1.0",
   "dash-bootstrap-components~=2.0.0",
   "prometheus_client~=0.23.1",
@@ -79,6 +81,7 @@ dev = [
   "pytest-cov",
   "pytest>=7.0.0",
   "pytest-xdist>=3.8.0",
+  "grpcio-tools~=1.71.0",
   "ruff>=0.14.0,<0.15.0",
   "scipy>=1.13.0",
   "trustme>=1.0.0",
@@ -88,7 +91,7 @@ dev = [
 # Base settings for ruff
 line-length = 88
 indent-width = 4
-exclude = ["__pycache__", "build", "dist", ".venv", "venv"]
+exclude = ["__pycache__", "build", "dist", ".venv", "venv", "src/aiperf/transports/grpc/proto/grpc_predict_v2_pb2*.py"]
 
 [tool.ruff.lint]
 select = [

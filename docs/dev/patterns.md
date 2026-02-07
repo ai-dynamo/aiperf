@@ -146,3 +146,84 @@ def test_with_mock_plugin():
 ```
 
 **Auto-fixtures** (always active): asyncio.sleep runs instantly, RNG=42, singletons reset.
+
+## Transport Pattern
+
+Transports extend `BaseTransport` (which uses `AIPerfLifecycleMixin`) and manage request delivery:
+
+```python
+from typing import Any
+
+from aiperf.common.hooks import on_init, on_stop
+from aiperf.common.models import RequestInfo, RequestRecord
+from aiperf.plugin.schema.schemas import TransportMetadata
+from aiperf.transports.base_transports import BaseTransport, FirstTokenCallback
+
+class MyTransport(BaseTransport):
+    @classmethod
+    def metadata(cls) -> TransportMetadata:
+        return TransportMetadata(
+            transport_type="my_protocol",
+            url_schemes=["myproto", "myprotos"],
+        )
+
+    @on_init
+    async def _init_client(self) -> None:
+        # Parse URL, create client connection
+        base_url = self.model_endpoint.endpoint.base_url
+        ...
+
+    @on_stop
+    async def _close_client(self) -> None:
+        # Close client connection
+        ...
+
+    def get_url(self, request_info: RequestInfo) -> str:
+        # Return target URL for request
+        ...
+
+    def get_transport_headers(self, request_info: RequestInfo) -> dict[str, str]:
+        return {}  # Transport-specific headers
+
+    async def send_request(
+        self, request_info: RequestInfo, payload: dict[str, Any],
+        *, first_token_callback: FirstTokenCallback | None = None,
+    ) -> RequestRecord:
+        # Send request, populate record with responses and timing
+        ...
+```
+
+Register in `plugins.yaml`:
+
+```yaml
+transport:
+  my_protocol:
+    class: aiperf.transports.my_transport:MyTransport
+    description: My custom transport
+    metadata:
+      transport_type: my_protocol
+      url_schemes: [myproto, myprotos]
+```
+
+Transport is auto-detected from URL scheme by `detect_transport_from_url()` in `workers/inference_client.py`.
+
+## Trace Data Pattern
+
+Custom trace data extends `BaseTraceData` and `TraceDataExport`. **Convention**: define the Export class before the Data class in the same file for readability and consistency with existing patterns (e.g., `GrpcTraceDataExport` before `GrpcTraceData`).
+
+```python
+from typing import Literal
+from pydantic import Field
+from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
+
+# Convention: Export class defined before Data class
+class MyTraceDataExport(TraceDataExport):
+    trace_type: Literal["my_protocol"] = "my_protocol"
+    my_field: int | None = Field(default=None, description="Protocol-specific field.")
+
+class MyTraceData(BaseTraceData):
+    trace_type: str = "my_protocol"
+    my_field: int | None = Field(default=None, description="Protocol-specific field.")
+```
+
+The `trace_type` discriminator enables `to_export()` to automatically produce the correct export subclass. Base fields (`request_send_start_perf_ns`, `response_chunks`, etc.) are inherited.

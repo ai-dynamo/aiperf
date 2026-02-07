@@ -63,7 +63,7 @@ EndpointType = plugins.create_enum(PluginType.ENDPOINT, "EndpointType")
 
 TransportTypeStr: TypeAlias = str
 TransportType = plugins.create_enum(PluginType.TRANSPORT, "TransportType")
-"""Dynamic enum for transport. Example: TransportType.HTTP"""
+"""Dynamic enum for transport. Example: TransportType.GRPC, TransportType.HTTP"""
 
 RecordProcessorTypeStr: TypeAlias = str
 RecordProcessorType = plugins.create_enum(PluginType.RECORD_PROCESSOR, "RecordProcessorType")

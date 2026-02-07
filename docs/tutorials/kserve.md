@@ -16,7 +16,7 @@ AIPerf provides five KServe-specific endpoint types:
 | `kserve_chat` | OpenAI-compatible | `/openai/v1/chat/completions` | Yes | Yes | LLMs via vLLM/TRT-LLM on KServe |
 | `kserve_completions` | OpenAI-compatible | `/openai/v1/completions` | Yes | Yes | Text completions via vLLM/TRT-LLM on KServe |
 | `kserve_embeddings` | OpenAI-compatible | `/openai/v1/embeddings` | No | No | Embedding models on KServe |
-| `kserve_v2_infer` | V2 Open Inference Protocol | `/v2/models/{model_name}/infer` | No | Yes | Triton/TRT-LLM tensor inference |
+| `kserve_v2_infer` | V2 Open Inference Protocol | `/v2/models/{model_name}/infer` | Yes (gRPC) | Yes | Triton/TRT-LLM tensor inference |
 | `kserve_v1_predict` | V1 TensorFlow Serving | `/v1/models/{model_name}:predict` | No | No | Legacy TF Serving-style models |
 
 **Token Metrics**: When "Yes", AIPerf computes token-based metrics (input/output token counts, tokens per second). When "No", only request-level metrics (latency, throughput) are available.
@@ -385,6 +385,67 @@ Use **standard endpoints** (`chat`, `completions`, `embeddings`) when:
 
 ---
 
+## Section 8. gRPC Transport for V2 Inference
+
+The KServe V2 Open Inference Protocol defines both HTTP/REST and gRPC variants. AIPerf supports both transports with the same `kserve_v2_infer` endpoint — the transport is auto-detected from the URL scheme.
+
+| URL Scheme | Transport | Protocol | Streaming |
+|---|---|---|---|
+| `http://` / `https://` | HTTP/1.1 (aiohttp) | V2 JSON REST | No (V2 REST has no streaming format) |
+| `grpc://` / `grpcs://` | gRPC (HTTP/2) | V2 Protobuf | Yes (`ModelStreamInfer`) |
+
+### Basic gRPC Usage
+
+Switch from HTTP to gRPC by changing the URL scheme to `grpc://`:
+
+```bash
+# HTTP transport (default)
+aiperf profile \
+    --model my-trtllm-model \
+    --url http://triton-isvc.default.svc.cluster.local:8000 \
+    --endpoint-type kserve_v2_infer \
+    --request-count 50
+
+# gRPC transport (same endpoint, different transport)
+aiperf profile \
+    --model my-trtllm-model \
+    --url grpc://triton-isvc.default.svc.cluster.local:8001 \
+    --endpoint-type kserve_v2_infer \
+    --request-count 50
+```
+
+> **Note:** Triton Inference Server typically exposes HTTP on port 8000 and gRPC on port 8001.
+
+### Streaming with gRPC
+
+When `--streaming` is used with a `grpc://` URL, AIPerf calls the `ModelStreamInfer` RPC, which sends responses token-by-token as a server-side stream. This enables Time to First Token (TTFT) and Inter Token Latency (ITL) metrics:
+
+```bash
+aiperf profile \
+    --model my-trtllm-model \
+    --url grpc://triton-isvc.default.svc.cluster.local:8001 \
+    --endpoint-type kserve_v2_infer \
+    --streaming \
+    --request-count 50 \
+    --concurrency 4
+```
+
+### gRPC with TLS
+
+Use the `grpcs://` scheme for TLS-encrypted gRPC connections:
+
+```bash
+aiperf profile \
+    --model my-model \
+    --url grpcs://secure-triton.default.svc.cluster.local:8001 \
+    --endpoint-type kserve_v2_infer \
+    --request-count 50
+```
+
+For full gRPC transport documentation including trace data, architecture details, and advanced configuration, see the [gRPC Transport Guide](./grpc-transport.md).
+
+---
+
 ## Troubleshooting
 
 ### Connection Refused or 404
@@ -418,4 +479,10 @@ Then adjust with `--extra-inputs v1_input_field:ACTUAL_FIELD --extra-inputs v1_o
 
 ### Streaming Not Supported
 
-The `kserve_v2_infer` and `kserve_v1_predict` endpoints do not support streaming (`--streaming` will be automatically disabled with a warning). For streaming LLM inference on KServe, use `kserve_chat` or `kserve_completions` which route through the OpenAI-compatible API.
+The `kserve_v1_predict` endpoint does not support streaming. For `kserve_v2_infer`, streaming requires gRPC (`grpc://`) which uses the `ModelStreamInfer` RPC. The V2 JSON REST API does not define an HTTP streaming format; using `--streaming` with an `http://` URL for V2 will not produce streaming results. For streaming LLM inference over HTTP on KServe, use `kserve_chat` or `kserve_completions` which route through the OpenAI-compatible SSE streaming API.
+
+### gRPC Connection Issues
+
+- Verify you are using the correct port (Triton gRPC defaults to port 8001, not 8000)
+- For `grpcs://`, ensure the server has TLS enabled and the certificate is trusted
+- Test connectivity with `grpcurl`: `grpcurl -plaintext triton:8001 inference.GRPCInferenceService/ModelReady`
