@@ -253,7 +253,7 @@ class InferenceResultParser(CommunicationMixin):
         # Include all turns' text content
         for turn in turns:
             if turn.raw_messages is not None:
-                # AA-RWLT and similar formats: extract text from pre-formatted messages
+                # Agentic Coding and similar formats: extract text from pre-formatted messages
                 for msg in turn.raw_messages:
                     if isinstance(msg.get("content"), str) and msg["content"]:
                         prompt_texts.append(msg["content"])

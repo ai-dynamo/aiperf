@@ -10,7 +10,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiperf.common.exceptions import NotInitializedError, TokenizerError
 
@@ -318,6 +318,40 @@ class Tokenizer:
         """
         self._require_init()
         return self._tokenizer.encode(text, **{**self._encode_args, **kwargs})
+
+    def apply_chat_template(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        **kwargs,
+    ) -> list[int] | None:
+        """Apply a chat template to messages and return token IDs.
+
+        Wraps the HuggingFace tokenizer's apply_chat_template to compute
+        accurate token counts that include chat template overhead (role markers,
+        special tokens, tool formatting).
+
+        Args:
+            messages: OpenAI-format chat messages.
+            tools: Optional tool/function definitions.
+            **kwargs: Additional arguments forwarded to apply_chat_template.
+
+        Returns:
+            List of token IDs, or None if the tokenizer doesn't support chat templates.
+        """
+        self._require_init()
+        if not hasattr(self._tokenizer, "apply_chat_template"):
+            return None
+        try:
+            return self._tokenizer.apply_chat_template(
+                messages,
+                tools=tools,
+                tokenize=True,
+                add_generation_prompt=True,
+                **kwargs,
+            )
+        except Exception:
+            return None
 
     def decode(self, token_ids, **kwargs) -> str:
         """

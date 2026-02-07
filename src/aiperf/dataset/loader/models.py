@@ -251,14 +251,14 @@ class MooncakeTrace(AIPerfBaseModel):
         return self
 
 
-class AARWLTEntry(AIPerfBaseModel):
-    """Schema for AA-RWLT agentic benchmark entries.
+class AgenticCodingEntry(AIPerfBaseModel):
+    """Schema for Agentic Coding benchmark entries.
 
     Each entry represents one step in a trajectory with cumulative message history.
     Entries with the same conversation_id form a trajectory, ordered by conversation_idx.
     """
 
-    type: Literal[CustomDatasetType.AA_RWLT] = CustomDatasetType.AA_RWLT
+    type: Literal[CustomDatasetType.AGENTIC_CODING] = CustomDatasetType.AGENTIC_CODING
     conversation_id: str = Field(..., description="Trajectory identifier.")
     conversation_idx: int = Field(
         ...,
@@ -276,6 +276,6 @@ class AARWLTEntry(AIPerfBaseModel):
 
 CustomDatasetT = TypeVar(
     "CustomDatasetT",
-    bound=SingleTurn | MultiTurn | RandomPool | MooncakeTrace | AARWLTEntry,
+    bound=SingleTurn | MultiTurn | RandomPool | MooncakeTrace | AgenticCodingEntry,
 )
 """A union type of all custom data types."""

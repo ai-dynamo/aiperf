@@ -418,7 +418,7 @@ class TestContextPromptISL:
 
 @pytest.mark.asyncio
 class TestRawMessagesTokenCount:
-    """Tests for input token counting with raw_messages (AA-RWLT format)."""
+    """Tests for input token counting with raw_messages (Agentic Coding format)."""
 
     async def test_raw_messages_extracts_text_content(
         self, setup_inference_parser, spy_tokenizer
@@ -501,7 +501,7 @@ class TestRawMessagesTokenCount:
     async def test_raw_messages_multi_turn_uses_all_turns(
         self, setup_inference_parser, spy_tokenizer
     ):
-        """Multi-turn AA-RWLT: token count includes delta messages from all turns in turn_list."""
+        """Multi-turn Agentic Coding: token count includes delta messages from all turns in turn_list."""
         turn0 = Turn(
             raw_messages=[
                 {"role": "user", "content": "First request"},

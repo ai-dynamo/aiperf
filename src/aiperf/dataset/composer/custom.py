@@ -197,7 +197,8 @@ class CustomDatasetComposer(BaseDatasetComposer):
             kwargs["prompt_generator"] = self.prompt_generator
         elif dataset_type == CustomDatasetType.RANDOM_POOL:
             kwargs["num_conversations"] = self.config.input.conversation.num
-
+        elif dataset_type == CustomDatasetType.AGENTIC_CODING:
+            kwargs["tokenizer"] = self.tokenizer
         LoaderClass = plugins.get_class(PluginType.CUSTOM_DATASET_LOADER, dataset_type)
         self.loader = LoaderClass(
             filename=self.config.input.file,

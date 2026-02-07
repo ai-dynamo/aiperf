@@ -141,6 +141,10 @@ class Turn(AIPerfBaseModel):
         "When set, the endpoint uses these directly instead of constructing "
         "messages from texts/images/audios/videos fields.",
     )
+    input_tokens: int | None = Field(
+        default=None,
+        description="Pre-computed input token count for this turn's full payload.",
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -188,6 +192,7 @@ class Turn(AIPerfBaseModel):
                 for vid in self.videos
             ],
             raw_messages=self.raw_messages,
+            input_tokens=self.input_tokens,
         )
 
 
@@ -270,7 +275,7 @@ class Conversation(AIPerfBaseModel):
         default=False,
         description="When True, the worker discards the LLM response instead of storing it "
         "for multi-turn context. Used when dataset entries contain pre-recorded cumulative "
-        "message history (e.g., AA-RWLT format).",
+        "message history (e.g., Agentic Coding format).",
     )
 
     def metadata(self) -> ConversationMetadata:

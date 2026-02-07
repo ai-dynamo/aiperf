@@ -29,7 +29,7 @@ class TestDiscardAssistantResponse:
     def discard_session(self) -> UserSession:
         """Session with discard_assistant_response=True (responses should not be stored)."""
         conv = Conversation(
-            session_id="aa-rwlt",
+            session_id="agentic-coding",
             turns=[Turn(raw_messages=[{"role": "user", "content": "hi"}])],
             discard_assistant_response=True,
             tools=[{"type": "function", "function": {"name": "search"}}],
