@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Low-level async gRPC client for KServe V2 inference protocol."""
+"""Generic proto-free async gRPC client."""
 
 from __future__ import annotations
 
@@ -12,14 +12,18 @@ import grpc.aio
 
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.transports.grpc.grpc_defaults import DEFAULT_CHANNEL_OPTIONS
-from aiperf.transports.grpc.proto import grpc_predict_v2_pb2 as pb2
-from aiperf.transports.grpc.proto import grpc_predict_v2_pb2_grpc as pb2_grpc
 
 
-class GrpcClient(AIPerfLoggerMixin):
-    """Low-level async gRPC client for KServe V2 inference protocol.
+def _identity(x: bytes) -> bytes:
+    """Identity passthrough for gRPC serializer/deserializer."""
+    return x
 
-    Manages a single gRPC channel with HTTP/2 multiplexing.
+
+class GenericGrpcClient(AIPerfLoggerMixin):
+    """Proto-free async gRPC client operating on raw bytes.
+
+    Uses identity serializer/deserializer so callers handle
+    serialization externally via pluggable callables.
     """
 
     def __init__(
@@ -55,80 +59,65 @@ class GrpcClient(AIPerfLoggerMixin):
         else:
             self._channel = grpc.aio.insecure_channel(target, options=options)
 
-        self._stub = pb2_grpc.GRPCInferenceServiceStub(self._channel)
-
     async def close(self) -> None:
         """Close the gRPC channel."""
         if self._channel:
             await self._channel.close()
 
-    async def model_infer(
+    async def unary(
         self,
-        request: pb2.ModelInferRequest,
+        method: str,
+        request_data: bytes,
         *,
         metadata: list[tuple[str, str]] | None = None,
         timeout: float | None = None,
-    ) -> pb2.ModelInferResponse:
-        """Unary ModelInfer RPC.
+    ) -> bytes:
+        """Send a unary RPC. Returns raw response bytes.
 
         Args:
-            request: ModelInferRequest protobuf.
+            method: Fully-qualified gRPC method path (e.g. "/service/Method").
+            request_data: Serialized request bytes.
             metadata: Optional gRPC metadata (key-value pairs).
             timeout: RPC timeout in seconds. Falls back to client default.
 
         Returns:
-            ModelInferResponse protobuf.
+            Serialized response bytes.
         """
-        return await self._stub.ModelInfer(
-            request,
-            metadata=metadata,
-            timeout=timeout or self._timeout,
+        callable_ = self._channel.unary_unary(
+            method,
+            request_serializer=_identity,
+            response_deserializer=_identity,
+        )
+        return await callable_(
+            request_data, metadata=metadata, timeout=timeout or self._timeout
         )
 
-    async def model_stream_infer(
+    async def server_stream(
         self,
-        request: pb2.ModelInferRequest,
+        method: str,
+        request_data: bytes,
         *,
         metadata: list[tuple[str, str]] | None = None,
         timeout: float | None = None,
-    ) -> AsyncIterator[pb2.ModelStreamInferResponse]:
-        """Server-side streaming ModelStreamInfer RPC.
+    ) -> AsyncIterator[bytes]:
+        """Send a server-streaming RPC. Yields raw response bytes.
 
         Args:
-            request: ModelInferRequest protobuf.
+            method: Fully-qualified gRPC method path (e.g. "/service/Method").
+            request_data: Serialized request bytes.
             metadata: Optional gRPC metadata (key-value pairs).
             timeout: RPC timeout in seconds. Falls back to client default.
 
         Yields:
-            ModelStreamInferResponse protobuf messages.
+            Serialized response bytes for each stream chunk.
         """
-        call = self._stub.ModelStreamInfer(
-            request,
-            metadata=metadata,
-            timeout=timeout or self._timeout,
+        callable_ = self._channel.unary_stream(
+            method,
+            request_serializer=_identity,
+            response_deserializer=_identity,
         )
-        async for response in call:
-            yield response
-
-    async def model_ready(
-        self,
-        model_name: str,
-        *,
-        model_version: str = "",
-        timeout: float | None = None,
-    ) -> bool:
-        """Check model readiness (health check).
-
-        Args:
-            model_name: Name of the model to check.
-            model_version: Version of the model to check.
-            timeout: RPC timeout in seconds.
-
-        Returns:
-            True if the model is ready.
-        """
-        request = pb2.ModelReadyRequest(name=model_name, version=model_version)
-        response = await self._stub.ModelReady(
-            request, timeout=timeout or self._timeout
+        call = callable_(
+            request_data, metadata=metadata, timeout=timeout or self._timeout
         )
-        return response.ready
+        async for chunk in call:
+            yield chunk

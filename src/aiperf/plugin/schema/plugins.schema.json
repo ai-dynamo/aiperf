@@ -526,6 +526,40 @@
       "title": "Custom Dataset Loader Plugin",
       "description": "Custom dataset loaders parse different JSONL file formats into conversations.\nSupports single-turn, multi-turn, random-pool, and trace formats.\nAuto-detection: loaders are tried in priority order based on can_load()."
     },
+    "GrpcEndpointConfig": {
+      "description": "gRPC-specific configuration for an endpoint.\n\nEndpoints that support gRPC transport declare their serializer class and\ngRPC method paths here. The gRPC transport reads this at init to dynamically\nload the correct serializer without hardcoding any proto knowledge.",
+      "properties": {
+        "serializer": {
+          "description": "Class path for the gRPC serializer (module.path:ClassName format). The class must implement serialize_request(), deserialize_response(), and deserialize_stream_response() methods.",
+          "title": "Serializer",
+          "type": "string"
+        },
+        "method": {
+          "description": "Fully-qualified gRPC method path for unary RPC (e.g., /inference.GRPCInferenceService/ModelInfer).",
+          "title": "Method",
+          "type": "string"
+        },
+        "stream_method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fully-qualified gRPC method path for streaming RPC. Required if supports_streaming is true.",
+          "title": "Stream Method"
+        }
+      },
+      "required": [
+        "serializer",
+        "method"
+      ],
+      "title": "GrpcEndpointConfig",
+      "type": "object"
+    },
     "EndpointPlugin": {
       "type": "object",
       "properties": {
@@ -655,6 +689,18 @@
               "default": null,
               "description": "Health check URL path for pre-flight validation. Supports {model_name} template.",
               "title": "Health Path"
+            },
+            "grpc": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/GrpcEndpointConfig"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "gRPC transport configuration. Endpoints that support gRPC declare their serializer and method paths here."
             }
           },
           "required": [

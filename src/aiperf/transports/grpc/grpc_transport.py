@@ -1,13 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""gRPC transport for KServe V2 Open Inference Protocol."""
+"""Generic gRPC transport with pluggable serializers.
+
+Protocol-agnostic: all proto knowledge is loaded dynamically from the
+endpoint's ``grpc`` metadata in plugins.yaml. No proto imports here.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib
 import time
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 from urllib.parse import urlparse
 
 import grpc
@@ -20,26 +25,43 @@ from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.models import ErrorDetails, RequestInfo, RequestRecord, TextResponse
 from aiperf.plugin.schema.schemas import TransportMetadata
 from aiperf.transports.base_transports import BaseTransport, FirstTokenCallback
-from aiperf.transports.grpc.grpc_client import GrpcClient
-from aiperf.transports.grpc.payload_converter import (
-    dict_to_model_infer_request,
-    model_infer_response_to_dict,
-)
+from aiperf.transports.grpc.grpc_client import GenericGrpcClient
 from aiperf.transports.grpc.status_mapping import grpc_status_to_http
+from aiperf.transports.grpc.stream_chunk import StreamChunk
 from aiperf.transports.grpc.trace_data import GrpcTraceData
 
 
+@runtime_checkable
+class GrpcSerializerProtocol(Protocol):
+    """Interface that gRPC serializer classes must implement."""
+
+    def serialize_request(
+        self, payload: dict[str, Any], model_name: str, request_id: str = ""
+    ) -> bytes: ...
+
+    def deserialize_response(self, data: bytes) -> tuple[dict[str, Any], int]: ...
+
+    def deserialize_stream_response(self, data: bytes) -> StreamChunk: ...
+
+
 class GrpcTransport(BaseTransport):
-    """gRPC transport for KServe V2 Open Inference Protocol.
+    """Generic gRPC transport with pluggable serializers.
 
     Uses grpc.aio for async gRPC with HTTP/2 multiplexing.
     Supports insecure (grpc://) and TLS (grpcs://) channels.
-    Supports unary (ModelInfer) and streaming (ModelStreamInfer) RPCs.
+    Supports unary and streaming RPCs for any proto schema.
+
+    The serializer class and gRPC method paths are loaded dynamically from
+    the endpoint's ``grpc`` metadata block in plugins.yaml. This keeps the
+    transport fully proto-agnostic.
     """
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._grpc_client: GrpcClient | None = None
+        self._grpc_client: GenericGrpcClient | None = None
+        self._serializer: GrpcSerializerProtocol | None = None
+        self._unary_method: str | None = None
+        self._stream_method: str | None = None
 
     @classmethod
     def metadata(cls) -> TransportMetadata:
@@ -74,7 +96,7 @@ class GrpcTransport(BaseTransport):
             )
 
         timeout = self.model_endpoint.endpoint.timeout
-        self._grpc_client = GrpcClient(
+        self._grpc_client = GenericGrpcClient(
             target=target,
             secure=secure,
             timeout=timeout,
@@ -82,6 +104,36 @@ class GrpcTransport(BaseTransport):
         self.info(
             f"gRPC client initialized: target={target}, secure={secure}, timeout={timeout}"
         )
+
+    @on_init
+    async def _init_serializer(self) -> None:
+        """Load gRPC serializer from endpoint metadata in plugins.yaml."""
+        from aiperf.plugin import plugins
+
+        endpoint_type = str(self.model_endpoint.endpoint.type)
+        metadata = plugins.get_endpoint_metadata(endpoint_type)
+
+        if metadata.grpc is None:
+            raise ValueError(
+                f"Endpoint '{endpoint_type}' does not have gRPC configuration in metadata. "
+                f"Add a 'grpc' block with serializer, method, and stream_method to plugins.yaml."
+            )
+
+        # Load serializer class from module:Class path
+        module_path, _, class_name = metadata.grpc.serializer.rpartition(":")
+        if not module_path or not class_name:
+            raise ValueError(
+                f"Invalid serializer format: {metadata.grpc.serializer!r}. "
+                f"Expected 'module.path:ClassName'."
+            )
+
+        module = importlib.import_module(module_path)
+        serializer_cls = getattr(module, class_name)
+        self._serializer = serializer_cls()
+        self._unary_method = metadata.grpc.method
+        self._stream_method = metadata.grpc.stream_method
+
+        self.debug(f"gRPC serializer loaded: {metadata.grpc.serializer}")
 
     @on_stop
     async def _close_grpc_client(self) -> None:
@@ -154,7 +206,7 @@ class GrpcTransport(BaseTransport):
         Returns:
             RequestRecord with responses, timing, and any errors.
         """
-        if self._grpc_client is None:
+        if self._grpc_client is None or self._serializer is None:
             raise NotInitializedError(
                 "GrpcTransport not initialized. Call initialize() before send_request()."
             )
@@ -167,9 +219,9 @@ class GrpcTransport(BaseTransport):
         )
 
         try:
-            # Build protobuf request
+            # Serialize request to bytes
             model_name = request_info.model_endpoint.primary_model_name
-            grpc_request = dict_to_model_infer_request(
+            request_bytes = self._serializer.serialize_request(
                 payload,
                 model_name=model_name,
                 request_id=request_info.x_request_id or "",
@@ -180,7 +232,7 @@ class GrpcTransport(BaseTransport):
 
             # Record request send timing
             trace_data.request_send_start_perf_ns = time.perf_counter_ns()
-            request_size = grpc_request.ByteSize()
+            request_size = len(request_bytes)
             trace_data.request_chunks.append(
                 (trace_data.request_send_start_perf_ns, request_size)
             )
@@ -191,7 +243,7 @@ class GrpcTransport(BaseTransport):
                 await self._send_streaming_request(
                     record=record,
                     trace_data=trace_data,
-                    grpc_request=grpc_request,
+                    request_bytes=request_bytes,
                     grpc_metadata=grpc_metadata,
                     first_token_callback=first_token_callback,
                     cancel_after_ns=request_info.cancel_after_ns,
@@ -200,7 +252,7 @@ class GrpcTransport(BaseTransport):
                 await self._send_unary_request(
                     record=record,
                     trace_data=trace_data,
-                    grpc_request=grpc_request,
+                    request_bytes=request_bytes,
                     grpc_metadata=grpc_metadata,
                     cancel_after_ns=request_info.cancel_after_ns,
                 )
@@ -242,7 +294,7 @@ class GrpcTransport(BaseTransport):
         *,
         record: RequestRecord,
         trace_data: GrpcTraceData,
-        grpc_request: Any,
+        request_bytes: bytes,
         grpc_metadata: list[tuple[str, str]] | None,
         cancel_after_ns: int | None,
     ) -> None:
@@ -251,23 +303,27 @@ class GrpcTransport(BaseTransport):
         Args:
             record: RequestRecord to populate.
             trace_data: Trace data to populate.
-            grpc_request: ModelInferRequest protobuf.
+            request_bytes: Serialized request bytes.
             grpc_metadata: gRPC metadata tuples.
             cancel_after_ns: Cancel after this many ns, or None for no cancellation.
         """
         assert self._grpc_client is not None  # noqa: S101
+        assert self._serializer is not None  # noqa: S101
+        assert self._unary_method is not None  # noqa: S101
 
         if cancel_after_ns is None:
-            response = await self._grpc_client.model_infer(
-                grpc_request, metadata=grpc_metadata
+            response_bytes = await self._grpc_client.unary(
+                self._unary_method, request_bytes, metadata=grpc_metadata
             )
         else:
             timeout_s = cancel_after_ns / NANOS_PER_SECOND
             task = asyncio.create_task(
-                self._grpc_client.model_infer(grpc_request, metadata=grpc_metadata)
+                self._grpc_client.unary(
+                    self._unary_method, request_bytes, metadata=grpc_metadata
+                )
             )
             try:
-                response = await asyncio.wait_for(task, timeout=timeout_s)
+                response_bytes = await asyncio.wait_for(task, timeout=timeout_s)
             except asyncio.TimeoutError:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -286,12 +342,13 @@ class GrpcTransport(BaseTransport):
         perf_ns = time.perf_counter_ns()
         trace_data.response_receive_start_perf_ns = perf_ns
         trace_data.response_receive_end_perf_ns = perf_ns
-        response_size = response.ByteSize()
+        response_dict, response_size = self._serializer.deserialize_response(
+            response_bytes
+        )
         trace_data.response_chunks.append((perf_ns, response_size))
         trace_data.grpc_status_code = 0  # OK
         record.status = 200
 
-        response_dict = model_infer_response_to_dict(response)
         json_str = orjson.dumps(response_dict).decode("utf-8")
         record.responses.append(
             TextResponse(
@@ -307,7 +364,7 @@ class GrpcTransport(BaseTransport):
         *,
         record: RequestRecord,
         trace_data: GrpcTraceData,
-        grpc_request: Any,
+        request_bytes: bytes,
         grpc_metadata: list[tuple[str, str]] | None,
         first_token_callback: FirstTokenCallback | None,
         cancel_after_ns: int | None,
@@ -317,12 +374,14 @@ class GrpcTransport(BaseTransport):
         Args:
             record: RequestRecord to populate.
             trace_data: Trace data to populate.
-            grpc_request: ModelInferRequest protobuf.
+            request_bytes: Serialized request bytes.
             grpc_metadata: gRPC metadata tuples.
             first_token_callback: Optional callback on first non-error response.
             cancel_after_ns: Cancel after this many ns, or None for no cancellation.
         """
         assert self._grpc_client is not None  # noqa: S101
+        assert self._serializer is not None  # noqa: S101
+        assert self._stream_method is not None  # noqa: S101
 
         first_token_acquired = False
 
@@ -330,31 +389,29 @@ class GrpcTransport(BaseTransport):
             nonlocal first_token_acquired
             assert self._grpc_client is not None  # noqa: S101
 
-            async for stream_response in self._grpc_client.model_stream_infer(
-                grpc_request, metadata=grpc_metadata
+            async for chunk_bytes in self._grpc_client.server_stream(
+                self._stream_method, request_bytes, metadata=grpc_metadata
             ):
-                if stream_response.error_message:
+                chunk = self._serializer.deserialize_stream_response(chunk_bytes)
+
+                if chunk.error_message:
                     error_perf_ns = time.perf_counter_ns()
                     trace_data.error_timestamp_perf_ns = error_perf_ns
                     record.end_perf_ns = error_perf_ns
                     record.error = ErrorDetails(
                         type="gRPC:STREAM_ERROR",
-                        message=stream_response.error_message,
+                        message=chunk.error_message,
                         code=500,
                     )
                     break
 
                 perf_ns = time.perf_counter_ns()
-                response_size = stream_response.infer_response.ByteSize()
-                trace_data.response_chunks.append((perf_ns, response_size))
+                trace_data.response_chunks.append((perf_ns, chunk.response_size))
 
                 if trace_data.response_receive_start_perf_ns is None:
                     trace_data.response_receive_start_perf_ns = perf_ns
 
-                response_dict = model_infer_response_to_dict(
-                    stream_response.infer_response
-                )
-                json_str = orjson.dumps(response_dict).decode("utf-8")
+                json_str = orjson.dumps(chunk.response_dict).decode("utf-8")
                 text_response = TextResponse(
                     perf_ns=perf_ns,
                     text=json_str,

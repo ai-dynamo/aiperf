@@ -67,36 +67,38 @@ aiperf profile \
 
 ## Architecture
 
-The gRPC transport sits between the endpoint (which formats dict payloads) and the inference server, converting between dict and protobuf:
+The gRPC transport is protocol-agnostic. It delegates all proto knowledge to a pluggable **serializer** class, loaded from endpoint metadata in `plugins.yaml`:
 
 ```
 Endpoint (kserve_v2_infer)          -- format_payload() returns dict
     | dict payload
-GrpcTransport (BaseTransport)       -- converts dict <-> protobuf
-    | protobuf
-GrpcClient                          -- grpc.aio ModelInfer / ModelStreamInfer RPCs
+GrpcTransport (BaseTransport)       -- uses serializer to convert dict <-> bytes
+    | raw bytes
+GenericGrpcClient                   -- proto-free, sends/receives raw bytes via gRPC
     | gRPC wire protocol (HTTP/2)
 Triton / TRT-LLM Server
 ```
 
-The endpoint never knows it's running over gRPC. The payload converter translates the V2 JSON dict to a `ModelInferRequest` protobuf on the way out, and converts `ModelInferResponse` protobuf back to a JSON-serialized `TextResponse` on the way in. This means all existing `--extra-inputs` options (like `v2_input_name`, `v2_output_name`) work identically over gRPC.
+The endpoint never knows it's running over gRPC. The serializer (e.g., `KServeV2GrpcSerializer`) converts the endpoint's dict payload to protobuf bytes on the way out, and converts response bytes back to a JSON-serialized `TextResponse` on the way in. This means all existing `--extra-inputs` options (like `v2_input_name`, `v2_output_name`) work identically over gRPC.
+
+The serializer class and gRPC method paths are declared in `plugins.yaml` endpoint metadata, so adding support for a new gRPC protocol requires only a new serializer — no transport changes.
 
 ### Request Flow
 
 **Unary (ModelInfer):**
 
 1. Endpoint's `format_payload()` produces a V2 JSON dict
-2. `payload_converter.dict_to_model_infer_request()` converts to protobuf
-3. `GrpcClient.model_infer()` sends the unary RPC
-4. Response protobuf is converted back to a JSON dict
+2. `KServeV2GrpcSerializer.serialize_request()` converts dict to protobuf bytes
+3. `GenericGrpcClient.unary()` sends the raw bytes via gRPC
+4. `KServeV2GrpcSerializer.deserialize_response()` converts response bytes back to a dict
 5. JSON is wrapped in a `TextResponse` and stored in `RequestRecord`
 
 **Streaming (ModelStreamInfer):**
 
 1. Same payload preparation as unary
-2. `GrpcClient.model_stream_infer()` returns an async iterator
-3. Each streamed `ModelStreamInferResponse` is converted to a `TextResponse`
-4. `first_token_callback` fires on the first non-error response (enabling TTFT)
+2. `GenericGrpcClient.server_stream()` returns an async iterator of raw bytes
+3. Each chunk is deserialized via `KServeV2GrpcSerializer.deserialize_stream_response()` to a `StreamChunk`
+4. `first_token_callback` fires on the first non-error chunk (enabling TTFT)
 5. All responses are collected in `RequestRecord.responses`
 
 ## Custom Tensor Names
@@ -179,13 +181,13 @@ The gRPC transport captures timing information in `GrpcTraceData`, which extends
 | `grpc_status_code` | gRPC status code (0 = OK, 14 = UNAVAILABLE, etc.) |
 | `grpc_status_message` | gRPC status message from the server |
 
-### Inherited Base Fields
+### Inherited Base Fields (Export Format)
 
-All base trace data timing fields are available:
+All base trace data timing fields are included in the export. Field names below are the exported JSON names (internally, the `BaseTraceData` model uses `_perf_ns` suffix, e.g., `request_send_start_perf_ns`):
 
 | Field | Description |
 |---|---|
-| `request_send_start_ns` | When the protobuf request was sent |
+| `request_send_start_ns` | When the request was sent |
 | `response_receive_start_ns` | When the first response chunk arrived |
 | `response_receive_end_ns` | When the last response chunk arrived |
 | `request_chunks` | Array of `[timestamp_ns, size_bytes]` for each request |
@@ -320,7 +322,9 @@ When choosing between HTTP and gRPC for V2 inference:
 - [HTTP Trace Metrics Guide](./http-trace-metrics.md) - HTTP trace timing reference (aiohttp transport)
 - [Multi-URL Load Balancing](./multi-url-load-balancing.md) - Distributing requests across targets
 - [Request Cancellation Testing](./request-cancellation.md) - Cancellation testing guide
-- [Source: grpc_transport.py](../../src/aiperf/transports/grpc/grpc_transport.py) - Transport implementation
-- [Source: grpc_client.py](../../src/aiperf/transports/grpc/grpc_client.py) - Low-level gRPC client
+- [Adding gRPC Endpoints](../dev/adding-grpc-endpoints.md) - Developer guide for adding new gRPC protocols
+- [Source: grpc_transport.py](../../src/aiperf/transports/grpc/grpc_transport.py) - Generic transport implementation
+- [Source: grpc_client.py](../../src/aiperf/transports/grpc/grpc_client.py) - Proto-free gRPC client
+- [Source: kserve_v2_serializers.py](../../src/aiperf/transports/grpc/kserve_v2_serializers.py) - KServe V2 serializer
 - [Source: payload_converter.py](../../src/aiperf/transports/grpc/payload_converter.py) - Dict/protobuf conversion
 - [Source: status_mapping.py](../../src/aiperf/transports/grpc/status_mapping.py) - gRPC to HTTP status mapping

@@ -207,6 +207,51 @@ transport:
 
 Transport is auto-detected from URL scheme by `detect_transport_from_url()` in `workers/inference_client.py`.
 
+### gRPC Serializer Pattern
+
+The gRPC transport is protocol-agnostic. All proto knowledge is isolated in pluggable **serializer** classes that implement `GrpcSerializerProtocol`:
+
+```python
+from typing import Any
+
+from aiperf.transports.grpc.stream_chunk import StreamChunk
+
+
+class MyGrpcSerializer:
+    """Implements GrpcSerializerProtocol for MyService proto."""
+
+    @staticmethod
+    def serialize_request(
+        payload: dict[str, Any], model_name: str, request_id: str = ""
+    ) -> bytes:
+        # dict -> protobuf -> bytes
+        ...
+
+    @staticmethod
+    def deserialize_response(data: bytes) -> tuple[dict[str, Any], int]:
+        # bytes -> protobuf -> (dict, wire_size)
+        ...
+
+    @staticmethod
+    def deserialize_stream_response(data: bytes) -> StreamChunk:
+        # bytes -> protobuf -> StreamChunk
+        ...
+```
+
+Serializers are declared in `plugins.yaml` endpoint metadata and loaded dynamically by `GrpcTransport`:
+
+```yaml
+endpoint:
+  my_endpoint:
+    metadata:
+      grpc:
+        serializer: aiperf.transports.grpc.my_serializer:MyGrpcSerializer
+        method: /mypackage.MyService/Infer
+        stream_method: /mypackage.MyService/StreamInfer
+```
+
+See [Adding gRPC Endpoints](./adding-grpc-endpoints.md) for the full guide.
+
 ## Trace Data Pattern
 
 Custom trace data extends `BaseTraceData` and `TraceDataExport`. **Convention**: define the Export class before the Data class in the same file for readability and consistency with existing patterns (e.g., `GrpcTraceDataExport` before `GrpcTraceData`).

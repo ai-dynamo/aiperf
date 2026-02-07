@@ -25,8 +25,13 @@ from aiperf.common.models.model_endpoint_info import (
 from aiperf.common.models.record_models import RequestInfo
 from aiperf.plugin.enums import EndpointType
 from aiperf.transports.grpc.grpc_transport import GrpcTransport
+from aiperf.transports.grpc.kserve_v2_serializers import KServeV2GrpcSerializer
 from aiperf.transports.grpc.proto import grpc_predict_v2_pb2 as pb2
 from aiperf.transports.grpc.trace_data import GrpcTraceData
+
+# Method paths for tests (match plugins.yaml kserve_v2_infer metadata)
+_V2_UNARY_METHOD = "/inference.GRPCInferenceService/ModelInfer"
+_V2_STREAM_METHOD = "/inference.GRPCInferenceService/ModelStreamInfer"
 
 
 def create_grpc_model_endpoint(
@@ -98,6 +103,13 @@ def make_stream_error_response(error: str) -> pb2.ModelStreamInferResponse:
     stream_resp = pb2.ModelStreamInferResponse()
     stream_resp.error_message = error
     return stream_resp
+
+
+def _init_transport_serializer(transport: GrpcTransport) -> None:
+    """Wire V2 serializer and method paths onto a transport for testing."""
+    transport._serializer = KServeV2GrpcSerializer()
+    transport._unary_method = _V2_UNARY_METHOD
+    transport._stream_method = _V2_STREAM_METHOD
 
 
 class TestGrpcTransportMetadata:
@@ -177,9 +189,10 @@ class TestGrpcTransportSendRequest:
 
     @pytest.fixture
     def transport_and_endpoint(self):
-        """Create transport with mocked gRPC client."""
+        """Create transport with mocked gRPC client and V2 serializer."""
         endpoint = create_grpc_model_endpoint()
         transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
         return transport, endpoint
 
     @pytest.mark.asyncio
@@ -187,7 +200,9 @@ class TestGrpcTransportSendRequest:
         """Successful unary ModelInfer request."""
         transport, endpoint = transport_and_endpoint
         mock_client = MagicMock()
-        mock_client.model_infer = AsyncMock(return_value=make_infer_response())
+        mock_client.unary = AsyncMock(
+            return_value=make_infer_response().SerializeToString()
+        )
         transport._grpc_client = mock_client
 
         request_info = create_request_info(endpoint)
@@ -211,13 +226,14 @@ class TestGrpcTransportSendRequest:
         assert record.start_perf_ns > 0
         assert record.end_perf_ns is not None
         assert record.end_perf_ns >= record.start_perf_ns
-        mock_client.model_infer.assert_awaited_once()
+        mock_client.unary.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_send_request_streaming_success(self) -> None:
         """Successful streaming ModelStreamInfer request."""
         endpoint = create_grpc_model_endpoint(streaming=True)
         transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
 
         responses = [
             make_stream_response("Hello"),
@@ -226,10 +242,10 @@ class TestGrpcTransportSendRequest:
 
         async def mock_stream(*args, **kwargs):
             for resp in responses:
-                yield resp
+                yield resp.SerializeToString()
 
         mock_client = MagicMock()
-        mock_client.model_stream_infer = mock_stream
+        mock_client.server_stream = mock_stream
         transport._grpc_client = mock_client
 
         request_info = create_request_info(endpoint)
@@ -256,6 +272,7 @@ class TestGrpcTransportSendRequest:
         """Streaming request fires first_token_callback on first response."""
         endpoint = create_grpc_model_endpoint(streaming=True)
         transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
 
         responses = [
             make_stream_response("token1"),
@@ -264,10 +281,10 @@ class TestGrpcTransportSendRequest:
 
         async def mock_stream(*args, **kwargs):
             for resp in responses:
-                yield resp
+                yield resp.SerializeToString()
 
         mock_client = MagicMock()
-        mock_client.model_stream_infer = mock_stream
+        mock_client.server_stream = mock_stream
         transport._grpc_client = mock_client
 
         callback_calls = []
@@ -294,6 +311,7 @@ class TestGrpcTransportSendRequest:
         """Streaming request with error in stream sets error on record."""
         endpoint = create_grpc_model_endpoint(streaming=True)
         transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
 
         responses = [
             make_stream_response("token1"),
@@ -302,10 +320,10 @@ class TestGrpcTransportSendRequest:
 
         async def mock_stream(*args, **kwargs):
             for resp in responses:
-                yield resp
+                yield resp.SerializeToString()
 
         mock_client = MagicMock()
-        mock_client.model_stream_infer = mock_stream
+        mock_client.server_stream = mock_stream
         transport._grpc_client = mock_client
 
         request_info = create_request_info(endpoint)
@@ -334,7 +352,7 @@ class TestGrpcTransportSendRequest:
         )
 
         mock_client = MagicMock()
-        mock_client.model_infer = AsyncMock(side_effect=rpc_error)
+        mock_client.unary = AsyncMock(side_effect=rpc_error)
         transport._grpc_client = mock_client
 
         request_info = create_request_info(endpoint)
@@ -355,7 +373,9 @@ class TestGrpcTransportSendRequest:
         """Request with cancel_after_ns that completes before timeout."""
         transport, endpoint = transport_and_endpoint
         mock_client = MagicMock()
-        mock_client.model_infer = AsyncMock(return_value=make_infer_response())
+        mock_client.unary = AsyncMock(
+            return_value=make_infer_response().SerializeToString()
+        )
         transport._grpc_client = mock_client
 
         request_info = create_request_info(endpoint, cancel_after_ns=5_000_000_000)
@@ -376,14 +396,14 @@ class TestGrpcTransportSendRequest:
         """Request cancelled by cancel_after_ns timeout."""
         transport, endpoint = transport_and_endpoint
 
-        async def slow_infer(*args, **kwargs):
+        async def slow_unary(*args, **kwargs):
             # Use a Future that never resolves to simulate a slow request.
             # asyncio.sleep is auto-mocked to be instant in tests.
             await asyncio.get_event_loop().create_future()
-            return make_infer_response()
+            return make_infer_response().SerializeToString()
 
         mock_client = MagicMock()
-        mock_client.model_infer = slow_infer
+        mock_client.unary = slow_unary
         transport._grpc_client = mock_client
 
         # Cancel after 1ns (effectively immediate)
@@ -405,7 +425,9 @@ class TestGrpcTransportSendRequest:
         """Headers from build_headers are passed as gRPC metadata."""
         transport, endpoint = transport_and_endpoint
         mock_client = MagicMock()
-        mock_client.model_infer = AsyncMock(return_value=make_infer_response())
+        mock_client.unary = AsyncMock(
+            return_value=make_infer_response().SerializeToString()
+        )
         transport._grpc_client = mock_client
 
         request_info = create_request_info(endpoint)
@@ -416,7 +438,7 @@ class TestGrpcTransportSendRequest:
 
         await transport.send_request(request_info, payload)
 
-        call_kwargs = mock_client.model_infer.call_args[1]
+        call_kwargs = mock_client.unary.call_args[1]
         metadata = call_kwargs.get("metadata")
         assert metadata is not None
         metadata_dict = dict(metadata)
@@ -428,7 +450,9 @@ class TestGrpcTransportSendRequest:
         """Trace data should be populated with gRPC timing info."""
         transport, endpoint = transport_and_endpoint
         mock_client = MagicMock()
-        mock_client.model_infer = AsyncMock(return_value=make_infer_response())
+        mock_client.unary = AsyncMock(
+            return_value=make_infer_response().SerializeToString()
+        )
         transport._grpc_client = mock_client
 
         request_info = create_request_info(endpoint)
@@ -460,7 +484,7 @@ class TestGrpcTransportInit:
         transport = GrpcTransport(model_endpoint=endpoint)
 
         with patch.object(transport, "warning") as mock_warn:
-            with patch("aiperf.transports.grpc.grpc_transport.GrpcClient"):
+            with patch("aiperf.transports.grpc.grpc_transport.GenericGrpcClient"):
                 await transport._init_grpc_client()
 
             mock_warn.assert_called_once()

@@ -359,6 +359,10 @@ endpoint:
       metrics_title: KServe V2 Metrics
       service_kind: kserve
       health_path: /v2/models/{model_name}/ready
+      grpc:
+        serializer: aiperf.transports.grpc.kserve_v2_serializers:KServeV2GrpcSerializer
+        method: /inference.GRPCInferenceService/ModelInfer
+        stream_method: /inference.GRPCInferenceService/ModelStreamInfer
 
   template:
     class: aiperf.endpoints.template_endpoint:TemplateEndpoint

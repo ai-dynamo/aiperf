@@ -222,6 +222,30 @@ class CategorySpec(BaseModel):
 # =============================================================================
 
 
+class GrpcEndpointConfig(BaseModel):
+    """gRPC-specific configuration for an endpoint.
+
+    Endpoints that support gRPC transport declare their serializer class and
+    gRPC method paths here. The gRPC transport reads this at init to dynamically
+    load the correct serializer without hardcoding any proto knowledge.
+    """
+
+    serializer: str = Field(
+        description=(
+            "Class path for the gRPC serializer (module.path:ClassName format). "
+            "The class must implement serialize_request(), deserialize_response(), "
+            "and deserialize_stream_response() methods."
+        ),
+    )
+    method: str = Field(
+        description="Fully-qualified gRPC method path for unary RPC (e.g., /inference.GRPCInferenceService/ModelInfer).",
+    )
+    stream_method: str | None = Field(
+        default=None,
+        description="Fully-qualified gRPC method path for streaming RPC. Required if supports_streaming is true.",
+    )
+
+
 class EndpointMetadata(BaseModel):
     """Metadata schema for endpoint plugins.
 
@@ -277,6 +301,10 @@ class EndpointMetadata(BaseModel):
     health_path: str | None = Field(
         default=None,
         description="Health check URL path for pre-flight validation. Supports {model_name} template.",
+    )
+    grpc: GrpcEndpointConfig | None = Field(
+        default=None,
+        description="gRPC transport configuration. Endpoints that support gRPC declare their serializer and method paths here.",
     )
 
 

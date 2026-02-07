@@ -394,6 +394,8 @@ The KServe V2 Open Inference Protocol defines both HTTP/REST and gRPC variants. 
 | `http://` / `https://` | HTTP/1.1 (aiohttp) | V2 JSON REST | No (V2 REST has no streaming format) |
 | `grpc://` / `grpcs://` | gRPC (HTTP/2) | V2 Protobuf | Yes (`ModelStreamInfer`) |
 
+The gRPC transport is protocol-agnostic. It uses a pluggable serializer (`KServeV2GrpcSerializer`) declared in `plugins.yaml` to handle V2 protobuf conversion, while the transport and client layers operate on raw bytes. This architecture means the same `GrpcTransport` can support any gRPC protocol by swapping the serializer — see [Adding gRPC Endpoints](../dev/adding-grpc-endpoints.md) for details.
+
 ### Basic gRPC Usage
 
 Switch from HTTP to gRPC by changing the URL scheme to `grpc://`:
