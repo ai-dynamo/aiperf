@@ -30,13 +30,33 @@ class TelemetryMetrics(AIPerfBaseModel):
         default=None, description="Cumulative energy consumption in MJ"
     )
     gpu_utilization: float | None = Field(
-        default=None, description="GPU utilization percentage (0-100)"
+        default=None,
+        description="GPU utilization percentage (0-100). "
+        "Percent of time over the past sample period during which one or more kernels was executing on the GPU.",
     )
     gpu_memory_used: float | None = Field(
         default=None, description="GPU memory used in GB"
     )
     gpu_temperature: float | None = Field(
         default=None, description="GPU temperature in °C"
+    )
+    mem_utilization: float | None = Field(
+        default=None,
+        description="Memory bandwidth utilization percentage (0-100). "
+        "Percent of time over the past sample period during which global (device) memory was being read or written.",
+    )
+    sm_utilization: float | None = Field(
+        default=None,
+        description="Streaming multiprocessor utilization percentage (0-100)",
+    )
+    decoder_utilization: float | None = Field(
+        default=None, description="Video decoder (NVDEC) utilization percentage (0-100)"
+    )
+    encoder_utilization: float | None = Field(
+        default=None, description="Video encoder (NVENC) utilization percentage (0-100)"
+    )
+    jpg_utilization: float | None = Field(
+        default=None, description="JPEG decoder utilization percentage (0-100)"
     )
     xid_errors: float | None = Field(
         default=None, description="Value of the last XID error encountered"
@@ -94,7 +114,7 @@ class TelemetryRecord(GpuMetadata):
         description="Nanosecond wall-clock timestamp when telemetry was collected (time_ns)"
     )
     dcgm_url: str = Field(
-        description="Source DCGM endpoint URL (e.g., 'http://node1:9401/metrics')"
+        description="Source identifier (DCGM URL e.g., 'http://node1:9401/metrics' or 'pynvml://localhost')"
     )
     telemetry_data: TelemetryMetrics = Field(
         description="GPU metrics snapshot collected at this timestamp"

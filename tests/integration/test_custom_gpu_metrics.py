@@ -12,10 +12,11 @@ from aiperf.common.enums import (
     GenericMetricUnit,
     TemperatureMetricUnit,
 )
-from aiperf.gpu_telemetry.constants import (
-    GPU_TELEMETRY_METRICS_CONFIG,
-)
 from tests.harness.utils import AIPerfCLI, AIPerfMockServer
+
+# DCGMFaker provides 8 of the 12 default metrics defined in GPU_TELEMETRY_METRICS_CONFIG.
+# Missing from DCGMFaker: encoder_utilization, decoder_utilization, sm_utilization, jpg_utilization
+DCGM_FAKER_DEFAULT_METRIC_COUNT = 8
 
 
 @pytest.mark.skipif(
@@ -44,7 +45,7 @@ DCGM_FI_DEV_MEM_CLOCK, gauge, Memory clock frequency (in MHz)
 # Custom temperature metrics (DCGMFaker returns this)
 DCGM_FI_DEV_MEMORY_TEMP, gauge, Memory temperature (in °C)
 
-# Custom utilization metric (DCGMFaker returns this)
+# This is already a default metric (maps to mem_utilization), included to test deduplication
 DCGM_FI_DEV_MEM_COPY_UTIL, gauge, Memory copy utilization (in %)
 """
         csv_path.write_text(csv_content)
@@ -118,18 +119,20 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
             for gpu_data in endpoint_data.gpus.values():
                 assert gpu_data.metrics is not None
 
-                default_metric_count = len(GPU_TELEMETRY_METRICS_CONFIG)
+                # 8 defaults from DCGMFaker + 3 custom (sm_clock, mem_clock, memory_temp)
+                # Note: DCGM_FI_DEV_MEM_COPY_UTIL maps to default "mem_utilization", not added as custom
+                expected_min_metrics = DCGM_FAKER_DEFAULT_METRIC_COUNT + 3
 
-                assert len(gpu_data.metrics) >= default_metric_count, (
-                    f"Expected at least {default_metric_count} default metrics, "
+                assert len(gpu_data.metrics) >= expected_min_metrics, (
+                    f"Expected at least {expected_min_metrics} metrics, "
                     f"got {len(gpu_data.metrics)}"
                 )
 
+                # These are the actual custom metrics added (mem_copy_util is a default as mem_utilization)
                 custom_metric_names = [
                     "sm_clock",
                     "mem_clock",
                     "memory_temp",
-                    "mem_copy_util",
                 ]
                 for metric_name in custom_metric_names:
                     assert metric_name in gpu_data.metrics, (
@@ -162,11 +165,12 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
                 ), (
                     f"memory_temp unit is {gpu_data.metrics['memory_temp'].unit}, expected {TemperatureMetricUnit.CELSIUS.value}"
                 )
+                # DCGM_FI_DEV_MEM_COPY_UTIL maps to default "mem_utilization" (not "mem_copy_util")
                 assert (
-                    gpu_data.metrics["mem_copy_util"].unit
+                    gpu_data.metrics["mem_utilization"].unit
                     == GenericMetricUnit.PERCENT.value
                 ), (
-                    f"mem_copy_util unit is {gpu_data.metrics['mem_copy_util'].unit}, expected {GenericMetricUnit.PERCENT.value}"
+                    f"mem_utilization unit is {gpu_data.metrics['mem_utilization'].unit}, expected {GenericMetricUnit.PERCENT.value}"
                 )
 
     async def test_custom_metrics_deduplication(
@@ -209,12 +213,11 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
                 assert "sm_clock" in gpu_data.metrics
                 assert "mem_clock" in gpu_data.metrics
 
-                default_metric_count = len(GPU_TELEMETRY_METRICS_CONFIG)
-                custom_metrics_added = 2
+                # 8 defaults from DCGMFaker + 2 custom (sm_clock, mem_clock)
+                # GPU_UTIL and POWER_USAGE from CSV are already defaults, so not added as custom
+                expected_min_metrics = DCGM_FAKER_DEFAULT_METRIC_COUNT + 2
 
-                assert (
-                    len(gpu_data.metrics) >= default_metric_count + custom_metrics_added
-                )
+                assert len(gpu_data.metrics) >= expected_min_metrics
 
     async def test_invalid_csv_fallback_to_defaults(
         self,
@@ -245,8 +248,9 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
             for gpu_data in endpoint_data.gpus.values():
                 assert "sm_clock" in gpu_data.metrics
 
-                default_metric_count = len(GPU_TELEMETRY_METRICS_CONFIG)
-                assert len(gpu_data.metrics) >= default_metric_count
+                # 8 defaults from DCGMFaker + 1 valid custom (sm_clock)
+                expected_min_metrics = DCGM_FAKER_DEFAULT_METRIC_COUNT + 1
+                assert len(gpu_data.metrics) >= expected_min_metrics
 
     async def test_nonexistent_csv_file_error(
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, tmp_path: Path

@@ -2,17 +2,109 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared fixtures and helpers for common tests, especially bootstrap tests."""
 
+import io
 import multiprocessing
 from dataclasses import dataclass, field
 from unittest.mock import MagicMock, patch
 
 import pytest
+from rich.console import Console
 
 from aiperf.common.base_service import BaseService
 from aiperf.common.config import ServiceConfig
+from aiperf.common.tokenizer_display import TokenizerDisplayEntry
 from aiperf.timing.manager import TimingManager
 from aiperf.workers.worker import Worker
 from tests.harness import mock_plugin
+
+# =============================================================================
+# Tokenizer Test Helpers
+# =============================================================================
+
+
+def make_display_entry(
+    original_name: str,
+    resolved_name: str | None = None,
+    was_resolved: bool | None = None,
+) -> TokenizerDisplayEntry:
+    """Factory helper for creating TokenizerDisplayEntry instances.
+
+    Args:
+        original_name: The name originally requested by the user.
+        resolved_name: The resolved name. Defaults to original_name if not provided.
+        was_resolved: Whether resolution occurred. Auto-detected if not provided.
+
+    Returns:
+        TokenizerDisplayEntry with the specified attributes.
+    """
+    if resolved_name is None:
+        resolved_name = original_name
+
+    if was_resolved is None:
+        was_resolved = original_name != resolved_name
+
+    return TokenizerDisplayEntry(
+        original_name=original_name,
+        resolved_name=resolved_name,
+        was_resolved=was_resolved,
+    )
+
+
+# =============================================================================
+# Tokenizer Test Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def console_output():
+    """Create a console that writes to a string buffer for testing Rich output.
+
+    Returns:
+        Tuple of (Console, StringIO) for capturing and inspecting output.
+    """
+    string_io = io.StringIO()
+    console = Console(file=string_io, force_terminal=True, width=120)
+    return console, string_io
+
+
+@pytest.fixture
+def mock_logger():
+    """Create a mock logger that captures log output for testing.
+
+    Returns:
+        Tuple of (mock_logger, list) where list captures info messages.
+    """
+    messages: list[str] = []
+    logger = MagicMock()
+    logger.info = MagicMock(side_effect=lambda msg: messages.append(msg))
+    return logger, messages
+
+
+@pytest.fixture
+def mock_tokenizer_cls():
+    """Mock the Tokenizer class for testing validation without loading real tokenizers."""
+    with patch("aiperf.common.tokenizer.Tokenizer") as mock_cls:
+        yield mock_cls
+
+
+@pytest.fixture
+def mock_executor():
+    """Mock ProcessPoolExecutor for testing subprocess validation.
+
+    Provides a dictionary with:
+        - executor: The mocked executor instance
+        - future: The mocked future object for setting return values
+    """
+    mock_future = MagicMock()
+    mock_executor_instance = MagicMock()
+    mock_executor_instance.submit.return_value = mock_future
+    mock_executor_instance.__enter__ = MagicMock(return_value=mock_executor_instance)
+    mock_executor_instance.__exit__ = MagicMock(return_value=False)
+
+    with patch(
+        "concurrent.futures.ProcessPoolExecutor", return_value=mock_executor_instance
+    ):
+        yield {"executor": mock_executor_instance, "future": mock_future}
 
 
 class DummyService(BaseService):

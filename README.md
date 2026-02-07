@@ -33,7 +33,7 @@ Features
 
 - Scalable via multiprocess support
 - Modular design for easy user modification
-- **3 UI types**: `--ui-type dashboard` (default, real-time TUI), `--ui-type simple` (progress bars), `--ui-type none` (no UI). See [CLI Options](docs/cli_options.md) for details.
+- **3 UI types**: `--ui-type dashboard` (default in TTY, real-time TUI), `--ui-type simple` (progress bars), `--ui-type none` (default in non-TTY). Automatically detects interactive terminals. See [CLI Options](docs/cli_options.md) or [User Interface](docs/tutorials/ui-types.md) for details.
 - Several benchmarking modes:
   - concurrency
   - request-rate

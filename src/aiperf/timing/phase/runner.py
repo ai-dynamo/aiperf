@@ -278,7 +278,7 @@ class PhaseRunner(TaskManagerMixin):
             # If there is an error while setting up or executing the phase,
             # we need to flush it through the lifecycle to ensure the other services
             # are notified that the phase has ended, and the benchmark does not hang forever.
-            self.exception(f"Error executing phase {self._config.phase.title}: {e!r}")
+            self.error(f"Error executing phase {self._config.phase.title}: {e!r}")
             if not self._was_cancelled:
                 self.cancel()
 
@@ -452,7 +452,7 @@ class PhaseRunner(TaskManagerMixin):
                 set_event_on_timeout=True,
             )
         except Exception as e:
-            self.exception(
+            self.error(
                 f"Error waiting for phase {self._config.phase} to send all credits: {e!r}"
             )
         finally:
@@ -605,7 +605,7 @@ class PhaseRunner(TaskManagerMixin):
             return _on_timeout()
 
         except Exception as e:
-            self.exception(f"Error waiting for event '{name}' with timeout: {e!r}")
+            self.error(f"Error waiting for event '{name}' with timeout: {e!r}")
             raise
 
     async def _progress_report_loop(self) -> None:

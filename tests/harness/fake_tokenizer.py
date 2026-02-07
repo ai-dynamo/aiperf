@@ -31,7 +31,11 @@ class FakeTokenizer:
 
     @classmethod
     def from_pretrained(
-        cls, name: str, trust_remote_code: bool = False, revision: str = "main"
+        cls,
+        name: str,
+        trust_remote_code: bool = False,
+        revision: str = "main",
+        resolve_alias: bool = True,
     ) -> "FakeTokenizer":
         """Return a FakeTokenizer."""
         return cls()

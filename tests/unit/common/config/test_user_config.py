@@ -28,6 +28,7 @@ from aiperf.plugin.enums import (
     ArrivalPattern,
     DatasetSamplingStrategy,
     EndpointType,
+    GPUTelemetryCollectorType,
     TimingMode,
 )
 
@@ -306,7 +307,6 @@ class TestGPUTelemetryConfig:
                 "dashboard",
                 "http://node1:9401/metrics",
                 "https://node2:9401/metrics",
-                "summary",
             ],
         )
 
@@ -314,7 +314,6 @@ class TestGPUTelemetryConfig:
         assert "http://node1:9401/metrics" in config.gpu_telemetry_urls
         assert "https://node2:9401/metrics" in config.gpu_telemetry_urls
         assert "dashboard" not in config.gpu_telemetry_urls
-        assert "summary" not in config.gpu_telemetry_urls
 
     @pytest.mark.parametrize(
         "gpu_telemetry,expected_urls",
@@ -351,6 +350,131 @@ class TestGPUTelemetryConfig:
         """Test that GPU metrics CSV file validation raises error if file doesn't exist."""
         with pytest.raises(ValueError, match="GPU metrics file not found"):
             make_config(gpu_telemetry=["dashboard", "/nonexistent/path/metrics.csv"])
+
+    def test_pynvml_with_urls_raises_error(self):
+        """Test that using pynvml with DCGM URLs raises an error."""
+        with pytest.raises(ValueError, match="Cannot use pynvml with DCGM URLs"):
+            make_config(gpu_telemetry=["pynvml", "http://localhost:9401/metrics"])
+
+    def test_pynvml_with_multiple_urls_raises_error(self):
+        """Test that using pynvml with multiple DCGM URLs raises an error."""
+        with pytest.raises(ValueError, match="Cannot use pynvml with DCGM URLs"):
+            make_config(
+                gpu_telemetry=[
+                    "pynvml",
+                    "http://node1:9401/metrics",
+                    "http://node2:9401/metrics",
+                ]
+            )
+
+    def test_pynvml_with_dashboard_allowed(self):
+        """Test that pynvml can be used with dashboard mode."""
+        config = make_config(gpu_telemetry=["pynvml", "dashboard"])
+
+        assert config.gpu_telemetry_collector_type == GPUTelemetryCollectorType.PYNVML
+        assert config.gpu_telemetry_mode == GPUTelemetryMode.REALTIME_DASHBOARD
+        assert config.gpu_telemetry_urls == []
+
+    def test_pynvml_only(self):
+        """Test that pynvml can be used alone."""
+        config = make_config(gpu_telemetry=["pynvml"])
+
+        assert config.gpu_telemetry_collector_type == GPUTelemetryCollectorType.PYNVML
+        assert config.gpu_telemetry_mode == GPUTelemetryMode.SUMMARY
+        assert config.gpu_telemetry_urls == []
+
+    @pytest.mark.parametrize(
+        "url,should_warn",
+        [
+            ("localhost:8000", False),
+            ("http://localhost:8000", False),
+            ("127.0.0.1:8000", False),
+            ("http://127.0.0.1:8000", False),
+            ("::1:8000", False),
+            ("http://[::1]:8000", False),
+            ("remote-server:8000", True),
+            ("http://remote-server:8000", True),
+            ("192.168.1.100:8000", True),
+            ("http://192.168.1.100:8000", True),
+        ],
+    )
+    def test_pynvml_warns_on_non_localhost_url(self, url, should_warn, caplog):
+        """Test that pynvml with non-localhost server URLs emits a warning."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        make_config(
+            endpoint=make_endpoint(url=url),
+            gpu_telemetry=["pynvml"],
+        )
+
+        warning_present = any(
+            "pynvml collects GPU metrics from the local machine only" in record.message
+            for record in caplog.records
+        )
+        assert warning_present == should_warn, (
+            f"Expected warning={'present' if should_warn else 'absent'} for URL {url}, "
+            f"but got {'present' if warning_present else 'absent'}"
+        )
+
+    def test_pynvml_warns_lists_non_localhost_urls(self, caplog):
+        """Test that the warning lists the non-localhost URLs."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        make_config(
+            endpoint=make_endpoint(
+                urls=["http://remote-server:8000", "http://other-server:8000"]
+            ),
+            gpu_telemetry=["pynvml"],
+        )
+
+        warning_messages = [r.message for r in caplog.records if "pynvml" in r.message]
+        assert len(warning_messages) == 1
+        assert "remote-server" in warning_messages[0]
+        assert "other-server" in warning_messages[0]
+
+    def test_pynvml_no_warn_on_localhost_only(self, caplog):
+        """Test that pynvml with only localhost URLs does not emit a warning."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        make_config(
+            endpoint=make_endpoint(
+                urls=["http://localhost:8000", "http://127.0.0.1:8001"]
+            ),
+            gpu_telemetry=["pynvml"],
+        )
+
+        warning_present = any(
+            "pynvml collects GPU metrics from the local machine only" in record.message
+            for record in caplog.records
+        )
+        assert not warning_present
+
+    @pytest.mark.parametrize(
+        "invalid_item",
+        [
+            "unknown",
+            "invalid_option",
+            "dcgm",
+            "gpu",
+            "telemetry",
+            "metrics",
+        ],
+    )
+    def test_unknown_item_raises_error(self, invalid_item):
+        """Test that unknown items in gpu_telemetry raise an error."""
+        with pytest.raises(ValueError, match="Invalid GPU telemetry item"):
+            make_config(gpu_telemetry=[invalid_item])
+
+    def test_unknown_item_with_valid_items_raises_error(self):
+        """Test that unknown items mixed with valid items still raise an error."""
+        with pytest.raises(ValueError, match="Invalid GPU telemetry item"):
+            make_config(gpu_telemetry=["dashboard", "unknown_option"])
 
 
 # =============================================================================

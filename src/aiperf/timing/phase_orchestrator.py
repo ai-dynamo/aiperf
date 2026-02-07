@@ -214,7 +214,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 # or after all returns complete for non-seamless/final phases)
                 await runner.run(is_final_phase=is_final_phase)
             except Exception as e:
-                self.exception(f"Error executing phase {runner.phase}: {e!r}")
+                self.error(f"Error executing phase {runner.phase}: {e!r}")
                 await self.cancel()
                 raise e
 

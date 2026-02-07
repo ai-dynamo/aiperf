@@ -15,8 +15,10 @@ from aiperf.common.messages import (
     TelemetryStatusMessage,
 )
 from aiperf.common.models import ErrorDetails
-from aiperf.gpu_telemetry.data_collector import GPUTelemetryDataCollector
+from aiperf.gpu_telemetry.constants import PYNVML_SOURCE_IDENTIFIER
+from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
 from aiperf.gpu_telemetry.manager import GPUTelemetryManager
+from aiperf.plugin.enums import GPUTelemetryCollectorType
 
 
 def _create_user_config(
@@ -395,7 +397,7 @@ class TestStatusMessaging:
             manager.error = MagicMock()  # Mock error logging
 
             # Add a mock collector that will fail to start
-            mock_collector = AsyncMock(spec=GPUTelemetryDataCollector)
+            mock_collector = AsyncMock(spec=DCGMTelemetryCollector)
             mock_collector.initialize.side_effect = Exception("Failed to initialize")
             manager._collectors["http://localhost:9400/metrics"] = mock_collector
 
@@ -440,8 +442,8 @@ class TestCollectorManagement:
         manager = self._create_test_manager()
 
         # Create mock collectors
-        mock_collector1 = AsyncMock(spec=GPUTelemetryDataCollector)
-        mock_collector2 = AsyncMock(spec=GPUTelemetryDataCollector)
+        mock_collector1 = AsyncMock(spec=DCGMTelemetryCollector)
+        mock_collector2 = AsyncMock(spec=DCGMTelemetryCollector)
 
         manager._collectors = {
             "http://node1:9401/metrics": mock_collector1,
@@ -469,9 +471,9 @@ class TestCollectorManagement:
         manager = self._create_test_manager()
 
         # Create mock collectors - one fails, one succeeds
-        mock_collector1 = AsyncMock(spec=GPUTelemetryDataCollector)
+        mock_collector1 = AsyncMock(spec=DCGMTelemetryCollector)
         mock_collector1.stop.side_effect = Exception("Stop failed")
-        mock_collector2 = AsyncMock(spec=GPUTelemetryDataCollector)
+        mock_collector2 = AsyncMock(spec=DCGMTelemetryCollector)
 
         manager._collectors = {
             "http://node1:9401/metrics": mock_collector1,
@@ -630,6 +632,7 @@ class TestProfileConfigureCommand:
         manager._user_explicitly_configured_telemetry = False
         manager._telemetry_disabled = False
         manager._collection_interval = 0.333
+        manager._collector_type = GPUTelemetryCollectorType.DCGM
         manager.error = MagicMock()
         manager.debug = MagicMock()
         return manager
@@ -640,9 +643,9 @@ class TestProfileConfigureCommand:
         manager = self._create_test_manager()
         manager.publish = AsyncMock()
 
-        # Mock GPUTelemetryDataCollector to return unreachable
+        # Mock DCGMTelemetryCollector to return unreachable
         with patch.object(
-            GPUTelemetryDataCollector, "is_url_reachable", return_value=False
+            DCGMTelemetryCollector, "is_url_reachable", return_value=False
         ):
             configure_msg = ProfileConfigureCommand(
                 command_id="test", service_id="system_controller", config={}
@@ -670,16 +673,12 @@ class TestProfileConfigureCommand:
         manager.info = Mock()  # Mock logging method
         manager.debug = Mock()
 
-        # Mock GPUTelemetryDataCollector methods for reachability and baseline capture
+        # Mock DCGMTelemetryCollector methods for reachability and baseline capture
         with (
+            patch.object(DCGMTelemetryCollector, "is_url_reachable", return_value=True),
+            patch.object(DCGMTelemetryCollector, "initialize", new_callable=AsyncMock),
             patch.object(
-                GPUTelemetryDataCollector, "is_url_reachable", return_value=True
-            ),
-            patch.object(
-                GPUTelemetryDataCollector, "initialize", new_callable=AsyncMock
-            ),
-            patch.object(
-                GPUTelemetryDataCollector,
+                DCGMTelemetryCollector,
                 "collect_and_process_metrics",
                 new_callable=AsyncMock,
             ),
@@ -754,7 +753,7 @@ class TestProfileStartCommand:
         manager.publish = AsyncMock()
 
         # Add mock collector
-        mock_collector = AsyncMock(spec=GPUTelemetryDataCollector)
+        mock_collector = AsyncMock(spec=DCGMTelemetryCollector)
         manager._collectors["http://localhost:9400/metrics"] = mock_collector
 
         start_msg = ProfileStartCommand(
@@ -784,6 +783,7 @@ class TestSmartDefaultVisibility:
         manager._user_explicitly_configured_telemetry = user_requested
         manager._telemetry_disabled = False
         manager._collection_interval = 0.333
+        manager._collector_type = GPUTelemetryCollectorType.DCGM
         manager.error = MagicMock()
         manager.debug = MagicMock()
         return manager
@@ -829,7 +829,7 @@ class TestSmartDefaultVisibility:
 
         # Mock all endpoints as unreachable
         with patch.object(
-            GPUTelemetryDataCollector, "is_url_reachable", return_value=False
+            DCGMTelemetryCollector, "is_url_reachable", return_value=False
         ):
             configure_msg = ProfileConfigureCommand(
                 command_id="test", service_id="system_controller", config={}
@@ -883,7 +883,7 @@ class TestSmartDefaultVisibility:
 
         # Mock all endpoints as unreachable
         with patch.object(
-            GPUTelemetryDataCollector, "is_url_reachable", return_value=False
+            DCGMTelemetryCollector, "is_url_reachable", return_value=False
         ):
             configure_msg = ProfileConfigureCommand(
                 command_id="test", service_id="system_controller", config={}
@@ -896,3 +896,150 @@ class TestSmartDefaultVisibility:
         assert (
             len(call_args.endpoints_configured) == 0
         )  # No user endpoints, defaults hidden
+
+
+class TestPynvmlCollectorIntegration:
+    """Test PYNVML collector integration in manager's configure phase."""
+
+    def _create_test_manager(self):
+        """Helper to create a TelemetryManager instance configured for PYNVML."""
+        manager = GPUTelemetryManager.__new__(GPUTelemetryManager)
+        manager.service_id = "test_manager"
+        manager._collectors = {}
+        manager._collector_id_to_url = {}
+        manager._dcgm_endpoints = list(Environment.GPU.DEFAULT_DCGM_ENDPOINTS)
+        manager._user_provided_endpoints = []
+        manager._user_explicitly_configured_telemetry = False
+        manager._telemetry_disabled = False
+        manager._collection_interval = 0.333
+        manager._collector_type = GPUTelemetryCollectorType.PYNVML
+        manager.error = MagicMock()
+        manager.warning = MagicMock()
+        manager.debug = MagicMock()
+        return manager
+
+    @pytest.mark.asyncio
+    async def test_configure_pynvml_collector_success(self):
+        """Test successful PYNVML collector configuration when GPUs are available."""
+        manager = self._create_test_manager()
+        manager.publish = AsyncMock()
+
+        mock_collector = AsyncMock()
+        mock_collector.is_url_reachable = AsyncMock(return_value=True)
+
+        MockCollectorClass = MagicMock(return_value=mock_collector)
+        with patch(
+            "aiperf.plugin.plugins.get_class",
+            return_value=MockCollectorClass,
+        ):
+            configure_msg = ProfileConfigureCommand(
+                command_id="test", service_id="system_controller", config={}
+            )
+            await manager._profile_configure_command(configure_msg)
+
+        # Should have sent enabled status
+        manager.publish.assert_called_once()
+        call_args = manager.publish.call_args[0][0]
+        assert isinstance(call_args, TelemetryStatusMessage)
+        assert call_args.enabled is True
+        assert call_args.reason is None
+        assert PYNVML_SOURCE_IDENTIFIER in call_args.endpoints_configured
+        assert PYNVML_SOURCE_IDENTIFIER in call_args.endpoints_reachable
+
+        # Should have collector registered
+        assert PYNVML_SOURCE_IDENTIFIER in manager._collectors
+        assert (
+            manager._collector_id_to_url["pynvml_collector"] == PYNVML_SOURCE_IDENTIFIER
+        )
+
+    @pytest.mark.asyncio
+    async def test_configure_pynvml_collector_no_gpus_found(self):
+        """Test PYNVML collector configuration when no GPUs are available."""
+        manager = self._create_test_manager()
+        manager.publish = AsyncMock()
+
+        mock_collector = AsyncMock()
+        mock_collector.is_url_reachable = AsyncMock(return_value=False)
+
+        MockCollectorClass = MagicMock(return_value=mock_collector)
+        with patch(
+            "aiperf.plugin.plugins.get_class",
+            return_value=MockCollectorClass,
+        ):
+            configure_msg = ProfileConfigureCommand(
+                command_id="test", service_id="system_controller", config={}
+            )
+            await manager._profile_configure_command(configure_msg)
+
+        # Should have sent disabled status
+        manager.publish.assert_called_once()
+        call_args = manager.publish.call_args[0][0]
+        assert isinstance(call_args, TelemetryStatusMessage)
+        assert call_args.enabled is False
+        assert call_args.reason == "pynvml not available or no GPUs found"
+        assert PYNVML_SOURCE_IDENTIFIER in call_args.endpoints_configured
+        assert call_args.endpoints_reachable == []
+
+        # Should have no collectors registered
+        assert len(manager._collectors) == 0
+
+        # Should have logged warning
+        manager.warning.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_configure_pynvml_collector_package_not_installed(self):
+        """Test PYNVML collector configuration when pynvml package is not installed."""
+        manager = self._create_test_manager()
+        manager.publish = AsyncMock()
+
+        with patch(
+            "aiperf.plugin.plugins.get_class",
+            side_effect=RuntimeError(
+                "pynvml package not installed. Install with: pip install nvidia-ml-py"
+            ),
+        ):
+            configure_msg = ProfileConfigureCommand(
+                command_id="test", service_id="system_controller", config={}
+            )
+            await manager._profile_configure_command(configure_msg)
+
+        # Should have sent disabled status with RuntimeError message
+        manager.publish.assert_called_once()
+        call_args = manager.publish.call_args[0][0]
+        assert isinstance(call_args, TelemetryStatusMessage)
+        assert call_args.enabled is False
+        assert "pynvml package not installed" in call_args.reason
+        assert call_args.endpoints_configured == []
+        assert call_args.endpoints_reachable == []
+
+        # Should have logged error
+        manager.error.assert_called_once()
+        assert "pynvml package not installed" in str(manager.error.call_args)
+
+    @pytest.mark.asyncio
+    async def test_configure_pynvml_collector_general_exception(self):
+        """Test PYNVML collector configuration handles unexpected exceptions."""
+        manager = self._create_test_manager()
+        manager.publish = AsyncMock()
+
+        with patch(
+            "aiperf.plugin.plugins.get_class",
+            side_effect=ValueError("Unexpected initialization error"),
+        ):
+            configure_msg = ProfileConfigureCommand(
+                command_id="test", service_id="system_controller", config={}
+            )
+            await manager._profile_configure_command(configure_msg)
+
+        # Should have sent disabled status with general error message
+        manager.publish.assert_called_once()
+        call_args = manager.publish.call_args[0][0]
+        assert isinstance(call_args, TelemetryStatusMessage)
+        assert call_args.enabled is False
+        assert "pynvml configuration failed" in call_args.reason
+        assert call_args.endpoints_configured == []
+        assert call_args.endpoints_reachable == []
+
+        # Should have logged error about failed configuration
+        manager.error.assert_called_once()
+        assert "Failed to configure pynvml collector" in str(manager.error.call_args)

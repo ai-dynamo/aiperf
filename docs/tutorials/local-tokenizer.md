@@ -166,3 +166,9 @@ If the tokenizer fails to load:
 1. Verify your tokenizer files are in HuggingFace-compatible format
 2. Check that all required files are present (`tokenizer.json`, `config.json`, etc.)
 
+---
+
+## See Also
+
+- [Pre-Flight Tokenizer Auto Detection](../reference/tokenizer-auto-detection.md)
+
