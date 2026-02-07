@@ -182,6 +182,10 @@ class AioHttpTransport(BaseTransport):
         if endpoint_info.custom_endpoint:
             # Use custom endpoint path if provided
             path = endpoint_info.custom_endpoint.lstrip("/")
+            if "{" in path:
+                path = path.format(
+                    model_name=request_info.model_endpoint.primary_model_name
+                )
             url = f"{base_url}/{path}"
         else:
             # Get endpoint path from endpoint metadata
@@ -200,6 +204,10 @@ class AioHttpTransport(BaseTransport):
 
             else:
                 path = endpoint_path.lstrip("/")
+                if "{" in path:
+                    path = path.format(
+                        model_name=request_info.model_endpoint.primary_model_name
+                    )
                 # Handle /v1 base URL with v1/ path prefix to avoid duplication
                 if base_url.endswith("/v1") and path.startswith("v1/"):
                     path = path.removeprefix("v1/")

@@ -285,6 +285,81 @@ endpoint:
       tokenizes_input: true
       metrics_title: SOLIDO RAG Metrics
 
+  kserve_chat:
+    class: aiperf.endpoints.openai_chat:ChatEndpoint
+    description: |
+      KServe OpenAI-compatible Chat Completions endpoint. Uses /openai/v1/chat/completions.
+      For KServe InferenceService deployments with vLLM or TRT-LLM backends.
+    metadata:
+      endpoint_path: /openai/v1/chat/completions
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      supports_audio: true
+      supports_images: true
+      supports_videos: true
+      metrics_title: LLM Metrics
+      service_kind: kserve
+      health_path: /openai/v1/models
+
+  kserve_completions:
+    class: aiperf.endpoints.openai_completions:CompletionsEndpoint
+    description: |
+      KServe OpenAI-compatible Completions endpoint. Uses /openai/v1/completions.
+      For KServe InferenceService deployments with vLLM or TRT-LLM backends.
+    metadata:
+      endpoint_path: /openai/v1/completions
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      metrics_title: LLM Metrics
+      service_kind: kserve
+      health_path: /openai/v1/models
+
+  kserve_embeddings:
+    class: aiperf.endpoints.openai_embeddings:EmbeddingsEndpoint
+    description: |
+      KServe OpenAI-compatible Embeddings endpoint. Uses /openai/v1/embeddings.
+      For KServe InferenceService deployments with vLLM or TRT-LLM backends.
+    metadata:
+      endpoint_path: /openai/v1/embeddings
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: true
+      metrics_title: Embeddings Metrics
+      service_kind: kserve
+      health_path: /openai/v1/models
+
+  kserve_v1_predict:
+    class: aiperf.endpoints.kserve_v1_predict:KServeV1PredictEndpoint
+    description: |
+      KServe V1 Inference Protocol (TensorFlow Serving style) endpoint.
+      Uses instances/predictions format. Model name embedded in URL path.
+      Configure field names: --extra v1_input_field:X --extra v1_output_field:Y
+    metadata:
+      endpoint_path: /v1/models/{model_name}:predict
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: true
+      metrics_title: KServe V1 Metrics
+      service_kind: kserve
+      health_path: /v1/models/{model_name}
+
+  kserve_v2_infer:
+    class: aiperf.endpoints.kserve_v2_infer:KServeV2InferEndpoint
+    description: |
+      KServe V2 Open Inference Protocol endpoint for Triton/TRT-LLM inference.
+      Maps text to BYTES tensors. Model name embedded in URL path.
+      Configure tensor names: --extra v2_input_name:X --extra v2_output_name:Y
+    metadata:
+      endpoint_path: /v2/models/{model_name}/infer
+      supports_streaming: false
+      produces_tokens: true
+      tokenizes_input: true
+      metrics_title: KServe V2 Metrics
+      service_kind: kserve
+      health_path: /v2/models/{model_name}/ready
+
   template:
     class: aiperf.endpoints.template_endpoint:TemplateEndpoint
     description: |

@@ -274,6 +274,10 @@ class EndpointMetadata(BaseModel):
     produces_videos: bool = Field(
         default=False, description="Whether endpoint produces video-based outputs."
     )
+    health_path: str | None = Field(
+        default=None,
+        description="Health check URL path for pre-flight validation. Supports {model_name} template.",
+    )
 
 
 class TransportMetadata(BaseModel):

@@ -642,6 +642,19 @@
               "description": "Whether endpoint produces video-based outputs.",
               "title": "Produces Videos",
               "type": "boolean"
+            },
+            "health_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Health check URL path for pre-flight validation. Supports {model_name} template.",
+              "title": "Health Path"
             }
           },
           "required": [
