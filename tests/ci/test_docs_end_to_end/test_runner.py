@@ -304,8 +304,10 @@ class EndToEndTestRunner:
         logger.info(f"Server {server.name} health check passed - ready for testing")
 
         # Wait for model to fully load (health check only checks basic connectivity)
-        logger.info("Waiting 10 seconds for model to fully load...")
-        time.sleep(10)
+        # Large models like Qwen2-Audio-7B (7B parameters) need significant time to load into GPU
+        logger.info("Waiting 60 seconds for model to fully load into GPU memory...")
+        time.sleep(60)
+        logger.info("Model should be ready now")
 
         # Run all aiperf commands for this server
         all_aiperf_passed = True

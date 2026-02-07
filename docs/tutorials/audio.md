@@ -13,12 +13,18 @@ This guide covers profiling audio models using OpenAI-compatible chat completion
 
 ## Start a vLLM Server
 
-Launch the vLLM server with Qwen2-Audio-7B-Instruct:
+Launch the vLLM server with Qwen2-Audio-7B-Instruct. Audio support requires the `vllm[audio]` extras to be installed:
 
 <!-- setup-vllm-audio-openai-endpoint-server -->
 ```bash
-docker pull vllm/vllm-openai:latest
-docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
+# Build vLLM image with audio support
+docker build -t vllm-audio - << 'EOF'
+FROM vllm/vllm-openai:latest
+RUN pip install 'vllm[audio]'
+EOF
+
+# Run the server
+docker run --gpus all -p 8000:8000 vllm-audio \
   --model Qwen/Qwen2-Audio-7B-Instruct \
   --trust-remote-code
 ```
