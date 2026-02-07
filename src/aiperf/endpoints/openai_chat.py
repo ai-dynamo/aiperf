@@ -217,14 +217,6 @@ class ChatEndpoint(BaseEndpoint):
         Returns:
             Extracted response data or None if no content
         """
-        # Check for error responses first (they don't have "object" field)
-        if "error" in json_obj:
-            error_info = json_obj["error"]
-            self.warning(
-                f"Server returned error: {error_info.get('message', 'Unknown error')}"
-            )
-            return None
-
         match json_obj.get("object"):
             case "chat.completion":
                 data_key = "message"
@@ -232,10 +224,6 @@ class ChatEndpoint(BaseEndpoint):
                 data_key = "delta"
             case _:
                 object_type = json_obj.get("object")
-                self.warning(
-                    f"Unsupported or missing OpenAI object type: {object_type!r}. "
-                    f"Full response: {json_obj}"
-                )
                 raise ValueError(f"Unsupported OpenAI object type: {object_type!r}")
 
         choices = json_obj.get("choices")
