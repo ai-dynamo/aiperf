@@ -4,6 +4,7 @@
 import pytest
 
 from aiperf.common.enums import CreditPhase, MetricFlags, ModelSelectionStrategy
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import (
     ParsedResponse,
@@ -216,10 +217,7 @@ class TestOSLMismatchCountMetric:
     def test_counts_mismatches_above_threshold(self, monkeypatch):
         """Test that records with mismatch above threshold are counted."""
         # Set threshold to 20%
-        monkeypatch.setattr(
-            "aiperf.common.environment.Environment.METRICS.OSL_MISMATCH_PCT_THRESHOLD",
-            20.0,
-        )
+        monkeypatch.setattr(Environment.METRICS, "OSL_MISMATCH_PCT_THRESHOLD", 20.0)
 
         records = [
             create_record_with_osl(
@@ -252,10 +250,7 @@ class TestOSLMismatchCountMetric:
 
     def test_counts_positive_mismatches(self, monkeypatch):
         """Test that positive mismatches (generated more than requested) are also counted."""
-        monkeypatch.setattr(
-            "aiperf.common.environment.Environment.METRICS.OSL_MISMATCH_PCT_THRESHOLD",
-            10.0,
-        )
+        monkeypatch.setattr(Environment.METRICS, "OSL_MISMATCH_PCT_THRESHOLD", 10.0)
 
         records = [
             create_record_with_osl(
@@ -278,10 +273,7 @@ class TestOSLMismatchCountMetric:
 
     def test_zero_count_when_all_within_threshold(self, monkeypatch):
         """Test that count is 0 when all records are within threshold."""
-        monkeypatch.setattr(
-            "aiperf.common.environment.Environment.METRICS.OSL_MISMATCH_PCT_THRESHOLD",
-            50.0,
-        )
+        monkeypatch.setattr(Environment.METRICS, "OSL_MISMATCH_PCT_THRESHOLD", 50.0)
 
         records = [
             create_record_with_osl(requested_osl=100, actual_output_tokens=100),  # 0%
@@ -301,14 +293,8 @@ class TestOSLMismatchCountMetric:
 
     def test_max_token_threshold_caps_large_osl(self, monkeypatch):
         """Test that max_token_threshold caps the effective threshold for large OSL values."""
-        monkeypatch.setattr(
-            "aiperf.common.environment.Environment.METRICS.OSL_MISMATCH_PCT_THRESHOLD",
-            5.0,
-        )
-        monkeypatch.setattr(
-            "aiperf.common.environment.Environment.METRICS.OSL_MISMATCH_MAX_TOKEN_THRESHOLD",
-            50,
-        )
+        monkeypatch.setattr(Environment.METRICS, "OSL_MISMATCH_PCT_THRESHOLD", 5.0)
+        monkeypatch.setattr(Environment.METRICS, "OSL_MISMATCH_MAX_TOKEN_THRESHOLD", 50)
 
         records = [
             # 2000 requested: threshold = min(2000*5%=100, 50) = 50 tokens
