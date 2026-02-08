@@ -135,7 +135,7 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
                 return
             await self._publish_command_success_response(message, result)
         except Exception as e:
-            self.exception(
+            self.error(
                 f"Failed to handle command {message.command} with hook {hook}: {e}"
             )
             await self._publish_command_error_response(

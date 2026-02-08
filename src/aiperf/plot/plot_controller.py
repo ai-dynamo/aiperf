@@ -10,7 +10,8 @@ from aiperf.plot.constants import PlotMode, PlotTheme
 from aiperf.plot.core.data_loader import DataLoader
 from aiperf.plot.core.mode_detector import ModeDetector, VisualizationMode
 from aiperf.plot.dashboard.server import DashboardServer
-from aiperf.plot.exporters import MultiRunPNGExporter, SingleRunPNGExporter
+from aiperf.plot.exporters.png.multi_run import MultiRunPNGExporter
+from aiperf.plot.exporters.png.single_run import SingleRunPNGExporter
 from aiperf.plot.logging import setup_console_only_logging, setup_plot_logging
 
 logger = logging.getLogger(__name__)

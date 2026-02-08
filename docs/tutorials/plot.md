@@ -19,6 +19,9 @@ The `aiperf plot` command automatically detects whether to generate multi-run co
 
 ## Quick Start
 
+> [!WARNING]
+> **Custom export filenames not supported:** The plot command expects default export filenames (`profile_export.jsonl`, `profile_export_aiperf.json`). If you ran `aiperf profile` with `--profile-export-file` or a custom `--profile-export-prefix`, the output files will have different names and will not be detected by `aiperf plot`. To use the plot command, re-run profiling without custom export file options, or rename the files to match the default names.
+
 ```bash
 # Analyze a single profiling run
 aiperf plot <single_run_name>
@@ -452,6 +455,7 @@ plots/
 
 **Solutions**:
 - Verify input directory contains valid `profile_export.jsonl` files
+- If you used `--profile-export-file` or `--profile-export-prefix` during profiling, the output files have non-default names and will not be detected by the plot command. Re-run without custom export file options, or rename files to match the defaults (`profile_export.jsonl`, `profile_export_aiperf.json`)
 - Check output directory is writable
 - Review console output for error messages
 

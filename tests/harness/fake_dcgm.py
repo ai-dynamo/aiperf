@@ -71,20 +71,30 @@ class FakeDCGMMocker:
 
     @staticmethod
     def _default_endpoints() -> list[DCGMEndpoint]:
-        """Get default DCGM endpoints for testing."""
+        """Get default DCGM endpoints for testing.
+
+        Includes both application defaults (9400, 9401) plus additional test endpoint (9402).
+        """
         return [
             DCGMEndpoint(
-                url="http://localhost:9401/metrics",
+                url="http://localhost:9400/metrics",
                 gpu_name="h100",
                 num_gpus=2,
                 seed=42,
                 initial_load=0.3,
             ),
             DCGMEndpoint(
+                url="http://localhost:9401/metrics",
+                gpu_name="h100",
+                num_gpus=2,
+                seed=43,
+                initial_load=0.3,
+            ),
+            DCGMEndpoint(
                 url="http://localhost:9402/metrics",
                 gpu_name="h200",
                 num_gpus=2,
-                seed=43,
+                seed=44,
                 initial_load=0.3,
             ),
         ]

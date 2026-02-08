@@ -183,7 +183,7 @@ class HooksMixin(AIPerfLoggerMixin):
                 await hook(**kwargs)
             except Exception as e:
                 exceptions.append(HookError(self.__class__.__name__, hook.func_name, e))
-                self.exception(
+                self.error(
                     f"Error running {hook!r} hook for {self.__class__.__name__}: {e}"
                 )
         if exceptions:

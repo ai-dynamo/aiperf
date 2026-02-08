@@ -6,7 +6,7 @@ import pytest
 from aiperf_mock_server.dcgm_faker import GPU_CONFIGS, DCGMFaker
 from pytest import approx
 
-from aiperf.gpu_telemetry.data_collector import GPUTelemetryDataCollector
+from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
 
 
 class TestDCGMFaker:
@@ -20,7 +20,7 @@ class TestDCGMFaker:
         print(metrics_text)
 
         # Use real TelemetryDataCollector to parse the output
-        collector = GPUTelemetryDataCollector(dcgm_url="http://fake")
+        collector = DCGMTelemetryCollector(dcgm_url="http://fake")
         records = collector._parse_metrics_to_records(metrics_text)
 
         # Should get 2 TelemetryRecord objects (one per GPU)
@@ -63,7 +63,7 @@ class TestDCGMFaker:
     def test_load_affects_telemetry_records(self):
         """Test that load changes affect TelemetryRecords when parsed by real collector."""
         faker = DCGMFaker(gpu_name="b200", num_gpus=1, seed=42)
-        collector = GPUTelemetryDataCollector(dcgm_url="http://fake")
+        collector = DCGMTelemetryCollector(dcgm_url="http://fake")
 
         # Low load
         faker.set_load(0.1)

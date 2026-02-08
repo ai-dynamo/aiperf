@@ -992,11 +992,14 @@ class TestMooncakeTraceSynthesisIntegration:
 
     @pytest.fixture
     def sample_trace_data(self) -> dict[str, list[MooncakeTrace]]:
-        """Sample trace data grouped by session."""
+        """Sample trace data grouped by session.
+
+        Note: input_length must be >= len(hash_ids) * block_size (512) for consistency.
+        """
         return {
             "session-1": [
-                MooncakeTrace(input_length=512, output_length=64, hash_ids=[1, 2]),
-                MooncakeTrace(input_length=768, output_length=128, hash_ids=[1, 2, 3]),
+                MooncakeTrace(input_length=1024, output_length=64, hash_ids=[1, 2]),
+                MooncakeTrace(input_length=1536, output_length=128, hash_ids=[1, 2, 3]),
             ],
             "session-2": [
                 MooncakeTrace(input_length=1024, output_length=256, hash_ids=[4, 5]),
@@ -1090,9 +1093,12 @@ class TestMooncakeTraceSynthesisIntegration:
 
     def test_prefix_len_multiplier_extends_hash_ids(self, mock_prompt_generator):
         """Test that prefix_len_multiplier extends hash_ids."""
+        # Need multiple traces with shared prefixes for the algorithm to work
+        # block_size=512, input_length=1024 = 2 blocks, shared prefix [1]
         data = {
             "session-1": [
-                MooncakeTrace(input_length=512, output_length=64, hash_ids=[1, 2]),
+                MooncakeTrace(input_length=1024, output_length=64, hash_ids=[1, 2]),
+                MooncakeTrace(input_length=1024, output_length=64, hash_ids=[1, 3]),
             ],
         }
         user_config = make_synthesis_config(prefix_len_multiplier=2.0)
@@ -1105,8 +1111,12 @@ class TestMooncakeTraceSynthesisIntegration:
 
         result = loader._apply_synthesis(data)
 
-        # Hash IDs should be extended
-        assert len(result["session-1"][0].hash_ids) > 2
+        # Shared prefix [1] stretched to 2 blocks + 1 prompt block = 3 blocks
+        # new_prefix_len = 512 * 2 = 1024, new_prompt_len = 512, new_input_len = 1536
+        assert len(result["session-1"][0].hash_ids) == 3
+        assert len(result["session-1"][1].hash_ids) == 3
+        assert result["session-1"][0].input_length == 1536
+        assert result["session-1"][1].input_length == 1536
 
     def test_max_isl_caps_input_length(self, mock_prompt_generator):
         """Test that max_isl caps synthesized input_length."""
@@ -1224,9 +1234,12 @@ class TestMooncakeTraceSynthesisIntegration:
 
     def test_block_size_passed_to_synthesis(self, mock_prompt_generator):
         """Test that user-configured block_size is passed to synthesis."""
+        # Need multiple traces with shared prefixes for the algorithm to work
+        # block_size=256, input_length=512 = 2 blocks, shared prefix [1]
         data = {
             "session-1": [
                 MooncakeTrace(input_length=512, output_length=64, hash_ids=[1, 2]),
+                MooncakeTrace(input_length=512, output_length=64, hash_ids=[1, 3]),
             ],
         }
         # Use non-default block_size (256 instead of default 512)
@@ -1245,11 +1258,11 @@ class TestMooncakeTraceSynthesisIntegration:
         result = loader._apply_synthesis(data)
 
         # With block_size=256 and prefix_len_multiplier=2.0:
-        # Original: 2 hash_ids, input_length=512 (2 full blocks of 256)
-        # Extended: should add more hash_ids based on 256-token blocks
-        assert len(result["session-1"]) == 1
-        trace = result["session-1"][0]
-        assert trace.input_length > 512  # Should be extended
+        # Shared prefix [1] = 256 tokens, prompt = 256 tokens
+        # new_prefix_len = 256 * 2 = 512, new_prompt_len = 256, new_input_len = 768
+        assert len(result["session-1"]) == 2
+        assert result["session-1"][0].input_length == 768
+        assert result["session-1"][1].input_length == 768
 
     def test_traces_without_hash_ids(self, mock_prompt_generator):
         """Test synthesis with traces that have no hash_ids."""
@@ -1303,9 +1316,10 @@ class TestMooncakeTraceSynthesisIntegration:
         self, create_jsonl_file, mock_prompt_generator
     ):
         """Test that load_dataset applies synthesis when configured."""
+        # input_length must be >= len(hash_ids) * block_size (512)
         content = [
-            '{"input_length": 512, "output_length": 64, "hash_ids": [1, 2], "timestamp": 1000}',
-            '{"input_length": 768, "output_length": 128, "hash_ids": [1, 2, 3], "timestamp": 2000}',
+            '{"input_length": 1024, "output_length": 64, "hash_ids": [1, 2], "timestamp": 1000}',
+            '{"input_length": 1536, "output_length": 128, "hash_ids": [1, 2, 3], "timestamp": 2000}',
         ]
         filename = create_jsonl_file(content)
 

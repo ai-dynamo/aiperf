@@ -72,13 +72,13 @@ def bootstrap_and_run_service(
 
     # Load the service configuration
     if service_config is None:
-        from aiperf.common.config import load_service_config
+        from aiperf.common.config.loader import load_service_config
 
         service_config = load_service_config()
 
     # Load the user configuration
     if user_config is None:
-        from aiperf.common.config import load_user_config
+        from aiperf.common.config.loader import load_user_config
 
         # TODO: Add support for loading user config from a file/environment variables
         user_config = load_user_config()

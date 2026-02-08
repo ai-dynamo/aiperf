@@ -8,7 +8,8 @@ from cyclopts import App
 from rich.console import Console
 from rich.table import Table
 
-from aiperf.dataset.synthesis import MetricStats, PrefixAnalyzer
+from aiperf.dataset.synthesis.models import MetricStats
+from aiperf.dataset.synthesis.prefix_analyzer import PrefixAnalyzer
 
 analyze_app = App(
     name="analyze-trace", help="Analyze mooncake trace for prefix statistics"

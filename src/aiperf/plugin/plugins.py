@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-import re
 from collections.abc import Iterator
 from importlib.metadata import Distribution, entry_points
 from pathlib import Path
@@ -25,8 +24,8 @@ from aiperf.plugin.constants import (
     DEFAULT_ENTRY_POINT_GROUP,
     SUPPORTED_SCHEMA_VERSIONS,
 )
-from aiperf.plugin.extensible_enums import ExtensibleStrEnum
-from aiperf.plugin.schema import (
+from aiperf.plugin.extensible_enums import ExtensibleStrEnum, _normalize_name
+from aiperf.plugin.schema.schemas import (
     EndpointMetadata,
     PlotMetadata,
     PluginsManifest,
@@ -39,6 +38,9 @@ from aiperf.plugin.types import (
     PluginEntry,
     TypeNotFoundError,
 )
+
+# Alias for category normalization - same as plugin name normalization
+_normalize_category = _normalize_name
 
 _logger = AIPerfLogger(__name__)
 _yaml = YAML(typ="safe")
@@ -70,11 +72,12 @@ class _PluginRegistry:
         self._type_entries_by_class_path: dict[str, PluginEntry] = {}
         # Loaded plugin metadata: plugin_name -> metadata
         self._loaded_plugins: dict[str, PackageInfo] = {}
-        # Reverse mapping from class to registered name (for find_registered_name)
+        # Reverse mapping from class to normalized name key (for find_registered_name)
         self._class_to_name: WeakKeyDictionary[type, str] = WeakKeyDictionary()
         # Cache for class_path -> name lookup (for find_registered_name slow path)
         self._class_path_to_name: dict[tuple[str, str], str] = {}
         # Category metadata cache (loaded lazily from categories.yaml)
+        # Keys are normalized (lowercase, underscores)
         self._category_metadata: dict[str, dict] | None = None
 
         # Load the builtin registry manifest and discover plugins once on startup
@@ -281,12 +284,14 @@ class _PluginRegistry:
         Much faster than iter_all() as it avoids importing plugin modules.
 
         Args:
-            category: Plugin category to iterate. If None, iterates all categories.
+            category: Plugin category to iterate. Supports dash/underscore normalized
+                matching. If None, iterates all categories.
 
         Yields:
             PluginEntry for each registered plugin.
         """
         if category is not None:
+            category = _normalize_category(category)
             if category not in self._types:
                 return
             yield from self._types[category].values()
@@ -359,14 +364,15 @@ class _PluginRegistry:
         """Get metadata for a plugin category from categories.yaml.
 
         Args:
-            category: Category name to get metadata for.
+            category: Category name to get metadata for. Supports dash/underscore normalized matching.
 
         Returns:
             Category metadata dict or None if not found.
         """
         if self._category_metadata is None:
             self._load_category_metadata()
-        return self._category_metadata.get(category)
+
+        return self._category_metadata.get(_normalize_category(category))
 
     def register_type(self, entry: PluginEntry) -> None:
         """Register a type entry with conflict resolution.
@@ -414,7 +420,9 @@ class _PluginRegistry:
         self.register_type(entry)
 
         _logger.debug(
-            lambda: f"Registered dynamic type {category}:{name} -> {cls.__name__} (priority={priority})"
+            lambda: (
+                f"Registered dynamic type {category}:{name} -> {cls.__name__} (priority={priority})"
+            )
         )
 
     def unregister(
@@ -437,7 +445,8 @@ class _PluginRegistry:
         Returns:
             The removed PluginEntry, or None if not found.
         """
-        category = str(category)
+        category = _normalize_category(category)
+        name = _normalize_name(name)
 
         # Get the current entry before removal
         current_entry = self._types.get(category, {}).get(name)
@@ -480,12 +489,13 @@ class _PluginRegistry:
         """List all registered PluginEntry objects for a category.
 
         Args:
-            category: Plugin category to list entries for.
+            category: Plugin category to list entries for. Supports dash/underscore normalized matching.
 
         Returns:
             List of PluginEntry objects with metadata (name, description, priority, etc.).
             Returns empty list if category doesn't exist.
         """
+        category = _normalize_category(category)
         if category not in self._types:
             return []
         return list(self._types[category].values())
@@ -494,8 +504,10 @@ class _PluginRegistry:
         """Get a plugin entry by category and name.
 
         Args:
-            category: Plugin category to search in.
-            name: Plugin name to find.
+            category: Plugin category to search in. Supports dash/underscore
+                normalized matching (e.g., 'timing-strategy' matches 'timing_strategy').
+            name: Plugin name to find. Supports case-insensitive and dash/underscore
+                normalized matching (e.g., 'my-plugin' matches 'my_plugin').
 
         Returns:
             PluginEntry for the requested plugin.
@@ -503,6 +515,7 @@ class _PluginRegistry:
         Raises:
             TypeNotFoundError: If the plugin is not found.
         """
+        category = _normalize_category(category)
         if category not in self._types:
             available = "\n".join(f"  • {c}" for c in sorted(self._types.keys()))
             raise KeyError(
@@ -510,23 +523,30 @@ class _PluginRegistry:
                 f"Available categories:\n{available}"
             )
 
-        if name not in self._types[category]:
-            available = list(self._types[category].keys())
-            raise TypeNotFoundError(category, name, available)
+        name = _normalize_name(name)
+        if name in self._types[category]:
+            return self._types[category][name]
 
-        return self._types[category][name]
+        # Get original names from entries for error message
+        available = [entry.name for entry in self.iter_entries(category)]
+        raise TypeNotFoundError(category, name, available)
 
     def has_entry(self, category: CategoryT, name: str) -> bool:
         """Check if a plugin entry exists without raising an exception.
 
         Args:
-            category: Plugin category to search in.
-            name: Plugin name to find.
+            category: Plugin category to search in. Supports dash/underscore
+                normalized matching.
+            name: Plugin name to find. Supports case-insensitive and dash/underscore
+                normalized matching.
 
         Returns:
             True if the entry exists, False otherwise.
         """
-        return category in self._types and name in self._types[category]
+        category = _normalize_category(category)
+        if category not in self._types:
+            return False
+        return _normalize_name(name) in self._types[category]
 
     def is_internal_category(self, category: CategoryT) -> bool:
         """Check if a category is internal (not user-facing).
@@ -551,7 +571,7 @@ class _PluginRegistry:
         Member names are UPPER_SNAKE_CASE, values are the original type names.
 
         Args:
-            category: Plugin category to create enum from.
+            category: Plugin category to create enum from. Supports dash/underscore normalized matching.
             enum_name: Name for the generated enum class.
 
         Returns:
@@ -565,6 +585,7 @@ class _PluginRegistry:
         from aiperf.plugin.extensible_enums import create_enum as _create_enum
 
         # Get entries without loading the plugin classes to avoid circular imports
+        category = _normalize_category(category)
         if category not in self._types or not self._types[category]:
             available = "\n".join(f"  • {c}" for c in self.list_categories())
             raise KeyError(
@@ -572,7 +593,7 @@ class _PluginRegistry:
                 f"Available categories:\n{available}"
             )
 
-        # Create members dict: UPPER_SNAKE_CASE name -> string value
+        # Create members dict: UPPER_SNAKE_CASE name -> string value (using original names)
         members = {
             entry.name.replace("-", "_").upper(): entry.name
             for entry in self._types[category].values()
@@ -585,7 +606,7 @@ class _PluginRegistry:
         enum_cls = _create_enum(enum_name, members, module=module)
 
         # Store the category on the enum for reverse lookup (used by docs generation)
-        enum_cls._plugin_category_ = str(category)
+        enum_cls._plugin_category_ = category
 
         return enum_cls
 
@@ -607,9 +628,9 @@ class _PluginRegistry:
 
         data = _yaml.load(content) or {}
 
-        # Filter out non-category keys
+        # Store with normalized keys for O(1) lookup
         self._category_metadata = {
-            k: v
+            _normalize_category(k): v
             for k, v in data.items()
             if k not in ("schema_version",) and isinstance(v, dict)
         }
@@ -628,8 +649,8 @@ class _PluginRegistry:
 
         lazy_type = self._type_entries_by_class_path[class_path]
 
-        # Verify category matches
-        if lazy_type.category != category:
+        # Verify category matches (using normalized comparison)
+        if _normalize_category(lazy_type.category) != _normalize_category(category):
             raise ValueError(
                 f"Category mismatch: {class_path} is registered for category "
                 f"'{lazy_type.category}', not '{category}'"
@@ -644,7 +665,8 @@ class _PluginRegistry:
     def _load_entry(self, entry: PluginEntry) -> type:
         """Load a PluginEntry and update the reverse class-to-name mapping."""
         cls = entry.load()
-        self._class_to_name[cls] = entry.name
+        # Store normalized name for O(1) lookup in find_registered_name
+        self._class_to_name[cls] = _normalize_name(entry.name)
         return cls
 
     def find_registered_name(self, category: CategoryT, cls: type) -> str | None:
@@ -654,33 +676,33 @@ class _PluginRegistry:
         (for classes not loaded via registry). The class_path lookup is cached.
 
         Args:
-            category: Plugin category to search in.
+            category: Plugin category to search in. Supports dash/underscore normalized matching.
             cls: The class to find the registered name for.
 
         Returns:
-            The registered type name, or None if not found.
+            The registered type name (original form), or None if not found.
         """
-        category_str = str(category)
-        if category_str not in self._types:
+        category = _normalize_category(category)
+        if category not in self._types:
             return None
 
         # Fast path: check reverse mapping for already-loaded classes
         if cls in self._class_to_name:
-            name = self._class_to_name[cls]
-            # Verify it's in the requested category
-            if name in self._types[category_str]:
-                return name
+            name = self._class_to_name[cls]  # already normalized
+            # Verify it's in the requested category and get original name from entry
+            if name in self._types[category]:
+                return self._types[category][name].name
 
         # Medium path: check class_path cache
         target_class_path = f"{cls.__module__}:{cls.__name__}"
-        cache_key = (category_str, target_class_path)
+        cache_key = (category, target_class_path)
         if cache_key in self._class_path_to_name:
             return self._class_path_to_name[cache_key]
 
         # Slow path: search by class path for classes not loaded via registry
-        for _, entry in self._types[category_str].items():
+        for entry in self.iter_entries(category):
             if entry.class_path == target_class_path:
-                # Cache the result for future lookups
+                # Cache the result for future lookups (original name)
                 self._class_path_to_name[cache_key] = entry.name
                 return entry.name
 
@@ -782,9 +804,13 @@ class _PluginRegistry:
                 self._resolve_conflict_and_register(entry)
 
     def _resolve_conflict_and_register(self, entry: PluginEntry) -> None:
-        """Resolve conflicts and register type."""
-        category = entry.category
-        name = entry.name
+        """Resolve conflicts and register type.
+
+        Keys are stored normalized (lowercase, dashes->underscores) for O(1) lookup.
+        Original names are preserved in entry.category/entry.name for display.
+        """
+        category = _normalize_category(entry.category)
+        name = _normalize_name(entry.name)
         self._types.setdefault(category, {})
         existing = self._types[category].get(name)
 
@@ -793,7 +819,9 @@ class _PluginRegistry:
             self._types[category][name] = entry
             self._type_entries_by_class_path[entry.class_path] = entry
             _logger.debug(
-                lambda e=entry: f"Registered {e.category}:{e.name} from {e.package} (priority={e.priority})"
+                lambda e=entry: (
+                    f"Registered {e.category}:{e.name} from {e.package} (priority={e.priority})"
+                )
             )
             return
 
@@ -869,8 +897,15 @@ class _PluginRegistry:
             author_email = pkg_metadata.get("Author-email", "")
             if author_email:
                 # Extract name from "Name <email>" or '"Name" <email>' format
-                if match := re.match(r'^"?([^"<]+)"?\s*<', author_email):
-                    author = match.group(1).strip()
+                if "<" in author_email:
+                    # Get everything before the '<' and strip whitespace
+                    name_part = author_email[: author_email.index("<")].strip()
+                    # Remove surrounding quotes if present
+                    if name_part.startswith('"'):
+                        name_part = name_part[1:]
+                    if name_part.endswith('"'):
+                        name_part = name_part[:-1]
+                    author = name_part.strip()
                 else:
                     author = author_email.split(",")[0].strip()
 
@@ -897,8 +932,9 @@ if TYPE_CHECKING:
     from aiperf.dataset.protocols import CustomDatasetLoaderProtocol, DatasetBackingStoreProtocol, DatasetClientStoreProtocol, DatasetSamplingStrategyProtocol
     from aiperf.endpoints.protocols import EndpointProtocol
     from aiperf.exporters.protocols import ConsoleExporterProtocol, DataExporterProtocol
+    from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
     from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerProtocol
-    from aiperf.plugin.enums import ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, PlotType, PluginType, PluginTypeStr, RampType, RecordProcessorType, ResultsProcessorType, ServiceRunType, ServiceType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
+    from aiperf.plugin.enums import ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, RampType, RecordProcessorType, ResultsProcessorType, ServiceRunType, ServiceType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
     from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
     from aiperf.post_processors.protocols import RecordProcessorProtocol
     from aiperf.timing.intervals import IntervalGeneratorProtocol
@@ -999,6 +1035,10 @@ if TYPE_CHECKING:
     def get_class(category: Literal[PluginType.PLOT, "plot"], name_or_class_path: PlotType | str) -> type[PlotTypeHandlerProtocol]: ...
     @overload
     def iter_all(category: Literal[PluginType.PLOT, "plot"]) -> Iterator[tuple[PluginEntry, type[PlotTypeHandlerProtocol]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.GPU_TELEMETRY_COLLECTOR, "gpu_telemetry_collector"], name_or_class_path: GPUTelemetryCollectorType | str) -> type[GPUTelemetryCollectorProtocol]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.GPU_TELEMETRY_COLLECTOR, "gpu_telemetry_collector"]) -> Iterator[tuple[PluginEntry, type[GPUTelemetryCollectorProtocol]]]: ...
     @overload
     def get_class(category: PluginType | PluginTypeStr, name_or_class_path: str) -> type: ...
     # fmt: on
@@ -1138,6 +1178,7 @@ def get_typed_metadata(category: CategoryT, name: str) -> Any:
 
     Args:
         category: Plugin category (e.g., PluginType.ENDPOINT or "endpoint").
+            Supports dash/underscore normalized matching.
         name: Plugin name within the category.
 
     Returns:
@@ -1149,12 +1190,10 @@ def get_typed_metadata(category: CategoryT, name: str) -> Any:
         >>> print(endpoint_meta.streaming)  # Typed access
         True
     """
-    category_str = str(category)
+    category = _normalize_category(category)
     entry = get_entry(category, name)
-
-    # Use registered metadata class if available
-    if category_str in _CATEGORY_METADATA_CLASSES:
-        return entry.get_typed_metadata(_CATEGORY_METADATA_CLASSES[category_str])
+    if metadata_cls := _CATEGORY_METADATA_CLASSES.get(category):
+        return entry.get_typed_metadata(metadata_cls)
 
     # Fall back to raw metadata dict
     return entry.metadata

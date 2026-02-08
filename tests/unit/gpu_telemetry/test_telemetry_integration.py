@@ -1,10 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
 Integration tests for GPU telemetry collection pipeline.
 
-Tests the end-to-end flow from GPUTelemetryDataCollector through GPUTelemetryAccumulator
+Tests the end-to-end flow from DCGMTelemetryCollector through GPUTelemetryAccumulator
 with realistic mock data and callback mechanisms.
 """
 
@@ -16,14 +16,14 @@ import pytest
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.gpu_telemetry.accumulator import GPUTelemetryAccumulator
-from aiperf.gpu_telemetry.data_collector import GPUTelemetryDataCollector
+from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
 
 
 class TestGPUTelemetryIntegration:
     """Integration tests for complete telemetry collection and processing pipeline.
 
     This test class verifies the end-to-end integration between:
-    - GPUTelemetryDataCollector (DCGM data collection)
+    - DCGMTelemetryCollector (DCGM data collection)
     - GPUTelemetryAccumulator (hierarchical data organization)
     - Multi-node telemetry aggregation
     - Error handling across the pipeline
@@ -130,7 +130,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
         Integration test for multi-node telemetry collection through processing pipeline.
 
         Tests the complete flow:
-        1. GPUTelemetryDataCollector fetches from multiple DCGM endpoints
+        1. DCGMTelemetryCollector fetches from multiple DCGM endpoints
         2. Records are processed through callbacks
         3. GPUTelemetryAccumulator stores in hierarchical structure
         4. Statistical aggregation produces MetricResult objects
@@ -157,7 +157,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             return mock_context_manager
 
         with patch("aiohttp.ClientSession.get", side_effect=mock_aiohttp_get):
-            collector1 = GPUTelemetryDataCollector(
+            collector1 = DCGMTelemetryCollector(
                 dcgm_url="http://node1:9401/metrics",
                 collection_interval=0.05,
                 record_callback=self.record_callback,
@@ -165,7 +165,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
                 collector_id="node1_collector",
             )
 
-            collector2 = GPUTelemetryDataCollector(
+            collector2 = DCGMTelemetryCollector(
                 dcgm_url="http://node2:9401/metrics",
                 collection_interval=0.05,
                 record_callback=self.record_callback,
@@ -305,7 +305,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             return mock_context_manager
 
         with patch("aiohttp.ClientSession.get", side_effect=mock_aiohttp_get_error):
-            collector = GPUTelemetryDataCollector(
+            collector = DCGMTelemetryCollector(
                 dcgm_url="http://node1:9401/metrics",
                 collection_interval=0.05,
                 record_callback=failing_record_callback,
@@ -361,7 +361,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             return mock_context_manager
 
         with patch("aiohttp.ClientSession.get", side_effect=mock_aiohttp_get_empty):
-            collector = GPUTelemetryDataCollector(
+            collector = DCGMTelemetryCollector(
                 dcgm_url="http://empty-node:9401/metrics",
                 collection_interval=0.1,
                 record_callback=self.record_callback,
@@ -410,7 +410,7 @@ DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-test-1234",device="nvidia
             return mock_context_manager
 
         with patch("aiohttp.ClientSession.get", side_effect=mock_aiohttp_get_scaling):
-            collector = GPUTelemetryDataCollector(
+            collector = DCGMTelemetryCollector(
                 dcgm_url="http://testnode:9401/metrics",
                 collection_interval=0.1,
                 record_callback=self.record_callback,

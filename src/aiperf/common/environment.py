@@ -332,6 +332,17 @@ class _MetricsSettings(BaseSettings):
         default=10.0,
         description="Percentage difference threshold for flagging discrepancies between API usage and client token counts (default: 10%)",
     )
+    OSL_MISMATCH_PCT_THRESHOLD: float = Field(
+        ge=0.0,
+        le=100.0,
+        default=5.0,
+        description="Percentage difference threshold for flagging discrepancies between requested and actual output sequence length (default: 5%)",
+    )
+    OSL_MISMATCH_MAX_TOKEN_THRESHOLD: int = Field(
+        ge=1,
+        default=50,
+        description="Maximum absolute token threshold for OSL mismatch. The effective threshold is min(requested_osl * pct_threshold, this value). Makes threshold tighter for large OSL values (default: 50 tokens)",
+    )
 
 
 class _RecordSettings(BaseSettings):

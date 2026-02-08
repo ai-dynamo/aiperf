@@ -182,6 +182,21 @@ endpoint:
       tokenizes_input: true
       metrics_title: LLM Metrics
 
+  chat_embeddings:
+    class: aiperf.endpoints.chat_embeddings:ChatEmbeddingsEndpoint
+    description: |
+      Chat-style embeddings endpoint for vLLM multimodal embedding models (e.g., VLM2Vec).
+      This is required for vLLM as it is the only way to obtain multimodal embeddings -
+      the request uses chat messages format (with images/text) while the response returns
+      embeddings. Uses /v1/embeddings path.
+    metadata:
+      endpoint_path: /v1/embeddings
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: true
+      supports_images: true
+      metrics_title: Embeddings Metrics
+
   embeddings:
     class: aiperf.endpoints.openai_embeddings:EmbeddingsEndpoint
     description: |
@@ -688,6 +703,13 @@ console_exporter:
       Console exporter for usage discrepancy warnings. Alerts when token counts
       from server differ significantly from client calculations. Always loaded.
 
+  osl_mismatch_warning:
+    class: aiperf.exporters.console_osl_mismatch_exporter:ConsoleOSLMismatchExporter
+    description: |
+      Console exporter for output sequence length mismatch warnings. Alerts when
+      actual output length differs significantly from requested --osl value.
+      Typically indicates ignore_eos is not set or not supported by the server.
+
 # =============================================================================
 # UI Implementations
 # =============================================================================
@@ -805,6 +827,23 @@ plot:
     metadata:
       display_name: Time Window Summary
       category: aggregated
+
+# =============================================================================
+# GPU Telemetry Collector
+# =============================================================================
+# GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.
+# Supports DCGM HTTP endpoints and pynvml Python library.
+# One-to-one mapping based on gpu_telemetry_collector configuration.
+# =============================================================================
+gpu_telemetry_collector:
+  dcgm:
+    class: aiperf.gpu_telemetry.dcgm_collector:DCGMTelemetryCollector
+    description: |
+      DCGM telemetry collector that collects GPU telemetry metrics from DCGM HTTP endpoints.
+  pynvml:
+    class: aiperf.gpu_telemetry.pynvml_collector:PyNVMLTelemetryCollector
+    description: |
+      PyNVML telemetry collector that collects GPU telemetry metrics using the pynvml Python library.
 
 # =============================================================================
 # Communication Backends
