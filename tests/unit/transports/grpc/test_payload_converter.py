@@ -433,3 +433,215 @@ class TestExtractRawTensorData:
                 assert abs(expected - actual) < 0.001
             else:
                 assert expected == actual
+
+    @pytest.mark.parametrize(
+        "datatype,fmt,values",
+        [
+            ("UINT64", "<Q", [100, 200]),
+            ("UINT8", "B", [1, 2, 255]),
+            ("UINT16", "<H", [1000, 2000]),
+            ("INT8", "b", [-1, 0, 127]),
+            ("INT16", "<h", [-100, 100]),
+            ("FP16", "<e", [0.5, 1.0]),
+            ("FP64", "<d", [0.123456789]),
+        ],
+    )
+    def test_additional_numeric_types(
+        self, datatype: str, fmt: str, values: list
+    ) -> None:
+        """Additional numeric types correctly unpacked from raw bytes."""
+        raw = struct.pack(
+            f"{len(values)}{fmt[-1]}" if len(fmt) > 1 else f"{len(values)}{fmt}",
+            *values,
+        )
+        result = _extract_raw_tensor_data(raw, datatype, [len(values)])
+
+        for expected, actual in zip(values, result, strict=True):
+            if isinstance(expected, float):
+                assert abs(expected - actual) < 0.01
+            else:
+                assert expected == actual
+
+    def test_multi_dimensional_shape(self) -> None:
+        """Multi-dimensional shape should compute correct element count."""
+        # Shape [2, 3] = 6 elements of INT32
+        values = [1, 2, 3, 4, 5, 6]
+        raw = struct.pack("<6i", *values)
+        result = _extract_raw_tensor_data(raw, "INT32", [2, 3])
+
+        assert result == values
+
+    def test_bytes_truncated_length_prefix(self) -> None:
+        """Truncated BYTES data (incomplete length prefix) should stop gracefully."""
+        # Only 2 bytes, not enough for 4-byte length prefix
+        raw = b"\x01\x02"
+        result = _extract_raw_tensor_data(raw, "BYTES", [1])
+
+        assert result == []
+
+    def test_unknown_datatype_fallback(self) -> None:
+        """Unknown datatype should fall back to UTF-8 decoding of raw bytes."""
+        raw = b"hello"
+        result = _extract_raw_tensor_data(raw, "BFLOAT16", [1])
+
+        assert result == ["hello"]
+
+
+class TestDictToModelInferRequestAdditional:
+    """Additional tests for dict_to_model_infer_request."""
+
+    @pytest.mark.parametrize(
+        "datatype,proto_field,values",
+        [
+            ("UINT64", "uint64_contents", [42, 100]),
+            ("UINT8", "uint_contents", [1, 255]),
+            ("UINT16", "uint_contents", [1000]),
+            ("UINT32", "uint_contents", [50000]),
+            ("INT8", "int_contents", [-1, 127]),
+            ("INT16", "int_contents", [-100, 100]),
+            ("FP16", "fp32_contents", [0.5, 1.0]),
+        ],
+    )
+    def test_additional_input_datatypes(
+        self, datatype: str, proto_field: str, values: list
+    ) -> None:
+        """Additional datatypes should be set on the correct protobuf field."""
+        payload = {
+            "inputs": [
+                {
+                    "name": "tensor",
+                    "shape": [len(values)],
+                    "datatype": datatype,
+                    "data": values,
+                }
+            ]
+        }
+        request = dict_to_model_infer_request(payload, model_name="m")
+        contents = request.inputs[0].contents
+        actual = list(getattr(contents, proto_field))
+
+        assert len(actual) == len(values)
+        for expected, got in zip(values, actual, strict=True):
+            if isinstance(expected, float):
+                assert abs(expected - got) < 0.01
+            else:
+                assert expected == got
+
+    def test_unknown_datatype_stored_as_bytes(self) -> None:
+        """Unknown datatype should fall back to bytes_contents."""
+        payload = {
+            "inputs": [
+                {
+                    "name": "tensor",
+                    "shape": [1],
+                    "datatype": "CUSTOM_TYPE",
+                    "data": ["hello"],
+                }
+            ]
+        }
+        request = dict_to_model_infer_request(payload, model_name="m")
+        assert request.inputs[0].contents.bytes_contents == [b"hello"]
+
+    def test_input_level_parameters(self) -> None:
+        """Input-level parameters should be set on the tensor."""
+        payload = {
+            "inputs": [
+                {
+                    "name": "text_input",
+                    "shape": [1],
+                    "datatype": "BYTES",
+                    "data": ["prompt"],
+                    "parameters": {"binary_data_size": 1024},
+                }
+            ]
+        }
+        request = dict_to_model_infer_request(payload, model_name="m")
+        assert request.inputs[0].parameters["binary_data_size"].int64_param == 1024
+
+    def test_input_without_data_key(self) -> None:
+        """Input tensor without 'data' key should produce empty contents."""
+        payload = {
+            "inputs": [
+                {
+                    "name": "tensor",
+                    "shape": [0],
+                    "datatype": "INT32",
+                }
+            ]
+        }
+        request = dict_to_model_infer_request(payload, model_name="m")
+        assert len(request.inputs[0].contents.int_contents) == 0
+
+
+class TestModelInferResponseToDictAdditional:
+    """Additional tests for model_infer_response_to_dict."""
+
+    def test_model_version_included(self) -> None:
+        """model_version should appear in result dict when set."""
+        response = pb2.ModelInferResponse()
+        response.model_name = "m"
+        response.model_version = "3"
+        output = response.outputs.add()
+        output.name = "out"
+        output.datatype = "INT32"
+        output.shape.append(1)
+        output.contents.int_contents.append(42)
+
+        result = model_infer_response_to_dict(response)
+
+        assert result["model_version"] == "3"
+
+    def test_model_version_absent_when_empty(self) -> None:
+        """model_version should not appear in result dict when empty."""
+        response = pb2.ModelInferResponse()
+        response.model_name = "m"
+        output = response.outputs.add()
+        output.name = "out"
+        output.datatype = "INT32"
+        output.shape.append(1)
+        output.contents.int_contents.append(42)
+
+        result = model_infer_response_to_dict(response)
+
+        assert "model_version" not in result
+
+    @pytest.mark.parametrize(
+        "datatype,proto_field,values",
+        [
+            ("UINT64", "uint64_contents", [42]),
+            ("INT64", "int64_contents", [100]),
+            ("FP64", "fp64_contents", [0.5]),
+            ("BOOL", "bool_contents", [True, False]),
+        ],
+    )
+    def test_extract_additional_output_datatypes(
+        self, datatype: str, proto_field: str, values: list
+    ) -> None:
+        """Additional output datatypes should be extracted correctly."""
+        response = pb2.ModelInferResponse()
+        output = response.outputs.add()
+        output.name = "tensor"
+        output.datatype = datatype
+        output.shape.append(len(values))
+        getattr(output.contents, proto_field).extend(values)
+
+        result = model_infer_response_to_dict(response)
+
+        for expected, actual in zip(values, result["outputs"][0]["data"], strict=True):
+            if isinstance(expected, float):
+                assert abs(expected - actual) < 0.001
+            else:
+                assert expected == actual
+
+    def test_unknown_datatype_falls_back_to_bytes(self) -> None:
+        """Unknown datatype should fall back to bytes_contents decoding."""
+        response = pb2.ModelInferResponse()
+        output = response.outputs.add()
+        output.name = "tensor"
+        output.datatype = "CUSTOM"
+        output.shape.append(1)
+        output.contents.bytes_contents.append(b"raw_data")
+
+        result = model_infer_response_to_dict(response)
+
+        assert result["outputs"][0]["data"] == ["raw_data"]

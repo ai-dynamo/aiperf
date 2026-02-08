@@ -16,12 +16,10 @@ from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import ErrorDetails, RequestInfo, RequestRecord
-from aiperf.plugin.enums import TransportType
 from aiperf.transports.aiohttp_client import AioHttpClient, create_tcp_connector
 from aiperf.transports.base_transports import (
     BaseTransport,
     FirstTokenCallback,
-    TransportMetadata,
 )
 
 
@@ -133,14 +131,6 @@ class AioHttpTransport(BaseTransport):
             aiohttp_client = self.aiohttp_client
             self.aiohttp_client = None
             await aiohttp_client.close()
-
-    @classmethod
-    def metadata(cls) -> TransportMetadata:
-        """Return HTTP transport metadata."""
-        return TransportMetadata(
-            transport_type=TransportType.HTTP,
-            url_schemes=["http", "https"],
-        )
 
     def get_transport_headers(self, request_info: RequestInfo) -> dict[str, str]:
         """Build HTTP-specific headers based on streaming mode.

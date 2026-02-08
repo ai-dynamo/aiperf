@@ -25,9 +25,8 @@ from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import ErrorDetails, RequestInfo, RequestRecord, TextResponse
-from aiperf.plugin.schema.schemas import TransportMetadata
 from aiperf.transports.base_transports import BaseTransport, FirstTokenCallback
-from aiperf.transports.grpc.grpc_client import GenericGrpcClient
+from aiperf.transports.grpc.grpc_client import GenericGrpcClient, GrpcStreamCall
 from aiperf.transports.grpc.status_mapping import grpc_status_to_http
 from aiperf.transports.grpc.stream_chunk import StreamChunk
 from aiperf.transports.grpc.trace_data import GrpcTraceData
@@ -141,14 +140,6 @@ class GrpcTransport(BaseTransport):
         self._unary_method: str | None = None
         self._stream_method: str | None = None
 
-    @classmethod
-    def metadata(cls) -> TransportMetadata:
-        """Return gRPC transport metadata."""
-        return TransportMetadata(
-            transport_type="grpc",
-            url_schemes=["grpc", "grpcs"],
-        )
-
     @staticmethod
     def _parse_target(url: str) -> str:
         """Extract host:port target from a gRPC URL.
@@ -258,7 +249,7 @@ class GrpcTransport(BaseTransport):
         self._unary_method = metadata.grpc.method
         self._stream_method = metadata.grpc.stream_method
 
-        self.debug(f"gRPC serializer loaded: {metadata.grpc.serializer}")
+        self.debug(lambda: f"gRPC serializer loaded: {metadata.grpc.serializer}")
 
     @on_stop
     async def _close_grpc_client(self) -> None:
@@ -312,22 +303,24 @@ class GrpcTransport(BaseTransport):
         metadata = [(k.lower(), v) for k, v in headers.items()]
         return metadata or None
 
+    @staticmethod
     async def _maybe_release_sticky_lease(
-        self,
         reuse_strategy: ConnectionReuseStrategy,
         session_id: str,
+        lease_manager: GrpcChannelLeaseManager | None,
     ) -> None:
         """Release sticky lease if using STICKY_USER_SESSIONS strategy.
 
         Args:
             reuse_strategy: The active connection reuse strategy.
             session_id: The session/correlation ID to release.
+            lease_manager: Captured reference to the lease manager.
         """
         if (
             reuse_strategy == ConnectionReuseStrategy.STICKY_USER_SESSIONS
-            and self._lease_manager is not None
+            and lease_manager is not None
         ):
-            await self._lease_manager.release_lease(session_id)
+            await lease_manager.release_lease(session_id)
 
     async def send_request(
         self,
@@ -368,6 +361,9 @@ class GrpcTransport(BaseTransport):
         target = self.get_url(request_info)
         client_owner = False  # True = close client after request (NEVER)
 
+        # Capture lease_manager reference to avoid race with concurrent shutdown
+        lease_manager = self._lease_manager
+
         match reuse_strategy:
             case ConnectionReuseStrategy.POOLED:
                 client = self._channel_pool.get(target)
@@ -378,12 +374,12 @@ class GrpcTransport(BaseTransport):
                 client = self._create_client(target)
                 client_owner = True
             case ConnectionReuseStrategy.STICKY_USER_SESSIONS:
-                if self._lease_manager is None:
+                if lease_manager is None:
                     raise NotInitializedError(
                         "GrpcChannelLeaseManager not initialized for "
                         "sticky-user-sessions strategy"
                     )
-                client = self._lease_manager.get_or_create(
+                client = lease_manager.get_or_create(
                     request_info.x_correlation_id,
                     lambda: self._create_client(target),
                 )
@@ -443,7 +439,7 @@ class GrpcTransport(BaseTransport):
             )
             if should_release:
                 await self._maybe_release_sticky_lease(
-                    reuse_strategy, request_info.x_correlation_id
+                    reuse_strategy, request_info.x_correlation_id, lease_manager
                 )
 
         except asyncio.CancelledError:
@@ -454,9 +450,9 @@ class GrpcTransport(BaseTransport):
                 message="Request cancelled by external signal",
                 code=499,
             )
-            self.debug("gRPC request cancelled by external signal")
+            self.debug(lambda: "gRPC request cancelled by external signal")
             await self._maybe_release_sticky_lease(
-                reuse_strategy, request_info.x_correlation_id
+                reuse_strategy, request_info.x_correlation_id, lease_manager
             )
             raise
         except grpc.aio.AioRpcError as e:
@@ -476,7 +472,7 @@ class GrpcTransport(BaseTransport):
             )
             self.error(f"gRPC error: {e.code().name} - {e.details()}")
             await self._maybe_release_sticky_lease(
-                reuse_strategy, request_info.x_correlation_id
+                reuse_strategy, request_info.x_correlation_id, lease_manager
             )
         except Exception as e:
             record.end_perf_ns = time.perf_counter_ns()
@@ -484,7 +480,7 @@ class GrpcTransport(BaseTransport):
             record.error = ErrorDetails.from_exception(e)
             self.error(f"gRPC request failed: {e!r}")
             await self._maybe_release_sticky_lease(
-                reuse_strategy, request_info.x_correlation_id
+                reuse_strategy, request_info.x_correlation_id, lease_manager
             )
         finally:
             if client_owner:
@@ -534,7 +530,7 @@ class GrpcTransport(BaseTransport):
                 message=message,
                 code=0,
             )
-            self.debug(f"gRPC request send failed: {message}")
+            self.debug(lambda: f"gRPC request send failed: {message}")
             return False
         return True
 
@@ -598,7 +594,9 @@ class GrpcTransport(BaseTransport):
                     message=f"Request cancelled {timeout_s:.3f}s after being sent",
                     code=499,
                 )
-                self.debug(f"gRPC request cancelled {timeout_s:.3f}s after being sent")
+                self.debug(
+                    lambda: f"gRPC request cancelled {timeout_s:.3f}s after being sent"
+                )
                 return
 
         perf_ns = time.perf_counter_ns()
@@ -656,7 +654,7 @@ class GrpcTransport(BaseTransport):
 
         first_token_acquired = False
 
-        async def _consume_stream(stream_call) -> None:
+        async def _consume_stream(stream_call: GrpcStreamCall) -> None:
             nonlocal first_token_acquired
 
             async for chunk_bytes in stream_call:
@@ -731,6 +729,7 @@ class GrpcTransport(BaseTransport):
                 await asyncio.wait_for(task, timeout=timeout_s)
             except asyncio.TimeoutError:
                 task.cancel()
+                stream_call.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
                 end_ns = time.perf_counter_ns()
@@ -742,5 +741,5 @@ class GrpcTransport(BaseTransport):
                     code=499,
                 )
                 self.debug(
-                    f"gRPC streaming request cancelled {timeout_s:.3f}s after being sent"
+                    lambda: f"gRPC streaming request cancelled {timeout_s:.3f}s after being sent"
                 )

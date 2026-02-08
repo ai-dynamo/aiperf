@@ -122,3 +122,86 @@ class TestDeserializeStreamResponse:
         assert chunk.error_message == "Model crashed"
         assert chunk.response_dict is None
         assert chunk.response_size == len(data)
+
+
+class TestDeserializeResponseRawOutputContents:
+    """Tests for deserialize_response with raw_output_contents."""
+
+    def test_raw_output_bytes_tensor(self) -> None:
+        """Should correctly deserialize raw_output_contents BYTES tensor."""
+        import struct
+
+        response = pb2.ModelInferResponse()
+        response.model_name = "m"
+        output = response.outputs.add()
+        output.name = "text_output"
+        output.datatype = "BYTES"
+        output.shape.append(1)
+        text = b"Hello from raw"
+        response.raw_output_contents.append(struct.pack("<I", len(text)) + text)
+        data = response.SerializeToString()
+
+        serializer = KServeV2GrpcSerializer()
+        result_dict, size = serializer.deserialize_response(data)
+
+        assert size == len(data)
+        assert result_dict["outputs"][0]["data"] == ["Hello from raw"]
+
+    def test_raw_output_int32_tensor(self) -> None:
+        """Should correctly deserialize raw_output_contents INT32 tensor."""
+        import struct
+
+        response = pb2.ModelInferResponse()
+        output = response.outputs.add()
+        output.name = "count"
+        output.datatype = "INT32"
+        output.shape.append(2)
+        response.raw_output_contents.append(struct.pack("<ii", 10, 20))
+        data = response.SerializeToString()
+
+        serializer = KServeV2GrpcSerializer()
+        result_dict, _ = serializer.deserialize_response(data)
+
+        assert result_dict["outputs"][0]["data"] == [10, 20]
+
+
+class TestDeserializeStreamResponseEdgeCases:
+    """Tests for edge cases in deserialize_stream_response."""
+
+    def test_empty_infer_response_returns_empty_outputs(self) -> None:
+        """Stream response with empty infer_response should return empty outputs."""
+        stream_resp = pb2.ModelStreamInferResponse()
+        # Set infer_response but with no outputs
+        stream_resp.infer_response.model_name = "m"
+        data = stream_resp.SerializeToString()
+
+        serializer = KServeV2GrpcSerializer()
+        chunk = serializer.deserialize_stream_response(data)
+
+        assert chunk.error_message is None
+        assert chunk.response_dict is not None
+        assert chunk.response_dict["outputs"] == []
+
+
+class TestSerializeRequestWithInputParameters:
+    """Tests for serialize_request with input-level parameters."""
+
+    def test_input_parameters_survive_roundtrip(self) -> None:
+        """Input-level parameters should be preserved through serialization."""
+        payload = {
+            "inputs": [
+                {
+                    "name": "text_input",
+                    "shape": [1],
+                    "datatype": "BYTES",
+                    "data": ["Hello"],
+                    "parameters": {"binary_data_size": 512},
+                }
+            ],
+        }
+        serializer = KServeV2GrpcSerializer()
+        data = serializer.serialize_request(payload, model_name="m")
+
+        parsed = pb2.ModelInferRequest()
+        parsed.ParseFromString(data)
+        assert parsed.inputs[0].parameters["binary_data_size"].int64_param == 512

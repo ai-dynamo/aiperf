@@ -77,3 +77,31 @@ class TestGrpcTraceDataExport:
         assert export.trace_type == "grpc"
         assert export.grpc_status_code == 13
         assert export.grpc_status_message == "INTERNAL"
+
+
+class TestGrpcTraceDataExportRegistration:
+    """Tests for GrpcTraceDataExport model registration in auto-routed lookup."""
+
+    def test_export_registered_in_lookup_table(self) -> None:
+        """GrpcTraceDataExport must be registered for auto-routed-model discriminator."""
+        from aiperf.common.models.trace_models import TraceDataExport
+
+        assert "grpc" in TraceDataExport._model_lookup_table
+        assert TraceDataExport._model_lookup_table["grpc"] is GrpcTraceDataExport
+
+
+class TestGrpcTraceDataExportNoneFields:
+    """Tests for export with None gRPC fields."""
+
+    def test_to_export_with_none_grpc_fields(self) -> None:
+        """to_export() should preserve None gRPC status fields."""
+        trace = GrpcTraceData()
+        trace.request_send_start_perf_ns = trace.reference_perf_ns
+        trace.response_receive_start_perf_ns = trace.reference_perf_ns + 100
+        trace.response_receive_end_perf_ns = trace.reference_perf_ns + 200
+
+        export = trace.to_export()
+
+        assert isinstance(export, GrpcTraceDataExport)
+        assert export.grpc_status_code is None
+        assert export.grpc_status_message is None

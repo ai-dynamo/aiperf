@@ -16,6 +16,7 @@ from aiperf.common.enums import (
     CreditPhase,
     ModelSelectionStrategy,
 )
+from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.models import TextResponse
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
@@ -26,7 +27,11 @@ from aiperf.common.models.model_endpoint_info import (
 from aiperf.common.models.record_models import RequestInfo
 from aiperf.plugin.enums import EndpointType
 from aiperf.transports.grpc.grpc_client import GrpcUnaryResult
-from aiperf.transports.grpc.grpc_transport import GrpcChannelLeaseManager, GrpcTransport
+from aiperf.transports.grpc.grpc_transport import (
+    GrpcChannelLeaseManager,
+    GrpcTransport,
+    _metadata_to_dict,
+)
 from aiperf.transports.grpc.kserve_v2_serializers import KServeV2GrpcSerializer
 from aiperf.transports.grpc.proto import grpc_predict_v2_pb2 as pb2
 from aiperf.transports.grpc.trace_data import GrpcTraceData
@@ -189,21 +194,6 @@ def _set_pool(
 ) -> None:
     """Set the channel pool on a transport for testing."""
     transport._channel_pool = {target: mock_client}
-
-
-class TestGrpcTransportMetadata:
-    """Tests for GrpcTransport class metadata."""
-
-    def test_metadata_transport_type(self) -> None:
-        """Transport metadata should report grpc type."""
-        meta = GrpcTransport.metadata()
-        assert meta.transport_type == "grpc"
-
-    def test_metadata_url_schemes(self) -> None:
-        """Transport metadata should support grpc and grpcs schemes."""
-        meta = GrpcTransport.metadata()
-        assert "grpc" in meta.url_schemes
-        assert "grpcs" in meta.url_schemes
 
 
 class TestGrpcTransportGetUrl:
@@ -1252,3 +1242,233 @@ class TestGrpcConnectionStrategies:
 
         assert record.status == 200
         mock_client.close.assert_awaited_once()
+
+
+class TestMetadataToDict:
+    """Tests for _metadata_to_dict helper function."""
+
+    def test_none_returns_none(self) -> None:
+        """None metadata should return None."""
+        assert _metadata_to_dict(None) is None
+
+    def test_empty_list_returns_none(self) -> None:
+        """Empty metadata list should return None."""
+        assert _metadata_to_dict([]) is None
+
+    def test_string_values(self) -> None:
+        """String metadata values should be preserved."""
+        metadata = [("key1", "val1"), ("key2", "val2")]
+        result = _metadata_to_dict(metadata)
+        assert result == {"key1": "val1", "key2": "val2"}
+
+    def test_binary_values_decoded(self) -> None:
+        """Binary metadata values should be decoded to UTF-8."""
+        metadata = [("content-type-bin", b"application/grpc")]
+        result = _metadata_to_dict(metadata)
+        assert result == {"content-type-bin": "application/grpc"}
+
+    def test_binary_values_with_invalid_utf8(self) -> None:
+        """Binary metadata with invalid UTF-8 should use replacement character."""
+        metadata = [("data-bin", b"\xff\xfe")]
+        result = _metadata_to_dict(metadata)
+        assert result is not None
+        assert "data-bin" in result
+
+    def test_mixed_str_and_bytes(self) -> None:
+        """Metadata with mixed str and bytes values should work."""
+        metadata = [("text-key", "text-val"), ("binary-bin", b"binary-val")]
+        result = _metadata_to_dict(metadata)
+        assert result == {"text-key": "text-val", "binary-bin": "binary-val"}
+
+
+class TestParseTarget:
+    """Tests for GrpcTransport._parse_target static method."""
+
+    def test_grpc_scheme(self) -> None:
+        """Should strip grpc:// scheme."""
+        assert GrpcTransport._parse_target("grpc://host:8001") == "host:8001"
+
+    def test_grpcs_scheme(self) -> None:
+        """Should strip grpcs:// scheme."""
+        assert GrpcTransport._parse_target("grpcs://host:443") == "host:443"
+
+    def test_empty_url_raises_value_error(self) -> None:
+        """Empty URL should raise ValueError."""
+        with pytest.raises(ValueError, match="Cannot parse"):
+            GrpcTransport._parse_target("")
+
+    def test_scheme_only_raises_value_error(self) -> None:
+        """URL with scheme only and no host should raise ValueError."""
+        with pytest.raises(ValueError, match="Cannot parse"):
+            GrpcTransport._parse_target("grpc://")
+
+
+class TestBuildGrpcMetadata:
+    """Tests for _build_grpc_metadata method."""
+
+    def test_empty_headers_returns_none(self) -> None:
+        """No headers should return None metadata."""
+        endpoint = create_grpc_model_endpoint()
+        transport = GrpcTransport(model_endpoint=endpoint)
+        transport.base_headers = {}
+        request_info = create_request_info(endpoint)
+        request_info.endpoint_headers = {}
+        request_info.x_request_id = ""
+        request_info.x_correlation_id = ""
+
+        result = transport._build_grpc_metadata(request_info)
+        assert result is None
+
+    def test_header_keys_lowercased(self) -> None:
+        """Header keys should be lowercased for gRPC metadata."""
+        endpoint = create_grpc_model_endpoint()
+        transport = GrpcTransport(model_endpoint=endpoint)
+        request_info = create_request_info(endpoint)
+        request_info.endpoint_headers = {"Authorization": "Bearer tok", "X-Custom": "v"}
+
+        result = transport._build_grpc_metadata(request_info)
+        assert result is not None
+        keys = [k for k, _ in result]
+        assert all(k == k.lower() for k in keys)
+        assert "authorization" in keys
+
+
+class TestSendRequestErrorPaths:
+    """Tests for error paths in send_request not covered elsewhere."""
+
+    @pytest.mark.asyncio
+    async def test_serializer_none_raises_not_initialized(self) -> None:
+        """send_request should raise NotInitializedError if serializer is None."""
+        endpoint = create_grpc_model_endpoint()
+        transport = GrpcTransport(model_endpoint=endpoint)
+
+        with pytest.raises(NotInitializedError, match="not initialized"):
+            await transport.send_request(create_request_info(endpoint), _SIMPLE_PAYLOAD)
+
+    @pytest.mark.asyncio
+    async def test_sticky_no_lease_manager_raises_not_initialized(self) -> None:
+        """send_request should raise NotInitializedError if lease_manager is None for sticky."""
+        endpoint = create_grpc_model_endpoint(
+            connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS,
+        )
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+
+        with pytest.raises(NotInitializedError, match="LeaseManager"):
+            await transport.send_request(create_request_info(endpoint), _SIMPLE_PAYLOAD)
+
+    @pytest.mark.asyncio
+    async def test_generic_exception_populates_error_details(self) -> None:
+        """Generic exceptions should be caught and wrapped in ErrorDetails."""
+        endpoint = create_grpc_model_endpoint()
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+
+        mock_client = _make_mock_client()
+        mock_client.unary = AsyncMock(side_effect=RuntimeError("Something broke"))
+        _set_pool(transport, mock_client)
+
+        record = await transport.send_request(
+            create_request_info(endpoint), _SIMPLE_PAYLOAD
+        )
+
+        assert record.error is not None
+        assert "RuntimeError" in record.error.type
+        assert "Something broke" in record.error.message
+        assert record.end_perf_ns is not None
+        assert record.trace_data.error_timestamp_perf_ns is not None
+
+    @pytest.mark.asyncio
+    async def test_generic_exception_releases_sticky_lease(self) -> None:
+        """Generic exceptions should release sticky lease."""
+        endpoint = create_grpc_model_endpoint(
+            connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS,
+        )
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+        transport._lease_manager = GrpcChannelLeaseManager()
+
+        mock_client = _make_mock_client()
+        mock_client.unary = AsyncMock(side_effect=RuntimeError("boom"))
+        with patch.object(transport, "_create_client", return_value=mock_client):
+            ri = create_request_info(
+                endpoint, x_correlation_id="c1", is_final_turn=False
+            )
+            await transport.send_request(ri, _SIMPLE_PAYLOAD)
+
+        assert "c1" not in transport._lease_manager._leases
+
+
+class TestStreamingFirstTokenCallback:
+    """Tests for first_token_callback edge cases in streaming."""
+
+    @pytest.mark.asyncio
+    async def test_callback_returning_false_fires_again(self) -> None:
+        """first_token_callback returning False should fire again on next chunk."""
+        endpoint = create_grpc_model_endpoint(streaming=True)
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+
+        stream_call = make_mock_stream_call(
+            make_stream_response("empty"),
+            make_stream_response("real_token"),
+            make_stream_response("more"),
+        )
+        mock_client = _make_mock_client(stream_call=stream_call)
+        _set_pool(transport, mock_client)
+
+        callback_calls: list[int] = []
+
+        async def callback(ttft_ns: int, message) -> bool:
+            callback_calls.append(ttft_ns)
+            return len(callback_calls) >= 2
+
+        ri = create_request_info(endpoint)
+        record = await transport.send_request(
+            ri, _SIMPLE_PAYLOAD, first_token_callback=callback
+        )
+
+        assert len(callback_calls) == 2
+        assert record.status == 200
+
+
+class TestStreamingGrpcError:
+    """Tests for gRPC-level errors during streaming."""
+
+    @pytest.mark.asyncio
+    async def test_aio_rpc_error_during_stream_caught(self) -> None:
+        """AioRpcError from the stream should be caught by outer handler."""
+        endpoint = create_grpc_model_endpoint(streaming=True)
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+
+        rpc_error = grpc.aio.AioRpcError(
+            code=grpc.StatusCode.UNAVAILABLE,
+            initial_metadata=grpc.aio.Metadata(),
+            trailing_metadata=grpc.aio.Metadata(),
+            details="Connection lost",
+        )
+
+        class ErrorStreamCall:
+            async def __aiter__(self):
+                raise rpc_error
+                yield  # noqa: RUF028 - make this an async generator
+
+            async def trailing_metadata(self):
+                return ()
+
+            def cancel(self) -> bool:
+                return True
+
+        mock_client = _make_mock_client()
+        mock_client.server_stream = MagicMock(return_value=ErrorStreamCall())
+        _set_pool(transport, mock_client)
+
+        record = await transport.send_request(
+            create_request_info(endpoint), _SIMPLE_PAYLOAD
+        )
+
+        assert record.error is not None
+        assert record.status == 503
+        assert "UNAVAILABLE" in record.error.type
+        assert record.trace_data.grpc_status_code is not None

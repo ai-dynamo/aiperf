@@ -157,7 +157,9 @@ class GenericGrpcClient(AIPerfLoggerMixin):
             response_deserializer=_identity,
         )
         call = callable_(
-            request_data, metadata=metadata, timeout=timeout or self._timeout
+            request_data,
+            metadata=metadata,
+            timeout=timeout if timeout is not None else self._timeout,
         )
         response_bytes = await call
         trailing = await call.trailing_metadata()
@@ -194,6 +196,8 @@ class GenericGrpcClient(AIPerfLoggerMixin):
             response_deserializer=_identity,
         )
         call = callable_(
-            request_data, metadata=metadata, timeout=timeout or self._timeout
+            request_data,
+            metadata=metadata,
+            timeout=timeout if timeout is not None else self._timeout,
         )
         return GrpcStreamCall(call)

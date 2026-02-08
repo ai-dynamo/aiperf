@@ -18,7 +18,6 @@ from aiperf.common.models import (
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.protocols import AIPerfLifecycleProtocol
 from aiperf.common.types import RequestInputT
-from aiperf.plugin.schema.schemas import TransportMetadata
 
 FirstTokenCallback = Callable[[int, InferenceServerResponse], Awaitable[bool]]
 """
@@ -41,9 +40,6 @@ class TransportProtocol(AIPerfLifecycleProtocol, Protocol):
     """Protocol for a transport that sends requests to an inference server."""
 
     def __init__(self, **kwargs) -> None: ...
-
-    @classmethod
-    def metadata(cls) -> TransportMetadata: ...
 
     def get_transport_headers(self, request_info: RequestInfo) -> dict[str, str]: ...
 
@@ -71,16 +67,6 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
         self.base_headers: dict[str, str] = {
             "User-Agent": self.user_agent,
         }
-
-    @classmethod
-    @abstractmethod
-    def metadata(cls) -> TransportMetadata:
-        """Return transport metadata for discovery and registration.
-
-        Returns:
-            Metadata describing transport type and supported URL schemes
-        """
-        ...
 
     def get_transport_headers(self, request_info: RequestInfo) -> dict[str, str]:
         """Get protocol-specific headers (e.g., Content-Type, Accept).
