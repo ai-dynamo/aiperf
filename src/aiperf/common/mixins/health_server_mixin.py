@@ -22,12 +22,18 @@ from __future__ import annotations
 
 import asyncio
 from asyncio import StreamReader, StreamWriter
-from multiprocessing import current_process
+from multiprocessing import parent_process
 
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.mixins.health_check_mixin import HealthCheckMixin
+
+# Process-level registry of active health servers to prevent duplicate binds.
+# Maps (host, port) -> service_id that owns it. When multiple services run in
+# the same process (component-integration tests, Kubernetes controller pod),
+# only the first service to initialize starts the health server.
+_active_health_servers: dict[tuple[str, int], str] = {}
 
 
 def _make_response(
@@ -69,6 +75,7 @@ class HealthServerMixin(HealthCheckMixin, AIPerfLifecycleMixin):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._health_server: asyncio.Server | None = None
+        self._health_server_bind_key: tuple[str, int] | None = None
 
     @on_init
     async def _health_server_start(self) -> None:
@@ -78,16 +85,39 @@ class HealthServerMixin(HealthCheckMixin, AIPerfLifecycleMixin):
             return
 
         # Don't start health server in spawned child processes to avoid port conflicts
-        if current_process()._parent_pid is not None:
+        if parent_process() is not None:
             self.debug("Health server skipped in subprocess.")
             return
 
-        self.debug("Starting health server...")
         host = Environment.SERVICE.HEALTH_HOST
         port = Environment.SERVICE.HEALTH_PORT
-        self._health_server = await asyncio.start_server(
-            self._handle_health_request, host=host, port=port
-        )
+        bind_key = (host, port)
+
+        # Check if another service already owns this port in this process
+        service_id = getattr(self, "id", str(id(self)))
+        if bind_key in _active_health_servers:
+            owner = _active_health_servers[bind_key]
+            self.debug(
+                f"Health server already running on {host}:{port} (owned by {owner}). "
+                "Skipping duplicate bind."
+            )
+            return
+
+        self.debug("Starting health server...")
+        try:
+            self._health_server = await asyncio.start_server(
+                self._handle_health_request, host=host, port=port
+            )
+        except OSError as e:
+            # Fail fast if port is already in use - don't silently continue without health probes
+            self.error(
+                f"Health server failed to bind to {host}:{port}: {e!r}. "
+                "Another process may already be using this port. "
+                "Set AIPERF_SERVICE_HEALTH_ENABLED=false to disable health server."
+            )
+            raise
+        _active_health_servers[bind_key] = service_id
+        self._health_server_bind_key = bind_key
         self.info(f"Health server started on {host}:{port}")
 
     @on_stop
@@ -100,6 +130,11 @@ class HealthServerMixin(HealthCheckMixin, AIPerfLifecycleMixin):
         self.debug("Stopping health server...")
         health_server = self._health_server
         self._health_server = None
+
+        # Unregister from process-level registry
+        bind_key = self._health_server_bind_key
+        if bind_key in _active_health_servers:
+            del _active_health_servers[bind_key]
 
         health_server.close()
         await health_server.wait_closed()
@@ -117,7 +152,8 @@ class HealthServerMixin(HealthCheckMixin, AIPerfLifecycleMixin):
             if not request_line:
                 return
 
-            # Parse: "GET /healthz HTTP/1.1\r\n"
+            # Split raw HTTP request line to extract method and path without a full HTTP parser
+            # Example: "GET /healthz HTTP/1.1\r\n"
             parts = request_line.split(maxsplit=2)
             if len(parts) < 2:
                 writer.write(_RESP_BAD_REQUEST)
