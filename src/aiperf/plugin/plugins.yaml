@@ -364,6 +364,42 @@ endpoint:
         method: /inference.GRPCInferenceService/ModelInfer
         stream_method: /inference.GRPCInferenceService/ModelStreamInfer
 
+  kserve_v2_embeddings:
+    class: aiperf.endpoints.kserve_v2_embeddings:KServeV2EmbeddingsEndpoint
+    description: |
+      KServe V2 Open Inference Protocol endpoint for embedding models on Triton/TRT-LLM.
+      Maps text to BYTES tensors. Model name embedded in URL path.
+      Configure tensor names: --extra v2_input_name:X --extra v2_output_name:Y
+    metadata:
+      endpoint_path: /v2/models/{model_name}/infer
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: true
+      metrics_title: KServe V2 Embeddings Metrics
+      service_kind: kserve
+      health_path: /v2/models/{model_name}/ready
+      grpc:
+        serializer: aiperf.transports.grpc.kserve_v2_serializers:KServeV2GrpcSerializer
+        method: /inference.GRPCInferenceService/ModelInfer
+
+  kserve_v2_rankings:
+    class: aiperf.endpoints.kserve_v2_rankings:KServeV2RankingsEndpoint
+    description: |
+      KServe V2 Open Inference Protocol endpoint for reranking models on Triton/TRT-LLM.
+      Maps query and passages to BYTES tensors. Model name embedded in URL path.
+      Configure tensor names: --extra v2_query_name:X --extra v2_passages_name:Y --extra v2_output_name:Z
+    metadata:
+      endpoint_path: /v2/models/{model_name}/infer
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: true
+      metrics_title: KServe V2 Rankings Metrics
+      service_kind: kserve
+      health_path: /v2/models/{model_name}/ready
+      grpc:
+        serializer: aiperf.transports.grpc.kserve_v2_serializers:KServeV2GrpcSerializer
+        method: /inference.GRPCInferenceService/ModelInfer
+
   template:
     class: aiperf.endpoints.template_endpoint:TemplateEndpoint
     description: |

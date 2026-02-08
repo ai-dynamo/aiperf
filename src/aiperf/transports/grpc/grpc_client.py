@@ -101,8 +101,7 @@ class GenericGrpcClient(AIPerfLoggerMixin):
 
     async def close(self) -> None:
         """Close the gRPC channel."""
-        if self._channel:
-            await self._channel.close()
+        await self._channel.close()
 
     async def wait_for_ready(self, timeout: float | None = None) -> None:
         """Wait for the gRPC channel to reach READY state.

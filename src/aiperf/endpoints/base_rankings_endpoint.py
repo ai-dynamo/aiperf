@@ -10,6 +10,7 @@ from aiperf.common.models import (
     ParsedResponse,
     RankingsResponseData,
     RequestInfo,
+    Turn,
 )
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
@@ -26,6 +27,51 @@ class BaseRankingsEndpoint(BaseEndpoint):
     @abstractmethod
     def extract_rankings(self, json_obj: dict[str, Any]) -> list[dict[str, Any]]:
         """Parse ranking results into a list."""
+
+    def _extract_query_and_passages(self, turn: Turn) -> tuple[str, list[str]]:
+        """Extract and validate query and passage texts from a turn.
+
+        Args:
+            turn: The request turn containing texts with 'query'/'queries' and 'passages' names
+
+        Returns:
+            Tuple of (query_text, passage_texts)
+
+        Raises:
+            ValueError: If no query text is found
+        """
+        query_texts: list[str] = []
+        passage_texts: list[str] = []
+
+        for text in turn.texts:
+            match text.name:
+                case "passages":
+                    passage_texts.extend(text.contents)
+                case "query" | "queries":
+                    query_texts.extend(text.contents)
+                case _:
+                    self.warning(
+                        f"Ignoring text with name '{text.name}' - rankings expects 'query'/'queries' and 'passages'"
+                    )
+
+        if not query_texts:
+            raise ValueError(
+                "Rankings request requires a text with name 'query' or 'queries'. "
+                "Provide a Text object with name='query' or name='queries' containing the search query."
+            )
+
+        if len(query_texts) > 1:
+            self.warning(
+                f"Multiple query texts found, using the first one. Found {len(query_texts)} queries."
+            )
+
+        if not passage_texts:
+            self.warning(
+                "Rankings request has query but no passages to rank. "
+                "Consider adding a Text object with name='passages' containing texts to rank."
+            )
+
+        return query_texts[0], passage_texts
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         """Format payload for a rankings request.
@@ -54,38 +100,8 @@ class BaseRankingsEndpoint(BaseEndpoint):
 
         if turn.max_tokens:
             self.warning("Max_tokens is provided but is not supported for rankings.")
-        query_texts = []
-        passage_texts = []
 
-        for text in turn.texts:
-            match text.name:
-                case "passages":
-                    passage_texts.extend(text.contents)
-                case "query" | "queries":
-                    query_texts.extend(text.contents)
-                case _:
-                    self.warning(
-                        f"Ignoring text with name '{text.name}' - rankings expects 'query'/'queries' and 'passages'"
-                    )
-
-        if not query_texts:
-            raise ValueError(
-                "Rankings request requires a text with name 'query' or 'queries'. "
-                "Provide a Text object with name='query' or name='queries' containing the search query."
-            )
-
-        if len(query_texts) > 1:
-            self.warning(
-                f"Multiple query texts found, using the first one. Found {len(query_texts)} queries."
-            )
-
-        query_text = query_texts[0]
-
-        if not passage_texts:
-            self.warning(
-                "Rankings request has query but no passages to rank. "
-                "Consider adding a Text object with name='passages' containing texts to rank."
-            )
+        query_text, passage_texts = self._extract_query_and_passages(turn)
 
         extra = model_endpoint.endpoint.extra or []
         model_name = turn.model or model_endpoint.primary_model_name

@@ -9,14 +9,20 @@ import grpc
 GRPC_TO_HTTP_STATUS: dict[int, int] = {
     grpc.StatusCode.OK.value[0]: 200,
     grpc.StatusCode.CANCELLED.value[0]: 499,
+    grpc.StatusCode.UNKNOWN.value[0]: 500,
     grpc.StatusCode.INVALID_ARGUMENT.value[0]: 400,
     grpc.StatusCode.DEADLINE_EXCEEDED.value[0]: 504,
     grpc.StatusCode.NOT_FOUND.value[0]: 404,
+    grpc.StatusCode.ALREADY_EXISTS.value[0]: 409,
     grpc.StatusCode.PERMISSION_DENIED.value[0]: 403,
     grpc.StatusCode.RESOURCE_EXHAUSTED.value[0]: 429,
+    grpc.StatusCode.FAILED_PRECONDITION.value[0]: 400,
+    grpc.StatusCode.ABORTED.value[0]: 409,
+    grpc.StatusCode.OUT_OF_RANGE.value[0]: 400,
     grpc.StatusCode.UNIMPLEMENTED.value[0]: 501,
     grpc.StatusCode.INTERNAL.value[0]: 500,
     grpc.StatusCode.UNAVAILABLE.value[0]: 503,
+    grpc.StatusCode.DATA_LOSS.value[0]: 500,
     grpc.StatusCode.UNAUTHENTICATED.value[0]: 401,
 }
 

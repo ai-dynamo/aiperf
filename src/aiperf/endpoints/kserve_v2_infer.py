@@ -102,7 +102,7 @@ class KServeV2InferEndpoint(BaseEndpoint):
         for output in outputs:
             if output.get("name") == self._output_name:
                 data = output.get("data")
-                if data and isinstance(data, list) and data[0]:
+                if isinstance(data, list) and len(data) > 0 and data[0] is not None:
                     text = str(data[0])
                     return ParsedResponse(
                         perf_ns=response.perf_ns,
@@ -112,7 +112,7 @@ class KServeV2InferEndpoint(BaseEndpoint):
         # Fallback: try first output with data
         for output in outputs:
             data = output.get("data")
-            if data and isinstance(data, list) and data[0]:
+            if isinstance(data, list) and len(data) > 0 and data[0] is not None:
                 text = str(data[0])
                 return ParsedResponse(
                     perf_ns=response.perf_ns,
