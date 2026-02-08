@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import gc
 import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import orjson
@@ -19,6 +21,7 @@ from aiperf.common.enums import (
     PublicDatasetType,
 )
 from aiperf.common.environment import Environment
+from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.hooks import on_command, on_request, on_stop
 from aiperf.common.messages import (
     ConversationRequestMessage,
@@ -45,13 +48,35 @@ from aiperf.plugin.enums import (
     DatasetBackingStoreType,
     PluginType,
 )
+from aiperf.transports.aiohttp_client import AioHttpClient
 
 if TYPE_CHECKING:
+    from aiperf.dataset.loader.base_loader import BaseLoader
     from aiperf.dataset.protocols import (
         DatasetBackingStoreProtocol,
         DatasetClientStoreProtocol,
     )
     from aiperf.endpoints.protocols import EndpointProtocol
+
+AIPERF_DATASET_CACHE_DIR = Path(".cache/aiperf/datasets")
+
+
+@dataclass
+class PublicDatasetSpec:
+    tag: str
+    url: str
+    filename: str
+    loader_cls: type[BaseLoader]
+
+
+PUBLIC_DATASETS: dict[PublicDatasetType, PublicDatasetSpec] = {
+    PublicDatasetType.SHAREGPT: PublicDatasetSpec(
+        tag="ShareGPT",
+        url="https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json",
+        filename="ShareGPT_V3_unfiltered_cleaned_split.json",
+        loader_cls=ShareGPTLoader,
+    )
+}
 
 
 class DatasetManager(ReplyClientMixin, BaseComponentService):
@@ -166,8 +191,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         endpoint: EndpointProtocol = EndpointClass(model_endpoint=model_endpoint)
         self.debug(
-            lambda: f"Created endpoint protocol for {model_endpoint.endpoint.type}, "
-            f"class: {endpoint.__class__.__name__}",
+            lambda: (
+                f"Created endpoint protocol for {model_endpoint.endpoint.type}, "
+                f"class: {endpoint.__class__.__name__}"
+            ),
         )
         session_payloads_map: dict[str, list] = {}
         for conversation in self.dataset.values():
@@ -246,21 +273,68 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
     async def _load_public_dataset(self) -> list[Conversation]:
         public_dataset_type = self.user_config.input.public_dataset
-        match public_dataset_type:
-            case PublicDatasetType.SHAREGPT:
-                loader = ShareGPTLoader(self.user_config, self.tokenizer)
-            case _:
-                raise ValueError(
-                    f"Unsupported public dataset type: {public_dataset_type}"
-                )
+        spec = PUBLIC_DATASETS.get(public_dataset_type)
+        if spec is None:
+            raise ValueError(f"Unsupported public dataset type: {public_dataset_type}")
 
-        dataset = await loader.load_dataset()
+        cache_path = await self._download_public_dataset(
+            tag=spec.tag,
+            url=spec.url,
+            filename=spec.filename,
+        )
+        loader = spec.loader_cls(
+            user_config=self.user_config,
+            tokenizer=self.tokenizer,
+            filename=str(cache_path),
+        )
+
+        dataset = loader.load_dataset()
         # Only use loader's recommended strategy if user hasn't explicitly set one
         if "dataset_sampling_strategy" not in self.user_config.input.model_fields_set:
             self.user_config.input.dataset_sampling_strategy = (
-                loader.get_recommended_sampling_strategy()
+                spec.loader_cls.get_preferred_sampling_strategy()
             )
-        return await loader.convert_to_conversations(dataset)
+        return loader.convert_to_conversations(dataset)
+
+    async def _download_public_dataset(self, tag: str, url: str, filename: str) -> Path:
+        cache_filepath = AIPERF_DATASET_CACHE_DIR / filename
+
+        if cache_filepath.exists():
+            self.info(f"Loading {tag} dataset from local cache {cache_filepath}")
+            return cache_filepath
+
+        self.info(f"No local dataset cache found, downloading {tag} from {url}")
+        http_client = AioHttpClient(timeout=Environment.DATASET.PUBLIC_DATASET_TIMEOUT)
+        try:
+            record = await http_client.get_request(
+                url, headers={"Accept": "application/json"}
+            )
+            if record.error is not None:
+                raise DatasetLoaderError(
+                    f"Error downloading {tag} dataset from {url}: "
+                    f"{record.error.type} ({record.error.code}): {record.error.message}"
+                )
+            if not record.responses:
+                raise DatasetLoaderError(
+                    f"Error downloading {tag} dataset from {url}: empty response body"
+                )
+            dataset = record.responses[0].text
+        except Exception as e:
+            raise DatasetLoaderError(
+                f"Error downloading {tag} dataset from {url}: {e}"
+            ) from e
+        finally:
+            await http_client.close()
+
+        try:
+            await asyncio.to_thread(cache_filepath.parent.mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread(cache_filepath.write_text, dataset)
+        except Exception as e:
+            raise DatasetLoaderError(
+                f"Error saving {tag} dataset to local cache: {e}"
+            ) from e
+
+        return cache_filepath
 
     def _load_custom_dataset(self) -> list[Conversation]:
         ComposerClass = plugins.get_class(

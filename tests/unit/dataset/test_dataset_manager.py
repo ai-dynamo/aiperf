@@ -9,7 +9,7 @@ import pytest
 from aiperf.common.config import EndpointConfig, InputConfig, ServiceConfig, UserConfig
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.enums import PublicDatasetType
-from aiperf.common.exceptions import ServiceError
+from aiperf.common.exceptions import DatasetLoaderError, ServiceError
 from aiperf.common.messages import (
     ConversationRequestMessage,
     ConversationTurnRequestMessage,
@@ -254,16 +254,19 @@ class TestDatasetManagerSamplingStrategyDefaults:
     """Test default sampling strategy behavior for different dataset types."""
 
     @pytest.mark.asyncio
+    @patch("aiperf.dataset.dataset_manager.DatasetManager._download_public_dataset")
     @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.load_dataset")
     @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.convert_to_conversations")
     async def test_public_dataset_uses_loader_recommended_strategy(
         self,
         mock_convert,
         mock_load,
+        mock_download,
         mock_tokenizer,
     ):
         """Test that public datasets use the loader's recommended sampling strategy."""
         # Mock dataset loading
+        mock_download.return_value = Path("sharegpt.json")
         mock_load.return_value = {}
         mock_convert.return_value = create_mock_conversations(
             ["session-1", "session-2"]
@@ -319,16 +322,19 @@ class TestDatasetManagerSamplingStrategyDefaults:
         )
 
     @pytest.mark.asyncio
+    @patch("aiperf.dataset.dataset_manager.DatasetManager._download_public_dataset")
     @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.load_dataset")
     @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.convert_to_conversations")
     async def test_explicit_strategy_overrides_loader_recommendation(
         self,
         mock_convert,
         mock_load,
+        mock_download,
         mock_tokenizer,
     ):
         """Test that explicitly set strategy is not overridden by loader recommendation."""
         # Mock dataset loading
+        mock_download.return_value = Path("sharegpt.json")
         mock_load.return_value = {}
         mock_convert.return_value = create_mock_conversations(["session-1"])
 
@@ -538,3 +544,126 @@ class TestDatasetManagerFallbackHandlers:
 
         with pytest.raises(ServiceError, match="out of range"):
             await dataset_manager._handle_conversation_turn_request(request)
+
+
+class TestDownloadPublicDataset:
+    """Tests for DatasetManager._download_public_dataset()."""
+
+    @pytest.fixture
+    def dataset_manager(self, mock_tokenizer):
+        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        return DatasetManager(ServiceConfig(), config)
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_returns_path_without_downloading(
+        self, dataset_manager, tmp_path
+    ):
+        """Returns cached path immediately when file already exists."""
+        cached_file = tmp_path / "dataset.json"
+        cached_file.write_text("[]")
+
+        with patch("aiperf.dataset.dataset_manager.AIPERF_DATASET_CACHE_DIR", tmp_path):
+            result = await dataset_manager._download_public_dataset(
+                tag="Test", url="http://example.com/data.json", filename="dataset.json"
+            )
+
+        assert result == cached_file
+
+    @pytest.mark.asyncio
+    async def test_cache_miss_downloads_and_saves(self, dataset_manager, tmp_path):
+        """Downloads dataset and writes to cache when file does not exist."""
+        mock_record = AsyncMock()
+        mock_record.error = None
+        mock_record.responses = [AsyncMock(text='[{"data": 1}]')]
+
+        with (
+            patch("aiperf.dataset.dataset_manager.AIPERF_DATASET_CACHE_DIR", tmp_path),
+            patch("aiperf.dataset.dataset_manager.AioHttpClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            mock_client.get_request.return_value = mock_record
+            mock_client_cls.return_value = mock_client
+
+            result = await dataset_manager._download_public_dataset(
+                tag="Test", url="http://example.com/data.json", filename="dataset.json"
+            )
+
+        assert result == tmp_path / "dataset.json"
+        assert result.read_text() == '[{"data": 1}]'
+        mock_client.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_download_error_raises_dataset_loader_error(
+        self, dataset_manager, tmp_path
+    ):
+        """Wraps download exceptions in DatasetLoaderError and still closes the client."""
+        with (
+            patch("aiperf.dataset.dataset_manager.AIPERF_DATASET_CACHE_DIR", tmp_path),
+            patch("aiperf.dataset.dataset_manager.AioHttpClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            mock_client.get_request.side_effect = RuntimeError("network error")
+            mock_client_cls.return_value = mock_client
+
+            with pytest.raises(DatasetLoaderError, match="Error downloading"):
+                await dataset_manager._download_public_dataset(
+                    tag="Test",
+                    url="http://example.com/data.json",
+                    filename="dataset.json",
+                )
+
+        mock_client.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_http_error_response_raises_dataset_loader_error(
+        self, dataset_manager, tmp_path
+    ):
+        """Raises DatasetLoaderError with HTTP status when server returns an error response."""
+        mock_error = AsyncMock()
+        mock_error.message = "Not Found"
+        mock_record = AsyncMock()
+        mock_record.error = mock_error
+        mock_record.status = 404
+
+        with (
+            patch("aiperf.dataset.dataset_manager.AIPERF_DATASET_CACHE_DIR", tmp_path),
+            patch("aiperf.dataset.dataset_manager.AioHttpClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            mock_client.get_request.return_value = mock_record
+            mock_client_cls.return_value = mock_client
+
+            with pytest.raises(DatasetLoaderError, match="Error downloading"):
+                await dataset_manager._download_public_dataset(
+                    tag="Test",
+                    url="http://example.com/data.json",
+                    filename="dataset.json",
+                )
+
+        mock_client.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_empty_response_raises_dataset_loader_error(
+        self, dataset_manager, tmp_path
+    ):
+        """Raises DatasetLoaderError when response has no error but empty body."""
+        mock_record = AsyncMock()
+        mock_record.error = None
+        mock_record.responses = []
+
+        with (
+            patch("aiperf.dataset.dataset_manager.AIPERF_DATASET_CACHE_DIR", tmp_path),
+            patch("aiperf.dataset.dataset_manager.AioHttpClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            mock_client.get_request.return_value = mock_record
+            mock_client_cls.return_value = mock_client
+
+            with pytest.raises(DatasetLoaderError, match="empty response body"):
+                await dataset_manager._download_public_dataset(
+                    tag="Test",
+                    url="http://example.com/data.json",
+                    filename="dataset.json",
+                )
+
+        mock_client.close.assert_awaited_once()

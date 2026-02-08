@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import warnings
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -12,11 +13,16 @@ from aiperf.dataset.loader.base_loader import BaseLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.transports.aiohttp_client import AioHttpClient
 
+# Deprecated: use AIPERF_DATASET_CACHE_DIR from aiperf.dataset.dataset_manager instead.
 AIPERF_DATASET_CACHE_DIR = Path(".cache/aiperf/datasets")
 
 
 class BasePublicDatasetLoader(BaseLoader):
     """Base class for loading public datasets from remote URLs with caching support.
+
+    Deprecated: Use BaseFileLoader instead. Public dataset loaders should extend
+    BaseFileLoader, and download/caching is handled by
+    DatasetManager._download_public_dataset(). See ShareGPTLoader for a migration example.
 
     This abstract base class provides a common interface and implementation for downloading,
     caching, and loading public datasets. It handles the HTTP download logic, local caching
@@ -45,7 +51,14 @@ class BasePublicDatasetLoader(BaseLoader):
     url: ClassVar[str]
     filename: ClassVar[str] = "dataset.json"
 
-    def __init__(self, user_config: UserConfig, **kwargs):
+    def __init__(self, user_config: UserConfig, **kwargs) -> None:
+        warnings.warn(
+            "BasePublicDatasetLoader is deprecated. Extend BaseFileLoader instead "
+            "and let DatasetManager handle download/caching. "
+            "See ShareGPTLoader for a migration example.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         super().__init__(user_config=user_config, **kwargs)
         self.http_client = AioHttpClient(
             timeout=Environment.DATASET.PUBLIC_DATASET_TIMEOUT

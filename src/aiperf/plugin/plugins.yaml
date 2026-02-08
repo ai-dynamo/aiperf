@@ -371,6 +371,11 @@ custom_dataset_loader:
       from predefined pools of system/user/assistant messages with configurable
       distributions.
 
+  sharegpt:
+    class: aiperf.dataset.loader.sharegpt:ShareGPTLoader
+    description: |
+      ShareGPT dataset loader for parsing the ShareGPT JSON file into conversations.
+
   single_turn:
     class: aiperf.dataset.loader.single_turn:SingleTurnDatasetLoader
     description: |

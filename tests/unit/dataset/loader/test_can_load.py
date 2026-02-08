@@ -9,6 +9,7 @@ from pytest import param
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
+from aiperf.dataset.loader.sharegpt import ShareGPTLoader
 from aiperf.dataset.loader.single_turn import SingleTurnDatasetLoader
 from aiperf.plugin.enums import CustomDatasetType
 
@@ -148,6 +149,25 @@ class TestMooncakeTraceCanLoad:
     def test_can_load(self, data, expected):
         """Test various data formats for MooncakeTrace pydantic validation."""
         assert MooncakeTraceDatasetLoader.can_load(data) is expected
+
+
+class TestShareGPTCanLoad:
+    """Tests for ShareGPTLoader.can_load() method."""
+
+    @pytest.mark.parametrize(
+        "data,expected",
+        [
+            param({"conversations": [{"value": "Hello"}]}, True, id="valid_conversations"),
+            param({"conversations": [{"value": "Hello"}, {"value": "World"}]}, True, id="multi_turn"),
+            param({"conversations": []}, False, id="empty_conversations"),
+            param({"conversations": [{"no_value_key": "Hello"}]}, False, id="missing_value_key"),
+            param({"conversations": "not a list"}, False, id="conversations_not_list"),
+            param({"turns": [{"value": "Hello"}]}, False, id="wrong_key"),
+            param(None, False, id="none_data"),
+        ],
+    )  # fmt: skip
+    def test_can_load(self, data, expected):
+        assert ShareGPTLoader.can_load(data) is expected
 
 
 class TestCustomDatasetComposerInferType:

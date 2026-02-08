@@ -23,7 +23,7 @@ class BaseLoader(AIPerfLoggerMixin, ABC):
         **kwargs: Additional arguments to pass to the base class.
     """
 
-    def __init__(self, *, user_config: UserConfig, **kwargs):
+    def __init__(self, *, user_config: UserConfig, **kwargs) -> None:
         self.user_config = user_config
         super().__init__(user_config=user_config, **kwargs)
         # Create session ID generator (deterministic when seed is set)
@@ -55,6 +55,6 @@ class BaseFileLoader(BaseLoader):
         **kwargs: Additional arguments to pass to the base class.
     """
 
-    def __init__(self, *, filename: str, user_config: UserConfig, **kwargs):
+    def __init__(self, *, filename: str, user_config: UserConfig, **kwargs) -> None:
         super().__init__(user_config=user_config, **kwargs)
         self.filename = filename
