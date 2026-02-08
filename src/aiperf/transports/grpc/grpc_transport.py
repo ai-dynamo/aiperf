@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import importlib
 import time
+from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import urlparse
 
@@ -22,6 +23,7 @@ from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import ConnectionReuseStrategy
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.hooks import on_init, on_stop
+from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import ErrorDetails, RequestInfo, RequestRecord, TextResponse
 from aiperf.plugin.schema.schemas import TransportMetadata
 from aiperf.transports.base_transports import BaseTransport, FirstTokenCallback
@@ -29,6 +31,31 @@ from aiperf.transports.grpc.grpc_client import GenericGrpcClient
 from aiperf.transports.grpc.status_mapping import grpc_status_to_http
 from aiperf.transports.grpc.stream_chunk import StreamChunk
 from aiperf.transports.grpc.trace_data import GrpcTraceData
+
+# Max time to wait for gRPC channel to become ready before considering the send failed.
+_CHANNEL_READY_TIMEOUT_S = 30.0
+
+
+def _metadata_to_dict(
+    metadata: Any,
+) -> dict[str, str] | None:
+    """Convert gRPC metadata (sequence of key-value tuples) to a string dict.
+
+    Handles both request metadata (str values) and trailing metadata
+    (which may contain bytes values for binary metadata keys ending in ``-bin``).
+
+    Args:
+        metadata: gRPC metadata as a sequence of (key, value) tuples, or None.
+
+    Returns:
+        Dict of string key-value pairs, or None if metadata is empty.
+    """
+    if not metadata:
+        return None
+    return {
+        k: v if isinstance(v, str) else v.decode("utf-8", errors="replace")
+        for k, v in metadata
+    } or None
 
 
 @runtime_checkable
@@ -42,6 +69,55 @@ class GrpcSerializerProtocol(Protocol):
     def deserialize_response(self, data: bytes) -> tuple[dict[str, Any], int]: ...
 
     def deserialize_stream_response(self, data: bytes) -> StreamChunk: ...
+
+
+class GrpcChannelLeaseManager(AIPerfLoggerMixin):
+    """Manages gRPC channel leases for sticky-user-sessions strategy.
+
+    Each user session (identified by x_correlation_id) gets a dedicated
+    GenericGrpcClient that persists across all turns. The client is closed
+    when the final turn completes, enabling sticky load balancing where all
+    turns of a user session hit the same backend server.
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._leases: dict[str, GenericGrpcClient] = {}
+
+    def get_or_create(
+        self, session_id: str, factory: Callable[[], GenericGrpcClient]
+    ) -> GenericGrpcClient:
+        """Get or create a gRPC client for a user session.
+
+        Args:
+            session_id: Unique identifier for the user session (x_correlation_id).
+            factory: Callable that creates a new GenericGrpcClient if needed.
+
+        Returns:
+            GenericGrpcClient dedicated to this user session.
+        """
+        if session_id not in self._leases:
+            self._leases[session_id] = factory()
+            self.debug(lambda: f"Created gRPC channel lease for session {session_id}")
+        return self._leases[session_id]
+
+    async def release_lease(self, session_id: str) -> None:
+        """Release and close the gRPC client for a session.
+
+        Args:
+            session_id: Unique identifier for the session (x_correlation_id).
+        """
+        if session_id in self._leases:
+            client = self._leases.pop(session_id)
+            await client.close()
+            self.debug(lambda: f"Released gRPC channel lease for session {session_id}")
+
+    async def close_all(self) -> None:
+        """Close all active channel leases."""
+        leases = list(self._leases.values())
+        self._leases.clear()
+        for lease in leases:
+            await lease.close()
 
 
 class GrpcTransport(BaseTransport):
@@ -58,7 +134,9 @@ class GrpcTransport(BaseTransport):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._grpc_client: GenericGrpcClient | None = None
+        self._channel_pool: dict[str, GenericGrpcClient] = {}
+        self._lease_manager: GrpcChannelLeaseManager | None = None
+        self._secure: bool = False
         self._serializer: GrpcSerializerProtocol | None = None
         self._unary_method: str | None = None
         self._stream_method: str | None = None
@@ -71,39 +149,86 @@ class GrpcTransport(BaseTransport):
             url_schemes=["grpc", "grpcs"],
         )
 
-    @on_init
-    async def _init_grpc_client(self) -> None:
-        """Parse target from URL, detect secure/insecure, create GrpcClient."""
-        base_url = self.model_endpoint.endpoint.base_url
-        parsed = urlparse(base_url)
-        scheme = parsed.scheme.lower()
-        secure = scheme == "grpcs"
+    @staticmethod
+    def _parse_target(url: str) -> str:
+        """Extract host:port target from a gRPC URL.
 
-        # Extract host:port from URL
+        Args:
+            url: URL with grpc:// or grpcs:// scheme.
+
+        Returns:
+            gRPC target string (host:port).
+
+        Raises:
+            ValueError: If the URL cannot be parsed into a target.
+        """
+        parsed = urlparse(url)
         target = parsed.netloc or parsed.path
         if not target:
-            raise ValueError(f"Cannot parse gRPC target from URL: {base_url}")
+            raise ValueError(f"Cannot parse gRPC target from URL: {url}")
+        return target
 
-        # Warn about connection reuse strategies that don't apply to gRPC
-        reuse_strategy = self.model_endpoint.endpoint.connection_reuse_strategy
-        if reuse_strategy in (
-            ConnectionReuseStrategy.NEVER,
-            ConnectionReuseStrategy.STICKY_USER_SESSIONS,
-        ):
-            self.warning(
-                f"Connection reuse strategy '{reuse_strategy}' is not applicable to gRPC "
-                f"(HTTP/2 multiplexing handles connection reuse). Using POOLED behavior."
-            )
+    def _create_client(self, target: str) -> GenericGrpcClient:
+        """Create a new GenericGrpcClient for the given target.
 
-        timeout = self.model_endpoint.endpoint.timeout
-        self._grpc_client = GenericGrpcClient(
+        Args:
+            target: gRPC target string (host:port).
+
+        Returns:
+            New GenericGrpcClient instance.
+        """
+        return GenericGrpcClient(
             target=target,
-            secure=secure,
-            timeout=timeout,
+            secure=self._secure,
+            timeout=self.model_endpoint.endpoint.timeout,
         )
-        self.info(
-            f"gRPC client initialized: target={target}, secure={secure}, timeout={timeout}"
-        )
+
+    @on_init
+    async def _init_grpc_client(self) -> None:
+        """Initialize gRPC channels based on the connection reuse strategy.
+
+        - POOLED: Pre-creates one channel per unique target from base_urls.
+        - NEVER: Stores config only; channels are created per-request.
+        - STICKY_USER_SESSIONS: Creates a GrpcChannelLeaseManager.
+        """
+        base_urls = self.model_endpoint.endpoint.base_urls
+        schemes = {urlparse(u).scheme.lower() for u in base_urls}
+        if len(schemes) > 1:
+            raise ValueError(
+                f"All gRPC URLs must use the same scheme, got mixed: {schemes}"
+            )
+        self._secure = "grpcs" in schemes
+        reuse_strategy = self.model_endpoint.endpoint.connection_reuse_strategy
+
+        match reuse_strategy:
+            case ConnectionReuseStrategy.POOLED:
+                for url in base_urls:
+                    target = self._parse_target(url)
+                    if target not in self._channel_pool:
+                        self._channel_pool[target] = self._create_client(target)
+                targets = list(self._channel_pool.keys())
+                self.info(
+                    f"gRPC channel pool initialized: targets={targets}, "
+                    f"secure={self._secure}"
+                )
+
+            case ConnectionReuseStrategy.NEVER:
+                self.info(
+                    f"gRPC NEVER strategy: channels created per-request, "
+                    f"secure={self._secure}"
+                )
+
+            case ConnectionReuseStrategy.STICKY_USER_SESSIONS:
+                self._lease_manager = GrpcChannelLeaseManager()
+                self.info(
+                    f"gRPC sticky-user-sessions: lease manager initialized, "
+                    f"secure={self._secure}"
+                )
+
+            case _:
+                raise ValueError(
+                    f"Unsupported connection reuse strategy for gRPC: {reuse_strategy}"
+                )
 
     @on_init
     async def _init_serializer(self) -> None:
@@ -137,10 +262,14 @@ class GrpcTransport(BaseTransport):
 
     @on_stop
     async def _close_grpc_client(self) -> None:
-        """Close gRPC client and channel."""
-        if self._grpc_client:
-            client = self._grpc_client
-            self._grpc_client = None
+        """Close all gRPC channels and the lease manager."""
+        if self._lease_manager:
+            lease_manager = self._lease_manager
+            self._lease_manager = None
+            await lease_manager.close_all()
+        clients = list(self._channel_pool.values())
+        self._channel_pool.clear()
+        for client in clients:
             await client.close()
 
     def get_transport_headers(self, request_info: RequestInfo) -> dict[str, str]:
@@ -159,10 +288,8 @@ class GrpcTransport(BaseTransport):
         Returns:
             gRPC target string (host:port).
         """
-        endpoint_info = request_info.model_endpoint.endpoint
-        base_url = endpoint_info.get_url(request_info.url_index)
-        parsed = urlparse(base_url)
-        return parsed.netloc or parsed.path or base_url
+        base_url = request_info.model_endpoint.endpoint.get_url(request_info.url_index)
+        return self._parse_target(base_url)
 
     def _build_grpc_metadata(
         self, request_info: RequestInfo
@@ -185,6 +312,23 @@ class GrpcTransport(BaseTransport):
         metadata = [(k.lower(), v) for k, v in headers.items()]
         return metadata or None
 
+    async def _maybe_release_sticky_lease(
+        self,
+        reuse_strategy: ConnectionReuseStrategy,
+        session_id: str,
+    ) -> None:
+        """Release sticky lease if using STICKY_USER_SESSIONS strategy.
+
+        Args:
+            reuse_strategy: The active connection reuse strategy.
+            session_id: The session/correlation ID to release.
+        """
+        if (
+            reuse_strategy == ConnectionReuseStrategy.STICKY_USER_SESSIONS
+            and self._lease_manager is not None
+        ):
+            await self._lease_manager.release_lease(session_id)
+
     async def send_request(
         self,
         request_info: RequestInfo,
@@ -194,9 +338,10 @@ class GrpcTransport(BaseTransport):
     ) -> RequestRecord:
         """Send a gRPC request to the inference server.
 
-        Converts the endpoint's dict payload to a ModelInferRequest protobuf,
-        sends via gRPC (unary or streaming), and converts responses back to
-        TextResponse objects with JSON-serialized dicts.
+        Connection behavior depends on the configured connection_reuse_strategy:
+        - POOLED: Uses shared channel pool (one channel per target).
+        - NEVER: Creates a new channel for each request, closed after.
+        - STICKY_USER_SESSIONS: Reuses channel across conversation turns, closed on final turn.
 
         Args:
             request_info: Request context and metadata.
@@ -206,7 +351,7 @@ class GrpcTransport(BaseTransport):
         Returns:
             RequestRecord with responses, timing, and any errors.
         """
-        if self._grpc_client is None or self._serializer is None:
+        if self._serializer is None:
             raise NotInitializedError(
                 "GrpcTransport not initialized. Call initialize() before send_request()."
             )
@@ -217,6 +362,33 @@ class GrpcTransport(BaseTransport):
             start_perf_ns=start_perf_ns,
             trace_data=trace_data,
         )
+
+        # Resolve client based on connection reuse strategy
+        reuse_strategy = self.model_endpoint.endpoint.connection_reuse_strategy
+        target = self.get_url(request_info)
+        client_owner = False  # True = close client after request (NEVER)
+
+        match reuse_strategy:
+            case ConnectionReuseStrategy.POOLED:
+                client = self._channel_pool.get(target)
+                if client is None:
+                    client = self._create_client(target)
+                    self._channel_pool[target] = client
+            case ConnectionReuseStrategy.NEVER:
+                client = self._create_client(target)
+                client_owner = True
+            case ConnectionReuseStrategy.STICKY_USER_SESSIONS:
+                if self._lease_manager is None:
+                    raise NotInitializedError(
+                        "GrpcChannelLeaseManager not initialized for "
+                        "sticky-user-sessions strategy"
+                    )
+                client = self._lease_manager.get_or_create(
+                    request_info.x_correlation_id,
+                    lambda: self._create_client(target),
+                )
+            case _:
+                raise ValueError(f"Invalid connection reuse strategy: {reuse_strategy}")
 
         try:
             # Serialize request to bytes
@@ -230,8 +402,12 @@ class GrpcTransport(BaseTransport):
             # Build gRPC metadata from headers
             grpc_metadata = self._build_grpc_metadata(request_info)
 
-            # Record request send timing
+            # Record request metadata and send timing
+            trace_data.request_headers = dict(grpc_metadata) if grpc_metadata else None
             trace_data.request_send_start_perf_ns = time.perf_counter_ns()
+            trace_data.request_headers_sent_perf_ns = (
+                trace_data.request_send_start_perf_ns
+            )
             request_size = len(request_bytes)
             trace_data.request_chunks.append(
                 (trace_data.request_send_start_perf_ns, request_size)
@@ -241,6 +417,7 @@ class GrpcTransport(BaseTransport):
 
             if is_streaming:
                 await self._send_streaming_request(
+                    client=client,
                     record=record,
                     trace_data=trace_data,
                     request_bytes=request_bytes,
@@ -250,11 +427,23 @@ class GrpcTransport(BaseTransport):
                 )
             else:
                 await self._send_unary_request(
+                    client=client,
                     record=record,
                     trace_data=trace_data,
                     request_bytes=request_bytes,
                     grpc_metadata=grpc_metadata,
                     cancel_after_ns=request_info.cancel_after_ns,
+                )
+
+            # Release sticky lease on final turn, cancellation, or error
+            should_release = (
+                request_info.is_final_turn
+                or record.cancellation_perf_ns is not None
+                or record.error is not None
+            )
+            if should_release:
+                await self._maybe_release_sticky_lease(
+                    reuse_strategy, request_info.x_correlation_id
                 )
 
         except asyncio.CancelledError:
@@ -266,6 +455,9 @@ class GrpcTransport(BaseTransport):
                 code=499,
             )
             self.debug("gRPC request cancelled by external signal")
+            await self._maybe_release_sticky_lease(
+                reuse_strategy, request_info.x_correlation_id
+            )
             raise
         except grpc.aio.AioRpcError as e:
             record.end_perf_ns = time.perf_counter_ns()
@@ -273,6 +465,8 @@ class GrpcTransport(BaseTransport):
             http_status = grpc_status_to_http(status_code)
             trace_data.grpc_status_code = status_code
             trace_data.grpc_status_message = e.details() or str(e.code())
+            trace_data.response_status_code = http_status
+            trace_data.response_reason = e.code().name
             trace_data.error_timestamp_perf_ns = record.end_perf_ns
             record.status = http_status
             record.error = ErrorDetails(
@@ -281,49 +475,117 @@ class GrpcTransport(BaseTransport):
                 code=http_status,
             )
             self.error(f"gRPC error: {e.code().name} - {e.details()}")
+            await self._maybe_release_sticky_lease(
+                reuse_strategy, request_info.x_correlation_id
+            )
         except Exception as e:
             record.end_perf_ns = time.perf_counter_ns()
             trace_data.error_timestamp_perf_ns = record.end_perf_ns
             record.error = ErrorDetails.from_exception(e)
             self.error(f"gRPC request failed: {e!r}")
+            await self._maybe_release_sticky_lease(
+                reuse_strategy, request_info.x_correlation_id
+            )
+        finally:
+            if client_owner:
+                await client.close()
 
         return record
+
+    async def _wait_for_channel_ready(
+        self,
+        *,
+        client: GenericGrpcClient,
+        record: RequestRecord,
+        trace_data: GrpcTraceData,
+    ) -> bool:
+        """Wait for gRPC channel to be ready, returning False on failure.
+
+        Separates connection establishment time from request processing time,
+        enabling the two-stage cancellation pattern: channel-ready timeout
+        produces RequestSendTimeout, while cancel_after_ns produces
+        RequestCancellationError.
+
+        Args:
+            client: gRPC client whose channel to wait on.
+            record: RequestRecord to populate on failure.
+            trace_data: Trace data to populate on failure.
+
+        Returns:
+            True if channel is ready, False if send timed out (record populated with error).
+        """
+        send_timeout = min(
+            self.model_endpoint.endpoint.timeout or _CHANNEL_READY_TIMEOUT_S,
+            _CHANNEL_READY_TIMEOUT_S,
+        )
+        try:
+            await client.wait_for_ready(timeout=send_timeout)
+        except (asyncio.TimeoutError, ConnectionError) as e:
+            end_ns = time.perf_counter_ns()
+            record.end_perf_ns = end_ns
+            trace_data.error_timestamp_perf_ns = end_ns
+            message = (
+                str(e)
+                if isinstance(e, ConnectionError)
+                else "Timed out waiting for gRPC channel to be ready"
+            )
+            record.error = ErrorDetails(
+                type="RequestSendTimeout",
+                message=message,
+                code=0,
+            )
+            self.debug(f"gRPC request send failed: {message}")
+            return False
+        return True
 
     async def _send_unary_request(
         self,
         *,
+        client: GenericGrpcClient,
         record: RequestRecord,
         trace_data: GrpcTraceData,
         request_bytes: bytes,
         grpc_metadata: list[tuple[str, str]] | None,
         cancel_after_ns: int | None,
     ) -> None:
-        """Send a unary ModelInfer RPC, optionally with cancellation timeout.
+        """Send a unary ModelInfer RPC, optionally with two-stage cancellation.
+
+        Two-stage cancellation (when cancel_after_ns is set):
+          1. Wait for channel ready (RequestSendTimeout on failure)
+          2. Send RPC with cancel timer (RequestCancellationError on timeout)
+
+        This mirrors aiohttp's two-stage approach: the cancel timer only measures
+        server processing time, not connection establishment.
 
         Args:
+            client: gRPC client to send the request with.
             record: RequestRecord to populate.
             trace_data: Trace data to populate.
             request_bytes: Serialized request bytes.
             grpc_metadata: gRPC metadata tuples.
             cancel_after_ns: Cancel after this many ns, or None for no cancellation.
         """
-        assert self._grpc_client is not None  # noqa: S101
         assert self._serializer is not None  # noqa: S101
         assert self._unary_method is not None  # noqa: S101
 
         if cancel_after_ns is None:
-            response_bytes = await self._grpc_client.unary(
+            result = await client.unary(
                 self._unary_method, request_bytes, metadata=grpc_metadata
             )
         else:
+            # Stage 1: Wait for channel ready
+            if not await self._wait_for_channel_ready(
+                client=client, record=record, trace_data=trace_data
+            ):
+                return
+
+            # Stage 2: Send with cancel timer (channel ready, request goes out immediately)
             timeout_s = cancel_after_ns / NANOS_PER_SECOND
             task = asyncio.create_task(
-                self._grpc_client.unary(
-                    self._unary_method, request_bytes, metadata=grpc_metadata
-                )
+                client.unary(self._unary_method, request_bytes, metadata=grpc_metadata)
             )
             try:
-                response_bytes = await asyncio.wait_for(task, timeout=timeout_s)
+                result = await asyncio.wait_for(task, timeout=timeout_s)
             except asyncio.TimeoutError:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -342,11 +604,15 @@ class GrpcTransport(BaseTransport):
         perf_ns = time.perf_counter_ns()
         trace_data.response_receive_start_perf_ns = perf_ns
         trace_data.response_receive_end_perf_ns = perf_ns
+        trace_data.response_headers_received_perf_ns = perf_ns
         response_dict, response_size = self._serializer.deserialize_response(
-            response_bytes
+            result.data
         )
         trace_data.response_chunks.append((perf_ns, response_size))
         trace_data.grpc_status_code = 0  # OK
+        trace_data.response_status_code = 200
+        trace_data.response_reason = "OK"
+        trace_data.response_headers = _metadata_to_dict(result.trailing_metadata)
         record.status = 200
 
         json_str = orjson.dumps(response_dict).decode("utf-8")
@@ -362,6 +628,7 @@ class GrpcTransport(BaseTransport):
     async def _send_streaming_request(
         self,
         *,
+        client: GenericGrpcClient,
         record: RequestRecord,
         trace_data: GrpcTraceData,
         request_bytes: bytes,
@@ -371,7 +638,12 @@ class GrpcTransport(BaseTransport):
     ) -> None:
         """Send a streaming ModelStreamInfer RPC, collecting responses.
 
+        Two-stage cancellation (when cancel_after_ns is set):
+          1. Wait for channel ready (RequestSendTimeout on failure)
+          2. Consume stream with cancel timer (RequestCancellationError on timeout)
+
         Args:
+            client: gRPC client to send the request with.
             record: RequestRecord to populate.
             trace_data: Trace data to populate.
             request_bytes: Serialized request bytes.
@@ -379,19 +651,15 @@ class GrpcTransport(BaseTransport):
             first_token_callback: Optional callback on first non-error response.
             cancel_after_ns: Cancel after this many ns, or None for no cancellation.
         """
-        assert self._grpc_client is not None  # noqa: S101
         assert self._serializer is not None  # noqa: S101
         assert self._stream_method is not None  # noqa: S101
 
         first_token_acquired = False
 
-        async def _consume_stream() -> None:
+        async def _consume_stream(stream_call) -> None:
             nonlocal first_token_acquired
-            assert self._grpc_client is not None  # noqa: S101
 
-            async for chunk_bytes in self._grpc_client.server_stream(
-                self._stream_method, request_bytes, metadata=grpc_metadata
-            ):
+            async for chunk_bytes in stream_call:
                 chunk = self._serializer.deserialize_stream_response(chunk_bytes)
 
                 if chunk.error_message:
@@ -410,6 +678,7 @@ class GrpcTransport(BaseTransport):
 
                 if trace_data.response_receive_start_perf_ns is None:
                     trace_data.response_receive_start_perf_ns = perf_ns
+                    trace_data.response_headers_received_perf_ns = perf_ns
 
                 json_str = orjson.dumps(chunk.response_dict).decode("utf-8")
                 text_response = TextResponse(
@@ -432,13 +701,32 @@ class GrpcTransport(BaseTransport):
                 record.end_perf_ns = end_ns
             if record.error is None:
                 trace_data.grpc_status_code = 0  # OK
+                trace_data.response_status_code = 200
+                trace_data.response_reason = "OK"
                 record.status = 200
+                # Best-effort trailing metadata capture
+                with contextlib.suppress(Exception):
+                    trailing = await stream_call.trailing_metadata()
+                    trace_data.response_headers = _metadata_to_dict(trailing)
 
         if cancel_after_ns is None:
-            await _consume_stream()
+            stream_call = client.server_stream(
+                self._stream_method, request_bytes, metadata=grpc_metadata
+            )
+            await _consume_stream(stream_call)
         else:
+            # Stage 1: Wait for channel ready
+            if not await self._wait_for_channel_ready(
+                client=client, record=record, trace_data=trace_data
+            ):
+                return
+
+            # Stage 2: Create stream and consume with cancel timer
+            stream_call = client.server_stream(
+                self._stream_method, request_bytes, metadata=grpc_metadata
+            )
             timeout_s = cancel_after_ns / NANOS_PER_SECOND
-            task = asyncio.create_task(_consume_stream())
+            task = asyncio.create_task(_consume_stream(stream_call))
             try:
                 await asyncio.wait_for(task, timeout=timeout_s)
             except asyncio.TimeoutError:

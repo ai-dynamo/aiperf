@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import grpc
@@ -24,7 +25,8 @@ from aiperf.common.models.model_endpoint_info import (
 )
 from aiperf.common.models.record_models import RequestInfo
 from aiperf.plugin.enums import EndpointType
-from aiperf.transports.grpc.grpc_transport import GrpcTransport
+from aiperf.transports.grpc.grpc_client import GrpcUnaryResult
+from aiperf.transports.grpc.grpc_transport import GrpcChannelLeaseManager, GrpcTransport
 from aiperf.transports.grpc.kserve_v2_serializers import KServeV2GrpcSerializer
 from aiperf.transports.grpc.proto import grpc_predict_v2_pb2 as pb2
 from aiperf.transports.grpc.trace_data import GrpcTraceData
@@ -33,9 +35,14 @@ from aiperf.transports.grpc.trace_data import GrpcTraceData
 _V2_UNARY_METHOD = "/inference.GRPCInferenceService/ModelInfer"
 _V2_STREAM_METHOD = "/inference.GRPCInferenceService/ModelStreamInfer"
 
+_SIMPLE_PAYLOAD = {
+    "inputs": [{"name": "t", "shape": [1], "datatype": "BYTES", "data": ["p"]}]
+}
+
 
 def create_grpc_model_endpoint(
     base_url: str = "grpc://localhost:8001",
+    base_urls: list[str] | None = None,
     model_name: str = "test-model",
     streaming: bool = False,
     connection_reuse_strategy: ConnectionReuseStrategy = ConnectionReuseStrategy.POOLED,
@@ -48,7 +55,7 @@ def create_grpc_model_endpoint(
         ),
         endpoint=EndpointInfo(
             type=EndpointType.KSERVE_V2_INFER,
-            base_urls=[base_url],
+            base_urls=base_urls or [base_url],
             streaming=streaming,
             connection_reuse_strategy=connection_reuse_strategy,
         ),
@@ -61,6 +68,7 @@ def create_request_info(
     x_request_id: str = "test-request-id",
     x_correlation_id: str = "test-correlation-id",
     cancel_after_ns: int | None = None,
+    is_final_turn: bool = True,
 ) -> RequestInfo:
     """Create RequestInfo for transport tests."""
     return RequestInfo(
@@ -75,7 +83,7 @@ def create_request_info(
         x_correlation_id=x_correlation_id,
         conversation_id="test-conversation",
         cancel_after_ns=cancel_after_ns,
-        is_final_turn=True,
+        is_final_turn=is_final_turn,
     )
 
 
@@ -105,11 +113,82 @@ def make_stream_error_response(error: str) -> pb2.ModelStreamInferResponse:
     return stream_resp
 
 
+def make_unary_result(
+    text: str = "Generated text",
+    trailing_metadata: tuple[tuple[str, str], ...] = (),
+) -> GrpcUnaryResult:
+    """Create a GrpcUnaryResult wrapping a ModelInferResponse."""
+    return GrpcUnaryResult(
+        data=make_infer_response(text).SerializeToString(),
+        trailing_metadata=trailing_metadata,
+    )
+
+
+class MockStreamCall:
+    """Mock GrpcStreamCall for testing streaming transport."""
+
+    def __init__(
+        self,
+        chunks: list[bytes],
+        trailing: tuple[tuple[str, str], ...] = (),
+    ) -> None:
+        self._chunks = chunks
+        self._trailing = trailing
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self._chunks:
+            yield chunk
+
+    async def trailing_metadata(self) -> tuple[tuple[str, str], ...]:
+        return self._trailing
+
+    async def initial_metadata(self) -> tuple[()]:
+        return ()
+
+    def cancel(self) -> bool:
+        return True
+
+
+def make_mock_stream_call(
+    *responses: pb2.ModelStreamInferResponse,
+    trailing_metadata: tuple[tuple[str, str], ...] = (),
+) -> MockStreamCall:
+    """Create a MockStreamCall from protobuf responses."""
+    chunks = [r.SerializeToString() for r in responses]
+    return MockStreamCall(chunks, trailing=trailing_metadata)
+
+
 def _init_transport_serializer(transport: GrpcTransport) -> None:
     """Wire V2 serializer and method paths onto a transport for testing."""
     transport._serializer = KServeV2GrpcSerializer()
     transport._unary_method = _V2_UNARY_METHOD
     transport._stream_method = _V2_STREAM_METHOD
+
+
+def _make_mock_client(
+    *,
+    unary_result: GrpcUnaryResult | None = None,
+    stream_call: MockStreamCall | None = None,
+    wait_for_ready: AsyncMock | None = None,
+) -> MagicMock:
+    """Create a mock gRPC client with common defaults."""
+    mock_client = MagicMock()
+    if unary_result is not None:
+        mock_client.unary = AsyncMock(return_value=unary_result)
+    if stream_call is not None:
+        mock_client.server_stream = MagicMock(return_value=stream_call)
+    mock_client.wait_for_ready = wait_for_ready or AsyncMock()
+    mock_client.close = AsyncMock()
+    return mock_client
+
+
+def _set_pool(
+    transport: GrpcTransport,
+    mock_client: MagicMock,
+    target: str = "localhost:8001",
+) -> None:
+    """Set the channel pool on a transport for testing."""
+    transport._channel_pool = {target: mock_client}
 
 
 class TestGrpcTransportMetadata:
@@ -199,11 +278,8 @@ class TestGrpcTransportSendRequest:
     async def test_send_request_unary_success(self, transport_and_endpoint) -> None:
         """Successful unary ModelInfer request."""
         transport, endpoint = transport_and_endpoint
-        mock_client = MagicMock()
-        mock_client.unary = AsyncMock(
-            return_value=make_infer_response().SerializeToString()
-        )
-        transport._grpc_client = mock_client
+        mock_client = _make_mock_client(unary_result=make_unary_result())
+        _set_pool(transport, mock_client)
 
         request_info = create_request_info(endpoint)
         payload = {
@@ -235,18 +311,12 @@ class TestGrpcTransportSendRequest:
         transport = GrpcTransport(model_endpoint=endpoint)
         _init_transport_serializer(transport)
 
-        responses = [
+        stream_call = make_mock_stream_call(
             make_stream_response("Hello"),
             make_stream_response(" world"),
-        ]
-
-        async def mock_stream(*args, **kwargs):
-            for resp in responses:
-                yield resp.SerializeToString()
-
-        mock_client = MagicMock()
-        mock_client.server_stream = mock_stream
-        transport._grpc_client = mock_client
+        )
+        mock_client = _make_mock_client(stream_call=stream_call)
+        _set_pool(transport, mock_client)
 
         request_info = create_request_info(endpoint)
         payload = {
@@ -274,18 +344,12 @@ class TestGrpcTransportSendRequest:
         transport = GrpcTransport(model_endpoint=endpoint)
         _init_transport_serializer(transport)
 
-        responses = [
+        stream_call = make_mock_stream_call(
             make_stream_response("token1"),
             make_stream_response("token2"),
-        ]
-
-        async def mock_stream(*args, **kwargs):
-            for resp in responses:
-                yield resp.SerializeToString()
-
-        mock_client = MagicMock()
-        mock_client.server_stream = mock_stream
-        transport._grpc_client = mock_client
+        )
+        mock_client = _make_mock_client(stream_call=stream_call)
+        _set_pool(transport, mock_client)
 
         callback_calls = []
 
@@ -294,12 +358,9 @@ class TestGrpcTransportSendRequest:
             return True  # First token is meaningful
 
         request_info = create_request_info(endpoint)
-        payload = {
-            "inputs": [{"name": "t", "shape": [1], "datatype": "BYTES", "data": ["p"]}]
-        }
 
         record = await transport.send_request(
-            request_info, payload, first_token_callback=callback
+            request_info, _SIMPLE_PAYLOAD, first_token_callback=callback
         )
 
         assert len(callback_calls) == 1
@@ -313,25 +374,16 @@ class TestGrpcTransportSendRequest:
         transport = GrpcTransport(model_endpoint=endpoint)
         _init_transport_serializer(transport)
 
-        responses = [
+        stream_call = make_mock_stream_call(
             make_stream_response("token1"),
             make_stream_error_response("Model crashed"),
-        ]
-
-        async def mock_stream(*args, **kwargs):
-            for resp in responses:
-                yield resp.SerializeToString()
-
-        mock_client = MagicMock()
-        mock_client.server_stream = mock_stream
-        transport._grpc_client = mock_client
+        )
+        mock_client = _make_mock_client(stream_call=stream_call)
+        _set_pool(transport, mock_client)
 
         request_info = create_request_info(endpoint)
-        payload = {
-            "inputs": [{"name": "t", "shape": [1], "datatype": "BYTES", "data": ["p"]}]
-        }
 
-        record = await transport.send_request(request_info, payload)
+        record = await transport.send_request(request_info, _SIMPLE_PAYLOAD)
 
         assert record.error is not None
         assert "Model crashed" in record.error.message
@@ -351,16 +403,13 @@ class TestGrpcTransportSendRequest:
             details="Server not available",
         )
 
-        mock_client = MagicMock()
+        mock_client = _make_mock_client()
         mock_client.unary = AsyncMock(side_effect=rpc_error)
-        transport._grpc_client = mock_client
+        _set_pool(transport, mock_client)
 
         request_info = create_request_info(endpoint)
-        payload = {
-            "inputs": [{"name": "t", "shape": [1], "datatype": "BYTES", "data": ["p"]}]
-        }
 
-        record = await transport.send_request(request_info, payload)
+        record = await transport.send_request(request_info, _SIMPLE_PAYLOAD)
 
         assert record.error is not None
         assert record.status == 503  # UNAVAILABLE -> 503
@@ -372,18 +421,12 @@ class TestGrpcTransportSendRequest:
     ) -> None:
         """Request with cancel_after_ns that completes before timeout."""
         transport, endpoint = transport_and_endpoint
-        mock_client = MagicMock()
-        mock_client.unary = AsyncMock(
-            return_value=make_infer_response().SerializeToString()
-        )
-        transport._grpc_client = mock_client
+        mock_client = _make_mock_client(unary_result=make_unary_result())
+        _set_pool(transport, mock_client)
 
         request_info = create_request_info(endpoint, cancel_after_ns=5_000_000_000)
-        payload = {
-            "inputs": [{"name": "t", "shape": [1], "datatype": "BYTES", "data": ["p"]}]
-        }
 
-        record = await transport.send_request(request_info, payload)
+        record = await transport.send_request(request_info, _SIMPLE_PAYLOAD)
 
         assert record.status == 200
         assert record.error is None
@@ -400,21 +443,19 @@ class TestGrpcTransportSendRequest:
             # Use a Future that never resolves to simulate a slow request.
             # asyncio.sleep is auto-mocked to be instant in tests.
             await asyncio.get_event_loop().create_future()
-            return make_infer_response().SerializeToString()
+            return make_unary_result()
 
-        mock_client = MagicMock()
+        mock_client = _make_mock_client()
         mock_client.unary = slow_unary
-        transport._grpc_client = mock_client
+        _set_pool(transport, mock_client)
 
         # Cancel after 1ns (effectively immediate)
         request_info = create_request_info(endpoint, cancel_after_ns=1)
-        payload = {
-            "inputs": [{"name": "t", "shape": [1], "datatype": "BYTES", "data": ["p"]}]
-        }
 
-        record = await transport.send_request(request_info, payload)
+        record = await transport.send_request(request_info, _SIMPLE_PAYLOAD)
 
         assert record.error is not None
+        assert record.error.type == "RequestCancellationError"
         assert record.error.code == 499
         assert record.cancellation_perf_ns is not None
 
@@ -424,19 +465,13 @@ class TestGrpcTransportSendRequest:
     ) -> None:
         """Headers from build_headers are passed as gRPC metadata."""
         transport, endpoint = transport_and_endpoint
-        mock_client = MagicMock()
-        mock_client.unary = AsyncMock(
-            return_value=make_infer_response().SerializeToString()
-        )
-        transport._grpc_client = mock_client
+        mock_client = _make_mock_client(unary_result=make_unary_result())
+        _set_pool(transport, mock_client)
 
         request_info = create_request_info(endpoint)
         request_info.endpoint_headers = {"Authorization": "Bearer token123"}
-        payload = {
-            "inputs": [{"name": "t", "shape": [1], "datatype": "BYTES", "data": ["p"]}]
-        }
 
-        await transport.send_request(request_info, payload)
+        await transport.send_request(request_info, _SIMPLE_PAYLOAD)
 
         call_kwargs = mock_client.unary.call_args[1]
         metadata = call_kwargs.get("metadata")
@@ -449,18 +484,12 @@ class TestGrpcTransportSendRequest:
     async def test_trace_data_populated(self, transport_and_endpoint) -> None:
         """Trace data should be populated with gRPC timing info."""
         transport, endpoint = transport_and_endpoint
-        mock_client = MagicMock()
-        mock_client.unary = AsyncMock(
-            return_value=make_infer_response().SerializeToString()
-        )
-        transport._grpc_client = mock_client
+        mock_client = _make_mock_client(unary_result=make_unary_result())
+        _set_pool(transport, mock_client)
 
         request_info = create_request_info(endpoint)
-        payload = {
-            "inputs": [{"name": "t", "shape": [1], "datatype": "BYTES", "data": ["p"]}]
-        }
 
-        record = await transport.send_request(request_info, payload)
+        record = await transport.send_request(request_info, _SIMPLE_PAYLOAD)
 
         assert isinstance(record.trace_data, GrpcTraceData)
         assert record.trace_data.trace_type == "grpc"
@@ -472,20 +501,754 @@ class TestGrpcTransportSendRequest:
         assert len(record.trace_data.response_chunks) > 0
 
 
+class TestGrpcTransportTraceFields:
+    """Tests for trace data field population (parity with aiohttp)."""
+
+    @pytest.fixture
+    def transport_and_endpoint(self):
+        """Create transport with mocked gRPC client and V2 serializer."""
+        endpoint = create_grpc_model_endpoint()
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+        return transport, endpoint
+
+    @pytest.mark.asyncio
+    async def test_unary_request_headers_recorded(self, transport_and_endpoint) -> None:
+        """Request headers (gRPC metadata) should be recorded in trace data."""
+        transport, endpoint = transport_and_endpoint
+        mock_client = _make_mock_client(unary_result=make_unary_result())
+        _set_pool(transport, mock_client)
+
+        request_info = create_request_info(endpoint)
+        request_info.endpoint_headers = {"X-Custom": "value"}
+
+        record = await transport.send_request(request_info, _SIMPLE_PAYLOAD)
+
+        assert record.trace_data.request_headers is not None
+        assert "x-custom" in record.trace_data.request_headers
+        assert record.trace_data.request_headers["x-custom"] == "value"
+
+    @pytest.mark.asyncio
+    async def test_unary_request_headers_sent_timestamp(
+        self, transport_and_endpoint
+    ) -> None:
+        """request_headers_sent_perf_ns should be set for unary requests."""
+        transport, endpoint = transport_and_endpoint
+        mock_client = _make_mock_client(unary_result=make_unary_result())
+        _set_pool(transport, mock_client)
+
+        record = await transport.send_request(
+            create_request_info(endpoint), _SIMPLE_PAYLOAD
+        )
+
+        assert record.trace_data.request_headers_sent_perf_ns is not None
+        assert (
+            record.trace_data.request_headers_sent_perf_ns
+            == record.trace_data.request_send_start_perf_ns
+        )
+
+    @pytest.mark.asyncio
+    async def test_unary_response_status_fields(self, transport_and_endpoint) -> None:
+        """response_status_code and response_reason should be set on success."""
+        transport, endpoint = transport_and_endpoint
+        mock_client = _make_mock_client(unary_result=make_unary_result())
+        _set_pool(transport, mock_client)
+
+        record = await transport.send_request(
+            create_request_info(endpoint), _SIMPLE_PAYLOAD
+        )
+
+        assert record.trace_data.response_status_code == 200
+        assert record.trace_data.response_reason == "OK"
+
+    @pytest.mark.asyncio
+    async def test_unary_response_headers_received_timestamp(
+        self, transport_and_endpoint
+    ) -> None:
+        """response_headers_received_perf_ns should be set for unary requests."""
+        transport, endpoint = transport_and_endpoint
+        mock_client = _make_mock_client(unary_result=make_unary_result())
+        _set_pool(transport, mock_client)
+
+        record = await transport.send_request(
+            create_request_info(endpoint), _SIMPLE_PAYLOAD
+        )
+
+        assert record.trace_data.response_headers_received_perf_ns is not None
+        assert (
+            record.trace_data.response_headers_received_perf_ns
+            == record.trace_data.response_receive_start_perf_ns
+        )
+
+    @pytest.mark.asyncio
+    async def test_unary_trailing_metadata_as_response_headers(
+        self, transport_and_endpoint
+    ) -> None:
+        """Trailing metadata should be captured as response_headers."""
+        transport, endpoint = transport_and_endpoint
+        result = make_unary_result(
+            trailing_metadata=(("x-server-id", "gpu-0"), ("x-model-version", "2")),
+        )
+        mock_client = _make_mock_client(unary_result=result)
+        _set_pool(transport, mock_client)
+
+        record = await transport.send_request(
+            create_request_info(endpoint), _SIMPLE_PAYLOAD
+        )
+
+        assert record.trace_data.response_headers is not None
+        assert record.trace_data.response_headers["x-server-id"] == "gpu-0"
+        assert record.trace_data.response_headers["x-model-version"] == "2"
+
+    @pytest.mark.asyncio
+    async def test_grpc_error_populates_response_status_fields(
+        self, transport_and_endpoint
+    ) -> None:
+        """gRPC error should set response_status_code and response_reason in trace."""
+        transport, endpoint = transport_and_endpoint
+
+        rpc_error = grpc.aio.AioRpcError(
+            code=grpc.StatusCode.UNAVAILABLE,
+            initial_metadata=grpc.aio.Metadata(),
+            trailing_metadata=grpc.aio.Metadata(),
+            details="Server not available",
+        )
+        mock_client = _make_mock_client()
+        mock_client.unary = AsyncMock(side_effect=rpc_error)
+        _set_pool(transport, mock_client)
+
+        record = await transport.send_request(
+            create_request_info(endpoint), _SIMPLE_PAYLOAD
+        )
+
+        assert record.trace_data.response_status_code == 503
+        assert record.trace_data.response_reason == "UNAVAILABLE"
+
+    @pytest.mark.asyncio
+    async def test_streaming_response_headers_received_on_first_chunk(self) -> None:
+        """Streaming: response_headers_received_perf_ns set on first chunk."""
+        endpoint = create_grpc_model_endpoint(streaming=True)
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+
+        stream_call = make_mock_stream_call(
+            make_stream_response("a"),
+            make_stream_response("b"),
+        )
+        mock_client = _make_mock_client(stream_call=stream_call)
+        _set_pool(transport, mock_client)
+
+        record = await transport.send_request(
+            create_request_info(endpoint), _SIMPLE_PAYLOAD
+        )
+
+        assert record.trace_data.response_headers_received_perf_ns is not None
+        assert (
+            record.trace_data.response_headers_received_perf_ns
+            == record.trace_data.response_receive_start_perf_ns
+        )
+
+    @pytest.mark.asyncio
+    async def test_streaming_trailing_metadata_captured(self) -> None:
+        """Streaming: trailing metadata captured as response_headers on success."""
+        endpoint = create_grpc_model_endpoint(streaming=True)
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+
+        stream_call = make_mock_stream_call(
+            make_stream_response("token"),
+            trailing_metadata=(("x-request-id", "abc123"),),
+        )
+        mock_client = _make_mock_client(stream_call=stream_call)
+        _set_pool(transport, mock_client)
+
+        record = await transport.send_request(
+            create_request_info(endpoint), _SIMPLE_PAYLOAD
+        )
+
+        assert record.trace_data.response_headers is not None
+        assert record.trace_data.response_headers["x-request-id"] == "abc123"
+
+    @pytest.mark.asyncio
+    async def test_streaming_status_fields_on_success(self) -> None:
+        """Streaming: response_status_code and response_reason set on success."""
+        endpoint = create_grpc_model_endpoint(streaming=True)
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+
+        stream_call = make_mock_stream_call(make_stream_response("ok"))
+        mock_client = _make_mock_client(stream_call=stream_call)
+        _set_pool(transport, mock_client)
+
+        record = await transport.send_request(
+            create_request_info(endpoint), _SIMPLE_PAYLOAD
+        )
+
+        assert record.trace_data.response_status_code == 200
+        assert record.trace_data.response_reason == "OK"
+
+    @pytest.mark.asyncio
+    async def test_default_headers_always_recorded(
+        self, transport_and_endpoint
+    ) -> None:
+        """Default headers (user-agent, x-request-id, etc.) are always recorded."""
+        transport, endpoint = transport_and_endpoint
+        mock_client = _make_mock_client(unary_result=make_unary_result())
+        _set_pool(transport, mock_client)
+
+        request_info = create_request_info(endpoint)
+        request_info.endpoint_headers = {}
+
+        record = await transport.send_request(request_info, _SIMPLE_PAYLOAD)
+
+        # Default headers are always present (user-agent, x-request-id, x-correlation-id)
+        assert record.trace_data.request_headers is not None
+        assert "x-request-id" in record.trace_data.request_headers
+
+
+class TestGrpcTransportCancellation:
+    """Tests for two-stage cancellation (channel-ready + cancel timer)."""
+
+    @pytest.fixture
+    def transport_and_endpoint(self):
+        """Create non-streaming transport with serializer."""
+        endpoint = create_grpc_model_endpoint()
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+        return transport, endpoint
+
+    @pytest.mark.asyncio
+    async def test_request_send_timeout_when_channel_not_ready(
+        self, transport_and_endpoint
+    ) -> None:
+        """Channel not ready within timeout should produce RequestSendTimeout."""
+        transport, endpoint = transport_and_endpoint
+        mock_client = _make_mock_client(
+            wait_for_ready=AsyncMock(side_effect=asyncio.TimeoutError),
+        )
+        _set_pool(transport, mock_client)
+
+        request_info = create_request_info(endpoint, cancel_after_ns=5_000_000_000)
+
+        record = await transport.send_request(request_info, _SIMPLE_PAYLOAD)
+
+        assert record.error is not None
+        assert record.error.type == "RequestSendTimeout"
+        assert record.error.code == 0
+        assert (
+            record.cancellation_perf_ns is None
+        )  # Not a cancellation, it's a send timeout
+
+    @pytest.mark.asyncio
+    async def test_request_send_timeout_channel_shutdown(
+        self, transport_and_endpoint
+    ) -> None:
+        """Channel in SHUTDOWN state should produce RequestSendTimeout."""
+        transport, endpoint = transport_and_endpoint
+        mock_client = _make_mock_client(
+            wait_for_ready=AsyncMock(
+                side_effect=ConnectionError("gRPC channel is shutdown")
+            ),
+        )
+        _set_pool(transport, mock_client)
+
+        request_info = create_request_info(endpoint, cancel_after_ns=5_000_000_000)
+
+        record = await transport.send_request(request_info, _SIMPLE_PAYLOAD)
+
+        assert record.error is not None
+        assert record.error.type == "RequestSendTimeout"
+        assert "shutdown" in record.error.message
+
+    @pytest.mark.asyncio
+    async def test_two_stage_cancellation_unary(self, transport_and_endpoint) -> None:
+        """Unary: channel ready succeeds, then request times out -> RequestCancellationError."""
+        transport, endpoint = transport_and_endpoint
+
+        async def slow_unary(*args, **kwargs):
+            await asyncio.get_event_loop().create_future()
+            return make_unary_result()
+
+        mock_client = _make_mock_client()
+        mock_client.unary = slow_unary
+        _set_pool(transport, mock_client)
+
+        request_info = create_request_info(endpoint, cancel_after_ns=1)
+
+        record = await transport.send_request(request_info, _SIMPLE_PAYLOAD)
+
+        # wait_for_ready was called (stage 1)
+        mock_client.wait_for_ready.assert_awaited_once()
+        # Then timed out waiting for response (stage 2)
+        assert record.error is not None
+        assert record.error.type == "RequestCancellationError"
+        assert record.error.code == 499
+        assert record.cancellation_perf_ns is not None
+
+    @pytest.mark.asyncio
+    async def test_two_stage_cancellation_streaming(self) -> None:
+        """Streaming: channel ready succeeds, then stream times out -> RequestCancellationError."""
+        endpoint = create_grpc_model_endpoint(streaming=True)
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+
+        class SlowStreamCall(MockStreamCall):
+            """Stream that yields one chunk then hangs forever."""
+
+            async def __aiter__(self) -> AsyncIterator[bytes]:
+                yield make_stream_response("first").SerializeToString()
+                await asyncio.get_event_loop().create_future()
+
+        slow_call = SlowStreamCall(chunks=[], trailing=())
+        mock_client = _make_mock_client(stream_call=slow_call)
+        _set_pool(transport, mock_client)
+
+        request_info = create_request_info(endpoint, cancel_after_ns=1)
+
+        record = await transport.send_request(request_info, _SIMPLE_PAYLOAD)
+
+        mock_client.wait_for_ready.assert_awaited_once()
+        assert record.error is not None
+        assert record.error.type == "RequestCancellationError"
+        assert record.cancellation_perf_ns is not None
+
+    @pytest.mark.asyncio
+    async def test_streaming_send_timeout(self) -> None:
+        """Streaming: channel not ready should produce RequestSendTimeout."""
+        endpoint = create_grpc_model_endpoint(streaming=True)
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+
+        stream_call = make_mock_stream_call(make_stream_response("x"))
+        mock_client = _make_mock_client(
+            stream_call=stream_call,
+            wait_for_ready=AsyncMock(side_effect=asyncio.TimeoutError),
+        )
+        _set_pool(transport, mock_client)
+
+        request_info = create_request_info(endpoint, cancel_after_ns=5_000_000_000)
+
+        record = await transport.send_request(request_info, _SIMPLE_PAYLOAD)
+
+        assert record.error is not None
+        assert record.error.type == "RequestSendTimeout"
+
+    @pytest.mark.asyncio
+    async def test_no_cancel_skips_wait_for_ready(self, transport_and_endpoint) -> None:
+        """Without cancel_after_ns, wait_for_ready should not be called."""
+        transport, endpoint = transport_and_endpoint
+        mock_client = _make_mock_client(unary_result=make_unary_result())
+        _set_pool(transport, mock_client)
+
+        request_info = create_request_info(endpoint, cancel_after_ns=None)
+
+        record = await transport.send_request(request_info, _SIMPLE_PAYLOAD)
+
+        assert record.status == 200
+        mock_client.wait_for_ready.assert_not_awaited()
+
+
 class TestGrpcTransportInit:
     """Tests for transport initialization."""
 
     @pytest.mark.asyncio
-    async def test_connection_reuse_never_warns(self) -> None:
-        """NEVER connection reuse strategy should log a warning."""
+    async def test_pooled_creates_channels_for_all_base_urls(self) -> None:
+        """POOLED strategy should pre-create channels for all base_urls."""
+        endpoint = create_grpc_model_endpoint(
+            base_urls=["grpc://host1:8001", "grpc://host2:8001"],
+            connection_reuse_strategy=ConnectionReuseStrategy.POOLED,
+        )
+        transport = GrpcTransport(model_endpoint=endpoint)
+
+        with patch(
+            "aiperf.transports.grpc.grpc_transport.GenericGrpcClient"
+        ) as mock_cls:
+            mock_cls.return_value = MagicMock()
+            await transport._init_grpc_client()
+
+        assert "host1:8001" in transport._channel_pool
+        assert "host2:8001" in transport._channel_pool
+        assert len(transport._channel_pool) == 2
+
+    @pytest.mark.asyncio
+    async def test_never_creates_no_channels(self) -> None:
+        """NEVER strategy should not pre-create any channels."""
         endpoint = create_grpc_model_endpoint(
             connection_reuse_strategy=ConnectionReuseStrategy.NEVER
         )
         transport = GrpcTransport(model_endpoint=endpoint)
 
-        with patch.object(transport, "warning") as mock_warn:
-            with patch("aiperf.transports.grpc.grpc_transport.GenericGrpcClient"):
-                await transport._init_grpc_client()
+        await transport._init_grpc_client()
 
-            mock_warn.assert_called_once()
-            assert "not applicable" in mock_warn.call_args[0][0]
+        assert len(transport._channel_pool) == 0
+        assert transport._lease_manager is None
+
+    @pytest.mark.asyncio
+    async def test_sticky_creates_lease_manager(self) -> None:
+        """STICKY_USER_SESSIONS strategy should create a lease manager."""
+        endpoint = create_grpc_model_endpoint(
+            connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS
+        )
+        transport = GrpcTransport(model_endpoint=endpoint)
+
+        await transport._init_grpc_client()
+
+        assert transport._lease_manager is not None
+        assert isinstance(transport._lease_manager, GrpcChannelLeaseManager)
+        assert len(transport._channel_pool) == 0
+
+    @pytest.mark.asyncio
+    async def test_secure_detected_from_grpcs_scheme(self) -> None:
+        """Transport should detect secure=True from grpcs:// scheme."""
+        endpoint = create_grpc_model_endpoint(
+            base_url="grpcs://secure-host:443",
+            connection_reuse_strategy=ConnectionReuseStrategy.NEVER,
+        )
+        transport = GrpcTransport(model_endpoint=endpoint)
+
+        await transport._init_grpc_client()
+
+        assert transport._secure is True
+
+    @pytest.mark.asyncio
+    async def test_mixed_schemes_raises_error(self) -> None:
+        """Mixed grpc:// and grpcs:// schemes should raise ValueError."""
+        endpoint = create_grpc_model_endpoint(
+            base_urls=["grpc://host1:8001", "grpcs://host2:8001"],
+        )
+        transport = GrpcTransport(model_endpoint=endpoint)
+
+        with pytest.raises(ValueError, match="mixed"):
+            await transport._init_grpc_client()
+
+
+class TestGrpcTransportShutdown:
+    """Tests for transport shutdown."""
+
+    @pytest.mark.asyncio
+    async def test_close_closes_pool_and_lease_manager(self) -> None:
+        """Shutdown should close all pool channels and lease manager."""
+        endpoint = create_grpc_model_endpoint()
+        transport = GrpcTransport(model_endpoint=endpoint)
+
+        mock_client1 = _make_mock_client()
+        mock_client2 = _make_mock_client()
+        transport._channel_pool = {
+            "host1:8001": mock_client1,
+            "host2:8001": mock_client2,
+        }
+        mock_lease_mgr = AsyncMock()
+        transport._lease_manager = mock_lease_mgr
+
+        await transport._close_grpc_client()
+
+        mock_lease_mgr.close_all.assert_awaited_once()
+        mock_client1.close.assert_awaited_once()
+        mock_client2.close.assert_awaited_once()
+        assert len(transport._channel_pool) == 0
+        assert transport._lease_manager is None
+
+
+class TestGrpcChannelLeaseManager:
+    """Tests for GrpcChannelLeaseManager."""
+
+    def test_get_or_create_creates_new(self) -> None:
+        """get_or_create should call factory for a new session."""
+        manager = GrpcChannelLeaseManager()
+        mock_client = _make_mock_client()
+        factory = MagicMock(return_value=mock_client)
+
+        result = manager.get_or_create("session-1", factory)
+
+        assert result is mock_client
+        factory.assert_called_once()
+
+    def test_get_or_create_returns_existing(self) -> None:
+        """get_or_create should return existing client for same session."""
+        manager = GrpcChannelLeaseManager()
+        mock_client = _make_mock_client()
+        factory = MagicMock(return_value=mock_client)
+
+        result1 = manager.get_or_create("session-1", factory)
+        result2 = manager.get_or_create("session-1", factory)
+
+        assert result1 is result2
+        factory.assert_called_once()  # Only called once
+
+    def test_get_or_create_different_sessions_get_different_clients(self) -> None:
+        """Different sessions should get different clients."""
+        manager = GrpcChannelLeaseManager()
+        client1 = _make_mock_client()
+        client2 = _make_mock_client()
+        calls = iter([client1, client2])
+        factory = MagicMock(side_effect=lambda: next(calls))
+
+        result1 = manager.get_or_create("session-1", factory)
+        result2 = manager.get_or_create("session-2", factory)
+
+        assert result1 is client1
+        assert result2 is client2
+        assert factory.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_release_lease_closes_client(self) -> None:
+        """release_lease should close the client and remove it."""
+        manager = GrpcChannelLeaseManager()
+        mock_client = _make_mock_client()
+        manager.get_or_create("session-1", lambda: mock_client)
+
+        await manager.release_lease("session-1")
+
+        mock_client.close.assert_awaited_once()
+        # Creating again should use the factory
+        mock_client2 = _make_mock_client()
+        result = manager.get_or_create("session-1", lambda: mock_client2)
+        assert result is mock_client2
+
+    @pytest.mark.asyncio
+    async def test_release_lease_noop_for_unknown_session(self) -> None:
+        """release_lease should be a no-op for unknown sessions."""
+        manager = GrpcChannelLeaseManager()
+        await manager.release_lease("unknown")  # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_close_all_closes_everything(self) -> None:
+        """close_all should close all active leases."""
+        manager = GrpcChannelLeaseManager()
+        client1 = _make_mock_client()
+        client2 = _make_mock_client()
+        manager.get_or_create("s1", lambda: client1)
+        manager.get_or_create("s2", lambda: client2)
+
+        await manager.close_all()
+
+        client1.close.assert_awaited_once()
+        client2.close.assert_awaited_once()
+        assert len(manager._leases) == 0
+
+
+class TestGrpcConnectionStrategies:
+    """Tests for connection reuse strategy behavior."""
+
+    @pytest.mark.asyncio
+    async def test_pooled_uses_correct_target_per_url_index(self) -> None:
+        """POOLED: should use the correct channel for each url_index."""
+        endpoint = create_grpc_model_endpoint(
+            base_urls=["grpc://host1:8001", "grpc://host2:8001"],
+        )
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+
+        client1 = _make_mock_client(unary_result=make_unary_result("resp1"))
+        client2 = _make_mock_client(unary_result=make_unary_result("resp2"))
+        transport._channel_pool = {
+            "host1:8001": client1,
+            "host2:8001": client2,
+        }
+
+        ri0 = create_request_info(endpoint)
+        ri0.url_index = 0
+        await transport.send_request(ri0, _SIMPLE_PAYLOAD)
+        client1.unary.assert_awaited_once()
+        client2.unary.assert_not_awaited()
+
+        ri1 = create_request_info(endpoint)
+        ri1.url_index = 1
+        await transport.send_request(ri1, _SIMPLE_PAYLOAD)
+        client2.unary.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_pooled_lazily_creates_missing_target(self) -> None:
+        """POOLED: should lazily create a channel for a target not in the pool."""
+        endpoint = create_grpc_model_endpoint()
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+        transport._secure = False
+
+        # Empty pool - should create lazily
+        with patch.object(transport, "_create_client") as mock_create:
+            mock_client = _make_mock_client(unary_result=make_unary_result())
+            mock_create.return_value = mock_client
+
+            ri = create_request_info(endpoint)
+            record = await transport.send_request(ri, _SIMPLE_PAYLOAD)
+
+            mock_create.assert_called_once_with("localhost:8001")
+            assert record.status == 200
+            assert "localhost:8001" in transport._channel_pool
+
+    @pytest.mark.asyncio
+    async def test_never_creates_new_channel_per_request(self) -> None:
+        """NEVER: should create a new channel for each request and close after."""
+        endpoint = create_grpc_model_endpoint(
+            connection_reuse_strategy=ConnectionReuseStrategy.NEVER,
+        )
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+        transport._secure = False
+
+        mock_client = _make_mock_client(unary_result=make_unary_result())
+        with patch.object(transport, "_create_client", return_value=mock_client):
+            record = await transport.send_request(
+                create_request_info(endpoint), _SIMPLE_PAYLOAD
+            )
+
+        assert record.status == 200
+        mock_client.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_never_closes_channel_on_error(self) -> None:
+        """NEVER: should close the per-request channel even on error."""
+        endpoint = create_grpc_model_endpoint(
+            connection_reuse_strategy=ConnectionReuseStrategy.NEVER,
+        )
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+        transport._secure = False
+
+        rpc_error = grpc.aio.AioRpcError(
+            code=grpc.StatusCode.UNAVAILABLE,
+            initial_metadata=grpc.aio.Metadata(),
+            trailing_metadata=grpc.aio.Metadata(),
+            details="Server not available",
+        )
+        mock_client = _make_mock_client()
+        mock_client.unary = AsyncMock(side_effect=rpc_error)
+        with patch.object(transport, "_create_client", return_value=mock_client):
+            record = await transport.send_request(
+                create_request_info(endpoint), _SIMPLE_PAYLOAD
+            )
+
+        assert record.error is not None
+        mock_client.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_sticky_creates_lease_and_reuses(self) -> None:
+        """STICKY: should reuse the same channel across turns of a conversation."""
+        endpoint = create_grpc_model_endpoint(
+            connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS,
+        )
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+        transport._secure = False
+        transport._lease_manager = GrpcChannelLeaseManager()
+
+        mock_client = _make_mock_client(unary_result=make_unary_result())
+        with patch.object(transport, "_create_client", return_value=mock_client):
+            # Turn 1 (not final)
+            ri1 = create_request_info(
+                endpoint,
+                x_correlation_id="conv-1",
+                is_final_turn=False,
+            )
+            await transport.send_request(ri1, _SIMPLE_PAYLOAD)
+            mock_client.close.assert_not_awaited()
+
+            # Turn 2 (not final) - should reuse same client
+            ri2 = create_request_info(
+                endpoint,
+                x_correlation_id="conv-1",
+                is_final_turn=False,
+            )
+            await transport.send_request(ri2, _SIMPLE_PAYLOAD)
+            mock_client.close.assert_not_awaited()
+            assert mock_client.unary.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_sticky_releases_on_final_turn(self) -> None:
+        """STICKY: should release the lease on the final turn."""
+        endpoint = create_grpc_model_endpoint(
+            connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS,
+        )
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+        transport._secure = False
+        transport._lease_manager = GrpcChannelLeaseManager()
+
+        mock_client = _make_mock_client(unary_result=make_unary_result())
+        with patch.object(transport, "_create_client", return_value=mock_client):
+            ri = create_request_info(
+                endpoint,
+                x_correlation_id="conv-1",
+                is_final_turn=True,
+            )
+            await transport.send_request(ri, _SIMPLE_PAYLOAD)
+
+        mock_client.close.assert_awaited_once()
+        assert "conv-1" not in transport._lease_manager._leases
+
+    @pytest.mark.asyncio
+    async def test_sticky_releases_on_error(self) -> None:
+        """STICKY: should release the lease when request errors."""
+        endpoint = create_grpc_model_endpoint(
+            connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS,
+        )
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+        transport._secure = False
+        transport._lease_manager = GrpcChannelLeaseManager()
+
+        rpc_error = grpc.aio.AioRpcError(
+            code=grpc.StatusCode.UNAVAILABLE,
+            initial_metadata=grpc.aio.Metadata(),
+            trailing_metadata=grpc.aio.Metadata(),
+            details="Server not available",
+        )
+        mock_client = _make_mock_client()
+        mock_client.unary = AsyncMock(side_effect=rpc_error)
+        with patch.object(transport, "_create_client", return_value=mock_client):
+            ri = create_request_info(
+                endpoint,
+                x_correlation_id="conv-1",
+                is_final_turn=False,
+            )
+            await transport.send_request(ri, _SIMPLE_PAYLOAD)
+
+        mock_client.close.assert_awaited_once()
+        assert "conv-1" not in transport._lease_manager._leases
+
+    @pytest.mark.asyncio
+    async def test_sticky_releases_on_cancelled_error(self) -> None:
+        """STICKY: should release the lease when request is externally cancelled."""
+        endpoint = create_grpc_model_endpoint(
+            connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS,
+        )
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+        transport._secure = False
+        transport._lease_manager = GrpcChannelLeaseManager()
+
+        mock_client = _make_mock_client()
+        mock_client.unary = AsyncMock(side_effect=asyncio.CancelledError)
+        with patch.object(transport, "_create_client", return_value=mock_client):
+            ri = create_request_info(
+                endpoint,
+                x_correlation_id="conv-1",
+                is_final_turn=False,
+            )
+            with pytest.raises(asyncio.CancelledError):
+                await transport.send_request(ri, _SIMPLE_PAYLOAD)
+
+        mock_client.close.assert_awaited_once()
+        assert "conv-1" not in transport._lease_manager._leases
+
+    @pytest.mark.asyncio
+    async def test_never_creates_new_channel_per_streaming_request(self) -> None:
+        """NEVER + streaming: should create and close a channel per request."""
+        endpoint = create_grpc_model_endpoint(
+            streaming=True,
+            connection_reuse_strategy=ConnectionReuseStrategy.NEVER,
+        )
+        transport = GrpcTransport(model_endpoint=endpoint)
+        _init_transport_serializer(transport)
+        transport._secure = False
+
+        stream_call = make_mock_stream_call(make_stream_response("token"))
+        mock_client = _make_mock_client(stream_call=stream_call)
+        with patch.object(transport, "_create_client", return_value=mock_client):
+            record = await transport.send_request(
+                create_request_info(endpoint), _SIMPLE_PAYLOAD
+            )
+
+        assert record.status == 200
+        mock_client.close.assert_awaited_once()

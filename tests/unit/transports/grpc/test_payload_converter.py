@@ -2,7 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for gRPC payload converter (dict <-> protobuf)."""
 
-from aiperf.transports.grpc.payload_converter import (
+import struct
+
+import pytest
+
+from aiperf.transports.grpc.kserve_v2_serializers import (
+    _extract_raw_tensor_data,
     dict_to_model_infer_request,
     model_infer_response_to_dict,
 )
@@ -293,3 +298,138 @@ class TestModelInferResponseToDict:
         result = model_infer_response_to_dict(response)
 
         assert result["outputs"] == []
+
+    def test_raw_output_contents_bytes(self) -> None:
+        """Extract data from raw_output_contents for BYTES tensor."""
+        response = pb2.ModelInferResponse()
+        response.model_name = "m"
+        output = response.outputs.add()
+        output.name = "text_output"
+        output.datatype = "BYTES"
+        output.shape.append(1)
+        # Empty InferTensorContents — data in raw_output_contents
+        text = b"Hello world"
+        response.raw_output_contents.append(struct.pack("<I", len(text)) + text)
+
+        result = model_infer_response_to_dict(response)
+
+        assert result["outputs"][0]["data"] == ["Hello world"]
+
+    def test_raw_output_contents_int32(self) -> None:
+        """Extract data from raw_output_contents for INT32 tensor."""
+        response = pb2.ModelInferResponse()
+        output = response.outputs.add()
+        output.name = "count"
+        output.datatype = "INT32"
+        output.shape.append(3)
+        response.raw_output_contents.append(struct.pack("<iii", 10, 20, 30))
+
+        result = model_infer_response_to_dict(response)
+
+        assert result["outputs"][0]["data"] == [10, 20, 30]
+
+    def test_raw_output_contents_fp32(self) -> None:
+        """Extract data from raw_output_contents for FP32 tensor."""
+        response = pb2.ModelInferResponse()
+        output = response.outputs.add()
+        output.name = "scores"
+        output.datatype = "FP32"
+        output.shape.extend([1, 2])
+        response.raw_output_contents.append(struct.pack("<ff", 0.5, 1.5))
+
+        result = model_infer_response_to_dict(response)
+
+        assert len(result["outputs"][0]["data"]) == 2
+        assert abs(result["outputs"][0]["data"][0] - 0.5) < 0.001
+        assert abs(result["outputs"][0]["data"][1] - 1.5) < 0.001
+
+    def test_raw_output_contents_multiple_outputs(self) -> None:
+        """raw_output_contents indexed by output position."""
+        response = pb2.ModelInferResponse()
+        # Output 0: BYTES
+        out0 = response.outputs.add()
+        out0.name = "text"
+        out0.datatype = "BYTES"
+        out0.shape.append(1)
+        text = b"token"
+        response.raw_output_contents.append(struct.pack("<I", len(text)) + text)
+
+        # Output 1: INT32
+        out1 = response.outputs.add()
+        out1.name = "count"
+        out1.datatype = "INT32"
+        out1.shape.append(1)
+        response.raw_output_contents.append(struct.pack("<i", 42))
+
+        result = model_infer_response_to_dict(response)
+
+        assert result["outputs"][0]["data"] == ["token"]
+        assert result["outputs"][1]["data"] == [42]
+
+    def test_contents_preferred_over_raw(self) -> None:
+        """InferTensorContents takes precedence over raw_output_contents."""
+        response = pb2.ModelInferResponse()
+        output = response.outputs.add()
+        output.name = "text"
+        output.datatype = "BYTES"
+        output.shape.append(1)
+        output.contents.bytes_contents.append(b"from_contents")
+        # Also set raw (should be ignored)
+        text = b"from_raw"
+        response.raw_output_contents.append(struct.pack("<I", len(text)) + text)
+
+        result = model_infer_response_to_dict(response)
+
+        assert result["outputs"][0]["data"] == ["from_contents"]
+
+
+class TestExtractRawTensorData:
+    """Tests for _extract_raw_tensor_data()."""
+
+    def test_bytes_single_element(self) -> None:
+        """Parse single length-prefixed BYTES element."""
+        text = b"Hello"
+        raw = struct.pack("<I", len(text)) + text
+        result = _extract_raw_tensor_data(raw, "BYTES", [1])
+
+        assert result == ["Hello"]
+
+    def test_bytes_multiple_elements(self) -> None:
+        """Parse multiple length-prefixed BYTES elements."""
+        raw = b""
+        for s in [b"Hello", b"world"]:
+            raw += struct.pack("<I", len(s)) + s
+        result = _extract_raw_tensor_data(raw, "BYTES", [2])
+
+        assert result == ["Hello", "world"]
+
+    def test_bytes_empty(self) -> None:
+        """Empty raw bytes for BYTES produces empty list."""
+        result = _extract_raw_tensor_data(b"", "BYTES", [0])
+
+        assert result == []
+
+    @pytest.mark.parametrize(
+        "datatype,fmt,values",
+        [
+            ("INT32", "<i", [1, 2, 3]),
+            ("INT64", "<q", [100, 200]),
+            ("FP32", "<f", [0.5, 1.5]),
+            ("FP64", "<d", [0.25]),
+            ("BOOL", "?", [True, False]),
+            ("UINT32", "<I", [10, 20]),
+        ],
+    )
+    def test_numeric_types(self, datatype: str, fmt: str, values: list) -> None:
+        """Numeric types correctly unpacked from raw bytes."""
+        raw = struct.pack(
+            f"{len(values)}{fmt[-1]}" if len(fmt) > 1 else f"{len(values)}{fmt}",
+            *values,
+        )
+        result = _extract_raw_tensor_data(raw, datatype, [len(values)])
+
+        for expected, actual in zip(values, result, strict=True):
+            if isinstance(expected, float):
+                assert abs(expected - actual) < 0.001
+            else:
+                assert expected == actual

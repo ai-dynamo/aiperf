@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -17,6 +19,44 @@ from aiperf.transports.grpc.grpc_defaults import DEFAULT_CHANNEL_OPTIONS
 def _identity(x: bytes) -> bytes:
     """Identity passthrough for gRPC serializer/deserializer."""
     return x
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GrpcUnaryResult:
+    """Result from a unary gRPC call with response data and metadata."""
+
+    data: bytes
+    trailing_metadata: tuple[tuple[str, str | bytes], ...]
+
+
+class GrpcStreamCall:
+    """Wrapper around grpc.aio.UnaryStreamCall exposing metadata access.
+
+    Provides async iteration over response chunks plus access to
+    initial/trailing metadata for trace data capture.
+    """
+
+    __slots__ = ("_call",)
+
+    def __init__(self, call: grpc.aio.UnaryStreamCall) -> None:
+        self._call = call
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        """Yield raw response bytes from the server stream."""
+        async for chunk in self._call:
+            yield chunk
+
+    async def initial_metadata(self) -> grpc.aio.Metadata:
+        """Await and return the server's initial metadata (response headers)."""
+        return await self._call.initial_metadata()
+
+    async def trailing_metadata(self) -> grpc.aio.Metadata:
+        """Await and return the server's trailing metadata (after stream ends)."""
+        return await self._call.trailing_metadata()
+
+    def cancel(self) -> bool:
+        """Cancel the underlying RPC call."""
+        return self._call.cancel()
 
 
 class GenericGrpcClient(AIPerfLoggerMixin):
@@ -64,6 +104,34 @@ class GenericGrpcClient(AIPerfLoggerMixin):
         if self._channel:
             await self._channel.close()
 
+    async def wait_for_ready(self, timeout: float | None = None) -> None:
+        """Wait for the gRPC channel to reach READY state.
+
+        Separates connection establishment time from request processing time,
+        enabling accurate cancellation timing (cancel_after_ns starts after
+        the channel is ready, not during connection setup).
+
+        Args:
+            timeout: Maximum seconds to wait. None means wait indefinitely.
+
+        Raises:
+            asyncio.TimeoutError: Channel didn't become ready within timeout.
+            ConnectionError: Channel entered SHUTDOWN state.
+        """
+        state = self._channel.get_state(try_to_connect=True)
+        if state == grpc.ChannelConnectivity.READY:
+            return
+
+        async def _wait() -> None:
+            nonlocal state
+            while state != grpc.ChannelConnectivity.READY:
+                if state == grpc.ChannelConnectivity.SHUTDOWN:
+                    raise ConnectionError("gRPC channel is shutdown")
+                await self._channel.wait_for_state_change(state)
+                state = self._channel.get_state()
+
+        await asyncio.wait_for(_wait(), timeout=timeout)
+
     async def unary(
         self,
         method: str,
@@ -71,8 +139,8 @@ class GenericGrpcClient(AIPerfLoggerMixin):
         *,
         metadata: list[tuple[str, str]] | None = None,
         timeout: float | None = None,
-    ) -> bytes:
-        """Send a unary RPC. Returns raw response bytes.
+    ) -> GrpcUnaryResult:
+        """Send a unary RPC. Returns response bytes and trailing metadata.
 
         Args:
             method: Fully-qualified gRPC method path (e.g. "/service/Method").
@@ -81,26 +149,35 @@ class GenericGrpcClient(AIPerfLoggerMixin):
             timeout: RPC timeout in seconds. Falls back to client default.
 
         Returns:
-            Serialized response bytes.
+            GrpcUnaryResult with response data and trailing metadata.
         """
         callable_ = self._channel.unary_unary(
             method,
             request_serializer=_identity,
             response_deserializer=_identity,
         )
-        return await callable_(
+        call = callable_(
             request_data, metadata=metadata, timeout=timeout or self._timeout
         )
+        response_bytes = await call
+        trailing = await call.trailing_metadata()
+        return GrpcUnaryResult(
+            data=response_bytes,
+            trailing_metadata=tuple(trailing),
+        )
 
-    async def server_stream(
+    def server_stream(
         self,
         method: str,
         request_data: bytes,
         *,
         metadata: list[tuple[str, str]] | None = None,
         timeout: float | None = None,
-    ) -> AsyncIterator[bytes]:
-        """Send a server-streaming RPC. Yields raw response bytes.
+    ) -> GrpcStreamCall:
+        """Create a server-streaming RPC call.
+
+        Returns a GrpcStreamCall wrapper that supports async iteration over
+        response chunks and access to initial/trailing metadata.
 
         Args:
             method: Fully-qualified gRPC method path (e.g. "/service/Method").
@@ -108,8 +185,8 @@ class GenericGrpcClient(AIPerfLoggerMixin):
             metadata: Optional gRPC metadata (key-value pairs).
             timeout: RPC timeout in seconds. Falls back to client default.
 
-        Yields:
-            Serialized response bytes for each stream chunk.
+        Returns:
+            GrpcStreamCall wrapper for async iteration and metadata access.
         """
         callable_ = self._channel.unary_stream(
             method,
@@ -119,5 +196,4 @@ class GenericGrpcClient(AIPerfLoggerMixin):
         call = callable_(
             request_data, metadata=metadata, timeout=timeout or self._timeout
         )
-        async for chunk in call:
-            yield chunk
+        return GrpcStreamCall(call)
