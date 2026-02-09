@@ -53,11 +53,15 @@ Each line represents one independent single-turn request.
 
 ### When to Use
 
-- **Single file with sequential execution** - Requests run in the order they appear
-- Testing individual prompts with known inputs
-- Debugging specific request configurations
-- Request timing control needed (timestamps/delays)
-- Default sampling: sequential (can be changed with `--dataset-sampling-strategy`)
+Use single_turn when you need **deterministic, sequential execution** where requests always run in the exact order they appear in the file:
+
+- **Debugging**: Test specific prompts in a known sequence
+- **Regression testing**: Same input file → same output order every time
+- **Timing control**: Schedule requests with precise timestamps or delays
+- **Predictable testing**: Know exactly which request runs when
+
+**Execution:** Sequential by default (request 1, then 2, then 3, etc.)
+**Input:** Single JSONL file only
 
 ### Basic Text Example
 
@@ -134,10 +138,14 @@ Each entry represents a complete conversation with multiple turns.
 
 ### When to Use
 
-- Testing conversational AI with context
-- Each turn builds on previous turns
-- Simulating realistic chat interactions
-- Benchmarking multi-turn task completion
+Use multi_turn when you need **conversations with context** where each turn builds on previous turns in the conversation:
+
+- **Chat testing**: Test conversational AI that maintains context across turns
+- **Realistic interactions**: Simulate real user conversations with follow-up questions
+- **Task completion**: Test multi-step tasks that require conversation history
+
+**Execution:** Sequential within each conversation (turn 1, then 2, then 3, etc.), but multiple conversations run concurrently
+**Input:** Single JSONL file only
 
 ### Basic Conversation
 
@@ -214,12 +222,16 @@ Randomly sample from one or more data pools for varied request patterns.
 
 ### When to Use
 
-- **Multiple files (directory input)** - Each file becomes a separate pool, sampled and combined into requests
-- **Random sampling with replacement** - Unpredictable, varied request patterns
-- Load testing with diverse data combinations
-- Simulating production workloads
-- Default sampling: shuffle (can be changed with `--dataset-sampling-strategy`)
-- Note: Does NOT support timing control or multi-turn conversations
+Use random_pool when you need **random sampling with replacement** for unpredictable, varied request patterns:
+
+- **Load testing**: Generate diverse request patterns with variety
+- **Production simulation**: Model real-world workloads where requests vary
+- **Stress testing**: Test system behavior under mixed input patterns
+- **Multiple data sources**: Combine files from a directory (each file becomes a pool)
+
+**Execution:** Random sampling with replacement (same entry can be selected multiple times)
+**Input:** Single JSONL file OR directory of multiple JSONL files
+**Note:** Does NOT support timing control or multi-turn conversations
 
 ### Basic Single-File Sampling
 
