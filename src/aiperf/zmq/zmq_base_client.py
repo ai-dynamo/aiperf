@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import uuid
+from pathlib import Path
 
 import zmq.asyncio
 
@@ -31,6 +32,7 @@ class BaseZMQClient(AIPerfLifecycleMixin):
         bind: bool,
         socket_ops: dict | None = None,
         client_id: str | None = None,
+        additional_bind_address: str | None = None,
         **kwargs,
     ) -> None:
         """
@@ -41,6 +43,8 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             bind (bool): Whether to BIND or CONNECT the socket.
             socket_type (SocketType): The type of ZMQ socket (eg. PUB, SUB, ROUTER, DEALER, etc.).
             socket_ops (dict, optional): Additional socket options to set.
+            additional_bind_address (str, optional): Optional second address to bind to for dual-bind
+                mode (e.g., IPC + TCP in Kubernetes). Only used when bind=True.
         """
         self.context: zmq.asyncio.Context = zmq.asyncio.Context.instance()
         self.socket_type: zmq.SocketType = socket_type
@@ -53,7 +57,14 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             or f"{self.socket_type.name.lower()}_client_{uuid.uuid4().hex[:8]}"
         )
         self.scheduler: LoopScheduler | None = None
+        self.additional_bind_address: str | None = (
+            additional_bind_address if bind else None
+        )
         super().__init__(id=self.client_id, **kwargs)
+        if not self.bind and additional_bind_address:
+            self.warning(
+                f"Additional bind address provided but bind is False, ignoring: {additional_bind_address} for client {self.client_id}"
+            )
         self.trace(lambda: f"ZMQ client __init__: {self.client_id}")
 
     async def _check_initialized(self) -> None:
@@ -134,6 +145,20 @@ class BaseZMQClient(AIPerfLifecycleMixin):
         except Exception as e:
             raise InitializationError(f"Failed to initialize ZMQ socket: {e}") from e
 
+    @on_init
+    async def _bind_additional_address(self) -> None:
+        """Bind to additional address for dual-bind mode (e.g., IPC + TCP)."""
+        if self.additional_bind_address and self.socket:
+            self.socket.bind(self.additional_bind_address)
+            self.debug(
+                lambda: f"Dual-bind: also bound to {self.additional_bind_address}"
+            )
+
+    def _cleanup_ipc_file(self) -> None:
+        """Remove the IPC socket file if this client bound to one."""
+        if self.bind and self.address.startswith("ipc://"):
+            Path(self.address.removeprefix("ipc://")).unlink(missing_ok=True)
+
     @on_stop
     async def _shutdown_socket(self) -> None:
         """Shutdown the socket."""
@@ -152,3 +177,5 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             self.exception(
                 f"Uncaught exception shutting down ZMQ socket: {e} ({self.client_id})"
             )
+        finally:
+            self._cleanup_ipc_file()

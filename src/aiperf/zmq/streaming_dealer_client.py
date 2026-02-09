@@ -173,7 +173,7 @@ class ZMQStreamingDealerClient(BaseZMQClient):
                     # and prevent event loop starvation during message bursts.
                     if (
                         self._yield_interval > 0
-                        and self._msg_count >= self._yield_interval
+                        and self._msg_count % self._yield_interval == 0
                     ):
                         await yield_to_event_loop()
                 else:
@@ -184,12 +184,14 @@ class ZMQStreamingDealerClient(BaseZMQClient):
             except zmq.Again:
                 self.debug("No data on dealer socket received, yielding to event loop")
                 await yield_to_event_loop()
-            except Exception as e:
-                self.exception(f"Exception receiving messages: {e}")
-                await yield_to_event_loop()
             except asyncio.CancelledError:
                 self.debug("Streaming DEALER receiver task cancelled")
                 raise  # re-raise the cancelled error
+            except Exception as e:
+                self.exception(
+                    f"Exception receiving messages for client {self.client_id}: {e!r}"
+                )
+                await yield_to_event_loop()
 
         self.debug(
             lambda: f"Streaming DEALER receiver task stopped for {self.identity}"

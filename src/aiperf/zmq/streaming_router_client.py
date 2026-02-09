@@ -99,6 +99,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         address: str,
         bind: bool = True,
         socket_ops: dict | None = None,
+        additional_bind_address: str | None = None,
         **kwargs,
     ) -> None:
         """
@@ -108,9 +109,18 @@ class ZMQStreamingRouterClient(BaseZMQClient):
             address: The address to bind or connect to (e.g., "tcp://*:5555" or "ipc:///tmp/socket")
             bind: Whether to bind (True) or connect (False) the socket
             socket_ops: Additional socket options to set
+            additional_bind_address: Optional second address to bind to for dual-bind mode
+                (e.g., IPC + TCP in Kubernetes). Only used when bind=True.
             **kwargs: Additional arguments passed to BaseZMQClient
         """
-        super().__init__(zmq.SocketType.ROUTER, address, bind, socket_ops, **kwargs)
+        super().__init__(
+            zmq.SocketType.ROUTER,
+            address,
+            bind,
+            socket_ops,
+            additional_bind_address=additional_bind_address,
+            **kwargs,
+        )
         self._receiver_handler: WorkerToRouterHandler | None = None
         self._msg_count: int = 0
         self._yield_interval: int = Environment.ZMQ.STREAMING_ROUTER_YIELD_INTERVAL
@@ -157,7 +167,9 @@ class ZMQStreamingRouterClient(BaseZMQClient):
             if self.is_trace_enabled:
                 self.trace(f"Sent {type(struct).__name__} to {identity}: {struct}")
         except Exception as e:
-            self.exception(f"Failed to send to {identity}: {e}")
+            self.exception(
+                f"Failed to send to {identity} for client {self.client_id}: {e!r}"
+            )
             raise
 
     @background_task(immediate=True, interval=None)
@@ -192,7 +204,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
                     # and prevent event loop starvation during message bursts.
                     if (
                         self._yield_interval > 0
-                        and self._msg_count >= self._yield_interval
+                        and self._msg_count % self._yield_interval == 0
                     ):
                         await yield_to_event_loop()
                 else:
@@ -204,12 +216,14 @@ class ZMQStreamingRouterClient(BaseZMQClient):
                 self.debug("Router receiver task timed out")
                 await yield_to_event_loop()
                 continue
-            except Exception as e:
-                if not self.stop_requested:
-                    self.exception(f"Error in streaming ROUTER receiver: {e}")
-                await yield_to_event_loop()
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, zmq.ContextTerminated):
                 self.debug("Streaming ROUTER receiver task cancelled")
                 break
+            except Exception as e:
+                if not self.stop_requested:
+                    self.exception(
+                        f"Error in streaming ROUTER receiver for client {self.client_id}: {e!r}"
+                    )
+                await yield_to_event_loop()
 
         self.debug("Streaming ROUTER receiver task stopped")

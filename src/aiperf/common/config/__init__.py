@@ -61,6 +61,8 @@ from aiperf.common.config.worker_config import WorkersConfig
 from aiperf.common.config.zmq_config import (
     BaseZMQCommunicationConfig,
     BaseZMQProxyConfig,
+    ZMQDualBindConfig,
+    ZMQDualBindProxyConfig,
     ZMQIPCConfig,
     ZMQIPCProxyConfig,
     ZMQTCPConfig,
@@ -119,6 +121,8 @@ __all__ = [
     "VideoDefaults",
     "WorkersConfig",
     "WorkersDefaults",
+    "ZMQDualBindConfig",
+    "ZMQDualBindProxyConfig",
     "ZMQIPCConfig",
     "ZMQIPCProxyConfig",
     "ZMQTCPConfig",

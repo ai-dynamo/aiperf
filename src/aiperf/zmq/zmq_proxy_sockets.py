@@ -37,6 +37,7 @@ def create_proxy_socket_class(
             address: str,
             socket_ops: dict | None = None,
             proxy_uuid: str | None = None,
+            **kwargs,
         ):
             """Initialize the ZMQ Proxy socket class."""
 
@@ -46,6 +47,7 @@ def create_proxy_socket_class(
                 end_type=end_type,
                 socket_ops=socket_ops,
                 proxy_uuid=proxy_uuid,
+                **kwargs,
             )
 
         @on_init
