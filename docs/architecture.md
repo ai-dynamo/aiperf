@@ -73,19 +73,6 @@ The Worker Manager orchestrates and manages the pool of worker processes that ex
 - Handling worker lifecycle events, such as startup, shutdown, and error recovery
 - Managing worker pool size based on benchmarking requirements
 
-### Workers
-
-Workers execute individual benchmarking tasks. Each worker operates as a process that sends requests to the inference server, collects responses, and records performance metrics.
-
-**Key Responsibilities:**
-- Receiving timing credits from the Credit Router
-- Accessing dataset via memory-mapped files
-- Formatting the data for the target endpoint
-- Sending requests to the target endpoint according to the specified schedule
-- Recording request and response timestamps
-- Maintaining conversation context for multi-turn conversations
-- Reporting results to the record processors for aggregation and analysis
-
 ### Record Processor
 
 The Record Processor processes and interprets the responses received from the inference server during benchmarking.
@@ -94,7 +81,7 @@ The Record Processor processes and interprets the responses received from the in
 - Parsing raw inference results to extract relevant metrics (latency, output tokens, correctness)
 - Handling different response formats from various model endpoints (OpenAI, vLLM, Triton, custom APIs)
 - Validating and normalizing results to ensure consistency across benchmarking runs
-- Computing metrics derived from individual requests (TTFT, TPOT, E2E latency, throughput)
+- Computing metrics derived from individual requests (TTFT, ITL, E2E latency, throughput)
 - Supporting error detection and handling for malformed or unexpected responses
 - Scales horizontally to handle high-volume metric computation
 
@@ -142,13 +129,8 @@ Workers execute the benchmark workload by sending requests to the inference serv
 2. Access dataset entry via memory-mapped files
 3. Format request for target endpoint (OpenAI, vLLM, etc.)
 4. Send HTTP request to inference server
-5. Collect response timing (TTFT, TPOT, E2E latency) and token counts
-6. Report raw results to Record Processor
-
-**State Management:**
-- Maintains conversation context for multi-turn conversations
-- Tracks token counts for throughput calculations
-- Stateless between workers
+5. Parse streaming responses and capture raw per-chunk timestamps
+6. Report raw timing data and responses to Record Processor
 
 **Performance Optimizations:**
 - Async I/O for non-blocking HTTP calls
@@ -169,7 +151,7 @@ The Timing Manager uses a **credit-based flow control system** to precisely cont
 **Flow Control Benefits:**
 - Prevents overwhelming the inference server
 - Enables precise reproduction of load patterns
-- Provides natural backpressure when workers or server slow down
+- Provides natural backpressure when the server slows down
 - Allows accurate measurement without artificial delays
 
 **Credit Distribution:**
@@ -189,7 +171,7 @@ This section describes the end-to-end message flow during a benchmark run, showi
 - **Timing Credit**: Grants permission to send one request
 - **Dataset Entry**: Prompt and conversation context
 - **Raw Result**: Request timing, tokens, response text
-- **Processed Record**: Computed metrics (latency, throughput, etc.)
+- **Metric Record**: Per-request computed metrics plus trace data
 - **Aggregated Results**: Final performance summary and per-request details
 
 **Message Flow:**
@@ -197,45 +179,8 @@ This section describes the end-to-end message flow during a benchmark run, showi
 2. Workers access dataset entries via memory-mapped files
 3. Workers send requests to Inference Server (external HTTP)
 4. Workers push raw results to Record Processors
-5. Record Processors publish processed records to Records Manager
+5. Record Processors push metric records to Records Manager
 6. Records Manager aggregates and exports final results
-
-**Flow Control:**
-- Credit-based system prevents overwhelming the inference server
-- Router controls which worker receives each credit based on load and sticky sessions
-- Backpressure automatically applies when components slow down
-- Asynchronous messaging ensures workers spend maximum time on I/O
-
-### Metric Computation
-
-Record Processors transform raw timing data into meaningful performance metrics. This computation happens in parallel across multiple processor instances for scalability.
-
-**Core Metrics Computed:**
-- **TTFT (Time to First Token)**: Time from request start to first token received
-- **TPOT (Time per Output Token)**: Average time between successive output tokens
-- **E2E Latency**: Total time from request start to completion
-- **Input/Output Token Counts**: For throughput calculations
-- **Request Success/Failure**: Error detection and categorization
-
-**Processing Pipeline:**
-1. Receive raw result from Worker (timestamps, tokens, response text)
-2. Parse response format (OpenAI, vLLM, etc.)
-3. Extract timing information and token counts
-4. Compute derived metrics (TTFT, TPOT, throughput)
-5. Validate and normalize results
-6. Publish processed record to Records Manager
-
-**Scalability:**
-- Multiple Record Processor instances run in parallel
-- Each processor handles a stream of raw results independently
-- No coordination required between processors
-- Scales linearly with the number of workers
-
-**Error Handling:**
-- Detects malformed responses
-- Categorizes errors (timeout, invalid format, server error)
-- Includes error details in processed records
-- Enables debugging and analysis of failure modes
 
 ## Communication Architecture
 
@@ -270,23 +215,10 @@ AIPerf uses **ZMQ proxies** for message routing between services and workers:
 
 ## Design Principles
 
-### Separation of Concerns
-- Control plane handles orchestration, scheduling, and data management
-- Workers focus solely on request execution and basic data collection
-- Record processors handle compute-intensive metric calculations
-- Clean interfaces between components via message bus
-
-### Scalability
-- Workers scale horizontally for load generation
-- Record processors scale horizontally for metric computation
-- Credit-based flow control prevents overwhelming the system
-- Async I/O throughout for maximum efficiency
-
-### Extensibility
-- Plugin system for datasets, endpoints, transports, metrics
-- Decorator-based factory registration for easy additions
-- Support for custom formats and protocols
-- Modular architecture allows component replacement
+AIPerf is built on three core principles:
+- **Separation of Concerns**: Control plane orchestrates, workers execute, record processors compute metrics
+- **Scalability**: Horizontal scaling for workers and processors with credit-based flow control
+- **Extensibility**: Plugin system for datasets, endpoints, transports, and metrics
 
 ## Deployment Modes
 
