@@ -13,15 +13,13 @@ AIPerf supports three custom dataset types for benchmarking with your own data:
 
 | Dataset Type | Best For | Multi-Turn | Timing Control | Random Sampling |
 |-------------|----------|-----------|---------------|-----------------|
-| **single_turn** | Independent single requests | No | Yes | No |
-| **multi_turn** | Conversations with context | Yes | Yes (per turn) | No |
-| **random_pool** | Load testing with variety | No | No | Yes |
+| **Single Turn** | Independent single requests | No | Yes | No |
+| **Multi Turn** | Conversations with context | Yes | Yes (per turn) | No |
+| **Random Pool** | Load testing with variety | No | No | Yes |
 
 **All three support:**
-- Multi-modal data (text, images, audio, video)
 - Client-side batching
-- Local file encoding (base64)
-- URL pass-through
+- Automatic media handling: local files are converted to base64 format, while remote URLs are sent directly to the API
 
 ---
 
@@ -55,10 +53,11 @@ Each line represents one independent single-turn request.
 
 ### When to Use
 
+- **Single file with sequential execution** - Requests run in the order they appear
 - Testing individual prompts with known inputs
 - Debugging specific request configurations
-- Load testing with predetermined patterns
-- Request timing control needed
+- Request timing control needed (timestamps/delays)
+- Default sampling: sequential (can be changed with `--dataset-sampling-strategy`)
 
 ### Basic Text Example
 
@@ -215,11 +214,12 @@ Randomly sample from one or more data pools for varied request patterns.
 
 ### When to Use
 
-- Load testing with unpredictable patterns
+- **Multiple files (directory input)** - Each file becomes a separate pool, sampled and combined into requests
+- **Random sampling with replacement** - Unpredictable, varied request patterns
+- Load testing with diverse data combinations
 - Simulating production workloads
-- Combining data sources (query + passage)
-- Reranking or embedding benchmarks
-- You don't need conversation context or timing
+- Default sampling: shuffle (can be changed with `--dataset-sampling-strategy`)
+- Note: Does NOT support timing control or multi-turn conversations
 
 ### Basic Single-File Sampling
 
