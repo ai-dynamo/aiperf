@@ -226,43 +226,6 @@ def get_all_container_ids() -> set[str]:
         return set()
 
 
-def cleanup_containers_on_port(port: int) -> None:
-    """Kill all containers using a specific port.
-
-    Args:
-        port: Port number to free up
-    """
-    logger.info(f"Checking for containers using port {port}...")
-    try:
-        # Find containers with port mappings to the specified port
-        result = subprocess.run(
-            f"docker ps --format '{{{{.ID}}}} {{{{.Ports}}}}' | grep ':{port}->' | awk '{{print $1}}'",
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-        if result.returncode == 0 and result.stdout.strip():
-            container_ids = result.stdout.strip().split("\n")
-            logger.info(
-                f"Found {len(container_ids)} containers using port {port}, removing them..."
-            )
-            for cid in container_ids:
-                subprocess.run(
-                    f"docker rm -f {cid}",
-                    shell=True,
-                    capture_output=True,
-                    timeout=10,
-                )
-            logger.info(f"Cleaned up containers on port {port}")
-        else:
-            logger.info(f"No containers found using port {port}")
-
-    except Exception as e:
-        logger.warning(f"Error cleaning up port {port}: {e}")
-
-
 def force_cleanup_containers(container_ids: set[str]) -> None:
     """Force remove specific Docker containers by ID.
 

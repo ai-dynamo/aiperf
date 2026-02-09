@@ -28,7 +28,21 @@ class EndToEndTestRunner:
         self.setup_process = None
         self.log_monitoring_thread = None
         self.stop_log_monitoring = threading.Event()
-        self.server_containers: dict[str, set[str]] = {}  # Track containers per server
+
+    def _cleanup_all_containers(self):
+        """Stop all containers and prune (nuclear cleanup)"""
+        subprocess.run(
+            "docker stop $(docker ps -q) 2>/dev/null || true",
+            shell=True,
+            capture_output=True,
+            timeout=30,
+        )
+        subprocess.run(
+            "docker container prune -f",
+            shell=True,
+            capture_output=True,
+            timeout=10,
+        )
 
     def run_tests(self, servers: dict[str, Server]) -> bool:
         """Run complete test suite"""
@@ -40,18 +54,7 @@ class EndToEndTestRunner:
             logger.info(
                 "Cleaning up any leftover containers from previous test runs..."
             )
-            subprocess.run(
-                "docker stop $(docker ps -q) 2>/dev/null || true",
-                shell=True,
-                capture_output=True,
-                timeout=30,
-            )
-            subprocess.run(
-                "docker container prune -f",
-                shell=True,
-                capture_output=True,
-                timeout=10,
-            )
+            self._cleanup_all_containers()
             logger.info("All leftover containers cleaned up")
 
             # Step 1: Build AIPerf container
@@ -305,9 +308,9 @@ class EndToEndTestRunner:
 
         # Wait for model to fully load (health check only checks basic connectivity)
         # Large models like Qwen2-Audio-7B (7B parameters) need significant time to load into GPU
-        logger.info("Waiting 60 seconds for model to fully load into GPU memory...")
-        time.sleep(60)
-        logger.info("Model should be ready now")
+        # Based on timing analysis: ~38s model loading + ~7s torch.compile + ~4s CUDA graphs + ~18s other = ~67s total
+        logger.info("Waiting 90 seconds for model to fully load into GPU memory...")
+        time.sleep(90)
 
         # Run all aiperf commands for this server
         all_aiperf_passed = True
@@ -383,90 +386,8 @@ class EndToEndTestRunner:
 
         return all_aiperf_passed
 
-    def _graceful_server_shutdown(self, server_name: str):
-        """Gracefully shutdown server using tracked containers"""
-        logger.info(f"Gracefully shutting down server: {server_name}")
-
-        # Get tracked containers for this server
-        containers = self.server_containers.get(server_name, set())
-
-        if not containers:
-            logger.warning(
-                f"No containers tracked for {server_name}, skipping shutdown"
-            )
-            return
-
-        logger.info(f"Stopping {len(containers)} tracked containers for {server_name}")
-
-        try:
-            # Convert set to space-separated string
-            container_list = " ".join(containers)
-
-            # Stop containers gracefully
-            shutdown_cmd = f"""
-                timeout 30 bash -c '
-                    echo "Stopping {len(containers)} containers for {server_name}..."
-                    echo "{container_list}" | xargs -r docker stop -t 10 2>/dev/null || true
-                    echo "Graceful shutdown completed"
-                '
-            """
-
-            # Execute the shutdown command
-            result = subprocess.run(
-                shutdown_cmd, shell=True, capture_output=True, text=True, timeout=35
-            )
-            if result.returncode == 0:
-                logger.info(f"Graceful shutdown completed for {server_name}")
-                if result.stdout.strip():
-                    logger.debug(f"Shutdown output: {result.stdout.strip()}")
-            else:
-                logger.warning(
-                    f"Graceful shutdown had some issues for {server_name} (non-critical)"
-                )
-
-        except subprocess.TimeoutExpired:
-            logger.warning(
-                f"Warning: Graceful shutdown for {server_name} timed out after 30 seconds"
-            )
-        except Exception as e:
-            logger.warning(f"Warning: Graceful shutdown for {server_name} failed: {e}")
-
-    def _cleanup_server(self, server_name: str):
-        """Basic cleanup for server"""
-        logger.info(f"Cleaning up server: {server_name}")
-
-        # Stop the log monitoring thread first
-        if self.log_monitoring_thread and self.log_monitoring_thread.is_alive():
-            logger.info("Stopping log monitoring thread...")
-            self.stop_log_monitoring.set()
-            self.log_monitoring_thread.join(timeout=5)
-            if self.log_monitoring_thread.is_alive():
-                logger.warning("Log monitoring thread did not stop gracefully")
-
-        # Stop the setup process if it's still running
-        if self.setup_process and self.setup_process.poll() is None:
-            logger.info("Terminating server setup process...")
-            self.setup_process.terminate()
-            try:
-                self.setup_process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                logger.warning("Setup process didn't terminate, killing...")
-                self.setup_process.kill()
-
-        # Note: Do NOT call cleanup_docker_resources() here as it could remove the aiperf container
-        # The aiperf container must remain running until all tests are complete
-        # Server-specific containers are cleaned up via force_cleanup_containers() with tracked IDs
-
     def _cleanup(self):
         """Cleanup all containers (nuclear approach)"""
         logger.info("Final cleanup - stopping all containers...")
-        subprocess.run(
-            "docker stop $(docker ps -q) 2>/dev/null || true",
-            shell=True,
-            capture_output=True,
-            timeout=30,
-        )
-        subprocess.run(
-            "docker container prune -f", shell=True, capture_output=True, timeout=10
-        )
+        self._cleanup_all_containers()
         logger.info("Final cleanup completed")
