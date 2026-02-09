@@ -70,7 +70,7 @@ aiperf profile \
 
 ```
 
-                                            NVIDIA AIPerf | LLM Metrics                                             
+                                            NVIDIA AIPerf | LLM Metrics
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━┓
 ┃                               Metric ┃      avg ┃    min ┃       max ┃       p99 ┃       p90 ┃    p50 ┃      std ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━┩
@@ -88,12 +88,12 @@ aiperf profile \
 │             Request Count (requests) │    20.00 │    N/A │       N/A │       N/A │       N/A │    N/A │      N/A │
 └──────────────────────────────────────┴──────────┴────────┴───────────┴───────────┴───────────┴────────┴──────────┘
 
-CLI Command: aiperf profile --model 'Qwen/Qwen2-Audio-7B-Instruct' --endpoint-type 'chat' --audio-length-mean 5.0 
+CLI Command: aiperf profile --model 'Qwen/Qwen2-Audio-7B-Instruct' --endpoint-type 'chat' --audio-length-mean 5.0
 --audio-format 'wav' --audio-sample-rates 16 --streaming --url 'localhost:8000' --request-count 20 --concurrency 4
 Benchmark Duration: 21.80 sec
-CSV Export: 
+CSV Export:
 /home/lkomali/aiperf/artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency4/profile_export_aiperf.csv
-JSON Export: 
+JSON Export:
 /home/lkomali/aiperf/artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency4/profile_export_aiperf.json
 Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency4/logs/aiperf.log
 ```
@@ -134,7 +134,7 @@ aiperf profile \
 
 ```
 
-                                          NVIDIA AIPerf | LLM Metrics                                          
+                                          NVIDIA AIPerf | LLM Metrics
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
 ┃                               Metric ┃      avg ┃    min ┃      max ┃      p99 ┃      p90 ┃    p50 ┃    std ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━┩
@@ -152,12 +152,12 @@ aiperf profile \
 │             Request Count (requests) │     3.00 │    N/A │      N/A │      N/A │      N/A │    N/A │    N/A │
 └──────────────────────────────────────┴──────────┴────────┴──────────┴──────────┴──────────┴────────┴────────┘
 
-CLI Command: aiperf profile --model 'Qwen/Qwen2-Audio-7B-Instruct' --endpoint-type 'chat' --input-file 
+CLI Command: aiperf profile --model 'Qwen/Qwen2-Audio-7B-Instruct' --endpoint-type 'chat' --input-file
 'inputs_filepaths.jsonl' --custom-dataset-type 'single_turn' --streaming --url 'localhost:8000' --request-count 3
 Benchmark Duration: 3.16 sec
-CSV Export: 
+CSV Export:
 /home/lkomali/aiperf/artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency1/profile_export_aiperf.csv
-JSON Export: 
+JSON Export:
 /home/lkomali/aiperf/artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency1/profile_export_aiperf.json
 Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency1/logs/aiperf.log
 ```
