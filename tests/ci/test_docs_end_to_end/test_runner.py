@@ -306,12 +306,6 @@ class EndToEndTestRunner:
         logger.info("=" * 60)
         logger.info(f"Server {server.name} health check passed - ready for testing")
 
-        # Wait for model to fully load (health check only checks basic connectivity)
-        # Large models like Qwen2-Audio-7B (7B parameters) need significant time to load into GPU
-        # Based on timing analysis: ~38s model loading + ~7s torch.compile + ~4s CUDA graphs + ~18s other = ~67s total
-        logger.info("Waiting 90 seconds for model to fully load into GPU memory...")
-        time.sleep(90)
-
         # Run all aiperf commands for this server
         all_aiperf_passed = True
         for i, aiperf_cmd in enumerate(server.aiperf_commands):

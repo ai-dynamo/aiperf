@@ -35,13 +35,7 @@ Verify the server is ready:
 
 <!-- health-check-vllm-audio-openai-endpoint-server -->
 ```bash
-curl -s http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "Qwen/Qwen2-Audio-7B-Instruct",
-    "messages": [{"role": "user", "content": "Hello"}],
-    "max_tokens": 10
-  }' | jq
+timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen2-Audio-7B-Instruct\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
 ```
 <!-- /health-check-vllm-audio-openai-endpoint-server -->
 
@@ -102,24 +96,18 @@ To add text prompts alongside audio, include `--synthetic-input-tokens-mean 100`
 
 ## Profile with Custom Input File
 
-AIPerf can automatically load and encode audio files from local paths:
+AIPerf can automatically load and encode audio files from local paths.
 
+> **Note:** The example below uses paths from the AIPerf test fixtures directory. Replace these with paths to your own audio files.
+
+<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 cat <<EOF > inputs.jsonl
-{"texts": ["Transcribe this audio."], "audios": ["/path/to/audio1.wav"]}
-{"texts": ["What is being said in this recording?"], "audios": ["/path/to/audio2.mp3"]}
-{"texts": ["Summarize the main points from this audio."], "audios": ["/path/to/audio3.wav"]}
+{"texts": ["Transcribe this."], "audios": ["/fixtures/audio/test_audio_1s.wav"]}
+{"texts": ["What is said?"], "audios": ["/fixtures/audio/test_audio_2.wav"]}
+{"texts": ["Summarize."], "audios": ["/fixtures/audio/test_audio_3.wav"]}
 EOF
-```
 
-AIPerf will automatically:
-- Load the audio files from the specified paths
-- Convert them to base64 format
-- Send them to the model endpoint
-
-Run AIPerf with the file path input:
-
-```bash
 aiperf profile \
     --model Qwen/Qwen2-Audio-7B-Instruct \
     --endpoint-type chat \
@@ -129,8 +117,14 @@ aiperf profile \
     --url localhost:8000 \
     --request-count 3
 ```
+<!-- /aiperf-run-vllm-audio-openai-endpoint-server -->
 
-**Output**
+AIPerf will automatically:
+- Load the audio files from the specified paths
+- Convert them to base64 format
+- Send them to the model endpoint
+
+**Output:**
 
 ```
 
@@ -161,22 +155,3 @@ JSON Export:
 /home/lkomali/aiperf/artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency1/profile_export_aiperf.json
 Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency1/logs/aiperf.log
 ```
-
-<!-- CI-ONLY: Hidden test for file path loading using existing vLLM server
-aiperf-run-vllm-audio-openai-endpoint-server
-```bash
-cat <<EOF > inputs_filepaths.jsonl
-{"texts": ["Transcribe this."], "audios": ["/fixtures/audio/test_audio_1s.wav"]}
-{"texts": ["What is said?"], "audios": ["/fixtures/audio/test_audio_2.wav"]}
-{"texts": ["Summarize."], "audios": ["/fixtures/audio/test_audio_3.wav"]}
-EOF
-aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
-    --endpoint-type chat \
-    --input-file inputs_filepaths.jsonl \
-    --custom-dataset-type single_turn \
-    --streaming \
-    --url localhost:8000 \
-    --request-count 3
-```
--->
