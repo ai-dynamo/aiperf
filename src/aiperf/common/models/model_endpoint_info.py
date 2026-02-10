@@ -112,6 +112,10 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointDefaults.CONNECTION_REUSE_STRATEGY,
         description="Transport connection reuse strategy.",
     )
+    download_video_content: bool = Field(
+        default=EndpointDefaults.DOWNLOAD_VIDEO_CONTENT,
+        description="For video generation endpoints, download the video content after generation completes.",
+    )
 
     @property
     def base_url(self) -> str:
@@ -146,6 +150,7 @@ class EndpointInfo(AIPerfBaseModel):
             use_legacy_max_tokens=user_config.endpoint.use_legacy_max_tokens,
             use_server_token_count=user_config.endpoint.use_server_token_count,
             connection_reuse_strategy=user_config.endpoint.connection_reuse_strategy,
+            download_video_content=user_config.endpoint.download_video_content,
         )
 
 

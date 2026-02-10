@@ -124,7 +124,7 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 #### `--endpoint-type` `<str>`
 
 The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br>_Choices: [`chat`, `cohere_rankings`, `completions`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
+<br>_Choices: [`chat`, `cohere_rankings`, `completions`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
 <br>_Default: `chat`_
 
 #### `--streaming`
@@ -178,6 +178,11 @@ Transport connection reuse strategy. 'pooled' (default): connections are pooled 
 | `pooled` | _default_ | Connections are pooled and reused across all requests |
 | `never` |  | New connection for each request, closed after response |
 | `sticky-user-sessions` |  | Connection persists across turns of a multi-turn conversation, closed on final turn (enables sticky load balancing) |
+
+#### `--download-video-content`
+
+For video generation endpoints, download the video content after generation completes. When enabled, request latency includes the video download time. When disabled (default), only generation time is measured.
+<br>_Flag (no value required)_
 
 ### Input
 

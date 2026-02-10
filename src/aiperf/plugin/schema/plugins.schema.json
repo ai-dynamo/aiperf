@@ -642,6 +642,12 @@
               "description": "Whether endpoint produces video-based outputs.",
               "title": "Produces Videos",
               "type": "boolean"
+            },
+            "requires_polling": {
+              "default": false,
+              "description": "Whether endpoint uses async job polling (submit job, poll for status, retrieve result).",
+              "title": "Requires Polling",
+              "type": "boolean"
             }
           },
           "required": [

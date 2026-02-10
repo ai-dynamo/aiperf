@@ -274,6 +274,10 @@ class EndpointMetadata(BaseModel):
     produces_videos: bool = Field(
         default=False, description="Whether endpoint produces video-based outputs."
     )
+    requires_polling: bool = Field(
+        default=False,
+        description="Whether endpoint uses async job polling (submit job, poll for status, retrieve result).",
+    )
 
 
 class TransportMetadata(BaseModel):
