@@ -14,8 +14,8 @@
 
 1. [Setup: Installing AIPerf 0.5.0](#setup-installing-aiperf-050)
 2. [Test Endpoint Details](#test-endpoint-details)
-3. [Use Case 1: Simple Profiling with Static ISL/OSL](#use-case-1-simple-profiling-with-static-isl-osl)
-   - [Evolution: Pareto Curve Analysis](#evolution-pareto-curve-analysis)
+3. [Use Case 1: Simple Profiling with Static ISL/OSL](#use-case-1-simple-profiling-with-static-islosl)
+   - [Evolution: Pareto Curve Analysis](#evolution-pareto-curve-analysis---resource-efficiency-vs-user-experience)
 4. [Use Case 2: Auditing Raw Results - Custom Percentile Analysis](#use-case-2-auditing-raw-results---custom-percentile-analysis)
 5. [Use Case 3: Trace-Based Benchmarking with Mooncake](#use-case-3-trace-based-benchmarking-with-mooncake)
 6. [Use Case 4: Goodput Analysis - Measuring SLA Compliance](#use-case-4-goodput-analysis---measuring-sla-compliance)
@@ -66,6 +66,19 @@ pip install aiperf
 - Small model (~600M parameters) = high throughput for benchmarking
 - 8 replicas = demonstrated horizontal scaling
 - Public access = allowed live demonstration
+
+**Follow along locally**: You can run a single vLLM replica to try the commands in this guide (results will differ from the multi-replica setup above):
+
+```bash
+docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
+  --model Qwen/Qwen3-0.6B \
+  --host 0.0.0.0 --port 8000
+
+# Wait for the server to be ready
+timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
+
+export ENDPOINT_URL=localhost:8000
+```
 
 ---
 
@@ -150,13 +163,13 @@ Success Rate: 100% (0 errors)
 We ran the same benchmark at **5 different concurrency levels** (10, 50, 100, 200, 500) to observe how throughput per GPU and throughput per user change:
 
 ```bash
-# Example commands (run each separately)
-aiperf profile --model qwen3-0.6b --url $ENDPOINT_URL \
-  --endpoint-type chat --streaming --concurrency 10 \
-  --request-count 1000 --isl 1000 --osl 500 \
-  --tokenizer Qwen/Qwen3-0.6B --artifact-dir artifacts/pareto-c10
-
-# (Repeat for concurrency: 50, 100, 200, 500)
+# Run the same benchmark at multiple concurrency levels
+for c in 10 50 100 200 500; do
+  aiperf profile --model qwen3-0.6b --url "$ENDPOINT_URL" \
+    --endpoint-type chat --streaming --concurrency $c \
+    --request-count 1000 --isl 1000 --osl 500 \
+    --tokenizer Qwen/Qwen3-0.6B --artifact-dir "artifacts/pareto-c$c"
+done
 ```
 
 #### Results: The Pareto Curve
@@ -173,8 +186,6 @@ aiperf profile --model qwen3-0.6b --url $ENDPOINT_URL \
 
 #### Visualizing the Trade-off
 
-**[Visual: Pareto Curve Chart - See presentation slide]**
-
 The Pareto frontier shows the inverse relationship between resource efficiency and user experience:
 
 | Point | Concurrency | TPS/GPU | TPS/User | Interpretation |
@@ -190,8 +201,8 @@ The Pareto frontier shows the inverse relationship between resource efficiency a
 #### Key Insights from the Pareto Curve
 
 ✅ **Low Concurrency (10-50)**:
-- **Best user experience**: 365 tokens/sec per user = very responsive
 - **Poor resource utilization**: Only 1,500-6,500 TPS/GPU = GPUs are underutilized
+- **Best user experience**: 365 tokens/sec per user = very responsive
 - Use case: Premium tier, low-latency applications
 
 ✅ **Medium Concurrency (100-200)**:
