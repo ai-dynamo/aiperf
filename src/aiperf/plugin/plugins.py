@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-import re
 from collections.abc import Iterator
 from importlib.metadata import Distribution, entry_points
 from pathlib import Path
@@ -26,7 +25,7 @@ from aiperf.plugin.constants import (
     SUPPORTED_SCHEMA_VERSIONS,
 )
 from aiperf.plugin.extensible_enums import ExtensibleStrEnum, _normalize_name
-from aiperf.plugin.schema import (
+from aiperf.plugin.schema.schemas import (
     EndpointMetadata,
     PlotMetadata,
     PluginsManifest,
@@ -421,7 +420,9 @@ class _PluginRegistry:
         self.register_type(entry)
 
         _logger.debug(
-            lambda: f"Registered dynamic type {category}:{name} -> {cls.__name__} (priority={priority})"
+            lambda: (
+                f"Registered dynamic type {category}:{name} -> {cls.__name__} (priority={priority})"
+            )
         )
 
     def unregister(
@@ -818,7 +819,9 @@ class _PluginRegistry:
             self._types[category][name] = entry
             self._type_entries_by_class_path[entry.class_path] = entry
             _logger.debug(
-                lambda e=entry: f"Registered {e.category}:{e.name} from {e.package} (priority={e.priority})"
+                lambda e=entry: (
+                    f"Registered {e.category}:{e.name} from {e.package} (priority={e.priority})"
+                )
             )
             return
 
@@ -894,8 +897,15 @@ class _PluginRegistry:
             author_email = pkg_metadata.get("Author-email", "")
             if author_email:
                 # Extract name from "Name <email>" or '"Name" <email>' format
-                if match := re.match(r'^"?([^"<]+)"?\s*<', author_email):
-                    author = match.group(1).strip()
+                if "<" in author_email:
+                    # Get everything before the '<' and strip whitespace
+                    name_part = author_email[: author_email.index("<")].strip()
+                    # Remove surrounding quotes if present
+                    if name_part.startswith('"'):
+                        name_part = name_part[1:]
+                    if name_part.endswith('"'):
+                        name_part = name_part[:-1]
+                    author = name_part.strip()
                 else:
                     author = author_email.split(",")[0].strip()
 
@@ -922,8 +932,9 @@ if TYPE_CHECKING:
     from aiperf.dataset.protocols import CustomDatasetLoaderProtocol, DatasetBackingStoreProtocol, DatasetClientStoreProtocol, DatasetSamplingStrategyProtocol
     from aiperf.endpoints.protocols import EndpointProtocol
     from aiperf.exporters.protocols import ConsoleExporterProtocol, DataExporterProtocol
+    from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
     from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerProtocol
-    from aiperf.plugin.enums import ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, PlotType, PluginType, PluginTypeStr, RampType, RecordProcessorType, ResultsProcessorType, ServiceRunType, ServiceType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
+    from aiperf.plugin.enums import ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, RampType, RecordProcessorType, ResultsProcessorType, ServiceRunType, ServiceType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
     from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
     from aiperf.post_processors.protocols import RecordProcessorProtocol
     from aiperf.timing.intervals import IntervalGeneratorProtocol
@@ -1024,6 +1035,10 @@ if TYPE_CHECKING:
     def get_class(category: Literal[PluginType.PLOT, "plot"], name_or_class_path: PlotType | str) -> type[PlotTypeHandlerProtocol]: ...
     @overload
     def iter_all(category: Literal[PluginType.PLOT, "plot"]) -> Iterator[tuple[PluginEntry, type[PlotTypeHandlerProtocol]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.GPU_TELEMETRY_COLLECTOR, "gpu_telemetry_collector"], name_or_class_path: GPUTelemetryCollectorType | str) -> type[GPUTelemetryCollectorProtocol]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.GPU_TELEMETRY_COLLECTOR, "gpu_telemetry_collector"]) -> Iterator[tuple[PluginEntry, type[GPUTelemetryCollectorProtocol]]]: ...
     @overload
     def get_class(category: PluginType | PluginTypeStr, name_or_class_path: str) -> type: ...
     # fmt: on

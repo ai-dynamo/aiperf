@@ -50,6 +50,9 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Usage Completion Tokens Diff %](#usage-completion-tokens-diff-)
     - [Usage Reasoning Tokens Diff %](#usage-reasoning-tokens-diff-)
     - [Usage Discrepancy Count](#usage-discrepancy-count)
+  - [OSL Mismatch Metrics](#osl-mismatch-metrics)
+    - [OSL Mismatch Diff %](#osl-mismatch-diff-)
+    - [OSL Mismatch Count](#osl-mismatch-count)
   - [Goodput Metrics](#goodput-metrics)
     - [Good Request Count](#good-request-count)
     - [Goodput](#goodput)
@@ -710,6 +713,65 @@ usage_discrepancy_count = sum(1 for r in records if r.any_diff > threshold)
 - Default threshold is 10% difference.
 - Counts requests where prompt, completion, or reasoning token differences are significant.
 - Useful for monitoring overall token count agreement quality.
+
+---
+
+## OSL Mismatch Metrics
+
+> [!NOTE]
+> These metrics measure the difference between requested output sequence length (`--osl`/`max_tokens`) and actual output tokens generated. They help identify when the server is not honoring the requested output length, typically because EOS tokens stop generation early. These metrics are **not displayed in console output** but are available in exports and used by the end-of-benchmark warning.
+
+### OSL Mismatch Diff %
+
+**Type:** [Record Metric](#record-metrics)
+
+The signed percentage difference between actual output sequence length and requested OSL. Negative values mean the server stopped early (actual < requested), positive values mean it generated more than requested.
+
+**Formula:**
+```python
+osl_mismatch_diff_pct = ((output_sequence_length - requested_osl) / requested_osl) * 100
+```
+
+**Notes:**
+- Negative = stopped early (hit EOS before max_tokens)
+- Positive = generated more than requested
+- 0% = exact match between requested and actual
+- Example: Requested 100 tokens, got 50 → Diff = -50%
+- Example: Requested 100 tokens, got 120 → Diff = 20%
+
+---
+
+### OSL Mismatch Count
+
+**Type:** [Aggregate Metric](#aggregate-metrics)
+
+The count of requests where the absolute token difference exceeds the effective threshold. Used to trigger the end-of-benchmark warning panel.
+
+**Formula:**
+```python
+# Effective threshold is capped to be tighter for large OSL values
+threshold_tokens = min(requested_osl * (pct_threshold / 100), max_token_threshold)
+diff_tokens = abs(actual_osl - requested_osl)
+osl_mismatch_count = sum(1 for r in records if diff_tokens > threshold_tokens)
+```
+
+**Notes:**
+- Default percentage threshold is 5% (`AIPERF_METRICS_OSL_MISMATCH_PCT_THRESHOLD`).
+- Default max token threshold is 50 (`AIPERF_METRICS_OSL_MISMATCH_MAX_TOKEN_THRESHOLD`).
+- The `min()` makes threshold tighter for large OSL: requesting 2000 tokens caps at 50 token diff instead of 100 (5%).
+- Counts both early stops (negative diff) and over-generation (positive diff).
+- When this count is non-zero, a warning panel is displayed at the end of the benchmark.
+- To ensure servers honor `--osl`, use `--extra-inputs ignore_eos:true` or `--extra-inputs min_tokens:<value>`.
+- If discrepancy is due to tokenizer mismatch between client and server, use `--use-server-token-count`.
+
+**Server support for `min_tokens`:**
+
+| Server | Parameter | Notes |
+|--------|-----------|-------|
+| [vLLM](https://docs.vllm.ai/en/latest/api/vllm/sampling_params/) | `min_tokens` | Default: 0 |
+| [TensorRT-LLM](https://nvidia.github.io/TensorRT-LLM/llm-api/reference.html) | `min_tokens` | Default: 1 |
+| [SGLang](https://github.com/sgl-project/sglang) | `min_new_tokens` | Default: 0 |
+| [TGI](https://github.com/huggingface/text-generation-inference) | `min_new_tokens` | ⚠️ Unclear API support; TGI in maintenance mode |
 
 ---
 

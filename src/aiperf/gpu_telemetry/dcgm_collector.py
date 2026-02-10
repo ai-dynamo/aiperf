@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import time
@@ -12,20 +12,28 @@ from aiperf.common.mixins import (
     TRecordCallback,
 )
 from aiperf.common.models import GpuMetadata, TelemetryMetrics, TelemetryRecord
-from aiperf.gpu_telemetry.constants import (
-    DCGM_TO_FIELD_MAPPING,
-    SCALING_FACTORS,
-)
+from aiperf.gpu_telemetry.constants import DCGM_TO_FIELD_MAPPING
 
-__all__ = ["GPUTelemetryDataCollector"]
+__all__ = ["DCGMTelemetryCollector"]
+
+# Unit conversion scaling factors for DCGM metrics
+SCALING_FACTORS = {
+    "energy_consumption": 1e-9,  # mJ -> MJ
+    "gpu_memory_used": 1.048576e-3,  # MiB -> GB
+    "sm_utilization": 100,  # ratio (0-1) -> percentage (0-100)
+    "power_violation": 1e-3,  # ns -> µs
+}
 
 
-class GPUTelemetryDataCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
-    """Collects GPU telemetry metrics from DCGM exporter endpoints.
+class DCGMTelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
+    """Collects GPU telemetry metrics from DCGM exporter HTTP endpoints.
 
     Async collector that fetches GPU metrics from DCGM Prometheus exporter and converts
     them to TelemetryRecord objects. Extends BaseMetricsCollectorMixin for HTTP
     collection patterns and uses prometheus_client for robust metric parsing.
+
+    This is the default collector type for GPU telemetry when DCGM is available.
+    For local GPU monitoring without DCGM, see PyNVMLTelemetryCollector.
 
     Features:
         - Async HTTP collection with aiohttp
@@ -173,9 +181,9 @@ class GPUTelemetryDataCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
         """Apply scaling factors to convert raw DCGM units to display units.
 
         Converts metrics from DCGM's native units to human-readable units:
-        - Power: milliwatts -> watts (multiply by 0.001)
-        - Memory: bytes -> megabytes (multiply by 1e-6)
-        - Frequency: MHz values (no scaling needed)
+        - Energy: millijoules -> megajoules
+        - Memory: MiB -> GB
+        - SM utilization: ratio (0-1) -> percentage (0-100)
 
         Only applies scaling to metrics present in the input dict. None values are preserved.
 

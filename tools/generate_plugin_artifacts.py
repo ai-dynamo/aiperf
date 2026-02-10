@@ -145,7 +145,7 @@ def generate_schemas(check: bool = False) -> int:
     categories = load_categories()
 
     try:
-        from aiperf.plugin.schema import (
+        from aiperf.plugin.schema.schemas import (
             CategoriesManifest,
             CategorySpec,
             PluginsManifest,
@@ -543,7 +543,7 @@ def validate_plugins(verbose: bool = False) -> tuple[int, int, int, float]:
     def check_cat_schema() -> list[str]:
         from pydantic import ValidationError
 
-        from aiperf.plugin.schema import CategoriesManifest
+        from aiperf.plugin.schema.schemas import CategoriesManifest
 
         try:
             CategoriesManifest.model_validate(categories)
@@ -557,7 +557,7 @@ def validate_plugins(verbose: bool = False) -> tuple[int, int, int, float]:
     def check_plug_schema() -> list[str]:
         from pydantic import ValidationError
 
-        from aiperf.plugin.schema import PluginsManifest
+        from aiperf.plugin.schema.schemas import PluginsManifest
 
         try:
             PluginsManifest.model_validate(plugins_data)

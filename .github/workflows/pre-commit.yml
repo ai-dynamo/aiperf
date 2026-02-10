@@ -27,8 +27,6 @@ jobs:
         make first-time-setup PYTHON_VERSION=3.10
 
     - uses: pre-commit/action@v3.0.1
-      env:
-        SKIP: mkinit
       with:
         extra_args: >-
           --from-ref ${{ github.event.pull_request.base.sha }}

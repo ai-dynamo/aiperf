@@ -31,7 +31,7 @@ class TestGPUTelemetryBasic:
                 --model {Defaults.model} \
                 --url http://localhost:8000 \
                 --gpu-telemetry http://localhost:9402/metrics \
-                --request-count 10 \
+                --benchmark-duration 2 \
                 --concurrency 2 \
                 --workers-max {Defaults.workers_max} \
                 --ui {Defaults.ui}
@@ -39,7 +39,6 @@ class TestGPUTelemetryBasic:
         )
 
         assert result.exit_code == 0
-        assert result.request_count == 10
         assert result.has_gpu_telemetry
 
         # Verify we collected telemetry from endpoints:
@@ -59,18 +58,22 @@ class TestGPUTelemetryBasic:
             )
 
             # Verify each GPU has valid metrics with all required fields
+            # Counter metrics only have avg (delta), not min/max
+            counter_metrics = {"energy_consumption", "xid_errors", "power_violation"}
             for gpu_id, gpu_data in endpoint_data.gpus.items():
                 assert gpu_data.metrics, f"GPU {gpu_id}: no metrics collected"
                 for metric_name, metric_value in gpu_data.metrics.items():
                     assert metric_value.avg is not None, (
                         f"GPU {gpu_id} metric {metric_name}: missing avg"
                     )
-                    assert metric_value.min is not None, (
-                        f"GPU {gpu_id} metric {metric_name}: missing min"
-                    )
-                    assert metric_value.max is not None, (
-                        f"GPU {gpu_id} metric {metric_name}: missing max"
-                    )
                     assert metric_value.unit is not None, (
                         f"GPU {gpu_id} metric {metric_name}: missing unit"
                     )
+                    # Gauge metrics should have min/max; counter metrics only have avg
+                    if metric_name not in counter_metrics:
+                        assert metric_value.min is not None, (
+                            f"GPU {gpu_id} metric {metric_name}: missing min"
+                        )
+                        assert metric_value.max is not None, (
+                            f"GPU {gpu_id} metric {metric_name}: missing max"
+                        )

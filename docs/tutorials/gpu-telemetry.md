@@ -1,5 +1,5 @@
 <!--
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 -->
 
@@ -9,13 +9,16 @@ This guide shows you how to collect GPU metrics (power, utilization, memory, tem
 
 ## Overview
 
-This guide covers two setup paths depending on your inference backend:
+This guide covers three setup paths depending on your inference backend and requirements:
 
 ### Path 1: Dynamo (Built-in DCGM)
 If you're using **Dynamo**, it comes with DCGM pre-configured on port 9401. No additional setup needed! Just use the `--gpu-telemetry` flag to enable console display and optionally add additional DCGM url endpoints. URLs can be specified with or without the `http://` prefix (e.g., `localhost:9400` or `http://localhost:9400`).
 
 ### Path 2: Other Inference Servers (Custom DCGM)
 If you're using **any other inference backend**, you'll need to set up DCGM separately.
+
+### Path 3: Local GPU Monitoring (pynvml)
+If you want **simple local GPU monitoring without DCGM**, use `--gpu-telemetry pynvml`. This uses NVIDIA's nvidia-ml-py Python library (commonly known as pynvml) to collect metrics directly from the GPU driver. No HTTP endpoints or additional containers required.
 
 ## Prerequisites
 
@@ -36,13 +39,22 @@ AIPerf provides GPU telemetry collection with the `--gpu-telemetry` flag. Here's
 | **Custom URLs** | `aiperf profile --model MODEL ... --gpu-telemetry node1:9400 http://node2:9400/metrics` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` + [custom URLs](#multi-node-gpu-telemetry-example) | ✅ Yes | ❌ No | ✅ Yes |
 | **Dashboard + URLs** | `aiperf profile --model MODEL ... --gpu-telemetry dashboard localhost:9400` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` + [custom URLs](#multi-node-gpu-telemetry-example) | ✅ Yes | ✅ Yes ([see dashboard](#real-time-dashboard-view)) | ✅ Yes |
 | **Custom metrics** | `aiperf profile --model MODEL ... --gpu-telemetry custom_gpu_metrics.csv` | `http://localhost:9400/metrics` + `http://localhost:9401/metrics` + [custom metrics from CSV](#customizing-displayed-metrics) | ✅ Yes | ❌ No | ✅ Yes |
+| **pynvml mode** | `aiperf profile --model MODEL ... --gpu-telemetry pynvml` | Local GPUs via pynvml library ([see pynvml section](#3-using-pynvml-local-gpu-monitoring)) | ✅ Yes | ❌ No | ✅ Yes |
+| **pynvml + dashboard** | `aiperf profile --model MODEL ... --gpu-telemetry pynvml dashboard` | Local GPUs via pynvml library | ✅ Yes | ✅ Yes ([see dashboard](#real-time-dashboard-view)) | ✅ Yes |
 | **Disabled** | `aiperf profile --model MODEL ... --no-gpu-telemetry` | None | ❌ No | ❌ No | ❌ No |
 
 > [!IMPORTANT]
-> The default endpoints `http://localhost:9400/metrics` and `http://localhost:9401/metrics` are ALWAYS attempted for telemetry collection, regardless of whether the `--gpu-telemetry` flag is used. The flag primarily controls whether metrics are displayed on the console and allows you to specify additional custom DCGM exporter endpoints. To completely disable GPU telemetry collection, use `--no-gpu-telemetry`.
+> **DCGM mode (default):** The default endpoints `http://localhost:9400/metrics` and `http://localhost:9401/metrics` are always attempted for telemetry collection, regardless of whether the `--gpu-telemetry` flag is used. The flag primarily controls whether metrics are displayed on the console and allows you to specify additional custom DCGM exporter endpoints.
+>
+> **pynvml mode:** When using `--gpu-telemetry pynvml`, DCGM endpoints are NOT used. Metrics are collected directly from local GPUs via the nvidia-ml-py library.
+>
+> To completely disable GPU telemetry collection, use `--no-gpu-telemetry`.
 
 > [!NOTE]
 > When specifying custom DCGM exporter URLs, the `http://` prefix is optional. URLs like `localhost:9400` will automatically be treated as `http://localhost:9400`. Both formats work identically.
+
+> [!TIP]
+> For simple local GPU monitoring without DCGM setup, use `--gpu-telemetry pynvml`. This collects metrics directly from the NVIDIA driver using the nvidia-ml-py library. See [Path 3: pynvml](#3-using-pynvml-local-gpu-monitoring) for details.
 
 ### Real-Time Dashboard View
 
@@ -338,8 +350,85 @@ aiperf profile \
 > [!TIP]
 > The `dashboard` keyword enables a live terminal UI for real-time GPU telemetry visualization. Press `5` to maximize the GPU Telemetry panel during the benchmark run.
 
+---
+
+# 3: Using pynvml (Local GPU Monitoring)
+
+For simple local GPU monitoring without DCGM infrastructure, AIPerf supports direct GPU metrics collection using NVIDIA's nvidia-ml-py Python library (commonly known as pynvml). This approach requires no additional containers, HTTP endpoints, or DCGM setup.
+
+## Prerequisites
+
+- NVIDIA GPU with driver installed
+- nvidia-ml-py package: `pip install nvidia-ml-py`
+
+## When to Use pynvml
+
+| Scenario | Recommended Approach |
+|----------|---------------------|
+| Local development/testing | pynvml |
+| Single-node inference server | pynvml or DCGM |
+| Multi-node distributed setup | DCGM (HTTP endpoints required) |
+| Production with existing DCGM | DCGM |
+| Quick GPU monitoring without setup | pynvml |
+
+## Run AIPerf with pynvml
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --endpoint /v1/chat/completions \
+    --streaming \
+    --url localhost:8000 \
+    --synthetic-input-tokens-mean 100 \
+    --synthetic-input-tokens-stddev 0 \
+    --output-tokens-mean 200 \
+    --output-tokens-stddev 0 \
+    --extra-inputs min_tokens:200 \
+    --extra-inputs ignore_eos:true \
+    --concurrency 4 \
+    --request-count 64 \
+    --warmup-request-count 1 \
+    --num-dataset-entries 8 \
+    --random-seed 100 \
+    --gpu-telemetry pynvml
+```
+
 > [!TIP]
-> The `dashboard` keyword enables a live terminal UI for real-time GPU telemetry visualization. Press `5` to maximize the GPU Telemetry panel during the benchmark run.
+> Add `dashboard` after `pynvml` for the real-time terminal UI: `--gpu-telemetry pynvml dashboard`
+
+## Metrics Collected via pynvml
+
+The nvidia-ml-py library (pynvml) collects the following metrics directly from the NVIDIA driver:
+
+| Metric | Description | Unit |
+|--------|-------------|------|
+| GPU Power Usage | Current power draw | W |
+| Energy Consumption | Total energy since boot | MJ |
+| GPU Utilization | GPU compute utilization | % |
+| Memory Utilization | Memory controller utilization | % |
+| GPU Memory Used | Framebuffer memory in use | GB |
+| GPU Temperature | GPU die temperature | °C |
+| SM Utilization | Streaming multiprocessor utilization | % |
+| Decoder Utilization | Video decoder utilization | % |
+| Encoder Utilization | Video encoder utilization | % |
+| JPEG Utilization | JPEG decoder utilization | % |
+| Power Violation | Throttling duration due to power limits | µs |
+
+> [!NOTE]
+> Not all metrics are available on all GPU models. AIPerf gracefully handles missing metrics and reports only what the hardware supports.
+
+## Comparing DCGM vs pynvml
+
+| Feature | DCGM | pynvml |
+|---------|------|--------|
+| Setup complexity | Requires container/service | Just install nvidia-ml-py Python package |
+| Multi-node support | Yes (via HTTP endpoints) | No (local only) |
+| Metrics granularity | High (profiling-level metrics) | Standard (driver-level metrics) |
+| Kubernetes integration | Native with dcgm-exporter | Not applicable |
+| XID error reporting | Yes | No |
+
+---
 
 ## Multi-Node GPU Telemetry Example
 

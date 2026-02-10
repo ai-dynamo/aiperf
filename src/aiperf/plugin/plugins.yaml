@@ -703,6 +703,13 @@ console_exporter:
       Console exporter for usage discrepancy warnings. Alerts when token counts
       from server differ significantly from client calculations. Always loaded.
 
+  osl_mismatch_warning:
+    class: aiperf.exporters.console_osl_mismatch_exporter:ConsoleOSLMismatchExporter
+    description: |
+      Console exporter for output sequence length mismatch warnings. Alerts when
+      actual output length differs significantly from requested --osl value.
+      Typically indicates ignore_eos is not set or not supported by the server.
+
 # =============================================================================
 # UI Implementations
 # =============================================================================
@@ -820,6 +827,23 @@ plot:
     metadata:
       display_name: Time Window Summary
       category: aggregated
+
+# =============================================================================
+# GPU Telemetry Collector
+# =============================================================================
+# GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.
+# Supports DCGM HTTP endpoints and pynvml Python library.
+# One-to-one mapping based on gpu_telemetry_collector configuration.
+# =============================================================================
+gpu_telemetry_collector:
+  dcgm:
+    class: aiperf.gpu_telemetry.dcgm_collector:DCGMTelemetryCollector
+    description: |
+      DCGM telemetry collector that collects GPU telemetry metrics from DCGM HTTP endpoints.
+  pynvml:
+    class: aiperf.gpu_telemetry.pynvml_collector:PyNVMLTelemetryCollector
+    description: |
+      PyNVML telemetry collector that collects GPU telemetry metrics using the pynvml Python library.
 
 # =============================================================================
 # Communication Backends

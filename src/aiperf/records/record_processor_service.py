@@ -100,10 +100,13 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """Get the tokenizer for a given model."""
         async with self.tokenizer_lock:
             if model not in self.tokenizers:
-                self.tokenizers[model] = Tokenizer.from_pretrained(
-                    self.user_config.tokenizer.name or model,
-                    trust_remote_code=self.user_config.tokenizer.trust_remote_code,
-                    revision=self.user_config.tokenizer.revision,
+                tokenizer_config = self.user_config.tokenizer
+                self.tokenizers[model] = await asyncio.to_thread(
+                    Tokenizer.from_pretrained,
+                    tokenizer_config.get_tokenizer_name_for_model(model),
+                    trust_remote_code=tokenizer_config.trust_remote_code,
+                    revision=tokenizer_config.revision,
+                    resolve_alias=tokenizer_config.should_resolve_alias,
                 )
             return self.tokenizers[model]
 

@@ -38,13 +38,6 @@ repos:
         entry: make add-copyright
         language: python
         require_serial: true
-      - id: mkinit
-        name: mkinit
-        entry: make init-files
-        language: python
-        files: (\.py$|^tools/generate_init_files\.py$)
-        pass_filenames: false
-        args: []
       - id: generate-cli-docs
         name: generate-cli-docs
         entry: make generate-cli-docs
@@ -71,6 +64,13 @@ repos:
         entry: make validate-plugin-schemas
         language: python
         files: (\.py$|^src/aiperf/plugin/(categories|plugins)\.yaml|tools/generate_plugin_artifacts\.py)$
+        pass_filenames: false
+        args: []
+      - id: test-imports
+        name: test-imports
+        entry: make test-imports
+        language: python
+        files: ^(src/aiperf|tests)/.*\.py$
         pass_filenames: false
         args: []
   - repo: https://github.com/astral-sh/ruff-pre-commit

@@ -17,6 +17,7 @@ from aiperf.common.config.zmq_config import (
     ZMQTCPConfig,
 )
 from aiperf.common.enums import AIPerfLogLevel
+from aiperf.common.utils import is_tty
 from aiperf.plugin.enums import ServiceRunType, UIType
 
 _logger = AIPerfLogger(__name__)
@@ -38,15 +39,17 @@ class ServiceConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
-    def validate_ui_type_from_verbose_flags(self) -> Self:
-        """Set UI type based on verbose flags."""
-        # If the user has explicitly set the UI type, use that.
+    def validate_ui_type(self) -> Self:
+        """Set UI type based on explicit user choice, TTY detection, and verbose flags.
+
+        Priority: explicit --ui-type > non-TTY (none) > verbose flags (simple) > default (dashboard).
+        """
         if "ui_type" in self.model_fields_set:
             return self
 
-        # If the user selected verbose or extra verbose flags, set the UI type to simple.
-        # This will allow the user to see the verbose output in the console easier.
-        if self.verbose or self.extra_verbose:
+        if not is_tty():
+            self.ui_type = UIType.NONE
+        elif self.verbose or self.extra_verbose:
             self.ui_type = UIType.SIMPLE
         return self
 
@@ -156,8 +159,10 @@ class ServiceConfig(BaseConfig):
         UIType,
         Field(
             description="Select the user interface type for displaying benchmark progress. "
-            "`dashboard` (default) shows real-time metrics in a Textual TUI, `simple` uses TQDM progress bars, "
-            "`none` disables UI completely. Automatically set to `simple` when using `--verbose` or `--extra-verbose`.",
+            "`dashboard` shows real-time metrics in a Textual TUI, `simple` uses TQDM progress bars, "
+            "`none` disables UI completely. Defaults to `dashboard` in interactive terminals, "
+            "`none` when not a TTY (e.g., piped or redirected output). "
+            "Automatically set to `simple` when using `--verbose` or `--extra-verbose` in a TTY.",
         ),
         CLIParameter(
             name=("--ui-type", "--ui"),

@@ -382,7 +382,7 @@ def _load_corpus() -> tuple[str, ...] | None:
 
     try:
         import aiperf.dataset.generator.prompt as prompt_module
-        from aiperf.dataset.generator import DEFAULT_CORPUS_FILE
+        from aiperf.dataset.generator.prompt import DEFAULT_CORPUS_FILE
 
         corpus_path = Path(prompt_module.__file__).parent / DEFAULT_CORPUS_FILE
     except ImportError:

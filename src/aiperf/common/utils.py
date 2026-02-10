@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import inspect
 import os
+import sys
 import traceback
 import types
 from collections.abc import Awaitable, Callable
@@ -14,6 +15,11 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.exceptions import AIPerfMultiError
 
 _logger = AIPerfLogger(__name__)
+
+
+def is_tty() -> bool:
+    """Check if stdout is connected to an interactive terminal."""
+    return sys.stdout is not None and getattr(sys.stdout, "isatty", lambda: False)()
 
 
 async def call_all_functions_self(
@@ -95,7 +101,12 @@ def load_json_str(
         # Refer to https://github.com/ijl/orjson?tab=readme-ov-file#str for details.
         return func(orjson.loads(json_str))
     except orjson.JSONDecodeError as e:
-        snippet = json_str[:200] + ("..." if len(json_str) > 200 else "")
+        raw = (
+            json_str[:200]
+            if isinstance(json_str, str)
+            else json_str[:200].decode("utf-8", errors="replace")
+        )
+        snippet = raw + ("..." if len(json_str) > 200 else "")
         _logger.exception(f"Failed to parse JSON string: '{snippet}' - {e!r}")
         raise
 
