@@ -709,6 +709,9 @@ class MetricFlags(Flag):
     HTTP_TRACE_ONLY = 1 << 15
     """Metrics that are only applicable to HTTP trace data (AioHttpTraceData)."""
 
+    PRODUCES_VIDEO_ONLY = 1 << 16
+    """Metrics that are only applicable when profiling an endpoint that produces video output."""
+
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""
         # Bitwise AND will return the input flags only if all of the given flags are present.

@@ -248,3 +248,18 @@ class EndpointConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.CONNECTION_REUSE_STRATEGY
+
+    download_video_content: Annotated[
+        bool,
+        Field(
+            description=(
+                "For video generation endpoints, download the video content after generation completes. "
+                "When enabled, request latency includes the video download time. "
+                "When disabled (default), only generation time is measured."
+            ),
+        ),
+        CLIParameter(
+            name=("--download-video-content",),
+            group=_CLI_GROUP,
+        ),
+    ] = EndpointDefaults.DOWNLOAD_VIDEO_CONTENT
