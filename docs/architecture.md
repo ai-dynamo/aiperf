@@ -9,7 +9,7 @@ AIPerf is a distributed benchmarking tool for measuring AI inference performance
 
 ## Architecture Overview
 
-AIPerf is designed as a modular, extensible benchmarking framework that separates concerns across three architectural planes. The system scales horizontally by adding more workers while maintaining centralized orchestration.
+AIPerf is designed as a modular, extensible benchmarking framework that separates concerns across three architectural planes. The system scales horizontally as more workers are added while maintaining centralized orchestration.
 
 ![AIPerf High-Level Architecture](diagrams/high-level-architecture-diagram.png)
 
@@ -19,7 +19,7 @@ AIPerf is designed as a modular, extensible benchmarking framework that separate
 |-------|-----------|---------|
 | **Control Plane** | SystemController, Timing Manager, Dataset Manager, Worker Manager | Decides what, when, and how many requests to send |
 | **Data Plane** | Workers, Inference Server | Executes the actual I/O and request/response cycle |
-| **Analytic Plane** | Record Processors, Records Manager, GPU Telemetry Manager, Server Metrics Manager | Processes benchmark results and collects GPU telemetry and server metrics for comprehensive analysis |
+| **Analytic Plane** | Record Processors, Records Manager, GPU Telemetry Manager, Server Metrics Manager | Computes metrics and collects telemetry |
 
 ### Request Lifecycle
 
@@ -28,6 +28,7 @@ AIPerf is designed as a modular, extensible benchmarking framework that separate
 3. **Collection**: Workers capture response timing and content
 4. **Processing**: Record Processors compute metrics in parallel
 5. **Aggregation**: Records Manager collects and exports results
+
 
 ## Core Components
 
@@ -73,6 +74,21 @@ The Worker Manager orchestrates and manages the pool of worker processes that ex
 - Handling worker lifecycle events, such as startup, shutdown, and error recovery
 - Managing worker pool size based on benchmarking requirements
 
+### Workers
+
+Workers are the processes that send HTTP requests to the inference server and measure response times. Each worker operates independently, processing one request at a time.
+
+**Key Responsibilities:**
+- Send HTTP requests to inference servers and measure response timing
+- Wait for timing credits before sending requests (enables precise load control)
+- Track conversation state for multi-turn interactions
+- Report timing measurements to Record Processors for analysis
+
+**Scalability:**
+- Run multiple workers (e.g., 10, 50, 100+) to support different workload patterns
+- No coordination or shared state between workers
+- Adding more workers increases load capacity and request rates
+
 ### Record Processor
 
 The Record Processor processes and interprets the responses received from the inference server during benchmarking.
@@ -81,7 +97,7 @@ The Record Processor processes and interprets the responses received from the in
 - Parsing raw inference results to extract relevant metrics (latency, output tokens, correctness)
 - Handling different response formats from various model endpoints (OpenAI, vLLM, Triton, custom APIs)
 - Validating and normalizing results to ensure consistency across benchmarking runs
-- Computing metrics derived from individual requests (TTFT, ITL, E2E latency, throughput)
+- Computing metrics derived from individual requests (TTFT, ITL, Request Latency, Request Throughput etc.)
 - Supporting error detection and handling for malformed or unexpected responses
 - Scales horizontally to handle high-volume metric computation
 
@@ -101,7 +117,7 @@ The Records Manager handles the collection, organization, and storage of benchma
 The GPU Telemetry Manager collects GPU metrics from DCGM (Data Center GPU Manager) Exporter endpoints during benchmarking runs.
 
 **Key Responsibilities:**
-- Collecting GPU metrics from DCGM Exporter endpoints (power usage, energy consumption, utilization, memory usage, temperature, XID errors, power violations)
+- Collecting GPU metrics from DCGM Exporter endpoints (power, utilization, memory, temperature, errors)
 - Auto-discovering DCGM endpoints (default: `http://localhost:9400/metrics`)
 - Supporting custom DCGM endpoints via `--gpu-telemetry` flag
 - Exporting GPU telemetry alongside benchmark results
@@ -118,31 +134,14 @@ The Server Metrics Manager collects metrics from Prometheus-compatible endpoints
 - Typical metrics collected: inference server KV cache usage, request counts, latencies, batch sizes, model-specific metrics, and server resource metrics
 - Exporting server metrics alongside benchmark results
 
-## Key Mechanisms
-
-### Worker Execution
-
-Workers execute the benchmark workload by sending requests to the inference server and collecting measurements. They are on the critical path for measurement accuracy and performance.
-
-**Request Execution Loop:**
-1. Receive timing credit from Credit Router
-2. Access dataset entry via memory-mapped files
-3. Format request for target endpoint (OpenAI, vLLM, etc.)
-4. Send HTTP request to inference server
-5. Parse streaming responses and capture raw per-chunk timestamps
-6. Report raw timing data and responses to Record Processor
-
-**Performance Optimizations:**
-- Async I/O for non-blocking HTTP calls
-- Connection pooling for HTTP reuse
-- Minimal processing (offload to Record Processors)
+## How AIPerf Works
 
 ### Credit System & Request Timing
 
-The Timing Manager uses a **credit-based flow control system** to precisely control when requests are sent to the inference server. This mechanism is fundamental to AIPerf's ability to reproduce specific load patterns and prevent overwhelming the server.
+The Timing Manager uses a **credit-based flow control system** to control when requests are sent. This enables accurate load pattern reproduction and prevents server overload.
 
 **How Credits Work:**
-- Each credit grants permission to send exactly one request
+- Each credit grants permission to send one request
 - The Timing Manager issues credits according to the configured timing mode:
   - **Fixed schedule mode**: Replays conversation traces at precise timestamps from dataset metadata
   - **Request-rate mode**: Issues credits at a specific rate with configurable arrival patterns (constant, Poisson, gamma, concurrency burst)
@@ -155,7 +154,7 @@ The Timing Manager uses a **credit-based flow control system** to precisely cont
 - Allows accurate measurement without artificial delays
 
 **Credit Distribution:**
-- Credits are routed to workers via ROUTER/DEALER pattern through a credit router
+- Credits are routed to workers via ROUTER/DEALER pattern
 - Router selects workers based on sticky sessions (multi-turn conversations) or least-loaded worker selection
 - No coordination required between workers
 - Scales to large numbers of workers without bottlenecks
@@ -190,7 +189,7 @@ All components communicate via a **ZeroMQ (ZMQ) message bus**, designed for low-
 
 AIPerf uses ZMQ to maintain **measurement accuracy** by decoupling orchestration logic from execution:
 
-- **Low-overhead messaging**: Credits are routed directly to workers via ROUTER/DEALER pattern
+- **Low-overhead messaging**: Credits are routed directly to workers
 - **Asynchronous by design**: No blocking calls between services, ensuring workers spend maximum time on I/O and timing
 - **Efficient transport**: ZMQ is designed for low-overhead inter-process communication
 - **Scalability**: Supports distributed workers across multiple nodes without code changes
@@ -203,7 +202,6 @@ AIPerf uses **ZMQ proxies** for message routing between services and workers:
 - Services subscribe to relevant message types
 - Router/Dealer patterns for credit distribution to workers
 - Request/Reply patterns for synchronous operations
-- Asynchronous, decoupled communication (no shared mutable state)
 
 ### State Management
 
