@@ -118,7 +118,7 @@ The GPU Telemetry Manager collects GPU metrics from DCGM (Data Center GPU Manage
 
 **Key Responsibilities:**
 - Collecting GPU metrics from DCGM Exporter endpoints (power, utilization, memory, temperature, errors)
-- Auto-discovering DCGM endpoints (default: `http://localhost:9400/metrics`)
+- Auto-discovering DCGM endpoints.
 - Supporting custom DCGM endpoints via `--gpu-telemetry` flag
 - Exporting GPU telemetry alongside benchmark results
 
