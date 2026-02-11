@@ -15,8 +15,8 @@ reviews:
   collapse_walkthrough: false
   auto_review:
     enabled: true
-    drafts: false
-    auto_incremental_review: false
+    drafts: true
+    auto_incremental_review: true
   suggested_labels: false
   suggested_reviewers: false
   sequence_diagrams: false
