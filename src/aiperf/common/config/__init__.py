@@ -23,6 +23,7 @@ from aiperf.common.config.config_defaults import (
     TokenizerDefaults,
     TurnDefaults,
     TurnDelayDefaults,
+    VideoAudioDefaults,
     VideoDefaults,
     WorkersDefaults,
 )
@@ -56,7 +57,11 @@ from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.config.synthesis_config import SynthesisConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.config.video_config import VideoConfig
+from aiperf.common.config.video_config import (
+    VIDEO_AUDIO_CODEC_MAP,
+    VideoAudioConfig,
+    VideoConfig,
+)
 from aiperf.common.config.worker_config import WorkersConfig
 from aiperf.common.config.zmq_config import (
     BaseZMQCommunicationConfig,
@@ -117,6 +122,9 @@ __all__ = [
     "TurnDelayConfig",
     "TurnDelayDefaults",
     "UserConfig",
+    "VIDEO_AUDIO_CODEC_MAP",
+    "VideoAudioConfig",
+    "VideoAudioDefaults",
     "VideoConfig",
     "VideoDefaults",
     "WorkersConfig",

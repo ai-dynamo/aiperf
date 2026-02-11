@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
@@ -11,7 +11,7 @@ from aiperf.common import random_generator as rng
 from aiperf.common.config import AudioConfig
 from aiperf.common.enums import AudioFormat
 from aiperf.common.exceptions import ConfigurationError
-from aiperf.dataset.generator.base import BaseGenerator
+from aiperf.dataset.generator.base import BaseGenerator, generate_noise_signal
 
 # MP3 supported sample rates in Hz
 MP3_SUPPORTED_SAMPLE_RATES = {
@@ -133,23 +133,14 @@ class AudioGenerator(BaseGenerator):
 
         # Generate synthetic audio data (gaussian noise)
         num_samples = int(audio_length * sampling_rate_hz)
-        audio_data = self._data_rng.normal(
-            0,
-            0.3,
-            (
-                (num_samples, self.config.num_channels)
-                if self.config.num_channels > 1
-                else num_samples
-            ),
+        signal = generate_noise_signal(
+            self._data_rng, num_samples, self.config.num_channels
         )
-
-        # Ensure the signal is within [-1, 1] range
-        audio_data = np.clip(audio_data, -1, 1)
 
         # Scale to the appropriate bit depth range
         max_val = 2 ** (bit_depth - 1) - 1
         numpy_type, _ = SUPPORTED_BIT_DEPTHS[bit_depth]
-        audio_data = (audio_data * max_val).astype(numpy_type)
+        audio_data = (signal * max_val).astype(numpy_type)
 
         # Write audio using soundfile
         output_buffer = io.BytesIO()
