@@ -12,7 +12,7 @@ SPDX-License-Identifier: Apache-2.0
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ai-dynamo/aiperf)
 
 
-**[Architecture](docs/architecture.md)** | **[Design Proposals](https://github.com/ai-dynamo/enhancements)** | **[Migrating from Genai-Perf](docs/migrating.md)** | **[CLI Options](docs/cli_options.md)** | **[Metrics Reference](docs/metrics_reference.md)**
+**[Comprehensive Guide](docs/comprehensive-llm-benchmarking.md)** |**[Architecture](docs/architecture.md)** | **[Design Proposals](https://github.com/ai-dynamo/enhancements)** | **[Migrating from Genai-Perf](docs/migrating.md)** | **[CLI Options](docs/cli_options.md)** | **[Metrics Reference](docs/metrics_reference.md)**
 
 
 AIPerf is a comprehensive benchmarking tool that measures the performance of generative AI models served by your preferred inference solution.
@@ -47,6 +47,7 @@ Features
 
 ### Getting Started
 - **[Basic Tutorial](docs/tutorial.md)** - Learn the fundamentals with Dynamo and vLLM examples
+- **[Comprehensive Benchmarking Guide](docs/comprehensive-llm-benchmarking.md)** - In-depth walkthrough with 5 real-world use cases, Pareto analysis, trace replay, goodput, and time-sliced analysis
 - **[User Interface](docs/tutorials/ui-types.md)** - Choose between dashboard, simple, or none for displaying progress
 
 ### Load Control & Timing

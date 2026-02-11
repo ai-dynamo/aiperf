@@ -307,6 +307,31 @@ class TextResponse(BaseInferenceServerResponse):
             return None
 
 
+class BinaryResponse(BaseInferenceServerResponse):
+    """Raw binary response from an inference client for non-text content types."""
+
+    content_type: str | None = Field(
+        default=None,
+        description="The content type of the response. e.g. 'video/mp4', 'application/octet-stream'.",
+    )
+    raw_bytes: bytes = Field(
+        ...,
+        description="The raw binary content of the response.",
+    )
+
+    def get_raw(self) -> Any | None:
+        """Get the raw representation of the response."""
+        return self.raw_bytes
+
+    def get_text(self) -> str | None:
+        """Get the text representation of the response."""
+        return None
+
+    def get_json(self) -> JsonObject | None:
+        """Get the JSON representation of the response."""
+        return None
+
+
 class SSEField(AIPerfBaseModel):
     """Base model for a single field in an SSE message."""
 
@@ -531,7 +556,7 @@ class RequestRecord(AIPerfBaseModel):
     # NOTE: We need to use SerializeAsAny to allow for generic subclass support
     # NOTE: The order of the types is important, as that is the order they are type checked.
     #       Start with the most specific types and work towards the most general types.
-    responses: SerializeAsAny[list[SSEMessage | TextResponse]] = Field(
+    responses: SerializeAsAny[list[SSEMessage | TextResponse | BinaryResponse]] = Field(
         default_factory=list,
         description="The raw responses received from the request.",
     )
@@ -715,6 +740,74 @@ class ImageResponseData(BaseResponseData):
     )
 
 
+class VideoResponseData(BaseResponseData):
+    """Parsed video generation response data.
+
+    Matches SGLang/OpenAI VideoResponse schema for async job-based video generation.
+    """
+
+    video_id: str | None = Field(
+        default=None,
+        description="Unique identifier for the video job.",
+    )
+    object: str | None = Field(
+        default=None,
+        description="Object type, always 'video'.",
+    )
+    status: str | None = Field(
+        default=None,
+        description="Job status: queued, in_progress, completed, failed.",
+    )
+    progress: int | None = Field(
+        default=None,
+        description="Completion percentage (0-100).",
+    )
+    url: str | None = Field(
+        default=None,
+        description="URL to download completed video (only when status=completed).",
+    )
+    size: str | None = Field(
+        default=None,
+        description="Video resolution (e.g., '1280x720').",
+    )
+    seconds: str | None = Field(
+        default=None,
+        description="Video duration in seconds.",
+    )
+    quality: str | None = Field(
+        default=None,
+        description="Quality setting for the generated video.",
+    )
+    model: str | None = Field(
+        default=None,
+        description="Model used for generation.",
+    )
+    created_at: int | None = Field(
+        default=None,
+        description="Unix timestamp of job creation.",
+    )
+    completed_at: int | None = Field(
+        default=None,
+        description="Unix timestamp of job completion.",
+    )
+    expires_at: int | None = Field(
+        default=None,
+        description="Unix timestamp when video assets expire.",
+    )
+    inference_time_s: float | None = Field(
+        default=None,
+        description="Generation time in seconds (SGLang metric).",
+    )
+    peak_memory_mb: float | None = Field(
+        default=None,
+        description="Peak memory usage in MB (SGLang metric).",
+    )
+    error: dict[str, Any] | None = Field(
+        default=None,
+        description="Error details if job failed.",
+    )
+
+
 class ParsedResponse(AIPerfBaseModel):
     """Parsed response from a inference client."""
 
@@ -727,6 +820,7 @@ class ParsedResponse(AIPerfBaseModel):
         | EmbeddingResponseData
         | RankingsResponseData
         | ImageResponseData
+        | VideoResponseData
         | BaseResponseData
         | None
     ] = Field(
@@ -912,7 +1006,7 @@ class RawRecordInfo(AIPerfBaseModel):
         default=None,
         description="The headers of the response.",
     )
-    responses: SerializeAsAny[list[SSEMessage | TextResponse]] = Field(
+    responses: SerializeAsAny[list[SSEMessage | TextResponse | BinaryResponse]] = Field(
         ...,
         description="The raw responses received from the request.",
     )

@@ -415,6 +415,22 @@ class VideoFormat(CaseInsensitiveStrEnum):
     """WebM container. Open format, optimized for web, good for VP9 codec."""
 
 
+class VideoJobStatus(CaseInsensitiveStrEnum):
+    """Status values for async video generation jobs."""
+
+    QUEUED = "queued"
+    """Job is queued and waiting to start."""
+
+    IN_PROGRESS = "in_progress"
+    """Job is currently being processed."""
+
+    COMPLETED = "completed"
+    """Job completed successfully."""
+
+    FAILED = "failed"
+    """Job failed with an error."""
+
+
 class VideoSynthType(CaseInsensitiveStrEnum):
     MOVING_SHAPES = "moving_shapes"
     """Generate videos with animated geometric shapes moving across the frame"""

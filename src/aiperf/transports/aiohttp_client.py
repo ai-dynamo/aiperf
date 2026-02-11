@@ -14,6 +14,7 @@ from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     AioHttpTraceData,
+    BinaryResponse,
     ErrorDetails,
     RequestRecord,
     TextResponse,
@@ -192,31 +193,55 @@ class AioHttpClient(AIPerfLoggerMixin):
                             ):
                                 AsyncSSEStreamReader.inspect_message_for_error(message)
                                 record.responses.append(message)
-                    else:
-                        # Non-SSE response (e.g., JSON)
-                        # Note: response.text() should trigger aiohttp trace callbacks,
-                        # but we set response_receive_end_perf_ns explicitly for consistency
-                        response_start_ns = time.perf_counter_ns()
-                        raw_response = await response.text()
                         record.end_perf_ns = time.perf_counter_ns()
-                        # Set trace timestamps if not already set by callbacks
+                    else:
+                        # Non-SSE response (e.g., JSON or binary)
+                        response_start_ns = time.perf_counter_ns()
+
+                        # Check if content type is binary (video, image, audio, octet-stream)
+                        content_type = response.content_type or ""
+                        is_binary = (
+                            content_type.startswith("video/")
+                            or content_type.startswith("image/")
+                            or content_type.startswith("audio/")
+                            or content_type == "application/octet-stream"
+                        )
+
+                        if is_binary:
+                            raw_bytes = await response.read()
+                            record.end_perf_ns = time.perf_counter_ns()
+                            record.responses.append(
+                                BinaryResponse(
+                                    perf_ns=record.end_perf_ns,
+                                    content_type=content_type,
+                                    raw_bytes=raw_bytes,
+                                )
+                            )
+                        else:
+                            raw_response = await response.text()
+                            record.end_perf_ns = time.perf_counter_ns()
+                            record.responses.append(
+                                TextResponse(
+                                    perf_ns=record.end_perf_ns,
+                                    content_type=content_type,
+                                    text=raw_response,
+                                )
+                            )
+
                         if record.trace_data.response_receive_start_perf_ns is None:
                             record.trace_data.response_receive_start_perf_ns = (
                                 response_start_ns
                             )
+                        # Note: response.text()/read() should trigger aiohttp trace callbacks,
+                        # but we set response_receive_end_perf_ns explicitly for consistency
                         record.trace_data.response_receive_end_perf_ns = (
                             record.end_perf_ns
                         )
-                        record.responses.append(
-                            TextResponse(
-                                perf_ns=record.end_perf_ns,
-                                content_type=response.content_type,
-                                text=raw_response,
-                            )
-                        )
-                    record.end_perf_ns = time.perf_counter_ns()
+
                     self.debug(
-                        lambda: f"{method} request to {url} completed in {(record.end_perf_ns - record.start_perf_ns) / NANOS_PER_SECOND} seconds"
+                        lambda: (
+                            f"{method} request to {url} completed in {(record.end_perf_ns - record.start_perf_ns) / NANOS_PER_SECOND} seconds"
+                        )
                     )
         except SSEResponseError as e:
             record.end_perf_ns = time.perf_counter_ns()
