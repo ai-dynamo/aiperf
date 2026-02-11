@@ -10,7 +10,6 @@ import pytest
 
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
-from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.models import MetricResult
 from aiperf.common.models.export_models import JsonExportData
 from aiperf.exporters.exporter_config import ExporterConfig
@@ -20,23 +19,24 @@ from aiperf.plugin.enums import EndpointType
 
 @pytest.fixture
 def sample_records():
+    """Create sample records already in display units (ms) as they would be from summarize()."""
     return [
         MetricResult(
             tag="time_to_first_token",
             header="Time to First Token",
-            unit="ns",
-            avg=123.0 * NANOS_PER_MILLIS,
-            min=100.0 * NANOS_PER_MILLIS,
-            max=150.0 * NANOS_PER_MILLIS,
-            p1=101.0 * NANOS_PER_MILLIS,
-            p5=105.0 * NANOS_PER_MILLIS,
-            p25=110.0 * NANOS_PER_MILLIS,
-            p50=120.0 * NANOS_PER_MILLIS,
-            p75=130.0 * NANOS_PER_MILLIS,
-            p90=140.0 * NANOS_PER_MILLIS,
+            unit="ms",  # Already in display units from summarize()
+            avg=123.0,
+            min=100.0,
+            max=150.0,
+            p1=101.0,
+            p5=105.0,
+            p25=110.0,
+            p50=120.0,
+            p75=130.0,
+            p90=140.0,
             p95=None,
-            p99=149.0 * NANOS_PER_MILLIS,
-            std=10.0 * NANOS_PER_MILLIS,
+            p99=149.0,
+            std=10.0,
         )
     ]
 
@@ -155,7 +155,7 @@ class TestMetricsJsonExporter:
         self, mock_results, mock_user_config
     ):
         """Verify uses base class export() method."""
-        from unittest.mock import AsyncMock, patch
+        from unittest.mock import AsyncMock
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
@@ -185,8 +185,6 @@ class TestMetricsJsonExporter:
         self, mock_results, mock_user_config
     ):
         """Verify _generate_content() uses instance data members."""
-        from unittest.mock import patch
-
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
             mock_user_config.output.artifact_directory = output_dir
@@ -200,17 +198,7 @@ class TestMetricsJsonExporter:
 
             exporter = MetricsJsonExporter(exporter_config)
 
-            # Mock conversion
-            import aiperf.exporters.metrics_base_exporter as mbe
-
-            def mock_convert(metrics, reg):
-                return {m.tag: m for m in metrics}
-
-            with (
-                patch.object(mbe, "convert_all_metrics_to_display_units", mock_convert),
-                patch.object(exporter, "_should_export", return_value=True),
-            ):
-                content = exporter._generate_content()
+            content = exporter._generate_content()
 
             # Should contain data from instance members
             data = json.loads(content)
@@ -233,15 +221,7 @@ class TestMetricsJsonExporter:
 
             exporter = MetricsJsonExporter(exporter_config)
 
-            import aiperf.exporters.metrics_base_exporter as mbe
-
-            def mock_convert(metrics, reg):
-                return {}
-
-            with patch.object(
-                mbe, "convert_all_metrics_to_display_units", mock_convert
-            ):
-                content = exporter._generate_content()
+            content = exporter._generate_content()
 
             # Should contain telemetry data
             data = json.loads(content)
@@ -252,7 +232,6 @@ class TestMetricsJsonExporter:
         self, mock_results, mock_user_config
     ):
         """Verify export() calls _generate_content() internally."""
-        from unittest.mock import patch
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)

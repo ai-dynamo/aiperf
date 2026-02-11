@@ -95,8 +95,6 @@ class MetricsCsvExporter(MetricsBaseExporter):
         writer.writerow(header)
 
         for _, metric in sorted(records.items(), key=lambda kv: kv[0]):
-            if not self._should_export(metric):
-                continue
             row = [self._format_metric_name(metric)]
             for stat_name in STAT_KEYS:
                 value = getattr(metric, stat_name, None)
@@ -110,8 +108,6 @@ class MetricsCsvExporter(MetricsBaseExporter):
     ) -> None:
         writer.writerow(["Metric", "Value"])
         for _, metric in sorted(records.items(), key=lambda kv: kv[0]):
-            if not self._should_export(metric):
-                continue
             writer.writerow(
                 [self._format_metric_name(metric), self._format_number(metric.avg)]
             )

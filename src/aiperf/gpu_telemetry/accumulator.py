@@ -23,7 +23,7 @@ from aiperf.common.models import (
 from aiperf.common.models.server_metrics_models import TimeRangeFilter
 from aiperf.common.models.telemetry_models import TelemetryHierarchy, TelemetryRecord
 from aiperf.common.protocols import PubClientProtocol
-from aiperf.exporters.display_units_utils import normalize_endpoint_display
+from aiperf.exporters.utils import normalize_endpoint_display
 from aiperf.gpu_telemetry.constants import (
     GPU_TELEMETRY_COUNTER_METRICS,
     get_gpu_telemetry_metrics_config,
