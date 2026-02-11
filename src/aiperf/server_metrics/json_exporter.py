@@ -123,13 +123,7 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
             exclude_unset=True,
         )
 
-        # Get AIPerf version from installed package
-        from importlib.metadata import version as get_version
-
-        try:
-            aiperf_version = get_version("aiperf")
-        except Exception:
-            aiperf_version = "unknown"
+        from aiperf import __version__ as aiperf_version
 
         export_data = ServerMetricsExportData(
             aiperf_version=aiperf_version,

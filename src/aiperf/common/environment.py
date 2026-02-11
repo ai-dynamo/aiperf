@@ -184,6 +184,11 @@ class _HTTPSettings(BaseSettings):
     Controls low-level socket options, keepalive settings, DNS caching, and connection
     pooling for HTTP clients. These settings optimize performance for high-throughput
     streaming workloads.
+
+    Video Generation Polling:
+        For async video generation APIs that use job polling (e.g., SGLang /v1/videos),
+        the poll interval is controlled by AIPERF_HTTP_VIDEO_POLL_INTERVAL. The max poll time uses
+        the --request-timeout-seconds CLI argument.
     """
 
     model_config = SettingsConfigDict(
@@ -289,6 +294,14 @@ class _HTTPSettings(BaseSettings):
         description="Trust environment variables for HTTP client configuration. "
         "When enabled, aiohttp will read proxy settings from HTTP_PROXY, HTTPS_PROXY, "
         "and NO_PROXY environment variables.",
+    )
+    VIDEO_POLL_INTERVAL: float = Field(
+        ge=0.001,
+        le=10.0,
+        default=0.1,
+        description="Interval in seconds between status polls for async video generation jobs. "
+        "Lower values provide faster completion detection but increase server load. "
+        "Applies to the aiohttp transport.",
     )
 
 

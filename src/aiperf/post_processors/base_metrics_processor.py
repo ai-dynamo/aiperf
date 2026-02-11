@@ -40,6 +40,10 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
             disallowed_flags |= MetricFlags.SUPPORTS_AUDIO_ONLY
         if not endpoint_metadata.supports_images:
             disallowed_flags |= MetricFlags.SUPPORTS_IMAGE_ONLY
+        if not endpoint_metadata.supports_videos:
+            disallowed_flags |= MetricFlags.SUPPORTS_VIDEO_ONLY
+        if not endpoint_metadata.produces_videos:
+            disallowed_flags |= MetricFlags.PRODUCES_VIDEO_ONLY
         if not self.user_config.endpoint.streaming:
             disallowed_flags |= MetricFlags.STREAMING_ONLY
         if self.user_config.endpoint.use_server_token_count:

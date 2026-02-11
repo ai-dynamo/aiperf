@@ -248,6 +248,21 @@ endpoint:
       tokenizes_input: true
       metrics_title: Image Generation Metrics
 
+  video_generation:
+    class: aiperf.endpoints.openai_video_generation:VideoGenerationEndpoint
+    description: |
+      OpenAI/SGLang Video Generation endpoint for text-to-video models.
+      Supports async generation with polling. Compatible with Sora, Wan2.1,
+      HunyuanVideo via SGLang. Use --endpoint-type video_generation.
+    metadata:
+      endpoint_path: /v1/videos
+      supports_streaming: false
+      produces_tokens: false
+      produces_videos: true
+      tokenizes_input: true
+      requires_polling: true
+      metrics_title: Video Generation Metrics
+
   nim_embeddings:
     class: aiperf.endpoints.nim_embeddings:NIMEmbeddingsEndpoint
     description: |

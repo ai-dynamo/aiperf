@@ -157,13 +157,7 @@ class ServerMetricsCsvExporter(MetricsBaseExporter):
         buf = io.StringIO()
         writer = csv.writer(buf)
 
-        # Get AIPerf version from installed package
-        from importlib.metadata import version as get_version
-
-        try:
-            aiperf_version = get_version("aiperf")
-        except Exception:
-            aiperf_version = "unknown"
+        from aiperf import __version__ as aiperf_version
 
         # Add metadata as comments at the top of the file
         buf.write("# AIPerf Server Metrics Export (CSV)\n")
