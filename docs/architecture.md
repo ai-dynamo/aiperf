@@ -76,7 +76,7 @@ The Worker Manager orchestrates and manages the pool of worker processes that ex
 
 ### Workers
 
-Workers are the processes that send HTTP requests to the inference server and measure response times. Each worker operates independently, processing one request at a time.
+Workers are the processes that send HTTP requests to the inference server and measure response times.
 
 **Key Responsibilities:**
 - Send HTTP requests to inference servers and measure response timing
@@ -86,7 +86,7 @@ Workers are the processes that send HTTP requests to the inference server and me
 
 **Scalability:**
 - Run multiple workers (e.g., 10, 50, 100+) to support different workload patterns
-- No coordination or shared state between workers
+- No coordination between workers
 - Adding more workers increases load capacity and request rates
 
 ### Record Processor
@@ -183,7 +183,7 @@ This section describes the end-to-end message flow during a benchmark run, showi
 
 ## Communication Architecture
 
-All components communicate via a **ZeroMQ (ZMQ) message bus**, designed for low-latency, high-throughput message passing.
+AIPerf services communicate internally via a **ZeroMQ (ZMQ) message bus**, designed for low-latency, high-throughput message passing between components.
 
 ### Why ZMQ?
 
