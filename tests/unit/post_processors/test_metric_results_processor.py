@@ -10,6 +10,7 @@ from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
 from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
+from aiperf.metrics.types.credit_drop_latency_metric import CreditDropLatencyMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
@@ -159,19 +160,27 @@ class TestMetricResultsProcessor:
     async def test_summarize(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
-        """Test summarize returns list of MetricResult objects."""
+        """Test summarize returns list of MetricResult objects in display units.
+
+        RequestLatencyMetric has unit=ns and display_unit=ms, so nanosecond
+        values should be converted to milliseconds in the output.
+        """
+        mock_metric_registry.get_class.return_value = RequestLatencyMetric
+
         processor = MetricResultsProcessor(mock_user_config)
         processor._tags_to_types = {RequestLatencyMetric.tag: MetricType.RECORD}
         processor._instances_map = {RequestLatencyMetric.tag: RequestLatencyMetric()}
 
         processor._results[RequestLatencyMetric.tag] = MetricArray()
-        processor._results[RequestLatencyMetric.tag].append(42.0)
+        processor._results[RequestLatencyMetric.tag].append(42_000_000.0)
 
         results = await processor.summarize()
 
         assert len(results) == 1
         assert isinstance(results[0], MetricResult)
         assert results[0].tag == RequestLatencyMetric.tag
+        assert results[0].unit == "ms"
+        assert results[0].avg == 42.0
 
     @pytest.mark.asyncio
     async def test_full_metrics(
@@ -291,3 +300,124 @@ class TestMetricResultsProcessor:
 
         # Both should return the same shared results dict
         assert results_dict_none is results_dict_with_time
+
+
+class TestShouldIncludeInSummary:
+    """Tests for _should_include_in_summary() filtering logic.
+
+    Uses real BaseRecordMetric subclasses with actual MetricFlags to test
+    filtering behavior. The mock_metric_registry fixture intercepts
+    __init_subclass__ registration, so no cleanup is needed.
+    """
+
+    def test_unknown_tag_raises_key_error(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """Unknown tags (not in _instances_map) raise KeyError."""
+        processor = MetricResultsProcessor(mock_user_config)
+        processor._instances_map = {}
+
+        with pytest.raises(KeyError):
+            processor._should_include_in_summary("nonexistent_tag")
+
+    def test_public_metric_included(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """Metrics with no special flags are always included."""
+        processor = MetricResultsProcessor(mock_user_config)
+        processor._instances_map = {RequestLatencyMetric.tag: RequestLatencyMetric()}
+
+        assert processor._should_include_in_summary(RequestLatencyMetric.tag) is True
+
+    def test_internal_metric_excluded_by_default(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """INTERNAL metrics are excluded when SHOW_INTERNAL_METRICS is False."""
+        processor = MetricResultsProcessor(mock_user_config)
+        processor._instances_map = {
+            CreditDropLatencyMetric.tag: CreditDropLatencyMetric()
+        }
+
+        with patch(
+            "aiperf.post_processors.metric_results_processor.Environment.DEV"
+        ) as mock_dev:
+            mock_dev.SHOW_INTERNAL_METRICS = False
+            mock_dev.SHOW_EXPERIMENTAL_METRICS = False
+
+            assert (
+                processor._should_include_in_summary(CreditDropLatencyMetric.tag)
+                is False
+            )
+
+    def test_internal_metric_included_when_flag_enabled(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """INTERNAL metrics are included when SHOW_INTERNAL_METRICS is True."""
+        processor = MetricResultsProcessor(mock_user_config)
+        processor._instances_map = {
+            CreditDropLatencyMetric.tag: CreditDropLatencyMetric()
+        }
+
+        with patch(
+            "aiperf.post_processors.metric_results_processor.Environment.DEV"
+        ) as mock_dev:
+            mock_dev.SHOW_INTERNAL_METRICS = True
+            mock_dev.SHOW_EXPERIMENTAL_METRICS = False
+
+            assert (
+                processor._should_include_in_summary(CreditDropLatencyMetric.tag)
+                is True
+            )
+
+    @pytest.mark.parametrize(
+        ("show_experimental", "expected"),
+        [
+            (False, False),
+            (True, True),
+        ],
+        ids=["excluded_by_default", "included_when_enabled"],
+    )
+    def test_experimental_metric_filtering(
+        self,
+        mock_metric_registry: Mock,
+        mock_user_config: UserConfig,
+        experimental_metric_cls,
+        show_experimental: bool,
+        expected: bool,
+    ) -> None:
+        """EXPERIMENTAL metrics respect the SHOW_EXPERIMENTAL_METRICS flag."""
+        processor = MetricResultsProcessor(mock_user_config)
+        processor._instances_map = {
+            experimental_metric_cls.tag: experimental_metric_cls()
+        }
+
+        with patch(
+            "aiperf.post_processors.metric_results_processor.Environment.DEV"
+        ) as mock_dev:
+            mock_dev.SHOW_INTERNAL_METRICS = False
+            mock_dev.SHOW_EXPERIMENTAL_METRICS = show_experimental
+
+            assert (
+                processor._should_include_in_summary(experimental_metric_cls.tag)
+                is expected
+            )
+
+    def test_internal_and_experimental_metric_excluded_when_both_disabled(
+        self,
+        mock_metric_registry: Mock,
+        mock_user_config: UserConfig,
+        dual_flag_metric_cls,
+    ) -> None:
+        """Metrics with both INTERNAL and EXPERIMENTAL flags are excluded when both flags are disabled."""
+        processor = MetricResultsProcessor(mock_user_config)
+        processor._instances_map = {dual_flag_metric_cls.tag: dual_flag_metric_cls()}
+
+        with patch(
+            "aiperf.post_processors.metric_results_processor.Environment.DEV"
+        ) as mock_dev:
+            mock_dev.SHOW_INTERNAL_METRICS = False
+            mock_dev.SHOW_EXPERIMENTAL_METRICS = False
+
+            assert (
+                processor._should_include_in_summary(dual_flag_metric_cls.tag) is False
+            )
