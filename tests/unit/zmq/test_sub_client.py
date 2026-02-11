@@ -383,3 +383,21 @@ class TestZMQSubClientBackgroundTask:
 
         # Should complete without hanging
         await client.stop()
+
+    @pytest.mark.asyncio
+    async def test_sub_receiver_stops_on_context_terminated(self, mock_zmq_context):
+        """Test that _sub_receiver breaks on ContextTerminated."""
+        mock_socket = AsyncMock(spec=zmq.asyncio.Socket)
+        mock_socket.bind = Mock()
+        mock_socket.setsockopt = Mock()
+        mock_socket.recv_multipart = AsyncMock(side_effect=zmq.ContextTerminated())
+        mock_zmq_context.socket = Mock(return_value=mock_socket)
+
+        client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
+        await client.initialize()
+
+        # Call _sub_receiver directly to exercise the except clause
+        await client._sub_receiver()
+
+        # Should have tried to recv and hit ContextTerminated
+        mock_socket.recv_multipart.assert_called()

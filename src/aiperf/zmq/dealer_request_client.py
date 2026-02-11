@@ -80,19 +80,21 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
                     # and prevent event loop starvation during message bursts.
                     if (
                         self._yield_interval > 0
-                        and self._msg_count >= self._yield_interval
+                        and self._msg_count % self._yield_interval == 0
                     ):
                         await yield_to_event_loop()
 
             except zmq.Again:
                 self.debug("No data on dealer socket received, yielding to event loop")
                 await yield_to_event_loop()
-            except Exception as e:
-                self.exception(f"Exception receiving responses: {e}")
-                await yield_to_event_loop()
             except asyncio.CancelledError:
                 self.debug("Dealer request client receiver task cancelled")
                 raise  # re-raise the cancelled error
+            except Exception as e:
+                self.exception(
+                    f"Exception receiving responses for client {self.client_id}: {e!r}"
+                )
+                await yield_to_event_loop()
 
     @on_stop
     async def _stop_remaining_tasks(self) -> None:

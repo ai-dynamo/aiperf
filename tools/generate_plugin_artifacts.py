@@ -280,7 +280,7 @@ def generate_enums_py() -> str:
         '    PluginType = create_enum("PluginType", {',
         '        category.replace("-", "_").upper(): category',
         "        for category in _all_plugin_categories",
-        "    })",
+        "    }, module=__name__)",
         "    PluginTypeStr: TypeAlias = str",
         "",
     ]
@@ -293,7 +293,7 @@ def generate_enums_py() -> str:
         lines.extend(
             [
                 f"{enum_name}Str: TypeAlias = str",
-                f'{enum_name} = plugins.create_enum(PluginType.{member}, "{enum_name}")',
+                f'{enum_name} = plugins.create_enum(PluginType.{member}, "{enum_name}", module=__name__)',
                 f'"""Dynamic enum for {name.replace("_", " ")}. Example: {examples}"""',
                 "",
             ]

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from unittest.mock import Mock
@@ -8,9 +8,8 @@ import pytest
 from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.exceptions import MetricUnitError
 from aiperf.common.models import MetricResult
-from aiperf.exporters.display_units_utils import (
+from aiperf.metrics.display_units import (
     _logger,
-    convert_all_metrics_to_display_units,
     to_display_unit,
 )
 
@@ -132,14 +131,3 @@ class TestDisplayUnitsUtils:
         assert out.unit == "ms"
         assert out.avg == 1_000_000.0
         assert warn_mock.call_count == 1
-
-    def test_convert_all_metrics_to_display_units(self):
-        reg = FakeRegistry(base_unit="ns", display_unit="ms")
-        a = MetricResult(
-            tag="time_to_first_token", unit="ns", header="TTFT", avg=1_000_000.0
-        )
-        b = MetricResult(tag="foo", unit="ns", header="Foo", avg=2_000_000.0)
-        out = convert_all_metrics_to_display_units([a, b], reg)
-        assert set(out.keys()) == {"time_to_first_token", "foo"}
-        assert out["time_to_first_token"].unit == "ms"
-        assert out["foo"].avg == pytest.approx(2.0)

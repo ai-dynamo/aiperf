@@ -87,11 +87,18 @@ class FakeCommunicationClient(AIPerfLifecycleMixin):
 
     client_type: ClassVar[CommClientType]
 
-    def __init__(self, address: str, identity: str, bus: FakeCommunicationBus) -> None:
+    def __init__(
+        self,
+        address: str,
+        identity: str,
+        bus: FakeCommunicationBus,
+        additional_bind_address: str | None = None,
+    ) -> None:
         super().__init__(id=identity)
         self.bus = bus
         self.address = address
         self.identity = identity
+        self.additional_bind_address = additional_bind_address
 
     def capture_sent_payload(
         self,
@@ -139,8 +146,16 @@ class FakeStreamingRouterClient(FakeCommunicationClient):
 
     client_type = CommClientType.STREAMING_ROUTER
 
-    def __init__(self, address: str, identity: str, bus: FakeCommunicationBus) -> None:
-        super().__init__(address, identity, bus)
+    def __init__(
+        self,
+        address: str,
+        identity: str,
+        bus: FakeCommunicationBus,
+        additional_bind_address: str | None = None,
+    ) -> None:
+        super().__init__(
+            address, identity, bus, additional_bind_address=additional_bind_address
+        )
         self.handler: Callable[[str, Any], Awaitable[None]] | None = None
 
     def register_receiver(
@@ -291,8 +306,16 @@ class FakePullClient(FakeCommunicationClient):
 
     client_type = CommClientType.PULL
 
-    def __init__(self, address: str, identity: str, bus: FakeCommunicationBus) -> None:
-        super().__init__(address, identity, bus)
+    def __init__(
+        self,
+        address: str,
+        identity: str,
+        bus: FakeCommunicationBus,
+        additional_bind_address: str | None = None,
+    ) -> None:
+        super().__init__(
+            address, identity, bus, additional_bind_address=additional_bind_address
+        )
         self.callbacks: dict[Any, Callable] = {}  # ONE callback per type
 
     def register_pull_callback(
@@ -509,9 +532,12 @@ class FakeCommunication(BaseCommunication):
         identity = kwargs.get(
             "identity", f"{client_type}-{len(self.clients_by_type(client_type))}"
         )
+        additional_bind = kwargs.get("additional_bind_address")
         match client_type:
             case CommClientType.STREAMING_ROUTER:
-                client = FakeStreamingRouterClient(addr, identity, self.bus)
+                client = FakeStreamingRouterClient(
+                    addr, identity, self.bus, additional_bind_address=additional_bind
+                )
                 self.router_clients[addr].append(client)
 
             case CommClientType.STREAMING_DEALER:
@@ -531,7 +557,9 @@ class FakeCommunication(BaseCommunication):
                 self.push_clients[addr].append(client)
 
             case CommClientType.PULL:
-                client = FakePullClient(addr, identity, self.bus)
+                client = FakePullClient(
+                    addr, identity, self.bus, additional_bind_address=additional_bind
+                )
                 self.pull_clients.append(client)
 
             case CommClientType.REQUEST:

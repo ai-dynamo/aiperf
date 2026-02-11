@@ -5,7 +5,7 @@ Tests for zmq_proxy_base.py and zmq_proxy_sockets.py - ZMQ proxy classes.
 """
 
 import asyncio
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 import zmq
@@ -87,8 +87,8 @@ class TestZMQXPubXSubProxy:
         proxy = ZMQXPubXSubProxy.from_config(config.event_bus_proxy_config)
 
         assert proxy is not None
-        assert proxy.frontend_address is not None
-        assert proxy.backend_address is not None
+        assert proxy.config.frontend_address is not None
+        assert proxy.config.backend_address is not None
 
     def test_from_config_returns_none_if_config_is_none(self):
         """Test that from_config returns None if config is None."""
@@ -336,3 +336,56 @@ class TestProxyEdgeCases:
         assert ZMQProxyType.XPUB_XSUB in registered_names
         assert ZMQProxyType.DEALER_ROUTER in registered_names
         assert ZMQProxyType.PUSH_PULL in registered_names
+
+
+class TestProxyMonitor:
+    """Test proxy _monitor_messages background task."""
+
+    @pytest.mark.asyncio
+    async def test_monitor_returns_early_without_capture(
+        self, mock_zmq_socket, mock_zmq_context
+    ):
+        """Test that _monitor_messages returns early when no capture socket."""
+        config = ZMQTCPConfig()
+
+        with patch("zmq.proxy_steerable"):
+            proxy = ZMQXPubXSubProxy.from_config(config.event_bus_proxy_config)
+            await proxy.initialize()
+            await proxy.start()
+            await asyncio.sleep(0)  # Let background tasks run
+            await proxy.stop()
+
+        # No capture socket, monitor should return early (line 228)
+        assert proxy.capture_client is None
+
+    @pytest.mark.asyncio
+    async def test_monitor_connects_and_handles_cancellation(
+        self, mock_zmq_socket, mock_zmq_context
+    ):
+        """Test that _monitor_messages connects to capture and handles cancellation."""
+        config = ZMQTCPConfig()
+        base_config = config.event_bus_proxy_config
+        proxy_config = ZMQTCPProxyConfig(
+            host=base_config.host,
+            frontend_port=base_config.frontend_port,
+            backend_port=base_config.backend_port,
+            capture_port=9999,
+        )
+
+        proxy = ZMQXPubXSubProxy(zmq_proxy_config=proxy_config)
+        assert proxy.capture_client is not None
+
+        # Set up a capture monitor socket that raises CancelledError on recv
+        capture_socket = AsyncMock()
+        capture_socket.recv_multipart = AsyncMock(side_effect=asyncio.CancelledError())
+        capture_socket.close = Mock()
+        capture_socket.connect = Mock()
+        capture_socket.setsockopt = Mock()
+        mock_zmq_context.socket = Mock(return_value=capture_socket)
+
+        # Call the monitor method directly (bypassing background_task decorator)
+        await proxy._monitor_messages()
+
+        # Monitor should have connected and closed in the finally block
+        capture_socket.connect.assert_called_once()
+        capture_socket.close.assert_called_once()

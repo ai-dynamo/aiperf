@@ -14,9 +14,12 @@ from aiperf.common.enums import (
     CreditPhase,
     ExportLevel,
     MessageType,
+    MetricFlags,
     MetricValueTypeT,
     ModelSelectionStrategy,
 )
+from aiperf.common.enums.metric_enums import GenericMetricUnit
+from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.messages import MetricRecordsMessage
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
@@ -43,6 +46,8 @@ from aiperf.common.models.record_models import (
 from aiperf.common.types import MetricTagT
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.metrics.base_metric import BaseMetric
+from aiperf.metrics.base_record_metric import BaseRecordMetric
+from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin.enums import EndpointType
 from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from aiperf.post_processors.raw_record_writer_processor import RawRecordWriterProcessor
@@ -356,8 +361,115 @@ def mock_metric_registry(monkeypatch):
     monkeypatch.setattr(
         "aiperf.post_processors.metric_results_processor.MetricRegistry", mock_registry
     )
+    monkeypatch.setattr("aiperf.metrics.display_units.MetricRegistry", mock_registry)
 
     return mock_registry
+
+
+@pytest.fixture
+def failing_metric_no_value_cls(mock_metric_registry: Mock) -> type[BaseRecordMetric]:
+    """A test metric that raises NoMetricValue on parse.
+
+    Defined inside a fixture so __init_subclass__ registers against the mock registry.
+    """
+
+    class FailingMetricNoValue(BaseRecordMetric[int]):
+        tag = "failing_metric_no_value"
+
+        def _parse_record(
+            self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+        ) -> int:
+            raise NoMetricValue("No value available")
+
+    return FailingMetricNoValue
+
+
+@pytest.fixture
+def failing_metric_value_error_cls(
+    mock_metric_registry: Mock,
+) -> type[BaseRecordMetric]:
+    """A test metric that raises ValueError on parse.
+
+    Defined inside a fixture so __init_subclass__ registers against the mock registry.
+    """
+
+    class FailingMetricValueError(BaseRecordMetric[int]):
+        tag = "failing_metric_value_error"
+
+        def _parse_record(
+            self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+        ) -> int:
+            raise ValueError("Something went wrong")
+
+    return FailingMetricValueError
+
+
+@pytest.fixture
+def double_latency_test_metric_cls(
+    mock_metric_registry: Mock,
+) -> type[BaseRecordMetric]:
+    """A test metric that doubles request_latency.
+
+    Defined inside a fixture so __init_subclass__ registers against the mock registry.
+    """
+    from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
+
+    class DoubleLatencyTestMetric(BaseRecordMetric[int]):
+        tag = "double_latency_test_metric"
+
+        def __init__(self):
+            super().__init__()
+            self.base_metric_tag = RequestLatencyMetric.tag
+
+        def _parse_record(
+            self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+        ) -> int:
+            base_value = record_metrics.get(RequestLatencyMetric.tag, 0)
+            return base_value * 2  # type: ignore
+
+    return DoubleLatencyTestMetric
+
+
+@pytest.fixture
+def experimental_metric_cls(mock_metric_registry: Mock) -> type[BaseRecordMetric]:
+    """A test metric with EXPERIMENTAL flag.
+
+    Defined inside a fixture so __init_subclass__ registers against the mock registry.
+    """
+
+    class ExperimentalTestMetric(BaseRecordMetric[int]):
+        tag = "_test_experimental"
+        header = "Test Experimental"
+        unit = GenericMetricUnit.COUNT
+        flags = MetricFlags.EXPERIMENTAL
+
+        def _parse_record(
+            self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+        ) -> int:
+            return 0
+
+    return ExperimentalTestMetric
+
+
+@pytest.fixture
+def dual_flag_metric_cls(mock_metric_registry: Mock) -> type[BaseRecordMetric]:
+    """A test metric with both INTERNAL and EXPERIMENTAL flags.
+
+    Defined inside a fixture so __init_subclass__ registers against the mock registry.
+    """
+
+    class DualFlagTestMetric(BaseRecordMetric[int]):
+        tag = "_test_dual_flag"
+        header = "Test Dual Flag"
+        unit = GenericMetricUnit.COUNT
+        flags = MetricFlags.INTERNAL | MetricFlags.EXPERIMENTAL
+
+        def _parse_record(
+            self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+        ) -> int:
+            return 0
+
+    return DualFlagTestMetric
 
 
 def create_metric_metadata(

@@ -132,7 +132,7 @@ def bootstrap_and_run_service(
         if platform.system() == "Darwin":
             # Only close terminal FDs if we're in a spawned child process
             # The main process name is typically "MainProcess", child processes have other names
-            is_child_process = multiprocessing.current_process().name != "MainProcess"
+            is_child_process = multiprocessing.parent_process() is not None
 
             if is_child_process:
                 try:
