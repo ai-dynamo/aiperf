@@ -336,8 +336,7 @@ class TestSynthesizer:
                 )
 
     def test_text_input_not_modified(self) -> None:
-        """Test that traces with text_input don't get input_length added.
-        """
+        """Test that traces with text_input don't get input_length added."""
         traces = [
             {"text_input": "What is AI?", "output_length": 50},
             {"text_input": "Explain quantum computing", "output_length": 100},
