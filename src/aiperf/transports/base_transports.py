@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import importlib.metadata as importlib_metadata
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from typing import Protocol, runtime_checkable
@@ -67,7 +66,9 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
     def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs) -> None:
         super().__init__(**kwargs)
         self.model_endpoint: ModelEndpointInfo = model_endpoint
-        self.user_agent: str = f"aiperf/{importlib_metadata.version('aiperf')}"
+        from aiperf import __version__
+
+        self.user_agent: str = f"aiperf/{__version__}"
         self.base_headers: dict[str, str] = {
             "User-Agent": self.user_agent,
         }

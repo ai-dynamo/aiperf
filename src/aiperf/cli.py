@@ -19,14 +19,9 @@ from aiperf.common.config import ServiceConfig, UserConfig
 
 def _get_help_text() -> str:
     """Generate help text with installed plugin information."""
-    from aiperf.plugin import plugins
-
     # Get aiperf version for the title
-    try:
-        aiperf_meta = plugins.get_package_metadata("aiperf")
-        aiperf_version = aiperf_meta.version
-    except KeyError:
-        aiperf_version = "unknown"
+    from aiperf import __version__ as aiperf_version
+    from aiperf.plugin import plugins
 
     packages = plugins.list_packages()
     plugin_list = []

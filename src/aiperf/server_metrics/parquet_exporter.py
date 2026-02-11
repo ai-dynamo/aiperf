@@ -255,15 +255,10 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
         """
         import socket
         import sys
-        from importlib.metadata import version as get_version
 
         import orjson
 
-        # Get AIPerf version from installed package
-        try:
-            aiperf_version = get_version("aiperf")
-        except Exception:
-            aiperf_version = "unknown"
+        from aiperf import __version__ as aiperf_version
 
         # Core metadata
         metadata = {
