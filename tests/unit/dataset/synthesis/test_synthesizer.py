@@ -335,6 +335,21 @@ class TestSynthesizer:
                     f"Trees {root_i} and {root_j} share hash_ids: {overlap}"
                 )
 
+    def test_text_input_not_modified(self) -> None:
+        """Test that traces with text_input don't get input_length added."""
+        traces = [
+            {"text_input": "What is AI?", "output_length": 50},
+            {"text_input": "Explain quantum computing", "output_length": 100},
+        ]
+        synthesizer = Synthesizer()
+        synthetic = synthesizer.synthesize_traces(traces)
+
+        # text_input should be preserved, input_length should NOT be added
+        assert synthetic[0]["text_input"] == "What is AI?"
+        assert synthetic[1]["text_input"] == "Explain quantum computing"
+        assert "input_length" not in synthetic[0]
+        assert "input_length" not in synthetic[1]
+
     # ============================================================================
     # Input Length Preservation Tests
     # ============================================================================
