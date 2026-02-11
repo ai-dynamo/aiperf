@@ -33,10 +33,20 @@ def _get_help_text() -> str:
     return f"NVIDIA AIPerf v{aiperf_version} - AI Performance Benchmarking Tool\n\nInstalled Plugin Packages: {plugins_str}"
 
 
-app = App(name="aiperf", help=_get_help_text())
+app = App(name="aiperf", help=_get_help_text(), help_on_error=True)
+
+# Register --install-completion flag to install completion for the current shell
+app.register_install_completion_command()
 
 # Add plugins subcommand
 app.command(plugins_app)
+
+
+def _register_service_command() -> None:
+    """Register the service command."""
+    from aiperf.cli_commands.service import service_app
+
+    app.command(service_app)
 
 
 def _register_trace_commands() -> None:
@@ -46,8 +56,9 @@ def _register_trace_commands() -> None:
     app.command(analyze_app)
 
 
-# Register trace commands
+# Register subcommands
 _register_trace_commands()
+_register_service_command()
 
 
 @app.command(name="profile")
