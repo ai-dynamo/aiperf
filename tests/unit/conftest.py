@@ -623,19 +623,10 @@ def mock_aiofiles_stringio():
 
 
 @pytest.fixture
-def mock_macos_child_process():
-    """Mock for simulating a child process on macOS."""
-    mock_process = Mock()
-    mock_process.name = "DATASET_MANAGER_process"  # Not MainProcess
-    return mock_process
-
-
-@pytest.fixture
-def mock_macos_main_process():
-    """Mock for simulating the main process on macOS."""
-    mock_process = Mock()
-    mock_process.name = "MainProcess"
-    return mock_process
+def mock_parent_process():
+    """Mock multiprocessing.parent_process() for testing."""
+    with patch("multiprocessing.parent_process") as mock:
+        yield mock
 
 
 @pytest.fixture
@@ -695,37 +686,24 @@ def mock_setup_child_process_logging():
 
 
 @pytest.fixture
-def mock_current_process():
-    """Mock multiprocessing.current_process() for testing."""
-    with patch("multiprocessing.current_process") as mock:
-        yield mock
+def mock_darwin_child_process(mock_platform_darwin, mock_parent_process):
+    """Mock macOS child process environment (Darwin + parent_process() returns non-None)."""
+    mock_parent_process.return_value = Mock()
+    return mock_parent_process
 
 
 @pytest.fixture
-def mock_darwin_child_process(
-    mock_platform_darwin, mock_current_process, mock_macos_child_process
-):
-    """Mock macOS child process environment (Darwin platform + child process)."""
-    mock_current_process.return_value = mock_macos_child_process
-    return mock_current_process
+def mock_darwin_main_process(mock_platform_darwin, mock_parent_process):
+    """Mock macOS main process environment (Darwin + parent_process() returns None)."""
+    mock_parent_process.return_value = None
+    return mock_parent_process
 
 
 @pytest.fixture
-def mock_darwin_main_process(
-    mock_platform_darwin, mock_current_process, mock_macos_main_process
-):
-    """Mock macOS main process environment (Darwin platform + main process)."""
-    mock_current_process.return_value = mock_macos_main_process
-    return mock_current_process
-
-
-@pytest.fixture
-def mock_linux_child_process(
-    mock_platform_linux, mock_current_process, mock_macos_child_process
-):
-    """Mock Linux child process environment (Linux platform + child process)."""
-    mock_current_process.return_value = mock_macos_child_process
-    return mock_current_process
+def mock_linux_child_process(mock_platform_linux, mock_parent_process):
+    """Mock Linux child process environment (Linux + parent_process() returns non-None)."""
+    mock_parent_process.return_value = Mock()
+    return mock_parent_process
 
 
 @pytest.fixture
