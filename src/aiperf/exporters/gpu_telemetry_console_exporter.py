@@ -6,8 +6,8 @@ from rich.table import Table
 from rich.text import Text
 
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.exporters.display_units_utils import normalize_endpoint_display
 from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.exporters.utils import normalize_endpoint_display
 from aiperf.gpu_telemetry.constants import get_gpu_telemetry_metrics_config
 
 

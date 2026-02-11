@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC, abstractmethod
@@ -6,12 +6,9 @@ from collections.abc import Iterable
 
 import aiofiles
 
-from aiperf.common.enums import MetricFlags
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult
-from aiperf.exporters.display_units_utils import convert_all_metrics_to_display_units
 from aiperf.exporters.exporter_config import ExporterConfig
-from aiperf.metrics.metric_registry import MetricRegistry
 
 
 class MetricsBaseExporter(AIPerfLoggerMixin, ABC):
@@ -23,46 +20,22 @@ class MetricsBaseExporter(AIPerfLoggerMixin, ABC):
         self._telemetry_results = exporter_config.telemetry_results
         self._server_metrics_results = exporter_config.server_metrics_results
         self._user_config = exporter_config.user_config
-        self._metric_registry = MetricRegistry
         self._output_directory = exporter_config.user_config.output.artifact_directory
 
     def _prepare_metrics(
         self, metric_results: Iterable[MetricResult]
     ) -> dict[str, MetricResult]:
-        """Convert to display units and filter exportable metrics.
+        """Build a dict of metrics keyed by tag for export.
+
+        Metrics are already filtered and in display units from summarize().
 
         Args:
-            metric_results: Raw metric results to prepare
+            metric_results: Metric results from summarize()
 
         Returns:
-            dict of filtered and converted metrics ready for export
+            dict of metrics ready for export
         """
-        converted = convert_all_metrics_to_display_units(
-            metric_results, self._metric_registry
-        )
-        return {
-            tag: result
-            for tag, result in converted.items()
-            if self._should_export(result)
-        }
-
-    def _should_export(self, metric: MetricResult) -> bool:
-        """Check if a metric should be exported.
-
-        Filters out experimental and internal metrics.
-
-        Args:
-            metric: MetricResult to check
-
-        Returns:
-            bool: True if metric should be exported
-        """
-        metric_class = MetricRegistry.get_class(metric.tag)
-        res = metric_class.missing_flags(
-            MetricFlags.EXPERIMENTAL | MetricFlags.INTERNAL
-        )
-        self.trace(lambda: f"Metric '{metric.tag}' should be exported: {res}")
-        return res
+        return {metric.tag: metric for metric in metric_results}
 
     @abstractmethod
     def _generate_content(self) -> str:

@@ -25,7 +25,7 @@ from aiperf.common.models.server_metrics_models import (
     ServerMetricsResults,
     TimeRangeFilter,
 )
-from aiperf.exporters.display_units_utils import normalize_endpoint_display
+from aiperf.exporters.utils import normalize_endpoint_display
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 from aiperf.server_metrics.export_stats import compute_stats
 from aiperf.server_metrics.parquet_exporter import ServerMetricsParquetExporter

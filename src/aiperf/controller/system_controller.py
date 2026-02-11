@@ -938,9 +938,9 @@ class SystemController(SignalHandlerMixin, BaseService):
             BenchmarkDurationMetric,
         )
 
+        # Metrics are already in display units from summarize()
         duration = self._profile_results.get(BenchmarkDurationMetric.tag)
         if duration:
-            duration = duration.to_display_unit()
             duration_str = f"[bold green]{BenchmarkDurationMetric.header}[/bold green]: {duration.avg:.2f} {duration.unit}"
             if self._was_cancelled:
                 duration_str += " [italic yellow](cancelled early)[/italic yellow]"

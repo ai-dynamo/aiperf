@@ -219,7 +219,7 @@ class TestGPUTelemetryConsoleExporter:
 
     def test_normalize_endpoint_display(self):
         """Test endpoint URL normalization for display."""
-        from aiperf.exporters.display_units_utils import normalize_endpoint_display
+        from aiperf.exporters.utils import normalize_endpoint_display
 
         # Standard http URL
         assert (

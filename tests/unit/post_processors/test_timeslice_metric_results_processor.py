@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from unittest.mock import Mock, patch
@@ -278,11 +278,12 @@ class TestTimesliceMetricResultsProcessor:
         processor._tags_to_types = {RequestLatencyMetric.tag: MetricType.RECORD}
 
         # Set up results in multiple timeslices
+        # Values are in nanoseconds (internal unit), summarize() converts to ms (display unit)
         processor._timeslice_results[0][RequestLatencyMetric.tag] = MetricArray()
-        processor._timeslice_results[0][RequestLatencyMetric.tag].append(42.0)
+        processor._timeslice_results[0][RequestLatencyMetric.tag].append(42_000_000.0)
 
         processor._timeslice_results[1][RequestLatencyMetric.tag] = MetricArray()
-        processor._timeslice_results[1][RequestLatencyMetric.tag].append(84.0)
+        processor._timeslice_results[1][RequestLatencyMetric.tag].append(84_000_000.0)
 
         # Set up the instances map (used by _create_metric_result)
         # The parent class _create_metric_result uses self._instances_map
@@ -302,9 +303,11 @@ class TestTimesliceMetricResultsProcessor:
         assert isinstance(results[1][0], MetricResult)
         assert results[0][0].tag == RequestLatencyMetric.tag
         assert results[1][0].tag == RequestLatencyMetric.tag
-        # Verify the actual values
+        # Verify the actual values are in display units (ms)
         assert results[0][0].avg == 42.0
         assert results[1][0].avg == 84.0
+        assert results[0][0].unit == "ms"
+        assert results[1][0].unit == "ms"
 
     @pytest.mark.asyncio
     async def test_summarize_with_empty_timeslices(
