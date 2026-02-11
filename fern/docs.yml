@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+instances:
+  - url: aiperf.docs.buildwithfern.com
+
+title: NVIDIA AIPerf Documentation
+
+versions:
+  - display-name: Next
+    path: ./versions/next.yml
+
+navbar-links:
+  - type: github
+    value: https://github.com/ai-dynamo/aiperf
+
+colors:
+  accent-primary:
+    dark: "#76B900"
+    light: "#4A7300"
+  background:
+    dark: "#1A1A1A"
+    light: "#FFFFFF"
