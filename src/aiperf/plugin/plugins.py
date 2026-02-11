@@ -563,7 +563,7 @@ class _PluginRegistry:
         return meta.get("internal", False)
 
     def create_enum(
-        self, category: CategoryT, enum_name: str
+        self, category: CategoryT, enum_name: str, *, module: str
     ) -> type[ExtensibleStrEnum]:
         """Create an ExtensibleStrEnum from registered types in a category.
 
@@ -573,6 +573,8 @@ class _PluginRegistry:
         Args:
             category: Plugin category to create enum from. Supports dash/underscore normalized matching.
             enum_name: Name for the generated enum class.
+            module: Module name for the enum. Required for pickling since pickle
+                looks up classes by module.name.
 
         Returns:
             A new ExtensibleStrEnum subclass.
@@ -580,8 +582,6 @@ class _PluginRegistry:
         Raises:
             KeyError: If no types are registered for the category.
         """
-        import sys
-
         from aiperf.plugin.extensible_enums import create_enum as _create_enum
 
         # Get entries without loading the plugin classes to avoid circular imports
@@ -598,10 +598,6 @@ class _PluginRegistry:
             entry.name.replace("-", "_").upper(): entry.name
             for entry in self._types[category].values()
         }
-
-        # Get the caller's module so pickle can find the enum
-        frame = sys._getframe(2)  # 2 because we're called via wrapper
-        module = frame.f_globals.get("__name__", __name__)
 
         enum_cls = _create_enum(enum_name, members, module=module)
 
