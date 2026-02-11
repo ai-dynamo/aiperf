@@ -867,6 +867,12 @@ gpu_telemetry_collector:
 # One-to-one mapping: exactly one communication backend is selected based on deployment.
 # =============================================================================
 communication:
+  zmq_dual_bind:
+    class: aiperf.zmq.zmq_comms:ZMQDualBindCommunication
+    description: |
+      ZMQ dual-bind communication backend for Kubernetes deployments. Provides
+      high-performance message passing over both IPC and TCP for both local and remote communication.
+
   zmq_ipc:
     class: aiperf.zmq.zmq_comms:ZMQIPCCommunication
     description: |

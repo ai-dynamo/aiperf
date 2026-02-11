@@ -3,7 +3,6 @@
 import inspect
 import os
 import sys
-import traceback
 import types
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -45,8 +44,9 @@ async def call_all_functions_self(
             else:
                 func(self_, *args, **kwargs)
         except Exception as e:
-            # TODO: error handling, logging
-            traceback.print_exc()
+            _logger.exception(
+                f"Error calling function {func.__name__} on {self_.__class__.__name__}: {e!r}"
+            )
             exceptions.append(e)
 
     if len(exceptions) > 0:
@@ -74,8 +74,7 @@ async def call_all_functions(funcs: list[Callable], *args, **kwargs) -> None:
             else:
                 func(*args, **kwargs)
         except Exception as e:
-            # TODO: error handling, logging
-            traceback.print_exc()
+            _logger.exception(f"Error calling function {func.__name__}: {e!r}")
             exceptions.append(e)
 
     if len(exceptions) > 0:

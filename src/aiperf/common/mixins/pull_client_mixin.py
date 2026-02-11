@@ -29,6 +29,7 @@ class PullClientMixin(CommunicationMixin, ABC):
         pull_client_address: CommAddress,
         pull_client_bind: bool = False,
         max_pull_concurrency: int | None = None,
+        pull_client_additional_bind_address: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(service_config=service_config, **kwargs)
@@ -37,6 +38,7 @@ class PullClientMixin(CommunicationMixin, ABC):
             pull_client_address,
             bind=pull_client_bind,
             max_pull_concurrency=max_pull_concurrency,
+            additional_bind_address=pull_client_additional_bind_address,
         )
 
     @on_init

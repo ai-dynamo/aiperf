@@ -171,3 +171,19 @@ class TestZMQDealerRequestClientRequest:
         async with dealer_test_helper.create_client(auto_start=True) as client:
             with pytest.raises(asyncio.TimeoutError):
                 await client.request(sample_message, timeout=0.1)
+
+
+class TestZMQDealerRequestClientReceiverExceptions:
+    """Test dealer receiver task exception handling paths."""
+
+    @pytest.mark.asyncio
+    async def test_receiver_handles_generic_exception(
+        self, dealer_test_helper, wait_for_background_task
+    ):
+        """Test that receiver task handles generic exceptions without crashing."""
+        async with dealer_test_helper.create_client(
+            auto_start=True,
+            recv_side_effect=[RuntimeError("Unexpected error")],
+        ) as _client:
+            await wait_for_background_task()
+            # Should not crash - exception is logged and task continues

@@ -15,8 +15,8 @@ from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import call_all_functions, yield_to_event_loop
 from aiperf.zmq.zmq_base_client import BaseZMQClient
 from aiperf.zmq.zmq_defaults import (
-    TOPIC_END,
     TOPIC_END_ENCODED,
+    TOPIC_END_LENGTH,
 )
 
 
@@ -113,10 +113,10 @@ class ZMQSubClient(BaseZMQClient):
     async def _subscribe_internal(
         self, topic: str, callback: Callable[[Message], Any]
     ) -> None:
-        """Subscribe to a message_type.
+        """Subscribe to a topic.
 
         Args:
-            message_type: MessageTypeT to subscribe to
+            topic: MessageTypeT to subscribe to
             callback: Function to call when a message is received (receives Message object)
         """
         try:
@@ -143,7 +143,7 @@ class ZMQSubClient(BaseZMQClient):
         """Handle a message from a subscribed message_type."""
 
         # strip the final TOPIC_END chars from the topic
-        topic = topic_bytes.decode()[: -len(TOPIC_END)]
+        topic = topic_bytes.decode()[:-TOPIC_END_LENGTH]
         self.trace(
             lambda: f"Received message from topic: '{topic}', message: {message_bytes}"
         )
@@ -180,17 +180,20 @@ class ZMQSubClient(BaseZMQClient):
                 self._msg_count += 1
                 # Yield periodically to allow scheduled handlers to run
                 # and prevent event loop starvation during message bursts.
-                if self._yield_interval > 0 and self._msg_count >= self._yield_interval:
+                if (
+                    self._yield_interval > 0
+                    and self._msg_count % self._yield_interval == 0
+                ):
                     await yield_to_event_loop()
 
             except zmq.Again:
                 self.debug(f"Sub client {self.client_id} receiver task timed out")
                 await yield_to_event_loop()
+            except (asyncio.CancelledError, zmq.ContextTerminated):
+                self.debug(f"Sub client {self.client_id} receiver task cancelled")
+                break
             except Exception as e:
                 self.exception(
                     f"Exception receiving message from subscription: {e}, {type(e)}"
                 )
                 await yield_to_event_loop()
-            except (asyncio.CancelledError, zmq.ContextTerminated):
-                self.debug(f"Sub client {self.client_id} receiver task cancelled")
-                break

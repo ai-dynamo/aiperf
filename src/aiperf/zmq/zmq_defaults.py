@@ -14,17 +14,20 @@ For example:
 - "command_response$"
 """
 
+TOPIC_END_LENGTH = len(TOPIC_END)
+"""The length of TOPIC_END. Computed once at runtime to avoid recomputing the length on every message."""
+
 TOPIC_END_ENCODED = TOPIC_END.encode()
-"""The encoded version of TOPIC_END."""
+"""The encoded version of TOPIC_END. Computed once at runtime to avoid recomputing the encoded version on every message."""
 
 TOPIC_DELIMITER = "."
 """The delimiter between topic parts.
 This is used to create an inverted hierarchy of topics for filtering by service type or service id.
 
 For example:
-- "command"
-- "system_controller.command"
-- "timing_manager_eff34565.command"
+- "command$"
+- "system_controller.command$"
+- "timing_manager_eff34565.command$"
 """
 
 

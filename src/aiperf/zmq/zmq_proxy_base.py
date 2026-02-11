@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
@@ -37,6 +37,7 @@ class ProxySocketClient(BaseZMQClient):
         end_type: ProxyEndType,
         socket_ops: dict | None = None,
         proxy_uuid: str | None = None,
+        **kwargs,
     ) -> None:
         self.client_id = f"proxy_{end_type}_{socket_type.name.lower()}_{proxy_uuid or uuid.uuid4().hex[:8]}"
         super().__init__(
@@ -45,6 +46,7 @@ class ProxySocketClient(BaseZMQClient):
             bind=True,
             socket_ops=socket_ops,
             client_id=self.client_id,
+            **kwargs,
         )
         self.debug(
             lambda: f"ZMQ Proxy {end_type.name} {socket_type.name} - Address: {address}"
@@ -94,42 +96,45 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
         self.control_client: ProxySocketClient | None = None
         self.capture_client: ProxySocketClient | None = None
 
-        self.frontend_address = zmq_proxy_config.frontend_address
-        self.backend_address = zmq_proxy_config.backend_address
-        self.control_address = zmq_proxy_config.control_address
-        self.capture_address = zmq_proxy_config.capture_address
+        self.config = zmq_proxy_config
 
         self.debug(
-            lambda: f"Proxy Initializing - Frontend: {self.frontend_address}, Backend: {self.backend_address}"
+            lambda: f"Proxy Initializing - Frontend: {self.config.frontend_address}, Backend: {self.config.backend_address}"
         )
 
         self.backend_socket = backend_socket_class(
-            address=self.backend_address,
+            address=self.config.backend_address,
             socket_ops=self.socket_ops,
-            proxy_uuid=self.proxy_uuid,  # Pass the proxy UUID for tracing
+            proxy_uuid=self.proxy_uuid,
+            additional_bind_address=self.config.additional_backend_bind_address,
         )  # type: ignore
 
         self.frontend_socket = frontend_socket_class(
-            address=self.frontend_address,
+            address=self.config.frontend_address,
             socket_ops=self.socket_ops,
-            proxy_uuid=self.proxy_uuid,  # Pass the proxy UUID for tracing
+            proxy_uuid=self.proxy_uuid,
+            additional_bind_address=self.config.additional_frontend_bind_address,
         )  # type: ignore
 
-        if self.control_address:
-            self.debug(lambda: f"Proxy Control - Address: {self.control_address}")
+        if self.config.control_address:
+            self.debug(
+                lambda: f"Proxy Control - Address: {self.config.control_address}"
+            )
             self.control_client = ProxySocketClient(
                 socket_type=SocketType.REP,
-                address=self.control_address,
+                address=self.config.control_address,
                 socket_ops=self.socket_ops,
                 end_type=ProxyEndType.Control,
                 proxy_uuid=self.proxy_uuid,
             )
 
-        if self.capture_address:
-            self.debug(lambda: f"Proxy Capture - Address: {self.capture_address}")
+        if self.config.capture_address:
+            self.debug(
+                lambda: f"Proxy Capture - Address: {self.config.capture_address}"
+            )
             self.capture_client = ProxySocketClient(
                 socket_type=SocketType.PUB,
-                address=self.capture_address,
+                address=self.config.capture_address,
                 socket_ops=self.socket_ops,
                 end_type=ProxyEndType.Capture,
                 proxy_uuid=self.proxy_uuid,
@@ -150,10 +155,10 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
         """Initialize and start the BaseZMQProxy."""
         self.debug("Proxy Initializing Sockets...")
         self.debug(
-            lambda: f"Frontend {self.frontend_socket.socket_type.name} socket binding to: {self.frontend_address} (for {self.backend_socket.socket_type.name} clients)"
+            lambda: f"Frontend {self.frontend_socket.socket_type.name} socket binding to: {self.config.frontend_address} (for {self.backend_socket.socket_type.name} clients)"
         )
         self.debug(
-            lambda: f"Backend {self.backend_socket.socket_type.name} socket binding to: {self.backend_address} (for {self.frontend_socket.socket_type.name} services)"
+            lambda: f"Backend {self.backend_socket.socket_type.name} socket binding to: {self.config.backend_address} (for {self.frontend_socket.socket_type.name} services)"
         )
 
         try:
@@ -183,9 +188,13 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
             self.debug("Proxy Sockets Initialized Successfully")
 
             if self.control_client:
-                self.debug(lambda: f"Control socket bound to: {self.control_address}")
+                self.debug(
+                    lambda: f"Control socket bound to: {self.config.control_address}"
+                )
             if self.capture_client:
-                self.debug(lambda: f"Capture socket bound to: {self.capture_address}")
+                self.debug(
+                    lambda: f"Capture socket bound to: {self.config.capture_address}"
+                )
 
         except Exception as e:
             self.exception(f"Proxy Socket Initialization Failed: {e}")
@@ -216,18 +225,18 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
     @background_task(immediate=True, interval=None)
     async def _monitor_messages(self) -> None:
         """Monitor messages flowing through the proxy via the capture socket."""
-        if not self.capture_client or not self.capture_address:
+        if not self.capture_client or not self.config.capture_address:
             self.debug("Proxy Monitor Not Enabled")
             return
 
         self.debug(
-            lambda: f"Proxy Monitor Starting - Capture Address: {self.capture_address}"
+            lambda: f"Proxy Monitor Starting - Capture Address: {self.config.capture_address}"
         )
 
         capture_socket = self.context.socket(SocketType.SUB)
-        capture_socket.connect(self.capture_address)
+        capture_socket.connect(self.config.capture_address)
         self.debug(
-            lambda: f"Proxy Monitor Connected to Capture Address: {self.capture_address}"
+            lambda: f"Proxy Monitor Connected to Capture Address: {self.config.capture_address}"
         )
         capture_socket.setsockopt(zmq.SUBSCRIBE, b"")  # Subscribe to all messages
         self.debug("Proxy Monitor Subscribed to all messages")
@@ -236,11 +245,12 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
             while not self.stop_requested:
                 recv_msg = await capture_socket.recv_multipart()
                 self.debug(lambda msg=recv_msg: f"Proxy Monitor Received: {msg}")
+        except asyncio.CancelledError:
+            self.debug("Proxy Monitor Task Cancelled")
+            return
         except Exception as e:
             self.exception(f"Proxy Monitor Error - {e}")
             raise
-        except asyncio.CancelledError:
-            return
         finally:
             capture_socket.close()
 

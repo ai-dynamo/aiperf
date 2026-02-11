@@ -4,7 +4,12 @@
 import orjson
 import pytest
 
-from aiperf.common.utils import load_json_str
+from aiperf.common.exceptions import AIPerfMultiError
+from aiperf.common.utils import (
+    call_all_functions,
+    call_all_functions_self,
+    load_json_str,
+)
 
 
 class TestLoadJsonStrErrors:
@@ -31,3 +36,26 @@ class TestLoadJsonStrErrors:
 
         with pytest.raises(ValueError, match="bad data"):
             load_json_str('{"key": 1}', func=fail)
+
+
+class TestCallAllFunctions:
+    """Test call_all_functions and call_all_functions_self error handling."""
+
+    @pytest.mark.asyncio
+    async def test_call_all_functions_logs_and_raises_on_error(self) -> None:
+        def bad_func() -> None:
+            raise RuntimeError("boom")
+
+        with pytest.raises(AIPerfMultiError):
+            await call_all_functions([bad_func])
+
+    @pytest.mark.asyncio
+    async def test_call_all_functions_self_logs_and_raises_on_error(self) -> None:
+        class Dummy:
+            pass
+
+        def bad_method(self_) -> None:
+            raise RuntimeError("boom")
+
+        with pytest.raises(AIPerfMultiError):
+            await call_all_functions_self(Dummy(), [bad_method])

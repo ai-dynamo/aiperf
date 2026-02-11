@@ -99,7 +99,7 @@ ServiceRunType = plugins.create_enum(PluginType.SERVICE_MANAGER, "ServiceRunType
 
 CommunicationBackendStr: TypeAlias = str
 CommunicationBackend = plugins.create_enum(PluginType.COMMUNICATION, "CommunicationBackend")
-"""Dynamic enum for communication. Example: CommunicationBackend.ZMQ_IPC, CommunicationBackend.ZMQ_TCP"""
+"""Dynamic enum for communication. Example: CommunicationBackend.ZMQ_DUAL_BIND, CommunicationBackend.ZMQ_IPC, CommunicationBackend.ZMQ_TCP"""
 
 CommClientTypeStr: TypeAlias = str
 CommClientType = plugins.create_enum(PluginType.COMMUNICATION_CLIENT, "CommClientType")
