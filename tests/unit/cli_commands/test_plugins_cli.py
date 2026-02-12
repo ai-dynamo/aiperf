@@ -57,13 +57,10 @@ def mock_plugins() -> Generator[MagicMock, None, None]:
 
 
 @pytest.fixture
-def mock_validators() -> Generator[tuple[MagicMock, MagicMock], None, None]:
-    """Mock the validation functions for testing."""
-    with (
-        patch("aiperf.plugin.validate.validate_alphabetical_order") as mock_alpha,
-        patch("aiperf.plugin.validate.validate_registry") as mock_registry,
-    ):
-        yield mock_alpha, mock_registry
+def mock_validate_all() -> Generator[MagicMock, None, None]:
+    """Mock plugins.validate_all for testing."""
+    with patch("aiperf.cli_commands.plugins_cli.plugins.validate_all") as mock:
+        yield mock
 
 
 # =============================================================================
@@ -501,45 +498,25 @@ class TestRunValidate:
     """Tests for run_validate() function."""
 
     @pytest.mark.parametrize(
-        ("alpha_errors", "registry_errors", "expected_strings", "should_pass"),
+        ("registry_errors", "expected_strings"),
         [
-            param({}, {}, ["All checks passed", "✓"], True, id="all pass"),
+            param({}, ["All checks passed", "✓"], id="all pass"),
             param(
-                {"endpoint": ["Not alphabetically sorted"]},
-                {},
-                ["Alphabetical order", "endpoint", "Validation failed", "✗"],
-                False,
-                id="alpha errors",
-            ),
-            param(
-                {},
                 {"endpoint": [("broken_type", "Module not found")]},
                 ["Class paths", "broken_type", "Module not found", "Validation failed"],
-                False,
                 id="registry errors",
-            ),
-            param(
-                {"endpoint": ["Not sorted"]},
-                {"transport": [("broken", "Error")]},
-                ["endpoint", "transport", "Validation failed"],
-                False,
-                id="multiple errors",
             ),
         ],
     )  # fmt: skip
     def test_validate_output(
         self,
         capture_console: tuple[Console, StringIO],
-        mock_validators: tuple[MagicMock, MagicMock],
-        alpha_errors: dict,
+        mock_validate_all: MagicMock,
         registry_errors: dict,
         expected_strings: list[str],
-        should_pass: bool,
     ) -> None:
         """Test validation output for various scenarios."""
-        mock_alpha, mock_registry = mock_validators
-        mock_alpha.return_value = alpha_errors
-        mock_registry.return_value = registry_errors
+        mock_validate_all.return_value = registry_errors
 
         run_validate()
 
