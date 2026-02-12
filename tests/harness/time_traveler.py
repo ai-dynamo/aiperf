@@ -62,9 +62,17 @@ class TimeTraveler:
         self.patch_sleep = patch_sleep
 
     def _get_loop_time_ns(self) -> int:
-        """Get event loop's virtual time in nanoseconds."""
+        """Get event loop's virtual time in nanoseconds.
+
+        When looptime is disabled (e.g. during fixture setup/teardown),
+        we must NOT call loop.time() because BaseEventLoop.time() calls
+        time.monotonic(), which we've patched to call loop.time() again,
+        creating infinite recursion.
+        """
         try:
             loop = asyncio.get_running_loop()
+            if hasattr(loop, "looptime_on") and not loop.looptime_on:
+                return 0
             return int(loop.time() * NANOS_PER_SECOND)
         except RuntimeError:
             # No running loop - return 0 (tests that aren't async)
