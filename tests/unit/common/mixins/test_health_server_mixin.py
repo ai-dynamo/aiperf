@@ -4,7 +4,6 @@
 """Tests for HealthServerMixin."""
 
 import asyncio
-from multiprocessing import Process
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -239,30 +238,16 @@ class TestHealthServerMixin:
     @pytest.mark.asyncio
     async def test_server_not_started_in_subprocess(self, mock_env_settings) -> None:
         """Test health server does not start in spawned subprocess."""
+        service = MockServiceWithHealthServer()
 
-        def child_process_test():
-            """Run in child process - health server should not start."""
-            service = MockServiceWithHealthServer()
-            # Run async function in child
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                with patch.multiple(
-                    "aiperf.common.mixins.health_server_mixin.Environment.SERVICE",
-                    HEALTH_ENABLED=True,
-                    HEALTH_HOST="127.0.0.1",
-                    HEALTH_PORT=18089,
-                    HEALTH_REQUEST_TIMEOUT=5.0,
-                ):
-                    loop.run_until_complete(service._health_server_start())
-                    # Server should NOT have started in subprocess
-                    assert service._health_server is None
-            finally:
-                loop.close()
+        with (
+            mock_env_settings(enabled=True, port=18089),
+            patch(
+                "aiperf.common.mixins.health_server_mixin.parent_process",
+                return_value=MagicMock(),
+            ),
+        ):
+            await service._health_server_start()
 
-        # Run test in subprocess
-        p = Process(target=child_process_test)
-        p.start()
-        p.join(timeout=10)
-
-        assert p.exitcode == 0, "Subprocess test failed"
+        assert service._health_server is None
+        service.debug.assert_any_call("Health server skipped in subprocess.")
