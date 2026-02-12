@@ -71,7 +71,7 @@ cd $PKG
 
 You should see:
 
-```
+```text
 my-aiperf-plugins/
 ├── echo_server.py
 ├── pyproject.toml
@@ -153,7 +153,7 @@ class EchoEndpoint(BaseEndpoint):
     # REQUIRED: Format outgoing request
     # ─────────────────────────────────────────────────────────────────────────
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
-        turn = request_info.turns[0]
+        turn = request_info.turns[-1]
         model_endpoint = request_info.model_endpoint
         texts = [content for text in turn.texts for content in text.contents if content]
         return {
@@ -442,7 +442,7 @@ class TestEchoEndpoint:
 ### Data Flow
 
 ```
-RequestInfo.turns[0]   →  format_payload()  →  HTTP Request  →  Your API
+RequestInfo.turns[-1]  →  format_payload()  →  HTTP Request  →  Your API
                                                                     ↓
 ParsedResponse         ←  parse_response()  ←  HTTP Response ←────┘
 ```
