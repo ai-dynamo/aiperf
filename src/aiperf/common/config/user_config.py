@@ -10,6 +10,7 @@ from pydantic import BeforeValidator, Field, model_validator
 from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.config.accuracy_config import AccuracyConfig
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
 from aiperf.common.config.config_defaults import (
@@ -412,6 +413,13 @@ class UserConfig(BaseConfig):
             description="Load Generator configuration",
         ),
     ] = LoadGeneratorConfig()
+
+    accuracy: Annotated[
+        AccuracyConfig,
+        Field(
+            description="Accuracy benchmarking configuration",
+        ),
+    ] = AccuracyConfig()
 
     cli_command: Annotated[
         str | None,
@@ -961,4 +969,10 @@ class UserConfig(BaseConfig):
             raise ValueError(
                 "At least one stop condition must be set (--request-count, --num-sessions, or --benchmark-duration)"
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_accuracy_config(self) -> Self:
+        """Validate accuracy benchmarking configuration."""
+        # Stub: validation logic will be added when accuracy mode is implemented
         return self
