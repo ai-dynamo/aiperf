@@ -43,7 +43,7 @@ The plugin system enables:
 
 **Hierarchy:**
 
-```
+```text
 Registry (singleton)
 └── Package (1+) ─── discovered via entry points
     └── Manifest (1+ per package) ─── plugins.yaml files
@@ -69,7 +69,7 @@ Registry (singleton)
 
 ### Discovery Flow
 
-```
+```text
 Entry Points → plugins.yaml → Pydantic Validation → Registry
                                                       ↓
                               get_class() → Import Module → Cache
@@ -99,7 +99,7 @@ for entry, cls in plugins.iter_all(PluginType.ENDPOINT):
 
 ## Plugin Categories
 
-AIPerf supports 22 plugin categories organized by function:
+AIPerf supports 23 plugin categories organized by function:
 
 ### Timing Categories
 
@@ -142,21 +142,27 @@ AIPerf supports 22 plugin categories organized by function:
 | `ui` | `UIType` | UI implementations (dashboard, simple, none) |
 | `url_selection_strategy` | `URLSelectionStrategy` | Request distribution (round-robin) |
 
-### Infrastructure Categories (Internal)
+### Service Categories
 
 | Category | Enum | Description |
 |----------|------|-------------|
 | `service` | `ServiceType` | Core AIPerf services |
 | `service_manager` | `ServiceRunType` | Service orchestration (multiprocessing, Kubernetes) |
-| `communication` | `CommunicationBackend` | ZMQ backends (IPC, TCP) |
-| `communication_client` | `CommClientType` | Socket patterns (PUB, SUB, PUSH, PULL) |
-| `zmq_proxy` | `ZMQProxyType` | Message routing proxies |
 
-### Visualization Category
+### Visualization and Telemetry Categories
 
 | Category | Enum | Description |
 |----------|------|-------------|
 | `plot` | `PlotType` | Chart types (scatter, histogram, timeline, etc.) |
+| `gpu_telemetry_collector` | `GPUTelemetryCollectorType` | GPU metric collection (DCGM, pynvml) |
+
+### Infrastructure Categories (Internal)
+
+| Category | Enum | Description |
+|----------|------|-------------|
+| `communication` | `CommunicationBackend` | ZMQ backends (IPC, TCP, dual-bind) |
+| `communication_client` | `CommClientType` | Socket patterns (PUB, SUB, PUSH, PULL) |
+| `zmq_proxy` | `ZMQProxyType` | Message routing proxies |
 
 ## Using Plugins
 
@@ -190,6 +196,13 @@ endpoint_meta = plugins.get_endpoint_metadata("chat")  # Returns EndpointMetadat
 
 ## Creating Custom Plugins
 
+> [!TIP]
+> **Contributing directly to AIPerf?** You only need two things:
+> 1. Add your class under `src/aiperf/`
+> 2. Register it in `src/aiperf/plugin/plugins.yaml`
+>
+> The `pyproject.toml` entry points and separate package install below are only needed for external/third-party plugins.
+
 **Quick Start** (4 steps):
 
 | Step | File | Action |
@@ -197,7 +210,7 @@ endpoint_meta = plugins.get_endpoint_metadata("chat")  # Returns EndpointMetadat
 | 1 | `my_endpoint.py` | Create class extending `BaseEndpoint` |
 | 2 | `plugins.yaml` | Register with class path, description, and metadata |
 | 3 | `pyproject.toml` | Add entry point: `my-package = "my_package:plugins.yaml"` |
-| 4 | Terminal | `uv pip install -e . && aiperf plugins endpoint my_custom` |
+| 4 | Terminal | `pip install -e . && aiperf plugins endpoint my_custom` |
 
 ### Minimal Endpoint Example
 
@@ -206,7 +219,8 @@ endpoint_meta = plugins.get_endpoint_metadata("chat")  # Returns EndpointMetadat
 class MyCustomEndpoint(BaseEndpoint):
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         turn = request_info.turns[-1]
-        return {"prompt": turn.texts[0].contents[0] if turn.texts else ""}
+        texts = [content for text in turn.texts for content in text.contents if content]
+        return {"prompt": texts[0] if texts else ""}
 
     def parse_response(self, response: InferenceServerResponse) -> ParsedResponse | None:
         if json_obj := response.get_json():
@@ -215,13 +229,14 @@ class MyCustomEndpoint(BaseEndpoint):
 ```
 
 ```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ai-dynamo/aiperf/refs/heads/main/src/aiperf/plugin/schema/plugins.schema.json
 # my_package/plugins.yaml
 schema_version: "1.0"
 endpoint:
   my_custom:
     class: my_package.endpoints.custom_endpoint:MyCustomEndpoint
     description: Custom endpoint for my API.
-    metadata: { endpoint_path: /v1/generate, supports_streaming: true, produces_tokens: true, tokenizes_input: true }
+    metadata: { endpoint_path: /v1/generate, supports_streaming: true, produces_tokens: true, tokenizes_input: true, metrics_title: My Custom Metrics }
 ```
 
 > **Note**: Extend base classes (`BaseEndpoint`, etc.) to get logging, helpers, and default implementations. Only implement core methods.
@@ -233,6 +248,7 @@ endpoint:
 Defines plugin categories with their protocols and metadata schemas:
 
 ```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ai-dynamo/aiperf/refs/heads/main/src/aiperf/plugin/schema/categories.schema.json
 schema_version: "1.0"
 
 endpoint:
@@ -249,6 +265,7 @@ endpoint:
 Registers plugin implementations:
 
 ```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ai-dynamo/aiperf/refs/heads/main/src/aiperf/plugin/schema/plugins.schema.json
 schema_version: "1.0"
 
 endpoint:
@@ -270,20 +287,20 @@ Category-specific metadata is validated against Pydantic models in `aiperf.plugi
 
 | Model | Key Fields |
 |-------|------------|
-| `EndpointMetadata` | `endpoint_path`, `supports_streaming`, `produces_tokens`, `tokenizes_input` |
+| `EndpointMetadata` | `endpoint_path`, `supports_streaming`, `produces_tokens`, `tokenizes_input`, `metrics_title` + optional streaming/service/multimodal/polling fields |
 | `TransportMetadata` | `transport_type`, `url_schemes` |
 | `PlotMetadata` | `display_name`, `category` |
-| `ServiceMetadata` | `required`, `auto_start`, `disable_gc` |
+| `ServiceMetadata` | `required`, `auto_start`, `disable_gc`, `replicable` |
 
 ## CLI Commands
 
 | Command | Output |
 |---------|--------|
-| `aiperf plugins` | All categories with registered plugins |
+| `aiperf plugins` | Installed packages with versions and plugin counts |
+| `aiperf plugins --all` | All categories with registered plugins |
 | `aiperf plugins endpoint` | All endpoint types with descriptions |
 | `aiperf plugins endpoint chat` | Details: class path, package, metadata |
-| `aiperf plugins --packages` | Installed packages with versions |
-| `aiperf plugins --validate` | Validates ordering, paths, class existence |
+| `aiperf plugins --validate` | Validates class paths and existence |
 
 ```bash
 $ aiperf plugins endpoint chat
@@ -293,7 +310,8 @@ $ aiperf plugins endpoint chat
 │ Package: aiperf                                 │
 │ Class: aiperf.endpoints.openai_chat:ChatEndpoint│
 │                                                 │
-│ OpenAI Chat Completions endpoint for LLM APIs. │
+│ OpenAI Chat Completions endpoint. Supports      │
+│ multi-modal inputs and streaming responses.     │
 ╰─────────────────────────────────────────────────╯
 ```
 
@@ -338,16 +356,18 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | Name | Class | Description |
 |------|-------|-------------|
 | `chat` | `ChatEndpoint` | OpenAI Chat Completions API |
+| `chat_embeddings` | `ChatEmbeddingsEndpoint` | vLLM multimodal embeddings via chat API |
 | `completions` | `CompletionsEndpoint` | OpenAI Completions API |
-| `embeddings` | `EmbeddingsEndpoint` | OpenAI Embeddings API |
-| `image_generation` | `ImageGenerationEndpoint` | OpenAI Image Generation API |
-| `huggingface_generate` | `HuggingFaceGenerateEndpoint` | HuggingFace TGI |
 | `cohere_rankings` | `CohereRankingsEndpoint` | Cohere Reranking API |
+| `embeddings` | `EmbeddingsEndpoint` | OpenAI Embeddings API |
 | `hf_tei_rankings` | `HFTeiRankingsEndpoint` | HuggingFace TEI Rankings |
+| `huggingface_generate` | `HuggingFaceGenerateEndpoint` | HuggingFace TGI |
+| `image_generation` | `ImageGenerationEndpoint` | OpenAI Image Generation API |
 | `nim_embeddings` | `NIMEmbeddingsEndpoint` | NVIDIA NIM Embeddings |
 | `nim_rankings` | `NIMRankingsEndpoint` | NVIDIA NIM Rankings |
 | `solido_rag` | `SolidoEndpoint` | Solido RAG Pipeline |
 | `template` | `TemplateEndpoint` | Template for custom endpoints |
+| `video_generation` | `VideoGenerationEndpoint` | Text-to-video generation API |
 
 ### Timing Strategies
 
@@ -386,19 +406,19 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 
 ### Plugin Not Found
 
-```
+```text
 TypeNotFoundError: Type 'my_plugin' not found for category 'endpoint'.
 ```
 
 **Solutions**:
 1. Verify the plugin is registered in `plugins.yaml`
 2. Check the entry point is defined in `pyproject.toml`
-3. Reinstall the package: `uv pip install -e .`
+3. Reinstall the package: `pip install -e .`
 4. Run `aiperf plugins --validate` to check for errors
 
 ### Module Import Errors
 
-```
+```text
 ImportError: Failed to import module for endpoint:my_plugin
 ```
 
@@ -409,7 +429,7 @@ ImportError: Failed to import module for endpoint:my_plugin
 
 ### Class Not Found
 
-```
+```text
 AttributeError: Class 'MyClass' not found
 ```
 
@@ -424,4 +444,4 @@ If your plugin is being shadowed by another:
 
 1. Use higher priority: `priority: 10` in `plugins.yaml`
 2. Access by full class path: `plugins.get_class("endpoint", "my_pkg.endpoints:MyEndpoint")`
-3. Check `aiperf plugins --packages` to see which packages are loaded
+3. Check `aiperf plugins` to see which packages are loaded
