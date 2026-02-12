@@ -43,7 +43,7 @@ The plugin system enables:
 
 **Hierarchy:**
 
-```
+```text
 Registry (singleton)
 └── Package (1+) ─── discovered via entry points
     └── Manifest (1+ per package) ─── plugins.yaml files
@@ -69,7 +69,7 @@ Registry (singleton)
 
 ### Discovery Flow
 
-```
+```text
 Entry Points → plugins.yaml → Pydantic Validation → Registry
                                                       ↓
                               get_class() → Import Module → Cache
@@ -406,7 +406,7 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 
 ### Plugin Not Found
 
-```
+```text
 TypeNotFoundError: Type 'my_plugin' not found for category 'endpoint'.
 ```
 
@@ -418,7 +418,7 @@ TypeNotFoundError: Type 'my_plugin' not found for category 'endpoint'.
 
 ### Module Import Errors
 
-```
+```text
 ImportError: Failed to import module for endpoint:my_plugin
 ```
 
@@ -429,7 +429,7 @@ ImportError: Failed to import module for endpoint:my_plugin
 
 ### Class Not Found
 
-```
+```text
 AttributeError: Class 'MyClass' not found
 ```
 

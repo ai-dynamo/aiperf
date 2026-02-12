@@ -38,7 +38,7 @@ Before diving in, understand the plugin system terminology:
 
 **What you're building:**
 
-```
+```text
 Package (my-aiperf-plugins)
 └── Manifest (plugins.yaml)
     └── Category (endpoint)
@@ -215,7 +215,7 @@ pip install -e .
 
 You should see:
 
-```
+```text
 Successfully installed my-aiperf-plugins-0.1.0
 ```
 
@@ -229,18 +229,18 @@ Confirm both packages are installed in the same environment:
 pip show aiperf my-aiperf-plugins
 ```
 
-You should see both packages with matching locations:
+You should see both packages listed in the same environment:
 
-```
+```text
 Name: aiperf
 Version: 0.6.0
-Location: .../site-packages
+Location: ...
 Requires: ...
 Required-by: my-aiperf-plugins
 ---
 Name: my-aiperf-plugins
 Version: 0.1.0
-Location: .../site-packages
+Location: ...
 Requires: aiperf
 Required-by:
 ```
@@ -254,7 +254,7 @@ aiperf plugins endpoint
 
 You should see your plugin in the table:
 
-```
+```text
 Endpoint Types
 ┌──────────────┬──────────────────────────────────────────────────────────────┐
 │ Type         │ Description                                                  │
@@ -272,7 +272,7 @@ aiperf plugins endpoint echo
 
 You should see:
 
-```
+```text
 ╭──────────────────────────── endpoint:echo ─────────────────────────────╮
 │ Type: echo                                                             │
 │ Category: endpoint                                                     │
@@ -291,7 +291,7 @@ aiperf plugins --validate
 
 You should see:
 
-```
+```text
 Validating plugins...
 
 ✓ Class paths
@@ -354,7 +354,7 @@ python echo_server.py &
 
 You should see:
 
-```
+```text
 INFO:     Started server process
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
@@ -389,7 +389,7 @@ aiperf profile \
 
 You should see:
 
-```
+```text
                             NVIDIA AIPerf | Echo Metrics
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━┓
 ┃                           Metric ┃       avg ┃    min ┃    max ┃    p99 ┃  std ┃
@@ -441,7 +441,7 @@ class TestEchoEndpoint:
 
 ### Data Flow
 
-```
+```text
 RequestInfo.turns[-1]  →  format_payload()  →  HTTP Request  →  Your API
                                                                     ↓
 ParsedResponse         ←  parse_response()  ←  HTTP Response ←────┘
@@ -477,7 +477,7 @@ ParsedResponse         ←  parse_response()  ←  HTTP Response ←────
 
 ### Plugin not found
 
-```
+```text
 TypeNotFoundError: Type 'echo' not found for category 'endpoint'.
 ```
 
@@ -488,7 +488,7 @@ TypeNotFoundError: Type 'echo' not found for category 'endpoint'.
 
 ### Import errors
 
-```
+```text
 ImportError: Failed to import module for endpoint:echo from 'my_plugins.endpoints.echo_endpoint:EchoEndpoint'
 Reason: ...
 Tip: Check that the module is installed and importable
