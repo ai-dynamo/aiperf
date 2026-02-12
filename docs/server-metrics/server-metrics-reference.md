@@ -546,4 +546,4 @@ Labels that appear across multiple metrics:
 
 ---
 
-*For detailed implementation and usage examples, see the [Server Metrics Tutorial](server-metrics.md). For aggregated statistics, see the [JSON Schema Reference](server_metrics_json_schema.md). For raw time-series analysis, see the [Parquet Schema Reference](server_metrics_parquet_schema.md).*
+*For detailed implementation and usage examples, see the [Server Metrics Tutorial](server-metrics.md). For aggregated statistics, see the [JSON Schema Reference](server-metrics-json-schema.md). For raw time-series analysis, see the [Parquet Schema Reference](server-metrics-parquet-schema.md).*

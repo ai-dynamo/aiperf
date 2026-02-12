@@ -309,4 +309,4 @@ result = duckdb.query("""
 
 ---
 
-*For aggregated statistics, see [JSON Schema](server_metrics_json_schema.md). For metric definitions, see [Server Metrics Reference](server_metrics_reference.md). For usage examples, see the [Server Metrics Tutorial](server-metrics.md).*
+*For aggregated statistics, see [JSON Schema](server-metrics-json-schema.md). For metric definitions, see [Server Metrics Reference](server-metrics-reference.md). For usage examples, see the [Server Metrics Tutorial](server-metrics.md).*

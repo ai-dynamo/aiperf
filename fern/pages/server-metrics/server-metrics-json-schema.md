@@ -35,12 +35,12 @@ Note: The `--url` endpoint (`localhost:10000`) is automatically scraped for serv
 - Include Parquet: `--server-metrics-formats json csv parquet`
 - JSON only: `--server-metrics-formats json`
 
-The Parquet format exports raw time-series data with delta calculations in columnar format, optimized for SQL analytics with DuckDB, pandas, or Polars. See [Parquet Schema Reference](server_metrics_parquet_schema.md) for the complete schema.
+The Parquet format exports raw time-series data with delta calculations in columnar format, optimized for SQL analytics with DuckDB, pandas, or Polars. See [Parquet Schema Reference](server-metrics-parquet-schema.md) for the complete schema.
 
 **Related documentation:**
 - [Server Metrics Tutorial](server-metrics.md) - Quick start guide and usage examples
-- [Server Metrics Reference](server_metrics_reference.md) - Metric definitions by backend (vLLM, SGLang, TRT-LLM, Dynamo)
-- [Parquet Schema Reference](server_metrics_parquet_schema.md) - Raw time-series data schema
+- [Server Metrics Reference](server-metrics-reference.md) - Metric definitions by backend (vLLM, SGLang, TRT-LLM, Dynamo)
+- [Parquet Schema Reference](server-metrics-parquet-schema.md) - Raw time-series data schema
 
 ### Data Access
 

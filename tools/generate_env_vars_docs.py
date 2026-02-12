@@ -39,7 +39,7 @@ from tools._core import (
 # =============================================================================
 
 ENV_FILE = Path("src/aiperf/common/environment.py")
-OUTPUT_FILE = Path("docs/environment_variables.md")
+OUTPUT_FILE = Path("docs/environment-variables.md")
 
 # =============================================================================
 # Data Models

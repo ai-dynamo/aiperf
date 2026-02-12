@@ -47,7 +47,7 @@ from tools._core import (
 # Configuration
 # =============================================================================
 
-OUTPUT_FILE = Path("docs/cli_options.md")
+OUTPUT_FILE = Path("docs/cli-options.md")
 
 # NumPy-style docstring section headers that terminate description extraction.
 # Google-style ("Args:", "Examples:") are handled separately with startswith().

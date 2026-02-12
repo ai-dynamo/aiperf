@@ -340,4 +340,4 @@ This creates smooth traffic curves without sudden jumps.
 
 - [Prefill Concurrency](./prefill-concurrency.md) — Memory-safe long-context benchmarking with prefill limiting
 - [Request Rate with Concurrency](./request-rate-concurrency.md) — Combining rate and concurrency controls
-- [Timing Modes Reference](../benchmark_modes/timing-modes-reference.md) — Complete CLI compatibility matrix
+- [Timing Modes Reference](../benchmark-modes/timing-modes-reference.md) — Complete CLI compatibility matrix

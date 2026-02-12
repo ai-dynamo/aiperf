@@ -393,4 +393,4 @@ Where `λ` = request rate and `k` = smoothness.
 
 - [Request Rate with Concurrency](./request-rate-concurrency.md) — Combining rate and concurrency
 - [Warmup Phase](./warmup.md) — Configuring warmup with different patterns
-- [Timing Modes Reference](../benchmark_modes/timing-modes-reference.md) — Complete CLI compatibility matrix
+- [Timing Modes Reference](../benchmark-modes/timing-modes-reference.md) — Complete CLI compatibility matrix

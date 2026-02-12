@@ -342,12 +342,12 @@ Raw time-series data with delta calculations applied. Uses a normalized schema (
 | `bucket_le`, `bucket_count` | string, float64 | Histogram bucket bound and delta count |
 | *(label columns)* | string | Dynamic columns from Prometheus labels |
 
-See [Parquet Schema Reference](server_metrics_parquet_schema.md) for complete schema, metadata, and query examples.
+See [Parquet Schema Reference](server-metrics-parquet-schema.md) for complete schema, metadata, and query examples.
 
 **Related documentation:**
-- [JSON Schema Reference](server_metrics_json_schema.md) - Complete JSON export format specification
-- [Server Metrics Reference](server_metrics_reference.md) - Metric definitions by backend (vLLM, SGLang, TRT-LLM, Dynamo)
-- [Parquet Schema Reference](server_metrics_parquet_schema.md) - Raw time-series data schema
+- [JSON Schema Reference](server-metrics-json-schema.md) - Complete JSON export format specification
+- [Server Metrics Reference](server-metrics-reference.md) - Metric definitions by backend (vLLM, SGLang, TRT-LLM, Dynamo)
+- [Parquet Schema Reference](server-metrics-parquet-schema.md) - Raw time-series data schema
 
 **Quick examples:**
 

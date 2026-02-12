@@ -554,4 +554,4 @@ except ValueError as e:
 ## See Also
 
 - [Prefix Synthesis Tutorial](../tutorials/prefix-synthesis.md)
-- [Trace Replay](../benchmark_modes/trace_replay.md)
+- [Trace Replay](../benchmark-modes/trace-replay.md)

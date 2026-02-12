@@ -166,4 +166,4 @@ JSON Export: artifacts/Qwen_Qwen2.5-7B-Instruct-chat-concurrency20/profile_expor
 
 - [Warmup Phase](./warmup.md) — Configure pre-benchmark warmup
 - [User-Centric Timing](./user-centric-timing.md) — Multi-turn benchmarking (auto-sets infinite grace)
-- [Timing Modes Reference](../benchmark_modes/timing-modes-reference.md) — Complete CLI compatibility matrix
+- [Timing Modes Reference](../benchmark-modes/timing-modes-reference.md) — Complete CLI compatibility matrix

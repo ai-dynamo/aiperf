@@ -126,7 +126,7 @@ The JSONL output contains one record per line, for each request sent during the 
 - `cancellation_time_ns`: Epoch time in nanoseconds when the request was cancelled (if applicable).
 
 **Metrics:**
-See the [Complete Metrics Reference](../metrics_reference.md) page for a list of all metrics and their descriptions. Will always be null for failed requests.
+See the [Complete Metrics Reference](../metrics-reference.md) page for a list of all metrics and their descriptions. Will always be null for failed requests.
 
 #### Failed Request Record
 

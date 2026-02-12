@@ -252,4 +252,4 @@ Requests arrive at 10 QPS, up to 100 can be active, but only 10 can prefill at o
 - [Gradual Ramping](./ramping.md) — Smooth ramp-up for all concurrency dimensions
 - [Request Rate with Concurrency](./request-rate-concurrency.md) — Combining rate and concurrency controls
 - [User-Centric Timing](./user-centric-timing.md) — Multi-turn benchmarking for KV cache
-- [Timing Modes Reference](../benchmark_modes/timing-modes-reference.md) — Complete CLI compatibility matrix
+- [Timing Modes Reference](../benchmark-modes/timing-modes-reference.md) — Complete CLI compatibility matrix

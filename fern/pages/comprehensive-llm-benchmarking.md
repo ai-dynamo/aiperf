@@ -39,14 +39,14 @@ pip install aiperf
 ```
 
 **Key Features in 0.5.0**:
-- ✅ [Server-side metrics collection](server_metrics/server-metrics.md) via Prometheus
+- ✅ [Server-side metrics collection](server-metrics/server-metrics.md) via Prometheus
 - ✅ [Automatic plot generation](tutorials/plot.md) (`aiperf plot` command)
 - ✅ [KV cache efficiency testing](tutorials/prefix-synthesis.md) with trace synthesis
 - ✅ [User-centric timing mode](tutorials/user-centric-timing.md) for multi-turn KV cache TTL testing
 - ✅ [Goodput analysis](tutorials/goodput.md) for SLA compliance measurement
 - ✅ [Time-sliced analysis](tutorials/timeslices.md) for performance trends over time
 
-**📚 Documentation**: See the full [CLI Options Reference](cli_options.md) for all available parameters.
+**📚 Documentation**: See the full [CLI Options Reference](cli-options.md) for all available parameters.
 
 ---
 
@@ -352,7 +352,7 @@ Percentiles (ms):
 
 **Goal**: Test your system under realistic production workload patterns using privacy-preserving traces.
 
-**📚 Documentation**: See [Benchmark Datasets](benchmark_datasets.md) for supported dataset formats and [Trace Replay Mode](benchmark_modes/trace_replay.md) for detailed configuration.
+**📚 Documentation**: See [Benchmark Datasets](benchmark-datasets.md) for supported dataset formats and [Trace Replay Mode](benchmark-modes/trace-replay.md) for detailed configuration.
 
 ### What is Mooncake Trace Data?
 
@@ -486,7 +486,7 @@ aiperf profile \
 | **KV Cache** | No reuse patterns | Real cache-sharing patterns |
 | **Use Case** | Steady-state capacity | Production validation |
 
-**📚 Documentation**: See the [Timing Modes Reference](benchmark_modes/timing-modes-reference.md) for all supported timing modes.
+**📚 Documentation**: See the [Timing Modes Reference](benchmark-modes/timing-modes-reference.md) for all supported timing modes.
 
 ### Why Trace-Based Benchmarking Matters
 
@@ -908,7 +908,7 @@ aiperf profile \
 
 ### Server-Side Metrics Collection
 
-AIPerf can collect server-side metrics from Prometheus endpoints exposed by your inference server (e.g., vLLM, TensorRT-LLM). See the [Server Metrics Guide](server_metrics/server-metrics.md) for detailed configuration and the [Server Metrics Reference](server_metrics/server_metrics_reference.md) for supported metrics.
+AIPerf can collect server-side metrics from Prometheus endpoints exposed by your inference server (e.g., vLLM, TensorRT-LLM). See the [Server Metrics Guide](server-metrics/server-metrics.md) for detailed configuration and the [Server Metrics Reference](server-metrics/server-metrics-reference.md) for supported metrics.
 
 ```bash
 # Auto-discovers Prometheus metrics endpoint from your server URL

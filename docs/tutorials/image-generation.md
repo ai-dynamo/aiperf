@@ -257,19 +257,19 @@ Prompt:
 ```
 {"text": "A serene mountain landscape at sunset"}
 ```
-![](../media/extracted_images/image_0001_00_00.jpg)
+![](../media/extracted-images/image-0001-00-00.jpg)
 
 Prompt:
 ```
 {"text": "A futuristic city with flying cars"}
 ```
-![](../media/extracted_images/image_0002_00_00.jpg)
+![](../media/extracted-images/image-0002-00-00.jpg)
 
 Prompt:
 ```
 {"text": "A cute robot playing with a kitten"}
 ```
-![](../media/extracted_images/image_0003_00_00.jpg)
+![](../media/extracted-images/image-0003-00-00.jpg)
 
 ## Conclusion
 
