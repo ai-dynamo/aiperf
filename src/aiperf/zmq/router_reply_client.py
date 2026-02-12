@@ -211,12 +211,15 @@ class ZMQRouterReplyClient(BaseZMQClient):
                 self._msg_count += 1
                 # Yield periodically to allow scheduled handlers to run
                 # and prevent event loop starvation during message bursts.
-                if self._yield_interval > 0 and self._msg_count >= self._yield_interval:
+                if (
+                    self._yield_interval > 0
+                    and self._msg_count % self._yield_interval == 0
+                ):
                     await yield_to_event_loop()
 
-            except Exception as e:
-                self.exception(f"Exception receiving request: {e}")
-                await yield_to_event_loop()
             except asyncio.CancelledError:
                 self.debug("Router reply client receiver task cancelled")
                 break
+            except Exception as e:
+                self.exception(f"Exception receiving request: {e}")
+                await yield_to_event_loop()

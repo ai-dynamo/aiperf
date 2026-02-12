@@ -8,8 +8,8 @@ from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.models import MetricResult, ProfileResults
 from aiperf.exporters.console_metrics_exporter import ConsoleMetricsExporter
-from aiperf.exporters.display_units_utils import to_display_unit
 from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.metrics.display_units import to_display_unit
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
 from aiperf.metrics.types.credit_drop_latency_metric import CreditDropLatencyMetric

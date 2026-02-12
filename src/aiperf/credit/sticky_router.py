@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from aiperf.common.config import ServiceConfig
+from aiperf.common.config.zmq_config import ZMQDualBindConfig
 from aiperf.common.enums import CommAddress
 from aiperf.common.mixins import CommunicationMixin
 from aiperf.common.protocols import StreamingRouterClientProtocol
@@ -191,10 +192,25 @@ class StickyCreditRouter(CommunicationMixin):
     ) -> None:
         super().__init__(service_config=service_config, service_id=service_id, **kwargs)
 
+        # For dual-bind mode (Kubernetes), also bind to TCP for remote workers.
+        # Controller services use IPC (fast, same-pod) but workers connect via TCP.
+        # Only bind to TCP if we're in controller mode (controller_host not set).
+        additional_bind_address: str | None = None
+        comm_config = service_config.comm_config
+        if (
+            isinstance(comm_config, ZMQDualBindConfig)
+            and not comm_config.controller_host
+        ):
+            additional_bind_address = comm_config.credit_router_tcp_bind_address
+            self.info(
+                f"Dual-bind mode: credit router will also bind to {additional_bind_address}"
+            )
+
         self._router_client: StreamingRouterClientProtocol = (
             self.comms.create_streaming_router_client(
                 address=CommAddress.CREDIT_ROUTER,
                 bind=True,
+                additional_bind_address=additional_bind_address,
             )
         )
         self._router_client.register_receiver(self._handle_router_message)
@@ -448,9 +464,8 @@ class StickyCreditRouter(CommunicationMixin):
 
         self._workers_cache = list(self._workers.values())
 
-        if (
-            not worker_load
-            or worker_load.in_flight_credits == self._min_load
+        if not worker_load or (
+            worker_load.in_flight_credits == self._min_load
             and len(self._workers_by_load[self._min_load]) == 0
         ):
             # Recalculate min_load if the removed worker was the last at the current minimum.

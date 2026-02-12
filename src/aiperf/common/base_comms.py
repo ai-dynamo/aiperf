@@ -43,6 +43,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         bind: bool = False,
         socket_ops: dict | None = None,
         max_pull_concurrency: int | None = None,
+        additional_bind_address: str | None = None,
         **kwargs: Any,
     ) -> CommunicationClientProtocol:
         """Create a communication client for a given client type and address.
@@ -53,6 +54,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
             bind: Whether to bind or connect the socket.
             socket_ops: Additional socket options to set.
             max_pull_concurrency: The maximum number of concurrent pull requests to allow. (Only used for pull clients)
+            additional_bind_address: Optional second address to bind to for dual-bind mode (e.g., IPC + TCP).
             **kwargs: Additional keyword arguments passed to specific client types (e.g., identity for DEALER).
         """
 
@@ -95,6 +97,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         bind: bool = False,
         socket_ops: dict | None = None,
         max_pull_concurrency: int | None = None,
+        additional_bind_address: str | None = None,
     ) -> PullClientProtocol:
         return cast(
             PullClientProtocol,
@@ -104,6 +107,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
                 bind,
                 socket_ops,
                 max_pull_concurrency=max_pull_concurrency,
+                additional_bind_address=additional_bind_address,
             ),
         )
 
@@ -134,11 +138,16 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         address: CommAddressType,
         bind: bool = True,
         socket_ops: dict | None = None,
+        additional_bind_address: str | None = None,
     ) -> StreamingRouterClientProtocol:
         return cast(
             StreamingRouterClientProtocol,
             self.create_client(
-                CommClientType.STREAMING_ROUTER, address, bind, socket_ops
+                CommClientType.STREAMING_ROUTER,
+                address,
+                bind,
+                socket_ops,
+                additional_bind_address=additional_bind_address,
             ),
         )
 

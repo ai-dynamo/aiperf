@@ -128,3 +128,46 @@ class TestMooncakeTraceIntegration:
 
         assert result.request_count == request_count
         assert result.has_all_outputs
+
+    async def test_mooncake_trace_text_input_with_synthesis_speedup(
+        self,
+        cli: AIPerfCLI,
+        aiperf_mock_server: AIPerfMockServer,
+        tmp_path: Path,
+    ):
+        """Test that text_input traces work with synthesis speedup parameter.
+
+        This is a regression test for the bug where synthesis would add input_length
+        to traces with text_input, causing validation errors. Speedup should work
+        with text_input since it only modifies timestamps, not the text content.
+        """
+        traces = [
+            {"timestamp": 1000, "text_input": "What is AI?", "output_length": 50},
+            {"timestamp": 2000, "text_input": "Explain quantum computing", "output_length": 100},
+            {"timestamp": 3000, "text_input": "How does machine learning work?", "output_length": 75},
+            {"timestamp": 4000, "text_input": "What are neural networks?", "output_length": 80},
+            {"timestamp": 5000, "text_input": "Describe the benefits of cloud computing", "output_length": 120},
+        ]  # fmt: skip
+        trace_file = create_mooncake_trace_file(tmp_path, traces)
+        request_count = len(traces)
+
+        # Use synthesis-speedup-ratio to compress timeline
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --url {aiperf_mock_server.url} \
+                --endpoint-type chat \
+                --input-file {trace_file} \
+                --custom-dataset-type mooncake_trace \
+                --request-count {request_count} \
+                --fixed-schedule \
+                --synthesis-speedup-ratio 2.0 \
+                --workers-max {defaults.workers_max} \
+                --ui {defaults.ui}
+            """
+        )
+
+        # Should complete without validation errors
+        assert result.request_count == request_count
+        assert result.has_all_outputs

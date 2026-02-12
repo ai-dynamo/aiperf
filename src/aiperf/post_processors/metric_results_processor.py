@@ -4,13 +4,20 @@ from collections.abc import Callable
 from typing import Any
 
 from aiperf.common.config import UserConfig
-from aiperf.common.enums import MetricDictValueTypeT, MetricType, MetricValueTypeT
+from aiperf.common.enums import (
+    MetricDictValueTypeT,
+    MetricFlags,
+    MetricType,
+    MetricValueTypeT,
+)
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.models import MetricResult
 from aiperf.common.types import MetricTagT
 from aiperf.metrics import BaseAggregateMetric
 from aiperf.metrics.base_metric import BaseMetric
+from aiperf.metrics.display_units import to_display_unit
 from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
@@ -132,17 +139,43 @@ class MetricResultsProcessor(BaseMetricsProcessor):
             except Exception as e:
                 self.warning(f"Error deriving metric '{tag}': {e!r}")
 
+    def _should_include_in_summary(self, tag: str) -> bool:
+        """Check if a metric should be included in summarize() output.
+
+        INTERNAL and EXPERIMENTAL metrics are computed (they may be dependencies
+        of other metrics) but filtered from output unless dev mode flags are set.
+        """
+        metric_instance = self._instances_map[tag]
+
+        # Filter INTERNAL metrics unless SHOW_INTERNAL_METRICS is enabled
+        if (
+            metric_instance.has_flags(MetricFlags.INTERNAL)
+            and not Environment.DEV.SHOW_INTERNAL_METRICS
+        ):
+            return False
+
+        # Filter EXPERIMENTAL metrics unless SHOW_EXPERIMENTAL_METRICS is enabled
+        return not (
+            metric_instance.has_flags(MetricFlags.EXPERIMENTAL)
+            and not Environment.DEV.SHOW_EXPERIMENTAL_METRICS
+        )
+
     async def summarize(self) -> list[MetricResult]:
         """Summarize the results.
 
         This will compute the values for the derived metrics, and then create the MetricResult objects for each metric.
+        Results are returned in display units so consumers can use them directly.
+
+        Note: INTERNAL and EXPERIMENTAL metrics are computed (as they may be dependencies)
+        but filtered from output unless dev mode flags are enabled.
         """
         await self.update_derived_metrics()
 
-        # Compute and return the metric results.
+        # Compute metric results, filter internal/experimental, and convert to display units
         results = [
-            self._create_metric_result(tag, values)
+            to_display_unit(self._create_metric_result(tag, values), MetricRegistry)
             for tag, values in self._results.items()
+            if self._should_include_in_summary(tag)
         ]
         self.debug(lambda: f"Summarized {len(results)} metric results")
         return results

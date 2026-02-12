@@ -142,19 +142,12 @@ def show_type_details(category: str, name: str) -> None:
 
 def run_validate() -> None:
     """Validate all registered plugins."""
-    from aiperf.plugin.validate import validate_alphabetical_order, validate_registry
-
     console.print("[bold]Validating plugins...[/bold]\n")
 
     checks = [
         (
-            "Alphabetical order",
-            validate_alphabetical_order(),
-            lambda cat, msgs: [f"{cat}: {m}" for m in msgs],
-        ),
-        (
             "Class paths",
-            validate_registry(check_class=True),
+            plugins.validate_all(check_class=True),
             lambda cat, errs: [f"{cat}:{n} - {e}" for n, e in errs],
         ),
     ]

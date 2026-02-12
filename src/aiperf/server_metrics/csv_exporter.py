@@ -16,9 +16,9 @@ from aiperf.common.models.server_metrics_models import (
     HistogramSeries,
     ServerMetricsEndpointSummary,
 )
-from aiperf.exporters.display_units_utils import normalize_endpoint_display
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
+from aiperf.exporters.utils import normalize_endpoint_display
 from aiperf.server_metrics.units import infer_unit
 
 # Base headers at the start of each row
@@ -157,13 +157,7 @@ class ServerMetricsCsvExporter(MetricsBaseExporter):
         buf = io.StringIO()
         writer = csv.writer(buf)
 
-        # Get AIPerf version from installed package
-        from importlib.metadata import version as get_version
-
-        try:
-            aiperf_version = get_version("aiperf")
-        except Exception:
-            aiperf_version = "unknown"
+        from aiperf import __version__ as aiperf_version
 
         # Add metadata as comments at the top of the file
         buf.write("# AIPerf Server Metrics Export (CSV)\n")

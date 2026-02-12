@@ -294,6 +294,7 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         bind: bool = False,
         socket_ops: dict | None = None,
         max_pull_concurrency: int | None = None,
+        additional_bind_address: str | None = None,
     ) -> PullClientProtocol:
         """Create a PULL client for the given address, which will be automatically
         started and stopped with the CommunicationProtocol instance."""
@@ -324,6 +325,7 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         address: CommAddressType,
         bind: bool = True,
         socket_ops: dict | None = None,
+        additional_bind_address: str | None = None,
     ) -> StreamingRouterClientProtocol:
         """Create a STREAMING_ROUTER client for the given address, which will be automatically
         started and stopped with the CommunicationProtocol instance."""

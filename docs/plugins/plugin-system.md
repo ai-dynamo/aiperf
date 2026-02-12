@@ -317,7 +317,7 @@ plugins.register("endpoint", "test", TestEndpoint, priority=10)
 plugins.reset_registry()  # Reset to initial state
 
 # Dynamic enum generation
-MyEndpointType = plugins.create_enum(PluginType.ENDPOINT, "MyEndpointType")
+MyEndpointType = plugins.create_enum(PluginType.ENDPOINT, "MyEndpointType", module=__name__)
 
 # Validation without importing
 errors = plugins.validate_all(check_class=True)  # {category: [(name, error), ...]}
