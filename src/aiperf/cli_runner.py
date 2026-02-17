@@ -14,8 +14,6 @@ def run_system_controller(
     service_config: ServiceConfig,
 ) -> None:
     """Run the system controller with the given configuration."""
-    # Suppress the resource tracker's "leaked semaphore" warning on shutdown.
-    _suppress_resource_tracker_warnings()
 
     # NOTE: On macOS, when using the Textual UI with multiprocessing, terminal corruption
     # (ASCII garbage, freezing) can occur when mouse events interfere with child processes.
@@ -109,27 +107,3 @@ def run_system_controller(
         raise
     finally:
         logger.debug("AIPerf System exited")
-
-
-def _suppress_resource_tracker_warnings() -> None:
-    """Suppress the resource tracker's "leaked semaphore" warning on shutdown.
-
-    This is because the System Controller calls os._exit() on shutdown, which does not
-    allow for cleanup of the resource tracker semaphores (OS will handle cleanup).
-
-    This MUST be set via env var because the resource tracker runs as a separate daemon
-    process that inherits the environment but NOT Python's in-memory warning filters.
-
-    The message field is left empty because regex patterns are not supported in Python < 3.14.
-    Additionally, `:` in the message breaks field parsing since PYTHONWARNINGS uses `:` as the delimiter.
-    """
-    import os
-
-    _RESOURCE_TRACKER_FILTER = "ignore::UserWarning:multiprocessing.resource_tracker"
-    _existing_warnings = os.environ.get("PYTHONWARNINGS", "")
-    if _RESOURCE_TRACKER_FILTER not in _existing_warnings:
-        os.environ["PYTHONWARNINGS"] = (
-            f"{_existing_warnings},{_RESOURCE_TRACKER_FILTER}"
-            if _existing_warnings
-            else _RESOURCE_TRACKER_FILTER
-        )
