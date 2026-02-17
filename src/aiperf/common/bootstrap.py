@@ -23,16 +23,6 @@ warnings.filterwarnings(
     module="zmq._future",
 )
 
-# Suppress multiprocessing semaphore leak warnings during shutdown.
-# These occur when processes are terminated before cleaning up their semaphores,
-# which is expected during Ctrl+C cancellation.
-warnings.filterwarnings(
-    "ignore",
-    message=".*leaked semaphore.*",
-    category=UserWarning,
-    module="multiprocessing.resource_tracker",
-)
-
 
 def bootstrap_and_run_service(
     service_type: ServiceType,
