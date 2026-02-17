@@ -7,6 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 
 This tutorial walks you through creating a custom AIPerf endpoint plugin from scratch. By the end, you'll have a working plugin package that can benchmark any custom API.
 
+> [!TIP]
+> **Contributing directly to AIPerf?** The endpoint class (Step 2) and manifest format (Step 3) are the same, but you can skip the external packaging:
+> - Add your class under `src/aiperf/` instead of a separate package
+> - Register it in the existing `src/aiperf/plugin/plugins.yaml` instead of creating a new one
+> - Skip: Project Structure, Step 1 (pyproject.toml/entry points), Step 4 (install)
+
 ## What You'll Build
 
 We'll create a plugin for a hypothetical "Echo API" that returns the input text with some metadata. This simple example demonstrates all the core concepts you need to build more complex plugins.
@@ -14,7 +20,7 @@ We'll create a plugin for a hypothetical "Echo API" that returns the input text 
 ## Prerequisites
 
 - Python 3.10+
-- AIPerf installed (`uv pip install aiperf`)
+- AIPerf installed (`pip install aiperf`)
 - Basic understanding of Python async/await and Pydantic
 
 ## Key Concepts
@@ -32,7 +38,7 @@ Before diving in, understand the plugin system terminology:
 
 **What you're building:**
 
-```
+```text
 Package (my-aiperf-plugins)
 └── Manifest (plugins.yaml)
     └── Category (endpoint)
@@ -47,8 +53,27 @@ For complete plugin system documentation, see the [Plugin System Reference](./pl
 
 Create a new directory for your plugin package:
 
+```bash
+PKG=my-aiperf-plugins
+SRC=$PKG/src/my_plugins
+
+mkdir -p $SRC/endpoints $PKG/tests
+touch $PKG/pyproject.toml \
+      $PKG/echo_server.py \
+      $SRC/__init__.py \
+      $SRC/plugins.yaml \
+      $SRC/endpoints/__init__.py \
+      $SRC/endpoints/echo_endpoint.py \
+      $PKG/tests/test_echo_endpoint.py
+tree $PKG
+cd $PKG
 ```
+
+You should see:
+
+```text
 my-aiperf-plugins/
+├── echo_server.py
 ├── pyproject.toml
 ├── src/
 │   └── my_plugins/
@@ -60,6 +85,8 @@ my-aiperf-plugins/
 └── tests/
     └── test_echo_endpoint.py
 ```
+
+Now fill in each file in the steps below.
 
 ## Step 1: Create the Project Files
 
@@ -127,11 +154,13 @@ class EchoEndpoint(BaseEndpoint):
     # ─────────────────────────────────────────────────────────────────────────
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         turn = request_info.turns[-1]
+        model_endpoint = request_info.model_endpoint
+        texts = [content for text in turn.texts for content in text.contents if content]
         return {
-            "text": turn.texts[0].contents[0] if turn.texts else "",
-            "model": turn.model or self.model_endpoint.primary_model_name,
+            "text": texts[0] if texts else "",
+            "model": turn.model or model_endpoint.primary_model_name,
             "max_tokens": turn.max_tokens,
-            "stream": self.model_endpoint.endpoint.streaming,
+            "stream": model_endpoint.endpoint.streaming,
         }
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -156,6 +185,7 @@ class EchoEndpoint(BaseEndpoint):
 ### src/my_plugins/plugins.yaml
 
 ```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ai-dynamo/aiperf/refs/heads/main/src/aiperf/plugin/schema/plugins.schema.json
 schema_version: "1.0"
 
 # Register your endpoint
@@ -177,65 +207,205 @@ endpoint:
 
 ## Step 4: Install Your Plugin
 
-From your plugin directory:
+From your plugin directory, install into the **same Python environment** where AIPerf is installed. AIPerf discovers plugins via entry points, which only works when both packages share the same environment.
 
 ```bash
-uv pip install -e .
+pip install -e .
 ```
 
+You should see:
+
+```text
+Successfully installed my-aiperf-plugins-0.1.0
+```
+
+> **Important**: If you use `uv`, virtual environments, or conda, make sure you activate the environment where AIPerf is installed before running `pip install`.
+
 ## Step 5: Verify Installation
+
+Confirm both packages are installed in the same environment:
+
+```bash
+pip show aiperf my-aiperf-plugins
+```
+
+You should see both packages listed in the same environment:
+
+```text
+Name: aiperf
+Version: 0.6.0
+Location: ...
+Requires: ...
+Required-by: my-aiperf-plugins
+---
+Name: my-aiperf-plugins
+Version: 0.1.0
+Location: ...
+Requires: aiperf
+Required-by:
+```
 
 Check that AIPerf discovers your plugin:
 
 ```bash
 # List all plugins - your echo endpoint should appear
 aiperf plugins endpoint
-
-# View details about your endpoint
-aiperf plugins endpoint echo
-
-# Validate your plugin
-aiperf plugins --validate
 ```
 
-You should see output like:
+You should see your plugin in the table:
 
-```
+```text
 Endpoint Types
 ┌──────────────┬──────────────────────────────────────────────────────────────┐
 │ Type         │ Description                                                  │
 ├──────────────┼──────────────────────────────────────────────────────────────┤
 │ chat         │ OpenAI Chat Completions endpoint...                          │
-│ echo         │ Echo endpoint for testing. Sends text to an Echo API...      │
 │ ...          │ ...                                                          │
+│ echo         │ Echo endpoint for testing. Sends text to an Echo API...      │
 └──────────────┴──────────────────────────────────────────────────────────────┘
 ```
 
-## Step 6: Use Your Plugin
+```bash
+# View details about your endpoint
+aiperf plugins endpoint echo
+```
 
-Now you can use your endpoint with AIPerf:
+You should see:
+
+```text
+╭──────────────────────────── endpoint:echo ─────────────────────────────╮
+│ Type: echo                                                             │
+│ Category: endpoint                                                     │
+│ Package: my-plugins                                                    │
+│ Class: my_plugins.endpoints.echo_endpoint:EchoEndpoint                 │
+│                                                                        │
+│ Echo endpoint for testing. Sends text to an Echo API and receives it   │
+│ back. Useful for testing connectivity and basic benchmarking.          │
+╰────────────────────────────────────────────────────────────────────────╯
+```
 
 ```bash
-# Basic usage
+# Validate your plugin
+aiperf plugins --validate
+```
+
+You should see:
+
+```text
+Validating plugins...
+
+✓ Class paths
+
+All checks passed
+```
+
+## Step 6: Create a Test Server
+
+To test your plugin end-to-end, create a minimal Echo API server. Save this as `echo_server.py` in your project root:
+
+```python
+"""Minimal Echo API server for testing the EchoEndpoint plugin."""
+from __future__ import annotations
+
+import asyncio
+
+import cyclopts
+import orjson
+import uvicorn
+from fastapi import FastAPI
+from fastapi.responses import ORJSONResponse, StreamingResponse
+
+app = FastAPI()
+cli = cyclopts.App()
+
+@app.post("/echo", response_model=None)
+async def echo(body: dict) -> ORJSONResponse | StreamingResponse:
+    echo_text = f"[echo] {body.get('text', '')}"
+    model = body.get("model", "echo-model")
+
+    if not body.get("stream"):
+        return ORJSONResponse({"echo": echo_text, "model": model})
+
+    async def sse():
+        for i, word in enumerate(echo_text.split()):
+            chunk = orjson.dumps({"echo": word if i == 0 else f" {word}", "model": model})
+            yield b"data: " + chunk + b"\n\n"
+            await asyncio.sleep(0.02)
+        yield b"data: [DONE]\n\n"
+
+    return StreamingResponse(sse(), media_type="text/event-stream")
+
+
+@cli.default
+def main(host: str = "127.0.0.1", port: int = 8000) -> None:
+    uvicorn.run(app, host=host, port=port)
+
+
+if __name__ == "__main__":
+    cli()
+```
+
+Start the server:
+
+```bash
+pip install fastapi uvicorn orjson cyclopts
+python echo_server.py &
+```
+
+You should see:
+
+```text
+INFO:     Started server process
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+```
+
+## Step 7: Use Your Plugin
+
+With the test server running, use your endpoint with AIPerf:
+
+```bash
+# Basic usage (endpoint_path: /echo from metadata is appended automatically)
 aiperf profile \
   --model echo-model \
-  --url http://localhost:8000/echo \
+  --url http://localhost:8000 \
   --endpoint-type echo \
+  --tokenizer gpt2 \
   --synthetic-input-tokens-mean 100 \
   --request-count 10
 
 # With custom configuration
 aiperf profile \
   --model echo-model \
-  --url http://localhost:8000/echo \
+  --url http://localhost:8000 \
   --endpoint-type echo \
+  --tokenizer gpt2 \
   --extra-inputs echo_prefix:"[ECHO] " \
   --synthetic-input-tokens-mean 100 \
   --concurrency 4 \
   --request-count 100
 ```
 
-## Step 7: Add Tests
+You should see:
+
+```text
+                            NVIDIA AIPerf | Echo Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━┓
+┃                           Metric ┃       avg ┃    min ┃    max ┃    p99 ┃  std ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━┩
+│             Request Latency (ms) │      2.05 │   0.29 │  15.42 │  14.18 │ 4.47 │
+│  Output Sequence Length (tokens) │    104.00 │ 104.00 │ 104.00 │ 104.00 │ 0.00 │
+│   Input Sequence Length (tokens) │    100.00 │ 100.00 │ 100.00 │ 100.00 │ 0.00 │
+│          Output Token Throughput │ 40,850.61 │    N/A │    N/A │    N/A │  N/A │
+│                     (tokens/sec) │           │        │        │        │      │
+│               Request Throughput │    392.79 │    N/A │    N/A │    N/A │  N/A │
+│                   (requests/sec) │           │        │        │        │      │
+│         Request Count (requests) │     10.00 │    N/A │    N/A │    N/A │  N/A │
+└──────────────────────────────────┴───────────┴────────┴────────┴────────┴──────┘
+```
+
+## Step 8: Add Tests
 
 ### tests/test_echo_endpoint.py
 
@@ -271,7 +441,7 @@ class TestEchoEndpoint:
 
 ### Data Flow
 
-```
+```text
 RequestInfo.turns[-1]  →  format_payload()  →  HTTP Request  →  Your API
                                                                     ↓
 ParsedResponse         ←  parse_response()  ←  HTTP Response ←────┘
@@ -289,11 +459,11 @@ ParsedResponse         ←  parse_response()  ←  HTTP Response ←────
 
 | Field | Required | Purpose |
 |-------|----------|---------|
-| `endpoint_path` | Yes | Default API path (e.g., `/v1/chat/completions`) |
+| `endpoint_path` | Yes (nullable) | Default API path (e.g., `/v1/chat/completions`) |
 | `supports_streaming` | Yes | SSE streaming support |
 | `produces_tokens` | Yes | Enables token metrics |
 | `tokenizes_input` | Yes | Enables input tokenization |
-| `metrics_title` | No | Dashboard display name |
+| `metrics_title` | Yes | Dashboard display name (nullable) |
 
 ## Next Steps
 
@@ -307,19 +477,21 @@ ParsedResponse         ←  parse_response()  ←  HTTP Response ←────
 
 ### Plugin not found
 
-```
+```text
 TypeNotFoundError: Type 'echo' not found for category 'endpoint'.
 ```
 
 **Solutions:**
-1. Ensure `uv pip install -e .` completed successfully
+1. Ensure `pip install -e .` completed successfully
 2. Check the entry point in `pyproject.toml` matches your package structure
 3. Run `aiperf plugins --validate` to check for errors
 
 ### Import errors
 
-```
-ImportError: Failed to import module for endpoint:echo
+```text
+ImportError: Failed to import module for endpoint:echo from 'my_plugins.endpoints.echo_endpoint:EchoEndpoint'
+Reason: ...
+Tip: Check that the module is installed and importable
 ```
 
 **Solutions:**

@@ -654,14 +654,18 @@ class TestCreateEnum:
 
     def test_create_enum_basic(self, registry_with_types: _PluginRegistry) -> None:
         """create_enum() creates enum from registered types."""
-        enum_cls = registry_with_types.create_enum("test_category", "TestEnum")
+        enum_cls = registry_with_types.create_enum(
+            "test_category", "TestEnum", module=__name__
+        )
         assert issubclass(enum_cls, ExtensibleStrEnum)
         assert hasattr(enum_cls, "TYPE_A")
         assert hasattr(enum_cls, "TYPE_B")
 
     def test_create_enum_values(self, registry_with_types: _PluginRegistry) -> None:
         """create_enum() creates correct enum values."""
-        enum_cls = registry_with_types.create_enum("test_category", "TestEnum")
+        enum_cls = registry_with_types.create_enum(
+            "test_category", "TestEnum", module=__name__
+        )
         assert enum_cls.TYPE_A.value == "type_a"
         assert enum_cls.TYPE_B.value == "type_b"
 
@@ -670,13 +674,15 @@ class TestCreateEnum:
     ) -> None:
         """create_enum() raises KeyError for empty category."""
         with pytest.raises(KeyError, match="No types registered"):
-            registry_with_types.create_enum("nonexistent", "TestEnum")
+            registry_with_types.create_enum("nonexistent", "TestEnum", module=__name__)
 
     def test_create_enum_stores_category(
         self, registry_with_types: _PluginRegistry
     ) -> None:
         """create_enum() stores plugin category on enum."""
-        enum_cls = registry_with_types.create_enum("test_category", "TestEnum")
+        enum_cls = registry_with_types.create_enum(
+            "test_category", "TestEnum", module=__name__
+        )
         assert enum_cls._plugin_category_ == "test_category"
 
 

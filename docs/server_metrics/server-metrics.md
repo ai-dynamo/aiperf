@@ -104,6 +104,17 @@ AIPerf automatically:
    - `server_metrics_export.jsonl` - Time-series data (all scrapes, opt-in only)
    - `server_metrics_export.parquet` - Raw time-series with delta calculations (opt-in only)
 
+> [!NOTE]
+> **Custom file naming:** The `--profile-export-prefix` (or `--profile-export-file`) flag changes the prefix for all export files, including server metrics. Any file extension is automatically stripped from the provided value. For example:
+> ```bash
+> aiperf profile --model MODEL ... --profile-export-prefix my_benchmark
+> # Produces: my_benchmark_server_metrics.json, my_benchmark_server_metrics.csv, etc.
+>
+> # --profile-export-file is an alias for --profile-export-prefix, so this is equivalent:
+> aiperf profile --model MODEL ... --profile-export-file my_benchmark.json
+> # Produces the same files (the .json extension is stripped automatically)
+> ```
+
 **Time filtering:** Statistics in JSON/CSV exports exclude the warmup period, showing only metrics from the profiling phase. The JSONL file contains all scrapes (including warmup) for complete time-series analysis.
 
 **Format selection:** By default, only JSON and CSV formats are generated to avoid large JSONL files. To include JSONL for time-series analysis:
@@ -157,6 +168,9 @@ aiperf profile --model MODEL ... --server-metrics-formats json csv jsonl parquet
 | `AIPERF_SERVER_METRICS_SHUTDOWN_DELAY` | 5.0s | Shutdown delay for command response transmission |
 
 ## Output Files
+
+> [!NOTE]
+> The filenames below are defaults. When `--profile-export-prefix <prefix>` is used, server metrics files are named `<prefix>_server_metrics.{json,csv,jsonl,parquet}` (any file extension in the prefix is stripped automatically). All files are written to the artifact directory (`--artifact-directory`, default: `./artifacts/<run_info>`).
 
 ### 1. Time-Series: `server_metrics_export.jsonl`
 

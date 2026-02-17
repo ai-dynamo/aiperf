@@ -349,48 +349,48 @@ class TestCreateEnum:
 
     def test_basic_creation(self):
         """create_enum creates enum from dict."""
-        MyEnum = create_enum("MyEnum", {"ONE": "one", "TWO": "two"})
+        MyEnum = create_enum("MyEnum", {"ONE": "one", "TWO": "two"}, module=__name__)
         assert MyEnum.ONE.value == "one"
         assert MyEnum.TWO.value == "two"
 
     def test_extensible(self):
         """Created enum supports registration."""
-        MyEnum = create_enum("MyEnum", {"BASE": "base"})
+        MyEnum = create_enum("MyEnum", {"BASE": "base"}, module=__name__)
         MyEnum.register("EXT", "ext")
         assert MyEnum.EXT.value == "ext"
 
     def test_case_insensitive(self):
         """Created enum supports case-insensitive lookup."""
-        MyEnum = create_enum("MyEnum", {"ITEM": "item"})
+        MyEnum = create_enum("MyEnum", {"ITEM": "item"}, module=__name__)
         assert MyEnum("item") == MyEnum.ITEM
         assert MyEnum("ITEM") == MyEnum.ITEM
         assert MyEnum("Item") == MyEnum.ITEM
 
     def test_str_subclass(self):
         """Created enum members are str subclass."""
-        MyEnum = create_enum("MyEnum", {"ITEM": "item"})
+        MyEnum = create_enum("MyEnum", {"ITEM": "item"}, module=__name__)
         assert isinstance(MyEnum.ITEM, str)
 
     def test_iteration_and_len(self):
         """Created enum supports iteration and len."""
-        MyEnum = create_enum("MyEnum", {"A": "a", "B": "b", "C": "c"})
+        MyEnum = create_enum("MyEnum", {"A": "a", "B": "b", "C": "c"}, module=__name__)
         assert len(MyEnum) == 3
         values = sorted(m.value for m in MyEnum)
         assert values == ["a", "b", "c"]
 
-    def test_module_auto_detection(self):
-        """create_enum auto-detects caller's module."""
-        MyEnum = create_enum("MyEnum", {"ITEM": "item"})
-        assert MyEnum.__module__ == __name__
+    def test_module_required(self):
+        """create_enum requires module parameter."""
+        with pytest.raises(TypeError):
+            create_enum("MyEnum", {"ITEM": "item"})  # type: ignore[call-arg]
 
     def test_module_explicit(self):
-        """create_enum accepts explicit module."""
+        """create_enum sets module from explicit argument."""
         MyEnum = create_enum("MyEnum", {"ITEM": "item"}, module="custom.module")
         assert MyEnum.__module__ == "custom.module"
 
     def test_empty_members(self):
         """create_enum handles empty dict."""
-        MyEnum = create_enum("EmptyEnum", {})
+        MyEnum = create_enum("EmptyEnum", {}, module=__name__)
         assert len(MyEnum) == 0
         assert list(MyEnum) == []
 
@@ -441,7 +441,7 @@ class TestPydanticIntegration:
 
     def test_dynamic_enum_in_model(self):
         """Dynamically created enum works in Pydantic model."""
-        DynamicEnum = create_enum("DynamicEnum", {"A": "a", "B": "b"})
+        DynamicEnum = create_enum("DynamicEnum", {"A": "a", "B": "b"}, module=__name__)
 
         class Config(BaseModel):
             value: DynamicEnum
