@@ -103,9 +103,10 @@ class exit_on_error(AbstractContextManager):
             console = Console()
 
             # Only show full traceback if requested
+            # Don't show locals as they are very noisy and not useful for most errors
             if self.show_traceback:
                 console.print_exception(
-                    show_locals=True,
+                    show_locals=False,
                     max_frames=10,
                     word_wrap=True,
                     width=console.width,

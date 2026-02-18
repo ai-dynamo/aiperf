@@ -21,6 +21,15 @@ export AIPERF_ZMQ_RCVTIMEO=600000
 > Environment variable names, default values, and definitions are subject to change.
 > These settings may be modified, renamed, or removed in future releases.
 
+## CONFIG
+
+Configuration file paths for distributed deployments. Controls paths to configuration files loaded by services running in containers. These are primarily used by `aiperf service` when running in Kubernetes.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_CONFIG_SERVICE_FILE` | `None` | — | Path to service configuration JSON/YAML file. Default: /etc/aiperf/service_config.json in Kubernetes deployments. |
+| `AIPERF_CONFIG_USER_FILE` | `None` | — | Path to user configuration JSON/YAML file. Default: /etc/aiperf/user_config.json in Kubernetes deployments. |
+
 ## DATASET
 
 Dataset loading and configuration. Controls timeouts and behavior for dataset loading operations, as well as memory-mapped dataset storage settings.

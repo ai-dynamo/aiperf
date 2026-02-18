@@ -6,6 +6,7 @@ import contextlib
 import multiprocessing
 import os
 import platform
+import signal
 import sys
 import uuid
 import warnings
@@ -39,7 +40,6 @@ def bootstrap_and_run_service(
 
     Args:
         service_type: The type of the service to run.
-            ServiceType. This should be a string or enum value.
         service_config: The service configuration to use. If not provided, the service
             configuration will be loaded from the environment variables.
         user_config: The user configuration to use. If not provided, the user configuration
@@ -48,6 +48,11 @@ def bootstrap_and_run_service(
             the child process logging will be set up.
         kwargs: Additional keyword arguments to pass to the service constructor.
     """
+    # Ignore SIGINT in child processes so only the parent handles Ctrl+C.
+    # The parent (SystemController) will coordinate graceful shutdown of children.
+    if multiprocessing.parent_process() is not None:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+
     from aiperf.plugin import plugins
     from aiperf.plugin.enums import PluginType
 
@@ -70,10 +75,16 @@ def bootstrap_and_run_service(
     if user_config is None:
         from aiperf.common.config.loader import load_user_config
 
-        # TODO: Add support for loading user config from a file/environment variables
         user_config = load_user_config()
 
     async def _run_service():
+        # Disable health server in child processes to prevent port conflicts.
+        # Multiple child processes on the same host cannot bind to the same port.
+        # The main process (SystemController) handles health probes for local mode.
+        is_child_process = multiprocessing.parent_process() is not None
+        if is_child_process:
+            Environment.SERVICE.HEALTH_ENABLED = False
+
         if Environment.DEV.ENABLE_YAPPI:
             _start_yappi_profiling()
 
@@ -119,26 +130,21 @@ def bootstrap_and_run_service(
         # processes inherit terminal file descriptors and interfere with Textual's
         # terminal management, causing ASCII garbage and freezing when mouse events occur.
         # Only apply this in spawned child processes, NOT in the main process where Textual runs.
-        if platform.system() == "Darwin":
-            # Only close terminal FDs if we're in a spawned child process
-            # The main process name is typically "MainProcess", child processes have other names
-            is_child_process = multiprocessing.parent_process() is not None
+        if platform.system() == "Darwin" and is_child_process:
+            try:
+                # Close and redirect stdin to prevent reading terminal input (mouse events, etc.)
+                sys.stdin.close()
+                sys.stdin = open(os.devnull)  # noqa: SIM115
 
-            if is_child_process:
-                try:
-                    # Close and redirect stdin to prevent reading terminal input (mouse events, etc.)
-                    sys.stdin.close()
-                    sys.stdin = open(os.devnull)  # noqa: SIM115
-
-                    # Close and redirect stdout/stderr to prevent writing to terminal
-                    # All logging goes through the log_queue instead
-                    sys.stdout.close()
-                    sys.stderr.close()
-                    sys.stdout = open(os.devnull, "w")  # noqa: SIM115
-                    sys.stderr = open(os.devnull, "w")  # noqa: SIM115
-                except Exception:
-                    # Silently continue if FD operations fail
-                    pass
+                # Close and redirect stdout/stderr to prevent writing to terminal
+                # All logging goes through the log_queue instead
+                sys.stdout.close()
+                sys.stderr.close()
+                sys.stdout = open(os.devnull, "w")  # noqa: SIM115
+                sys.stderr = open(os.devnull, "w")  # noqa: SIM115
+            except Exception:
+                # Silently continue if FD operations fail
+                pass
 
         # Initialize global RandomGenerator for reproducible random number generation
         from aiperf.common import random_generator as rng
@@ -167,7 +173,7 @@ def bootstrap_and_run_service(
 
 
 def _start_yappi_profiling() -> None:
-    """Start yappi profiling to profile AIPerf's python code.."""
+    """Start yappi profiling to profile AIPerf's python code."""
     try:
         import yappi
 

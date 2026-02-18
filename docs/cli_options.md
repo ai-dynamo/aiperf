@@ -7,6 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 
 ## `aiperf` Commands
 
+### [`--install-completion`](#aiperf---install-completion)
+
+Install shell completion for this application.
+
 ### [`plugins`](#aiperf-plugins)
 
 Explore AIPerf plugins: aiperf plugins [category] [type]
@@ -14,6 +18,10 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 ### [`analyze-trace`](#aiperf-analyze-trace)
 
 Analyze mooncake trace for prefix statistics
+
+### [`service`](#aiperf-service)
+
+Run an AIPerf service in a single process.
 
 ### [`profile`](#aiperf-profile)
 
@@ -24,6 +32,22 @@ Run the Profile subcommand.
 ### [`plot`](#aiperf-plot)
 
 Generate visualizations from AIPerf profiling data.
+
+<hr>
+
+## `aiperf --install-completion`
+
+Install shell completion for this application.
+
+This command generates and installs the completion script to the appropriate location for your shell. After installation, you may need to restart your shell or source your shell configuration file.
+
+#### `--shell` `<str>`
+
+Shell type for completion. If not specified, attempts to auto-detect current shell.
+
+#### `-o`, `--output` `<str>`
+
+Output path for the completion script. If not specified, uses shell-specific default.
 
 <hr>
 
@@ -66,6 +90,41 @@ KV cache block size for analysis (default: 512).
 #### `--output-file` `<str>`
 
 Optional output path for analysis report (JSON).
+
+<hr>
+
+## `aiperf service`
+
+Run an AIPerf service in a single process.
+
+_Advanced use only — intended for developers and Kubernetes/distributed deployments where services run in separate containers or nodes._
+
+For standard single-node benchmarking, use the `aiperf profile` command instead.
+
+#### `--type` `<str>` _(Required)_
+
+Service type to run.
+<br>_Choices: [`dataset_manager`, `gpu_telemetry_manager`, `record_processor`, `records_manager`, `server_metrics_manager`, `system_controller`, `timing_manager`, `worker`, `worker_manager`]_
+
+#### `--user-config-file` `<str>`
+
+Path to the user configuration file (JSON or YAML). Falls back to AIPERF_CONFIG_USER_FILE environment variable.
+
+#### `--service-config-file` `<str>`
+
+Path to the service configuration file (JSON or YAML). Falls back to AIPERF_CONFIG_SERVICE_FILE environment variable, then to default ServiceConfig if neither is set.
+
+#### `--service-id` `<str>`
+
+Unique identifier for the service instance. Useful when running multiple instances of the same service type.
+
+#### `--health-host` `<str>`
+
+Host to bind the health server to. Falls back to AIPERF_SERVICE_HEALTH_HOST environment variable.
+
+#### `--health-port` `<int>`
+
+HTTP port for health endpoints (/healthz, /readyz). Required for Kubernetes liveness and readiness probes. Falls back to AIPERF_SERVICE_HEALTH_PORT environment variable.
 
 <hr>
 

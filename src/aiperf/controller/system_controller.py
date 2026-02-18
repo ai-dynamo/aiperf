@@ -62,7 +62,7 @@ from aiperf.controller.system_mixins import SignalHandlerMixin
 from aiperf.credit.messages import CreditsCompleteMessage
 from aiperf.exporters.exporter_manager import ExporterManager
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType, ServiceType, UIType
+from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType, UIType
 from aiperf.ui.protocols import AIPerfUIProtocol
 
 
@@ -78,11 +78,13 @@ class SystemController(SignalHandlerMixin, BaseService):
         user_config: UserConfig,
         service_config: ServiceConfig,
         service_id: str | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(
             service_config=service_config,
             user_config=user_config,
             service_id=service_id,
+            **kwargs,
         )
         self.debug("Creating System Controller")
         if Environment.DEV.MODE:
@@ -109,6 +111,12 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.scale_record_processors_with_workers = False
         else:
             self.scale_record_processors_with_workers = True
+
+        # In Kubernetes mode, workers are external pods that connect via TCP.
+        # We must wait for at least one worker to register before starting profiling.
+        # In Multi-Process mode, workers are spawned locally and register automatically.
+        if self.service_config.service_run_type == ServiceRunType.KUBERNETES:
+            self.required_services[ServiceType.WORKER] = 1
 
         self.proxy_manager: ProxyManager = ProxyManager(
             service_config=self.service_config
