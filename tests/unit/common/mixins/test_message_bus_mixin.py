@@ -123,11 +123,26 @@ class TestProbeLoopSuccess:
 
     @pytest.mark.asyncio
     @pytest.mark.looptime
+    async def test_no_info_log_on_single_retry(
+        self, mixin, mock_pub_client, monkeypatch
+    ) -> None:
+        """A single retry (2 total attempts) should not emit an info log."""
+        monkeypatch.setattr(Environment.SERVICE, "CONNECTION_PROBE_INTERVAL", 1.0)
+        monkeypatch.setattr(Environment.SERVICE, "CONNECTION_PROBE_TIMEOUT", 90.0)
+        _make_responder(mixin, mock_pub_client, respond_after=2)
+
+        await mixin._wait_for_successful_probe()
+
+        assert len(mock_pub_client.publish_calls) == 2
+        mixin.info.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.looptime
     @pytest.mark.parametrize("respond_after", [3, 4, 5])
     async def test_retries_logs_info_on_multi_attempt_success(
         self, mixin, mock_pub_client, monkeypatch, respond_after
     ) -> None:
-        """When probe succeeds after >1 attempt, an info log with attempt count is emitted."""
+        """When probe succeeds after >2 failed attempts, an info log with attempt count is emitted."""
         monkeypatch.setattr(Environment.SERVICE, "CONNECTION_PROBE_INTERVAL", 1.0)
         monkeypatch.setattr(Environment.SERVICE, "CONNECTION_PROBE_TIMEOUT", 90.0)
         _make_responder(mixin, mock_pub_client, respond_after=respond_after)
@@ -137,7 +152,7 @@ class TestProbeLoopSuccess:
         assert len(mock_pub_client.publish_calls) == respond_after
         mixin.info.assert_called_once()
         info_msg = mixin.info.call_args[0][0]
-        assert "succeeded after" in info_msg
+        assert f"succeeded after {respond_after} attempts" in info_msg
         assert SERVICE_ID in info_msg
 
 

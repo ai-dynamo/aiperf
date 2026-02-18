@@ -83,45 +83,47 @@ class MessageBusClientMixin(CommunicationMixin, ABC):
         initial_warning_threshold = 5.0
         warning_interval = 10.0
 
-        async def _probe_loop() -> None:
-            attempt_count = 0
-            elapsed_time = 0.0
-            next_warning_time = initial_warning_threshold
-            probe_interval = Environment.SERVICE.CONNECTION_PROBE_INTERVAL
+        attempt_count = 0
+        elapsed_time = 0.0
+        next_warning_time = initial_warning_threshold
+        probe_interval = Environment.SERVICE.CONNECTION_PROBE_INTERVAL
+        overall_timeout = Environment.SERVICE.CONNECTION_PROBE_TIMEOUT
 
-            while not self.stop_requested:
-                try:
-                    await asyncio.wait_for(
-                        self._probe_and_wait_for_response(),
-                        timeout=probe_interval,
+        while not self.stop_requested:
+            attempt_count += 1
+            try:
+                await asyncio.wait_for(
+                    self._probe_and_wait_for_response(),
+                    timeout=probe_interval,
+                )
+                if attempt_count > 2:
+                    self.info(
+                        f"Connection probe for {self.id} succeeded after {attempt_count} attempts ({elapsed_time:.1f}s)"
                     )
-                    if attempt_count > 1:
-                        self.info(
-                            f"Connection probe for {self.id} succeeded after {attempt_count} attempts ({elapsed_time:.1f}s)"
-                        )
-                    break
-                except asyncio.TimeoutError:
-                    attempt_count += 1
-                    # Compute from count to avoid floating point accumulation errors
-                    elapsed_time = attempt_count * probe_interval
+                return
+            except asyncio.TimeoutError:
+                # Compute from count to avoid floating point accumulation errors
+                elapsed_time = attempt_count * probe_interval
 
-                    # Log warnings at increasing intervals when probes are taking too long
-                    if elapsed_time >= next_warning_time:
-                        self.warning(
-                            f"Connection probe for {self.id} still waiting after {elapsed_time:.1f}s "
-                            f"({attempt_count} attempts). Check that ZMQ message bus is running "
-                            f"and accessible. Will timeout after {Environment.SERVICE.CONNECTION_PROBE_TIMEOUT}s."
-                        )
-                        next_warning_time += warning_interval
-
-                    self.debug(
-                        "Timeout waiting for connection probe message, sending another probe"
+                # Log warnings at increasing intervals when probes are taking too long
+                if elapsed_time >= next_warning_time:
+                    self.warning(
+                        f"Connection probe for {self.id} still waiting after {elapsed_time:.1f}s "
+                        f"({attempt_count} attempts). Check that ZMQ message bus is running "
+                        f"and accessible. Will timeout after {overall_timeout}s."
                     )
-                    await yield_to_event_loop()
+                    next_warning_time += warning_interval
 
-        await asyncio.wait_for(
-            _probe_loop(), timeout=Environment.SERVICE.CONNECTION_PROBE_TIMEOUT
-        )
+                if elapsed_time >= overall_timeout:
+                    raise TimeoutError(
+                        f"Connection probe for {self.id} timed out after {elapsed_time:.1f}s "
+                        f"({attempt_count} attempts)"
+                    ) from None
+
+                self.debug(
+                    "Timeout waiting for connection probe message, sending another probe"
+                )
+                await yield_to_event_loop()
 
     async def _process_connection_probe_message(
         self, message: ConnectionProbeMessage
