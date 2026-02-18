@@ -62,7 +62,7 @@ from aiperf.controller.system_mixins import SignalHandlerMixin
 from aiperf.credit.messages import CreditsCompleteMessage
 from aiperf.exporters.exporter_manager import ExporterManager
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType, ServiceType
+from aiperf.plugin.enums import PluginType, ServiceType, UIType
 from aiperf.ui.protocols import AIPerfUIProtocol
 
 
@@ -116,17 +116,21 @@ class SystemController(SignalHandlerMixin, BaseService):
         ServiceManagerClass = plugins.get_class(
             PluginType.SERVICE_MANAGER, self.service_config.service_run_type
         )
+
+        using_dashboard = self.service_config.ui_type == UIType.DASHBOARD
+        log_queue = get_global_log_queue() if using_dashboard else None
+
         self.service_manager: ServiceManagerProtocol = ServiceManagerClass(
             required_services=self.required_services,
             user_config=self.user_config,
             service_config=self.service_config,
-            log_queue=get_global_log_queue(),
+            log_queue=log_queue,
         )
         UIClass = plugins.get_class(PluginType.UI, self.service_config.ui_type)
         self.ui: AIPerfUIProtocol = UIClass(
             service_config=self.service_config,
             user_config=self.user_config,
-            log_queue=get_global_log_queue(),
+            log_queue=log_queue,
             controller=self,
         )
         self.attach_child_lifecycle(self.ui)
