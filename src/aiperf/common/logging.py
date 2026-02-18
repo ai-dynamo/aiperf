@@ -91,6 +91,9 @@ async def cleanup_global_log_queue() -> None:
             except Exception as e:
                 _logger.debug(f"Error cleaning up log queue: {e}")
             finally:
+                from aiperf.common.resource_tracker import unregister_queue_semaphores
+
+                unregister_queue_semaphores(_global_log_queue)
                 _global_log_queue = None
 
 
