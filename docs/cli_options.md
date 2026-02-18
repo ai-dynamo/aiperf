@@ -41,8 +41,6 @@ Install shell completion for this application.
 
 This command generates and installs the completion script to the appropriate location for your shell. After installation, you may need to restart your shell or source your shell configuration file.
 
-Parameters ---------- shell : Literal["zsh", "bash", "fish"] | None Shell type for completion. If not specified, attempts to auto-detect current shell. output : Path | None Output path for the completion script. If not specified, uses shell-specific default.
-
 #### `--shell` `<str>`
 
 Shell type for completion. If not specified, attempts to auto-detect current shell.
