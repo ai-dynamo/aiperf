@@ -6,6 +6,10 @@ When a process exits via os._exit(), garbage collection is skipped, so semaphore
 created by multiprocessing.Lock/RLock/Queue are never properly released. The
 resource tracker then warns about "leaked semaphore objects". These helpers
 explicitly unregister semaphores before os._exit() to suppress those warnings.
+
+Only applies to macOS where named POSIX semaphores (sem_open) are used.
+On Linux, semaphores are anonymous (SEM_PRIVATE) with name=None and are not
+tracked by the resource tracker, so unregistration is a no-op.
 """
 
 import contextlib
@@ -19,7 +23,7 @@ def unregister_semaphore(lock: object) -> None:
     RLock, BoundedSemaphore, etc.). No-op if the lock has no semaphore.
     """
     sem = getattr(lock, "_semlock", None)
-    if sem is not None:
+    if sem is not None and sem.name is not None:
         with contextlib.suppress(Exception):
             resource_tracker.unregister(sem.name, "semaphore")
 
