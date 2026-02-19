@@ -28,6 +28,8 @@ class AIPerfRunnerResult:
 
     exit_code: int
     output_dir: Path
+    stdout: str = ""
+    stderr: str = ""
 
 
 AIPerfRunnerFn: TypeAlias = Callable[[list[str], float], AIPerfRunnerResult]

@@ -3,7 +3,8 @@
 
 from typing import Annotated
 
-from pydantic import Field
+from cyclopts import Parameter
+from pydantic import Field, model_validator
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
@@ -378,3 +379,164 @@ class LoadGeneratorConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = None
+
+    # Upper limit of 10 runs balances statistical validity with practical considerations:
+    # - Statistical: 10 samples provide reasonable confidence intervals (t-distribution)
+    # - Practical: Limits total benchmark time (10 runs can take hours for long benchmarks)
+    # - Diminishing returns: Confidence interval width decreases with sqrt(n), so gains
+    #   beyond 10 runs are marginal compared to the additional time investment
+    # - Resource efficiency: Reduces compute/GPU costs while maintaining statistical rigor
+    num_profile_runs: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=10,
+            description="Number of profile runs to execute for confidence reporting. "
+            "Must be between 1 and 10. "
+            "When set to 1 (default), runs a single benchmark. "
+            "When set to >1, runs multiple benchmarks and computes aggregate statistics "
+            "(mean, std, confidence intervals, coefficient of variation) across runs. "
+            "Useful for quantifying variance and establishing confidence in results.",
+        ),
+        CLIParameter(
+            name=("--num-profile-runs",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = 1
+    profile_run_cooldown_seconds: Annotated[
+        float,
+        Field(
+            ge=0,
+            description="Cooldown duration in seconds between profile runs. "
+            "Only applies when --num-profile-runs > 1. "
+            "Allows the system to stabilize between runs (e.g., clear caches, cool down GPUs). "
+            "Default is 0 (no cooldown).",
+        ),
+        CLIParameter(
+            name=("--profile-run-cooldown-seconds",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = 0.0
+
+    confidence_level: Annotated[
+        float,
+        Field(
+            gt=0,
+            lt=1,
+            description="Confidence level for computing confidence intervals (0-1). "
+            "Only applies when --num-profile-runs > 1. "
+            "Common values: 0.90 (90%), 0.95 (95%, default), 0.99 (99%). "
+            "Higher values produce wider confidence intervals.",
+        ),
+        CLIParameter(
+            name=("--confidence-level",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = 0.95
+
+    profile_run_disable_warmup_after_first: Annotated[
+        bool,
+        Field(
+            description="Disable warmup for profile runs after the first. "
+            "Only applies when --num-profile-runs > 1. "
+            "When True (default), only the first run includes warmup, subsequent runs "
+            "measure steady-state performance for more accurate aggregate statistics. "
+            "When False, all runs include warmup (useful for long cooldown periods "
+            "or when testing cold-start performance).",
+        ),
+        Parameter(
+            name=("--profile-run-disable-warmup-after-first",),
+            group=Groups.MULTI_RUN,
+            show_env_var=False,
+            negative="--no-profile-run-disable-warmup-after-first",
+        ),
+    ] = True
+
+    set_consistent_seed: Annotated[
+        bool,
+        Field(
+            description="Automatically set random seed for consistent workloads across runs. "
+            "Only applies when --num-profile-runs > 1. "
+            "When True (default), automatically sets --random-seed=42 if not specified, "
+            "ensuring identical workloads across all runs for valid statistical comparison. "
+            "When False, preserves None seed, resulting in different workloads per run "
+            "(not recommended for confidence reporting as it produces invalid statistics). "
+            "If --random-seed is explicitly set, that value is always used regardless of this setting.",
+        ),
+        Parameter(
+            name=("--set-consistent-seed",),
+            group=Groups.MULTI_RUN,
+            show_env_var=False,
+            negative="--no-set-consistent-seed",
+        ),
+    ] = True
+
+    def disable_warmup(self) -> None:
+        """Disable all warmup-related parameters.
+
+        This method explicitly sets all warmup fields to None, ensuring
+        that no warmup phase runs. This is the authoritative list of
+        warmup fields - if a new warmup field is added, it MUST be
+        added to this method.
+
+        This design makes it explicit which fields are warmup-related
+        and ensures the list is maintained in one place (the config class).
+        """
+        # Core warmup parameters
+        self.warmup_request_count = None
+        self.warmup_duration = None
+        self.warmup_num_sessions = None
+
+        # Warmup load parameters
+        self.warmup_concurrency = None
+        self.warmup_prefill_concurrency = None
+        self.warmup_request_rate = None
+        self.warmup_arrival_pattern = None
+
+        # Warmup timing parameters
+        self.warmup_grace_period = None
+
+        # Warmup ramp parameters
+        self.warmup_concurrency_ramp_duration = None
+        self.warmup_prefill_concurrency_ramp_duration = None
+        self.warmup_request_rate_ramp_duration = None
+
+    @model_validator(mode="after")
+    def validate_multi_run_params(self) -> "LoadGeneratorConfig":
+        """Validate that multi-run specific parameters are only set when num_profile_runs > 1.
+
+        Raises:
+            ValueError: If confidence_level, profile_run_disable_warmup_after_first,
+                       profile_run_cooldown_seconds, or set_consistent_seed are explicitly
+                       set when num_profile_runs == 1.
+        """
+        if self.num_profile_runs == 1:
+            # Check if confidence_level was explicitly set by the user
+            if "confidence_level" in self.model_fields_set:
+                raise ValueError(
+                    "--confidence-level only applies when --num-profile-runs > 1. "
+                    "Remove --confidence-level or increase --num-profile-runs."
+                )
+
+            # Check if profile_run_disable_warmup_after_first was explicitly set by the user
+            if "profile_run_disable_warmup_after_first" in self.model_fields_set:
+                raise ValueError(
+                    "--profile-run-disable-warmup-after-first only applies when --num-profile-runs > 1. "
+                    "Remove --profile-run-disable-warmup-after-first or increase --num-profile-runs."
+                )
+
+            # Check if profile_run_cooldown_seconds was explicitly set by the user
+            if "profile_run_cooldown_seconds" in self.model_fields_set:
+                raise ValueError(
+                    "--profile-run-cooldown-seconds only applies when --num-profile-runs > 1. "
+                    "Remove --profile-run-cooldown-seconds or increase --num-profile-runs."
+                )
+
+            # Check if set_consistent_seed was explicitly set by the user
+            if "set_consistent_seed" in self.model_fields_set:
+                raise ValueError(
+                    "--set-consistent-seed only applies when --num-profile-runs > 1. "
+                    "Remove --set-consistent-seed or increase --num-profile-runs."
+                )
+
+        return self

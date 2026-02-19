@@ -1186,6 +1186,42 @@ http_req_connection_reused = 1 if connection_reused_perf_ns is not None else 0
 
 ---
 
+## Multi-Run Aggregate Metrics
+
+> [!NOTE]
+> These metrics are only available when using `--num-profile-runs > 1` for confidence reporting.
+
+When running multiple profile iterations with `--num-profile-runs`, AIPerf computes aggregate statistics across all runs to quantify measurement variance and repeatability. These statistics are written to `aggregate/profile_export_aiperf_aggregate.json` and `aggregate/profile_export_aiperf_aggregate.csv`.
+
+For detailed information about aggregate statistics, their mathematical definitions, and interpretation guidelines, see the [Multi-Run Confidence Tutorial](tutorials/multi-run-confidence.md).
+
+### Quick Reference
+
+The following aggregate statistics are computed for each metric:
+
+- **mean**: Average value across all runs
+- **std**: Standard deviation (measure of spread)
+- **min**: Minimum value observed
+- **max**: Maximum value observed
+- **cv**: Coefficient of Variation (normalized variability)
+- **se**: Standard Error (uncertainty in the mean)
+- **ci_low, ci_high**: Confidence interval bounds
+- **t_critical**: t-distribution critical value used
+
+### Aggregate Metadata
+
+The aggregate output also includes metadata about the multi-run benchmark:
+
+- **aggregation_type**: Always "confidence" for multi-run confidence reporting
+- **num_profile_runs**: Total number of runs requested
+- **num_successful_runs**: Number of runs that completed successfully
+- **failed_runs**: List of failed runs with error details
+- **confidence_level**: Confidence level used for intervals (e.g., 0.95)
+- **cooldown_seconds**: Cooldown duration between runs
+- **run_labels**: Labels for each run (e.g., ["run_0001", "run_0002", ...])
+
+---
+
 # Metric Flags Reference
 
 Metric flags are used to control when and how metrics are computed, displayed, and grouped. Flags can be combined using bitwise operations to create composite behaviors.

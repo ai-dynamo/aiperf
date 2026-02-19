@@ -331,6 +331,13 @@ class TestParseStrOrListOfPositiveValues:
         with pytest.raises(ValueError):
             parse_str_or_list_of_positive_values(invalid_input)
 
+    def test_none_input_raises_value_error(self):
+        """Test that None input raises ValueError with clear message."""
+        with pytest.raises(
+            ValueError, match="input must be a string or list of strings, not None"
+        ):
+            parse_str_or_list_of_positive_values(None)
+
     def test_parse_str_as_numeric_dict_simple(self):
         assert parse_str_as_numeric_dict(
             "request_latency:250 inter_token_latency:10"

@@ -291,38 +291,57 @@ async def aiperf_runner(
             "PYTHONUNBUFFERED": "1",
         }
 
-        # Pass stdout/stderr directly through for live terminal UI
+        # Capture stdout/stderr for validation error tests
+        # Use PIPE to capture output while still allowing it to be displayed
+        import subprocess
+
         process = await asyncio.create_subprocess_exec(
             *cmd,
-            stdout=None,
-            stderr=None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             env=env,
         )
 
         try:
-            await asyncio.wait_for(process.wait(), timeout=timeout)
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                process.communicate(), timeout=timeout
+            )
+            stdout = stdout_bytes.decode("utf-8", errors="replace")
+            stderr = stderr_bytes.decode("utf-8", errors="replace")
         except asyncio.TimeoutError as e:
             _logger.warning(f"AIPerf timed out after {timeout}s, sending SIGINT")
             process.send_signal(signal.SIGINT)
             try:
-                await asyncio.wait_for(process.wait(), timeout=5)
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    process.communicate(), timeout=5
+                )
+                stdout = stdout_bytes.decode("utf-8", errors="replace")
+                stderr = stderr_bytes.decode("utf-8", errors="replace")
             except asyncio.TimeoutError:
                 _logger.warning(
                     "Process did not exit after SIGINT(), forcing termination"
                 )
                 process.terminate()
                 try:
-                    await asyncio.wait_for(process.wait(), timeout=5)
+                    stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                        process.communicate(), timeout=5
+                    )
+                    stdout = stdout_bytes.decode("utf-8", errors="replace")
+                    stderr = stderr_bytes.decode("utf-8", errors="replace")
                 except asyncio.TimeoutError:
                     _logger.warning(
                         "Process did not exit after kill(), forcing termination"
                     )
                     process.kill()
+                    stdout = ""
+                    stderr = ""
             raise RuntimeError(f"AIPerf timed out after {timeout}s") from e
 
         return AIPerfRunnerResult(
             exit_code=process.returncode or 0,
             output_dir=temp_output_dir,
+            stdout=stdout,
+            stderr=stderr,
         )
 
     return runner
