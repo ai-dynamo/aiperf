@@ -183,7 +183,7 @@ Video generation is fully documented in [Synthetic Video Generation](synthetic-v
 
 <!-- aiperf-run-vllm-vision-openai-endpoint-server -->
 ```bash
-sudo apt-get install -y ffmpeg
+apt-get update && apt-get install -y ffmpeg
 
 aiperf profile \
   --model Qwen/Qwen2-VL-2B-Instruct \
