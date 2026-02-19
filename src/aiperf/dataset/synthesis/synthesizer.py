@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Synthesizer for generating synthetic traces with prefix patterns."""
 
+import math
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -213,7 +214,15 @@ class Synthesizer(AIPerfLoggerMixin):
                 stretched_ids = [
                     h * mult_int + j for h in prefix_ids for j in range(mult_int)
                 ]
-                new_prefix_len = int(prefix_len * prefix_mult)
+                # Add extra blocks for fractional part of the multiplier
+                target_prefix_blocks = math.ceil(len(prefix_ids) * prefix_mult)
+                extra_needed = target_prefix_blocks - len(stretched_ids)
+                if extra_needed > 0:
+                    stretched_ids.extend(
+                        range(max_hash_id + 1, max_hash_id + 1 + extra_needed)
+                    )
+                    max_hash_id += extra_needed
+                new_prefix_len = len(stretched_ids) * block_size
             elif prefix_mult < 1.0:
                 # Squeeze: slice to fewer blocks
                 new_prefix_blocks = max(1, int(len(prefix_ids) * prefix_mult))
