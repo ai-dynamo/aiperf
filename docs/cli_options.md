@@ -822,6 +822,7 @@ Automatically set random seed for consistent workloads across runs. Only applies
 #### `--accuracy-benchmark` `<str>`
 
 Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accuracy benchmarking mode alongside performance profiling.
+<br>_Choices: [`mmlu`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gpqa_diamond`, `lcb_codegeneration`]_
 
 #### `--accuracy-tasks` `<list>`
 
@@ -840,6 +841,7 @@ Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instru
 #### `--accuracy-grader` `<str>`
 
 Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution). If not set, uses the benchmark's default grader.
+<br>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`]_
 
 #### `--accuracy-system-prompt` `<str>`
 

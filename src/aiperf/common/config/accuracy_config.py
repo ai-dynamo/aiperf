@@ -8,6 +8,7 @@ from pydantic import Field
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.groups import Groups
+from aiperf.plugin.enums import AccuracyBenchmarkType, AccuracyGraderType
 
 
 class AccuracyConfig(BaseConfig):
@@ -16,7 +17,7 @@ class AccuracyConfig(BaseConfig):
     _CLI_GROUP = Groups.ACCURACY
 
     benchmark: Annotated[
-        str | None,
+        AccuracyBenchmarkType | None,
         Field(
             description="Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). "
             "When set, enables accuracy benchmarking mode alongside performance profiling.",
@@ -66,7 +67,7 @@ class AccuracyConfig(BaseConfig):
     ] = False
 
     grader: Annotated[
-        str | None,
+        AccuracyGraderType | None,
         Field(
             description="Override the default grader for the selected benchmark "
             "(e.g., exact_match, math, multiple_choice, code_execution). "
