@@ -13,7 +13,7 @@ class GradingResult(AIPerfBaseModel):
 
     correct: bool = Field(description="Whether the response was graded as correct")
     confidence: float = Field(
-        description="Confidence score of the grading (0.0 to 1.0)"
+        ge=0, le=1, description="Confidence score of the grading (0.0 to 1.0)"
     )
     reasoning: str = Field(description="Explanation of the grading decision")
     extracted_answer: str = Field(
