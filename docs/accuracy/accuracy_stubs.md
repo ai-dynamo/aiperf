@@ -178,15 +178,15 @@ All benchmarks use `AIPerfLoggerMixin` and must implement 1 method.
 
 | # | Class | File | Plugin Key | Default Grader | Default N-Shots |
 |---|-------|------|------------|----------------|-----------------|
-| 1 | `MMLUBenchmark` | `benchmarks/mmlu_benchmark.py` | `mmlu` | `multiple_choice` | 5 |
-| 2 | `AIMEBenchmark` | `benchmarks/aime_benchmark.py` | `aime` | `math` | 0 |
-| 3 | `HellaSwagBenchmark` | `benchmarks/hellaswag_benchmark.py` | `hellaswag` | `multiple_choice` | 0 |
-| 4 | `BigBenchBenchmark` | `benchmarks/bigbench_benchmark.py` | `bigbench` | `exact_match` | 3 |
-| 5 | `AIME24Benchmark` | `benchmarks/aime24_benchmark.py` | `aime24` | `math` | 0 |
-| 6 | `AIME25Benchmark` | `benchmarks/aime25_benchmark.py` | `aime25` | `math` | 0 |
-| 7 | `Math500Benchmark` | `benchmarks/math_500_benchmark.py` | `math_500` | `math` | 0 |
-| 8 | `GPQADiamondBenchmark` | `benchmarks/gpqa_diamond_benchmark.py` | `gpqa_diamond` | `multiple_choice` | 0 |
-| 9 | `LCBCodeGenerationBenchmark` | `benchmarks/lcb_codegeneration_benchmark.py` | `lcb_codegeneration` | `code_execution` | 0 |
+| 1 | `MMLUBenchmark` | `benchmarks/mmlu.py` | `mmlu` | `multiple_choice` | 5 |
+| 2 | `AIMEBenchmark` | `benchmarks/aime.py` | `aime` | `math` | 0 |
+| 3 | `HellaSwagBenchmark` | `benchmarks/hellaswag.py` | `hellaswag` | `multiple_choice` | 0 |
+| 4 | `BigBenchBenchmark` | `benchmarks/bigbench.py` | `bigbench` | `exact_match` | 3 |
+| 5 | `AIME24Benchmark` | `benchmarks/aime24.py` | `aime24` | `math` | 0 |
+| 6 | `AIME25Benchmark` | `benchmarks/aime25.py` | `aime25` | `math` | 0 |
+| 7 | `Math500Benchmark` | `benchmarks/math_500.py` | `math_500` | `math` | 0 |
+| 8 | `GPQADiamondBenchmark` | `benchmarks/gpqa_diamond.py` | `gpqa_diamond` | `multiple_choice` | 0 |
+| 9 | `LCBCodeGenerationBenchmark` | `benchmarks/lcb_codegeneration.py` | `lcb_codegeneration` | `code_execution` | 0 |
 
 **Each benchmark has 1 method to implement:**
 

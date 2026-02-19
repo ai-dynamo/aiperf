@@ -923,7 +923,7 @@ accuracy_grader:
 # =============================================================================
 accuracy_benchmark:
   mmlu:
-    class: aiperf.accuracy.benchmarks.mmlu_benchmark:MMLUBenchmark
+    class: aiperf.accuracy.benchmarks.mmlu:MMLUBenchmark
     description: |
       MMLU (Massive Multitask Language Understanding) benchmark covering 57 subjects
       across STEM, humanities, social sciences, and more.
@@ -932,7 +932,7 @@ accuracy_benchmark:
       default_n_shots: 5
 
   aime:
-    class: aiperf.accuracy.benchmarks.aime_benchmark:AIMEBenchmark
+    class: aiperf.accuracy.benchmarks.aime:AIMEBenchmark
     description: |
       AIME (American Invitational Mathematics Examination) benchmark for
       advanced high school mathematics problems.
@@ -941,7 +941,7 @@ accuracy_benchmark:
       default_n_shots: 0
 
   hellaswag:
-    class: aiperf.accuracy.benchmarks.hellaswag_benchmark:HellaSwagBenchmark
+    class: aiperf.accuracy.benchmarks.hellaswag:HellaSwagBenchmark
     description: |
       HellaSwag commonsense reasoning benchmark for sentence completion tasks.
     metadata:
@@ -949,7 +949,7 @@ accuracy_benchmark:
       default_n_shots: 0
 
   bigbench:
-    class: aiperf.accuracy.benchmarks.bigbench_benchmark:BigBenchBenchmark
+    class: aiperf.accuracy.benchmarks.bigbench:BigBenchBenchmark
     description: |
       BigBench benchmark for diverse language understanding tasks spanning
       linguistics, reasoning, and world knowledge.
@@ -958,7 +958,7 @@ accuracy_benchmark:
       default_n_shots: 3
 
   aime24:
-    class: aiperf.accuracy.benchmarks.aime24_benchmark:AIME24Benchmark
+    class: aiperf.accuracy.benchmarks.aime24:AIME24Benchmark
     description: |
       AIME 2024 benchmark with problems from the 2024 competition year.
     metadata:
@@ -966,7 +966,7 @@ accuracy_benchmark:
       default_n_shots: 0
 
   aime25:
-    class: aiperf.accuracy.benchmarks.aime25_benchmark:AIME25Benchmark
+    class: aiperf.accuracy.benchmarks.aime25:AIME25Benchmark
     description: |
       AIME 2025 benchmark with problems from the 2025 competition year.
     metadata:
@@ -974,7 +974,7 @@ accuracy_benchmark:
       default_n_shots: 0
 
   math_500:
-    class: aiperf.accuracy.benchmarks.math_500_benchmark:Math500Benchmark
+    class: aiperf.accuracy.benchmarks.math_500:Math500Benchmark
     description: |
       MATH-500 benchmark with 500 curated mathematical reasoning problems
       spanning algebra, geometry, number theory, and combinatorics.
@@ -983,7 +983,7 @@ accuracy_benchmark:
       default_n_shots: 0
 
   gpqa_diamond:
-    class: aiperf.accuracy.benchmarks.gpqa_diamond_benchmark:GPQADiamondBenchmark
+    class: aiperf.accuracy.benchmarks.gpqa_diamond:GPQADiamondBenchmark
     description: |
       GPQA Diamond benchmark with graduate-level science questions in physics,
       chemistry, and biology requiring expert-level reasoning.
@@ -992,7 +992,7 @@ accuracy_benchmark:
       default_n_shots: 0
 
   lcb_codegeneration:
-    class: aiperf.accuracy.benchmarks.lcb_codegeneration_benchmark:LCBCodeGenerationBenchmark
+    class: aiperf.accuracy.benchmarks.lcb_codegeneration:LCBCodeGenerationBenchmark
     description: |
       LiveCodeBench code generation benchmark for evaluating code synthesis
       capabilities with test-case-based validation.
