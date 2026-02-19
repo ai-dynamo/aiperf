@@ -892,25 +892,25 @@ gpu_telemetry_collector:
 # =============================================================================
 accuracy_grader:
   exact_match:
-    class: aiperf.accuracy.graders.exact_match_grader:ExactMatchGrader
+    class: aiperf.accuracy.graders.exact_match:ExactMatchGrader
     description: |
       Exact match grader that compares extracted answers against ground truth
       using exact string matching. Suitable for factual Q&A and classification tasks.
 
   math:
-    class: aiperf.accuracy.graders.math_grader:MathGrader
+    class: aiperf.accuracy.graders.math:MathGrader
     description: |
       Math grader that evaluates mathematical expressions for equivalence.
       Handles symbolic comparison, numeric tolerance, and expression normalization.
 
   multiple_choice:
-    class: aiperf.accuracy.graders.multiple_choice_grader:MultipleChoiceGrader
+    class: aiperf.accuracy.graders.multiple_choice:MultipleChoiceGrader
     description: |
       Multiple choice grader that matches selected choice labels (A/B/C/D)
       against ground truth. Supports various answer extraction patterns.
 
   code_execution:
-    class: aiperf.accuracy.graders.code_execution_grader:CodeExecutionGrader
+    class: aiperf.accuracy.graders.code_execution:CodeExecutionGrader
     description: |
       Code execution grader that runs generated code in a sandboxed environment
       and compares output against expected results.

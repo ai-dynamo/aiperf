@@ -143,7 +143,7 @@ All graders inherit from `BaseGrader(AIPerfLoggerMixin)` and must implement 2 me
 
 ### Base Class
 
-**File:** `src/aiperf/accuracy/graders/base_grader.py`
+**File:** `src/aiperf/accuracy/graders/base.py`
 
 ```python
 class BaseGrader(AIPerfLoggerMixin):
@@ -156,10 +156,10 @@ class BaseGrader(AIPerfLoggerMixin):
 
 | # | Class | File | Plugin Key | Description |
 |---|-------|------|------------|-------------|
-| 1 | `ExactMatchGrader` | `graders/exact_match_grader.py` | `exact_match` | Exact string matching against ground truth |
-| 2 | `MathGrader` | `graders/math_grader.py` | `math` | Mathematical expression equivalence |
-| 3 | `MultipleChoiceGrader` | `graders/multiple_choice_grader.py` | `multiple_choice` | Match choice labels (A/B/C/D) |
-| 4 | `CodeExecutionGrader` | `graders/code_execution_grader.py` | `code_execution` | Execute code and compare output |
+| 1 | `ExactMatchGrader` | `graders/exact_match.py` | `exact_match` | Exact string matching against ground truth |
+| 2 | `MathGrader` | `graders/math.py` | `math` | Mathematical expression equivalence |
+| 3 | `MultipleChoiceGrader` | `graders/multiple_choice.py` | `multiple_choice` | Match choice labels (A/B/C/D) |
+| 4 | `CodeExecutionGrader` | `graders/code_execution.py` | `code_execution` | Execute code and compare output |
 
 **Each grader has 2 methods to implement:**
 
