@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Any
+
 from pydantic import Field
 
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -26,9 +28,9 @@ class BenchmarkProblem(AIPerfBaseModel):
     prompt: str = Field(description="The prompt to send to the LLM")
     ground_truth: str = Field(description="The expected correct answer")
     task: str = Field(description="The task or subtask name within the benchmark")
-    metadata: dict = Field(
+    metadata: dict[str, Any] = Field(
         default_factory=dict, description="Additional problem metadata"
     )
-    few_shot_examples: list[dict] = Field(
+    few_shot_examples: list[dict[str, Any]] = Field(
         default_factory=list, description="Few-shot examples to prepend to the prompt"
     )
