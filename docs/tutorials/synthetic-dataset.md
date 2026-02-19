@@ -181,10 +181,10 @@ Video generation is fully documented in [Synthetic Video Generation](synthetic-v
 - **Codecs**: CPU (`libvpx-vp9`, `libx264`, `libx265`) or GPU (`h264_nvenc`, `hevc_nvenc`)
 - **Formats**: WebM (default) or MP4
 
+**Prerequisite:** Video generation requires FFmpeg. For installations, see [Synthetic Video Tutorial](synthetic-video.md#installing-ffmpeg).
+
 <!-- aiperf-run-vllm-vision-openai-endpoint-server -->
 ```bash
-apt-get update && apt-get install -y ffmpeg
-
 aiperf profile \
   --model Qwen/Qwen2-VL-2B-Instruct \
   --url localhost:8000 \
