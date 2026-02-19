@@ -220,13 +220,15 @@ def temp_output_dir(tmp_path: Path) -> Path:
 class AIPerfRunnerResultWithSharedBus(AIPerfRunnerResult):
     """AIPerf component integration result with message inspection helpers."""
 
-    shared_bus: FakeCommunicationBus
-    stdout: str = ""
-    stderr: str = ""
+    # Note: stdout and stderr are inherited from parent with default values
+    # shared_bus must have a default value to maintain field ordering
+    shared_bus: FakeCommunicationBus | None = None
 
     @property
     def sent_payloads(self) -> list[CapturedPayload]:
         """Get all sent payloads from all clients across all communications."""
+        if self.shared_bus is None:
+            return []
         return self.shared_bus.sent_payloads
 
     @property

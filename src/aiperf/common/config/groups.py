@@ -14,6 +14,7 @@ class Groups:
     OUTPUT = Group.create_ordered("Output")
     TOKENIZER = Group.create_ordered("Tokenizer")
     LOAD_GENERATOR = Group.create_ordered("Load Generator")
+    MULTI_RUN = Group.create_ordered("Multi-Run Confidence Reporting")
     CONVERSATION_INPUT = Group.create_ordered("Conversation Input")
     INPUT_SEQUENCE_LENGTH = Group.create_ordered("Input Sequence Length (ISL)")
     OUTPUT_SEQUENCE_LENGTH = Group.create_ordered("Output Sequence Length (OSL)")

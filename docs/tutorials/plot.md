@@ -17,6 +17,9 @@ The `aiperf plot` command automatically detects whether to generate multi-run co
 - Timeslice support (performance evolution across time windows)
 - Configurable plots via `~/.aiperf/plot_config.yaml`
 
+> [!WARNING]
+> **Multi-Run Profile Incompatibility**: The plot CLI is not compatible with the `--num-profile-runs > 1` option. When using multi-run confidence profiling, the directory structure includes `profile_runs/` subdirectories which the plot command does not recognize. To visualize individual profile runs, navigate into the specific run directory (e.g., `artifacts/my_run/profile_runs/run_0001/`) and run the plot command from there.
+
 ## Quick Start
 
 > [!WARNING]
