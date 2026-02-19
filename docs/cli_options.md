@@ -27,7 +27,7 @@ Run an AIPerf service in a single process.
 
 Run the Profile subcommand.
 
-[Endpoint](#endpoint) • [Input](#input) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Prompt](#prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Conversation Input](#conversation-input) • [Output](#output) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Multi-Run Confidence Reporting](#multi-run-confidence-reporting) • [Telemetry](#telemetry) • [Server Metrics](#server-metrics) • [ZMQ Communication](#zmq-communication) • [Workers](#workers) • [Service](#service)
+[Endpoint](#endpoint) • [Input](#input) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Prompt](#prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Conversation Input](#conversation-input) • [Output](#output) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Multi-Run Confidence Reporting](#multi-run-confidence-reporting) • [Accuracy](#accuracy) • [Telemetry](#telemetry) • [Server Metrics](#server-metrics) • [ZMQ Communication](#zmq-communication) • [Workers](#workers) • [Service](#service)
 
 ### [`plot`](#aiperf-plot)
 
@@ -816,6 +816,39 @@ Disable warmup for profile runs after the first. Only applies when --num-profile
 
 Automatically set random seed for consistent workloads across runs. Only applies when --num-profile-runs > 1. When True (default), automatically sets --random-seed=42 if not specified, ensuring identical workloads across all runs for valid statistical comparison. When False, preserves None seed, resulting in different workloads per run (not recommended for confidence reporting as it produces invalid statistics). If --random-seed is explicitly set, that value is always used regardless of this setting.
 <br>_Default: `True`_
+
+### Accuracy
+
+#### `--accuracy-benchmark` `<str>`
+
+Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accuracy benchmarking mode alongside performance profiling.
+
+#### `--accuracy-tasks` `<list>`
+
+Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU subjects). If not set, all tasks are included.
+
+#### `--accuracy-n-shots` `<int>`
+
+Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation. Maximum 8.
+<br>_Default: `0`_
+
+#### `--accuracy-enable-cot`
+
+Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions to the prompt.
+<br>_Flag (no value required)_
+
+#### `--accuracy-grader` `<str>`
+
+Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution). If not set, uses the benchmark's default grader.
+
+#### `--accuracy-system-prompt` `<str>`
+
+Custom system prompt to use for accuracy evaluation. Overrides any benchmark-specific system prompt.
+
+#### `--accuracy-verbose`
+
+Enable verbose output for accuracy evaluation, showing per-problem grading details.
+<br>_Flag (no value required)_
 
 ### Telemetry
 
