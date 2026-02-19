@@ -172,6 +172,48 @@ class TestSynthesizer:
         assert synthetic[0]["input_length"] == 1536
         assert synthetic[1]["input_length"] == 1536
 
+    @pytest.mark.parametrize(
+        "prefix_mult, num_shared_prefix_blocks, expected_prefix_blocks",
+        [
+            (1.1, 10, 11),  # ceil(10 * 1.1) = 11
+            (1.5, 10, 15),  # ceil(10 * 1.5) = 15
+            (2.3, 4, 10),  # ceil(4 * 2.3) = 10: interleave gives 8, +2 extra
+            (1.01, 3, 4),  # ceil(3 * 1.01) = 4: interleave gives 3, +1 extra
+        ],
+    )
+    def test_prefix_len_multiplier_fractional(
+        self,
+        prefix_mult: float,
+        num_shared_prefix_blocks: int,
+        expected_prefix_blocks: int,
+    ) -> None:
+        """Test fractional prefix_len_multiplier adds extra blocks."""
+        # Each trace has num_shared_prefix_blocks shared + 1 unique prompt block
+        shared = list(range(num_shared_prefix_blocks))
+        traces = [
+            {
+                "input_length": (num_shared_prefix_blocks + 1) * 512,
+                "output_length": 20,
+                "hash_ids": shared + [100],
+            },
+            {
+                "input_length": (num_shared_prefix_blocks + 1) * 512,
+                "output_length": 20,
+                "hash_ids": shared + [200],
+            },
+        ]
+        params = SynthesisParams(prefix_len_multiplier=prefix_mult, block_size=512)
+        synthesizer = Synthesizer(params=params)
+        synthetic = synthesizer.synthesize_traces(traces)
+
+        for trace in synthetic:
+            hash_ids = trace["hash_ids"]
+            input_length = trace["input_length"]
+            # Prefix blocks + 1 prompt block
+            assert len(hash_ids) == expected_prefix_blocks + 1
+            # Input length must be consistent with block count
+            assert input_length == len(hash_ids) * 512
+
     # ============================================================================
     # Max ISL Filter Tests
     # ============================================================================
