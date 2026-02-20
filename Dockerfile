@@ -116,6 +116,9 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz \
     && cp -P /usr/lib/*/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || \
        cp -P /usr/lib/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libvpx.so not found"; exit 1; }
 
+ENV PATH="/opt/ffmpeg/bin${PATH:+:${PATH}}" \
+    LD_LIBRARY_PATH="/opt/ffmpeg/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+
 # Create directories for the nvs user (UID 1000 in NVIDIA distroless)
 RUN mkdir -p /app /app/artifacts /app/.cache \
     && chown -R 1000:1000 /app \
@@ -161,8 +164,8 @@ COPY --from=env-builder --chown=1000:1000 --chmod=755 /bin/bash /bin/bash
 
 # Copy ffmpeg binaries and libraries (includes libvpx)
 COPY --from=env-builder --chown=1000:1000 /opt/ffmpeg /opt/ffmpeg
-ENV PATH="/opt/ffmpeg/bin:${PATH}" \
-    LD_LIBRARY_PATH="/opt/ffmpeg/lib:${LD_LIBRARY_PATH}"
+ENV PATH="/opt/ffmpeg/bin${PATH:+:${PATH}}" \
+    LD_LIBRARY_PATH="/opt/ffmpeg/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
 # Setup the directories with permissions for nvs user
 COPY --from=env-builder --chown=1000:1000 /app /app
