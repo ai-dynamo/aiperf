@@ -53,7 +53,7 @@ aiperf profile \
 **Options:**
 - `--synthetic-input-tokens-mean`: Mean input token count (default: 550)
 - `--synthetic-input-tokens-stddev`: Standard deviation for input length variability (default: 0)
-- `--output-tokens-mean`: Mean number of output tokens via `max_completion_tokens` (default: None — model decides)
+- `--output-tokens-mean`: Mean number of output tokens requested (default: None — model decides)
 - `--output-tokens-stddev`: Standard deviation for output token length (default: 0)
 - `--seq-dist`: Distribution of (ISL, OSL) pairs for mixed workload simulation (default: None). See [Sequence Length Distributions](sequence-distributions.md) for format details.
 - `--random-seed`: Seed for reproducible prompt generation (default: None)
@@ -201,5 +201,3 @@ aiperf profile \
 <!-- /aiperf-run-vllm-vision-openai-endpoint-server -->
 
 See [Synthetic Video Tutorial](synthetic-video.md) for complete details.
-
----
