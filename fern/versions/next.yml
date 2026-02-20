@@ -3,134 +3,134 @@
 
 navigation:
 - page: Welcome to AIPerf Documentation
-  path: ../pages/index.md
+  path: ../../docs/index.md
 - page: AIPerf Metrics Reference
-  path: ../pages/metrics-reference.md
+  path: ../../docs/metrics-reference.md
 - page: "AIPerf: Comprehensive LLM Benchmarking"
-  path: ../pages/comprehensive-llm-benchmarking.md
+  path: ../../docs/comprehensive-llm-benchmarking.md
 - page: Architecture of AIPerf
-  path: ../pages/architecture.md
+  path: ../../docs/architecture.md
 - page: Benchmark Datasets
-  path: ../pages/benchmark-datasets.md
+  path: ../../docs/benchmark-datasets.md
 - page: Command Line Options
-  path: ../pages/cli-options.md
+  path: ../../docs/cli-options.md
 - page: Environment Variables
-  path: ../pages/environment-variables.md
+  path: ../../docs/environment-variables.md
 - page: GenAI-Perf vs AIPerf CLI Feature Comparison Matrix
-  path: ../pages/genai-perf-feature-comparison.md
+  path: ../../docs/genai-perf-feature-comparison.md
 - page: Migrating from GenAI-Perf
-  path: ../pages/migrating.md
+  path: ../../docs/migrating.md
 - page: Profiling with AIPerf
-  path: ../pages/tutorial.md
+  path: ../../docs/tutorial.md
 - page: "Random Number Generation & Reproducibility"
-  path: ../pages/reproducibility.md
+  path: ../../docs/reproducibility.md
 - section: API
   contents:
   - page: Prefix Synthesis API Reference
-    path: ../pages/api/synthesis.md
+    path: ../../docs/api/synthesis.md
 - section: Benchmark Modes
   contents:
   - page: Load Generator Options Reference
-    path: ../pages/benchmark-modes/timing-modes-reference.md
+    path: ../../docs/benchmark-modes/timing-modes-reference.md
   - page: Trace Replay with Mooncake Traces
-    path: ../pages/benchmark-modes/trace-replay.md
+    path: ../../docs/benchmark-modes/trace-replay.md
 - section: Dev
   contents:
   - page: AIPerf Code Patterns
-    path: ../pages/dev/patterns.md
+    path: ../../docs/dev/patterns.md
 - section: Diagrams
   contents:
   - page: Metrics Flow
-    path: ../pages/diagrams/metrics-flow.md
+    path: ../../docs/diagrams/metrics-flow.md
   - page: Mixins
-    path: ../pages/diagrams/mixins.md
+    path: ../../docs/diagrams/mixins.md
 - section: Plugins
   contents:
   - page: AIPerf Plugin System
-    path: ../pages/plugins/plugin-system.md
+    path: ../../docs/plugins/plugin-system.md
   - page: Creating Your First AIPerf Plugin
-    path: ../pages/plugins/creating-your-first-plugin.md
+    path: ../../docs/plugins/creating-your-first-plugin.md
 - section: Reference
   contents:
   - page: Pre-Flight Tokenizer Auto Detection
-    path: ../pages/reference/tokenizer-auto-detection.md
+    path: ../../docs/reference/tokenizer-auto-detection.md
 - section: Server Metrics
   contents:
   - page: AIPerf Server Metrics JSON Export Schema
-    path: ../pages/server-metrics/server-metrics-json-schema.md
+    path: ../../docs/server-metrics/server-metrics-json-schema.md
   - page: AIPerf Server Metrics Parquet Export Schema
-    path: ../pages/server-metrics/server-metrics-parquet-schema.md
+    path: ../../docs/server-metrics/server-metrics-parquet-schema.md
   - page: AIPerf Server Metrics Reference
-    path: ../pages/server-metrics/server-metrics-reference.md
+    path: ../../docs/server-metrics/server-metrics-reference.md
   - page: Server Metrics Collection
-    path: ../pages/server-metrics/server-metrics.md
+    path: ../../docs/server-metrics/server-metrics.md
 - section: Tutorials
   contents:
   - page: "Arrival Patterns: Simulating Realistic Traffic"
-    path: ../pages/tutorials/arrival-patterns.md
+    path: ../../docs/tutorials/arrival-patterns.md
   - page: Benchmark Goodput with AIPerf
-    path: ../pages/tutorials/goodput.md
+    path: ../../docs/tutorials/goodput.md
   - page: Custom Dataset Guide
-    path: ../pages/tutorials/custom-dataset.md
+    path: ../../docs/tutorials/custom-dataset.md
   - page: Custom Prompt Benchmarking
-    path: ../pages/tutorials/custom-prompt-benchmarking.md
+    path: ../../docs/tutorials/custom-prompt-benchmarking.md
   - page: Fixed Schedule Benchmarking
-    path: ../pages/tutorials/fixed-schedule.md
+    path: ../../docs/tutorials/fixed-schedule.md
   - page: GPU Telemetry with AIPerf
-    path: ../pages/tutorials/gpu-telemetry.md
+    path: ../../docs/tutorials/gpu-telemetry.md
   - page: Gradual Ramping
-    path: ../pages/tutorials/ramping.md
+    path: ../../docs/tutorials/ramping.md
   - page: HTTP Trace Metrics Guide
-    path: ../pages/tutorials/http-trace-metrics.md
+    path: ../../docs/tutorials/http-trace-metrics.md
   - page: Multi-Turn Conversations
-    path: ../pages/tutorials/multi-turn.md
+    path: ../../docs/tutorials/multi-turn.md
   - page: Multi-URL Load Balancing
-    path: ../pages/tutorials/multi-url-load-balancing.md
+    path: ../../docs/tutorials/multi-url-load-balancing.md
   - page: "Prefill Concurrency: Fine-Grained Benchmarking Control"
-    path: ../pages/tutorials/prefill-concurrency.md
+    path: ../../docs/tutorials/prefill-concurrency.md
   - page: Prefix Data Synthesis Tutorial
-    path: ../pages/tutorials/prefix-synthesis.md
+    path: ../../docs/tutorials/prefix-synthesis.md
   - page: Profile Audio Language Models with AIPerf
-    path: ../pages/tutorials/audio.md
+    path: ../../docs/tutorials/audio.md
   - page: Profile Embedding Models with AIPerf
-    path: ../pages/tutorials/embeddings.md
+    path: ../../docs/tutorials/embeddings.md
   - page: Profile Hugging Face TGI Models with AIPerf
-    path: ../pages/tutorials/huggingface-tgi.md
+    path: ../../docs/tutorials/huggingface-tgi.md
   - page: Profile OpenAI-Compatible Text APIs Using AIPerf
-    path: ../pages/tutorials/openai-text-endpoints.md
+    path: ../../docs/tutorials/openai-text-endpoints.md
   - page: Profile Ranking Models with AIPerf
-    path: ../pages/tutorials/rankings.md
+    path: ../../docs/tutorials/rankings.md
   - page: Profile Vision Language Models with AIPerf
-    path: ../pages/tutorials/vision.md
+    path: ../../docs/tutorials/vision.md
   - page: Profile with ShareGPT Dataset
-    path: ../pages/tutorials/sharegpt.md
+    path: ../../docs/tutorials/sharegpt.md
   - page: Request Cancellation Testing
-    path: ../pages/tutorials/request-cancellation.md
+    path: ../../docs/tutorials/request-cancellation.md
   - page: Request Rate with Max Concurrency
-    path: ../pages/tutorials/request-rate-concurrency.md
+    path: ../../docs/tutorials/request-rate-concurrency.md
   - page: Sequence Length Distributions for Advanced Benchmarking
-    path: ../pages/tutorials/sequence-distributions.md
+    path: ../../docs/tutorials/sequence-distributions.md
   - page: SGLang Image Generation
-    path: ../pages/tutorials/sglang-image-generation.md
+    path: ../../docs/tutorials/sglang-image-generation.md
   - page: SGLang Video Generation
-    path: ../pages/tutorials/sglang-video-generation.md
+    path: ../../docs/tutorials/sglang-video-generation.md
   - page: Synthetic Video Generation
-    path: ../pages/tutorials/synthetic-video.md
+    path: ../../docs/tutorials/synthetic-video.md
   - page: Template Endpoint
-    path: ../pages/tutorials/template-endpoint.md
+    path: ../../docs/tutorials/template-endpoint.md
   - page: Time Slicing for Performance Analysis
-    path: ../pages/tutorials/timeslices.md
+    path: ../../docs/tutorials/timeslices.md
   - page: Time-Based Benchmarking
-    path: ../pages/tutorials/time-based-benchmarking.md
+    path: ../../docs/tutorials/time-based-benchmarking.md
   - page: User Interface
-    path: ../pages/tutorials/ui-types.md
+    path: ../../docs/tutorials/ui-types.md
   - page: User-Centric Timing for KV Cache Benchmarking
-    path: ../pages/tutorials/user-centric-timing.md
+    path: ../../docs/tutorials/user-centric-timing.md
   - page: Using Local Tokenizers Without HuggingFace
-    path: ../pages/tutorials/local-tokenizer.md
+    path: ../../docs/tutorials/local-tokenizer.md
   - page: Visualization and Plotting with AIPerf
-    path: ../pages/tutorials/plot.md
+    path: ../../docs/tutorials/plot.md
   - page: Warmup Phase Configuration
-    path: ../pages/tutorials/warmup.md
+    path: ../../docs/tutorials/warmup.md
   - page: Working with Profile Export Files
-    path: ../pages/tutorials/working-with-profile-exports.md
+    path: ../../docs/tutorials/working-with-profile-exports.md
