@@ -1,7 +1,7 @@
-<!--
+{/*
 SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
--->
+*/}
 
 # Profile with ShareGPT Dataset
 
@@ -34,7 +34,7 @@ curl -s localhost:8000/v1/chat/completions \
 
 AIPerf automatically downloads and caches the ShareGPT dataset from HuggingFace.
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -45,7 +45,7 @@ aiperf profile \
     --request-count 20 \
     --concurrency 4
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Sample Output (Successful Run):**
 ```

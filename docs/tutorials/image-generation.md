@@ -194,7 +194,7 @@ aiperf profile \
 
 ### Viewing the generated images
 
-**Extract the generated images:**<br>
+**Extract the generated images:**<br/>
 Copy the following code into a file called `extract_images.py`:
 ```python extract_images.py
 #!/usr/bin/env python3
@@ -237,7 +237,7 @@ with open(input_file, 'r') as f:
 
 **Run the script:**
 > [!TIP]
-> The script is setup to use the default directory and file names for the input and output files, but can be modified to use different files.<br>
+> The script is setup to use the default directory and file names for the input and output files, but can be modified to use different files.<br/>
 >
 > Usage: `python extract_images.py <input_file> <output_dir>`
 

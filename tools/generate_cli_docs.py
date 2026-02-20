@@ -305,6 +305,17 @@ def extract_params(app: Any, subcommand: str) -> dict[str, list[Param]]:
 # =============================================================================
 
 
+def _escape_mdx_prose(text: str) -> str:
+    """Escape bare < characters in prose text so MDX doesn't treat them as JSX tags.
+
+    Preserves backtick code spans unchanged.
+    """
+    parts = re.split(r"(`[^`]+`)", text)
+    return "".join(
+        part if part.startswith("`") else part.replace("<", "&lt;") for part in parts
+    )
+
+
 def _format_param(param: Param) -> list[str]:
     """Format a parameter as markdown."""
     # Header
@@ -325,13 +336,13 @@ def _format_param(param: Param) -> list[str]:
     lines = [f"#### {', '.join(opts)}{type_str}{req}", ""]
 
     # Body
-    lines.append(f"{normalize_text(param.description).rstrip('.')}.")
+    lines.append(f"{_escape_mdx_prose(normalize_text(param.description).rstrip('.'))}.")
 
     if param.type_suffix in ("", " <bool>") and "--no-" not in param.long_opts:
-        lines.append("<br>_Flag (no value required)_")
+        lines.append("<br/>_Flag (no value required)_")
 
     if param.constraints:
-        lines.append(f"<br>_Constraints: {', '.join(param.constraints)}_")
+        lines.append(f"<br/>_Constraints: {', '.join(param.constraints)}_")
 
     if param.choices:
         if param.choice_descs:
@@ -339,7 +350,7 @@ def _format_param(param: Param) -> list[str]:
                 ["", "**Choices:**", "", "| | | |", "|-------|:-------:|-------------|"]
             )
             for choice in param.choices:
-                desc = param.choice_descs.get(choice, "")
+                desc = _escape_mdx_prose(param.choice_descs.get(choice, ""))
                 val = choice.strip("`")
                 is_default = False
                 if param.default and param.default != "False":
@@ -352,11 +363,11 @@ def _format_param(param: Param) -> list[str]:
                 marker = "_default_" if is_default else ""
                 lines.append(f"| {choice} | {marker} | {desc} |")
         else:
-            lines.append(f"<br>_Choices: [{', '.join(param.choices)}]_")
+            lines.append(f"<br/>_Choices: [{', '.join(param.choices)}]_")
             if param.default and param.default != "False":
-                lines.append(f"<br>_Default: `{param.default}`_")
+                lines.append(f"<br/>_Default: `{param.default}`_")
     elif param.default and param.default != "False":
-        lines.append(f"<br>_Default: `{param.default}`_")
+        lines.append(f"<br/>_Default: `{param.default}`_")
 
     lines.append("")
     return lines
@@ -398,7 +409,7 @@ def generate_markdown(app: Any, data: dict[str, dict[str, list[Param]]]) -> str:
 
     # Command sections
     for cmd_name, groups in data.items():
-        lines.extend(["<hr>", "", f"## `aiperf {cmd_name}`", ""])
+        lines.extend(["<hr/>", "", f"## `aiperf {cmd_name}`", ""])
 
         # Command help text
         cmd = app._commands.get(cmd_name)

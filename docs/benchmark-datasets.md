@@ -1,7 +1,7 @@
-<!--
+{/*
 SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
--->
+*/}
 
 This document describes datasets that AIPerf can use to generate stimulus. Additional support is under development, so check back often.
 
@@ -44,7 +44,7 @@ This document describes datasets that AIPerf can use to generate stimulus. Addit
     <tr>
       <td><strong>ShareGPT</strong></td>
       <td style="text-align: center;">✅</td>
-      <td>Conversations from <a href="https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json"><code>--public-dataset sharegpt</code></td>
+      <td>Conversations from <a href="https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json"><code>--public-dataset sharegpt</code></a></td>
     </tr>
   </tbody>
 </table>

@@ -1,7 +1,7 @@
-<!--
+{/*
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+*/}
 # Multi-URL Load Balancing
 
 AIPerf supports distributing requests across multiple inference server instances for horizontal scaling. This is useful for:
@@ -21,6 +21,7 @@ aiperf profile --model llama \
     --url http://server2:8000 \
     --request-rate 20 \
     --request-count 100
+```
 
 **Sample Output (Successful Run):**
 ```
@@ -46,6 +47,7 @@ INFO     Results saved to: artifacts/llama-chat-rate20/
 JSON Export: artifacts/llama-chat-rate20/profile_export_aiperf.json
 ```
 
+```bash
 # Multi-GPU scaling on a single node
 aiperf profile --model llama \
     --url http://localhost:8000 \
@@ -54,6 +56,7 @@ aiperf profile --model llama \
     --url http://localhost:8003 \
     --concurrency 32 \
     --benchmark-duration 60
+```
 
 **Sample Output (Successful Run):**
 ```
@@ -76,7 +79,6 @@ INFO     Results saved to: artifacts/llama-chat-concurrency32/
 └────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
 
 JSON Export: artifacts/llama-chat-concurrency32/profile_export_aiperf.json
-```
 ```
 
 ## URL Selection Strategy

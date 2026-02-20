@@ -1,7 +1,7 @@
-<!--
+{/*
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+*/}
 # AIPerf Server Metrics JSON Export Schema
 
 This document describes the structure and semantics of every field in the AIPerf server metrics JSON export format.
@@ -794,8 +794,8 @@ The +Inf bucket sum is calculated as `total_sum - estimated_finite_sum`. Observa
 
 **Phase 4 - Generate finite observations with sum constraint:**
 For each bucket, observations are placed using one of several strategies based on learned statistics:
-- **F3 two-point mass**: When variance is extremely tight (< 1% of bucket width)
-- **Blended distribution**: When variance is tight (< 20%) and mean is near center (< 30% offset)
+- **F3 two-point mass**: When variance is extremely tight (&lt; 1% of bucket width)
+- **Blended distribution**: When variance is tight (&lt; 20%) and mean is near center (&lt; 30% offset)
 - **Variance-aware distribution**: When variance is moderate
 - **Shifted uniform**: Fallback when only mean is learned (no variance data)
 - **Pure uniform**: Final fallback using bucket midpoint

@@ -1,7 +1,7 @@
-<!--
+{/*
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+*/}
 # GenAI-Perf vs AIPerf CLI Feature Comparison Matrix
 
 This comparison matrix shows the supported CLI options between GenAI-Perf and AIPerf.
@@ -66,13 +66,13 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | Feature | CLI Option | GenAI-Perf | AIPerf | Notes |
 |---------|------------|------------|---------|-------|
 | **Model Names** | `-m` | ✅ | ✅ | |
-| **Model Selection Strategy** | `--model-selection-strategy`<br>`{round_robin,random}` | ✅ | ✅ | |
-| **Backend Selection** | `--backend`<br>`{tensorrtllm,vllm}` | ✅ | ❌ | |
+| **Model Selection Strategy** | `--model-selection-strategy`<br/>`{round_robin,random}` | ✅ | ✅ | |
+| **Backend Selection** | `--backend`<br/>`{tensorrtllm,vllm}` | ✅ | ❌ | |
 | **Custom Endpoint** | `--endpoint` | ✅ | ✅ | |
 | **Endpoint Type** | `--endpoint-type` | ✅ | ✅ | [See detailed comparison above](#endpoint-types-support-matrix) |
 | **Server Metrics URL** | `--server-metrics-url` | ❌ | ✅ | AIPerf uses `--server-metrics` (enabled by default, auto-collects Prometheus metrics from endpoint). GenAI-Perf's `--server-metrics-url` is for GPU telemetry only. |
 | **Streaming** | `--streaming` | ✅ | ✅ | |
-| **URL** | `-u URL`<br>`--url` | ✅ | ✅ | |
+| **URL** | `-u URL`<br/>`--url` | ✅ | ✅ | |
 | **Request Timeout** | `--request-timeout-seconds` | ❌ | ✅ | |
 | **API Key** | `--api-key` | 🟡 | ✅ | For GenAI-Perf, use `-H` instead |
 
@@ -86,11 +86,11 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **Custom Headers** | `--header -H` | ✅ | ✅ | |
 | **Input File** | `--input-file` | ✅ | ✅ | |
 | **Dataset Entries/Conversations** | `--num-dataset-entries` | ✅ | ✅ | |
-| **Public Dataset** | `--public-dataset`<br>`{sharegpt}` | ❌ | ✅ | |
-| **Custom Dataset Type** | `--custom-dataset-type`<br>`{single_turn,multi_turn,random_pool,mooncake_trace}` | ❌ | ✅ | GenAI-Perf infers dataset type from input file format |
+| **Public Dataset** | `--public-dataset`<br/>`{sharegpt}` | ❌ | ✅ | |
+| **Custom Dataset Type** | `--custom-dataset-type`<br/>`{single_turn,multi_turn,random_pool,mooncake_trace}` | ❌ | ✅ | GenAI-Perf infers dataset type from input file format |
 | **Fixed Schedule** | `--fixed-schedule` | ✅ | ✅ | |
 | **Fixed Schedule Auto Offset** | `--fixed-schedule-auto-offset` | ❌ | ✅ | |
-| **Fixed Schedule Start/End Offset** | `--fixed-schedule-start-offset`<br>`--fixed-schedule-end-offset` | ❌ | ✅ | |
+| **Fixed Schedule Start/End Offset** | `--fixed-schedule-start-offset`<br/>`--fixed-schedule-end-offset` | ❌ | ✅ | |
 | **Random Seed** | `--random-seed` | ✅ | ✅ | |
 | **GRPC Method** | `--grpc-method` | ✅ | ❌ | |
 
@@ -124,7 +124,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 |---------|------------|------------|---------|-------|
 | **Concurrency** | `--concurrency` | ✅ | ✅ | |
 | **Request Rate** | `--request-rate` | ✅ | ✅ | |
-| **Request Count** | `--request-count`<br>`--num-requests` | ✅ | ✅ | |
+| **Request Count** | `--request-count`<br/>`--num-requests` | ✅ | ✅ | |
 | **Request Rate w/ Max Concurrency** | `--request-rate` with `--concurrency` | ❌ | ✅ | Dual control of rate and concurrency ceiling |
 | **Measurement Interval** | `--measurement-interval -p` | ✅ | **`N/A`** | Not applicable to AIPerf |
 | **Stability Percentage** | `--stability-percentage -s` | ✅ | **`N/A`** | Not applicable to AIPerf |
@@ -135,8 +135,8 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 
 | Feature | CLI Option | GenAI-Perf | AIPerf | Notes |
 |---------|------------|------------|---------|-------|
-| **Arrival Pattern** | `--arrival-pattern`<br>`{constant,poisson,gamma}` | ❌ | ✅ | Controls inter-arrival time distribution |
-| **Arrival Smoothness** | `--arrival-smoothness`<br>`--vllm-burstiness` | ❌ | ✅ | Gamma distribution shape: <1=bursty, 1=Poisson, >1=smooth |
+| **Arrival Pattern** | `--arrival-pattern`<br/>`{constant,poisson,gamma}` | ❌ | ✅ | Controls inter-arrival time distribution |
+| **Arrival Smoothness** | `--arrival-smoothness`<br/>`--vllm-burstiness` | ❌ | ✅ | Gamma distribution shape: &lt;1=bursty, 1=Poisson, >1=smooth |
 
 ---
 
@@ -215,9 +215,9 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 
 | Feature | CLI Option | GenAI-Perf | AIPerf | Notes |
 |---------|------------|------------|---------|-------|
-| **Input Tokens Mean** | `--synthetic-input-tokens-mean`<br>`--isl` | ✅ | ✅ | |
+| **Input Tokens Mean** | `--synthetic-input-tokens-mean`<br/>`--isl` | ✅ | ✅ | |
 | **Input Tokens Stddev** | `--synthetic-input-tokens-stddev` | ✅ | ✅ | |
-| **Input Tokens Block Size** | `--prompt-input-tokens-block-size`<br>`--isl-block-size` | ❌ | ✅ | Used for `mooncake_trace` hash_id blocks |
+| **Input Tokens Block Size** | `--prompt-input-tokens-block-size`<br/>`--isl-block-size` | ❌ | ✅ | Used for `mooncake_trace` hash_id blocks |
 
 ---
 
@@ -225,7 +225,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 
 | Feature | CLI Option | GenAI-Perf | AIPerf | Notes |
 |---------|------------|------------|---------|-------|
-| **Output Tokens Mean** | `--output-tokens-mean`<br>`--osl` | ✅ | ✅ | |
+| **Output Tokens Mean** | `--output-tokens-mean`<br/>`--osl` | ✅ | ✅ | |
 | **Output Tokens Stddev** | `--output-tokens-stddev` | ✅ | ✅ | |
 | **Output Tokens Mean Deterministic** | `--output-tokens-mean-deterministic` | ✅ | ❌ | Only applicable to Triton |
 
@@ -235,7 +235,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 
 | Feature | CLI Option | GenAI-Perf | AIPerf | Notes |
 |---------|------------|------------|---------|-------|
-| **Text Batch Size** | `--batch-size-text`<br>`--batch-size -b` | ✅ | ✅ | |
+| **Text Batch Size** | `--batch-size-text`<br/>`--batch-size -b` | ✅ | ✅ | |
 | **Audio Batch Size** | `--batch-size-audio` | ✅ | ✅ | |
 | **Image Batch Size** | `--batch-size-image` | ✅ | ✅ | |
 
@@ -256,7 +256,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 |---------|------------|------------|---------|-------|
 | **Audio Length Mean** | `--audio-length-mean` | ✅ | ✅ | |
 | **Audio Length Stddev** | `--audio-length-stddev` | ✅ | ✅ | |
-| **Audio Format** | `--audio-format`<br>`{wav,mp3,random}` | ✅ | ✅ | |
+| **Audio Format** | `--audio-format`<br/>`{wav,mp3,random}` | ✅ | ✅ | |
 | **Audio Depths** | `--audio-depths` | ✅ | ✅ | |
 | **Audio Sample Rates** | `--audio-sample-rates` | ✅ | ✅ | |
 | **Audio Number of Channels** | `--audio-num-channels` | ✅ | ✅ | |
@@ -271,7 +271,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **Image Width Stddev** | `--image-width-stddev` | ✅ | ✅ | |
 | **Image Height Mean** | `--image-height-mean` | ✅ | ✅ | |
 | **Image Height Stddev** | `--image-height-stddev` | ✅ | ✅ | |
-| **Image Format** | `--image-format`<br>`{png,jpeg,random}` | ✅ | ✅ | |
+| **Image Format** | `--image-format`<br/>`{png,jpeg,random}` | ✅ | ✅ | |
 
 ---
 
@@ -279,8 +279,8 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 
 | Feature | CLI Option | GenAI-Perf | AIPerf | Notes |
 |---------|------------|------------|---------|-------|
-| **Record Processor Service Count** | `--record-processor-service-count`<br>`--record-processors` | ❌ | ✅ | |
-| **Maximum Workers** | `--workers-max`<br>`--max-workers` | ❌ | ✅ | |
+| **Record Processor Service Count** | `--record-processor-service-count`<br/>`--record-processors` | ❌ | ✅ | |
+| **Maximum Workers** | `--workers-max`<br/>`--max-workers` | ❌ | ✅ | |
 | **ZMQ Host** | `--zmq-host` | ❌ | ✅ | |
 | **ZMQ IPC Path** | `--zmq-ipc-path` | ❌ | ✅ | |
 
@@ -303,7 +303,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **Verbose** | `-v --verbose` | ✅ | ✅ | |
 | **Extra Verbose** | `-vv` | ✅ | ✅ | |
 | **Log Level** | `--log-level` | ❌ | ✅ | `{trace,debug,info,notice,warning,success,error,critical}` |
-| **UI Type** | `--ui-type --ui`<br>`{dashboard,simple,none}` | ❌ | ✅ | |
+| **UI Type** | `--ui-type --ui`<br/>`{dashboard,simple,none}` | ❌ | ✅ | |
 | **Help** | `-h --help` | ✅ | ✅ | |
 
 ---

@@ -1,7 +1,7 @@
-<!--
+{/*
 SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
--->
+*/}
 
 # Request Cancellation Testing
 
@@ -79,7 +79,7 @@ timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost
 
 Test with a small percentage of cancelled requests:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 # Profile with 10% request cancellation
 aiperf profile \
@@ -98,7 +98,7 @@ aiperf profile \
     --request-count 50 \
     --warmup-request-count 5
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Sample Output (Successful Run):**
 ```
@@ -139,7 +139,7 @@ JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency8/profile_export_aiperf.j
 
 Test service resilience under frequent cancellations:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 # Profile with 50% request cancellation
 aiperf profile \
@@ -155,7 +155,7 @@ aiperf profile \
     --concurrency 10 \
     --request-count 40
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Sample Output (Successful Run):**
 ```
@@ -187,7 +187,7 @@ JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/profile_export_aiperf.
 
 Test immediate disconnection where the client closes the connection right after sending the request:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 # Profile with immediate cancellation (0 delay)
 aiperf profile \
@@ -203,7 +203,7 @@ aiperf profile \
     --concurrency 15 \
     --request-count 60
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Sample Output (Successful Run):**
 ```

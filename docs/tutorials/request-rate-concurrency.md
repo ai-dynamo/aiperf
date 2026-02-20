@@ -1,7 +1,7 @@
-<!--
+{/*
 SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
--->
+*/}
 
 # Request Rate with Max Concurrency
 
@@ -48,7 +48,7 @@ The sleep intervals in step 1 are determined by your chosen arrival pattern (`--
 >
 > **`constant`** — Requests arrive at precisely evenly-spaced intervals for deterministic, predictable load. Ideal for reproducible benchmarks and regression testing.
 >
-> **`gamma`** — Uses gamma-distributed inter-arrival times with tunable smoothness via `--arrival-smoothness`. Values <1.0 create bursty traffic, >1.0 creates smoother traffic, and 1.0 is equivalent to Poisson. Compatible with vLLM's `--burstiness` parameter.
+> **`gamma`** — Uses gamma-distributed inter-arrival times with tunable smoothness via `--arrival-smoothness`. Values &lt;1.0 create bursty traffic, >1.0 creates smoother traffic, and 1.0 is equivalent to Poisson. Compatible with vLLM's `--burstiness` parameter.
 >
 > **`concurrency_burst`** — Issues requests as fast as possible (zero interval), useful for stress testing or when concurrency is the only rate limiter. Often used internally for warmup phases.
 
@@ -75,7 +75,7 @@ The following examples demonstrate both request rate modes in action. Make sure 
 
 This example demonstrates realistic traffic simulation with a fast ramp-up (0.5 seconds). The Poisson distribution creates natural variance in request timing while maintaining an average rate of 200 req/s, capped at 100 concurrent requests.
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -91,7 +91,7 @@ aiperf profile \
     --synthetic-input-tokens-mean 500 \
     --output-tokens-mean 200
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Sample Output (Successful Run):**
 ```
@@ -120,7 +120,7 @@ The Poisson distribution creates natural request spacing. You'll notice requests
 
 This example uses evenly-spaced requests with a moderate ramp-up (1 second). Requests arrive at exactly 20ms intervals (50 req/s), making results highly reproducible for benchmarking and regression testing.
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -135,7 +135,7 @@ aiperf profile \
     --synthetic-input-tokens-mean 800 \
     --output-tokens-mean 400
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Sample Output (Successful Run):**
 ```

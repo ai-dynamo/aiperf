@@ -1,7 +1,7 @@
-<!--
+{/*
 SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
--->
+*/}
 
 # Profile OpenAI-Compatible Text APIs Using AIPerf
 
@@ -28,7 +28,7 @@ The Chat Completions API uses the `/v1/chat/completions` endpoint.
 ### Profile with synthetic inputs
 
 Run AIPerf against the Chat Completions endpoint using synthetic inputs:
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -42,7 +42,7 @@ aiperf profile \
     --url localhost:8000 \
     --request-count 20
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Sample Output (Successful Run):**
 ```
@@ -70,7 +70,7 @@ JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency1/profile_export_aiperf.j
 ### Profile with custom input file
 
 Create a JSONL input file:
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 
 ```bash
 cat <<EOF > inputs.jsonl
@@ -91,7 +91,7 @@ aiperf profile \
     --url localhost:8000 \
     --request-count 10
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 ## Profile Completions API
 The Completions API uses the `/v1/completions` endpoint.
@@ -99,7 +99,7 @@ The Completions API uses the `/v1/completions` endpoint.
 ### Profile with synthetic inputs
 
 Run AIPerf against the Completions endpoint using synthetic inputs:
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -112,7 +112,7 @@ aiperf profile \
     --url localhost:8000 \
     --request-count 32
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Sample Output (Successful Run):**
 ```
@@ -141,7 +141,7 @@ JSON Export: artifacts/Qwen_Qwen3-0.6B-completions-concurrency1/profile_export_a
 ### Profile with custom input file
 
 Create a JSONL input file:
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 cat <<EOF > inputs.jsonl
 {"texts": ["How are you?"]}
@@ -161,4 +161,4 @@ aiperf profile \
     --request-count 10
 
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}

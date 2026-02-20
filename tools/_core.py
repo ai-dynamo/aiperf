@@ -81,17 +81,17 @@ CONSTRAINT_SYMBOLS = {
     "ge": "≥",
     "le": "≤",
     "gt": ">",
-    "lt": "<",
+    "lt": "&lt;",
     "min_length": "min:",
     "max_length": "max:",
 }
 
 # Copyright header for generated markdown files
 SPDX_HEADER_MD = (
-    "<!--",
+    "{/*",
     "SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
     "SPDX-License-Identifier: Apache-2.0",
-    "-->",
+    "*/}",
 )
 
 # Header for auto-generated Python files

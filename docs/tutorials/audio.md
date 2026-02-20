@@ -1,7 +1,7 @@
-<!--
+{/*
 SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
--->
+*/}
 
 # Profile Audio Language Models with AIPerf
 
@@ -15,7 +15,7 @@ This guide covers profiling audio models using OpenAI-compatible chat completion
 
 Launch the vLLM server with Qwen2-Audio-7B-Instruct. Audio support requires the `vllm[audio]` extras to be installed:
 
-<!-- setup-vllm-audio-openai-endpoint-server -->
+{/* setup-vllm-audio-openai-endpoint-server */}
 ```bash
 # Build vLLM image with audio support
 docker build -t vllm-audio - << 'EOF'
@@ -28,16 +28,16 @@ docker run --gpus all -p 8000:8000 vllm-audio \
   --model Qwen/Qwen2-Audio-7B-Instruct \
   --trust-remote-code
 ```
-<!-- /setup-vllm-audio-openai-endpoint-server -->
+{/* /setup-vllm-audio-openai-endpoint-server */}
 
 
 Verify the server is ready:
 
-<!-- health-check-vllm-audio-openai-endpoint-server -->
+{/* health-check-vllm-audio-openai-endpoint-server */}
 ```bash
 timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen2-Audio-7B-Instruct\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
 ```
-<!-- /health-check-vllm-audio-openai-endpoint-server -->
+{/* /health-check-vllm-audio-openai-endpoint-server */}
 
 ---
 
@@ -45,7 +45,7 @@ timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost
 
 AIPerf can generate synthetic audio for benchmarking:
 
-<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
+{/* aiperf-run-vllm-audio-openai-endpoint-server */}
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-Audio-7B-Instruct \
@@ -58,7 +58,7 @@ aiperf profile \
     --request-count 20 \
     --concurrency 4
 ```
-<!-- /aiperf-run-vllm-audio-openai-endpoint-server -->
+{/* /aiperf-run-vllm-audio-openai-endpoint-server */}
 
 **Output:**
 
@@ -100,7 +100,7 @@ AIPerf can automatically load and encode audio files from local paths.
 
 > **Note:** The example below uses paths from the AIPerf test fixtures directory. Replace these with paths to your own audio files.
 
-<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
+{/* aiperf-run-vllm-audio-openai-endpoint-server */}
 ```bash
 cat <<EOF > inputs.jsonl
 {"texts": ["Transcribe this."], "audios": ["/fixtures/audio/test_audio_1s.wav"]}
@@ -117,7 +117,7 @@ aiperf profile \
     --url localhost:8000 \
     --request-count 3
 ```
-<!-- /aiperf-run-vllm-audio-openai-endpoint-server -->
+{/* /aiperf-run-vllm-audio-openai-endpoint-server */}
 
 AIPerf will automatically:
 - Load the audio files from the specified paths

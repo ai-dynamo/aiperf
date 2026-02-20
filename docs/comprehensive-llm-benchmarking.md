@@ -1,11 +1,11 @@
-<!--
+{/*
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+*/}
 # AIPerf: Comprehensive LLM Benchmarking
 
-**Presentation Date**: November 13, 2025<br>
-**Updated**: February 2, 2026<br>
+**Presentation Date**: November 13, 2025<br/>
+**Updated**: February 2, 2026<br/>
 **Tool**: [AIPerf v0.5.0](https://github.com/ai-dynamo/aiperf) | [Architecture Overview](architecture.md) | [Full Documentation](index.md)
 
 ---
@@ -56,10 +56,10 @@ pip install aiperf
 
 **Note**: This was a demo endpoint used for the November 13, 2025 presentation. The cluster has been taken down.
 
-**Model**: Qwen3-0.6B (Qwen/Qwen3-0.6B)<br>
-**Inference Engine**: vLLM v0.11.0<br>
-**Architecture**: 8-way data parallelism (8 independent vLLM replicas)<br>
-**Hardware**: 8x NVIDIA H200 GPUs (1 GPU per replica)<br>
+**Model**: Qwen3-0.6B (Qwen/Qwen3-0.6B)<br/>
+**Inference Engine**: vLLM v0.11.0<br/>
+**Architecture**: 8-way data parallelism (8 independent vLLM replicas)<br/>
+**Hardware**: 8x NVIDIA H200 GPUs (1 GPU per replica)<br/>
 **Deployment**: Kubernetes on Nebius Cloud
 
 **Why this endpoint was chosen for the demo:**
@@ -140,10 +140,10 @@ Success Rate: 100% (0 errors)
 
 ### Key Takeaways
 
-✅ **TTFT = 347ms**: Fast first token delivery - users see responses quickly<br>
-✅ **Request Latency = 2.1s**: Total time to generate 500 tokens per request<br>
-✅ **System Throughput = 22.5K tokens/sec**: High capacity with 100 concurrent users<br>
-✅ **ITL = 3.57ms**: Smooth, consistent token streaming<br>
+✅ **TTFT = 347ms**: Fast first token delivery - users see responses quickly<br/>
+✅ **Request Latency = 2.1s**: Total time to generate 500 tokens per request<br/>
+✅ **System Throughput = 22.5K tokens/sec**: High capacity with 100 concurrent users<br/>
+✅ **ITL = 3.57ms**: Smooth, consistent token streaming<br/>
 ✅ **P99 Latency = 3.6s**: Even worst-case requests complete reasonably fast
 
 **What we learned**:
@@ -234,9 +234,9 @@ The Pareto frontier shows the inverse relationship between resource efficiency a
 
 #### What We Learned
 
-🔍 **Performance is non-linear**: Doubling concurrency doesn't double throughput<br>
-📊 **The U-shaped curve**: TPS/GPU rises, peaks at c=200, then falls due to queuing overhead<br>
-⚖️ **No free lunch**: Higher concurrency = better GPU utilization BUT worse user experience<br>
+🔍 **Performance is non-linear**: Doubling concurrency doesn't double throughput<br/>
+📊 **The U-shaped curve**: TPS/GPU rises, peaks at c=200, then falls due to queuing overhead<br/>
+⚖️ **No free lunch**: Higher concurrency = better GPU utilization BUT worse user experience<br/>
 🎯 **Know your SLA**: Choose concurrency based on your latency vs. throughput priorities
 
 **Pro tip**: Run this analysis on YOUR endpoint with YOUR request patterns to find YOUR sweet spot!
@@ -337,9 +337,9 @@ Percentiles (ms):
 
 ### Key Takeaways
 
-✅ **P75 = 422.87ms**: 75% of requests get first token within this time<br>
-✅ **Raw data access**: Calculate ANY custom metric your org needs<br>
-✅ **Full transparency**: Every request is logged with complete metrics<br>
+✅ **P75 = 422.87ms**: 75% of requests get first token within this time<br/>
+✅ **Raw data access**: Calculate ANY custom metric your org needs<br/>
+✅ **Full transparency**: Every request is logged with complete metrics<br/>
 ✅ **Easy parsing**: Standard JSON format, one record per line
 
 **Why this matters**:
@@ -440,9 +440,9 @@ MOONCAKE ARXIV TRACE - DATASET CHARACTERISTICS
 
 **Key characteristics of real production traffic**:
 
-✅ **Highly Variable Request Sizes**: 49% of requests are 5K-10K tokens, but tail extends to 125K<br>
-✅ **Long-Context Dominant**: Median of 6,402 tokens vs. typical benchmarks using 1K-2K<br>
-✅ **Consistent Load**: ~393 requests/minute with relatively steady arrival rate<br>
+✅ **Highly Variable Request Sizes**: 49% of requests are 5K-10K tokens, but tail extends to 125K<br/>
+✅ **Long-Context Dominant**: Median of 6,402 tokens vs. typical benchmarks using 1K-2K<br/>
+✅ **Consistent Load**: ~393 requests/minute with relatively steady arrival rate<br/>
 ✅ **Heavy Tail Distribution**: 2% of requests exceed 40K tokens (production reality!)
 
 This represents **real-world patterns** you won't get from synthetic benchmarks:
@@ -492,9 +492,9 @@ aiperf profile \
 
 ### Why Trace-Based Benchmarking Matters
 
-✅ **Realistic Load Testing**: Test how your system handles actual production patterns, not idealized synthetic load<br>
-✅ **KV Cache Validation**: If you implement cache sharing (like Mooncake), trace data shows real hit rates<br>
-✅ **Capacity Planning**: See performance under bursty traffic with variable request sizes<br>
+✅ **Realistic Load Testing**: Test how your system handles actual production patterns, not idealized synthetic load<br/>
+✅ **KV Cache Validation**: If you implement cache sharing (like Mooncake), trace data shows real hit rates<br/>
+✅ **Capacity Planning**: See performance under bursty traffic with variable request sizes<br/>
 ✅ **Privacy-Preserving**: Hash-based traces enable sharing without exposing sensitive data
 
 **Pro tip**: Use `--fixed-schedule` for end-to-end system validation (respects timing), or remove it to stress-test maximum throughput capacity. See the [Fixed Schedule Tutorial](tutorials/fixed-schedule.md) for more details.
@@ -833,7 +833,7 @@ Look for: Correlation between requests/slice and latency
 ### Best Practices
 
 ✅ **Choose appropriate slice duration**:
-- Too short (<5s): High variance, unstable metrics
+- Too short (&lt;5s): High variance, unstable metrics
 - Too long (>60s): Miss fine-grained patterns
 - Recommended: 10-30 seconds for most workloads
 

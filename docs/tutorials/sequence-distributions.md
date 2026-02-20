@@ -1,7 +1,7 @@
-<!--
+{/*
 SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
--->
+*/}
 
 # Sequence Length Distributions for Advanced Benchmarking
 
@@ -83,7 +83,7 @@ Values are automatically clamped to be at least 1.
 
 ### Example Case: Chatbot Workload Simulation
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 # Simulate typical chatbot traffic:
 # - 70% short queries (quick questions)
@@ -98,7 +98,7 @@ aiperf profile \
     --url localhost:8000 \
     --sequence-distribution "64|10,32|8:70;256|40,128|20:20;1024|100,512|50:10"
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Sample Output (Successful Run):**
 ```
