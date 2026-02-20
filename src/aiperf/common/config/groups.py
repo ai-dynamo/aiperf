@@ -21,6 +21,7 @@ class Groups:
     PROMPT = Group.create_ordered("Prompt")
     PREFIX_PROMPT = Group.create_ordered("Prefix Prompt")
     RANKINGS = Group.create_ordered("Rankings")
+    ACCURACY = Group.create_ordered("Accuracy")
     SYNTHESIS = Group.create_ordered("Synthesis")
     AUDIO_INPUT = Group.create_ordered("Audio Input")
     IMAGE_INPUT = Group.create_ordered("Image Input")
