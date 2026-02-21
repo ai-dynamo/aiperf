@@ -124,10 +124,10 @@ CLI Command: aiperf profile --model 'Qwen/Qwen3-0.6B' --endpoint-type 'chat' --i
 2
 Benchmark Duration: 15.81 sec
 CSV Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.csv
+artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.csv
 JSON Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.json
-Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
+artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.json
+Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
 ```
 
 ---
@@ -203,10 +203,10 @@ CLI Command: aiperf profile --model 'Qwen/Qwen3-0.6B' --endpoint-type 'chat' --i
 --concurrency 2
 Benchmark Duration: 10.60 sec
 CSV Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.csv
+artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.csv
 JSON Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.json
-Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
+artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.json
+Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
 ```
 
 **Key Points:**
@@ -298,10 +298,10 @@ CLI Command: aiperf profile --model 'Qwen/Qwen3-0.6B' --endpoint-type 'chat' --i
 --random-seed 42 --url 'localhost:8000'
 Benchmark Duration: 42.74 sec
 CSV Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/profile_export_aiperf.csv
+artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/profile_export_aiperf.csv
 JSON Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/profile_export_aiperf.json
-Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/logs/aiperf.log
+artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/profile_export_aiperf.json
+Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/logs/aiperf.log
 ```
 
 **Behavior:**

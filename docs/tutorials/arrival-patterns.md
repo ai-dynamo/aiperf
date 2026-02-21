@@ -11,7 +11,7 @@ When benchmarking with `--request-rate`, AIPerf can vary how requests arrive ove
 
 Real traffic doesn't arrive at perfectly regular intervals. Traffic comes in bursts—quiet periods followed by sudden spikes. How your server handles this variance affects real-world performance.
 
-```
+```text
 Constant Pattern:         Poisson Pattern:         Gamma (bursty):
 |  |  |  |  |  |  |       |   | || |    | |         |||    |    |||  |
 └──────────────────▶     └──────────────────▶    └──────────────────▶
@@ -42,7 +42,7 @@ aiperf profile --request-rate 50 --arrival-pattern gamma --arrival-smoothness 0.
 
 Requests arrive at perfectly regular intervals: exactly `1/rate` seconds apart.
 
-```
+```text
 Inter-arrival times:
 10 QPS → every 100ms:  |····|····|····|····|····|····|
                        0   100  200  300  400  500  600 ms
@@ -62,7 +62,7 @@ Inter-arrival times:
 
 Requests arrive according to a Poisson process—the mathematical model for random events at a constant average rate. Inter-arrival times follow an exponential distribution.
 
-```
+```text
 Inter-arrival times (exponential):
 10 QPS average:  |··|······|·|···|····|··|·······|···|
                  Varied gaps, same average rate over time
@@ -93,7 +93,7 @@ Gamma distribution generalizes Poisson with a **smoothness** parameter that cont
 | `= 1.0` | **Poisson** — natural randomness | Medium | Same as `--arrival-pattern poisson` |
 | `> 1.0` | **Smooth** — more regular arrivals | Lower | Controlled testing, less noise |
 
-```
+```text
 Smoothness = 0.5 (bursty):
 ||||      |||        |||||    ||
  Clusters of requests with quiet gaps
@@ -118,7 +118,7 @@ aiperf profile --concurrency 50 ...
 
 When you omit `--request-rate` and only specify `--concurrency`, AIPerf uses burst mode: zero delay between request dispatches, limited only by the concurrency semaphore.
 
-```
+```text
 Burst mode (concurrency=3):
 [Req1]────────────────────────────▶
 [Req2]────────────────────────────▶
@@ -186,8 +186,7 @@ INFO     Results saved to: results/constant/
 └────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
 
 JSON Export: results/constant/profile_export_aiperf.json
-```
-
+```text
 # Run 2: Poisson (realistic)
 aiperf profile \
     --model your-model \
@@ -201,7 +200,7 @@ aiperf profile \
 ```
 
 **Expected Output (Run 2):**
-```
+```text
 INFO     Starting AIPerf System
 INFO     Using Request_Rate strategy with poisson arrival pattern
 INFO     AIPerf System is PROFILING
@@ -243,7 +242,7 @@ aiperf profile \
 ```
 
 **Sample Output (Successful Run):**
-```
+```text
 INFO     Starting AIPerf System
 INFO     Using Request_Rate strategy with gamma arrival pattern (smoothness: 0.3)
 INFO     AIPerf System is PROFILING
@@ -285,7 +284,7 @@ aiperf profile \
 ```
 
 **Sample Output (Successful Run):**
-```
+```text
 INFO     Starting AIPerf System
 INFO     Using Request_Rate strategy with gamma arrival pattern (smoothness: 5.0)
 INFO     AIPerf System is PROFILING

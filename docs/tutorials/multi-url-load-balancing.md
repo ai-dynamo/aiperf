@@ -24,7 +24,7 @@ aiperf profile --model llama \
 ```
 
 **Sample Output (Successful Run):**
-```
+```text
 INFO     Starting AIPerf System
 INFO     Load balancing enabled: 2 URLs with round_robin strategy
 INFO     Using Request_Rate strategy (20.0 req/s)
@@ -59,7 +59,7 @@ aiperf profile --model llama \
 ```
 
 **Sample Output (Successful Run):**
-```
+```text
 INFO     Starting AIPerf System
 INFO     Load balancing enabled: 4 URLs with round_robin strategy
 INFO     AIPerf System is PROFILING

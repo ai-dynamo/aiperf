@@ -77,9 +77,8 @@ AIPerf achieves its high throughput through parallel workers, ZMQ load balancing
 
 Reproducibility is enforced by automated tests on every commit:
 
-- **[test_random_generator_canary.py](../tests/integration/test_random_generator_canary.py)**: Compares payloads against reference snapshots to detect regressions
-- **[test_deterministic_behavior.py](../tests/integration/test_deterministic_behavior.py)**: Verifies byte-for-byte identical outputs with same seed, different outputs with different seeds, tested with 5+ parallel workers
-
+- **[test_random_generator_canary.py](https://github.com/ai-dynamo/aiperf/blob/main/tests/integration/test_random_generator_canary.py)**: Compares payloads against reference snapshots to detect regressions
+- **[test_deterministic_behavior.py](https://github.com/ai-dynamo/aiperf/blob/main/tests/integration/test_deterministic_behavior.py)**: Verifies byte-for-byte identical outputs with same seed, different outputs with different seeds, tested with 5+ parallel workers
 ---
 
 ## User Guide
@@ -270,4 +269,4 @@ my_rng = rng.derive(identifier: str) -> RandomGenerator
 rng.reset()
 ```
 
-See [random_generator.py](../src/aiperf/common/random_generator.py) for the RandomGenerator class and full API details.
+See [random_generator.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/random_generator.py) for the RandomGenerator class and full API details.
