@@ -248,9 +248,9 @@ class ResponsesEndpoint(BaseEndpoint):
     ) -> TextResponseData | ReasoningResponseData | None:
         """Extract content from a non-streaming Responses API response.
 
-        Looks for output items with ``type: "message"`` and collects their
-        content parts (``output_text`` and ``reasoning``). Falls back to
-        the top-level ``output_text`` convenience field.
+        Looks for output items with ``type: "message"`` (text content) and
+        ``type: "reasoning"`` (summary text). Falls back to the top-level
+        ``output_text`` convenience field.
 
         Args:
             json_obj: Deserialized response JSON
@@ -264,15 +264,24 @@ class ResponsesEndpoint(BaseEndpoint):
             reasoning_parts: list[str] = []
 
             for item in output:
-                if not isinstance(item, dict) or item.get("type") != "message":
+                if not isinstance(item, dict):
                     continue
-                for part in item.get("content", []):
-                    if not isinstance(part, dict):
-                        continue
-                    if part.get("type") == "output_text" and part.get("text"):
-                        text_parts.append(part["text"])
-                    elif part.get("type") == "reasoning" and part.get("text"):
-                        reasoning_parts.append(part["text"])
+
+                item_type = item.get("type")
+
+                if item_type == "reasoning":
+                    for part in item.get("summary", []):
+                        if not isinstance(part, dict):
+                            continue
+                        if part.get("type") == "summary_text" and part.get("text"):
+                            reasoning_parts.append(part["text"])
+
+                elif item_type == "message":
+                    for part in item.get("content", []):
+                        if not isinstance(part, dict):
+                            continue
+                        if part.get("type") == "output_text" and part.get("text"):
+                            text_parts.append(part["text"])
 
             if reasoning_parts:
                 return ReasoningResponseData(
