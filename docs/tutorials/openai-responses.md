@@ -34,7 +34,7 @@ Launch an OpenAI Responses API-compatible server. For example, using a vLLM serv
 ```bash
 docker pull vllm/vllm-openai:latest
 docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
-  --model Qwen/Qwen3-0.6B
+  --model Qwen/Qwen3-0.6B --reasoning-parser qwen3
 ```
 
 Verify the server is ready:
@@ -159,6 +159,29 @@ aiperf profile \
 ```
 
 Image inputs are formatted as `{"type": "input_image", "image_url": "<url>"}` in the Responses API (compared to `{"type": "image_url", "image_url": {"url": "<url>"}}` in Chat Completions).
+
+---
+
+## Audio Inputs
+
+Profile audio-capable models with the Responses API:
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --endpoint-type responses \
+    --endpoint /v1/responses \
+    --streaming \
+    --audio-length-mean 5.0 \
+    --audio-format wav \
+    --audio-sample-rates 16 \
+    --url localhost:8000 \
+    --request-count 20
+```
+
+Audio inputs are formatted as `{"type": "input_audio", "input_audio": {"data": "<base64>", "format": "<fmt>"}}`, the same structure used by Chat Completions.
+
+See the [Audio](audio.md) tutorial for details on audio input configuration and supported formats.
 
 ---
 
