@@ -96,37 +96,24 @@ class TestEmptyTimeSeriesHandling:
 
         assert result is None
 
-    def test_compute_stats_with_empty_gauge(self) -> None:
-        """Test compute_stats dispatcher handles empty gauge series."""
-        series = ScalarTimeSeries()
-
+    @pytest.mark.parametrize(
+        "metric_type,series_factory",
+        [
+            (PrometheusMetricType.GAUGE, ScalarTimeSeries),
+            (PrometheusMetricType.UNKNOWN, ScalarTimeSeries),
+            (PrometheusMetricType.COUNTER, ScalarTimeSeries),
+            (PrometheusMetricType.HISTOGRAM, HistogramTimeSeries),
+        ],
+    )
+    def test_compute_stats_with_empty_series(
+        self,
+        metric_type: PrometheusMetricType,
+        series_factory: type,
+    ) -> None:
+        """Test compute_stats dispatcher returns None for empty series."""
         result = compute_stats(
-            metric_type=PrometheusMetricType.GAUGE,
-            time_series=series,
-            time_filter=make_time_filter(),
-        )
-
-        assert result is None
-
-    def test_compute_stats_with_empty_counter(self) -> None:
-        """Test compute_stats dispatcher handles empty counter series."""
-        series = ScalarTimeSeries()
-
-        result = compute_stats(
-            metric_type=PrometheusMetricType.COUNTER,
-            time_series=series,
-            time_filter=make_time_filter(),
-        )
-
-        assert result is None
-
-    def test_compute_stats_with_empty_histogram(self) -> None:
-        """Test compute_stats dispatcher handles empty histogram series."""
-        series = HistogramTimeSeries()
-
-        result = compute_stats(
-            metric_type=PrometheusMetricType.HISTOGRAM,
-            time_series=series,
+            metric_type=metric_type,
+            time_series=series_factory(),
             time_filter=make_time_filter(),
         )
 

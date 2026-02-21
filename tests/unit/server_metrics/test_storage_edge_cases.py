@@ -473,6 +473,7 @@ class TestServerMetricEntry:
             (PrometheusMetricType.GAUGE, ScalarTimeSeries),
             (PrometheusMetricType.COUNTER, ScalarTimeSeries),
             (PrometheusMetricType.HISTOGRAM, HistogramTimeSeries),
+            (PrometheusMetricType.UNKNOWN, ScalarTimeSeries),
         ],
     )
     def test_from_metric_family(

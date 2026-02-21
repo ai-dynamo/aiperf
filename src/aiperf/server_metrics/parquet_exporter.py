@@ -340,7 +340,10 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
         for time_series_collection in hierarchy.endpoints.values():
             for metric_entry in time_series_collection.metrics.values():
                 total_metrics += 1
-                if metric_entry.metric_type == PrometheusMetricType.GAUGE:
+                if metric_entry.metric_type in (
+                    PrometheusMetricType.GAUGE,
+                    PrometheusMetricType.UNKNOWN,
+                ):
                     type_counts["gauge"] += 1
                 elif metric_entry.metric_type == PrometheusMetricType.COUNTER:
                     type_counts["counter"] += 1
@@ -446,6 +449,7 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
                 if metric_type in (
                     PrometheusMetricType.GAUGE,
                     PrometheusMetricType.COUNTER,
+                    PrometheusMetricType.UNKNOWN,
                 ):
                     rows = self._collect_scalar_rows(
                         endpoint_url,
@@ -495,6 +499,7 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
                 if metric_type in (
                     PrometheusMetricType.GAUGE,
                     PrometheusMetricType.COUNTER,
+                    PrometheusMetricType.UNKNOWN,
                 ):
                     rows.extend(
                         self._collect_scalar_rows(
@@ -547,7 +552,10 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
             return []
 
         metric_type = metric_entry.metric_type
-        is_gauge = metric_type == PrometheusMetricType.GAUGE
+        is_gauge = metric_type in (
+            PrometheusMetricType.GAUGE,
+            PrometheusMetricType.UNKNOWN,
+        )
 
         # Infer unit for this metric
         unit = infer_unit(metric_name, metric_entry.description)

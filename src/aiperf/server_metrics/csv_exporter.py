@@ -41,6 +41,7 @@ HISTOGRAM_STAT_KEYS = [
 
 STAT_KEYS_MAP = {
     PrometheusMetricType.GAUGE: GAUGE_STAT_KEYS,
+    PrometheusMetricType.UNKNOWN: GAUGE_STAT_KEYS,
     PrometheusMetricType.COUNTER: COUNTER_STAT_KEYS,
     PrometheusMetricType.HISTOGRAM: HISTOGRAM_STAT_KEYS,
 }

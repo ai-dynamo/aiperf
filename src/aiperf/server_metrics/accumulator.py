@@ -243,9 +243,8 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                     continue
 
                 if base_name not in metrics:
-                    # Create appropriate type-specific metric data
                     match metric_entry.metric_type:
-                        case PrometheusMetricType.GAUGE:
+                        case PrometheusMetricType.GAUGE | PrometheusMetricType.UNKNOWN:
                             metrics[base_name] = GaugeMetricData(
                                 description=metric_entry.description,
                                 series=[series_stats],

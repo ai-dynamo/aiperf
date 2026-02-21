@@ -195,7 +195,7 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
                 # Get or create metric entry with appropriate type
                 if metric_name not in metrics:
                     match metric_data.type:
-                        case PrometheusMetricType.GAUGE:
+                        case PrometheusMetricType.GAUGE | PrometheusMetricType.UNKNOWN:
                             metric_class = GaugeMetricData
                         case PrometheusMetricType.COUNTER:
                             metric_class = CounterMetricData

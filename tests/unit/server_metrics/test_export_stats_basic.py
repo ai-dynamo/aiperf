@@ -6,12 +6,14 @@
 import pytest
 
 from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.models.server_metrics_models import TimeRangeFilter
 from aiperf.server_metrics.export_stats import (
     _compute_counter_stats,
     _compute_gauge_stats,
     _compute_histogram_stats,
     _compute_histogram_timeslices,
+    compute_stats,
 )
 from aiperf.server_metrics.storage import (
     ServerMetricKey,
@@ -85,6 +87,31 @@ class TestGaugeExportStats:
         assert result.stats.avg == 14.5  # (10+11+...+19)/10
         assert result.stats.min == 10.0
         assert result.stats.max == 19.0
+
+
+# =============================================================================
+# Unknown Metric Type Tests
+# =============================================================================
+
+
+class TestUnknownExportStats:
+    """Test UNKNOWN metric type is routed to gauge stats."""
+
+    def test_unknown_type_computes_gauge_stats(self):
+        """Test UNKNOWN metric type produces identical results to GAUGE."""
+        ts = ServerMetricsTimeSeries()
+        add_gauge_samples(ts, "unknown_metric", [10.0, 20.0, 30.0])
+
+        result = compute_stats(
+            metric_type=PrometheusMetricType.UNKNOWN,
+            time_series=get_gauge(ts, "unknown_metric"),
+            time_filter=make_time_filter(),
+        )
+
+        assert result is not None
+        assert result.stats.avg == 20.0
+        assert result.stats.min == 10.0
+        assert result.stats.max == 30.0
 
 
 # =============================================================================

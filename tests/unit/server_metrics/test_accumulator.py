@@ -111,25 +111,33 @@ class TestServerMetricsResultsProcessor:
 
         assert result is None
 
+    @pytest.mark.parametrize(
+        "metric_type,metric_name",
+        [
+            (PrometheusMetricType.GAUGE, "cache_usage"),
+            (PrometheusMetricType.UNKNOWN, "unknown_metric"),
+        ],
+    )
     async def test_export_results_with_data(
         self,
         mock_user_config: UserConfig,
+        metric_type: PrometheusMetricType,
+        metric_name: str,
     ) -> None:
         """Test export_results returns ServerMetricsResults with collected data."""
         processor = ServerMetricsAccumulator(mock_user_config)
 
-        # Add multiple records
         for i in range(5):
-            gauge = MetricFamily(
-                type=PrometheusMetricType.GAUGE,
-                description="KV cache usage",
+            family = MetricFamily(
+                type=metric_type,
+                description="Test metric",
                 samples=[MetricSample(labels=None, value=0.4 + i * 0.05)],
             )
             record = ServerMetricsRecord(
                 endpoint_url="http://node1:8081/metrics",
                 timestamp_ns=1_000_000_000 + i * 100_000_000,
                 endpoint_latency_ns=5_000_000,
-                metrics={"cache_usage": gauge},
+                metrics={metric_name: family},
             )
             await processor.process_server_metrics_record(record)
 

@@ -463,45 +463,32 @@ class TestServerMetricKey:
 class TestServerMetricEntry:
     """Tests for ServerMetricEntry class."""
 
-    def test_from_gauge_metric_family(self) -> None:
-        """Test creating entry from gauge metric family."""
+    @pytest.mark.parametrize(
+        "metric_type,expected_data_type",
+        [
+            (PrometheusMetricType.GAUGE, ScalarTimeSeries),
+            (PrometheusMetricType.COUNTER, ScalarTimeSeries),
+            (PrometheusMetricType.HISTOGRAM, HistogramTimeSeries),
+            (PrometheusMetricType.UNKNOWN, ScalarTimeSeries),
+        ],
+    )
+    def test_from_metric_family(
+        self,
+        metric_type: PrometheusMetricType,
+        expected_data_type: type,
+    ) -> None:
+        """Test creating entry from metric family produces correct data type."""
         family = MetricFamily(
-            type=PrometheusMetricType.GAUGE,
-            description="Test gauge",
+            type=metric_type,
+            description=f"Test {metric_type.value}",
             samples=[],
         )
 
         entry = ServerMetricEntry.from_metric_family(family)
 
-        assert entry.metric_type == PrometheusMetricType.GAUGE
-        assert entry.description == "Test gauge"
-        assert isinstance(entry.data, ScalarTimeSeries)
-
-    def test_from_counter_metric_family(self) -> None:
-        """Test creating entry from counter metric family."""
-        family = MetricFamily(
-            type=PrometheusMetricType.COUNTER,
-            description="Test counter",
-            samples=[],
-        )
-
-        entry = ServerMetricEntry.from_metric_family(family)
-
-        assert entry.metric_type == PrometheusMetricType.COUNTER
-        assert isinstance(entry.data, ScalarTimeSeries)
-
-    def test_from_histogram_metric_family(self) -> None:
-        """Test creating entry from histogram metric family."""
-        family = MetricFamily(
-            type=PrometheusMetricType.HISTOGRAM,
-            description="Test histogram",
-            samples=[],
-        )
-
-        entry = ServerMetricEntry.from_metric_family(family)
-
-        assert entry.metric_type == PrometheusMetricType.HISTOGRAM
-        assert isinstance(entry.data, HistogramTimeSeries)
+        assert entry.metric_type == metric_type
+        assert entry.description == f"Test {metric_type.value}"
+        assert isinstance(entry.data, expected_data_type)
 
 
 class TestServerMetricsTimeSeries:

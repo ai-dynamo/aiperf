@@ -10,7 +10,7 @@ from typing import TypeAlias
 import pytest
 
 from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.enums import GenericMetricUnit
+from aiperf.common.enums import GenericMetricUnit, PrometheusMetricType
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.models import (
     CounterMetricData,
@@ -28,7 +28,11 @@ from aiperf.common.models import (
     ServerMetricsResults,
 )
 from aiperf.plugin.enums import EndpointType
-from aiperf.server_metrics.csv_exporter import CsvMetricInfo, ServerMetricsCsvExporter
+from aiperf.server_metrics.csv_exporter import (
+    STAT_KEYS_MAP,
+    CsvMetricInfo,
+    ServerMetricsCsvExporter,
+)
 from tests.unit.conftest import create_exporter_config
 
 MetricDataType: TypeAlias = GaugeMetricData | CounterMetricData | HistogramMetricData
@@ -324,6 +328,17 @@ def server_metrics_results_with_labeled_metrics():
         },
     )
     return _create_server_metrics_results({"localhost:8081": endpoint_summary})
+
+
+class TestStatKeysMap:
+    """Test STAT_KEYS_MAP covers all expected metric types."""
+
+    def test_unknown_metric_type_uses_gauge_stat_keys(self):
+        """Test UNKNOWN type maps to the same stat keys as GAUGE."""
+        assert (
+            STAT_KEYS_MAP[PrometheusMetricType.UNKNOWN]
+            is STAT_KEYS_MAP[PrometheusMetricType.GAUGE]
+        )
 
 
 class TestServerMetricsCsvExporterInitialization:
