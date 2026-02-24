@@ -227,8 +227,16 @@ def _extract_param(arg: Any, constraints: dict[str, list[str]]) -> Param:
                     for n, m in enum_cls.__members__.items()
                 }
 
-    # Constraints
-    field_name = arg.names[0].lstrip("-").replace("-", "_")
+    # Constraints: try the actual Pydantic field name (from cyclopts keys) first,
+    # then fall back to deriving from the CLI option name. These can differ when
+    # CLIParameter(name=...) overrides the default naming, e.g. field
+    # "warmup_num_sessions" exposed as "--num-warmup-sessions".
+    param_constraints = None
+    if hasattr(arg, "keys") and arg.keys:
+        param_constraints = constraints.get(arg.keys[-1])
+    if param_constraints is None:
+        cli_field_name = arg.names[0].lstrip("-").replace("-", "_")
+        param_constraints = constraints.get(cli_field_name)
 
     return Param(
         name=arg.names[0].lstrip("-").replace("-", " ").title()
@@ -241,7 +249,7 @@ def _extract_param(arg: Any, constraints: dict[str, list[str]]) -> Param:
         default=default,
         choices=choices,
         choice_descs=choice_descs,
-        constraints=constraints.get(field_name),
+        constraints=param_constraints,
     )
 
 
