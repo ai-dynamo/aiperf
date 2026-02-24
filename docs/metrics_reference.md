@@ -32,8 +32,12 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Output Token Throughput](#output-token-throughput)
     - [Total Token Throughput](#total-token-throughput)
   - [Image Metrics](#image-metrics)
+    - [Number of Images](#number-of-images)
     - [Image Throughput](#image-throughput)
     - [Image Latency](#image-latency)
+  - [Video Metrics](#video-metrics)
+    - [Video Inference Time](#video-inference-time)
+    - [Video Peak Memory](#video-peak-memory)
   - [Reasoning Metrics](#reasoning-metrics)
     - [Reasoning Token Count](#reasoning-token-count)
     - [Total Reasoning Tokens](#total-reasoning-tokens)
@@ -80,13 +84,13 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [HTTP Data Sent](#http-data-sent)
     - [HTTP Data Received](#http-data-received)
     - [HTTP Connection Reused](#http-connection-reused)
+    - [HTTP Chunks Sent](#http-chunks-sent)
+    - [HTTP Chunks Received](#http-chunks-received)
 - [Metric Flags Reference](#metric-flags-reference)
 
 ---
 
 ## Quick Reference
-
-For a quick reference of all metrics with their tags, formulas, and units, see the **[Metrics Reference section in the README](../README.md#metrics-reference)**.
 
 The sections below provide detailed descriptions, requirements, and notes for each metric.
 
@@ -356,7 +360,7 @@ input_sequence_length = len(tokenizer.encode(prompt, add_special_tokens=False))
 
 ### Total Output Tokens
 
-**Type:** [Aggregate Metric](#aggregate-metrics)
+**Type:** [Derived Metric](#derived-metrics)
 
 The sum of all output tokens (excluding reasoning tokens) generated across all requests. This represents the total output token workload.
 
@@ -373,7 +377,7 @@ total_output_tokens = sum(r.output_token_count for r in records if r.valid)
 
 ### Total Output Sequence Length
 
-**Type:** [Aggregate Metric](#aggregate-metrics)
+**Type:** [Derived Metric](#derived-metrics)
 
 The sum of all completion tokens (output + reasoning) generated across all requests. This represents the complete token generation workload.
 
@@ -390,7 +394,7 @@ total_osl = sum(r.output_sequence_length for r in records if r.valid)
 
 ### Total Input Sequence Length
 
-**Type:** [Aggregate Metric](#aggregate-metrics)
+**Type:** [Derived Metric](#derived-metrics)
 
 The sum of all input/prompt tokens processed across all requests. This represents the total input workload sent to the model.
 
@@ -447,6 +451,23 @@ total_token_throughput = (total_isl + total_osl) / benchmark_duration_seconds
 > [!NOTE]
 > All metrics in this section require image-capable endpoints (e.g., image generation APIs). These metrics are not available for text-only or other non-image endpoints.
 
+### Number of Images
+
+**Type:** [Record Metric](#record-metrics)
+
+The number of images in the request, summed across all turns. This is the foundation metric used by Image Throughput and Image Latency.
+
+**Formula:**
+```python
+num_images = sum(len(image.contents) for turn in request.turns for image in turn.images)
+```
+
+**Notes:**
+- Requires at least one image in at least one turn.
+- Not displayed in console output (`NO_CONSOLE` flag).
+
+---
+
 ### Image Throughput
 
 **Type:** [Record Metric](#record-metrics)
@@ -479,6 +500,45 @@ image_latency = request_latency_ms / num_images
 
 ---
 
+## Video Metrics
+
+> [!NOTE]
+> All metrics in this section require video-producing endpoints (e.g., SGLang video generation). These metrics rely on server-reported fields in the response and are not available for non-video endpoints.
+
+### Video Inference Time
+
+**Type:** [Record Metric](#record-metrics)
+
+Server-reported GPU generation time for video inference, extracted from the `inference_time_s` field in video generation responses (e.g., SGLang).
+
+**Formula:**
+```python
+video_inference_time = response.data.inference_time_s
+```
+
+**Notes:**
+- Value comes from the server, not computed by AIPerf.
+- Displayed in milliseconds.
+
+---
+
+### Video Peak Memory
+
+**Type:** [Record Metric](#record-metrics)
+
+Server-reported peak GPU memory usage during video generation, extracted from the `peak_memory_mb` field in video generation responses.
+
+**Formula:**
+```python
+video_peak_memory = response.data.peak_memory_mb
+```
+
+**Notes:**
+- Value comes from the server, not computed by AIPerf.
+- Unit is megabytes.
+
+---
+
 ## Reasoning Metrics
 
 > [!NOTE]
@@ -503,7 +563,7 @@ reasoning_token_count = len(tokenizer.encode(reasoning_content, add_special_toke
 
 ### Total Reasoning Tokens
 
-**Type:** [Aggregate Metric](#aggregate-metrics)
+**Type:** [Derived Metric](#derived-metrics)
 
 The sum of all reasoning tokens generated across all requests. This represents the total reasoning/thinking workload.
 
@@ -596,7 +656,7 @@ usage_reasoning_tokens = response.usage.completion_tokens_details.reasoning_toke
 
 ### Total Usage Prompt Tokens
 
-**Type:** [Aggregate Metric](#aggregate-metrics)
+**Type:** [Derived Metric](#derived-metrics)
 
 The sum of all API-reported prompt tokens across all requests.
 
@@ -612,7 +672,7 @@ total_usage_prompt_tokens = sum(r.usage_prompt_tokens for r in records if r.vali
 
 ### Total Usage Completion Tokens
 
-**Type:** [Aggregate Metric](#aggregate-metrics)
+**Type:** [Derived Metric](#derived-metrics)
 
 The sum of all API-reported completion tokens across all requests.
 
@@ -628,7 +688,7 @@ total_usage_completion_tokens = sum(r.usage_completion_tokens for r in records i
 
 ### Total Usage Total Tokens
 
-**Type:** [Aggregate Metric](#aggregate-metrics)
+**Type:** [Derived Metric](#derived-metrics)
 
 The sum of all API-reported total tokens across all requests.
 
@@ -778,7 +838,7 @@ osl_mismatch_count = sum(1 for r in records if diff_tokens > threshold_tokens)
 ## Goodput Metrics
 
 > [!NOTE]
-> Goodput metrics measure the throughput of requests that meet user-defined Service Level Objectives (SLOs). See the [Goodput tutorial](../docs/tutorials/goodput.md) for configuration details.
+> Goodput metrics measure the throughput of requests that meet user-defined Service Level Objectives (SLOs). See the [Goodput tutorial](tutorials/goodput.md) for configuration details.
 
 ### Good Request Count
 
@@ -840,7 +900,7 @@ error_isl = input_sequence_length  # for error requests only
 
 ### Total Error Input Sequence Length
 
-**Type:** [Aggregate Metric](#aggregate-metrics)
+**Type:** [Derived Metric](#derived-metrics)
 
 The sum of all input tokens from requests that resulted in errors.
 
@@ -968,7 +1028,7 @@ benchmark_duration = max_response_timestamp - min_request_timestamp
 ## HTTP Trace Metrics
 
 > [!NOTE]
-> All metrics in this section require HTTP trace data to be collected during requests. These metrics provide detailed HTTP request lifecycle timing following k6 naming conventions. See the [HTTP Trace Metrics tutorial](../docs/tutorials/http-trace-metrics.md) for configuration details.
+> All metrics in this section require HTTP trace data to be collected during requests. These metrics provide detailed HTTP request lifecycle timing following k6 naming conventions. See the [HTTP Trace Metrics tutorial](tutorials/http-trace-metrics.md) for configuration details.
 
 ### HTTP Blocked
 
@@ -1186,6 +1246,40 @@ http_req_connection_reused = 1 if connection_reused_perf_ns is not None else 0
 
 ---
 
+### HTTP Chunks Sent
+
+**Type:** [Record Metric](#record-metrics)
+
+Number of transport-level write operations during the request. Useful for debugging chunked transfers.
+
+**Formula:**
+```python
+http_req_chunks_sent = len(trace.request_chunks)
+```
+
+**Notes:**
+- Not displayed in console output (`NO_CONSOLE` flag).
+- Only available for AioHttpTraceData.
+
+---
+
+### HTTP Chunks Received
+
+**Type:** [Record Metric](#record-metrics)
+
+Number of transport-level read operations during the response. Useful for debugging chunked/streaming responses.
+
+**Formula:**
+```python
+http_req_chunks_received = len(trace.response_chunks)
+```
+
+**Notes:**
+- Not displayed in console output (`NO_CONSOLE` flag).
+- Only available for AioHttpTraceData.
+
+---
+
 ## Multi-Run Aggregate Metrics
 
 > [!NOTE]
@@ -1241,11 +1335,13 @@ Metric flags are used to control when and how metrics are computed, displayed, a
 | <a id="flag-supports-image-only"></a>`SUPPORTS_IMAGE_ONLY` | Only computed for image endpoints | Requires image-capable endpoints; skipped for other endpoint types |
 | <a id="flag-supports-reasoning"></a>`SUPPORTS_REASONING` | Requires reasoning token support | Only available for models and endpoints that expose reasoning content in separate fields |
 | <a id="flag-experimental"></a>`EXPERIMENTAL` | Experimental/unstable metric | May change or be removed in future releases; not displayed in console or exported without developer mode |
-| <a id="flag-goodput"></a>`GOODPUT` | Only computed when goodput is enabled | Requires SLO thresholds to be configured (e.g., `--goodput-constraints`); skipped otherwise |
+| <a id="flag-goodput"></a>`GOODPUT` | Only computed when goodput is enabled | Requires SLO thresholds to be configured (e.g., `--goodput`); skipped otherwise |
 | <a id="flag-no-individual-records"></a>`NO_INDIVIDUAL_RECORDS` | Not exported for individual records | Aggregate metrics not relevant to individual records (e.g., request count, min/max timestamps); excluded from per-record exports |
 | <a id="flag-tokenizes-input-only"></a>`TOKENIZES_INPUT_ONLY` | Only computed when endpoint tokenizes input | Requires endpoints that process and tokenize input text; skipped for non-text endpoints |
 | <a id="flag-http-trace-only"></a>`HTTP_TRACE_ONLY` | Only computed when HTTP trace data is available | Requires HTTP request tracing to be enabled; provides detailed HTTP lifecycle timing metrics |
+| <a id="flag-supports-video-only"></a>`SUPPORTS_VIDEO_ONLY` | Only computed for video endpoints | Requires video-capable endpoints; skipped for other endpoint types |
 | <a id="flag-usage-diff-only"></a>`USAGE_DIFF_ONLY` | Only computed when usage field data is available | Requires API responses to include usage field with token counts for comparison with client-computed values |
+| <a id="flag-produces-video-only"></a>`PRODUCES_VIDEO_ONLY` | Only computed for video-producing endpoints | Requires endpoints that produce video output (e.g., SGLang video generation) |
 
 ## Composite Flags
 

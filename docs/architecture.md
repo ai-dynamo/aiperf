@@ -24,10 +24,11 @@ AIPerf is designed as a modular, extensible benchmarking framework that separate
 ### Request Lifecycle
 
 1. **Initialization**: Dataset Manager loads data, Timing Manager prepares schedule
-2. **Execution**: Workers receive credits, access data, send requests to inference server
-3. **Collection**: Workers capture response timing and content
-4. **Processing**: Record Processors compute metrics in parallel
-5. **Aggregation**: Records Manager collects and exports results
+2. **Warmup** (optional): Workers send warmup requests to prime JIT, caches, and connection pools. Results are discarded.
+3. **Profiling**: Workers receive credits, access data, send requests to inference server
+4. **Collection**: Workers capture response timing and content
+5. **Processing**: Record Processors compute metrics in parallel
+6. **Aggregation**: Records Manager collects and exports results
 
 
 ## Core Components
@@ -107,19 +108,21 @@ The Records Manager handles the collection, organization, and storage of benchma
 
 **Key Responsibilities:**
 - Aggregating data from the records processors (inference results, timing information, metrics)
-- Storing records in memory and/or exporting them to files (CSV, JSON) for later analysis
+- Storing records in memory and/or exporting them to files (CSV, JSON, Parquet) for later analysis
 - Providing interfaces for querying, filtering, and summarizing benchmarking results
 - Supporting the generation of reports and artifacts for performance evaluation
 - Managing the final export of aggregated performance summaries and per-request details
 
 ### GPU Telemetry Manager
 
-The GPU Telemetry Manager collects GPU metrics from DCGM (Data Center GPU Manager) Exporter endpoints during benchmarking runs.
+The GPU Telemetry Manager collects GPU metrics during benchmarking runs via pluggable collectors.
 
 **Key Responsibilities:**
-- Collecting GPU metrics from DCGM Exporter endpoints (power, utilization, memory, temperature, errors)
-- Auto-discovering DCGM endpoints.
-- Supporting custom DCGM endpoints via `--gpu-telemetry` flag
+- Collecting GPU metrics (power, utilization, memory, temperature, errors) via two collector backends:
+  - **DCGM**: Scrapes DCGM Exporter HTTP endpoints (Prometheus format)
+  - **PyNVML**: Queries NVIDIA GPUs directly via the pynvml Python library (no external endpoint required)
+- Auto-discovering DCGM endpoints
+- Supporting custom endpoints via `--gpu-telemetry` flag
 - Exporting GPU telemetry alongside benchmark results
 
 ### Server Metrics Manager
@@ -230,5 +233,5 @@ AIPerf supports distributed execution with two deployment models:
 AIPerf integrates with external systems:
 
 - **Inference Server**: The target system being benchmarked (vLLM, Dynamo, SGLang, etc.)
-- **DCGM Exporter**: Optional GPU telemetry source for GPU Telemetry Manager (exposes GPU metrics in Prometheus format)
+- **DCGM Exporter**: Optional GPU telemetry source (exposes GPU metrics in Prometheus format). Alternative: PyNVML queries GPUs directly without an external endpoint.
 - **Prometheus-compatible endpoints**: Optional server/application metrics source for Server Metrics Manager (inference servers like vLLM expose metrics in Prometheus format at their /metrics endpoint)
