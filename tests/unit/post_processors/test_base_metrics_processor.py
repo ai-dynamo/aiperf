@@ -112,7 +112,6 @@ class TestBaseMetricsProcessor:
             | MetricFlags.STREAMING_ONLY
             | MetricFlags.GOODPUT
             | MetricFlags.EXPERIMENTAL
-            | MetricFlags.INTERNAL
         )
 
         # Verify registry calls
@@ -197,7 +196,7 @@ class TestBaseMetricsProcessor:
 
         mock_metric_registry.tags_applicable_to.assert_called_once_with(
             expected_required,
-            expected_disallowed | MetricFlags.EXPERIMENTAL | MetricFlags.INTERNAL,
+            expected_disallowed | MetricFlags.EXPERIMENTAL,
             MetricType.RECORD,
         )
 
@@ -240,8 +239,7 @@ class TestBaseMetricsProcessor:
             | MetricFlags.PRODUCES_VIDEO_ONLY
             | MetricFlags.STREAMING_ONLY
             | MetricFlags.GOODPUT
-            | MetricFlags.EXPERIMENTAL
-            | MetricFlags.INTERNAL,
+            | MetricFlags.EXPERIMENTAL,
             MetricType.RECORD,
             MetricType.AGGREGATE,
             MetricType.DERIVED,

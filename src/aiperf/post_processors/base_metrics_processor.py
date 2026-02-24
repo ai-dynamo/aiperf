@@ -50,10 +50,11 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
             # Disable usage diff metrics if server token counts are used, because
             # these metrics are only applicable when client side tokenization is enabled.
             disallowed_flags |= MetricFlags.USAGE_DIFF_ONLY
-        if not Environment.DEV.MODE and not Environment.DEV.SHOW_INTERNAL_METRICS:
-            disallowed_flags |= MetricFlags.INTERNAL
         if not Environment.DEV.MODE and not Environment.DEV.SHOW_EXPERIMENTAL_METRICS:
             disallowed_flags |= MetricFlags.EXPERIMENTAL
+
+        # NOTE: We don't filter out INTERNAL metrics here, because they are often required for other metrics
+
         return required_flags, disallowed_flags
 
     def _configure_goodput(self, applicable_tags: set[str]) -> None:
