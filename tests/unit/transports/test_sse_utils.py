@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 
+import orjson
 import pytest
 
 from aiperf.common.enums import SSEFieldType
@@ -449,6 +450,111 @@ retry: 5000"""
         else:
             # For non-standard fields, preserve exact case
             assert result.packets[0].name == field_name_case
+
+
+class TestParseSSEMessageIncompleteJSON:
+    """Tests for SSE messages where a literal newline in a JSON value splits a data field."""
+
+    def test_embedded_newline_in_json_content(self, base_perf_ns: int) -> None:
+        """A literal newline inside a JSON string value is re-joined and escaped."""
+        raw_message = (
+            'data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"'
+            "\n"
+            '","function_call":null,"role":"assistant"}}]}'
+        )
+        result = SSEMessage.parse(raw_message, base_perf_ns)
+
+        assert len(result.packets) == 1
+        assert result.packets[0].name == SSEFieldType.DATA
+
+        import orjson
+
+        parsed = orjson.loads(result.packets[0].value)
+        assert parsed["choices"][0]["delta"]["content"] == "\n"
+        assert parsed["choices"][0]["delta"]["function_call"] is None
+
+    def test_multiple_embedded_newlines(self, base_perf_ns: int) -> None:
+        """Multiple literal newlines are all re-joined and escaped."""
+        raw_message = 'data: {"content":"line1\nline2\nline3"}'
+        result = SSEMessage.parse(raw_message, base_perf_ns)
+
+        assert len(result.packets) == 1
+        assert result.packets[0].name == SSEFieldType.DATA
+
+        import orjson
+
+        parsed = orjson.loads(result.packets[0].value)
+        assert parsed["content"] == "line1\nline2\nline3"
+
+    def test_complete_json_not_affected(self, base_perf_ns: int) -> None:
+        """Complete JSON objects are never treated as needing continuation."""
+        raw_message = 'data: {"id":"1","choices":[{"delta":{"content":"hello"}}]}'
+        result = SSEMessage.parse(raw_message, base_perf_ns)
+
+        assert len(result.packets) == 1
+        assert result.packets[0].name == SSEFieldType.DATA
+
+        import orjson
+
+        parsed = orjson.loads(result.packets[0].value)
+        assert parsed["choices"][0]["delta"]["content"] == "hello"
+
+    def test_non_json_data_not_affected(self, base_perf_ns: int) -> None:
+        """Data fields that don't start with '{' are never treated as incomplete JSON."""
+        raw_message = "data: plain text\ncustom-header: value"
+        result = SSEMessage.parse(raw_message, base_perf_ns)
+
+        assert len(result.packets) == 2
+        assert result.packets[0].name == SSEFieldType.DATA
+        assert result.packets[0].value == "plain text"
+        assert result.packets[1].name == "custom-header"
+
+    def test_complete_json_followed_by_other_fields(self, base_perf_ns: int) -> None:
+        """Other SSE fields after a complete JSON data field parse normally."""
+        raw_message = 'data: {"content":"hello"}\nevent: message\nid: 123'
+        result = SSEMessage.parse(raw_message, base_perf_ns)
+
+        assert len(result.packets) == 3
+        assert result.packets[0].name == SSEFieldType.DATA
+        assert result.packets[1].name == SSEFieldType.EVENT
+        assert result.packets[1].value == "message"
+        assert result.packets[2].name == SSEFieldType.ID
+        assert result.packets[2].value == "123"
+
+    def test_incomplete_json_followed_by_data_line(self, base_perf_ns: int) -> None:
+        """A new data: line after incomplete JSON is treated as a new field, not continuation."""
+        raw_message = 'data: {"incomplete": true\ndata: {"second": "message"}'
+        result = SSEMessage.parse(raw_message, base_perf_ns)
+
+        assert len(result.packets) == 2
+        assert result.packets[0].name == SSEFieldType.DATA
+        assert result.packets[1].name == SSEFieldType.DATA
+
+    def test_real_world_bug_report_re_joined(self, base_perf_ns: int) -> None:
+        """Reproduce the exact scenario from the bug report.
+
+        The server emitted a raw 0x0A byte in the JSON content field, which split
+        the SSE data line. After re-joining and escaping, the value is valid JSON.
+        Without the fix, this produces 2 packets with truncated/garbage field names.
+        """
+        raw_message = (
+            'data: {"id":"chatcmpl-1e910357-2256-4808-a201-44ee43860885",'
+            '"choices":[{"index":0,"delta":{"content":"'
+            "\n"
+            '","function_call":null,"tool_calls":null,"role":"assistant",'
+            '"refusal":null,"reasoning_content":null}}],'
+            '"created":1771899390,"model":"openai/gpt-oss-20b",'
+            '"object":"chat.completion.chunk","usage":null}'
+        )
+        result = SSEMessage.parse(raw_message, base_perf_ns)
+
+        assert len(result.packets) == 1
+        assert result.packets[0].name == SSEFieldType.DATA
+
+        parsed = orjson.loads(result.packets[0].value)
+        assert parsed["id"] == "chatcmpl-1e910357-2256-4808-a201-44ee43860885"
+        assert parsed["choices"][0]["delta"]["content"] == "\n"
+        assert parsed["choices"][0]["delta"]["function_call"] is None
 
 
 class TestParseSSEMessagePerformance:
