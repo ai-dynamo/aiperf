@@ -30,6 +30,9 @@ For example:
 - "timing_manager_eff34565.command$"
 """
 
+WILDCARD_TOPIC = "*"
+"""The wildcard topic for all message types. This is used to subscribe to all message types."""
+
 
 class ZMQSocketDefaults:
     """Default values for ZMQ sockets.
