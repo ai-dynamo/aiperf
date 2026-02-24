@@ -167,9 +167,17 @@ def _redirect_stdio_to_devnull() -> None:
     Handles the case where streams are already None (e.g., in spawned contexts)
     to avoid AttributeError when libraries like billiard call sys.stdout.flush().
     """
-    devnull_stdin = open(os.devnull)  # noqa: SIM115
-    devnull_stdout = open(os.devnull, "w")  # noqa: SIM115
-    devnull_stderr = open(os.devnull, "w")  # noqa: SIM115
+    # Pre-event-loop bootstrap: blocking open() is safe here (no asyncio loop yet)
+    opened: list = []
+    try:
+        opened.append(open(os.devnull))  # noqa: SIM115
+        opened.append(open(os.devnull, "w"))  # noqa: SIM115
+        opened.append(open(os.devnull, "w"))  # noqa: SIM115
+    except Exception:
+        for f in opened:
+            f.close()
+        raise
+    devnull_stdin, devnull_stdout, devnull_stderr = opened
 
     for stream in (sys.stdin, sys.stdout, sys.stderr):
         with contextlib.suppress(Exception):

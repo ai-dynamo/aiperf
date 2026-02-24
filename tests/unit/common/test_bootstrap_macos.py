@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for macOS-specific terminal FD closing in bootstrap.py"""
 
+import contextlib
 import os
 import sys
 from unittest.mock import patch
@@ -143,6 +144,14 @@ class TestBootstrapMacOSFixes:
                 pytest.fail("Exception should have been caught and handled")
 
 
+def _close_devnull_streams(saved: tuple) -> None:
+    """Close devnull streams opened by _redirect_stdio_to_devnull before restoring originals."""
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        if stream is not None and stream not in saved:
+            with contextlib.suppress(Exception):
+                stream.close()
+
+
 class TestRedirectStdioToDevnull:
     """Tests for _redirect_stdio_to_devnull handling of None streams.
 
@@ -152,7 +161,7 @@ class TestRedirectStdioToDevnull:
     otherwise libraries like billiard crash on sys.stdout.flush().
     """
 
-    def test_handles_none_stdout(self, capsys):
+    def test_redirect_stdio_to_devnull_none_stdout_replaced_with_devnull(self, capsys):
         """Streams set to None (FD_CLOEXEC + spawn) are replaced with devnull."""
         with capsys.disabled():
             saved = sys.stdin, sys.stdout, sys.stderr
@@ -164,9 +173,12 @@ class TestRedirectStdioToDevnull:
                 sys.stdout.flush()  # must not raise
                 sys.stdout.write("discard")  # must not raise
             finally:
+                _close_devnull_streams(saved)
                 sys.stdin, sys.stdout, sys.stderr = saved
 
-    def test_handles_all_none_streams(self, capsys):
+    def test_redirect_stdio_to_devnull_all_none_streams_replaced_with_devnull(
+        self, capsys
+    ):
         """All three streams None — all must be replaced with valid objects."""
         with capsys.disabled():
             saved = sys.stdin, sys.stdout, sys.stderr
@@ -180,14 +192,16 @@ class TestRedirectStdioToDevnull:
                     assert stream is not None
                     stream.flush()
             finally:
+                _close_devnull_streams(saved)
                 sys.stdin, sys.stdout, sys.stderr = saved
 
-    def test_redirects_to_devnull(self, capsys):
+    def test_redirect_stdio_to_devnull_valid_streams_redirected_to_devnull(
+        self, capsys
+    ):
         """Streams are redirected to /dev/null, not arbitrary objects."""
         with capsys.disabled():
             saved = sys.stdin, sys.stdout, sys.stderr
             try:
-                # Use disposable devnull streams so the real ones aren't closed
                 sys.stdin = open(os.devnull)  # noqa: SIM115
                 sys.stdout = open(os.devnull, "w")  # noqa: SIM115
                 sys.stderr = open(os.devnull, "w")  # noqa: SIM115
@@ -198,4 +212,5 @@ class TestRedirectStdioToDevnull:
                 assert sys.stderr.name == os.devnull
                 assert sys.stdin.name == os.devnull
             finally:
+                _close_devnull_streams(saved)
                 sys.stdin, sys.stdout, sys.stderr = saved
