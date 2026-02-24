@@ -166,7 +166,9 @@ class TestRedirectStdioToDevnull:
         with capsys.disabled():
             saved = sys.stdin, sys.stdout, sys.stderr
             try:
+                sys.stdin = None
                 sys.stdout = None
+                sys.stderr = None
                 _redirect_stdio_to_devnull()
 
                 assert sys.stdout is not None

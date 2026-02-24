@@ -167,7 +167,8 @@ def _redirect_stdio_to_devnull() -> None:
     Handles the case where streams are already None (e.g., in spawned contexts)
     to avoid AttributeError when libraries like billiard call sys.stdout.flush().
     """
-    # Pre-event-loop bootstrap: blocking open() is safe here (no asyncio loop yet)
+    # /dev/null opens via a kernel fast path (no disk I/O), so blocking open() is
+    # safe on the event loop thread despite the no-blocking-I/O guideline.
     opened: list = []
     try:
         opened.append(open(os.devnull))  # noqa: SIM115
