@@ -4,6 +4,7 @@
 """Unit tests for parallel_decode module."""
 
 import importlib
+import os
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -175,9 +176,26 @@ class TestWorkerFunctions:
 
         pd_module._init_worker("gpt2")
 
-        mock_tokenizer_class.from_pretrained.assert_called_once_with("gpt2")
+        mock_tokenizer_class.from_pretrained.assert_called_once_with(
+            "gpt2", resolve_alias=False
+        )
         assert pd_module._worker_tokenizer is mock_tokenizer
         assert pd_module._worker_tokenizer_name == "gpt2"
+
+    @patch("aiperf.common.tokenizer.Tokenizer")
+    def test_init_worker_sets_offline_mode(self, mock_tokenizer_class, monkeypatch):
+        """Test that _init_worker enables HuggingFace offline mode."""
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+        monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+        pd_module._worker_tokenizer = None
+        pd_module._worker_tokenizer_name = None
+
+        mock_tokenizer_class.from_pretrained.return_value = MagicMock()
+
+        pd_module._init_worker("gpt2")
+
+        assert os.environ["HF_HUB_OFFLINE"] == "1"
+        assert os.environ["TRANSFORMERS_OFFLINE"] == "1"
 
     @patch("aiperf.common.tokenizer.Tokenizer")
     def test_init_worker_reuses_tokenizer_same_name(self, mock_tokenizer_class):
@@ -204,7 +222,9 @@ class TestWorkerFunctions:
 
         pd_module._init_worker("llama")
 
-        mock_tokenizer_class.from_pretrained.assert_called_once_with("llama")
+        mock_tokenizer_class.from_pretrained.assert_called_once_with(
+            "llama", resolve_alias=False
+        )
         assert pd_module._worker_tokenizer is new_tokenizer
         assert pd_module._worker_tokenizer_name == "llama"
 

@@ -13,6 +13,7 @@ services run as daemons.
 """
 
 import multiprocessing as mp
+import os
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING
 
@@ -35,9 +36,16 @@ def _init_worker(tokenizer_name: str) -> None:
     """
     global _worker_tokenizer, _worker_tokenizer_name
     if _worker_tokenizer is None or _worker_tokenizer_name != tokenizer_name:
+        # The main process already downloaded and cached the tokenizer, so force
+        # offline mode to skip network requests and alias resolution.
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
         from aiperf.common.tokenizer import Tokenizer
 
-        _worker_tokenizer = Tokenizer.from_pretrained(tokenizer_name)
+        _worker_tokenizer = Tokenizer.from_pretrained(
+            tokenizer_name, resolve_alias=False
+        )
         _worker_tokenizer_name = tokenizer_name
 
 
