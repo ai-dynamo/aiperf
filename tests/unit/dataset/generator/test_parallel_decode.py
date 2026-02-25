@@ -4,11 +4,11 @@
 """Unit tests for parallel_decode module."""
 
 import importlib
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from aiperf.dataset.generator.parallel_decode import parallel_decode
+from aiperf.dataset.generator.parallel_decode import _set_daemon, parallel_decode
 
 # Import the module directly (not through __init__.py which exports the function)
 pd_module = importlib.import_module("aiperf.dataset.generator.parallel_decode")
@@ -91,6 +91,67 @@ class TestParallelDecode:
         # Should be capped at 8
         call_kwargs = mock_executor_class.call_args.kwargs
         assert call_kwargs["max_workers"] == 8
+
+
+class TestSetDaemon:
+    """Test suite for _set_daemon helper."""
+
+    def test_set_daemon_uses_property(self):
+        """_set_daemon sets daemon via the public property when possible."""
+        mock_proc = MagicMock()
+        mock_proc.daemon = True
+        with patch.object(pd_module.mp, "current_process", return_value=mock_proc):
+            _set_daemon(False)
+        assert mock_proc.daemon is False
+
+    def test_set_daemon_falls_back_to_config_on_assertion_error(self):
+        """_set_daemon falls back to _config when property raises AssertionError."""
+        mock_proc = MagicMock()
+        type(mock_proc).daemon = property(
+            fget=lambda self: self._config.get("daemon"),
+            fset=MagicMock(side_effect=AssertionError),
+        )
+        mock_proc._config = {"daemon": True}
+        with patch.object(pd_module.mp, "current_process", return_value=mock_proc):
+            _set_daemon(False)
+        assert mock_proc._config["daemon"] is False
+
+
+class TestParallelDecodeDaemonFlag:
+    """Test that parallel_decode properly manages the daemon flag."""
+
+    @patch.object(pd_module, "ProcessPoolExecutor")
+    def test_daemon_flag_cleared_before_executor_and_restored_after(
+        self, mock_executor_class
+    ):
+        """Daemon flag is cleared before spawning and restored after."""
+        mock_executor = MagicMock()
+        mock_executor.__enter__ = MagicMock(return_value=mock_executor)
+        mock_executor.__exit__ = MagicMock(return_value=False)
+        mock_executor.map.return_value = ["decoded"] * 15
+        mock_executor_class.return_value = mock_executor
+
+        with patch.object(pd_module, "_set_daemon") as mock_set:
+            parallel_decode([[i] for i in range(15)], "gpt2")
+
+        assert mock_set.call_args_list == [call(False), call(True)]
+
+    @patch.object(pd_module, "ProcessPoolExecutor")
+    def test_daemon_flag_restored_on_executor_error(self, mock_executor_class):
+        """Daemon flag is restored even when the executor raises."""
+        mock_executor = MagicMock()
+        mock_executor.__enter__ = MagicMock(return_value=mock_executor)
+        mock_executor.__exit__ = MagicMock(return_value=False)
+        mock_executor.map.side_effect = RuntimeError("boom")
+        mock_executor_class.return_value = mock_executor
+
+        with (
+            patch.object(pd_module, "_set_daemon") as mock_set,
+            pytest.raises(RuntimeError, match="boom"),
+        ):
+            parallel_decode([[i] for i in range(15)], "gpt2")
+
+        assert mock_set.call_args_list == [call(False), call(True)]
 
 
 class TestWorkerFunctions:
