@@ -111,8 +111,8 @@ def parallel_decode(
     #   BrokenPipeError on macOS due to terminal FD inheritance issues.
     # - loky: robust reusable executor, but still requires the same daemon flag
     #   hack, so no advantage over stdlib.
-    _set_daemon(False)
     try:
+        _set_daemon(False)
         with ProcessPoolExecutor(
             max_workers=num_workers,
             initializer=_init_worker,
@@ -122,7 +122,6 @@ def parallel_decode(
                 executor.map(_decode_tokens, token_sequences, chunksize=chunksize)
             )
     finally:
-        # Restore the daemon flag
         _set_daemon(True)
 
     return results
@@ -133,5 +132,4 @@ def _set_daemon(daemon: bool) -> None:
     try:
         mp.current_process().daemon = daemon
     except AssertionError:
-        # Fallback to using the internal _config dictionary if assertions are enabled
         mp.current_process()._config["daemon"] = daemon

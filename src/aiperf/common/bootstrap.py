@@ -187,10 +187,13 @@ def _redirect_stdio_to_devnull() -> None:
         os.dup2(devnull_fd, fd)
     os.close(devnull_fd)
 
-    # Recreate Python-level streams from the redirected OS FDs
-    sys.stdin = os.fdopen(0, "r")
-    sys.stdout = os.fdopen(1, "w")
-    sys.stderr = os.fdopen(2, "w")
+    # Recreate Python-level streams from the redirected OS FDs.
+    # closefd=False keeps FD ownership at the OS level so that if these
+    # stream objects are garbage-collected (e.g. replaced by test frameworks),
+    # the underlying FDs 0/1/2 stay open and the /dev/null redirect holds.
+    sys.stdin = os.fdopen(0, "r", closefd=False)
+    sys.stdout = os.fdopen(1, "w", closefd=False)
+    sys.stderr = os.fdopen(2, "w", closefd=False)
 
 
 def _start_yappi_profiling() -> None:

@@ -105,7 +105,15 @@ class TestRedirectStdioToDevnull:
     def test_redirect_dup2_called_for_stdin_stdout_stderr(self):
         """os.dup2 redirects FDs 0, 1, 2 to /dev/null."""
         p_open, p_dup2, p_close, p_fdopen = self._patch_os()
-        with p_open as mock_open, p_dup2 as mock_dup2, p_close as mock_close, p_fdopen:
+        with (
+            p_open as mock_open,
+            p_dup2 as mock_dup2,
+            p_close as mock_close,
+            p_fdopen,
+            patch("sys.stdin"),
+            patch("sys.stdout"),
+            patch("sys.stderr"),
+        ):
             _redirect_stdio_to_devnull()
 
             mock_open.assert_called_once_with(os.devnull, os.O_RDWR)
@@ -120,7 +128,7 @@ class TestRedirectStdioToDevnull:
         """sys.stdin/stdout/stderr are recreated from OS-level FDs."""
         mock_streams = {0: MagicMock(), 1: MagicMock(), 2: MagicMock()}
 
-        def fdopen_side_effect(fd, mode="r"):
+        def fdopen_side_effect(fd, _mode="r", **_kwargs):
             return mock_streams[fd]
 
         p_open, p_dup2, p_close, _ = self._patch_os()
@@ -131,14 +139,17 @@ class TestRedirectStdioToDevnull:
             patch(
                 "aiperf.common.bootstrap.os.fdopen", side_effect=fdopen_side_effect
             ) as mock_fdopen,
+            patch("sys.stdin"),
+            patch("sys.stdout"),
+            patch("sys.stderr"),
         ):
             import sys
 
             _redirect_stdio_to_devnull()
 
-            mock_fdopen.assert_any_call(0, "r")
-            mock_fdopen.assert_any_call(1, "w")
-            mock_fdopen.assert_any_call(2, "w")
+            mock_fdopen.assert_any_call(0, "r", closefd=False)
+            mock_fdopen.assert_any_call(1, "w", closefd=False)
+            mock_fdopen.assert_any_call(2, "w", closefd=False)
             assert sys.stdin is mock_streams[0]
             assert sys.stdout is mock_streams[1]
             assert sys.stderr is mock_streams[2]
