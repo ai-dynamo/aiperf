@@ -131,20 +131,7 @@ def bootstrap_and_run_service(
         # terminal management, causing ASCII garbage and freezing when mouse events occur.
         # Only apply this in spawned child processes, NOT in the main process where Textual runs.
         if platform.system() == "Darwin" and is_child_process:
-            try:
-                # Close and redirect stdin to prevent reading terminal input (mouse events, etc.)
-                sys.stdin.close()
-                sys.stdin = open(os.devnull)  # noqa: SIM115
-
-                # Close and redirect stdout/stderr to prevent writing to terminal
-                # All logging goes through the log_queue instead
-                sys.stdout.close()
-                sys.stderr.close()
-                sys.stdout = open(os.devnull, "w")  # noqa: SIM115
-                sys.stderr = open(os.devnull, "w")  # noqa: SIM115
-            except Exception:
-                # Silently continue if FD operations fail
-                pass
+            _redirect_stdio_to_devnull()
 
         # Initialize global RandomGenerator for reproducible random number generation
         from aiperf.common import random_generator as rng
@@ -170,6 +157,37 @@ def bootstrap_and_run_service(
             uvloop.run(_run_service())
         else:
             asyncio.run(_run_service())
+
+
+def _redirect_stdio_to_devnull() -> None:
+    """Redirect stdin/stdout/stderr to /dev/null for macOS child processes.
+
+    Prevents child processes from accessing the parent's terminal, which causes
+    Textual UI corruption (ASCII garbage and freezes from inherited terminal FDs).
+    Handles the case where streams are already None (e.g., in spawned contexts)
+    to avoid AttributeError when libraries like billiard call sys.stdout.flush().
+    """
+    # /dev/null opens via a kernel fast path (no disk I/O), so blocking open() is
+    # safe on the event loop thread despite the no-blocking-I/O guideline.
+    opened: list = []
+    try:
+        opened.append(open(os.devnull))  # noqa: SIM115
+        opened.append(open(os.devnull, "w"))  # noqa: SIM115
+        opened.append(open(os.devnull, "w"))  # noqa: SIM115
+    except Exception:
+        for f in opened:
+            f.close()
+        raise
+    devnull_stdin, devnull_stdout, devnull_stderr = opened
+
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        with contextlib.suppress(Exception):
+            if stream is not None:
+                stream.close()
+
+    sys.stdin = devnull_stdin
+    sys.stdout = devnull_stdout
+    sys.stderr = devnull_stderr
 
 
 def _start_yappi_profiling() -> None:
