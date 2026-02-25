@@ -1,11 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for macOS-specific terminal FD closing in bootstrap.py"""
+"""Tests for macOS-specific terminal FD redirection in bootstrap.py"""
 
-import contextlib
 import os
-import sys
-from unittest.mock import patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -16,8 +14,8 @@ from aiperf.common.bootstrap import (
 from aiperf.common.config import ServiceConfig, UserConfig
 
 
-class TestBootstrapMacOSFixes:
-    """Test the macOS-specific terminal FD closing in bootstrap.py"""
+class TestBootstrapMacOSRedirect:
+    """Test that _redirect_stdio_to_devnull is called under the right conditions."""
 
     @pytest.fixture(autouse=True)
     def setup_bootstrap_mocks(
@@ -26,32 +24,19 @@ class TestBootstrapMacOSFixes:
         mock_setup_child_process_logging,
         register_dummy_services,
     ):
-        """Combine common bootstrap mocks that are used but not called in tests."""
         pass
 
-    @pytest.mark.parametrize("capsys", [None], indirect=True)
-    def test_terminal_fds_closed_in_macos_child_process(
+    def test_redirect_called_in_macos_child_process(
         self,
-        capsys,
         service_config_no_uvloop: ServiceConfig,
         user_config: UserConfig,
         mock_log_queue,
         mock_darwin_child_process,
     ):
-        """Test that terminal FDs are closed in child processes on macOS."""
-        # Disable pytest capture to avoid conflicts with FD mocking
-        # Use the disabled context around the patches to ensure proper cleanup
-        with (
-            capsys.disabled(),
-            patch("sys.stdin") as mock_stdin,
-            patch("sys.stdout") as mock_stdout,
-            patch("sys.stderr") as mock_stderr,
-        ):
-            # Setup FD mocks
-            mock_stdin.fileno.return_value = 0
-            mock_stdout.fileno.return_value = 1
-            mock_stderr.fileno.return_value = 2
-
+        """_redirect_stdio_to_devnull is called for Darwin child processes."""
+        with patch(
+            "aiperf.common.bootstrap._redirect_stdio_to_devnull"
+        ) as mock_redirect:
             bootstrap_and_run_service(
                 "test_dummy",
                 service_config=service_config_no_uvloop,
@@ -59,21 +44,19 @@ class TestBootstrapMacOSFixes:
                 log_queue=mock_log_queue,
                 service_id="test_service",
             )
+            mock_redirect.assert_called_once()
 
-            # Verify FDs were closed
-            mock_stdin.close.assert_called()
-            mock_stdout.close.assert_called()
-            mock_stderr.close.assert_called()
-
-    def test_terminal_fds_not_closed_in_main_process(
+    def test_redirect_not_called_in_main_process(
         self,
         service_config_no_uvloop: ServiceConfig,
         user_config: UserConfig,
         mock_log_queue,
         mock_darwin_main_process,
     ):
-        """Test that terminal FDs are NOT closed in the main process on macOS."""
-        with patch("sys.stdin") as mock_stdin:
+        """_redirect_stdio_to_devnull is NOT called in the main process."""
+        with patch(
+            "aiperf.common.bootstrap._redirect_stdio_to_devnull"
+        ) as mock_redirect:
             bootstrap_and_run_service(
                 "test_dummy",
                 service_config=service_config_no_uvloop,
@@ -81,19 +64,19 @@ class TestBootstrapMacOSFixes:
                 log_queue=mock_log_queue,
                 service_id="test_service",
             )
+            mock_redirect.assert_not_called()
 
-            # Verify stdin was NOT closed in main process
-            mock_stdin.close.assert_not_called()
-
-    def test_terminal_fds_not_closed_on_linux(
+    def test_redirect_not_called_on_linux(
         self,
         service_config_no_uvloop: ServiceConfig,
         user_config: UserConfig,
         mock_log_queue,
         mock_linux_child_process,
     ):
-        """Test that terminal FDs are NOT closed on Linux."""
-        with patch("sys.stdin") as mock_stdin:
+        """_redirect_stdio_to_devnull is NOT called on Linux."""
+        with patch(
+            "aiperf.common.bootstrap._redirect_stdio_to_devnull"
+        ) as mock_redirect:
             bootstrap_and_run_service(
                 "test_dummy",
                 service_config=service_config_no_uvloop,
@@ -101,118 +84,72 @@ class TestBootstrapMacOSFixes:
                 log_queue=mock_log_queue,
                 service_id="test_service",
             )
-
-            # Verify stdin was NOT closed on Linux
-            mock_stdin.close.assert_not_called()
-
-    @pytest.mark.parametrize("capsys", [None], indirect=True)
-    def test_terminal_fd_closing_handles_exceptions(
-        self,
-        capsys,
-        service_config_no_uvloop: ServiceConfig,
-        user_config: UserConfig,
-        mock_log_queue,
-        mock_darwin_child_process,
-    ):
-        """Test that exceptions during FD closing are handled gracefully."""
-        # Disable pytest capture to avoid conflicts with FD mocking
-        # Use the disabled context around the patches to ensure proper cleanup
-        with (
-            capsys.disabled(),
-            patch("sys.stdin") as mock_stdin,
-            patch("sys.stdout") as mock_stdout,
-            patch("sys.stderr") as mock_stderr,
-        ):
-            # Setup FD mocks
-            mock_stdin.fileno.return_value = 0
-            mock_stdout.fileno.return_value = 1
-            mock_stderr.fileno.return_value = 2
-
-            # Make stdin.close() raise an exception
-            mock_stdin.close.side_effect = OSError("File descriptor already closed")
-
-            # Should not raise an exception despite the error
-            try:
-                bootstrap_and_run_service(
-                    "test_dummy",
-                    service_config=service_config_no_uvloop,
-                    user_config=user_config,
-                    log_queue=mock_log_queue,
-                    service_id="test_service",
-                )
-            except OSError:
-                pytest.fail("Exception should have been caught and handled")
-
-
-def _close_devnull_streams(saved: tuple) -> None:
-    """Close devnull streams opened by _redirect_stdio_to_devnull before restoring originals."""
-    for stream in (sys.stdin, sys.stdout, sys.stderr):
-        if stream is not None and stream not in saved:
-            with contextlib.suppress(Exception):
-                stream.close()
+            mock_redirect.assert_not_called()
 
 
 class TestRedirectStdioToDevnull:
-    """Tests for _redirect_stdio_to_devnull handling of None streams.
+    """Tests for _redirect_stdio_to_devnull OS-level FD redirection.
 
-    On macOS, FD_CLOEXEC is set on terminal FDs before spawning child processes.
-    After exec, FDs 0/1/2 are closed, so Python sets sys.stdout/stderr to None.
-    The redirect function must handle this without leaving streams as None,
-    otherwise libraries like billiard crash on sys.stdout.flush().
+    These tests mock os.dup2/os.open/os.fdopen to avoid corrupting pytest's
+    own FD capture mechanism.
     """
 
-    def test_redirect_stdio_to_devnull_none_stdout_replaced_with_devnull(self, capsys):
-        """Streams set to None (FD_CLOEXEC + spawn) are replaced with devnull."""
-        with capsys.disabled():
-            saved = sys.stdin, sys.stdout, sys.stderr
-            try:
-                sys.stdin = None
-                sys.stdout = None
-                sys.stderr = None
-                _redirect_stdio_to_devnull()
+    def _patch_os(self):
+        return (
+            patch("aiperf.common.bootstrap.os.open", return_value=99),
+            patch("aiperf.common.bootstrap.os.dup2"),
+            patch("aiperf.common.bootstrap.os.close"),
+            patch("aiperf.common.bootstrap.os.fdopen"),
+        )
 
-                assert sys.stdout is not None
-                sys.stdout.flush()  # must not raise
-                sys.stdout.write("discard")  # must not raise
-            finally:
-                _close_devnull_streams(saved)
-                sys.stdin, sys.stdout, sys.stderr = saved
+    def test_redirect_dup2_called_for_stdin_stdout_stderr(self):
+        """os.dup2 redirects FDs 0, 1, 2 to /dev/null."""
+        p_open, p_dup2, p_close, p_fdopen = self._patch_os()
+        with (
+            p_open as mock_open,
+            p_dup2 as mock_dup2,
+            p_close as mock_close,
+            p_fdopen,
+            patch("sys.stdin"),
+            patch("sys.stdout"),
+            patch("sys.stderr"),
+        ):
+            _redirect_stdio_to_devnull()
 
-    def test_redirect_stdio_to_devnull_all_none_streams_replaced_with_devnull(
-        self, capsys
-    ):
-        """All three streams None — all must be replaced with valid objects."""
-        with capsys.disabled():
-            saved = sys.stdin, sys.stdout, sys.stderr
-            try:
-                sys.stdin = None
-                sys.stdout = None
-                sys.stderr = None
-                _redirect_stdio_to_devnull()
+            mock_open.assert_called_once_with(os.devnull, os.O_RDWR)
+            assert mock_dup2.call_args_list == [
+                call(99, 0),
+                call(99, 1),
+                call(99, 2),
+            ]
+            mock_close.assert_called_once_with(99)
 
-                for stream in (sys.stdin, sys.stdout, sys.stderr):
-                    assert stream is not None
-                    stream.flush()
-            finally:
-                _close_devnull_streams(saved)
-                sys.stdin, sys.stdout, sys.stderr = saved
+    def test_redirect_creates_python_streams_from_fds(self):
+        """sys.stdin/stdout/stderr are recreated from OS-level FDs."""
+        mock_streams = {0: MagicMock(), 1: MagicMock(), 2: MagicMock()}
 
-    def test_redirect_stdio_to_devnull_valid_streams_redirected_to_devnull(
-        self, capsys
-    ):
-        """Streams are redirected to /dev/null, not arbitrary objects."""
-        with capsys.disabled():
-            saved = sys.stdin, sys.stdout, sys.stderr
-            try:
-                sys.stdin = open(os.devnull)  # noqa: SIM115
-                sys.stdout = open(os.devnull, "w")  # noqa: SIM115
-                sys.stderr = open(os.devnull, "w")  # noqa: SIM115
+        def fdopen_side_effect(fd, _mode="r", **_kwargs):
+            return mock_streams[fd]
 
-                _redirect_stdio_to_devnull()
+        p_open, p_dup2, p_close, _ = self._patch_os()
+        with (
+            p_open,
+            p_dup2,
+            p_close,
+            patch(
+                "aiperf.common.bootstrap.os.fdopen", side_effect=fdopen_side_effect
+            ) as mock_fdopen,
+            patch("sys.stdin"),
+            patch("sys.stdout"),
+            patch("sys.stderr"),
+        ):
+            import sys
 
-                assert sys.stdout.name == os.devnull
-                assert sys.stderr.name == os.devnull
-                assert sys.stdin.name == os.devnull
-            finally:
-                _close_devnull_streams(saved)
-                sys.stdin, sys.stdout, sys.stderr = saved
+            _redirect_stdio_to_devnull()
+
+            mock_fdopen.assert_any_call(0, "r", closefd=False)
+            mock_fdopen.assert_any_call(1, "w", closefd=False)
+            mock_fdopen.assert_any_call(2, "w", closefd=False)
+            assert sys.stdin is mock_streams[0]
+            assert sys.stdout is mock_streams[1]
+            assert sys.stderr is mock_streams[2]
