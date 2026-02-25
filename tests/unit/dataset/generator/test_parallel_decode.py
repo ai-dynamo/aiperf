@@ -132,10 +132,34 @@ class TestParallelDecodeDaemonFlag:
         mock_executor.map.return_value = ["decoded"] * 15
         mock_executor_class.return_value = mock_executor
 
-        with patch.object(pd_module, "_set_daemon") as mock_set:
+        mock_process = MagicMock()
+        mock_process.daemon = True
+        with (
+            patch.object(pd_module.mp, "current_process", return_value=mock_process),
+            patch.object(pd_module, "_set_daemon") as mock_set,
+        ):
             parallel_decode([[i] for i in range(15)], "gpt2")
 
         assert mock_set.call_args_list == [call(False), call(True)]
+
+    @patch.object(pd_module, "ProcessPoolExecutor")
+    def test_daemon_flag_not_toggled_for_non_daemon_process(self, mock_executor_class):
+        """Daemon flag is not toggled when the process is not a daemon."""
+        mock_executor = MagicMock()
+        mock_executor.__enter__ = MagicMock(return_value=mock_executor)
+        mock_executor.__exit__ = MagicMock(return_value=False)
+        mock_executor.map.return_value = ["decoded"] * 15
+        mock_executor_class.return_value = mock_executor
+
+        mock_process = MagicMock()
+        mock_process.daemon = False
+        with (
+            patch.object(pd_module.mp, "current_process", return_value=mock_process),
+            patch.object(pd_module, "_set_daemon") as mock_set,
+        ):
+            parallel_decode([[i] for i in range(15)], "gpt2")
+
+        mock_set.assert_not_called()
 
     @patch.object(pd_module, "ProcessPoolExecutor")
     def test_daemon_flag_restored_on_executor_error(self, mock_executor_class):
@@ -146,7 +170,10 @@ class TestParallelDecodeDaemonFlag:
         mock_executor.map.side_effect = RuntimeError("boom")
         mock_executor_class.return_value = mock_executor
 
+        mock_process = MagicMock()
+        mock_process.daemon = True
         with (
+            patch.object(pd_module.mp, "current_process", return_value=mock_process),
             patch.object(pd_module, "_set_daemon") as mock_set,
             pytest.raises(RuntimeError, match="boom"),
         ):
