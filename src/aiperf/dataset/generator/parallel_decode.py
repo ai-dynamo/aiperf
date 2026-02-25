@@ -111,8 +111,10 @@ def parallel_decode(
     #   BrokenProcessPool on macOS due to terminal FD inheritance issues.
     # - loky: robust reusable executor, but still requires the same daemon flag
     #   hack, so no advantage over stdlib.
+    was_daemon = mp.current_process().daemon
     try:
-        _set_daemon(False)
+        if was_daemon:
+            _set_daemon(False)
         with ProcessPoolExecutor(
             max_workers=num_workers,
             initializer=_init_worker,
@@ -122,7 +124,8 @@ def parallel_decode(
                 executor.map(_decode_tokens, token_sequences, chunksize=chunksize)
             )
     finally:
-        _set_daemon(True)
+        if was_daemon:
+            _set_daemon(True)
 
     return results
 
