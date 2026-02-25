@@ -4,11 +4,12 @@
 """Unit tests for parallel_decode module."""
 
 import importlib
-from unittest.mock import MagicMock, patch
+import os
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from aiperf.dataset.generator.parallel_decode import parallel_decode
+from aiperf.dataset.generator.parallel_decode import _set_daemon, parallel_decode
 
 # Import the module directly (not through __init__.py which exports the function)
 pd_module = importlib.import_module("aiperf.dataset.generator.parallel_decode")
@@ -93,6 +94,94 @@ class TestParallelDecode:
         assert call_kwargs["max_workers"] == 8
 
 
+class TestSetDaemon:
+    """Test suite for _set_daemon helper."""
+
+    def test_set_daemon_uses_property(self):
+        """_set_daemon sets daemon via the public property when possible."""
+        mock_proc = MagicMock()
+        mock_proc.daemon = True
+        with patch.object(pd_module.mp, "current_process", return_value=mock_proc):
+            _set_daemon(False)
+        assert mock_proc.daemon is False
+
+    def test_set_daemon_falls_back_to_config_on_assertion_error(self):
+        """_set_daemon falls back to _config when property raises AssertionError."""
+        mock_proc = MagicMock()
+        type(mock_proc).daemon = property(
+            fget=lambda self: self._config.get("daemon"),
+            fset=MagicMock(side_effect=AssertionError),
+        )
+        mock_proc._config = {"daemon": True}
+        with patch.object(pd_module.mp, "current_process", return_value=mock_proc):
+            _set_daemon(False)
+        assert mock_proc._config["daemon"] is False
+
+
+class TestParallelDecodeDaemonFlag:
+    """Test that parallel_decode properly manages the daemon flag."""
+
+    @patch.object(pd_module, "ProcessPoolExecutor")
+    def test_daemon_flag_cleared_before_executor_and_restored_after(
+        self, mock_executor_class
+    ):
+        """Daemon flag is cleared before spawning and restored after."""
+        mock_executor = MagicMock()
+        mock_executor.__enter__ = MagicMock(return_value=mock_executor)
+        mock_executor.__exit__ = MagicMock(return_value=False)
+        mock_executor.map.return_value = ["decoded"] * 15
+        mock_executor_class.return_value = mock_executor
+
+        mock_process = MagicMock()
+        mock_process.daemon = True
+        with (
+            patch.object(pd_module.mp, "current_process", return_value=mock_process),
+            patch.object(pd_module, "_set_daemon") as mock_set,
+        ):
+            parallel_decode([[i] for i in range(15)], "gpt2")
+
+        assert mock_set.call_args_list == [call(False), call(True)]
+
+    @patch.object(pd_module, "ProcessPoolExecutor")
+    def test_daemon_flag_not_toggled_for_non_daemon_process(self, mock_executor_class):
+        """Daemon flag is not toggled when the process is not a daemon."""
+        mock_executor = MagicMock()
+        mock_executor.__enter__ = MagicMock(return_value=mock_executor)
+        mock_executor.__exit__ = MagicMock(return_value=False)
+        mock_executor.map.return_value = ["decoded"] * 15
+        mock_executor_class.return_value = mock_executor
+
+        mock_process = MagicMock()
+        mock_process.daemon = False
+        with (
+            patch.object(pd_module.mp, "current_process", return_value=mock_process),
+            patch.object(pd_module, "_set_daemon") as mock_set,
+        ):
+            parallel_decode([[i] for i in range(15)], "gpt2")
+
+        mock_set.assert_not_called()
+
+    @patch.object(pd_module, "ProcessPoolExecutor")
+    def test_daemon_flag_restored_on_executor_error(self, mock_executor_class):
+        """Daemon flag is restored even when the executor raises."""
+        mock_executor = MagicMock()
+        mock_executor.__enter__ = MagicMock(return_value=mock_executor)
+        mock_executor.__exit__ = MagicMock(return_value=False)
+        mock_executor.map.side_effect = RuntimeError("boom")
+        mock_executor_class.return_value = mock_executor
+
+        mock_process = MagicMock()
+        mock_process.daemon = True
+        with (
+            patch.object(pd_module.mp, "current_process", return_value=mock_process),
+            patch.object(pd_module, "_set_daemon") as mock_set,
+            pytest.raises(RuntimeError, match="boom"),
+        ):
+            parallel_decode([[i] for i in range(15)], "gpt2")
+
+        assert mock_set.call_args_list == [call(False), call(True)]
+
+
 class TestWorkerFunctions:
     """Test suite for worker functions."""
 
@@ -114,9 +203,26 @@ class TestWorkerFunctions:
 
         pd_module._init_worker("gpt2")
 
-        mock_tokenizer_class.from_pretrained.assert_called_once_with("gpt2")
+        mock_tokenizer_class.from_pretrained.assert_called_once_with(
+            "gpt2", resolve_alias=False
+        )
         assert pd_module._worker_tokenizer is mock_tokenizer
         assert pd_module._worker_tokenizer_name == "gpt2"
+
+    @patch("aiperf.common.tokenizer.Tokenizer")
+    def test_init_worker_sets_offline_mode(self, mock_tokenizer_class, monkeypatch):
+        """Test that _init_worker enables HuggingFace offline mode."""
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+        monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+        pd_module._worker_tokenizer = None
+        pd_module._worker_tokenizer_name = None
+
+        mock_tokenizer_class.from_pretrained.return_value = MagicMock()
+
+        pd_module._init_worker("gpt2")
+
+        assert os.environ["HF_HUB_OFFLINE"] == "1"
+        assert os.environ["TRANSFORMERS_OFFLINE"] == "1"
 
     @patch("aiperf.common.tokenizer.Tokenizer")
     def test_init_worker_reuses_tokenizer_same_name(self, mock_tokenizer_class):
@@ -143,7 +249,9 @@ class TestWorkerFunctions:
 
         pd_module._init_worker("llama")
 
-        mock_tokenizer_class.from_pretrained.assert_called_once_with("llama")
+        mock_tokenizer_class.from_pretrained.assert_called_once_with(
+            "llama", resolve_alias=False
+        )
         assert pd_module._worker_tokenizer is new_tokenizer
         assert pd_module._worker_tokenizer_name == "llama"
 

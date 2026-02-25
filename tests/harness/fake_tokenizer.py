@@ -60,5 +60,9 @@ class FakeTokenizer:
         return 2
 
     @property
+    def resolved_name(self) -> str | None:
+        return None
+
+    @property
     def block_separation_token_id(self) -> int:
         return 1

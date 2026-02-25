@@ -4,19 +4,18 @@
 """Parallel decode utilities for batch tokenizer operations.
 
 This module provides functions to decode multiple token sequences in parallel
-using ProcessPoolExecutor with billiard context, bypassing Python's GIL for
-CPU-bound tokenizer operations.
+using ProcessPoolExecutor, bypassing Python's GIL for CPU-bound tokenizer
+operations.
 
-billiard is used because AIPerf services run as daemon processes, and Python's
-stdlib multiprocessing does not allow daemon processes to spawn children.
-billiard (used by Celery) removes this restriction by overriding Process.start().
+The daemon flag on the current process is temporarily cleared because Python's
+multiprocessing refuses to spawn children from daemon processes, and AIPerf
+services run as daemons.
 """
 
 import multiprocessing as mp
+import os
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING
-
-import billiard
 
 if TYPE_CHECKING:
     from aiperf.common.tokenizer import Tokenizer
@@ -37,9 +36,16 @@ def _init_worker(tokenizer_name: str) -> None:
     """
     global _worker_tokenizer, _worker_tokenizer_name
     if _worker_tokenizer is None or _worker_tokenizer_name != tokenizer_name:
+        # The main process already downloaded and cached the tokenizer, so force
+        # offline mode to skip network requests and alias resolution.
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
         from aiperf.common.tokenizer import Tokenizer
 
-        _worker_tokenizer = Tokenizer.from_pretrained(tokenizer_name)
+        _worker_tokenizer = Tokenizer.from_pretrained(
+            tokenizer_name, resolve_alias=False
+        )
         _worker_tokenizer_name = tokenizer_name
 
 
@@ -72,9 +78,6 @@ def parallel_decode(
     For small batches (< 10 sequences), it falls back to sequential decoding
     to avoid process spawn overhead.
 
-    Uses billiard's context to allow spawning from daemon processes (AIPerf
-    services run as daemons, and Python's stdlib forbids daemon children).
-
     Args:
         token_sequences: List of token ID lists to decode.
         tokenizer_name: Name or path of the pretrained tokenizer to use in workers.
@@ -99,17 +102,38 @@ def parallel_decode(
 
     num_workers = max_workers or min(mp.cpu_count() or 4, 8)
 
-    # Use billiard context to bypass daemon process restriction
-    mp_context = billiard.get_context()
-
-    with ProcessPoolExecutor(
-        max_workers=num_workers,
-        initializer=_init_worker,
-        initargs=(tokenizer_name,),
-        mp_context=mp_context,
-    ) as executor:
-        results = list(
-            executor.map(_decode_tokens, token_sequences, chunksize=chunksize)
-        )
+    # Temporarily clear the daemon flag so ProcessPoolExecutor can spawn workers.
+    # Python's multiprocessing refuses to spawn children from daemon processes,
+    # and AIPerf services run as daemons.
+    #
+    # Alternatives considered:
+    # - billiard: bypasses the daemon restriction natively, but crashes with
+    #   BrokenProcessPool on macOS due to terminal FD inheritance issues.
+    # - loky: robust reusable executor, but still requires the same daemon flag
+    #   hack, so no advantage over stdlib.
+    was_daemon = mp.current_process().daemon
+    try:
+        if was_daemon:
+            _set_daemon(False)
+        with ProcessPoolExecutor(
+            max_workers=num_workers,
+            initializer=_init_worker,
+            initargs=(tokenizer_name,),
+        ) as executor:
+            results = list(
+                executor.map(_decode_tokens, token_sequences, chunksize=chunksize)
+            )
+    finally:
+        if was_daemon:
+            _set_daemon(True)
 
     return results
+
+
+def _set_daemon(daemon: bool) -> None:
+    """Set the daemon flag on the current process."""
+    try:
+        mp.current_process().daemon = daemon
+    except AssertionError:
+        # Fallback to using the internal _config dictionary if assertions are enabled
+        mp.current_process()._config["daemon"] = daemon

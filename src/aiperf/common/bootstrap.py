@@ -165,30 +165,32 @@ def _redirect_stdio_to_devnull() -> None:
 
     Prevents child processes from accessing the parent's terminal, which causes
     Textual UI corruption (ASCII garbage and freezes from inherited terminal FDs).
-    Handles the case where streams are already None (e.g., in spawned contexts)
-    to avoid AttributeError when libraries like billiard call sys.stdout.flush().
     """
-    # /dev/null opens via a kernel fast path (no disk I/O), so blocking open() is
-    # safe on the event loop thread despite the no-blocking-I/O guideline.
-    opened: list = []
-    try:
-        opened.append(open(os.devnull))  # noqa: SIM115
-        opened.append(open(os.devnull, "w"))  # noqa: SIM115
-        opened.append(open(os.devnull, "w"))  # noqa: SIM115
-    except Exception:
-        for f in opened:
-            f.close()
-        raise
-    devnull_stdin, devnull_stdout, devnull_stderr = opened
+    # Redirect at the OS level so spawned grandchild processes (e.g.
+    # ProcessPoolExecutor workers via 'spawn' context) inherit safe FDs
+    # rather than the terminal FDs that Textual manages.
+    # Python-level reassignment alone (sys.stdout = ...) is not enough
+    # because spawned processes create fresh sys.* from inherited OS FDs.
+    #
+    # No error handling: if /dev/null can't be opened or dup2 fails, the
+    # process is in a broken state and should crash rather than continue
+    # with corrupted FDs.
+    #
+    # Runs inside the event loop as one of the first operations, but
+    # os.open on /dev/null hits a kernel fast path (no disk I/O), so
+    # the blocking calls are safe here.
+    devnull_fd = os.open(os.devnull, os.O_RDWR)
+    for fd in (0, 1, 2):
+        os.dup2(devnull_fd, fd)
+    os.close(devnull_fd)
 
-    for stream in (sys.stdin, sys.stdout, sys.stderr):
-        with contextlib.suppress(Exception):
-            if stream is not None:
-                stream.close()
-
-    sys.stdin = devnull_stdin
-    sys.stdout = devnull_stdout
-    sys.stderr = devnull_stderr
+    # Recreate Python-level streams from the redirected OS FDs.
+    # closefd=False keeps FD ownership at the OS level so that if these
+    # stream objects are garbage-collected (e.g. replaced by test frameworks),
+    # the underlying FDs 0/1/2 stay open and the /dev/null redirect holds.
+    sys.stdin = os.fdopen(0, "r", closefd=False)
+    sys.stdout = os.fdopen(1, "w", closefd=False)
+    sys.stderr = os.fdopen(2, "w", closefd=False)
 
 
 def _start_yappi_profiling() -> None:
