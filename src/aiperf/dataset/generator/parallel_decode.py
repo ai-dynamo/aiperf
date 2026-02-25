@@ -108,7 +108,7 @@ def parallel_decode(
     #
     # Alternatives considered:
     # - billiard: bypasses the daemon restriction natively, but crashes with
-    #   BrokenPipeError on macOS due to terminal FD inheritance issues.
+    #   BrokenProcessPool on macOS due to terminal FD inheritance issues.
     # - loky: robust reusable executor, but still requires the same daemon flag
     #   hack, so no advantage over stdlib.
     try:
@@ -132,4 +132,5 @@ def _set_daemon(daemon: bool) -> None:
     try:
         mp.current_process().daemon = daemon
     except AssertionError:
+        # Fallback to using the internal _config dictionary if assertions are enabled
         mp.current_process()._config["daemon"] = daemon

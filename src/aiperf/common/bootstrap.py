@@ -164,10 +164,6 @@ def _redirect_stdio_to_devnull() -> None:
 
     Prevents child processes from accessing the parent's terminal, which causes
     Textual UI corruption (ASCII garbage and freezes from inherited terminal FDs).
-
-    Redirects at both the OS level (dup2 on FDs 0/1/2) and the Python level
-    (sys.stdin/stdout/stderr) so that spawned grandchild processes (e.g.
-    ProcessPoolExecutor workers) also inherit safe descriptors.
     """
     # Redirect at the OS level so spawned grandchild processes (e.g.
     # ProcessPoolExecutor workers via 'spawn' context) inherit safe FDs
