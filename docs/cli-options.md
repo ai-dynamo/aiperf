@@ -383,6 +383,11 @@ Image file format for generated images. Choose `png` for lossless compression (l
 | `jpeg` |  | JPEG format. Lossy compression, smaller file sizes, good for photos. |
 | `random` |  | Randomly select PNG or JPEG for each image. |
 
+#### `--image-source` `<str>`
+
+Source image generation mode. `assets` loads images from the built-in `assets/source_images` directory (ships with a small set of 4 images). `noise` generates random noise images on the fly, providing a larger and more diverse pool without requiring files on disk. Noise mode is useful for stressing multimodal pipelines more realistically. A path to a directory loads images from the given directory (e.g. `--image-source ./source_images`).
+<br/>_Default: `assets`_
+
 ### Video Input
 
 #### `--video-batch-size`, `--batch-size-video` `<int>`

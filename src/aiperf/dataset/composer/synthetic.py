@@ -32,10 +32,11 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             not self.include_prompt
             and not self.include_image
             and not self.include_audio
+            and not self.include_video
         ):
             raise ValueError(
                 "All synthetic data are disabled. "
-                "Please enable at least one of prompt, image, or audio by "
+                "Please enable at least one of prompt, image, audio, or video by "
                 "setting the mean to a positive value."
             )
 
@@ -100,7 +101,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         if not turn.texts and not turn.images and not turn.audios and not turn.videos:
             self.logger.warning(
                 "There were no synthetic payloads generated. "
-                "Please enable at least one of prompt, image, or audio by "
+                "Please enable at least one of prompt, image, audio, or video by "
                 "setting the mean to a positive value."
             )
 
@@ -199,15 +200,12 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
     @property
     def include_image(self) -> bool:
-        return (
-            self.config.input.image.width.mean > 0
-            and self.config.input.image.height.mean > 0
-        )
+        return self.config.input.image.images_enabled()
 
     @property
     def include_audio(self) -> bool:
-        return self.config.input.audio.length.mean > 0
+        return self.config.input.audio.audio_enabled()
 
     @property
     def include_video(self) -> bool:
-        return bool(self.config.input.video.width and self.config.input.video.height)
+        return self.config.input.video.videos_enabled()

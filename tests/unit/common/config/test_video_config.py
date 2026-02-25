@@ -8,9 +8,8 @@ from aiperf.common.config import (
     VideoAudioConfig,
     VideoAudioDefaults,
     VideoConfig,
-    VideoDefaults,
 )
-from aiperf.common.enums import VideoAudioCodec
+from aiperf.common.enums import VideoAudioCodec, VideoFormat
 
 
 class TestVideoAudioConfigDefaults:
@@ -112,8 +111,8 @@ class TestVideoConfigWithAudio:
     def test_video_config_preserves_existing_defaults(self):
         """Existing VideoConfig defaults are unchanged."""
         config = VideoConfig()
-        assert config.batch_size == VideoDefaults.BATCH_SIZE
-        assert config.duration == VideoDefaults.DURATION
-        assert config.fps == VideoDefaults.FPS
-        assert config.format == VideoDefaults.FORMAT
-        assert config.codec == VideoDefaults.CODEC
+        assert config.batch_size == 1
+        assert config.duration == 5.0
+        assert config.fps == 4
+        assert config.format == VideoFormat.WEBM
+        assert config.codec == "libvpx-vp9"

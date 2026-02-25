@@ -5,11 +5,9 @@ from aiperf.common.config.audio_config import AudioConfig, AudioLengthConfig
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
 from aiperf.common.config.config_defaults import (
-    AudioDefaults,
     CLIDefaults,
     ConversationDefaults,
     EndpointDefaults,
-    ImageDefaults,
     InputDefaults,
     InputTokensDefaults,
     LoadGeneratorDefaults,
@@ -24,7 +22,6 @@ from aiperf.common.config.config_defaults import (
     TurnDefaults,
     TurnDelayDefaults,
     VideoAudioDefaults,
-    VideoDefaults,
     WorkersDefaults,
 )
 from aiperf.common.config.conversation_config import (
@@ -76,7 +73,6 @@ from aiperf.common.config.zmq_config import (
 
 __all__ = [
     "AudioConfig",
-    "AudioDefaults",
     "AudioLengthConfig",
     "BaseConfig",
     "BaseZMQCommunicationConfig",
@@ -90,7 +86,6 @@ __all__ = [
     "EndpointDefaults",
     "Groups",
     "ImageConfig",
-    "ImageDefaults",
     "ImageHeightConfig",
     "ImageWidthConfig",
     "InputConfig",
@@ -126,7 +121,6 @@ __all__ = [
     "VideoAudioConfig",
     "VideoAudioDefaults",
     "VideoConfig",
-    "VideoDefaults",
     "WorkersConfig",
     "WorkersDefaults",
     "ZMQDualBindConfig",

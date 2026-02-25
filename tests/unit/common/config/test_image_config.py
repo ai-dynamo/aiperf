@@ -1,38 +1,33 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
 
 from aiperf.common.config import (
     ImageConfig,
-    ImageDefaults,
     ImageHeightConfig,
     ImageWidthConfig,
 )
-from aiperf.common.enums import ImageFormat
+from aiperf.common.enums import ImageFormat, ImageSource
 
 
 def test_image_config_defaults():
-    """
-    Test the default values of the ImageConfig class.
-
-    This test verifies that the ImageConfig object is initialized with the correct
-    default values as defined in the ImageDefaults class.
-    """
+    """Test the default values of the ImageConfig class."""
     config = ImageConfig()
-    assert config.width.mean == ImageDefaults.WIDTH_MEAN
-    assert config.width.stddev == ImageDefaults.WIDTH_STDDEV
-    assert config.height.mean == ImageDefaults.HEIGHT_MEAN
-    assert config.height.stddev == ImageDefaults.HEIGHT_STDDEV
-    assert config.batch_size == ImageDefaults.BATCH_SIZE
-    assert config.format == ImageDefaults.FORMAT
+    assert config.width.mean == 0.0
+    assert config.width.stddev == 0.0
+    assert config.height.mean == 0.0
+    assert config.height.stddev == 0.0
+    assert config.batch_size == 1
+    assert config.format == ImageFormat.PNG
+    assert config.source == ImageSource.ASSETS
 
 
 def test_image_config_custom_values():
-    """
-    Test the InputConfig class with custom values.
-
-    This test verifies that the InputConfig class correctly initializes its attributes
-    when provided with a dictionary of custom values.
-    """
+    """Test ImageConfig correctly initializes with custom values."""
     custom_values = {
         "width": ImageWidthConfig(mean=640.0, stddev=80.0),
         "height": ImageHeightConfig(mean=480.0, stddev=60.0),
@@ -43,3 +38,87 @@ def test_image_config_custom_values():
 
     for key, value in custom_values.items():
         assert getattr(config, key) == value
+
+
+class TestImagesEnabled:
+    def test_enabled_when_all_conditions_met(self):
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=10),
+            height=ImageHeightConfig(mean=10),
+            batch_size=1,
+        )
+        assert config.images_enabled() is True
+
+    def test_disabled_by_default(self):
+        config = ImageConfig()
+        assert config.images_enabled() is False
+
+    def test_disabled_when_width_zero(self):
+        config = ImageConfig.model_construct(
+            width=ImageWidthConfig(mean=0),
+            height=ImageHeightConfig(mean=10),
+            batch_size=1,
+        )
+        assert config.images_enabled() is False
+
+    def test_disabled_when_height_zero(self):
+        config = ImageConfig.model_construct(
+            width=ImageWidthConfig(mean=10),
+            height=ImageHeightConfig(mean=0),
+            batch_size=1,
+        )
+        assert config.images_enabled() is False
+
+    def test_disabled_when_batch_size_zero(self):
+        config = ImageConfig.model_construct(
+            width=ImageWidthConfig(mean=10),
+            height=ImageHeightConfig(mean=10),
+            batch_size=0,
+        )
+        assert config.images_enabled() is False
+
+
+class TestImageConfigValidation:
+    def test_rejects_options_when_images_disabled(self):
+        with pytest.raises(ValidationError, match="Image generation is disabled"):
+            ImageConfig(
+                width=ImageWidthConfig(mean=0),
+                height=ImageHeightConfig(mean=0),
+            )
+
+    def test_format_alone_does_not_require_images_enabled(self):
+        """Setting format without dimensions is allowed (e.g., for external loaders)."""
+        config = ImageConfig(format=ImageFormat.JPEG)
+        assert config.format == ImageFormat.JPEG
+        assert config.images_enabled() is False
+
+    def test_source_alone_does_not_require_images_enabled(self):
+        """Setting source without dimensions is allowed (e.g., for external loaders)."""
+        config = ImageConfig(source=ImageSource.NOISE)
+        assert config.source == ImageSource.NOISE
+        assert config.images_enabled() is False
+
+
+class TestImageSource:
+    def test_source_defaults_to_assets(self):
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=10),
+            height=ImageHeightConfig(mean=10),
+        )
+        assert config.source == ImageSource.ASSETS
+
+    def test_source_noise(self):
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=10),
+            height=ImageHeightConfig(mean=10),
+            source=ImageSource.NOISE,
+        )
+        assert config.source == ImageSource.NOISE
+
+    def test_source_custom_path(self):
+        config = ImageConfig(
+            width=ImageWidthConfig(mean=10),
+            height=ImageHeightConfig(mean=10),
+            source=Path("/tmp/my_images"),
+        )
+        assert config.source == Path("/tmp/my_images")
