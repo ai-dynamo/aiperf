@@ -99,7 +99,7 @@ for entry, cls in plugins.iter_all(PluginType.ENDPOINT):
 
 ## Plugin Categories
 
-AIPerf supports 23 plugin categories organized by function:
+AIPerf supports 25 plugin categories organized by function:
 
 ### Timing Categories
 
@@ -134,6 +134,13 @@ AIPerf supports 23 plugin categories organized by function:
 | `results_processor` | `ResultsProcessorType` | Aggregated results computation |
 | `data_exporter` | `DataExporterType` | File format exporters (CSV, JSON, Parquet) |
 | `console_exporter` | `ConsoleExporterType` | Terminal output exporters |
+
+### Accuracy Categories
+
+| Category | Enum | Description |
+|----------|------|-------------|
+| `accuracy_benchmark` | `AccuracyBenchmarkType` | Accuracy benchmark problem sets (MMLU, AIME, HellaSwag, BigBench, etc.) |
+| `accuracy_grader` | `AccuracyGraderType` | Grading strategies for accuracy evaluation (exact match, math, multiple choice, code execution) |
 
 ### UI and Selection Categories
 
@@ -401,6 +408,29 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `dashboard` | `AIPerfDashboardUI` | Rich terminal dashboard |
 | `simple` | `TQDMProgressUI` | Simple tqdm progress bar |
 | `none` | `NoUI` | Headless execution |
+
+### Accuracy Benchmarks
+
+| Name | Class | Description |
+|------|-------|-------------|
+| `mmlu` | `MMLUBenchmark` | Massive Multitask Language Understanding |
+| `aime` | `AIMEBenchmark` | American Invitational Mathematics Examination |
+| `aime24` | `AIME24Benchmark` | AIME 2024 competition problems |
+| `aime25` | `AIME25Benchmark` | AIME 2025 competition problems |
+| `hellaswag` | `HellaSwagBenchmark` | HellaSwag commonsense reasoning |
+| `bigbench` | `BigBenchBenchmark` | BIG-Bench benchmark tasks |
+| `math_500` | `Math500Benchmark` | MATH-500 problem set |
+| `gpqa_diamond` | `GPQADiamondBenchmark` | GPQA Diamond graduate-level science |
+| `lcb_codegeneration` | `LCBCodeGenerationBenchmark` | LiveCodeBench code generation |
+
+### Accuracy Graders
+
+| Name | Class | Description |
+|------|-------|-------------|
+| `exact_match` | `ExactMatchGrader` | Exact string matching |
+| `math` | `MathGrader` | Mathematical expression evaluation |
+| `multiple_choice` | `MultipleChoiceGrader` | Multiple choice answer extraction |
+| `code_execution` | `CodeExecutionGrader` | Code execution and output comparison |
 
 ## Troubleshooting
 
