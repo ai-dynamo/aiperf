@@ -50,6 +50,10 @@ class MetricResult(JsonMetricResult):
         default=None,
         description="The most recent value of the metric (used for realtime dashboard display only)",
     )
+    sum: int | float | None = Field(
+        default=None,
+        description="The sum of all the metric values across all records",
+    )
 
     def to_display_unit(self) -> "MetricResult":
         """Convert the metric result to its display unit."""
@@ -61,7 +65,9 @@ class MetricResult(JsonMetricResult):
     def to_json_result(self) -> JsonMetricResult:
         """Convert the metric result to a JsonMetricResult."""
         result = JsonMetricResult(unit=self.unit)
-        for stat in STAT_KEYS:
+        for stat in [
+            s for s in STAT_KEYS if s != "sum"
+        ]:  # sum is not included in the JsonMetricResult
             setattr(result, stat, getattr(self, stat, None))
         return result
 

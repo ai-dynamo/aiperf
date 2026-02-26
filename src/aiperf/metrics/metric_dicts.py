@@ -199,6 +199,7 @@ class MetricArray(Generic[MetricValueTypeVarT]):
             min=np.min(arr),
             max=np.max(arr),
             avg=float(np.mean(arr)),
+            sum=float(self.sum),
             std=float(np.std(arr)),
             p1=p1,
             p5=p5,

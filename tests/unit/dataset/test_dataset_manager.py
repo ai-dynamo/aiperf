@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -18,7 +18,11 @@ from aiperf.common.messages import (
 from aiperf.common.messages.command_messages import ProfileConfigureCommand
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.dataset_manager import DatasetManager
-from aiperf.plugin.enums import CustomDatasetType, DatasetSamplingStrategy
+from aiperf.plugin.enums import (
+    CustomDatasetType,
+    DatasetSamplingStrategy,
+    ServiceRunType,
+)
 
 # ============================================================================
 # Shared Fixtures
@@ -538,3 +542,44 @@ class TestDatasetManagerFallbackHandlers:
 
         with pytest.raises(ServiceError, match="out of range"):
             await dataset_manager._handle_conversation_turn_request(request)
+
+
+class TestKubernetesMode:
+    """Test Kubernetes-specific behavior in DatasetManager."""
+
+    def test_compress_only_kubernetes_returns_true(
+        self, base_user_config: UserConfig
+    ) -> None:
+        """compress_only should be True when service_run_type is KUBERNETES."""
+        service_config = ServiceConfig(service_run_type=ServiceRunType.KUBERNETES)
+        manager = DatasetManager(service_config, base_user_config)
+        assert manager._compress_only is True
+
+    def test_compress_only_multiprocessing_returns_false(
+        self, base_user_config: UserConfig
+    ) -> None:
+        """compress_only should be False in local (multiprocessing) mode."""
+        service_config = ServiceConfig(service_run_type=ServiceRunType.MULTIPROCESSING)
+        manager = DatasetManager(service_config, base_user_config)
+        assert manager._compress_only is False
+
+    @pytest.mark.asyncio
+    async def test_configure_client_compress_only_skips_client_creation(
+        self, base_user_config: UserConfig
+    ) -> None:
+        """In compress_only mode, _configure_dataset_client_and_free_memory skips client creation."""
+        service_config = ServiceConfig(service_run_type=ServiceRunType.KUBERNETES)
+        manager = DatasetManager(service_config, base_user_config)
+        # Simulate some dataset entries
+        manager.dataset = {"conv1": MagicMock(), "conv2": MagicMock()}
+        manager._conversation_ids_cache = ["conv1", "conv2"]
+
+        await manager._configure_dataset_client_and_free_memory()
+
+        # Should have set dataset_configured event
+        assert manager.dataset_configured.is_set()
+        # Should have freed memory (cleared dataset)
+        assert manager.dataset == {}
+        assert manager._conversation_ids_cache == []
+        # Should NOT have created a dataset client
+        assert manager._dataset_client is None
