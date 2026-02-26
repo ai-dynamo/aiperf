@@ -36,7 +36,7 @@ choco install ffmpeg
 ## Overview
 
 The synthetic video feature provides:
-- Multiple synthesis types (moving shapes, grid clock patterns)
+- Multiple synthesis types (moving shapes, grid clock, noise patterns)
 - Configurable resolution, frame rate, and duration
 - Hardware-accelerated encoding options (CPU and GPU codecs)
 - Embedded synthetic audio tracks for video+audio multimodal benchmarking
@@ -51,7 +51,7 @@ Generate videos at 640x480 with default temporal settings (4 fps, 5 seconds):
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --endpoint /v1/chat/completions \
     --url localhost:8000 \
@@ -98,7 +98,7 @@ Control the resolution of generated videos:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 1920 \
@@ -112,7 +112,7 @@ Adjust temporal properties:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -128,7 +128,7 @@ aiperf profile \
 
 ### Synthesis Types
 
-AIPerf supports two built-in video patterns:
+AIPerf supports three built-in video patterns:
 
 #### 1. Moving Shapes (Default)
 
@@ -136,7 +136,7 @@ Generates videos with animated geometric shapes moving across the screen:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -157,7 +157,7 @@ Generates videos with a grid pattern and clock-like animation:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -172,6 +172,26 @@ Features:
 - Dark gray background
 - Frame number overlay
 
+#### 3. Noise
+
+Generates videos with random noise pixels in each frame:
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen2-VL-2B-Instruct \
+    --endpoint-type chat \
+    --url localhost:8000 \
+    --video-width 640 \
+    --video-height 480 \
+    --video-synth-type noise \
+    --request-count 20
+```
+
+Features:
+- Random RGB pixel values per frame
+- Deterministic output via seeded RNG
+- Maximum entropy content for codec stress testing
+
 ## Advanced Configuration
 
 ### Video Codec Selection
@@ -182,7 +202,7 @@ Choose encoding codec based on your hardware and requirements:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -203,7 +223,7 @@ For faster encoding with NVIDIA GPUs:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 1920 \
@@ -222,7 +242,7 @@ Control the number of videos per request:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -243,7 +263,7 @@ Set `--video-audio-num-channels` to 1 (mono) or 2 (stereo) to embed an audio tra
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -275,7 +295,7 @@ You can override the auto-selection with an explicit codec:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -290,7 +310,7 @@ aiperf profile \
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -328,7 +348,7 @@ Benchmark with small, low-framerate videos:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 320 \
@@ -348,7 +368,7 @@ Test with high-resolution, longer videos:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 1920 \
@@ -368,7 +388,7 @@ Combine video with text prompts for multimodal testing:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -390,7 +410,7 @@ Benchmark models that process both video and audio streams:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -411,7 +431,7 @@ Test with MP4 format and stereo audio for maximum compatibility:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 1280 \
@@ -434,7 +454,7 @@ Test with many short video clips:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -457,7 +477,7 @@ AIPerf supports both **WebM** (default) and **MP4** formats:
 **WebM format (default):**
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -470,7 +490,7 @@ aiperf profile \
 **MP4 format:**
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -563,7 +583,7 @@ All video-related parameters at a glance:
 | `--video-fps` | `4` | Frames per second |
 | `--video-duration` | `5.0` | Clip duration in seconds |
 | `--video-batch-size` | `1` | Videos per request |
-| `--video-synth-type` | `moving_shapes` | Synthesis pattern (`moving_shapes`, `grid_clock`) |
+| `--video-synth-type` | `moving_shapes` | Synthesis pattern (`moving_shapes`, `grid_clock`, `noise`) |
 | `--video-format` | `webm` | Container format (`webm`, `mp4`) |
 | `--video-codec` | `libvpx-vp9` | Video codec (any FFmpeg-supported codec) |
 
