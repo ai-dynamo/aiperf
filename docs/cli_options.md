@@ -441,6 +441,7 @@ Algorithm for generating synthetic video content. Different types produce differ
 |-------|:-------:|-------------|
 | `moving_shapes` | _default_ | Generate videos with animated geometric shapes moving across the frame |
 | `grid_clock` |  | Generate videos with a grid pattern and timestamp overlay for frame-accurate verification |
+| `noise` |  | Generate videos with random noise frames |
 
 #### `--video-format` `<str>`
 

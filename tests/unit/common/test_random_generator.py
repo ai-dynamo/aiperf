@@ -260,6 +260,26 @@ class TestSampleMethodEdgeCases:
         assert sample >= 0
 
 
+class TestIntegersMethod:
+    """Test integers method including dtype passthrough."""
+
+    def test_integers_with_dtype(self):
+        """Test that integers respects the dtype parameter."""
+        import numpy as np
+
+        gen = RandomGenerator(seed=42, _internal=True)
+        result = gen.integers(0, 256, size=(2, 3), dtype=np.uint8)
+        assert result.dtype == np.uint8
+
+    def test_integers_default_dtype_is_int64(self):
+        """Test that integers defaults to int64."""
+        import numpy as np
+
+        gen = RandomGenerator(seed=42, _internal=True)
+        result = gen.integers(0, 256, size=(2,))
+        assert result.dtype == np.int64
+
+
 class TestNewAPIMethods:
     """Test newly added API methods (uniform, randint, sample)."""
 

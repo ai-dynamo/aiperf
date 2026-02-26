@@ -451,6 +451,9 @@ class VideoSynthType(CaseInsensitiveStrEnum):
     GRID_CLOCK = "grid_clock"
     """Generate videos with a grid pattern and timestamp overlay for frame-accurate verification"""
 
+    NOISE = "noise"
+    """Generate videos with random noise frames"""
+
 
 class WorkerStatus(CaseInsensitiveStrEnum):
     """The current status of a worker service.

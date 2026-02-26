@@ -123,6 +123,7 @@ class TestVideoGenerator:
         [
             (VideoSynthType.MOVING_SHAPES, 64, 64, 0.5, 2),
             (VideoSynthType.GRID_CLOCK, 128, 128, 1.0, 4),
+            (VideoSynthType.NOISE, 64, 64, 0.5, 2),
         ],
     )
     def test_generate_frames(self, synth_type, width, height, duration, fps):

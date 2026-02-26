@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 import ffmpeg
+import numpy as np
 import soundfile as sf
 from PIL import Image, ImageDraw
 
@@ -32,6 +33,7 @@ class VideoGenerator(BaseGenerator):
         super().__init__(**kwargs)
         self.config = config
         self._audio_rng = rng.derive("dataset.video.audio")
+        self._noise_rng = rng.derive("dataset.video.noise")
 
     def _check_ffmpeg_availability(self) -> bool:
         """Check if FFmpeg binary is available in the system."""
@@ -111,6 +113,8 @@ class VideoGenerator(BaseGenerator):
             frames = self._generate_moving_shapes_frames(total_frames)
         elif self.config.synth_type == VideoSynthType.GRID_CLOCK:
             frames = self._generate_grid_clock_frames(total_frames)
+        elif self.config.synth_type == VideoSynthType.NOISE:
+            frames = self._generate_noise_frames(total_frames)
         else:
             raise ValueError(f"Unknown synthesis type: {self.config.synth_type}")
 
@@ -247,6 +251,16 @@ class VideoGenerator(BaseGenerator):
             frames.append(img)
 
         return frames
+
+    def _generate_noise_frames(self, total_frames: int) -> list[Image.Image]:
+        """Generate frames with random noise pixels."""
+        width, height = self.config.width, self.config.height
+        return [
+            Image.fromarray(
+                self._noise_rng.integers(0, 256, (height, width, 3), dtype=np.uint8)
+            )
+            for _ in range(total_frames)
+        ]
 
     def _encode_frames_to_base64(self, frames: list[Image.Image]) -> str:
         """Convert frames to video data and encode as base64 string.
