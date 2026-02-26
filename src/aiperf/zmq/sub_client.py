@@ -124,8 +124,7 @@ class ZMQSubClient(BaseZMQClient):
             callback: Function to call when a message is received (receives Message object)
         """
         try:
-            # Only subscribe to topic if this is the first callback for this type
-            # and the wildcard subscriber is not set
+            # Skip socket subscription if wildcard is active (it already receives everything).
             if topic not in self._subscribers and self._wildcard_subscriber is None:
                 self.debug(
                     lambda: f"SUB client {self.client_id} subscribing to topic: {topic}"
@@ -154,14 +153,13 @@ class ZMQSubClient(BaseZMQClient):
         Args:
             callback: Coroutine to call when a message is received (receives Message object)
         """
+        if self._wildcard_subscriber is not None:
+            raise CommunicationError(
+                "Wildcard subscriber already set. Only one wildcard subscriber is allowed."
+            )
         try:
-            if self._wildcard_subscriber is not None:
-                self.warning(
-                    "Wildcard subscriber already set, overriding with new subscriber"
-                )
-            else:
-                # ZMQ subscriptions are prefix-based, so subscribing to an empty topic will match all messages.
-                self.socket.setsockopt(zmq.SUBSCRIBE, b"")
+            # ZMQ subscriptions are prefix-based, so subscribing to an empty topic will match all messages.
+            self.socket.setsockopt(zmq.SUBSCRIBE, b"")
             self._wildcard_subscriber = callback
         except Exception as e:
             self.exception(f"Exception subscribing to wildcard: {e}")

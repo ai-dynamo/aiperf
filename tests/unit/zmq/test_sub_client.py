@@ -311,10 +311,10 @@ class TestZMQSubClientWildcardSubscription:
         mock_zmq_socket.setsockopt.assert_any_call(zmq.SUBSCRIBE, b"")
 
     @pytest.mark.asyncio
-    async def test_wildcard_override_logs_warning(
+    async def test_subscribe_wildcard_override_raises_error(
         self, mock_zmq_socket, mock_zmq_context
     ):
-        """Test that overriding a wildcard subscriber replaces the callback."""
+        """Test that subscribing a second wildcard raises CommunicationError."""
         client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
         await client.initialize()
 
@@ -325,12 +325,14 @@ class TestZMQSubClientWildcardSubscription:
             pass
 
         await client.subscribe(WILDCARD_TOPIC, callback1)
-        await client.subscribe(WILDCARD_TOPIC, callback2)
 
-        assert client._wildcard_subscriber is callback2
+        with pytest.raises(CommunicationError, match="Wildcard subscriber already set"):
+            await client.subscribe(WILDCARD_TOPIC, callback2)
+
+        assert client._wildcard_subscriber is callback1
 
     @pytest.mark.asyncio
-    async def test_wildcard_subscriber_receives_all_messages(
+    async def test_handle_message_wildcard_subscriber_receives_all_messages(
         self, mock_zmq_context, create_callback_tracker
     ):
         """Test that wildcard subscriber is called for every message."""
@@ -354,7 +356,7 @@ class TestZMQSubClientWildcardSubscription:
         assert received_messages[0].message_type == MessageType.HEARTBEAT
 
     @pytest.mark.asyncio
-    async def test_wildcard_and_topic_subscriber_both_called(
+    async def test_handle_message_wildcard_and_topic_subscriber_both_called(
         self, mock_zmq_context, create_callback_tracker
     ):
         """Test that both wildcard and topic-specific subscribers are called."""
@@ -383,7 +385,9 @@ class TestZMQSubClientWildcardSubscription:
         assert len(topic_msgs) == 1
 
     @pytest.mark.asyncio
-    async def test_wildcard_subscriber_error_does_not_crash(self, mock_zmq_context):
+    async def test_handle_message_wildcard_subscriber_exception_is_caught(
+        self, mock_zmq_context
+    ):
         """Test that an exception in wildcard subscriber is caught."""
         client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
 

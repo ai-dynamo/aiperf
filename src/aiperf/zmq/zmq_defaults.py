@@ -31,7 +31,7 @@ For example:
 """
 
 WILDCARD_TOPIC = "*"
-"""The wildcard topic for all message types. This is used to subscribe to all message types."""
+"""Sentinel for subscribing to all topics. Maps to an empty string ZMQ subscription internally and bypasses TOPIC_END appending."""
 
 
 class ZMQSocketDefaults:
