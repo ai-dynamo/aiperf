@@ -94,8 +94,9 @@ class RealtimeMetricsTable(Widget):
             metric
             for metric in sorted(
                 metrics,
-                key=lambda m: MetricRegistry.get_class(m.tag).display_order
-                or sys.maxsize,
+                key=lambda m: (
+                    MetricRegistry.get_class(m.tag).display_order or sys.maxsize
+                ),
             )
             if not self._should_skip(metric)
         ]

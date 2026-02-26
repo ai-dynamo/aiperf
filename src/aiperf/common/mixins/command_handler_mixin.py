@@ -87,12 +87,16 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
         """
         self.trace_or_debug(
             lambda: f"Received command message: {message}",
-            lambda: f"Received '{message.command}' command from '{message.service_id}' (id: {message.command_id})",
+            lambda: (
+                f"Received '{message.command}' command from '{message.service_id}' (id: {message.command_id})"
+            ),
         )
         if message.command_id in self._processed_command_ids:
             self.trace_or_debug(
                 lambda: f"Received duplicate command message: {message}. Ignoring.",
-                lambda: f"Received duplicate command message '{message.command}' from '{message.service_id}' (id: {message.command_id}). Ignoring.",
+                lambda: (
+                    f"Received duplicate command message '{message.command}' from '{message.service_id}' (id: {message.command_id}). Ignoring."
+                ),
             )
             # If we receive a duplicate command message, we just send an acknowledged response.
             await self._publish_command_acknowledged_response(message)
@@ -104,7 +108,9 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
             # In the case of a broadcast command, you will receive a command message from yourself.
             # We ignore these messages.
             self.debug(
-                lambda: f"Received broadcast command message from self: {message}. Ignoring."
+                lambda: (
+                    f"Received broadcast command message from self: {message}. Ignoring."
+                )
             )
             return
 
@@ -330,7 +336,9 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
         """
         self.trace_or_debug(
             lambda: f"Received command response message: {message}",
-            lambda: f"Received {message.status} response for command '{message.command}' from '{message.service_id}' (id: {message.command_id})",
+            lambda: (
+                f"Received {message.status} response for command '{message.command}' from '{message.service_id}' (id: {message.command_id})"
+            ),
         )
 
         # If the command ID is in the single response futures, we set the result of the future.
@@ -341,7 +349,9 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
                 future.set_result(message)
             else:
                 self.debug(
-                    lambda: f"Already received response for command {message.command_id}, ignoring duplicate from {message.service_id}"
+                    lambda: (
+                        f"Already received response for command {message.command_id}, ignoring duplicate from {message.service_id}"
+                    )
                 )
             return
 
@@ -356,7 +366,9 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
                     future.set_result(message)
                 else:
                     self.debug(
-                        lambda: f"Already received response for command {message.command_id} from {message.service_id}, ignoring duplicate"
+                        lambda: (
+                            f"Already received response for command {message.command_id} from {message.service_id}, ignoring duplicate"
+                        )
                     )
             else:
                 if message.command != CommandType.PROFILE_CANCEL:
@@ -368,5 +380,7 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
         # If we reach here, we received a command response that we were not tracking. It is
         # safe to ignore.
         self.debug(
-            lambda: f"Received command response for untracked command: {message}. Ignoring."
+            lambda: (
+                f"Received command response for untracked command: {message}. Ignoring."
+            )
         )

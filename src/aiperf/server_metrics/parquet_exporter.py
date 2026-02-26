@@ -92,8 +92,12 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
         self._accumulator = server_metrics_accumulator
         self._time_filter = time_filter
         self.trace_or_debug(
-            lambda: f"Initializing ServerMetricsParquetExporter with config: {self.user_config}",
-            lambda: f"Initializing ServerMetricsParquetExporter with file path: {self._file_path}",
+            lambda: (
+                f"Initializing ServerMetricsParquetExporter with config: {self.user_config}"
+            ),
+            lambda: (
+                f"Initializing ServerMetricsParquetExporter with file path: {self._file_path}"
+            ),
         )
 
     def get_export_info(self) -> FileExportInfo:
@@ -167,7 +171,9 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
             writer.write_table(table)
             total_rows += len(batch_rows)
             self.trace(
-                lambda: f"Wrote batch of {len(batch_rows):,} rows (total: {total_rows:,})"
+                lambda: (
+                    f"Wrote batch of {len(batch_rows):,} rows (total: {total_rows:,})"
+                )
             )
             batch_rows = []
 
@@ -186,8 +192,9 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
                     batch_count = len(batch_rows)
                     current_total = total_rows
                     self.trace(
-                        lambda batch_count=batch_count,
-                        current_total=current_total: f"Wrote batch of {batch_count:,} rows (total: {current_total:,})"
+                        lambda batch_count=batch_count, current_total=current_total: (
+                            f"Wrote batch of {batch_count:,} rows (total: {current_total:,})"
+                        )
                     )
                     batch_rows = []
 

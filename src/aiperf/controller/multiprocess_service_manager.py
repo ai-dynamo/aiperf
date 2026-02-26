@@ -79,8 +79,9 @@ class MultiProcessServiceManager(BaseServiceManager):
             process.start()
 
             self.debug(
-                lambda pid=process.pid,
-                type=service_type: f"Service {type} started as process (pid: {pid})"
+                lambda pid=process.pid, type=service_type: (
+                    f"Service {type} started as process (pid: {pid})"
+                )
             )
 
             self.multi_process_info.append(

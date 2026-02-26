@@ -188,8 +188,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         endpoint: EndpointProtocol = EndpointClass(model_endpoint=model_endpoint)
         self.debug(
-            lambda: f"Created endpoint protocol for {model_endpoint.endpoint.type}, "
-            f"class: {endpoint.__class__.__name__}",
+            lambda: (
+                f"Created endpoint protocol for {model_endpoint.endpoint.type}, "
+                f"class: {endpoint.__class__.__name__}"
+            ),
         )
         session_payloads_map: dict[str, list] = {}
         for conversation in self.dataset.values():

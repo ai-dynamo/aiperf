@@ -70,7 +70,9 @@ class WorkerManager(BaseComponentService):
                 ),
             )
             self.debug(
-                lambda: f"Auto-setting max workers to {self.max_workers} due to no max workers specified."
+                lambda: (
+                    f"Auto-setting max workers to {self.max_workers} due to no max workers specified."
+                )
             )
 
         # Cap the worker count to the max concurrency, but only if the user is in concurrency mode.

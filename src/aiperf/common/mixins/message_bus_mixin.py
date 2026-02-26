@@ -51,7 +51,9 @@ class MessageBusClientMixin(CommunicationMixin, ABC):
             subscribe_all for efficiency
             """
             self.debug(
-                lambda: f"Adding subscription for message type: '{message_type}' for hook: {hook}"
+                lambda: (
+                    f"Adding subscription for message type: '{message_type}' for hook: {hook}"
+                )
             )
             subscription_map.setdefault(message_type, []).append(hook.func)
 

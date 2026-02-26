@@ -152,8 +152,10 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
     async def _init_orchestrator(self) -> None:
         """Log configured phases (actual initialization happens per-phase in _execute_phases)."""
         self.info(
-            lambda: f"Initialized {len(self._ordered_phase_configs)} phase(s): "
-            f"{[p.phase.replace('_', ' ').title() for p in self._ordered_phase_configs]}"
+            lambda: (
+                f"Initialized {len(self._ordered_phase_configs)} phase(s): "
+                f"{[p.phase.replace('_', ' ').title() for p in self._ordered_phase_configs]}"
+            )
         )
 
     @on_start

@@ -134,7 +134,9 @@ class ZMQSubClient(BaseZMQClient):
                 )
             else:
                 self.debug(
-                    lambda: f"Adding callback to existing subscription for topic: {topic}"
+                    lambda: (
+                        f"Adding callback to existing subscription for topic: {topic}"
+                    )
                 )
 
             self._subscribers.setdefault(topic, []).append(callback)
@@ -181,7 +183,9 @@ class ZMQSubClient(BaseZMQClient):
         message = Message.from_json(message_bytes)
 
         self.trace(
-            lambda: f"Calling callbacks for message: {message}, {self._subscribers.get(topic)}"
+            lambda: (
+                f"Calling callbacks for message: {message}, {self._subscribers.get(topic)}"
+            )
         )
 
         # Call callbacks with the parsed message object

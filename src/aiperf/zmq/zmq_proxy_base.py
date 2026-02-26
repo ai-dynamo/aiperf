@@ -99,7 +99,9 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
         self.config = zmq_proxy_config
 
         self.debug(
-            lambda: f"Proxy Initializing - Frontend: {self.config.frontend_address}, Backend: {self.config.backend_address}"
+            lambda: (
+                f"Proxy Initializing - Frontend: {self.config.frontend_address}, Backend: {self.config.backend_address}"
+            )
         )
 
         self.backend_socket = backend_socket_class(
@@ -155,10 +157,14 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
         """Initialize and start the BaseZMQProxy."""
         self.debug("Proxy Initializing Sockets...")
         self.debug(
-            lambda: f"Frontend {self.frontend_socket.socket_type.name} socket binding to: {self.config.frontend_address} (for {self.backend_socket.socket_type.name} clients)"
+            lambda: (
+                f"Frontend {self.frontend_socket.socket_type.name} socket binding to: {self.config.frontend_address} (for {self.backend_socket.socket_type.name} clients)"
+            )
         )
         self.debug(
-            lambda: f"Backend {self.backend_socket.socket_type.name} socket binding to: {self.config.backend_address} (for {self.frontend_socket.socket_type.name} services)"
+            lambda: (
+                f"Backend {self.backend_socket.socket_type.name} socket binding to: {self.config.backend_address} (for {self.frontend_socket.socket_type.name} services)"
+            )
         )
 
         try:
@@ -230,13 +236,17 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
             return
 
         self.debug(
-            lambda: f"Proxy Monitor Starting - Capture Address: {self.config.capture_address}"
+            lambda: (
+                f"Proxy Monitor Starting - Capture Address: {self.config.capture_address}"
+            )
         )
 
         capture_socket = self.context.socket(SocketType.SUB)
         capture_socket.connect(self.config.capture_address)
         self.debug(
-            lambda: f"Proxy Monitor Connected to Capture Address: {self.config.capture_address}"
+            lambda: (
+                f"Proxy Monitor Connected to Capture Address: {self.config.capture_address}"
+            )
         )
         capture_socket.setsockopt(zmq.SUBSCRIBE, b"")  # Subscribe to all messages
         self.debug("Proxy Monitor Subscribed to all messages")

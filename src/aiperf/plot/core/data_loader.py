@@ -1048,16 +1048,18 @@ class DataLoader(AIPerfLoggerMixin):
 
             # Build series key for grouping
             df_filtered["labels_json"] = df_filtered.apply(
-                lambda row: orjson.dumps(
-                    {
-                        k: row[k]
-                        for k in label_columns
-                        if pd.notna(row[k]) and row[k] != ""
-                    },
-                    option=orjson.OPT_SORT_KEYS,
-                ).decode()
-                if any(pd.notna(row[k]) and row[k] != "" for k in label_columns)
-                else "{}",
+                lambda row: (
+                    orjson.dumps(
+                        {
+                            k: row[k]
+                            for k in label_columns
+                            if pd.notna(row[k]) and row[k] != ""
+                        },
+                        option=orjson.OPT_SORT_KEYS,
+                    ).decode()
+                    if any(pd.notna(row[k]) and row[k] != "" for k in label_columns)
+                    else "{}"
+                ),
                 axis=1,
             )
 

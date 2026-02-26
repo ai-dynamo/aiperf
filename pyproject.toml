@@ -76,7 +76,7 @@ dev = [
   "pytest-cov",
   "pytest>=7.0.0",
   "pytest-xdist>=3.8.0",
-  "ruff>=0.14.0,<0.15.0",
+  "ruff>=0.15.0",
   "scipy>=1.13.0",
   "trustme>=1.0.0",
 ]

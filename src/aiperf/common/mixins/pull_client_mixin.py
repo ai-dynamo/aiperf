@@ -47,7 +47,9 @@ class PullClientMixin(CommunicationMixin, ABC):
 
         def _register_pull_callback(hook: Hook, message_type: MessageTypeT) -> None:
             self.debug(
-                lambda: f"Registering pull callback for message type: {message_type} for hook: {hook}"
+                lambda: (
+                    f"Registering pull callback for message type: {message_type} for hook: {hook}"
+                )
             )
             self.pull_client.register_pull_callback(
                 message_type=message_type,

@@ -81,7 +81,9 @@ class ProgressTracker:
         pct = getattr(stats, f"{prefix}_progress_percent")
 
         _logger.debug(
-            lambda: f"Updating {prefix} stats for phase '{stats.phase.title()}': progress_percent: {pct}, finished: {finished}"
+            lambda: (
+                f"Updating {prefix} stats for phase '{stats.phase.title()}': progress_percent: {pct}, finished: {finished}"
+            )
         )
 
         if not pct or finished == 0:

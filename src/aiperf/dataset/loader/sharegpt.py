@@ -111,7 +111,9 @@ class ShareGPTLoader(BasePublicDatasetLoader):
             )
 
         self.debug(
-            lambda: f"Filtered to {len(filtered_dataset)} dataset entries out of {len(dataset)} (skipped {skipped_entries})"
+            lambda: (
+                f"Filtered to {len(filtered_dataset)} dataset entries out of {len(dataset)} (skipped {skipped_entries})"
+            )
         )
         return filtered_dataset
 

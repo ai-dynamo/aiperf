@@ -36,8 +36,12 @@ class TimesliceMetricsJsonExporter(MetricsJsonExporter):
             exporter_config.user_config.output.profile_export_timeslices_json_file
         )
         self.trace_or_debug(
-            lambda: f"Initializing TimesliceMetricsJsonExporter with config: {exporter_config}",
-            lambda: f"Initializing TimesliceMetricsJsonExporter with file path: {self._file_path}",
+            lambda: (
+                f"Initializing TimesliceMetricsJsonExporter with config: {exporter_config}"
+            ),
+            lambda: (
+                f"Initializing TimesliceMetricsJsonExporter with file path: {self._file_path}"
+            ),
         )
 
     def get_export_info(self) -> FileExportInfo:

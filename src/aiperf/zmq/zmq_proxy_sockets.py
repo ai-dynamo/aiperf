@@ -56,7 +56,9 @@ def create_proxy_socket_class(
             if self.socket_type == SocketType.XPUB:
                 self.socket.setsockopt(zmq.XPUB_VERBOSE, 1)
                 self.debug(
-                    lambda: "XPUB socket configured with XPUB_VERBOSE=1 for subscription forwarding"
+                    lambda: (
+                        "XPUB socket configured with XPUB_VERBOSE=1 for subscription forwarding"
+                    )
                 )
 
     # Dynamically set the class name and qualname based on the socket and end type

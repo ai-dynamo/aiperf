@@ -199,7 +199,9 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
                         # cumulatively over server lifetime, not per-benchmark period
                         if family.name not in self._seen_summary_metrics:
                             self.info(
-                                lambda name=family.name: f"Skipping unsupported summary metric: {name}"
+                                lambda name=family.name: (
+                                    f"Skipping unsupported summary metric: {name}"
+                                )
                             )
                             self._seen_summary_metrics.add(family.name)
                         continue

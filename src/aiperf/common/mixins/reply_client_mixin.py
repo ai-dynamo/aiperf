@@ -42,7 +42,9 @@ class ReplyClientMixin(CommunicationMixin, ABC):
 
         def _register_request_handler(hook: Hook, message_type: MessageTypeT) -> None:
             self.debug(
-                lambda: f"Registering request handler for message type: {message_type} for hook: {hook}"
+                lambda: (
+                    f"Registering request handler for message type: {message_type} for hook: {hook}"
+                )
             )
             self.reply_client.register_request_handler(
                 service_id=self.id,

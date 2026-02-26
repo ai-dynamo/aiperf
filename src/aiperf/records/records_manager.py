@@ -187,7 +187,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         if message.metadata.benchmark_phase != CreditPhase.PROFILING:
             self.debug(
-                lambda: f"Skipping non-profiling record: {message.metadata.benchmark_phase}"
+                lambda: (
+                    f"Skipping non-profiling record: {message.metadata.benchmark_phase}"
+                )
             )
             return
 
@@ -256,7 +258,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         phase_stats = self._records_tracker.create_stats_for_phase(phase)
         self.info(
-            lambda: f"Processed {phase_stats.success_records} valid requests and {phase_stats.error_records} errors ({phase_stats.total_records} total)."
+            lambda: (
+                f"Processed {phase_stats.success_records} valid requests and {phase_stats.error_records} errors ({phase_stats.total_records} total)."
+            )
         )
 
         self.info("Received all records, processing now...")
@@ -405,7 +409,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
             # TODO
             self.info(
-                lambda: f"Received CREDIT_PHASE_COMPLETE message, Phase complete: {phase_stats!r}"
+                lambda: (
+                    f"Received CREDIT_PHASE_COMPLETE message, Phase complete: {phase_stats!r}"
+                )
             )
             self.notice(
                 f"All requests have completed, please wait for the results to be processed "

@@ -224,8 +224,10 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
         # Phase 2: Batch parallel decode for all cache misses
         if pending_decodes:
             self.debug(
-                lambda: f"Parallel decoding {len(pending_decodes)} prompts "
-                f"({len(data)} conversations)"
+                lambda: (
+                    f"Parallel decoding {len(pending_decodes)} prompts "
+                    f"({len(data)} conversations)"
+                )
             )
             token_sequences = [p[2] for p in pending_decodes]
             decoded_prompts = parallel_decode(token_sequences, self._tokenizer_name)

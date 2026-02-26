@@ -80,9 +80,11 @@ class TimingManager(BaseComponentService):
     ) -> None:
         """Store dataset metadata and signal configuration ready."""
         self.debug(
-            lambda: f"Received dataset configured notification: "
-            f"{len(message.metadata.conversations)} conversations, "
-            f"{message.metadata.sampling_strategy.value} sampling strategy"
+            lambda: (
+                f"Received dataset configured notification: "
+                f"{len(message.metadata.conversations)} conversations, "
+                f"{message.metadata.sampling_strategy.value} sampling strategy"
+            )
         )
 
         self._dataset_metadata = message.metadata

@@ -51,8 +51,10 @@ class InferenceResultParser(CommunicationMixin):
             or (not endpoint_meta.produces_tokens and not endpoint_meta.tokenizes_input)
         )
         self.debug(
-            lambda: f"Created endpoint for {self.model_endpoint.endpoint.type}, "
-            f"class: {self.endpoint.__class__.__name__}",
+            lambda: (
+                f"Created endpoint for {self.model_endpoint.endpoint.type}, "
+                f"class: {self.endpoint.__class__.__name__}"
+            ),
         )
 
     @on_init
@@ -114,9 +116,11 @@ class InferenceResultParser(CommunicationMixin):
         request_info = request_record.request_info
         self.trace_or_debug(
             lambda: f"Received inference results message: {request_record}",
-            lambda: f"Received inference results for credit '{request_info.credit_num}' (id: {request_info.x_request_id})"
-            if request_info
-            else "Received inference results (no request_info)",
+            lambda: (
+                f"Received inference results for credit '{request_info.credit_num}' (id: {request_info.x_request_id})"
+                if request_info
+                else "Received inference results (no request_info)"
+            ),
         )
 
         # Make sure any invalid request records are converted to error records for combined processing.
@@ -162,7 +166,9 @@ class InferenceResultParser(CommunicationMixin):
                 else:
                     # Success path: valid record with no errors
                     self.debug(
-                        lambda: f"Received {len(record.request.responses)} response packet(s), token counts: {record.token_counts}"
+                        lambda: (
+                            f"Received {len(record.request.responses)} response packet(s), token counts: {record.token_counts}"
+                        )
                     )
                     return record
 
@@ -194,7 +200,9 @@ class InferenceResultParser(CommunicationMixin):
         """Process a valid request record."""
         if request_record.model_name is None:
             self.warning(
-                lambda: f"Model name is None, unable to process record: {request_record}"
+                lambda: (
+                    f"Model name is None, unable to process record: {request_record}"
+                )
             )
             return ParsedResponseRecord(
                 request=request_record,
