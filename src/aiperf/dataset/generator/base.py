@@ -1,9 +1,35 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC, abstractmethod
 
+import numpy as np
+from numpy.typing import NDArray
+
 from aiperf.common.mixins import AIPerfLoggerMixin
+from aiperf.common.random_generator import RandomGenerator
+
+
+def generate_noise_signal(
+    rng: RandomGenerator,
+    num_samples: int,
+    channels: int,
+) -> NDArray[np.floating]:
+    """Generate a Gaussian noise signal clipped to [-1, 1].
+
+    Args:
+        rng: Random generator for reproducible output.
+        num_samples: Number of audio samples to generate.
+        channels: Number of audio channels (1=mono, 2=stereo).
+
+    Returns:
+        Float array of shape (num_samples,) for mono or (num_samples, channels) for stereo.
+    """
+    if channels < 1:
+        raise ValueError(f"channels must be >= 1, got {channels}")
+    shape = (num_samples, channels) if channels > 1 else num_samples
+    signal = rng.normal(0, 0.3, shape)
+    return np.clip(signal, -1, 1)
 
 
 class BaseGenerator(AIPerfLoggerMixin, ABC):

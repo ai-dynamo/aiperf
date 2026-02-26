@@ -2,18 +2,23 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
+import io
 import math
-import os
 import platform
 import shutil
 import tempfile
+from pathlib import Path
 
 import ffmpeg
+import numpy as np
+import soundfile as sf
 from PIL import Image, ImageDraw
 
-from aiperf.common.config.video_config import VideoConfig
-from aiperf.common.enums import VideoFormat, VideoSynthType
-from aiperf.dataset.generator.base import BaseGenerator
+from aiperf.common import random_generator as rng
+from aiperf.common.config.video_config import VIDEO_AUDIO_CODEC_MAP, VideoConfig
+from aiperf.common.enums import VideoAudioCodec, VideoFormat, VideoSynthType
+from aiperf.dataset.generator.audio import SUPPORTED_BIT_DEPTHS
+from aiperf.dataset.generator.base import BaseGenerator, generate_noise_signal
 
 
 class VideoGenerator(BaseGenerator):
@@ -27,6 +32,8 @@ class VideoGenerator(BaseGenerator):
     def __init__(self, config: VideoConfig, **kwargs):
         super().__init__(**kwargs)
         self.config = config
+        self._audio_rng = rng.derive("dataset.video.audio")
+        self._noise_rng = rng.derive("dataset.video.noise")
 
     def _check_ffmpeg_availability(self) -> bool:
         """Check if FFmpeg binary is available in the system."""
@@ -106,6 +113,8 @@ class VideoGenerator(BaseGenerator):
             frames = self._generate_moving_shapes_frames(total_frames)
         elif self.config.synth_type == VideoSynthType.GRID_CLOCK:
             frames = self._generate_grid_clock_frames(total_frames)
+        elif self.config.synth_type == VideoSynthType.NOISE:
+            frames = self._generate_noise_frames(total_frames)
         else:
             raise ValueError(f"Unknown synthesis type: {self.config.synth_type}")
 
@@ -243,6 +252,16 @@ class VideoGenerator(BaseGenerator):
 
         return frames
 
+    def _generate_noise_frames(self, total_frames: int) -> list[Image.Image]:
+        """Generate frames with random noise pixels."""
+        width, height = self.config.width, self.config.height
+        return [
+            Image.fromarray(
+                self._noise_rng.integers(0, 256, (height, width, 3), dtype=np.uint8)
+            )
+            for _ in range(total_frames)
+        ]
+
     def _encode_frames_to_base64(self, frames: list[Image.Image]) -> str:
         """Convert frames to video data and encode as base64 string.
 
@@ -250,9 +269,6 @@ class VideoGenerator(BaseGenerator):
         """
         if not frames:
             return ""
-
-        # Validate format
-        from aiperf.common.enums import VideoFormat
 
         if self.config.format not in [VideoFormat.MP4, VideoFormat.WEBM]:
             raise ValueError(
@@ -305,6 +321,71 @@ class VideoGenerator(BaseGenerator):
             # Fall back to temporary file approach if pipes fail
             return self._create_video_with_temp_files(frames)
 
+    def _generate_audio_data(self) -> bytes:
+        """Generate Gaussian noise audio data matching video duration as WAV bytes."""
+        num_samples = int(self.config.duration * self.config.audio.sample_rate)
+        signal = generate_noise_signal(
+            self._audio_rng, num_samples, self.config.audio.channels
+        )
+
+        # Scale to the appropriate bit depth range
+        # Note: For 8-bit, we use int16 input and let soundfile convert to PCM_U8
+        bit_depth = self.config.audio.depth
+        numpy_type, subtype = SUPPORTED_BIT_DEPTHS[bit_depth]
+        scale_depth = 16 if bit_depth == 8 else bit_depth
+        max_val = 2 ** (scale_depth - 1) - 1
+        audio_data = (signal * max_val).astype(numpy_type)
+
+        output_buffer = io.BytesIO()
+        sf.write(
+            output_buffer,
+            audio_data,
+            self.config.audio.sample_rate,
+            format="WAV",
+            subtype=subtype,
+        )
+        return output_buffer.getvalue()
+
+    def _resolve_audio_codec(self) -> VideoAudioCodec:
+        """Resolve the audio codec, auto-selecting from format if not explicitly set."""
+        if self.config.audio.codec is not None:
+            return self.config.audio.codec
+        codec = VIDEO_AUDIO_CODEC_MAP.get(self.config.format)
+        if codec is None:
+            raise ValueError(
+                f"No default audio codec for format '{self.config.format}'. "
+                f"Specify --video-audio-codec explicitly."
+            )
+        return codec
+
+    def _build_ffmpeg_output(
+        self,
+        video_stream: ffmpeg.Stream,
+        output_dest: str,
+        output_options: dict,
+        audio_dir: Path,
+    ) -> ffmpeg.Stream:
+        """Build ffmpeg output node, muxing audio if channels > 0.
+
+        Writes a temp WAV file into audio_dir when audio is enabled.
+        Caller is responsible for cleaning up audio_dir.
+        """
+        if self.config.audio.channels > 0:
+            audio_path = audio_dir / "audio.wav"
+            audio_path.write_bytes(self._generate_audio_data())
+
+            audio_stream = ffmpeg.input(str(audio_path))
+            merged_options = {
+                **output_options,
+                "acodec": self._resolve_audio_codec(),
+                "shortest": None,
+            }
+            return ffmpeg.output(
+                video_stream, audio_stream, output_dest, **merged_options
+            ).overwrite_output()
+
+        return video_stream.output(output_dest, **output_options).overwrite_output()
+
     def _prepare_frame_for_encoding(self, frame: Image.Image) -> bytes:
         """Prepare frame for encoding."""
         if frame.size != (self.config.width, self.config.height):
@@ -315,7 +396,7 @@ class VideoGenerator(BaseGenerator):
 
     def _create_video_with_pipes(self, frames: list[Image.Image]) -> str:
         """Create video using pipes via stdin and either stdout or temp file output."""
-        temp_output_path = None
+        temp_dir = Path(tempfile.mkdtemp(prefix="aiperf_pipes_"))
         try:
             # Gather all frame data first to prevent deadlocks due to pipe input/output synchronization issues
             all_data = b"".join(
@@ -332,35 +413,29 @@ class VideoGenerator(BaseGenerator):
             if self.config.format == VideoFormat.MP4:
                 # MP4 requires seekable output, use temp file
                 output_options["movflags"] = "faststart"
-                # Ignore SIM115 warning as we are closing the file in the finally block
-                temp_output = tempfile.NamedTemporaryFile(  # noqa: SIM115
-                    suffix=f".{self.config.format}", delete=False
-                )
-                temp_output_path = temp_output.name
-                temp_output.close()
-                output_dest = temp_output_path
+                output_dest = str(temp_dir / f"output.{self.config.format}")
             else:
                 # WebM and other formats can use pipe output
                 output_dest = "pipe:"
 
-            # Run ffmpeg
-            stdout, _ = (
-                ffmpeg.input(
-                    "pipe:",
-                    format="rawvideo",
-                    pix_fmt="rgb24",
-                    s=f"{self.config.width}x{self.config.height}",
-                    r=self.config.fps,
-                )
-                .output(output_dest, **output_options)
-                .overwrite_output()
-                .run(input=all_data, capture_stdout=True, capture_stderr=True)
+            video_stream = ffmpeg.input(
+                "pipe:",
+                format="rawvideo",
+                pix_fmt="rgb24",
+                s=f"{self.config.width}x{self.config.height}",
+                r=self.config.fps,
+            )
+
+            pipeline = self._build_ffmpeg_output(
+                video_stream, output_dest, output_options, temp_dir
+            )
+            stdout, _ = pipeline.run(
+                input=all_data, capture_stdout=True, capture_stderr=True
             )
 
             # Read output based on destination
-            if temp_output_path is not None:
-                with open(temp_output_path, "rb") as f:
-                    video_data = f.read()
+            if output_dest != "pipe:":
+                video_data = Path(output_dest).read_bytes()
             else:
                 video_data = stdout
 
@@ -374,19 +449,13 @@ class VideoGenerator(BaseGenerator):
             self.logger.error(f"FFmpeg error: {error_msg}")
             raise RuntimeError(f"FFmpeg process failed: {error_msg}") from e
         finally:
-            # Clean up temporary output file if it was created
-            if temp_output_path and os.path.exists(temp_output_path):
-                try:
-                    os.unlink(temp_output_path)
-                except OSError as e:
-                    self.logger.debug(
-                        f"Failed to remove temporary output file: {temp_output_path}: {e!r}"
-                    )
+            if temp_dir.exists():
+                shutil.rmtree(temp_dir)
 
     def _create_video_with_temp_files(self, frames: list[Image.Image]) -> str:
         """Create video using temporary files (fallback method)."""
         # Create temporary directory for frames
-        temp_dir = tempfile.mkdtemp(prefix="aiperf_frames_")
+        temp_dir = Path(tempfile.mkdtemp(prefix="aiperf_frames_"))
 
         try:
             # Save frames as PNG files
@@ -397,14 +466,13 @@ class VideoGenerator(BaseGenerator):
                         (self.config.width, self.config.height), Image.LANCZOS
                     )
 
-                frame_path = os.path.join(temp_dir, f"frame_{i:06d}.png")
+                frame_path = temp_dir / f"frame_{i:06d}.png"
                 # Use explicit compression settings for deterministic output across platforms
                 frame.save(frame_path, "PNG", compress_level=6, optimize=False)
 
             # Create output file in the same temp directory
-            file_ext = self.config.format
-            output_path = os.path.join(temp_dir, f"output.{file_ext}")
-            frame_pattern = os.path.join(temp_dir, "frame_%06d.png")
+            output_path = temp_dir / f"output.{self.config.format}"
+            frame_pattern = str(temp_dir / "frame_%06d.png")
 
             # Build output options based on format
             output_options = {
@@ -417,17 +485,15 @@ class VideoGenerator(BaseGenerator):
             if self.config.format == VideoFormat.MP4:
                 output_options["movflags"] = "faststart"
 
-            # Use ffmpeg to create video from frames
-            _ = (
-                ffmpeg.input(frame_pattern, r=self.config.fps)
-                .output(output_path, **output_options)
-                .overwrite_output()
-                .run(capture_stdout=True, capture_stderr=True)
+            video_stream = ffmpeg.input(frame_pattern, r=self.config.fps)
+
+            pipeline = self._build_ffmpeg_output(
+                video_stream, str(output_path), output_options, temp_dir
             )
+            pipeline.run(capture_stdout=True, capture_stderr=True)
 
             # Read the output file
-            with open(output_path, "rb") as f:
-                video_data = f.read()
+            video_data = output_path.read_bytes()
 
             if not video_data:
                 raise RuntimeError("FFmpeg produced no output")
@@ -442,5 +508,5 @@ class VideoGenerator(BaseGenerator):
             raise RuntimeError(f"FFmpeg process failed: {error_msg}") from e
         finally:
             # Clean up temporary files
-            if os.path.exists(temp_dir):
+            if temp_dir.exists():
                 shutil.rmtree(temp_dir)

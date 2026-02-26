@@ -119,18 +119,19 @@ class RandomGenerator:
         """Get the seed used to initialize this generator."""
         return self._seed
 
-    def integers(self, low: int, high: int | None = None, size=None):
+    def integers(self, low: int, high: int | None = None, size=None, dtype=np.int64):
         """Generate random integers from [low, high) using NumPy.
 
         Args:
             low: Lowest integer (inclusive), or if high is None, then [0, low)
             high: Highest integer (exclusive), optional
             size: Output shape, optional
+            dtype: Desired NumPy dtype for the result (default: np.int64)
 
         Returns:
             Random integer or array of integers
         """
-        return self._numpy_rng.integers(low, high, size=size)
+        return self._numpy_rng.integers(low, high, size=size, dtype=dtype)
 
     def choice(self, seq):
         """Select random element from non-empty sequence.

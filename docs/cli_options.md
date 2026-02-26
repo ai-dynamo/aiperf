@@ -433,18 +433,19 @@ Video frame height in pixels. Must be specified together with `--video-width` (b
 
 #### `--video-synth-type` `<str>`
 
-Algorithm for generating synthetic video content. Different types produce different visual patterns for testing. Options vary by implementation (e.g., `noise`, `gradient`, `checkerboard`). Content doesn't affect semantic meaning but may impact encoding efficiency and file size.
+Algorithm for generating synthetic video content. Different types produce different visual patterns for testing. Options: `moving_shapes` (animated geometric shapes), `grid_clock` (grid with rotating clock hands), `noise` (random pixel frames). Content doesn't affect semantic meaning but may impact encoding efficiency and file size.
 
 **Choices:**
 
 | | | |
 |-------|:-------:|-------------|
 | `moving_shapes` | _default_ | Generate videos with animated geometric shapes moving across the frame |
-| `grid_clock` |  | Generate videos with a grid pattern and timestamp overlay for frame-accurate verification |
+| `grid_clock` |  | Generate videos with a grid pattern and frame number overlay for frame-accurate verification |
+| `noise` |  | Generate videos with random noise frames |
 
 #### `--video-format` `<str>`
 
-Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed), `mp4` (H.264/H.265, widely compatible), `avi` (legacy, larger files), `mkv` (Matroska, flexible). Format choice affects compatibility, file size, and encoding options. Use `webm` for open-source workflows, `mp4` for maximum compatibility.
+Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed) and `mp4` (H.264/H.265, widely compatible). Format choice affects compatibility, file size, and encoding options. Use `webm` for open-source workflows, `mp4` for maximum compatibility.
 
 **Choices:**
 
@@ -457,6 +458,35 @@ Container format for generated video files. Supports `webm` (VP9, recommended, B
 
 The video codec to use for encoding. Common options: libvpx-vp9 (CPU, BSD-licensed, default for WebM), libx264 (CPU, GPL-licensed, widely compatible), libx265 (CPU, GPL-licensed, smaller files), h264_nvenc (NVIDIA GPU), hevc_nvenc (NVIDIA GPU, smaller files). Any FFmpeg-supported codec can be used.
 <br>_Default: `libvpx-vp9`_
+
+#### `--video-audio-sample-rate` `<int>`
+
+Audio sample rate in Hz for the embedded audio track. Common values: 8000 (telephony), 16000 (speech), 44100 (CD quality), 48000 (professional). Higher sample rates increase audio fidelity and file size.
+<br>_Constraints: ≥ 8000, ≤ 96000_
+<br>_Default: `44100`_
+
+#### `--video-audio-num-channels` `<int>`
+
+Number of audio channels to embed in generated video files. 0 = disabled (no audio track, default), 1 = mono, 2 = stereo. When set to 1 or 2, a Gaussian noise audio track matching the video duration is muxed into each video via FFmpeg.
+<br>_Constraints: ≥ 0, ≤ 2_
+<br>_Default: `0`_
+
+#### `--video-audio-codec` `<str>`
+
+Audio codec for the embedded audio track. If not specified, auto-selects based on video format: aac for MP4, libvorbis for WebM. Options: aac, libvorbis, libopus.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `aac` |  | AAC codec. Default for MP4 containers. |
+| `libvorbis` |  | Vorbis codec. Default for WebM containers. |
+| `libopus` |  | Opus codec. Alternative for WebM containers. |
+
+#### `--video-audio-depth` `<str>`
+
+Audio bit depth for the embedded audio track. Supported values: 8, 16, 24, or 32 bits. Higher bit depths provide greater dynamic range but increase file size.
+<br>_Default: `16`_
 
 ### Prompt
 

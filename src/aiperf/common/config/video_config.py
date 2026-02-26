@@ -1,16 +1,94 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 from typing_extensions import Self
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
-from aiperf.common.config.config_defaults import VideoDefaults
+from aiperf.common.config.config_defaults import VideoAudioDefaults, VideoDefaults
 from aiperf.common.config.groups import Groups
-from aiperf.common.enums import VideoFormat, VideoSynthType
+from aiperf.common.enums import VideoAudioCodec, VideoFormat, VideoSynthType
+
+VIDEO_AUDIO_CODEC_MAP: dict[VideoFormat, VideoAudioCodec] = {
+    VideoFormat.WEBM: VideoAudioCodec.LIBVORBIS,
+    VideoFormat.MP4: VideoAudioCodec.AAC,
+}
+
+
+class VideoAudioConfig(BaseConfig):
+    """Configuration for embedding an audio track in synthetic video files."""
+
+    @model_validator(mode="after")
+    def validate_config(self) -> Self:
+        if self.codec is not None and self.channels == 0:
+            raise ValueError(
+                f"--video-audio-codec '{self.codec}' is set but --video-audio-num-channels is 0 "
+                f"(audio disabled). Set --video-audio-num-channels to 1 or 2 to enable audio."
+            )
+        return self
+
+    _CLI_GROUP = Groups.VIDEO_INPUT
+
+    sample_rate: Annotated[
+        int,
+        Field(
+            ge=8000,
+            le=96000,
+            description="Audio sample rate in Hz for the embedded audio track. "
+            "Common values: 8000 (telephony), 16000 (speech), 44100 (CD quality), 48000 (professional). "
+            "Higher sample rates increase audio fidelity and file size.",
+        ),
+        CLIParameter(
+            name=("--video-audio-sample-rate",),
+            group=_CLI_GROUP,
+        ),
+    ] = VideoAudioDefaults.SAMPLE_RATE
+
+    channels: Annotated[
+        int,
+        Field(
+            ge=0,
+            le=2,
+            description="Number of audio channels to embed in generated video files. "
+            "0 = disabled (no audio track, default), 1 = mono, 2 = stereo. "
+            "When set to 1 or 2, a Gaussian noise audio track matching the video duration "
+            "is muxed into each video via FFmpeg.",
+        ),
+        CLIParameter(
+            name=("--video-audio-num-channels",),
+            group=_CLI_GROUP,
+        ),
+    ] = VideoAudioDefaults.CHANNELS
+
+    codec: Annotated[
+        VideoAudioCodec | None,
+        Field(
+            description="Audio codec for the embedded audio track. "
+            "If not specified, auto-selects based on video format: "
+            "aac for MP4, libvorbis for WebM. "
+            "Options: aac, libvorbis, libopus.",
+        ),
+        CLIParameter(
+            name=("--video-audio-codec",),
+            group=_CLI_GROUP,
+        ),
+    ] = VideoAudioDefaults.CODEC
+
+    depth: Annotated[
+        Literal[8, 16, 24, 32],
+        Field(
+            description="Audio bit depth for the embedded audio track. "
+            "Supported values: 8, 16, 24, or 32 bits. "
+            "Higher bit depths provide greater dynamic range but increase file size.",
+        ),
+        CLIParameter(
+            name=("--video-audio-depth",),
+            group=_CLI_GROUP,
+        ),
+    ] = VideoAudioDefaults.DEPTH
 
 
 class VideoConfig(BaseConfig):
@@ -106,8 +184,8 @@ class VideoConfig(BaseConfig):
         VideoSynthType,
         Field(
             description="Algorithm for generating synthetic video content. Different types produce different visual patterns for testing. "
-            "Options vary by implementation (e.g., `noise`, `gradient`, `checkerboard`). Content doesn't affect semantic meaning but may "
-            "impact encoding efficiency and file size.",
+            "Options: `moving_shapes` (animated geometric shapes), `grid_clock` (grid with rotating clock hands), `noise` (random pixel frames). "
+            "Content doesn't affect semantic meaning but may impact encoding efficiency and file size.",
         ),
         CLIParameter(
             name=("--video-synth-type",),
@@ -118,8 +196,8 @@ class VideoConfig(BaseConfig):
     format: Annotated[
         VideoFormat,
         Field(
-            description="Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed), `mp4` (H.264/H.265, widely compatible), "
-            "`avi` (legacy, larger files), `mkv` (Matroska, flexible). Format choice affects compatibility, file size, and encoding options. "
+            description="Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed) and `mp4` (H.264/H.265, widely compatible). "
+            "Format choice affects compatibility, file size, and encoding options. "
             "Use `webm` for open-source workflows, `mp4` for maximum compatibility.",
         ),
         CLIParameter(
@@ -145,3 +223,10 @@ class VideoConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = VideoDefaults.CODEC
+
+    audio: Annotated[
+        VideoAudioConfig,
+        Field(
+            description="Audio track configuration for embedding audio in generated videos."
+        ),
+    ] = VideoAudioConfig()

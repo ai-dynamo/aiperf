@@ -86,6 +86,10 @@ class VideoDetails:
     fps: float
     pix_fmt: str | None = None
     is_fragmented: bool = False
+    has_audio: bool = False
+    audio_codec: str | None = None
+    audio_sample_rate: int | None = None
+    audio_channels: int | None = None
 
 
 class AIPerfResults:

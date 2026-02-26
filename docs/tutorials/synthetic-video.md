@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
@@ -36,9 +36,10 @@ choco install ffmpeg
 ## Overview
 
 The synthetic video feature provides:
-- Multiple synthesis types (moving shapes, grid clock patterns)
+- Multiple synthesis types (moving shapes, grid clock, noise patterns)
 - Configurable resolution, frame rate, and duration
 - Hardware-accelerated encoding options (CPU and GPU codecs)
+- Embedded synthetic audio tracks for video+audio multimodal benchmarking
 - Base64-encoded video output for API requests
 - MP4 and WebM format support
 
@@ -46,11 +47,11 @@ The synthetic video feature provides:
 
 ### Example: Basic Video Generation
 
-Generate videos with default settings (640x480, 4fps, 5 seconds):
+Generate videos at 640x480 with default temporal settings (4 fps, 5 seconds):
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --endpoint /v1/chat/completions \
     --url localhost:8000 \
@@ -61,7 +62,7 @@ aiperf profile \
     --request-count 20
 ```
 
-**Note:** Video generation is disabled by default (width=0, height=0). You must specify non-zero width and height to enable video generation.
+**Note:** Video generation is disabled by default (width and height are unset). You must specify both width and height to enable video generation.
 
 **Sample Output (Successful Run):**
 ```
@@ -76,15 +77,15 @@ INFO     Benchmark completed successfully
 INFO     Results saved to: artifacts/your-model-name-chat-concurrency1/
 
             NVIDIA AIPerf | LLM Metrics
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
-┃                      Metric ┃     avg ┃     min ┃     max ┃     p99 ┃     p50 ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
-│        Request Latency (ms) │ 2456.78 │ 2123.45 │ 2789.34 │ 2765.89 │ 2445.67 │
-│    Time to First Token (ms) │  345.67 │  289.34 │  423.45 │  412.34 │  342.12 │
-│    Inter Token Latency (ms) │   18.45 │   15.23 │   22.34 │   21.89 │   18.12 │
-│ Output Token Count (tokens) │  150.00 │  145.00 │  158.00 │  157.45 │  150.00 │
-│  Request Throughput (req/s) │    4.56 │       - │       - │       - │       - │
-└─────────────────────────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃                      Metric ┃     avg ┃     min ┃     max ┃     p99 ┃     p90 ┃     p50 ┃     std ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│        Request Latency (ms) │ 2456.78 │ 2123.45 │ 2789.34 │ 2765.89 │ 2698.12 │ 2445.67 │  198.34 │
+│    Time to First Token (ms) │  345.67 │  289.34 │  423.45 │  412.34 │  398.56 │  342.12 │   38.21 │
+│    Inter Token Latency (ms) │   18.45 │   15.23 │   22.34 │   21.89 │   20.78 │   18.12 │    2.15 │
+│ Output Token Count (tokens) │  150.00 │  145.00 │  158.00 │  157.45 │  156.12 │  150.00 │    3.87 │
+│ Request Throughput (requests/sec) │    4.56 │     N/A │     N/A │     N/A │     N/A │     N/A │     N/A │
+└─────────────────────────────┴─────────┴─────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
 
 JSON Export: artifacts/your-model-name-chat-concurrency1/profile_export_aiperf.json
 ```
@@ -97,7 +98,7 @@ Control the resolution of generated videos:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 1920 \
@@ -111,7 +112,7 @@ Adjust temporal properties:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -127,7 +128,7 @@ aiperf profile \
 
 ### Synthesis Types
 
-AIPerf supports two built-in video patterns:
+AIPerf supports three built-in video patterns:
 
 #### 1. Moving Shapes (Default)
 
@@ -135,7 +136,7 @@ Generates videos with animated geometric shapes moving across the screen:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -156,7 +157,7 @@ Generates videos with a grid pattern and clock-like animation:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -167,9 +168,29 @@ aiperf profile \
 
 Features:
 - Grid overlay
-- Animated rotating elements
-- Gray background
-- Visual timing markers
+- Animated clock hands (hour and minute)
+- Dark gray background
+- Frame number overlay
+
+#### 3. Noise
+
+Generates videos with random noise pixels in each frame:
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen2-VL-2B-Instruct \
+    --endpoint-type chat \
+    --url localhost:8000 \
+    --video-width 640 \
+    --video-height 480 \
+    --video-synth-type noise \
+    --request-count 20
+```
+
+Features:
+- Random RGB pixel values per frame
+- Deterministic output via seeded RNG
+- Maximum entropy content for codec stress testing
 
 ## Advanced Configuration
 
@@ -181,7 +202,7 @@ Choose encoding codec based on your hardware and requirements:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -202,7 +223,7 @@ For faster encoding with NVIDIA GPUs:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 1920 \
@@ -221,7 +242,7 @@ Control the number of videos per request:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -229,6 +250,96 @@ aiperf profile \
     --video-batch-size 2 \
     --request-count 10
 ```
+
+### Embedded Audio Track
+
+AIPerf can embed a synthetic audio track into generated videos for benchmarking multimodal models that process video+audio inputs together. When enabled, a Gaussian noise audio signal matching the video duration is muxed into each video file via FFmpeg.
+
+Audio embedding is disabled by default to maintain backward compatibility and minimize file size for video-only workloads.
+
+#### Enabling Audio
+
+Set `--video-audio-num-channels` to 1 (mono) or 2 (stereo) to embed an audio track:
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen2-VL-2B-Instruct \
+    --endpoint-type chat \
+    --url localhost:8000 \
+    --video-width 640 \
+    --video-height 480 \
+    --video-audio-num-channels 1 \
+    --request-count 20
+```
+
+This generates videos with a mono, 44100 Hz audio track using an auto-selected codec (libvorbis for WebM, aac for MP4).
+
+#### Audio Parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `--video-audio-num-channels` | `int` | `0` | 0 = disabled, 1 = mono, 2 = stereo |
+| `--video-audio-sample-rate` | `int` | `44100` | Sample rate in Hz (8000-96000) |
+| `--video-audio-codec` | `string` | auto | Audio codec (`aac`, `libvorbis`, `libopus`) |
+| `--video-audio-depth` | `int` | `16` | Bit depth per sample (8, 16, 24, or 32) |
+
+#### Audio Codec Selection
+
+When `--video-audio-codec` is not specified, the codec is automatically selected based on the video format:
+
+| Video Format | Auto-Selected Audio Codec |
+|---|---|
+| WebM | `libvorbis` (Vorbis) |
+| MP4 | `aac` (AAC) |
+
+You can override the auto-selection with an explicit codec:
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen2-VL-2B-Instruct \
+    --endpoint-type chat \
+    --url localhost:8000 \
+    --video-width 640 \
+    --video-height 480 \
+    --video-format webm \
+    --video-audio-num-channels 1 \
+    --video-audio-codec libopus \
+    --request-count 20
+```
+
+#### Stereo Audio with Custom Sample Rate
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen2-VL-2B-Instruct \
+    --endpoint-type chat \
+    --url localhost:8000 \
+    --video-width 640 \
+    --video-height 480 \
+    --video-audio-num-channels 2 \
+    --video-audio-sample-rate 48000 \
+    --request-count 20
+```
+
+#### How It Works
+
+1. A Gaussian noise audio signal is generated matching the video duration
+2. The audio is encoded as 16-bit PCM WAV
+3. FFmpeg muxes the video and audio streams together using `-shortest` to ensure duration alignment
+4. The audio codec converts the WAV data to the target format (AAC, Vorbis, or Opus)
+5. The resulting video+audio file is base64-encoded for API requests
+
+The audio generation uses a deterministic RNG seed (`dataset.video.audio`), so videos with audio are reproducible across runs when using `--random-seed`.
+
+#### Audio Size Impact
+
+Factors affecting audio contribution to file size:
+- **Sample rate**: 48000 Hz produces ~9% more data than 44100 Hz
+- **Channels**: Stereo (2) doubles audio data compared to mono (1)
+- **Codec**: Vorbis and Opus provide better compression than AAC at lower bitrates
+- **Duration**: Audio size scales linearly with video duration
+
+For most benchmarking scenarios, the audio track adds minimal overhead compared to the video stream.
 
 ## Example Workflows
 
@@ -238,7 +349,7 @@ Benchmark with small, low-framerate videos:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 320 \
@@ -258,7 +369,7 @@ Test with high-resolution, longer videos:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 1920 \
@@ -278,7 +389,7 @@ Combine video with text prompts for multimodal testing:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -294,13 +405,57 @@ aiperf profile \
 
 **Use case:** Simulating video question-answering or video captioning workloads.
 
-### Example 4: Rapid Short Clips
+### Example 4: Video + Audio Multimodal
+
+Benchmark models that process both video and audio streams:
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen2-VL-2B-Instruct \
+    --endpoint-type chat \
+    --url localhost:8000 \
+    --video-width 640 \
+    --video-height 480 \
+    --video-fps 4 \
+    --video-duration 5.0 \
+    --video-audio-num-channels 1 \
+    --video-audio-sample-rate 16000 \
+    --concurrency 4 \
+    --request-count 50
+```
+
+**Use case:** Testing video+audio understanding models (e.g., video QA with spoken audio, meeting transcription with video context).
+
+### Example 5: Video + Audio with MP4 and Stereo
+
+Test with MP4 format and stereo audio for maximum compatibility:
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen2-VL-2B-Instruct \
+    --endpoint-type chat \
+    --url localhost:8000 \
+    --video-width 1280 \
+    --video-height 720 \
+    --video-fps 8 \
+    --video-duration 10.0 \
+    --video-format mp4 \
+    --video-codec libx264 \
+    --video-audio-num-channels 2 \
+    --video-audio-sample-rate 44100 \
+    --concurrency 2 \
+    --request-count 20
+```
+
+**Use case:** Simulating real-world video files with stereo audio tracks for production-like multimodal workloads.
+
+### Example 6: Rapid Short Clips
 
 Test with many short video clips:
 
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -323,7 +478,7 @@ AIPerf supports both **WebM** (default) and **MP4** formats:
 **WebM format (default):**
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -336,7 +491,7 @@ aiperf profile \
 **MP4 format:**
 ```bash
 aiperf profile \
-    --model your-model-name \
+    --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --url localhost:8000 \
     --video-width 640 \
@@ -385,11 +540,16 @@ Factors affecting video file size:
 If you see an error about FFmpeg not being installed:
 
 ```
-Error: FFmpeg is required for video generation but was not found
-Install with: sudo apt install ffmpeg
+RuntimeError: FFmpeg binary not found. Please install FFmpeg:
+
+  Recommended: sudo apt update && sudo apt install ffmpeg
+
+  Alternative: conda install -c conda-forge ffmpeg
+
+After installation, restart your terminal and try again.
 ```
 
-Follow the installation instructions in the Prerequisites section.
+Follow the installation instructions in the [Prerequisites](#prerequisites) section.
 
 ### GPU Codec Not Available
 
@@ -411,6 +571,32 @@ For high-resolution or long-duration videos:
 2. Decrease `--video-duration`
 3. Lower `--concurrency`
 
+## CLI Reference
+
+All video-related parameters at a glance:
+
+### Video Parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `--video-width` | `None` | Frame width in pixels (must pair with height) |
+| `--video-height` | `None` | Frame height in pixels (must pair with width) |
+| `--video-fps` | `4` | Frames per second |
+| `--video-duration` | `5.0` | Clip duration in seconds |
+| `--video-batch-size` | `1` | Videos per request |
+| `--video-synth-type` | `moving_shapes` | Synthesis pattern (`moving_shapes`, `grid_clock`, `noise`) |
+| `--video-format` | `webm` | Container format (`webm`, `mp4`) |
+| `--video-codec` | `libvpx-vp9` | Video codec (any FFmpeg-supported codec) |
+
+### Audio Parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `--video-audio-num-channels` | `0` | 0 = disabled, 1 = mono, 2 = stereo |
+| `--video-audio-sample-rate` | `44100` | Sample rate in Hz (8000-96000) |
+| `--video-audio-codec` | auto | Audio codec (`aac`, `libvorbis`, `libopus`) |
+| `--video-audio-depth` | `16` | Bit depth per sample (8, 16, 24, or 32) |
+
 ## Summary
 
 The synthetic video generation feature enables comprehensive benchmarking of video understanding models with:
@@ -418,7 +604,7 @@ The synthetic video generation feature enables comprehensive benchmarking of vid
 - Flexible video parameters (resolution, frame rate, duration)
 - Multiple synthesis patterns for variety
 - Hardware-accelerated encoding options
+- Optional embedded audio tracks for video+audio multimodal workloads
 - Easy integration with multimodal APIs
 
 Use synthetic videos to test your model's performance across different video characteristics without requiring large video datasets.
-

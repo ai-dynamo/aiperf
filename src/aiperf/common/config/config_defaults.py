@@ -111,6 +111,14 @@ class VideoDefaults:
 
 
 @dataclass(frozen=True)
+class VideoAudioDefaults:
+    SAMPLE_RATE = 44100
+    CHANNELS = 0
+    CODEC = None
+    DEPTH = 16
+
+
+@dataclass(frozen=True)
 class PromptDefaults:
     BATCH_SIZE = 1
     NUM = 100

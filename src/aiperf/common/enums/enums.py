@@ -431,12 +431,28 @@ class VideoJobStatus(CaseInsensitiveStrEnum):
     """Job failed with an error."""
 
 
+class VideoAudioCodec(CaseInsensitiveStrEnum):
+    """Audio codecs for embedding audio in synthetic video files."""
+
+    AAC = "aac"
+    """AAC codec. Default for MP4 containers."""
+
+    LIBVORBIS = "libvorbis"
+    """Vorbis codec. Default for WebM containers."""
+
+    LIBOPUS = "libopus"
+    """Opus codec. Alternative for WebM containers."""
+
+
 class VideoSynthType(CaseInsensitiveStrEnum):
     MOVING_SHAPES = "moving_shapes"
     """Generate videos with animated geometric shapes moving across the frame"""
 
     GRID_CLOCK = "grid_clock"
-    """Generate videos with a grid pattern and timestamp overlay for frame-accurate verification"""
+    """Generate videos with a grid pattern and frame number overlay for frame-accurate verification"""
+
+    NOISE = "noise"
+    """Generate videos with random noise frames"""
 
 
 class WorkerStatus(CaseInsensitiveStrEnum):
