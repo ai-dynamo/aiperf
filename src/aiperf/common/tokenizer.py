@@ -336,6 +336,11 @@ class Tokenizer:
         return self._tokenizer.decode(token_ids, **{**self._decode_args, **kwargs})
 
     @property
+    def resolved_name(self) -> str | None:
+        """The resolved model name used to load this tokenizer."""
+        return self._resolved_name
+
+    @property
     def bos_token_id(self) -> int:
         """
         Return the beginning-of-sequence (BOS) token ID.

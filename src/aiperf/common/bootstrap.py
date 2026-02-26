@@ -131,20 +131,7 @@ def bootstrap_and_run_service(
         # terminal management, causing ASCII garbage and freezing when mouse events occur.
         # Only apply this in spawned child processes, NOT in the main process where Textual runs.
         if platform.system() == "Darwin" and is_child_process:
-            try:
-                # Close and redirect stdin to prevent reading terminal input (mouse events, etc.)
-                sys.stdin.close()
-                sys.stdin = open(os.devnull)  # noqa: SIM115
-
-                # Close and redirect stdout/stderr to prevent writing to terminal
-                # All logging goes through the log_queue instead
-                sys.stdout.close()
-                sys.stderr.close()
-                sys.stdout = open(os.devnull, "w")  # noqa: SIM115
-                sys.stderr = open(os.devnull, "w")  # noqa: SIM115
-            except Exception:
-                # Silently continue if FD operations fail
-                pass
+            _redirect_stdio_to_devnull()
 
         # Initialize global RandomGenerator for reproducible random number generation
         from aiperf.common import random_generator as rng
@@ -170,6 +157,39 @@ def bootstrap_and_run_service(
             uvloop.run(_run_service())
         else:
             asyncio.run(_run_service())
+
+
+def _redirect_stdio_to_devnull() -> None:
+    """Redirect stdin/stdout/stderr to /dev/null for macOS child processes.
+
+    Prevents child processes from accessing the parent's terminal, which causes
+    Textual UI corruption (ASCII garbage and freezes from inherited terminal FDs).
+    """
+    # Redirect at the OS level so spawned grandchild processes (e.g.
+    # ProcessPoolExecutor workers via 'spawn' context) inherit safe FDs
+    # rather than the terminal FDs that Textual manages.
+    # Python-level reassignment alone (sys.stdout = ...) is not enough
+    # because spawned processes create fresh sys.* from inherited OS FDs.
+    #
+    # No error handling: if /dev/null can't be opened or dup2 fails, the
+    # process is in a broken state and should crash rather than continue
+    # with corrupted FDs.
+    #
+    # Runs inside the event loop as one of the first operations, but
+    # os.open on /dev/null hits a kernel fast path (no disk I/O), so
+    # the blocking calls are safe here.
+    devnull_fd = os.open(os.devnull, os.O_RDWR)
+    for fd in (0, 1, 2):
+        os.dup2(devnull_fd, fd)
+    os.close(devnull_fd)
+
+    # Recreate Python-level streams from the redirected OS FDs.
+    # closefd=False keeps FD ownership at the OS level so that if these
+    # stream objects are garbage-collected (e.g. replaced by test frameworks),
+    # the underlying FDs 0/1/2 stay open and the /dev/null redirect holds.
+    sys.stdin = os.fdopen(0, "r", closefd=False)
+    sys.stdout = os.fdopen(1, "w", closefd=False)
+    sys.stderr = os.fdopen(2, "w", closefd=False)
 
 
 def _start_yappi_profiling() -> None:
