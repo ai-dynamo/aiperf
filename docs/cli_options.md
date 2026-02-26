@@ -483,10 +483,9 @@ Audio codec for the embedded audio track. If not specified, auto-selects based o
 | `libvorbis` |  | Vorbis codec. Default for WebM containers. |
 | `libopus` |  | Opus codec. Alternative for WebM containers. |
 
-#### `--video-audio-depth` `<int>`
+#### `--video-audio-depth` `<str>`
 
 Audio bit depth for the embedded audio track. Supported values: 8, 16, 24, or 32 bits. Higher bit depths provide greater dynamic range but increase file size.
-<br>_Constraints: ≥ 8, ≤ 32_
 <br>_Default: `16`_
 
 ### Prompt

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 from typing_extensions import Self
@@ -18,9 +18,6 @@ VIDEO_AUDIO_CODEC_MAP: dict[VideoFormat, VideoAudioCodec] = {
 }
 
 
-SUPPORTED_VIDEO_AUDIO_BIT_DEPTHS = {8, 16, 24, 32}
-
-
 class VideoAudioConfig(BaseConfig):
     """Configuration for embedding an audio track in synthetic video files."""
 
@@ -30,11 +27,6 @@ class VideoAudioConfig(BaseConfig):
             raise ValueError(
                 f"--video-audio-codec '{self.codec}' is set but --video-audio-num-channels is 0 "
                 f"(audio disabled). Set --video-audio-num-channels to 1 or 2 to enable audio."
-            )
-        if self.depth not in SUPPORTED_VIDEO_AUDIO_BIT_DEPTHS:
-            raise ValueError(
-                f"Unsupported bit depth: {self.depth}. "
-                f"Supported values are: {sorted(SUPPORTED_VIDEO_AUDIO_BIT_DEPTHS)}"
             )
         return self
 
@@ -86,10 +78,8 @@ class VideoAudioConfig(BaseConfig):
     ] = VideoAudioDefaults.CODEC
 
     depth: Annotated[
-        int,
+        Literal[8, 16, 24, 32],
         Field(
-            ge=8,
-            le=32,
             description="Audio bit depth for the embedded audio track. "
             "Supported values: 8, 16, 24, or 32 bits. "
             "Higher bit depths provide greater dynamic range but increase file size.",

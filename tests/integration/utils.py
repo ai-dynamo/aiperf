@@ -166,15 +166,24 @@ def extract_base64_video_details(base64_data: str) -> VideoDetails:
 
 def iter_video_details(result: AIPerfResults) -> Iterator[VideoDetails]:
     """Yield VideoDetails for every video found in the result payloads."""
+    if result.inputs is None:
+        return
     for session in result.inputs.data:
         for payload in session.payloads:
             for message in payload.get("messages", []):
                 content = message.get("content", [])
                 if isinstance(content, list):
                     for item in content:
-                        if isinstance(item, dict) and "video_url" in item:
-                            video_data = item["video_url"]["url"].split(",")[1]
-                            yield extract_base64_video_details(video_data)
+                        if not isinstance(item, dict) or "video_url" not in item:
+                            continue
+                        video_url = item["video_url"]
+                        if not isinstance(video_url, dict):
+                            continue
+                        url = video_url.get("url")
+                        if not isinstance(url, str) or "," not in url:
+                            continue
+                        video_data = url.split(",", 1)[1]
+                        yield extract_base64_video_details(video_data)
 
 
 def first_video_details(result: AIPerfResults) -> VideoDetails | None:
