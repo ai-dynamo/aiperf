@@ -42,7 +42,9 @@ class TestCompressOnlyRoundTrip:
     """Test full write-finalize-read cycle in compress_only mode."""
 
     @pytest.mark.asyncio
-    async def test_single_conversation_roundtrip(self, tmp_path, monkeypatch) -> None:
+    async def test_add_conversation_single_roundtrip_succeeds(
+        self, tmp_path, monkeypatch
+    ) -> None:
         """Write one conversation in compress_only mode, decompress, verify."""
         monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
         store = MemoryMapDatasetBackingStore(
@@ -83,7 +85,7 @@ class TestCompressOnlyRoundTrip:
         await store.stop()
 
     @pytest.mark.asyncio
-    async def test_multiple_conversations_roundtrip(
+    async def test_add_conversations_multiple_roundtrip_succeeds(
         self, tmp_path, monkeypatch
     ) -> None:
         """Write multiple conversations in compress_only mode and verify index."""
@@ -115,7 +117,7 @@ class TestCompressOnlyMetadata:
     """Test metadata produced by compress_only mode."""
 
     @pytest.mark.asyncio
-    async def test_metadata_includes_compressed_fields(
+    async def test_get_client_metadata_compress_only_includes_compressed_fields(
         self, tmp_path, monkeypatch
     ) -> None:
         monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
@@ -136,7 +138,7 @@ class TestCompressOnlyMetadata:
         await store.stop()
 
     @pytest.mark.asyncio
-    async def test_normal_mode_has_no_compressed_fields(
+    async def test_get_client_metadata_normal_mode_has_no_compressed_fields(
         self, tmp_path, monkeypatch
     ) -> None:
         monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
@@ -159,7 +161,9 @@ class TestCompressOnlyErrors:
     """Test error handling in compress_only mode."""
 
     @pytest.mark.asyncio
-    async def test_add_after_finalize_raises(self, tmp_path, monkeypatch) -> None:
+    async def test_add_conversation_after_finalize_raises_error(
+        self, tmp_path, monkeypatch
+    ) -> None:
         monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
         store = MemoryMapDatasetBackingStore(
             benchmark_id="err-finalized", compress_only=True
@@ -174,7 +178,9 @@ class TestCompressOnlyErrors:
         await store.stop()
 
     @pytest.mark.asyncio
-    async def test_double_finalize_raises(self, tmp_path, monkeypatch) -> None:
+    async def test_finalize_called_twice_raises_error(
+        self, tmp_path, monkeypatch
+    ) -> None:
         monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
         store = MemoryMapDatasetBackingStore(
             benchmark_id="err-double", compress_only=True
@@ -189,7 +195,7 @@ class TestCompressOnlyErrors:
         await store.stop()
 
     @pytest.mark.asyncio
-    async def test_get_metadata_before_finalize_raises(
+    async def test_get_client_metadata_before_finalize_raises_error(
         self, tmp_path, monkeypatch
     ) -> None:
         monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
@@ -210,9 +216,7 @@ class TestCompressOnlyCleanup:
     """Test cleanup of compressed files."""
 
     @pytest.mark.asyncio
-    async def test_cleanup_removes_compressed_files(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    async def test_stop_removes_compressed_files(self, tmp_path, monkeypatch) -> None:
         monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
         store = MemoryMapDatasetBackingStore(benchmark_id="cleanup", compress_only=True)
         await store.initialize()

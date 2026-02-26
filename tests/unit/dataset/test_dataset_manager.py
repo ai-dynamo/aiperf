@@ -547,7 +547,7 @@ class TestDatasetManagerFallbackHandlers:
 class TestKubernetesMode:
     """Test Kubernetes-specific behavior in DatasetManager."""
 
-    def test_compress_only_enabled_in_kubernetes_mode(
+    def test_compress_only_kubernetes_returns_true(
         self, base_user_config: UserConfig
     ) -> None:
         """compress_only should be True when service_run_type is KUBERNETES."""
@@ -555,7 +555,7 @@ class TestKubernetesMode:
         manager = DatasetManager(service_config, base_user_config)
         assert manager._compress_only is True
 
-    def test_compress_only_disabled_in_multiprocessing_mode(
+    def test_compress_only_multiprocessing_returns_false(
         self, base_user_config: UserConfig
     ) -> None:
         """compress_only should be False in local (multiprocessing) mode."""
@@ -564,7 +564,7 @@ class TestKubernetesMode:
         assert manager._compress_only is False
 
     @pytest.mark.asyncio
-    async def test_configure_client_skipped_in_compress_only_mode(
+    async def test_configure_client_compress_only_skips_client_creation(
         self, base_user_config: UserConfig
     ) -> None:
         """In compress_only mode, _configure_dataset_client_and_free_memory skips client creation."""

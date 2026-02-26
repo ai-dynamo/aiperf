@@ -47,7 +47,7 @@ from aiperf.common.models import (
 _logger = AIPerfLogger(__name__)
 
 
-def _import_zstandard():
+def _import_zstandard() -> types.ModuleType:
     """Lazy-import zstandard or raise a helpful error."""
     try:
         import zstandard
@@ -82,7 +82,7 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         self,
         benchmark_id: str | None = None,
         compress_only: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """Initialize memory-mapped storage.
 
