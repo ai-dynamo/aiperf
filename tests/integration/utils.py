@@ -4,7 +4,7 @@
 
 import base64
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 import orjson
@@ -166,11 +166,23 @@ def extract_base64_video_details(base64_data: str) -> VideoDetails:
 
 def iter_video_details(result: AIPerfResults) -> Iterator[VideoDetails]:
     """Yield VideoDetails for every video found in the result payloads."""
-    if result.inputs is None:
+    if (
+        result.inputs is None
+        or not hasattr(result.inputs, "data")
+        or not isinstance(result.inputs.data, Iterable)
+    ):
         return
     for session in result.inputs.data:
+        if not hasattr(session, "payloads") or not isinstance(
+            session.payloads, Iterable
+        ):
+            continue
         for payload in session.payloads:
+            if not isinstance(payload, dict):
+                continue
             for message in payload.get("messages", []):
+                if not isinstance(message, dict):
+                    continue
                 content = message.get("content", [])
                 if isinstance(content, list):
                     for item in content:
