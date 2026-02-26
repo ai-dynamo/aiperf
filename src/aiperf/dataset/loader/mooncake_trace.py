@@ -58,9 +58,12 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
         self._max_isl = user_config.input.synthesis.max_isl
         self._max_osl = user_config.input.synthesis.max_osl
 
-        # Store tokenizer name and block size for parallel decode
+        # Use the resolved tokenizer name so worker processes can load from cache
+        # without needing alias resolution or network access.
         self._tokenizer_name = (
-            user_config.tokenizer.name or user_config.endpoint.model_names[0]
+            prompt_generator.tokenizer.resolved_name
+            or user_config.tokenizer.name
+            or user_config.endpoint.model_names[0]
         )
         self._block_size = user_config.input.prompt.input_tokens.block_size
 
