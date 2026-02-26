@@ -526,3 +526,84 @@ class TestVideoGeneratorAudio:
             assert call_args[0][0] is mock_video_input
             assert call_args[0][1] is mock_audio_input
             assert "acodec" in call_args[1]
+
+
+class TestVideoAudioBitDepth:
+    """Test suite for video audio bit depth support, including 8-bit unsigned WAV."""
+
+    @pytest.mark.parametrize(
+        "bit_depth,expected_subtype",
+        [
+            (8, "PCM_U8"),
+            (16, "PCM_16"),
+            (24, "PCM_24"),
+            (32, "PCM_32"),
+        ],
+    )
+    def test_video_audio_bit_depth_produces_correct_subtype(
+        self, bit_depth, expected_subtype
+    ):
+        """Video audio uses correct PCM subtype for each bit depth.
+
+        Regression test for 8-bit audio bug where PCM_S8 was incorrectly used
+        instead of PCM_U8. WAV format requires unsigned 8-bit audio.
+        """
+        config = VideoConfig(
+            width=64,
+            height=64,
+            duration=0.1,
+            fps=2,
+            format=VideoFormat.WEBM,
+            codec="libvpx-vp9",
+            synth_type=VideoSynthType.MOVING_SHAPES,
+            audio=VideoAudioConfig(channels=1, depth=bit_depth),
+        )
+        generator = VideoGenerator(config)
+        wav_bytes = generator._generate_audio_data()
+
+        with io.BytesIO(wav_bytes) as f:
+            info = sf.info(f)
+            assert info.subtype == expected_subtype
+
+    @pytest.mark.parametrize("bit_depth", [8, 16, 24, 32])
+    def test_video_audio_bit_depth_produces_valid_audio(self, bit_depth):
+        """All supported bit depths produce valid, readable WAV audio."""
+        config = VideoConfig(
+            width=64,
+            height=64,
+            duration=0.1,
+            fps=2,
+            format=VideoFormat.WEBM,
+            codec="libvpx-vp9",
+            synth_type=VideoSynthType.MOVING_SHAPES,
+            audio=VideoAudioConfig(channels=1, depth=bit_depth),
+        )
+        generator = VideoGenerator(config)
+        wav_bytes = generator._generate_audio_data()
+
+        data, sr = sf.read(io.BytesIO(wav_bytes))
+        assert len(data) > 0
+        assert sr == 44100  # default sample rate
+
+    def test_video_audio_8bit_is_unsigned(self):
+        """8-bit video audio values are in unsigned range (0-255 centered at 128).
+
+        This is a specific regression test for the PCM_U8 bug fix.
+        """
+        config = VideoConfig(
+            width=64,
+            height=64,
+            duration=0.1,
+            fps=2,
+            format=VideoFormat.WEBM,
+            codec="libvpx-vp9",
+            synth_type=VideoSynthType.MOVING_SHAPES,
+            audio=VideoAudioConfig(channels=1, depth=8),
+        )
+        generator = VideoGenerator(config)
+        wav_bytes = generator._generate_audio_data()
+
+        with io.BytesIO(wav_bytes) as f:
+            info = sf.info(f)
+            assert info.subtype == "PCM_U8"
+            assert info.format == "WAV"

@@ -197,3 +197,73 @@ def test_audio_validation_errors(base_config, config_changes, expected_error):
 
     with pytest.raises(ConfigurationError, match=expected_error):
         audio_generator.generate()
+
+
+class TestAudioBitDepth:
+    """Test suite for audio bit depth support, including 8-bit unsigned WAV."""
+
+    @pytest.mark.parametrize(
+        "bit_depth,expected_subtype",
+        [
+            (8, "PCM_U8"),
+            (16, "PCM_16"),
+            (24, "PCM_24"),
+            (32, "PCM_32"),
+        ],
+    )
+    def test_wav_bit_depth_produces_correct_subtype(self, bit_depth, expected_subtype):
+        """WAV files use correct PCM subtype for each bit depth.
+
+        Regression test for 8-bit audio bug where PCM_S8 was incorrectly used
+        instead of PCM_U8. WAV format requires unsigned 8-bit audio.
+        """
+        config = AudioConfig(
+            length=AudioLengthConfig(mean=0.1, stddev=0.0),
+            sample_rates=[16.0],
+            depths=[bit_depth],
+            format=AudioFormat.WAV,
+            num_channels=1,
+        )
+        generator = AudioGenerator(config)
+        data_uri = generator.generate()
+
+        _, b64_data = data_uri.split(",")
+        audio_bytes = base64.b64decode(b64_data)
+
+        with io.BytesIO(audio_bytes) as f:
+            info = sf.info(f)
+            assert info.subtype == expected_subtype
+
+    @pytest.mark.parametrize("bit_depth", [8, 16, 24, 32])
+    def test_wav_bit_depth_produces_valid_audio(self, bit_depth):
+        """All supported bit depths produce valid, readable WAV audio."""
+        config = AudioConfig(
+            length=AudioLengthConfig(mean=0.1, stddev=0.0),
+            sample_rates=[16.0],
+            depths=[bit_depth],
+            format=AudioFormat.WAV,
+            num_channels=1,
+        )
+        generator = AudioGenerator(config)
+        data_uri = generator.generate()
+
+        audio_data, sample_rate = decode_audio(data_uri)
+        assert len(audio_data) > 0
+        assert sample_rate == 16000
+
+    @pytest.mark.parametrize("bit_depth", [8, 16, 24, 32])
+    def test_mp3_ignores_bit_depth_uses_lossy_encoding(self, bit_depth):
+        """MP3 format works with all bit depths (lossy encoding ignores PCM subtype)."""
+        config = AudioConfig(
+            length=AudioLengthConfig(mean=0.1, stddev=0.0),
+            sample_rates=[44.1],
+            depths=[bit_depth],
+            format=AudioFormat.MP3,
+            num_channels=1,
+        )
+        generator = AudioGenerator(config)
+        data_uri = generator.generate()
+
+        assert data_uri.startswith("mp3,")
+        audio_data, _ = decode_audio(data_uri)
+        assert len(audio_data) > 0

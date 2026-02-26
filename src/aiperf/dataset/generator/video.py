@@ -10,16 +10,14 @@ import tempfile
 from pathlib import Path
 
 import ffmpeg
-import numpy as np
 import soundfile as sf
 from PIL import Image, ImageDraw
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config.video_config import VIDEO_AUDIO_CODEC_MAP, VideoConfig
 from aiperf.common.enums import VideoAudioCodec, VideoFormat, VideoSynthType
+from aiperf.dataset.generator.audio import SUPPORTED_BIT_DEPTHS
 from aiperf.dataset.generator.base import BaseGenerator, generate_noise_signal
-
-_INT16_MAX = np.iinfo(np.int16).max
 
 
 class VideoGenerator(BaseGenerator):
@@ -315,7 +313,14 @@ class VideoGenerator(BaseGenerator):
         signal = generate_noise_signal(
             self._audio_rng, num_samples, self.config.audio.channels
         )
-        audio_data = (signal * _INT16_MAX).astype(np.int16)
+
+        # Scale to the appropriate bit depth range
+        # Note: For 8-bit, we use int16 input and let soundfile convert to PCM_U8
+        bit_depth = self.config.audio.depth
+        numpy_type, subtype = SUPPORTED_BIT_DEPTHS[bit_depth]
+        scale_depth = 16 if bit_depth == 8 else bit_depth
+        max_val = 2 ** (scale_depth - 1) - 1
+        audio_data = (signal * max_val).astype(numpy_type)
 
         output_buffer = io.BytesIO()
         sf.write(
@@ -323,7 +328,7 @@ class VideoGenerator(BaseGenerator):
             audio_data,
             self.config.audio.sample_rate,
             format="WAV",
-            subtype="PCM_16",
+            subtype=subtype,
         )
         return output_buffer.getvalue()
 

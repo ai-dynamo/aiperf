@@ -26,9 +26,11 @@ MP3_SUPPORTED_SAMPLE_RATES = {
     48000,
 }
 
-# Supported bit depths and their corresponding numpy types
+# Supported bit depths and their corresponding (numpy_type, subtype)
+# Note: soundfile only accepts float32/64, int16, int32 as input arrays.
+# For 8-bit output, we use int16 input and let soundfile convert to PCM_U8.
 SUPPORTED_BIT_DEPTHS = {
-    8: (np.int8, "PCM_S8"),
+    8: (np.int16, "PCM_U8"),
     16: (np.int16, "PCM_16"),
     24: (np.int32, "PCM_24"),  # soundfile handles 24-bit as 32-bit
     32: (np.int32, "PCM_32"),
@@ -138,8 +140,10 @@ class AudioGenerator(BaseGenerator):
         )
 
         # Scale to the appropriate bit depth range
-        max_val = 2 ** (bit_depth - 1) - 1
+        # Note: For 8-bit, we use int16 input and let soundfile convert to PCM_U8
         numpy_type, _ = SUPPORTED_BIT_DEPTHS[bit_depth]
+        scale_depth = 16 if bit_depth == 8 else bit_depth
+        max_val = 2 ** (scale_depth - 1) - 1
         audio_data = (signal * max_val).astype(numpy_type)
 
         # Write audio using soundfile
