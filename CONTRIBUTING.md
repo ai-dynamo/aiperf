@@ -1,184 +1,164 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Contribution Guidelines
+# Contributing to AIPerf
 
-Contributions that fix documentation errors or that make small changes
-to existing code can be contributed directly by following the rules
-below and submitting an appropriate PR.
+For technical architecture, see [`docs/architecture.md`](docs/architecture.md). For AI assistant instructions, see `CLAUDE.md`.
 
-Contributions intended to add significant new functionality must
-follow a more collaborative path described in the following
-points. Before submitting a large PR that adds a major enhancement or
-extension, be sure to submit a GitHub issue that describes the
-proposed change so that the AIPerf team can provide feedback.
+## Development Setup
 
-- As part of the GitHub issue discussion, a design for your change
-  will be agreed upon. An up-front design discussion is required to
-  ensure that your enhancement is done in a manner that is consistent
-  with AIPerf's overall architecture.
+### Prerequisites
 
-- The Dynamo project is spread across multiple GitHub Repositories.
-  The AIPerf team will provide guidance about how and where your enhancement
-  should be implemented and any interactions that your proposed change will
-  impact other projects.
+- **Python 3.10+**
+- **uv**: Package manager (installed automatically by `make first-time-setup`)
+- **pre-commit**: For automated code quality checks
 
-- Testing is a critical part of any AIPerf
-  enhancement. You should plan on spending significant time on
-  creating tests for your change. The AIPerf team will help you to
-  design your testing so that it is compatible with existing testing
-  infrastructure.
+### Initial Setup
 
-- If your enhancement provides a user visible feature then you need to
-  provide documentation.
+```bash
+# Clone the repository
+git clone <repository-url>
+cd aiperf
 
-# Contribution Rules
+# One-command setup: creates venv, installs project + mock server + pre-commit hooks
+make first-time-setup
 
-- The code style convention is enforced by common formatting tools
-  for a given language (such as clang-format for c++, black for python).
-  See below on how to ensure your contributions conform. In general please follow
-  the existing conventions in the relevant file, submodule, module,
-  and project when you add new code or when you extend/fix existing
-  functionality.
-
-- Avoid introducing unnecessary complexity into existing code so that
-  maintainability and readability are preserved.
-
-- Try to keep code changes for each pull request (PR) as concise as possible:
-
-  - Fillout PR template with clear description and mark applicable checkboxes
-
-  - Avoid committing commented-out code.
-
-  - Wherever possible, each PR should address a single concern. If
-    there are several otherwise-unrelated things that should be fixed
-    to reach a desired endpoint, it is perfectly fine to open several
-    PRs and state in the description which PR depends on another
-    PR. The more complex the changes are in a single PR, the more time
-    it will take to review those changes.
-
-  - Make sure that the build log is clean, meaning no warnings or
-    errors should be present.
-
-  - Make sure all tests pass.
-
-- AIPerf's default build assumes recent versions of
-  dependencies. Contributions that add compatibility with older versions of
-  those dependencies will be considered, but NVIDIA cannot guarantee
-  that all possible build configurations work, are not broken by
-  future contributions, and retain highest performance.
-
-- Make sure that you can contribute your work to open source (no
-  license and/or patent conflict is introduced by your code).
-  You must certify compliance with the
-  [license terms](https://github.com/ai-dynamo/aiperf/blob/main/LICENSE)
-  and sign off on the [Developer Certificate of Origin (DCO)](https://developercertificate.org)
-  described below before your pull request (PR) can be merged.
-
-- Thanks in advance for your patience as we review your contributions;
-  we do appreciate them!
-
-# Coding Convention
-
-All pull requests are checked against the
-[pre-commit hooks](https://github.com/pre-commit/pre-commit-hooks)
-located [in the repository's top-level .pre-commit-config.yaml](https://github.com/ai-dynamo/aiperf/blob/main/.pre-commit-config.yaml).
-The hooks do some sanity checking like linting and formatting.
-These checks must pass to merge a change.
-
-To run these locally, you can
-[install pre-commit,](https://pre-commit.com/#install)
-then run `pre-commit install` inside the cloned repo. When you
-commit a change, the pre-commit hooks will run automatically.
-If a fix is implemented by a pre-commit hook, adding the file again
-and running `git commit` a second time will pass and successfully
-commit.
-
-# Running Github actions locally
-
-To run the Github actions locally, you can use the `act` tool.
-See [act usage](https://nektosact.com/introduction.html) for more information.
-
-For example, to run the pre-merge-rust workflow locally, you can use the following command from terminal:
+# Or manually:
+make setup-venv       # Create virtual environment
+make install          # Install project + mock server in editable mode
+pre-commit install    # Install pre-commit hooks
 ```
+
+### Available Commands
+
+| Command | Description |
+|---------|-------------|
+| `make first-time-setup` | Full environment setup (venv + install + hooks) |
+| `make install` | Install project and mock server in editable mode |
+| `make install-app` | Install project only |
+| `make install-mock-server` | Install mock server only |
+| `make test` | Unit tests (parallel, excludes integration) |
+| `make test-verbose` | Unit tests with DEBUG logging |
+| `make test-all` | All tests (unit + component integration + integration) |
+| `make test-integration` | Integration tests with mock server |
+| `make test-integration-verbose` | Integration tests with real-time output |
+| `make test-component-integration` | Component integration tests |
+| `make test-ci` | CI mode: unit + component integration with coverage |
+| `make test-imports` | Verify all modules can be imported |
+| `make test-stress` | Stress tests with mock server |
+| `make coverage` | Unit tests with HTML/XML coverage report |
+| `make lint` | Run ruff linter |
+| `make lint-fix` | Auto-fix linter errors |
+| `make fmt` | Format code with ruff |
+| `make check-fmt` | Check formatting without changes |
+| `make validate-plugin-schemas` | Validate plugins.yaml against schemas |
+| `make generate-all-plugin-files` | Regenerate plugin enums, overloads, schemas |
+| `make generate-all-docs` | Regenerate CLI + env var documentation |
+| `make generate-cli-docs` | Regenerate CLI documentation |
+| `make generate-env-vars-docs` | Regenerate environment variable documentation |
+| `make docker` | Build Docker image |
+| `make docker-run` | Run Docker container |
+| `make clean` | Clean caches and build artifacts |
+| `make version` | Print project version |
+
+Direct pytest commands:
+
+```bash
+uv run pytest tests/unit/ -n auto                          # Unit tests (parallel)
+uv run pytest -m integration -n auto                       # Integration tests (multiprocess)
+uv run pytest -m component_integration -n auto             # Component integration tests
+```
+
+### Pre-Commit Hooks
+
+The repository uses pre-commit hooks defined in `.pre-commit-config.yaml`:
+
+**General hooks:**
+- `check-ast` - Verify Python AST validity
+- `debug-statements` - Detect leftover debug statements
+- `detect-private-key` - Prevent committing private keys
+- `check-added-large-files` - Fail if files > 5MB added
+- `check-case-conflict` - Detect case-insensitive filename conflicts
+- `check-merge-conflict` - Detect merge conflict markers
+- `check-json` - Validate JSON syntax
+- `check-toml` - Validate TOML syntax
+- `check-yaml` - Validate YAML syntax
+- `end-of-file-fixer` - Ensure files end with newline
+- `trailing-whitespace` - Remove trailing whitespace
+- `mixed-line-ending` - Enforce consistent line endings
+- `no-commit-to-branch` - Prevent direct commits to main
+
+**Code quality hooks:**
+- `codespell` - Spell checking
+- `ruff` - Lint with auto-fix
+- `ruff-format` - Format with ruff
+
+**Project-specific hooks:**
+- `add-license` - Add SPDX copyright headers
+- `generate-cli-docs` - Regenerate CLI documentation when Python files change
+- `generate-env-vars-docs` - Regenerate env var docs when environment.py changes
+- `generate-plugin-artifacts` - Regenerate plugin enums/overloads/schemas
+- `validate-plugin-schemas` - Validate plugin YAML against schemas
+- `test-imports` - Verify all modules can be imported
+
+Run pre-commit after every code change, even before creating commits. Do not wait until commit time to discover problems.
+
+### Package Management
+
+Always use `uv` (never pip): `uv add package`, `uv run pytest`.
+
+## Contribution Guidelines
+
+Contributions that fix documentation errors or that make small changes to existing code can be contributed directly by following the rules below and submitting a PR.
+
+Contributions intended to add significant new functionality must follow a more collaborative path. Before submitting a large PR, submit a GitHub issue describing the proposed change so the AIPerf team can provide feedback:
+
+- A design for your change will be agreed upon to ensure consistency with AIPerf's architecture.
+- The Dynamo project is spread across multiple GitHub repositories. The AIPerf team will provide guidance about how and where your enhancement should be implemented.
+- Testing is critical. Plan on spending significant time on creating tests. The team will help design testing compatible with existing infrastructure.
+- User-visible features need documentation.
+
+## Contribution Rules
+
+- Code style is enforced by `ruff` (formatting + linting). Follow existing conventions.
+- Avoid introducing unnecessary complexity.
+- Keep PRs concise and focused on a single concern.
+- Build log must be clean: no warnings or errors.
+- All tests must pass.
+- No license or patent conflicts. You must certify compliance with the [license terms](https://github.com/ai-dynamo/aiperf/blob/main/LICENSE) and sign off on the [Developer Certificate of Origin (DCO)](https://developercertificate.org).
+
+## Git Workflow
+
+Feature branches use `<username>/feature-name` format, forked from `main`.
+
+## Running GitHub Actions Locally
+
+You can use the `act` tool to run GitHub Actions locally. See [act usage](https://nektosact.com/introduction.html).
+
+```bash
 act -j run-integration-tests
 ```
 
-Also you can use vscode extension [GitHub Local Actions](https://marketplace.visualstudio.com/items?itemName=SanjulaGanepola.github-local-actions) to run the workflows from vscode.
+You can also use the VSCode extension [GitHub Local Actions](https://marketplace.visualstudio.com/items?itemName=SanjulaGanepola.github-local-actions).
 
+## Developer Certificate of Origin
 
-# Developer Certificate of Origin
+AIPerf is open source under the Apache 2.0 license (see [the Apache site](https://www.apache.org/licenses/LICENSE-2.0) or [LICENSE](./LICENSE)).
 
-AIPerf is an open source product released under
-the Apache 2.0 license (see either
-[the Apache site](https://www.apache.org/licenses/LICENSE-2.0) or
-the [LICENSE file](./LICENSE)). The Apache 2.0 license allows you
-to freely use, modify, distribute, and sell your own products
-that include Apache 2.0 licensed software.
+We respect intellectual property rights and want to ensure all contributions are correctly attributed and licensed. A Developer Certificate of Origin (DCO) is a lightweight mechanism to do that.
 
-We respect intellectual property rights of others and we want
-to make sure all incoming contributions are correctly attributed
-and licensed. A Developer Certificate of Origin (DCO) is a
-lightweight mechanism to do that.
+The DCO is a declaration attached to every contribution. In the commit message, the developer adds a `Signed-off-by` statement and thereby agrees to the DCO, which you can find at [DeveloperCertificate.org](http://developercertificate.org/).
 
-The DCO is a declaration attached to every contribution made by
-every developer. In the commit message of the contribution,
-the developer simply adds a `Signed-off-by` statement and thereby
-agrees to the DCO, which you can find below or at [DeveloperCertificate.org](http://developercertificate.org/).
+We require that every contribution is signed with a DCO, verified by a required CI check. Please use your real name. We do not accept anonymous contributors or pseudonyms.
 
-```
-Developer Certificate of Origin
-Version 1.1
+Each commit must include:
 
-Copyright (C) 2004, 2006 The Linux Foundation and its contributors.
-
-Everyone is permitted to copy and distribute verbatim copies of this
-license document, but changing it is not allowed.
-
-
-Developer's Certificate of Origin 1.1
-
-By making a contribution to this project, I certify that:
-
-(a) The contribution was created in whole or in part by me and I
-    have the right to submit it under the open source license
-    indicated in the file; or
-
-(b) The contribution is based upon previous work that, to the best
-    of my knowledge, is covered under an appropriate open source
-    license and I have the right under that license to submit that
-    work with modifications, whether created in whole or in part
-    by me, under the same open source license (unless I am
-    permitted to submit under a different license), as indicated
-    in the file; or
-
-(c) The contribution was provided directly to me by some other
-    person who certified (a), (b) or (c) and I have not modified
-    it.
-
-(d) I understand and agree that this project and the contribution
-    are public and that a record of the contribution (including all
-    personal information I submit with it, including my sign-off) is
-    maintained indefinitely and may be redistributed consistent with
-    this project or the open source license(s) involved.
-```
-
-We require that every contribution to Dynamo is signed with
-a Developer Certificate of Origin, this is verified by a required CI check.
-Additionally, please use your real name.
-We do not accept anonymous contributors nor those utilizing pseudonyms.
-
-Each commit must include a DCO which looks like this
-
-```
+```text
 Signed-off-by: Jane Smith <jane.smith@email.com>
 ```
-You may type this line on your own when writing your commit messages.
-However, if your user.name and user.email are set in your git configs,
-you can use `-s` or `--signoff` to add the `Signed-off-by` line to
-the end of the commit message.
 
-⚠️ **Contributor-Friendly DCO Guide:**
-If your pull request fails the DCO check, don’t worry! Check out our [DCO Troubleshooting Guide](DCO.md) for step-by-step instructions to fix it quickly.
+You can use `-s` or `--signoff` to add the `Signed-off-by` line automatically.
+
+If your pull request fails the DCO check, see the [DCO Troubleshooting Guide](DCO.md).

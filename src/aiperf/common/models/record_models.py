@@ -376,6 +376,20 @@ class SSEMessage(BaseInferenceServerResponse):
             if not (line := line.strip()):
                 continue
 
+            prev_value = message.packets[-1].value if message.packets else None
+            # Detect continuation: if the previous packet's value is an incomplete
+            # JSON object (starts with '{' but doesn't end with '}') and this line
+            # isn't a new data field, the server embedded a literal newline in the
+            # JSON value. Append this line as a continuation.
+            if (
+                prev_value
+                and prev_value.startswith("{")
+                and not prev_value.endswith("}")
+                and not line.startswith("data:")
+            ):
+                message.packets[-1].value = f"{prev_value}\\n{line}"
+                continue
+
             parts = line.split(":", 1)
             if len(parts) < 2:
                 # Fields without a colon have no value, so the whole line is the field name
