@@ -21,6 +21,25 @@ export AIPERF_ZMQ_RCVTIMEO=600000
 > Environment variable names, default values, and definitions are subject to change.
 > These settings may be modified, renamed, or removed in future releases.
 
+## COMPRESSION
+
+Compression settings for streaming file transfers. Controls chunk size and compression levels for zstd and gzip encodings used in dataset and results file transfers.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_COMPRESSION_CHUNK_SIZE` | `65536` | ≥ 1024, ≤ 1048576 | Chunk size in bytes for streaming compressed data (default: 64KB) |
+| `AIPERF_COMPRESSION_ZSTD_LEVEL` | `3` | ≥ 1, ≤ 22 | Zstandard compression level (1=fastest, 22=best compression, default: 3) |
+| `AIPERF_COMPRESSION_GZIP_LEVEL` | `6` | ≥ 1, ≤ 9 | Gzip compression level (1=fastest, 9=best compression, default: 6) |
+
+## CONFIG
+
+Configuration file paths for distributed deployments. Controls paths to configuration files loaded by services running in containers. These are primarily used by `aiperf service` when running in Kubernetes.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_CONFIG_SERVICE_FILE` | `None` | — | Path to service configuration JSON/YAML file. Default: /etc/aiperf/service_config.json in Kubernetes deployments. |
+| `AIPERF_CONFIG_USER_FILE` | `None` | — | Path to user configuration JSON/YAML file. Default: /etc/aiperf/user_config.json in Kubernetes deployments. |
+
 ## DATASET
 
 Dataset loading and configuration. Controls timeouts and behavior for dataset loading operations, as well as memory-mapped dataset storage settings.

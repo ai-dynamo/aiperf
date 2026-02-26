@@ -105,8 +105,25 @@ class TQDMProgressUI(BaseAIPerfUI):
 
     @on_stop
     async def _disable_all_bars(self):
-        """Disable all progress bars (async hook)."""
+        """Disable all progress bars and clean up tqdm's semaphore."""
         self._disable_all_bars_sync()
+        self._unregister_tqdm_semaphore()
+
+    @staticmethod
+    def _unregister_tqdm_semaphore() -> None:
+        """Unregister tqdm's internal multiprocessing lock from the resource tracker.
+
+        tqdm lazily creates a multiprocessing.RLock (TRLock.mp_lock) for thread-safe
+        output. This semaphore leaks when the process exits via os._exit() since GC
+        is skipped.
+        """
+        from aiperf.common.resource_tracker import unregister_semaphore
+
+        lock = getattr(tqdm, "_lock", None)
+        if lock is not None:
+            mp_lock = getattr(lock, "mp_lock", None)
+            if mp_lock is not None:
+                unregister_semaphore(mp_lock)
 
     def _create_or_update_requests_bar(
         self,

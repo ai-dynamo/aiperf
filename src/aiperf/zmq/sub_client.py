@@ -1,8 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import contextlib
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import zmq.asyncio
@@ -17,6 +16,7 @@ from aiperf.zmq.zmq_base_client import BaseZMQClient
 from aiperf.zmq.zmq_defaults import (
     TOPIC_END_ENCODED,
     TOPIC_END_LENGTH,
+    WILDCARD_TOPIC,
 )
 
 
@@ -75,6 +75,7 @@ class ZMQSubClient(BaseZMQClient):
         super().__init__(zmq.SocketType.SUB, address, bind, socket_ops, **kwargs)
 
         self._subscribers: dict[MessageTypeT, list[Callable[[Message], Any]]] = {}
+        self._wildcard_subscriber: Callable[[Message], Awaitable[None]] | None = None
         self._msg_count: int = 0
         self._yield_interval: int = Environment.ZMQ.SUB_YIELD_INTERVAL
 
@@ -108,7 +109,10 @@ class ZMQSubClient(BaseZMQClient):
             Exception if subscription was not successful, None otherwise
         """
         await self._check_initialized()
-        await self._subscribe_internal(message_type, callback)
+        if message_type == WILDCARD_TOPIC:
+            await self._subscribe_wildcard(callback)
+        else:
+            await self._subscribe_internal(message_type, callback)
 
     async def _subscribe_internal(
         self, topic: str, callback: Callable[[Message], Any]
@@ -120,9 +124,11 @@ class ZMQSubClient(BaseZMQClient):
             callback: Function to call when a message is received (receives Message object)
         """
         try:
-            # Only subscribe to topic if this is the first callback for this type
-            if topic not in self._subscribers:
-                self.debug(lambda: f"Subscribed to topic: {topic}")
+            # Skip socket subscription if wildcard is active (it already receives everything).
+            if topic not in self._subscribers and self._wildcard_subscriber is None:
+                self.debug(
+                    lambda: f"SUB client {self.client_id} subscribing to topic: {topic}"
+                )
                 self.socket.setsockopt(
                     zmq.SUBSCRIBE, topic.encode() + TOPIC_END_ENCODED
                 )
@@ -137,6 +143,28 @@ class ZMQSubClient(BaseZMQClient):
             self.exception(f"Exception subscribing to topic {topic}: {e}")
             raise CommunicationError(
                 f"Failed to subscribe to topic {topic}: {e}",
+            ) from e
+
+    async def _subscribe_wildcard(
+        self, callback: Callable[[Message], Awaitable[None]]
+    ) -> None:
+        """Subscribe to all messages.
+
+        Args:
+            callback: Coroutine to call when a message is received (receives Message object)
+        """
+        if self._wildcard_subscriber is not None:
+            raise CommunicationError(
+                "Wildcard subscriber already set. Only one wildcard subscriber is allowed."
+            )
+        try:
+            # ZMQ subscriptions are prefix-based, so subscribing to an empty topic will match all messages.
+            self.socket.setsockopt(zmq.SUBSCRIBE, b"")
+            self._wildcard_subscriber = callback
+        except Exception as e:
+            self.exception(f"Exception subscribing to wildcard: {e}")
+            raise CommunicationError(
+                f"Failed to subscribe to wildcard: {e}",
             ) from e
 
     async def _handle_message(self, topic_bytes: bytes, message_bytes: bytes) -> None:
@@ -158,8 +186,18 @@ class ZMQSubClient(BaseZMQClient):
 
         # Call callbacks with the parsed message object
         if topic in self._subscribers:
-            with contextlib.suppress(Exception):  # Ignore errors, they will get logged
+            try:
                 await call_all_functions(self._subscribers[topic], message)
+            except Exception:
+                self.exception(f"Error in subscription handler for topic {topic}")
+
+        if self._wildcard_subscriber is not None:
+            try:
+                await self._wildcard_subscriber(message)
+            except Exception:
+                self.exception(
+                    f"Error in wildcard subscription handler for topic {topic}"
+                )
 
     @background_task(immediate=True, interval=None)
     async def _sub_receiver(self) -> None:

@@ -49,6 +49,22 @@ from tools._core import (
 
 OUTPUT_FILE = Path("docs/cli_options.md")
 
+# NumPy-style docstring section headers that terminate description extraction.
+# Google-style ("Args:", "Examples:") are handled separately with startswith().
+_DOCSTRING_SECTIONS = frozenset(
+    {
+        "parameters",
+        "returns",
+        "raises",
+        "notes",
+        "references",
+        "yields",
+        "attributes",
+        "see also",
+        "warnings",
+    }
+)
+
 # =============================================================================
 # Data Models
 # =============================================================================
@@ -211,8 +227,16 @@ def _extract_param(arg: Any, constraints: dict[str, list[str]]) -> Param:
                     for n, m in enum_cls.__members__.items()
                 }
 
-    # Constraints
-    field_name = arg.names[0].lstrip("-").replace("-", "_")
+    # Constraints: try the actual Pydantic field name (from cyclopts keys) first,
+    # then fall back to deriving from the CLI option name. These can differ when
+    # CLIParameter(name=...) overrides the default naming, e.g. field
+    # "warmup_num_sessions" exposed as "--num-warmup-sessions".
+    param_constraints = None
+    if hasattr(arg, "keys") and arg.keys:
+        param_constraints = constraints.get(arg.keys[-1])
+    if param_constraints is None:
+        cli_field_name = arg.names[0].lstrip("-").replace("-", "_")
+        param_constraints = constraints.get(cli_field_name)
 
     return Param(
         name=arg.names[0].lstrip("-").replace("-", " ").title()
@@ -225,7 +249,7 @@ def _extract_param(arg: Any, constraints: dict[str, list[str]]) -> Param:
         default=default,
         choices=choices,
         choice_descs=choice_descs,
-        constraints=constraints.get(field_name),
+        constraints=param_constraints,
     )
 
 
@@ -384,14 +408,17 @@ def generate_markdown(app: Any, data: dict[str, dict[str, list[Param]]]) -> str:
                 text = _extract_text(help_text)
                 text_lines = text.split("\n")
 
-                # Extract description (before Examples:)
+                # Extract description (before docstring sections)
                 desc_lines = []
                 examples_idx = None
                 for i, line in enumerate(text_lines):
-                    if line.strip().lower().startswith("examples:"):
+                    stripped = line.strip().lower()
+                    if stripped.startswith("examples:"):
                         examples_idx = i
                         break
-                    if line.strip().lower().startswith("args:"):
+                    if stripped.startswith("args:"):
+                        break
+                    if stripped in _DOCSTRING_SECTIONS:
                         break
                     desc_lines.append(line)
 
@@ -405,7 +432,8 @@ def generate_markdown(app: Any, data: dict[str, dict[str, list[Param]]]) -> str:
                 if examples_idx is not None:
                     end_idx = len(text_lines)
                     for i in range(examples_idx + 1, len(text_lines)):
-                        if text_lines[i].strip().lower().startswith("args:"):
+                        s = text_lines[i].strip().lower()
+                        if s.startswith("args:") or s in _DOCSTRING_SECTIONS:
                             end_idx = i
                             break
                     example_lines = text_lines[examples_idx + 1 : end_idx]

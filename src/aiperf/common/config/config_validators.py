@@ -15,20 +15,22 @@ This module provides utility functions for validating and parsing configuration 
 """
 
 
-def parse_str_or_list(input: Any) -> list[Any]:
+def parse_str_or_list(input: Any) -> list[Any] | None:
     """
-    Parses the input to ensure it is either a string or a list. If the input is a string,
+    Parses the input to ensure it is either a string, a list, or None. If the input is a string,
     it splits the string by commas and trims any whitespace around each element, returning
     the result as a list. If the input is already a list, it is returned as-is. If the input
-    is neither a string nor a list, a ValueError is raised.
+    is None, it is returned as-is. If the input is none of these, a ValueError is raised.
     Args:
-        input (Any): The input to be parsed. Expected to be a string or a list.
+        input (Any): The input to be parsed. Expected to be a string, a list, or None.
     Returns:
-        list: A list of strings derived from the input.
+        list | None: A list of strings derived from the input, or None if input is None.
     Raises:
-        ValueError: If the input is neither a string nor a list.
+        ValueError: If the input is neither a string, a list, nor None.
     """
-    if isinstance(input, str):
+    if input is None:
+        return None
+    elif isinstance(input, str):
         output = [item.strip() for item in input.split(",")]
     elif isinstance(input, list):
         # TODO: When using cyclopts, the values are already lists, so we have to split them by commas.
@@ -39,7 +41,7 @@ def parse_str_or_list(input: Any) -> list[Any]:
             else:
                 output.append(item)
     else:
-        raise ValueError(f"User Config: {input} - must be a string or list")
+        raise ValueError(f"User Config: {input} - must be a string, list, or None")
 
     return output
 
@@ -190,10 +192,18 @@ def parse_str_or_list_of_positive_values(input: Any) -> list[Any]:
     Returns:
         List[Any]: A list of positive integers or floats.
     Raises:
-        ValueError: If any value in the parsed list is not a positive integer or float.
+        ValueError: If any value in the parsed list is not a positive integer or float,
+                    or if the input is None.
     """
+    # Guard against None before calling parse_str_or_list to provide clear error
+    if input is None:
+        raise ValueError("input must be a string or list of strings, not None")
 
     output = parse_str_or_list(input)
+
+    # Additional safety check (should not be reached due to above check, but defensive)
+    if output is None:
+        raise ValueError("input must be a string or list of strings, not None")
 
     try:
         output = [

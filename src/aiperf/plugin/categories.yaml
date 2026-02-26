@@ -135,6 +135,26 @@ results_processor:
     One-to-many mapping: multiple processors can be loaded simultaneously.
 
 # =============================================================================
+# Accuracy Categories
+# =============================================================================
+
+accuracy_grader:
+  protocol: aiperf.accuracy.protocols:AccuracyGraderProtocol
+  enum: AccuracyGraderType
+  description: |
+    Accuracy graders evaluate LLM responses against ground truth answers.
+    Supports exact match, math expression, multiple choice, and code execution grading.
+    One-to-one mapping based on grader configuration or benchmark default.
+
+accuracy_benchmark:
+  protocol: aiperf.accuracy.protocols:AccuracyBenchmarkProtocol
+  enum: AccuracyBenchmarkType
+  description: |
+    Accuracy benchmarks provide standardized problem sets for evaluating LLM correctness.
+    Supports MMLU, AIME, HellaSwag, BigBench, Math500, GPQA Diamond, and more.
+    One-to-one mapping based on accuracy benchmark configuration.
+
+# =============================================================================
 # Export Categories
 # =============================================================================
 

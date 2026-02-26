@@ -31,6 +31,7 @@ from aiperf.common.messages import (
 from aiperf.common.mixins import ReplyClientMixin
 from aiperf.common.models import (
     Conversation,
+    DatasetClientMetadata,
     DatasetMetadata,
     InputsFile,
     ModelEndpointInfo,
@@ -44,6 +45,7 @@ from aiperf.plugin.enums import (
     ComposerType,
     DatasetBackingStoreType,
     PluginType,
+    ServiceRunType,
 )
 
 if TYPE_CHECKING:
@@ -71,6 +73,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         service_config: ServiceConfig,
         user_config: UserConfig,
         service_id: str | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(
             service_config=service_config,
@@ -78,6 +81,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             service_id=service_id,
             reply_client_address=CommAddress.DATASET_MANAGER_PROXY_BACKEND,
             reply_client_bind=False,
+            **kwargs,
         )
         self.user_config = user_config
         self.tokenizer: Tokenizer | None = None
@@ -88,11 +92,19 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._conversation_ids_cache: list[str] = []
         self.dataset_configured = asyncio.Event()
 
+        # In Kubernetes mode, use compress_only to stream directly to compressed files.
+        # This avoids creating large uncompressed files on the control plane.
+        # WorkerPodManagers will download compressed files and decompress locally.
+        self._compress_only = (
+            service_config.service_run_type == ServiceRunType.KUBERNETES
+        )
+
         BackingStoreClass = plugins.get_class(
             PluginType.DATASET_BACKING_STORE, DatasetBackingStoreType.MEMORY_MAP
         )
         self._backing_store: DatasetBackingStoreProtocol = BackingStoreClass(
             benchmark_id=user_config.benchmark_id,
+            compress_only=self._compress_only,
         )
         self._dataset_client: DatasetClientStoreProtocol | None = None
 
@@ -118,27 +130,36 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self.info(lambda: f"Dataset configured in {duration:.2f} seconds")
 
     async def _configure_dataset_client_and_free_memory(self) -> None:
-        """Configure the dataset client for serving fallback requests."""
-        # Create dataset client for serving fallback requests, then free in-memory dataset
-        client_metadata = self._backing_store.get_client_metadata()
-        ClientStoreClass = plugins.get_class(
-            PluginType.DATASET_CLIENT_STORE, client_metadata.client_type
-        )
-        self._dataset_client = ClientStoreClass(client_metadata=client_metadata)
-        await self._dataset_client.initialize()
-        # Now that the client is ready, signal that fallback requests can be served
+        """Configure the dataset client for serving fallback requests, then free memory."""
+        conversation_count = len(self.dataset)
+
+        if not self._compress_only:
+            client_metadata = self._backing_store.get_client_metadata()
+            ClientStoreClass = plugins.get_class(
+                PluginType.DATASET_CLIENT_STORE, client_metadata.client_type
+            )
+            self._dataset_client = ClientStoreClass(client_metadata=client_metadata)
+            await self._dataset_client.initialize()
+
         self.dataset_configured.set()
-        # Free the in-memory dataset now that we have the client to serve fallback requests.
+
         # Reassign to new empty containers (not .clear()) to release object references,
         # then run gc.collect() twice to ensure circular references are cleaned up.
-        conversation_count = len(self.dataset)
         self.dataset = {}
         self._conversation_ids_cache = []
         gc.collect()
         gc.collect()
-        self.info(
-            f"Dataset client initialized and freed {conversation_count} conversations from memory"
-        )
+
+        if self._compress_only:
+            self.info(
+                f"Kubernetes mode: skipped local client, freed {conversation_count} "
+                "conversations from memory (workers handle all requests)"
+            )
+        else:
+            self.info(
+                f"Dataset client initialized and freed {conversation_count} "
+                "conversations from memory"
+            )
 
     async def _configure_tokenizer(self) -> None:
         """Configure the tokenizer for the dataset manager."""
@@ -315,8 +336,21 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         conversations_dict = {conv.session_id: conv for conv in conversations}
         await self._backing_store.add_conversations(conversations_dict)
         await self._backing_store.finalize()
-        client_metadata = self._backing_store.get_client_metadata()
-        self.info(f"Backing store finalized: {client_metadata}")
+        # In Kubernetes mode (compress_only=True), files are already compressed
+        # during finalize(). In local mode, uncompressed files are used directly.
+
+        mmap_metadata = self._backing_store.get_client_metadata()
+        self.info(f"Backing store finalized: {mmap_metadata}")
+
+        # In Kubernetes mode, workers wait for DatasetDownloadedNotification from
+        # WorkerPodManager which provides local file paths. We still send mmap_metadata
+        # which has the control plane paths (ignored by workers in Kubernetes mode).
+        client_metadata: DatasetClientMetadata = mmap_metadata
+        if self.service_config.service_run_type == ServiceRunType.KUBERNETES:
+            self.info(
+                "Kubernetes mode: workers will wait for DatasetDownloadedNotification "
+                "from WorkerPodManager before accessing dataset"
+            )
 
         self.dataset_metadata = DatasetMetadata(
             conversations=[conversation.metadata() for conversation in conversations],
@@ -327,8 +361,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             f"unique conversations: {len(self.dataset_metadata.conversations)}, "
             f"unique turn count: {self.dataset_metadata.total_turn_count}"
         )
-        # Note: dataset_configured event is set in _profile_configure_command after
-        # the dataset client is initialized, to avoid a race condition where fallback
+        # Note: dataset_configured event is set in _configure_dataset_client_and_free_memory()
+        # after the dataset client is initialized, to avoid a race condition where fallback
         # requests arrive before the client is ready.
         await self.publish(
             DatasetConfiguredNotification(
@@ -348,6 +382,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         await self._wait_for_dataset_configuration()
 
         if self._dataset_client is None:
+            if self._compress_only:
+                raise self._service_error(
+                    "DatasetManager cannot serve requests in Kubernetes mode. "
+                    "Workers should handle all conversation requests.",
+                )
             raise self._service_error(
                 "Dataset client is not initialized. Dataset must be configured before handling requests.",
             )
@@ -381,6 +420,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         await self._wait_for_dataset_configuration()
 
         if self._dataset_client is None:
+            if self._compress_only:
+                raise self._service_error(
+                    "DatasetManager cannot serve requests in Kubernetes mode. "
+                    "Workers should handle all conversation requests.",
+                )
             raise self._service_error(
                 "Dataset client is not initialized. Dataset must be configured before handling requests.",
             )

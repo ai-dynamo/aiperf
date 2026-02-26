@@ -50,6 +50,10 @@ class MetricResult(JsonMetricResult):
         default=None,
         description="The most recent value of the metric (used for realtime dashboard display only)",
     )
+    sum: int | float | None = Field(
+        default=None,
+        description="The sum of all the metric values across all records",
+    )
 
     def to_display_unit(self) -> "MetricResult":
         """Convert the metric result to its display unit."""
@@ -61,7 +65,9 @@ class MetricResult(JsonMetricResult):
     def to_json_result(self) -> JsonMetricResult:
         """Convert the metric result to a JsonMetricResult."""
         result = JsonMetricResult(unit=self.unit)
-        for stat in STAT_KEYS:
+        for stat in [
+            s for s in STAT_KEYS if s != "sum"
+        ]:  # sum is not included in the JsonMetricResult
             setattr(result, stat, getattr(self, stat, None))
         return result
 
@@ -374,6 +380,20 @@ class SSEMessage(BaseInferenceServerResponse):
         message = cls(perf_ns=perf_ns)
         for line in raw_message.splitlines():
             if not (line := line.strip()):
+                continue
+
+            prev_value = message.packets[-1].value if message.packets else None
+            # Detect continuation: if the previous packet's value is an incomplete
+            # JSON object (starts with '{' but doesn't end with '}') and this line
+            # isn't a new data field, the server embedded a literal newline in the
+            # JSON value. Append this line as a continuation.
+            if (
+                prev_value
+                and prev_value.startswith("{")
+                and not prev_value.endswith("}")
+                and not line.startswith("data:")
+            ):
+                message.packets[-1].value = f"{prev_value}\\n{line}"
                 continue
 
             parts = line.split(":", 1)

@@ -53,6 +53,19 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
         default=0,
         description="Total size of the data file in bytes.",
     )
+    # Pre-compressed files for Kubernetes HTTP transfer (optional)
+    compressed_data_file_path: Path | None = Field(
+        default=None,
+        description="Path to zstd-compressed data file for HTTP transfer (K8s only).",
+    )
+    compressed_index_file_path: Path | None = Field(
+        default=None,
+        description="Path to zstd-compressed index file for HTTP transfer (K8s only).",
+    )
+    compressed_size_bytes: int = Field(
+        default=0,
+        description="Total size of the compressed data file in bytes.",
+    )
 
 
 class Media(AIPerfBaseModel):

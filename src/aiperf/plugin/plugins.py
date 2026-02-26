@@ -922,6 +922,7 @@ if TYPE_CHECKING:
     # <generated-imports>
     # fmt: off
     # ruff: noqa: I001
+    from aiperf.accuracy.protocols import AccuracyBenchmarkProtocol, AccuracyGraderProtocol
     from aiperf.common.protocols import CommunicationClientProtocol, CommunicationProtocol, ServiceProtocol
     from aiperf.controller.protocols import ServiceManagerProtocol
     from aiperf.dataset.composer.base import BaseDatasetComposer
@@ -930,7 +931,7 @@ if TYPE_CHECKING:
     from aiperf.exporters.protocols import ConsoleExporterProtocol, DataExporterProtocol
     from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
     from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerProtocol
-    from aiperf.plugin.enums import ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, RampType, RecordProcessorType, ResultsProcessorType, ServiceRunType, ServiceType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
+    from aiperf.plugin.enums import AccuracyBenchmarkType, AccuracyGraderType, ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, RampType, RecordProcessorType, ResultsProcessorType, ServiceRunType, ServiceType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
     from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
     from aiperf.post_processors.protocols import RecordProcessorProtocol
     from aiperf.timing.intervals import IntervalGeneratorProtocol
@@ -991,6 +992,14 @@ if TYPE_CHECKING:
     def get_class(category: Literal[PluginType.RESULTS_PROCESSOR, "results_processor"], name_or_class_path: ResultsProcessorType | str) -> type[BaseMetricsProcessor]: ...
     @overload
     def iter_all(category: Literal[PluginType.RESULTS_PROCESSOR, "results_processor"]) -> Iterator[tuple[PluginEntry, type[BaseMetricsProcessor]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.ACCURACY_GRADER, "accuracy_grader"], name_or_class_path: AccuracyGraderType | str) -> type[AccuracyGraderProtocol]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.ACCURACY_GRADER, "accuracy_grader"]) -> Iterator[tuple[PluginEntry, type[AccuracyGraderProtocol]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.ACCURACY_BENCHMARK, "accuracy_benchmark"], name_or_class_path: AccuracyBenchmarkType | str) -> type[AccuracyBenchmarkProtocol]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.ACCURACY_BENCHMARK, "accuracy_benchmark"]) -> Iterator[tuple[PluginEntry, type[AccuracyBenchmarkProtocol]]]: ...
     @overload
     def get_class(category: Literal[PluginType.DATA_EXPORTER, "data_exporter"], name_or_class_path: DataExporterType | str) -> type[DataExporterProtocol]: ...
     @overload

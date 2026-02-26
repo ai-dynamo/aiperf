@@ -25,7 +25,12 @@ from aiperf.common.messages import (
     Message,
 )
 from aiperf.zmq.sub_client import ZMQSubClient
-from aiperf.zmq.zmq_defaults import TOPIC_DELIMITER, TOPIC_END, TOPIC_END_ENCODED
+from aiperf.zmq.zmq_defaults import (
+    TOPIC_DELIMITER,
+    TOPIC_END,
+    TOPIC_END_ENCODED,
+    WILDCARD_TOPIC,
+)
 
 
 class TestZMQSubClientInitialization:
@@ -284,6 +289,170 @@ class TestZMQSubClientMessageHandling:
         await event.wait()
 
         assert isinstance(received_messages[0], CommandResponse)
+
+
+class TestZMQSubClientWildcardSubscription:
+    """Test wildcard subscription methods."""
+
+    @pytest.mark.asyncio
+    async def test_subscribe_wildcard_sets_empty_topic(
+        self, mock_zmq_socket, mock_zmq_context
+    ):
+        """Test that subscribing to WILDCARD_TOPIC sets an empty ZMQ subscription."""
+        client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
+        await client.initialize()
+
+        async def callback(msg: Message) -> None:
+            pass
+
+        await client.subscribe(WILDCARD_TOPIC, callback)
+
+        assert client._wildcard_subscriber is callback
+        mock_zmq_socket.setsockopt.assert_any_call(zmq.SUBSCRIBE, b"")
+
+    @pytest.mark.asyncio
+    async def test_subscribe_wildcard_override_raises_error(
+        self, mock_zmq_socket, mock_zmq_context
+    ):
+        """Test that subscribing a second wildcard raises CommunicationError."""
+        client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
+        await client.initialize()
+
+        async def callback1(msg: Message) -> None:
+            pass
+
+        async def callback2(msg: Message) -> None:
+            pass
+
+        await client.subscribe(WILDCARD_TOPIC, callback1)
+
+        with pytest.raises(CommunicationError, match="Wildcard subscriber already set"):
+            await client.subscribe(WILDCARD_TOPIC, callback2)
+
+        assert client._wildcard_subscriber is callback1
+
+    @pytest.mark.asyncio
+    async def test_handle_message_wildcard_subscriber_receives_all_messages(
+        self, mock_zmq_context, create_callback_tracker
+    ):
+        """Test that wildcard subscriber is called for every message."""
+        client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
+
+        callback, event, received_messages = create_callback_tracker()
+        client._wildcard_subscriber = callback
+
+        message = HeartbeatMessage(
+            service_id="test-service",
+            state=LifecycleState.RUNNING,
+            service_type="test",
+        )
+        topic_bytes = f"{MessageType.HEARTBEAT}{TOPIC_END}".encode()
+        message_bytes = message.model_dump_json().encode()
+
+        await client._handle_message(topic_bytes, message_bytes)
+        await asyncio.wait_for(event.wait(), timeout=1.0)
+
+        assert len(received_messages) == 1
+        assert received_messages[0].message_type == MessageType.HEARTBEAT
+
+    @pytest.mark.asyncio
+    async def test_handle_message_wildcard_and_topic_subscriber_both_called(
+        self, mock_zmq_context, create_callback_tracker
+    ):
+        """Test that both wildcard and topic-specific subscribers are called."""
+        client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
+
+        wild_cb, wild_event, wild_msgs = create_callback_tracker()
+        topic_cb, topic_event, topic_msgs = create_callback_tracker()
+
+        client._wildcard_subscriber = wild_cb
+        client._subscribers[MessageType.HEARTBEAT] = [topic_cb]
+
+        message = HeartbeatMessage(
+            service_id="test-service",
+            state=LifecycleState.RUNNING,
+            service_type="test",
+        )
+        topic_bytes = f"{MessageType.HEARTBEAT}{TOPIC_END}".encode()
+        message_bytes = message.model_dump_json().encode()
+
+        await client._handle_message(topic_bytes, message_bytes)
+
+        await asyncio.wait_for(wild_event.wait(), timeout=1.0)
+        await asyncio.wait_for(topic_event.wait(), timeout=1.0)
+
+        assert len(wild_msgs) == 1
+        assert len(topic_msgs) == 1
+
+    @pytest.mark.asyncio
+    async def test_handle_message_wildcard_subscriber_exception_is_caught(
+        self, mock_zmq_context
+    ):
+        """Test that an exception in wildcard subscriber is caught."""
+        client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
+
+        async def failing_callback(msg: Message) -> None:
+            raise RuntimeError("boom")
+
+        client._wildcard_subscriber = failing_callback
+
+        message = HeartbeatMessage(
+            service_id="test-service",
+            state=LifecycleState.RUNNING,
+            service_type="test",
+        )
+        topic_bytes = f"{MessageType.HEARTBEAT}{TOPIC_END}".encode()
+        message_bytes = message.model_dump_json().encode()
+
+        await client._handle_message(topic_bytes, message_bytes)
+
+    @pytest.mark.asyncio
+    async def test_subscribe_skips_zmq_subscribe_when_wildcard_active(
+        self, mock_zmq_socket, mock_zmq_context
+    ):
+        """Test that topic subscribe skips setsockopt when wildcard is already active."""
+        client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
+        await client.initialize()
+
+        async def callback(msg: Message) -> None:
+            pass
+
+        await client.subscribe(WILDCARD_TOPIC, callback)
+        mock_zmq_socket.setsockopt.reset_mock()
+
+        await client.subscribe(MessageType.HEARTBEAT, callback)
+
+        subscribe_calls = [
+            call
+            for call in mock_zmq_socket.setsockopt.call_args_list
+            if call[0][0] == zmq.SUBSCRIBE
+        ]
+        assert len(subscribe_calls) == 0
+        assert MessageType.HEARTBEAT in client._subscribers
+
+    @pytest.mark.asyncio
+    async def test_wildcard_subscribe_raises_communication_error_on_failure(
+        self, mock_zmq_context
+    ):
+        """Test that wildcard subscribe raises CommunicationError on setsockopt failure."""
+
+        def setsockopt_side_effect(option, value):
+            if option == zmq.SUBSCRIBE:
+                raise zmq.ZMQError("Subscription failed")
+
+        mock_socket = Mock(spec=zmq.asyncio.Socket)
+        mock_socket.bind = Mock()
+        mock_socket.setsockopt = Mock(side_effect=setsockopt_side_effect)
+        mock_zmq_context.socket = Mock(return_value=mock_socket)
+
+        client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
+        await client.initialize()
+
+        async def callback(msg: Message) -> None:
+            pass
+
+        with pytest.raises(CommunicationError, match="Failed to subscribe to wildcard"):
+            await client.subscribe(WILDCARD_TOPIC, callback)
 
 
 class TestZMQSubClientBackgroundTask:

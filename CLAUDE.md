@@ -2,141 +2,113 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 -->
-# AIPerf Dev Guide
+# AIPerf
 
-Python 3.10+ async AI Benchmarking Tool for measuring LLM inference server performance. 9 services communicate via ZMQ message bus. Update this guide only for major architectural shifts.
+Python 3.10+ async AI benchmarking tool for measuring LLM inference server performance. 9 services communicate via ZMQ message bus.
 
-**Principles**: KISS + DRY. Extensibility + Usability + Accuracy + Scalability. One concern per PR. Review own diff first.
+**Reference documentation:**
+- [`docs/architecture.md`](docs/architecture.md) - Three-plane architecture, core components, credit system, data flow, communication patterns
+- [`docs/dev/patterns.md`](docs/dev/patterns.md) - Code examples for services, models, messages, plugins, error handling, logging, testing
+- [`docs/cli_options.md`](docs/cli_options.md) - Complete CLI command and option reference
+- [`docs/environment_variables.md`](docs/environment_variables.md) - All `AIPERF_*` environment variables by subsystem
+- [`docs/metrics_reference.md`](docs/metrics_reference.md) - Metric definitions, formulas, and requirements
+- [`docs/plugins/plugin-system.md`](docs/plugins/plugin-system.md) - Plugin architecture, categories, creation guide
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) - Development setup, available commands, pre-commit hooks, DCO
 
-## Rules (Read First)
-**CRITICAL (YOU MUST):**
-- async/await for ALL I/O (no `time.sleep`, no blocking calls)
-- `Field(description="...")` on EVERY Pydantic field
-- Type hints on ALL functions (params and return)
-- KISS + DRY: minimal code, optimize for reader
+## Coding Standards
 
-**Architecture:**
-- BaseComponentService for services (BaseService for SystemController only)
-- AIPerfBaseModel for data; BaseConfig for configuration
-- Message bus for inter-service communication (no shared mutable state)
-- YAML plugin registry for extensible features (plugins.yaml)
+- async/await for ALL I/O - no `time.sleep`, no blocking calls.
+- `Field(description="...")` on EVERY Pydantic field.
+- Type hints on ALL functions (params and return).
+- KISS + DRY: minimal code, optimize for reader.
+- `AIPerfBaseModel` for data, `BaseConfig` for configuration.
+- `BaseComponentService` for services, `BaseService` for SystemController only.
+- Message bus for inter-service communication - no shared mutable state.
+- YAML plugin registry for extensible features (`plugins.yaml`).
+- Lambda for expensive logs: `self.debug(lambda: f"{self._x()}")`. Direct string for cheap ones.
+- Always `orjson.loads(s)`, `orjson.dumps(d)` for JSON.
+- No `Optional[X]` or `Union[X, Y]` - use `X | Y`.
+- Comments only for "why?" not "what".
+- Enums are string-based - use `MessageType.X` directly, never `.value`.
+- Dependencies: always use `uv` (never pip) - `uv add package`, `uv run pytest`.
+- Use mermaid diagrams instead of ASCII art in markdown files.
+- Do not create markdown files to document code changes or decisions.
+- Do not over-comment code. Removing code is fine without adding comments to explain why.
+- No emojis in code or comments.
 
-**Code Quality:**
-- Lambda for expensive logs: `self.debug(lambda: f"{self._x()}")`
-- Tests: fixtures + helpers + `@pytest.mark.parametrize`
+## Build and Test Commands
 
-## Patterns
-
-See [docs/dev/patterns.md](docs/dev/patterns.md) for detailed code examples.
-
-| Pattern | Key Points |
-|---------|------------|
-| **Service** | `BaseComponentService` + `@on_message` + `plugins.yaml` registration |
-| **Models** | `AIPerfBaseModel` for data, `BaseConfig` for config, `Field(description=...)` always |
-| **Messages** | Set `message_type`, use `@on_message(MessageType.X)`, auto-subscribes at `@on_init` |
-| **Plugin** | YAML registry, `plugins.get_class(PluginType.X, 'name')`, lazy-loaded |
-| **Errors** | `self.error(f"msg: {e!r}")` + `ErrorDetails.from_exception(e)` in response |
-| **Logging** | Lambda for expensive: `self.debug(lambda: f"{len(x)}")`, direct for cheap |
-| **JSON** | Always `orjson.loads(s)`, `orjson.dumps(d)` |
-
-## Base Classes & Mixins
-
-- **BaseComponentService**: For 8 services (heartbeat + registration with SystemController)
-- **BaseService**: For SystemController only (no heartbeat/registration)
-- **AIPerfLifecycleMixin**: For standalone components (`CREATED`→`INITIALIZING`→`INITIALIZED`→`STARTING`→`RUNNING`→`STOPPING`→`STOPPED`; `FAILED` terminal)
-
-**Decorators:** `@on_init`, `@on_start`, `@on_stop`, `@on_message`, `@on_command`, `@background_task`, `@on_pull_message`, `@on_request`
-
-**Communication:** `publish()` for broadcast, `@on_message` to subscribe, `send_command_and_wait_for_response()` for sync
-
-## Anti-Patterns
-- One PR = one goal (no scope creep)
-- Comments only for "why?" not "what"
-- No shared mutable state between services
-- No blocking I/O (use async alternatives)
-- No `Optional[X]` or `Union[X, Y]` (use `X | Y`)
-
-## Key Directories
-```
-src/aiperf/
-├── cli_commands/      # CLI command handlers
-├── common/            # Base classes, mixins, models, messages
-├── controller/        # SystemController service
-├── credit/            # Credit system for flow control
-├── dataset/           # DatasetManager service
-├── endpoints/         # API endpoint implementations
-├── exporters/         # Results export (CSV, JSON, console)
-├── gpu_telemetry/     # GPUTelemetryManager service
-├── metrics/           # Metric definitions and calculations
-├── plot/              # Plotting and visualization
-├── plugin/            # Plugin system (plugins.py, plugins.yaml)
-├── post_processors/   # Record and results processors
-├── records/           # RecordProcessor, RecordsManager services
-├── server_metrics/    # ServerMetricsManager service
-├── timing/            # TimingManager service
-├── transports/        # HTTP transport implementations
-├── ui/                # Textual UI components
-├── workers/           # Worker, WorkerManager services
-└── zmq/               # ZMQ communication layer
-tests/
-├── harness/               # Test harness for mocking plugins and services
-├── aiperf_mock_server/    # Mock server for integration tests
-├── unit/                  # Fast isolated tests
-├── component_integration/ # Integration tests with mocked communication and single process
-└── integration/           # End-to-end tests with real communication and multiple processes
+```bash
+make first-time-setup                                      # Initial environment setup
+make install                                               # Install project + mock server
+uv run pytest tests/unit/ -n auto                          # Unit tests (fast, isolated)
+uv run pytest -m integration -n auto                       # Integration tests (real services, multiprocess)
+uv run pytest -m component_integration -n auto             # Component integration tests (single process)
+ruff format . && ruff check --fix .                        # Format and lint
+make validate-plugin-schemas                               # Validate plugin registry
+pre-commit run                                             # Pre-commit on staged files
+pre-commit run --all-files                                 # Pre-commit on all files
+make generate-all-docs                                     # Regenerate CLI + env var docs
+make generate-all-plugin-files                             # Regenerate plugin enums, overloads, schemas
 ```
 
-## Services
-**SystemController**: orchestration, lifecycle management
-**DatasetManager**: prompt/token generation
-**TimingManager**: request scheduling, credit issuance
-**WorkerManager**: worker lifecycle, health monitoring
-**Worker** (N): LLM API calls, conversation state
-**RecordProcessor** (N): metric computation, scales with load
-**RecordsManager**: record aggregation
-**GPUTelemetryManager**: GPU telemetry from DCGM
-**ServerMetricsManager**: server metrics from Prometheus
+## Pre-Commit Hooks
 
-Communication: ZMQ message bus via `await self.publish(msg)`. Services auto-subscribe based on `@on_message` decorators during `@on_init`.
+Run pre-commit after every code change, even before creating commits:
 
-## Enums
-All enums use `ExtensibleStrEnum` or `CaseInsensitiveStrEnum`:
-- **DO**: `MessageType.MY_MSG` (use directly)
-- **DON'T**: `MessageType.MY_MSG.value` (no `.value` needed)
+```bash
+pre-commit run              # Staged files only
+pre-commit run --all-files  # All files (recommended after significant changes)
+```
 
-## Testing
+Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large-files`, `check-case-conflict`, `check-merge-conflict`, `check-json`, `check-toml`, `check-yaml`, `end-of-file-fixer`, `trailing-whitespace`, `codespell`, `add-license`, `generate-cli-docs`, `generate-env-vars-docs`, `generate-plugin-artifacts`, `validate-plugin-schemas`, `test-imports`, `ruff` (lint + format).
 
-**Auto-fixtures** (always active): asyncio.sleep runs instantly, RNG=42, singletons reset between tests.
+## Adding a New Service
 
-**Commands:**
-- `uv run pytest tests/unit/ -n auto` - Fast, isolated, mock dependencies
-- `uv run pytest -m integration -n auto` - Full system, real services in multiple processes
-- `uv run pytest -m component_integration -n auto` - Component integration and cli tests in single process
+1. Create class extending `BaseComponentService` with `@on_message` handlers
+2. Register in `plugins.yaml` under `service` category with `class`, `description`, `metadata`
+3. Add message type to `common/enums/enums.py` if new messages needed
+4. Create message class in `messages/` with `message_type` field
+5. Validate with `aiperf plugins --validate`
 
-**Conventions:**
+## Adding a New Message
+
+1. Add enum value to `MessageType` in `common/enums/enums.py`
+2. Create message class in `messages/` inheriting from `Message` with `message_type` field set
+3. Add `@on_message(MessageType.X)` handler in the receiving service
+4. Auto-subscription happens during `@on_init` phase
+
+## Adding a New Plugin
+
+1. Create plugin class implementing the appropriate base
+2. Add entry to `plugins.yaml` with `class`, `description`, `metadata`
+3. Validate with `make validate-plugin-schemas`
+4. Use via `plugins.get_class(PluginType.X, 'name')`
+
+## Testing Conventions
+
 - `@pytest.mark.asyncio` for async tests, `@pytest.mark.parametrize` for data-driven
-- `from tests.harness import mock_plugin` for plugin mocking in tests
+- `from tests.harness import mock_plugin` for plugin mocking
 - Name: `test_<function>_<scenario>_<expected>` e.g. `test_parse_config_missing_field_raises_error`
 - Imports at file top, fixtures for setup, one focus per test
+- Auto-fixtures (always active): asyncio.sleep runs instantly, RNG=42, singletons reset between tests
 
-See [docs/dev/patterns.md](docs/dev/patterns.md) for code examples.
+## Git Workflow
 
-## Package Management
-Always use `uv` (never pip): `uv add package`, `uv run pytest`
-- `make first-time-setup` - Initial environment setup
-- `make install` - When dependencies are missing
+Feature branches use `<username>/feature-name` format, forked from `main`. One PR = one concern.
 
-## Verification Commands
-```bash
-ruff format . && ruff check --fix .   # Format and lint
-uv run pytest tests/unit/ -n auto    # Unit tests in parallel
-uv run pytest -m integration -n auto   # Integration tests in multiple processes
-uv run pytest -m component_integration -n auto # Component integration and cli tests in single process
-make validate-plugin-schemas           # Validate plugin registry
-pre-commit run                         # Pre-commit on staged files
-```
+## Tips
+
+- SystemController uses `BaseService` (not `BaseComponentService`) - it's the orchestrator.
+- Worker/TimingManager disable GC for latency - see `service_metadata.disable_gc`.
+- macOS child processes close terminal FDs to prevent Textual UI corruption.
+- Plugin priority resolves conflicts: higher wins, external beats built-in at equal priority.
+- Decorators: `@on_init`, `@on_start`, `@on_stop`, `@on_message`, `@on_command`, `@background_task`, `@on_pull_message`, `@on_request`.
+- Communication: `publish()` for broadcast, `@on_message` to subscribe, `send_command_and_wait_for_response()` for sync.
+- `AIPerfLifecycleMixin` for standalone components: `CREATED` -> `INITIALIZING` -> `INITIALIZED` -> `STARTING` -> `RUNNING` -> `STOPPING` -> `STOPPED`; `FAILED` terminal.
 
 ## Pre-Commit Checklist
+
 1. Review diff: all lines required?
 2. `ruff format . && ruff check --fix .`
 3. `uv run pytest tests/unit/ -n auto`
@@ -144,16 +116,31 @@ pre-commit run                         # Pre-commit on staged files
 5. `Field(description=...)` on all Pydantic fields
 6. `git commit -s`
 
-## Gotchas
-- **SystemController uses BaseService** (not BaseComponentService) - it's the orchestrator
-- **Worker/TimingManager disable GC** for latency - see `service_metadata.disable_gc`
-- **macOS child processes** close terminal FDs to prevent Textual UI corruption
-- **Plugin priority** resolves conflicts: higher wins, external beats built-in at equal priority
-- **Enums are string-based** - use `MessageType.X` directly, never `.value`
+## Three-File Sync Rule
 
-## Common Tasks
-**Service**: BaseComponentService → add to `plugins.yaml` under `service` category
-**Message**: Enum `common/enums/enums.py` → class `messages/` → `@on_message()`
-**Plugin**: Create class → add to `plugins.yaml` with `class`, `description`, `metadata` → validate with `aiperf plugins --validate`
+`CLAUDE.md`, `.github/copilot-instructions.md`, and `.cursor/rules/python.mdc` must contain identical content (only headers/frontmatter differ). When updating one, update all three. Always diff them after editing to confirm sync.
 
-**Build systems that scale. Write code that lasts.**
+## Documentation Updates
+
+When making changes, update the appropriate documentation files. When adding a new tutorial, also add it to `README.md`'s tutorial index.
+
+| Change type | Files to update |
+|---|---|
+| Architecture, components, data flow, communication | `docs/architecture.md` |
+| Coding standards, build commands, new patterns | `CLAUDE.md` + `.github/copilot-instructions.md` + `.cursor/rules/python.mdc` |
+| Code patterns, examples, base classes | `docs/dev/patterns.md` |
+| CLI arguments or commands | `docs/cli_options.md` (auto-generated via `make generate-cli-docs`) |
+| Environment variables | `docs/environment_variables.md` (auto-generated via `make generate-env-vars-docs`) |
+| Metrics definitions or formulas | `docs/metrics_reference.md` |
+| Plugin system, categories, creation | `docs/plugins/plugin-system.md` |
+| Accuracy benchmarks, graders | `docs/accuracy/` |
+| Server metrics, schemas | `docs/server_metrics/` |
+| Benchmark modes, timing, traces | `docs/benchmark_modes/` |
+| Tokenizer, reference docs | `docs/reference/` |
+| Dataset synthesis API | `docs/api/synthesis.md` |
+| Dev setup, make targets, pre-commit | `CONTRIBUTING.md` |
+| Contribution process, DCO | `CONTRIBUTING.md` |
+| New services, message types, plugin types | `docs/architecture.md` + `docs/dev/patterns.md` |
+| Tutorials and feature guides | `docs/tutorials/` + `README.md` tutorial index |
+
+**A feature is incomplete until documentation is updated.**

@@ -1,0 +1,147 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# AIPerf
+
+Python 3.10+ async AI benchmarking tool for measuring LLM inference server performance. 9 services communicate via ZMQ message bus.
+
+**Reference documentation:**
+- [`docs/architecture.md`](docs/architecture.md) - Three-plane architecture, core components, credit system, data flow, communication patterns
+- [`docs/dev/patterns.md`](docs/dev/patterns.md) - Code examples for services, models, messages, plugins, error handling, logging, testing
+- [`docs/cli_options.md`](docs/cli_options.md) - Complete CLI command and option reference
+- [`docs/environment_variables.md`](docs/environment_variables.md) - All `AIPERF_*` environment variables by subsystem
+- [`docs/metrics_reference.md`](docs/metrics_reference.md) - Metric definitions, formulas, and requirements
+- [`docs/plugins/plugin-system.md`](docs/plugins/plugin-system.md) - Plugin architecture, categories, creation guide
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) - Development setup, available commands, pre-commit hooks, DCO
+
+## Coding Standards
+
+- async/await for ALL I/O - no `time.sleep`, no blocking calls.
+- `Field(description="...")` on EVERY Pydantic field.
+- Type hints on ALL functions (params and return).
+- KISS + DRY: minimal code, optimize for reader.
+- `AIPerfBaseModel` for data, `BaseConfig` for configuration.
+- `BaseComponentService` for services, `BaseService` for SystemController only.
+- Message bus for inter-service communication - no shared mutable state.
+- YAML plugin registry for extensible features (`plugins.yaml`).
+- Lambda for expensive logs: `self.debug(lambda: f"{self._x()}")`. Direct string for cheap ones.
+- Always `orjson.loads(s)`, `orjson.dumps(d)` for JSON.
+- No `Optional[X]` or `Union[X, Y]` - use `X | Y`.
+- Comments only for "why?" not "what".
+- Enums are string-based - use `MessageType.X` directly, never `.value`.
+- Dependencies: always use `uv` (never pip) - `uv add package`, `uv run pytest`.
+- Use mermaid diagrams instead of ASCII art in markdown files.
+- Do not create markdown files to document code changes or decisions.
+- Do not over-comment code. Removing code is fine without adding comments to explain why.
+- No emojis in code or comments.
+
+## Build and Test Commands
+
+```bash
+make first-time-setup                                      # Initial environment setup
+make install                                               # Install project + mock server
+uv run pytest tests/unit/ -n auto                          # Unit tests (fast, isolated)
+uv run pytest -m integration -n auto                       # Integration tests (real services, multiprocess)
+uv run pytest -m component_integration -n auto             # Component integration tests (single process)
+ruff format . && ruff check --fix .                        # Format and lint
+make validate-plugin-schemas                               # Validate plugin registry
+pre-commit run                                             # Pre-commit on staged files
+pre-commit run --all-files                                 # Pre-commit on all files
+make generate-all-docs                                     # Regenerate CLI + env var docs
+make generate-all-plugin-files                             # Regenerate plugin enums, overloads, schemas
+```
+
+## Pre-Commit Hooks
+
+Run pre-commit after every code change, even before creating commits:
+
+```bash
+pre-commit run              # Staged files only
+pre-commit run --all-files  # All files (recommended after significant changes)
+```
+
+Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large-files`, `check-case-conflict`, `check-merge-conflict`, `check-json`, `check-toml`, `check-yaml`, `end-of-file-fixer`, `trailing-whitespace`, `codespell`, `add-license`, `generate-cli-docs`, `generate-env-vars-docs`, `generate-plugin-artifacts`, `validate-plugin-schemas`, `test-imports`, `ruff` (lint + format).
+
+## Adding a New Service
+
+1. Create class extending `BaseComponentService` with `@on_message` handlers
+2. Register in `plugins.yaml` under `service` category with `class`, `description`, `metadata`
+3. Add message type to `common/enums/enums.py` if new messages needed
+4. Create message class in `messages/` with `message_type` field
+5. Validate with `aiperf plugins --validate`
+
+## Adding a New Message
+
+1. Add enum value to `MessageType` in `common/enums/enums.py`
+2. Create message class in `messages/` inheriting from `Message` with `message_type` field set
+3. Add `@on_message(MessageType.X)` handler in the receiving service
+4. Auto-subscription happens during `@on_init` phase
+
+## Adding a New Plugin
+
+1. Create plugin class implementing the appropriate base
+2. Add entry to `plugins.yaml` with `class`, `description`, `metadata`
+3. Validate with `make validate-plugin-schemas`
+4. Use via `plugins.get_class(PluginType.X, 'name')`
+
+## Testing Conventions
+
+- `@pytest.mark.asyncio` for async tests, `@pytest.mark.parametrize` for data-driven
+- `from tests.harness import mock_plugin` for plugin mocking
+- Name: `test_<function>_<scenario>_<expected>` e.g. `test_parse_config_missing_field_raises_error`
+- Imports at file top, fixtures for setup, one focus per test
+- Auto-fixtures (always active): asyncio.sleep runs instantly, RNG=42, singletons reset between tests
+
+## Git Workflow
+
+Feature branches use `<username>/feature-name` format, forked from `main`. One PR = one concern.
+
+## Tips
+
+- SystemController uses `BaseService` (not `BaseComponentService`) - it's the orchestrator.
+- Worker/TimingManager disable GC for latency - see `service_metadata.disable_gc`.
+- macOS child processes close terminal FDs to prevent Textual UI corruption.
+- Plugin priority resolves conflicts: higher wins, external beats built-in at equal priority.
+- Decorators: `@on_init`, `@on_start`, `@on_stop`, `@on_message`, `@on_command`, `@background_task`, `@on_pull_message`, `@on_request`.
+- Communication: `publish()` for broadcast, `@on_message` to subscribe, `send_command_and_wait_for_response()` for sync.
+- `AIPerfLifecycleMixin` for standalone components: `CREATED` -> `INITIALIZING` -> `INITIALIZED` -> `STARTING` -> `RUNNING` -> `STOPPING` -> `STOPPED`; `FAILED` terminal.
+
+## Pre-Commit Checklist
+
+1. Review diff: all lines required?
+2. `ruff format . && ruff check --fix .`
+3. `uv run pytest tests/unit/ -n auto`
+4. Type hints on all functions
+5. `Field(description=...)` on all Pydantic fields
+6. `git commit -s`
+
+## Three-File Sync Rule
+
+`CLAUDE.md`, `.github/copilot-instructions.md`, and `.cursor/rules/python.mdc` must contain identical content (only headers/frontmatter differ). When updating one, update all three. Always diff them after editing to confirm sync.
+
+## Documentation Updates
+
+When making changes, update the appropriate documentation files. When adding a new tutorial, also add it to `README.md`'s tutorial index.
+
+| Change type | Files to update |
+|---|---|
+| Architecture, components, data flow, communication | `docs/architecture.md` |
+| Coding standards, build commands, new patterns | `CLAUDE.md` + `.github/copilot-instructions.md` + `.cursor/rules/python.mdc` |
+| Code patterns, examples, base classes | `docs/dev/patterns.md` |
+| CLI arguments or commands | `docs/cli_options.md` (auto-generated via `make generate-cli-docs`) |
+| Environment variables | `docs/environment_variables.md` (auto-generated via `make generate-env-vars-docs`) |
+| Metrics definitions or formulas | `docs/metrics_reference.md` |
+| Plugin system, categories, creation | `docs/plugins/plugin-system.md` |
+| Accuracy benchmarks, graders | `docs/accuracy/` |
+| Server metrics, schemas | `docs/server_metrics/` |
+| Benchmark modes, timing, traces | `docs/benchmark_modes/` |
+| Tokenizer, reference docs | `docs/reference/` |
+| Dataset synthesis API | `docs/api/synthesis.md` |
+| Dev setup, make targets, pre-commit | `CONTRIBUTING.md` |
+| Contribution process, DCO | `CONTRIBUTING.md` |
+| New services, message types, plugin types | `docs/architecture.md` + `docs/dev/patterns.md` |
+| Tutorials and feature guides | `docs/tutorials/` + `README.md` tutorial index |
+
+**A feature is incomplete until documentation is updated.**

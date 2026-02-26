@@ -7,6 +7,8 @@ Provides a hierarchical, type-safe configuration system using Pydantic BaseSetti
 All settings can be configured via environment variables with the AIPERF_ prefix.
 
 Structure:
+    Environment.COMPRESSION.*    - Compression settings for streaming file transfers
+    Environment.CONFIG.*         - Configuration file paths for distributed deployments
     Environment.DATASET.*        - Dataset management
     Environment.DEV.*            - Development and debugging settings
     Environment.GPU.*            - GPU telemetry collection
@@ -49,6 +51,60 @@ from aiperf.plugin.enums import ServiceType
 _logger = AIPerfLogger(__name__)
 
 __all__ = ["Environment"]
+
+
+class _CompressionSettings(BaseSettings):
+    """Compression settings for streaming file transfers.
+
+    Controls chunk size and compression levels for zstd and gzip encodings
+    used in dataset and results file transfers.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_COMPRESSION_",
+    )
+
+    CHUNK_SIZE: int = Field(
+        ge=1024,
+        le=1048576,
+        default=65536,
+        description="Chunk size in bytes for streaming compressed data (default: 64KB)",
+    )
+    ZSTD_LEVEL: int = Field(
+        ge=1,
+        le=22,
+        default=3,
+        description="Zstandard compression level (1=fastest, 22=best compression, default: 3)",
+    )
+    GZIP_LEVEL: int = Field(
+        ge=1,
+        le=9,
+        default=6,
+        description="Gzip compression level (1=fastest, 9=best compression, default: 6)",
+    )
+
+
+class _ConfigSettings(BaseSettings):
+    """Configuration file paths for distributed deployments.
+
+    Controls paths to configuration files loaded by services running in containers.
+    These are primarily used by `aiperf service` when running in Kubernetes.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_CONFIG_",
+    )
+
+    SERVICE_FILE: Path | None = Field(
+        default=None,
+        description="Path to service configuration JSON/YAML file. "
+        "Default: /etc/aiperf/service_config.json in Kubernetes deployments.",
+    )
+    USER_FILE: Path | None = Field(
+        default=None,
+        description="Path to user configuration JSON/YAML file. "
+        "Default: /etc/aiperf/user_config.json in Kubernetes deployments.",
+    )
 
 
 class _DatasetSettings(BaseSettings):
@@ -875,6 +931,14 @@ class _Environment(BaseSettings):
     )
 
     # Nested subsystem settings (alphabetically ordered)
+    COMPRESSION: _CompressionSettings = Field(
+        default_factory=_CompressionSettings,
+        description="Compression settings for streaming file transfers",
+    )
+    CONFIG: _ConfigSettings = Field(
+        default_factory=_ConfigSettings,
+        description="Configuration file paths for distributed deployments",
+    )
     DATASET: _DatasetSettings = Field(
         default_factory=_DatasetSettings,
         description="Dataset loading and configuration settings",

@@ -77,18 +77,39 @@ class BaseComponentService(BaseService):
             target_service_type=ServiceType.SYSTEM_CONTROLLER,
             state=self.state,
         )
-        for _ in range(Environment.SERVICE.REGISTRATION_MAX_ATTEMPTS):
+        max_attempts = Environment.SERVICE.REGISTRATION_MAX_ATTEMPTS
+        registration_interval = Environment.SERVICE.REGISTRATION_INTERVAL
+        warning_threshold = 3  # Log warning after this many failed attempts
+
+        for attempt in range(max_attempts):
             result = await self.send_command_and_wait_for_response(
                 # NOTE: We keep the command id the same each time to ensure that the system controller
                 #       can ignore duplicate registration requests.
                 command_message,
-                timeout=Environment.SERVICE.REGISTRATION_INTERVAL,
+                timeout=registration_interval,
             )
             if isinstance(result, CommandResponse):
-                self.debug(
-                    lambda: f"Service {self.service_id} registered with system controller"
-                )
+                if attempt > 1:
+                    self.info(
+                        f"Service {self.service_id} registered with system controller "
+                        f"after {attempt + 1} attempts ({(attempt + 1) * registration_interval:.1f}s)"
+                    )
+                else:
+                    self.debug(
+                        lambda: f"Service {self.service_id} registered with system controller"
+                    )
                 break
+
+            # Log warnings when registration is taking multiple attempts
+            if attempt + 1 >= warning_threshold:
+                elapsed = (attempt + 1) * registration_interval
+                remaining = (max_attempts - attempt - 1) * registration_interval
+                self.warning(
+                    f"Service registration still waiting after {elapsed:.1f}s "
+                    f"({attempt + 1}/{max_attempts} attempts). "
+                    f"Check that SystemController is running. Will timeout in {remaining:.1f}s."
+                )
+
         if isinstance(result, ErrorDetails):
             self.error(
                 f"Failed to register service {self} ({self.service_id}): {result}"

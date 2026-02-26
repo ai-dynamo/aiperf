@@ -555,6 +555,12 @@ record_processor:
       Raw record writer that streams raw request/response data to JSONL files
       for detailed analysis and debugging. Enabled when export_level is RAW.
 
+  accuracy_record:
+    class: aiperf.accuracy.accuracy_record_processor:AccuracyRecordProcessor
+    description: |
+      Accuracy record processor that grades LLM responses against ground truth
+      for accuracy benchmarking. Self-disables when accuracy mode is off.
+
 # =============================================================================
 # Results Processors
 # =============================================================================
@@ -606,6 +612,12 @@ results_processor:
       Timeslice results processor that computes metrics for user-configurable
       time slices, enabling time-series analysis of benchmark performance.
       Enabled when timeslice config is set.
+
+  accuracy_results:
+    class: aiperf.accuracy.accuracy_results_processor:AccuracyResultsProcessor
+    description: |
+      Accuracy results processor that aggregates grading results and computes
+      summary accuracy metrics. Self-disables when accuracy mode is off.
 
 # =============================================================================
 # Data Exporters
@@ -661,6 +673,12 @@ data_exporter:
     description: |
       JSON exporter for timeslice metrics. Exports time-series metric data to JSON
       format for temporal analysis and visualization.
+
+  accuracy_csv:
+    class: aiperf.accuracy.accuracy_data_exporter:AccuracyDataExporter
+    description: |
+      CSV exporter for accuracy benchmarking results. Exports per-problem grading
+      details for offline analysis. Self-disables when accuracy mode is off.
 
 # =============================================================================
 # Console Exporters
@@ -724,6 +742,12 @@ console_exporter:
       Console exporter for output sequence length mismatch warnings. Alerts when
       actual output length differs significantly from requested --osl value.
       Typically indicates ignore_eos is not set or not supported by the server.
+
+  accuracy:
+    class: aiperf.accuracy.accuracy_console_exporter:AccuracyConsoleExporter
+    description: |
+      Console exporter for accuracy benchmarking results. Displays accuracy scores,
+      per-task breakdown, and grading details. Self-disables when accuracy mode is off.
 
 # =============================================================================
 # UI Implementations
@@ -859,6 +883,122 @@ gpu_telemetry_collector:
     class: aiperf.gpu_telemetry.pynvml_collector:PyNVMLTelemetryCollector
     description: |
       PyNVML telemetry collector that collects GPU telemetry metrics using the pynvml Python library.
+
+# =============================================================================
+# Accuracy Graders
+# =============================================================================
+# Accuracy graders evaluate LLM responses against ground truth answers.
+# One-to-one mapping based on grader configuration or benchmark default.
+# =============================================================================
+accuracy_grader:
+  exact_match:
+    class: aiperf.accuracy.graders.exact_match:ExactMatchGrader
+    description: |
+      Exact match grader that compares extracted answers against ground truth
+      using exact string matching. Suitable for factual Q&A and classification tasks.
+
+  math:
+    class: aiperf.accuracy.graders.math:MathGrader
+    description: |
+      Math grader that evaluates mathematical expressions for equivalence.
+      Handles symbolic comparison, numeric tolerance, and expression normalization.
+
+  multiple_choice:
+    class: aiperf.accuracy.graders.multiple_choice:MultipleChoiceGrader
+    description: |
+      Multiple choice grader that matches selected choice labels (A/B/C/D)
+      against ground truth. Supports various answer extraction patterns.
+
+  code_execution:
+    class: aiperf.accuracy.graders.code_execution:CodeExecutionGrader
+    description: |
+      Code execution grader that runs generated code in a sandboxed environment
+      and compares output against expected results.
+
+# =============================================================================
+# Accuracy Benchmarks
+# =============================================================================
+# Accuracy benchmarks provide standardized problem sets for evaluating LLM correctness.
+# One-to-one mapping based on accuracy benchmark configuration.
+# =============================================================================
+accuracy_benchmark:
+  mmlu:
+    class: aiperf.accuracy.benchmarks.mmlu:MMLUBenchmark
+    description: |
+      MMLU (Massive Multitask Language Understanding) benchmark covering 57 subjects
+      across STEM, humanities, social sciences, and more.
+    metadata:
+      default_grader: multiple_choice
+      default_n_shots: 5
+
+  aime:
+    class: aiperf.accuracy.benchmarks.aime:AIMEBenchmark
+    description: |
+      AIME (American Invitational Mathematics Examination) benchmark for
+      advanced high school mathematics problems.
+    metadata:
+      default_grader: math
+      default_n_shots: 0
+
+  hellaswag:
+    class: aiperf.accuracy.benchmarks.hellaswag:HellaSwagBenchmark
+    description: |
+      HellaSwag commonsense reasoning benchmark for sentence completion tasks.
+    metadata:
+      default_grader: multiple_choice
+      default_n_shots: 0
+
+  bigbench:
+    class: aiperf.accuracy.benchmarks.bigbench:BigBenchBenchmark
+    description: |
+      BigBench benchmark for diverse language understanding tasks spanning
+      linguistics, reasoning, and world knowledge.
+    metadata:
+      default_grader: exact_match
+      default_n_shots: 3
+
+  aime24:
+    class: aiperf.accuracy.benchmarks.aime24:AIME24Benchmark
+    description: |
+      AIME 2024 benchmark with problems from the 2024 competition year.
+    metadata:
+      default_grader: math
+      default_n_shots: 0
+
+  aime25:
+    class: aiperf.accuracy.benchmarks.aime25:AIME25Benchmark
+    description: |
+      AIME 2025 benchmark with problems from the 2025 competition year.
+    metadata:
+      default_grader: math
+      default_n_shots: 0
+
+  math_500:
+    class: aiperf.accuracy.benchmarks.math_500:Math500Benchmark
+    description: |
+      MATH-500 benchmark with 500 curated mathematical reasoning problems
+      spanning algebra, geometry, number theory, and combinatorics.
+    metadata:
+      default_grader: math
+      default_n_shots: 0
+
+  gpqa_diamond:
+    class: aiperf.accuracy.benchmarks.gpqa_diamond:GPQADiamondBenchmark
+    description: |
+      GPQA Diamond benchmark with graduate-level science questions in physics,
+      chemistry, and biology requiring expert-level reasoning.
+    metadata:
+      default_grader: multiple_choice
+      default_n_shots: 0
+
+  lcb_codegeneration:
+    class: aiperf.accuracy.benchmarks.lcb_codegeneration:LCBCodeGenerationBenchmark
+    description: |
+      LiveCodeBench code generation benchmark for evaluating code synthesis
+      capabilities with test-case-based validation.
+    metadata:
+      default_grader: code_execution
+      default_n_shots: 0
 
 # =============================================================================
 # Communication Backends

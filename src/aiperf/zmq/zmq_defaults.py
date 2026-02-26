@@ -30,6 +30,9 @@ For example:
 - "timing_manager_eff34565.command$"
 """
 
+WILDCARD_TOPIC = "*"
+"""Sentinel for subscribing to all topics. Maps to an empty string ZMQ subscription internally and bypasses TOPIC_END appending."""
+
 
 class ZMQSocketDefaults:
     """Default values for ZMQ sockets.

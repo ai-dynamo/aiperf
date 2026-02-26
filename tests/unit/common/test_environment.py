@@ -6,7 +6,11 @@ from unittest.mock import patch
 import pytest
 from pytest import param
 
-from aiperf.common.environment import _Environment, _ServiceSettings
+from aiperf.common.environment import (
+    _CompressionSettings,
+    _Environment,
+    _ServiceSettings,
+)
 
 
 class TestServiceSettingsUvloopWindows:
@@ -93,3 +97,57 @@ class TestProfileConfigureTimeout:
             )
             assert profile_timeout == env.SERVICE.PROFILE_CONFIGURE_TIMEOUT
             assert dataset_timeout == env.DATASET.CONFIGURATION_TIMEOUT
+
+
+class TestCompressionSettings:
+    """Test _CompressionSettings defaults and validation."""
+
+    def test_compression_settings_defaults_valid(self) -> None:
+        settings = _CompressionSettings()
+        assert settings.CHUNK_SIZE == 65536
+        assert settings.ZSTD_LEVEL == 3
+        assert settings.GZIP_LEVEL == 6
+
+    def test_compression_settings_chunk_size_env_override_applied(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("AIPERF_COMPRESSION_CHUNK_SIZE", "131072")
+        settings = _CompressionSettings()
+        assert settings.CHUNK_SIZE == 131072
+
+    @pytest.mark.parametrize(
+        "field,env_var,value",
+        [
+            param("ZSTD_LEVEL", "AIPERF_COMPRESSION_ZSTD_LEVEL", "10", id="zstd"),
+            param("GZIP_LEVEL", "AIPERF_COMPRESSION_GZIP_LEVEL", "9", id="gzip"),
+        ],
+    )
+    def test_compression_settings_level_env_override_applied(
+        self, field, env_var, value, monkeypatch
+    ) -> None:
+        monkeypatch.setenv(env_var, value)
+        settings = _CompressionSettings()
+        assert getattr(settings, field) == int(value)
+
+    @pytest.mark.parametrize(
+        "env_var,bad_value",
+        [
+            param("AIPERF_COMPRESSION_CHUNK_SIZE", "512", id="chunk_too_small"),
+            param("AIPERF_COMPRESSION_CHUNK_SIZE", "2097152", id="chunk_too_large"),
+            param("AIPERF_COMPRESSION_ZSTD_LEVEL", "0", id="zstd_too_low"),
+            param("AIPERF_COMPRESSION_ZSTD_LEVEL", "23", id="zstd_too_high"),
+            param("AIPERF_COMPRESSION_GZIP_LEVEL", "0", id="gzip_too_low"),
+            param("AIPERF_COMPRESSION_GZIP_LEVEL", "10", id="gzip_too_high"),
+        ],
+    )
+    def test_compression_settings_out_of_range_raises_value_error(
+        self, env_var, bad_value, monkeypatch
+    ) -> None:
+        monkeypatch.setenv(env_var, bad_value)
+        with pytest.raises(ValueError):
+            _CompressionSettings()
+
+    def test_environment_compression_subsystem_exists(self) -> None:
+        env = _Environment()
+        assert hasattr(env, "COMPRESSION")
+        assert isinstance(env.COMPRESSION, _CompressionSettings)
