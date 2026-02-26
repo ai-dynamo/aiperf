@@ -36,7 +36,7 @@ dependencies = [
   "nvidia-ml-py",  # Note: No version specified to be most compatible with CUDA version
   "orjson~=3.10.18",
   "pandas~=2.3.3",
-  "pillow~=11.1.0",
+  "pillow~=12.1.1",
   "plotly~=6.4.0",
   "dash~=3.1.0",
   "dash-bootstrap-components~=2.0.0",
