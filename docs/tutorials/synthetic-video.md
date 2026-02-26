@@ -281,6 +281,7 @@ This generates videos with a mono, 44100 Hz audio track using an auto-selected c
 | `--video-audio-num-channels` | `int` | `0` | 0 = disabled, 1 = mono, 2 = stereo |
 | `--video-audio-sample-rate` | `int` | `44100` | Sample rate in Hz (8000-96000) |
 | `--video-audio-codec` | `string` | auto | Audio codec (`aac`, `libvorbis`, `libopus`) |
+| `--video-audio-depth` | `int` | `16` | Bit depth per sample (8, 16, 24, or 32) |
 
 #### Audio Codec Selection
 
@@ -594,6 +595,7 @@ All video-related parameters at a glance:
 | `--video-audio-num-channels` | `0` | 0 = disabled, 1 = mono, 2 = stereo |
 | `--video-audio-sample-rate` | `44100` | Sample rate in Hz (8000-96000) |
 | `--video-audio-codec` | auto | Audio codec (`aac`, `libvorbis`, `libopus`) |
+| `--video-audio-depth` | `16` | Bit depth per sample (8, 16, 24, or 32) |
 
 ## Summary
 

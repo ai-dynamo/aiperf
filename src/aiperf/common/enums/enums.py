@@ -449,7 +449,7 @@ class VideoSynthType(CaseInsensitiveStrEnum):
     """Generate videos with animated geometric shapes moving across the frame"""
 
     GRID_CLOCK = "grid_clock"
-    """Generate videos with a grid pattern and timestamp overlay for frame-accurate verification"""
+    """Generate videos with a grid pattern and frame number overlay for frame-accurate verification"""
 
     NOISE = "noise"
     """Generate videos with random noise frames"""

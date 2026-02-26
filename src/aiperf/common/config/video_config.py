@@ -184,7 +184,7 @@ class VideoConfig(BaseConfig):
         VideoSynthType,
         Field(
             description="Algorithm for generating synthetic video content. Different types produce different visual patterns for testing. "
-            "Options: `moving_shapes` (animated geometric shapes), `grid_clock` (grid with rotating clock hands). "
+            "Options: `moving_shapes` (animated geometric shapes), `grid_clock` (grid with rotating clock hands), `noise` (random pixel frames). "
             "Content doesn't affect semantic meaning but may impact encoding efficiency and file size.",
         ),
         CLIParameter(

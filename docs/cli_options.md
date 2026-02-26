@@ -433,14 +433,14 @@ Video frame height in pixels. Must be specified together with `--video-width` (b
 
 #### `--video-synth-type` `<str>`
 
-Algorithm for generating synthetic video content. Different types produce different visual patterns for testing. Options: `moving_shapes` (animated geometric shapes), `grid_clock` (grid with rotating clock hands). Content doesn't affect semantic meaning but may impact encoding efficiency and file size.
+Algorithm for generating synthetic video content. Different types produce different visual patterns for testing. Options: `moving_shapes` (animated geometric shapes), `grid_clock` (grid with rotating clock hands), `noise` (random pixel frames). Content doesn't affect semantic meaning but may impact encoding efficiency and file size.
 
 **Choices:**
 
 | | | |
 |-------|:-------:|-------------|
 | `moving_shapes` | _default_ | Generate videos with animated geometric shapes moving across the frame |
-| `grid_clock` |  | Generate videos with a grid pattern and timestamp overlay for frame-accurate verification |
+| `grid_clock` |  | Generate videos with a grid pattern and frame number overlay for frame-accurate verification |
 | `noise` |  | Generate videos with random noise frames |
 
 #### `--video-format` `<str>`
