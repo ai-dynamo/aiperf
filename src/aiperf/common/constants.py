@@ -10,6 +10,7 @@ STAT_KEYS = [
     "avg",
     "min",
     "max",
+    "sum",
     "p1",
     "p5",
     "p10",
