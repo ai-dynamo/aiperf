@@ -66,7 +66,10 @@ def _needs_tokenizer(args: list[str]) -> bool:
 
     from aiperf.plugin import plugins
 
-    meta = plugins.get_endpoint_metadata(endpoint_type)
+    try:
+        meta = plugins.get_endpoint_metadata(endpoint_type)
+    except Exception:
+        return True
     return meta.tokenizes_input or meta.produces_tokens
 
 

@@ -51,7 +51,7 @@ class ImageRetrievalEndpoint(BaseEndpoint):
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
 
-        self.debug(lambda: f"Formatted Image Retrieval payload: {payload}")
+        self.trace(lambda: f"Formatted Image Retrieval payload: {payload}")
         return payload
 
     def parse_response(

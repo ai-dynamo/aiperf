@@ -35,9 +35,17 @@ class TestNonTokenizingEndpointTextValidation:
         assert result.exit_code == 1
         assert "--synthetic-input-tokens-mean" in result.stderr
 
+    def test_rejects_synthetic_input_tokens_stddev(self, cli: AIPerfCLI):
+        result = cli.run_sync(
+            f"{BASE_CMD} --synthetic-input-tokens-stddev 32",
+            assert_success=False,
+        )
+        assert result.exit_code == 1
+        assert "--synthetic-input-tokens-stddev" in result.stderr
+
     def test_rejects_batch_size_text(self, cli: AIPerfCLI):
         result = cli.run_sync(
-            f"{BASE_CMD} --batch-size 4",
+            f"{BASE_CMD} --batch-size-text 4",
             assert_success=False,
         )
         assert result.exit_code == 1

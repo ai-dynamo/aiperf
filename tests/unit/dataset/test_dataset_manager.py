@@ -635,8 +635,8 @@ class TestDatasetManagerTokenizerSkip:
         assert dataset_manager.tokenizer is None
 
     @pytest.mark.asyncio
-    @pytest.mark.usefixtures("_mock_dataset_steps")
-    async def test_tokenizer_loaded_for_tokenizing_endpoint(self, mock_tokenizer):
+    @pytest.mark.usefixtures("_mock_dataset_steps", "mock_tokenizer")
+    async def test_tokenizer_loaded_for_tokenizing_endpoint(self):
         """Test that tokenizer is loaded when endpoint has tokenizes_input=true."""
         user_config = UserConfig(
             endpoint=EndpointConfig(model_names=["test-model"], type="chat"),

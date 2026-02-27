@@ -993,6 +993,14 @@ class UserConfig(BaseConfig):
             self.input.prompt.input_tokens.mean = 0
 
         if (
+            "stddev" in self.input.prompt.input_tokens.model_fields_set
+            and self.input.prompt.input_tokens.stddev > 0
+        ):
+            raise err("--synthetic-input-tokens-stddev")
+        else:
+            self.input.prompt.input_tokens.stddev = 0
+
+        if (
             "batch_size" in self.input.prompt.model_fields_set
             and self.input.prompt.batch_size > 0
         ):

@@ -1401,9 +1401,21 @@ class TestNonTokenizingEndpointValidation:
         config = self._make_image_retrieval()
         assert config.input.prompt.input_tokens.mean == 0
 
+    def test_defaults_input_tokens_stddev_to_zero(self):
+        config = self._make_image_retrieval()
+        assert config.input.prompt.input_tokens.stddev == 0
+
     def test_defaults_batch_size_to_zero(self):
         config = self._make_image_retrieval()
         assert config.input.prompt.batch_size == 0
+
+    def test_rejects_explicit_input_tokens_stddev(self):
+        with pytest.raises(ValidationError, match="--synthetic-input-tokens-stddev"):
+            self._make_image_retrieval(
+                input_config=InputConfig(
+                    prompt=PromptConfig(input_tokens=InputTokensConfig(stddev=32))
+                ),
+            )
 
     def test_rejects_explicit_input_tokens_mean(self):
         with pytest.raises(ValidationError, match="--synthetic-input-tokens-mean"):
