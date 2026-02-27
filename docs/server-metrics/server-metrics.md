@@ -20,8 +20,7 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 
 **Key metrics by server:**
 
-<details open>
-<summary><b>vLLM</b></summary>
+<Accordion title="vLLM">
 
 | Metric | Type | What to Watch |
 |--------|------|---------------|
@@ -34,10 +33,9 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 | `vllm:inter_token_latency_seconds` | histogram | ITL (`stats.p99_estimate`) |
 | `vllm:generation_tokens` | counter | Decode throughput (`stats.rate`) |
 
-</details>
+</Accordion>
 
-<details open>
-<summary><b>Dynamo</b></summary>
+<Accordion title="Dynamo">
 
 | Metric | Type | What to Watch |
 |--------|------|---------------|
@@ -49,10 +47,9 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 | `dynamo_frontend_requests` | counter | Throughput (`stats.rate`) |
 | `dynamo_component_kvstats_gpu_cache_usage_percent` | gauge | Backend cache usage (`stats.max`) |
 
-</details>
+</Accordion>
 
-<details open>
-<summary><b>SGLang</b></summary>
+<Accordion title="SGLang">
 
 | Metric | Type | What to Watch |
 |--------|------|---------------|
@@ -63,10 +60,9 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 | `sglang:gen_throughput` | gauge | Real-time tokens/s (`stats.avg`) |
 | `sglang:queue_time_seconds` | histogram | Queue wait (`stats.p99_estimate`) |
 
-</details>
+</Accordion>
 
-<details open>
-<summary><b>TRT-LLM</b></summary>
+<Accordion title="TRT-LLM">
 
 | Metric | Type | What to Watch |
 |--------|------|---------------|
@@ -76,7 +72,7 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 | `trtllm:request_queue_time_seconds` | histogram | Queue wait (`stats.p99_estimate`) |
 | `trtllm:request_success` | counter | Completed requests (`stats.rate`) |
 
-</details>
+</Accordion>
 
 ## Quick Start
 
@@ -104,16 +100,17 @@ AIPerf automatically:
    - `server_metrics_export.jsonl` - Time-series data (all scrapes, opt-in only)
    - `server_metrics_export.parquet` - Raw time-series with delta calculations (opt-in only)
 
-> [!NOTE]
-> **Custom file naming:** The `--profile-export-prefix` (or `--profile-export-file`) flag changes the prefix for all export files, including server metrics. Any file extension is automatically stripped from the provided value. For example:
-> ```bash
-> aiperf profile --model MODEL ... --profile-export-prefix my_benchmark
-> # Produces: my_benchmark_server_metrics.json, my_benchmark_server_metrics.csv, etc.
->
-> # --profile-export-file is an alias for --profile-export-prefix, so this is equivalent:
-> aiperf profile --model MODEL ... --profile-export-file my_benchmark.json
-> # Produces the same files (the .json extension is stripped automatically)
-> ```
+<Note>
+**Custom file naming:** The `--profile-export-prefix` (or `--profile-export-file`) flag changes the prefix for all export files, including server metrics. Any file extension is automatically stripped from the provided value. For example:
+```bash
+aiperf profile --model MODEL ... --profile-export-prefix my_benchmark
+# Produces: my_benchmark_server_metrics.json, my_benchmark_server_metrics.csv, etc.
+
+# --profile-export-file is an alias for --profile-export-prefix, so this is equivalent:
+aiperf profile --model MODEL ... --profile-export-file my_benchmark.json
+# Produces the same files (the .json extension is stripped automatically)
+```
+</Note>
 
 **Time filtering:** Statistics in JSON/CSV exports exclude the warmup period, showing only metrics from the profiling phase. The JSONL file contains all scrapes (including warmup) for complete time-series analysis.
 
@@ -169,8 +166,9 @@ aiperf profile --model MODEL ... --server-metrics-formats json csv jsonl parquet
 
 ## Output Files
 
-> [!NOTE]
-> The filenames below are defaults. When `--profile-export-prefix <prefix>` is used, server metrics files are named `<prefix>_server_metrics.{json,csv,jsonl,parquet}` (any file extension in the prefix is stripped automatically). All files are written to the artifact directory (`--artifact-directory`, default: `./artifacts/<run_info>`).
+<Note>
+The filenames below are defaults. When `--profile-export-prefix <prefix>` is used, server metrics files are named `<prefix>_server_metrics.{json,csv,jsonl,parquet}` (any file extension in the prefix is stripped automatically). All files are written to the artifact directory (`--artifact-directory`, default: `./artifacts/<run_info>`).
+</Note>
 
 ### 1. Time-Series: `server_metrics_export.jsonl`
 
@@ -397,8 +395,9 @@ Series-level field: `buckets` (per-bucket delta counts, not cumulative)
 - `avg` (sum/count) is **exact**
 - Percentiles are **estimates** from bucket interpolation
 
-> [!NOTE]
-> **Prometheus Summary metrics are not supported.** Summary quantiles are computed cumulatively over the entire server lifetime, making them unsuitable for benchmark-specific analysis. Major LLM inference servers (vLLM, SGLang, TRT-LLM, Dynamo) use Histograms instead, which allow period-specific percentile estimation.
+<Note>
+**Prometheus Summary metrics are not supported.** Summary quantiles are computed cumulatively over the entire server lifetime, making them unsuitable for benchmark-specific analysis. Major LLM inference servers (vLLM, SGLang, TRT-LLM, Dynamo) use Histograms instead, which allow period-specific percentile estimation.
+</Note>
 
 ## Timesliced Statistics
 

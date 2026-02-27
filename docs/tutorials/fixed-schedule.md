@@ -169,14 +169,15 @@ JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-fixed-schedule/profile_export_aiperf
 
 ## Use Cases
 
-> [!IMPORTANT]
-> **When to Use Fixed Schedule Benchmarking:**
-> - **Traffic Replay**: Reproduce exact timing patterns from production logs
-> - **Temporal Analysis**: Study how performance varies with request timing
-> - **Peak Load Testing**: Test system behavior during known high-traffic periods
-> - **SLA Validation**: Verify performance under specific timing constraints
-> - **Capacity Planning**: Model future load based on projected growth patterns
-> - **Regression Testing**: Ensure temporal performance characteristics remain stable
+<Warning>
+**When to Use Fixed Schedule Benchmarking:**
+- **Traffic Replay**: Reproduce exact timing patterns from production logs
+- **Temporal Analysis**: Study how performance varies with request timing
+- **Peak Load Testing**: Test system behavior during known high-traffic periods
+- **SLA Validation**: Verify performance under specific timing constraints
+- **Capacity Planning**: Model future load based on projected growth patterns
+- **Regression Testing**: Ensure temporal performance characteristics remain stable
+</Warning>
 
 ## Related Tutorials
 

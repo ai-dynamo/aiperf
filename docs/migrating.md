@@ -39,8 +39,9 @@ Modern language models with reasoning capabilities such as openai/gpt-oss-120b, 
 
 ### Behavioral Differences
 
-> [!IMPORTANT]
-> **GenAI-Perf does not parse or process reasoning tokens**. Content in the `reasoning_content` field is ignored, which means GenAI-Perf waits until the first non-reasoning output token is generated before recording the Time to First Token (TTFT).
+<Warning>
+**GenAI-Perf does not parse or process reasoning tokens**. Content in the `reasoning_content` field is ignored, which means GenAI-Perf waits until the first non-reasoning output token is generated before recording the Time to First Token (TTFT).
+</Warning>
 
 **AIPerf** fully supports parsing and processing of reasoning tokens. The TTFT metric captures the time to generate the first token of any type, whether it's a reasoning token or an output token. Additionally, AIPerf introduces a new metric: **Time to First Output Token (TTFO)**, which measures the time to the first non-reasoning output token, equivalent to GenAI-Perf's TTFT.
 
@@ -50,8 +51,9 @@ When comparing benchmark results between the two tools for reasoning-capable mod
 
 #### Time to First Token (TTFT)
 
-> [!TIP]
-> When migrating from GenAI-Perf, use **AIPerf TTFO** to compare against **GenAI-Perf TTFT** for equivalent measurements of reasoning-capable models.
+<Tip>
+When migrating from GenAI-Perf, use **AIPerf TTFO** to compare against **GenAI-Perf TTFT** for equivalent measurements of reasoning-capable models.
+</Tip>
 
 - **AIPerf TTFT** measures time to the first token of any type (including reasoning tokens) from the start of the request, and will be lower than GenAI-Perf TTFT
 - **GenAI-Perf TTFT** measures time to the first non-reasoning output token from the start of the request, and will be higher than AIPerf TTFT
@@ -61,8 +63,9 @@ By providing both TTFT and TTFO metrics, AIPerf enables more comprehensive perfo
 
 #### Output Sequence Length (OSL)
 
-> [!TIP]
-> When migrating from GenAI-Perf, use **AIPerf Output Token Count** to compare against **GenAI-Perf OSL** for equivalent measurements of reasoning-capable models.
+<Tip>
+When migrating from GenAI-Perf, use **AIPerf Output Token Count** to compare against **GenAI-Perf OSL** for equivalent measurements of reasoning-capable models.
+</Tip>
 
 - **AIPerf OSL** includes both reasoning and output tokens, so it will be higher than GenAI-Perf OSL
 - **GenAI-Perf OSL** excludes reasoning tokens from the count, so it will be lower than AIPerf OSL

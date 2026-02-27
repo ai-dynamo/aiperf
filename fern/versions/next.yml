@@ -82,6 +82,8 @@ navigation:
     path: ../../docs/tutorials/ramping.md
   - page: HTTP Trace Metrics Guide
     path: ../../docs/tutorials/http-trace-metrics.md
+  - page: Multi-Run Confidence Reporting
+    path: ../../docs/tutorials/multi-run-confidence.md
   - page: Multi-Turn Conversations
     path: ../../docs/tutorials/multi-turn.md
   - page: Multi-URL Load Balancing

@@ -17,26 +17,28 @@ Multi-turn benchmarking provides several advantages:
 - **Memory and State Management**: Identify issues with conversation state handling
 - **Conversation Flow Analysis**: Measure performance degradation over multiple turns
 
-> [!IMPORTANT]
-> **Understanding Request Control Options**
->
-> AIPerf provides different options for controlling the number of requests depending on whether you're running single-turn or multi-turn benchmarks:
->
-> - **`--request-count`**: Controls the total number of **single-turn requests** to send. Use this for traditional single-turn benchmarks.
-> - **`--conversation-num`**: Controls the total number of **conversations (sessions)** to send in multi-turn scenarios. Each conversation may contain multiple turns (requests).
->
-> These options are mutually exclusive in their intent - use `--request-count` for single-turn benchmarking and `--conversation-num` for multi-turn benchmarking to avoid confusion.
+<Warning>
+**Understanding Request Control Options**
 
-> [!NOTE]
-> **Dataset Generation vs Request Execution**
->
-> The `--num-dataset-entries` option controls how many **unique prompts** are generated in the dataset. This is separate from the number of requests or conversations:
->
-> - `--num-dataset-entries`: Number of unique prompt entries to generate in the dataset
-> - `--request-count`: Number of single-turn requests to send (for single-turn benchmarks)
-> - `--conversation-num`: Number of conversations to send (for multi-turn benchmarks)
->
-> The dataset entries are reused/sampled as needed to fulfill the total request or conversation count. For example, you might generate 100 unique prompts (`--num-dataset-entries 100`) but send 1000 requests that sample from those prompts. `--dataset-sampling-strategy` determines how the pool of prompts is sampled when building payloads.
+AIPerf provides different options for controlling the number of requests depending on whether you're running single-turn or multi-turn benchmarks:
+
+- **`--request-count`**: Controls the total number of **single-turn requests** to send. Use this for traditional single-turn benchmarks.
+- **`--conversation-num`**: Controls the total number of **conversations (sessions)** to send in multi-turn scenarios. Each conversation may contain multiple turns (requests).
+
+These options are mutually exclusive in their intent - use `--request-count` for single-turn benchmarking and `--conversation-num` for multi-turn benchmarking to avoid confusion.
+</Warning>
+
+<Note>
+**Dataset Generation vs Request Execution**
+
+The `--num-dataset-entries` option controls how many **unique prompts** are generated in the dataset. This is separate from the number of requests or conversations:
+
+- `--num-dataset-entries`: Number of unique prompt entries to generate in the dataset
+- `--request-count`: Number of single-turn requests to send (for single-turn benchmarks)
+- `--conversation-num`: Number of conversations to send (for multi-turn benchmarks)
+
+The dataset entries are reused/sampled as needed to fulfill the total request or conversation count. For example, you might generate 100 unique prompts (`--num-dataset-entries 100`) but send 1000 requests that sample from those prompts. `--dataset-sampling-strategy` determines how the pool of prompts is sampled when building payloads.
+</Note>
 
 ## Core Parameters
 

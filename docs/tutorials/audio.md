@@ -98,7 +98,9 @@ To add text prompts alongside audio, include `--synthetic-input-tokens-mean 100`
 
 AIPerf can automatically load and encode audio files from local paths.
 
-> **Note:** The example below uses paths from the AIPerf test fixtures directory. Replace these with paths to your own audio files.
+<Note>
+The example below uses paths from the AIPerf test fixtures directory. Replace these with paths to your own audio files.
+</Note>
 
 {/* aiperf-run-vllm-audio-openai-endpoint-server */}
 ```bash

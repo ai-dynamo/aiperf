@@ -35,8 +35,9 @@ The cancellation timer starts at **T2** ("request fully sent") for two reasons:
 
 2. **Reproducibility**: The delay is measured from a fixed point (request fully sent) rather than being affected by variable queue times or connection setup. This means running the same benchmark twice with `--request-cancellation-delay 0.5` will cancel requests at the same point in their lifecycle, regardless of system load.
 
-> [!NOTE]
-> If the server responds before the delay expires, the request completes normally and is **not** cancelled. Only requests still waiting for a response when the timer expires are cancelled.
+<Note>
+If the server responds before the delay expires, the request completes normally and is **not** cancelled. Only requests still waiting for a response when the timer expires are cancelled.
+</Note>
 
 ### Understanding the Delay Parameter
 
@@ -46,8 +47,9 @@ The cancellation timer starts at **T2** ("request fully sent") for two reasons:
 | `0.5` | Wait 0.5 seconds after sending, then disconnect |
 | `5` | Wait 5 seconds after sending, then disconnect |
 
-> [!TIP]
-> A delay of **0 means "send the full request, then immediately disconnect"**. The server receives the complete request but the client closes the connection before receiving any response. Longer delays allow partial responses to be received before disconnection.
+<Tip>
+A delay of **0 means "send the full request, then immediately disconnect"**. The server receives the complete request but the client closes the connection before receiving any response. Longer delays allow partial responses to be received before disconnection.
+</Tip>
 
 ### Testing Disaggregated Inference Systems
 

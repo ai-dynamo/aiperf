@@ -1,7 +1,7 @@
-<!--
+{/*
 SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
--->
+*/}
 
 # Profile Image Generation Models with AIPerf
 
@@ -41,19 +41,20 @@ docker run --gpus all \
     lmsysorg/sglang:dev
 ```
 
-> [!NOTE]
+<Note>
 > The following steps are to be performed _inside_ the Docker container.
-
+</Note>
 **Install the dependencies:**
 ```bash
 pip install yunchang remote_pdb imageio diffusers diffusion
 ```
 
 **Set the server arguments:**
-> [!IMPORTANT]
+<Warning>
 > The following arguments will setup the server to use the FLUX.1-dev model on a single GPU, on port 30000.
 > You can modify these arguments to use a different model, different number of GPUs, different port, etc.
 > See the [SGLang Image Generation CLI](https://github.com/sgl-project/sglang/blob/main/python/sglang/multimodal_gen/docs/cli.md) for more details.
+</Warning>
 ```bash
 SERVER_ARGS=(   --model-path black-forest-labs/FLUX.1-dev   --text-encoder-cpu-offload   --pin-cpu-memory   --num-gpus 1   --port 30000 --host 0.0.0.0 )
 ```
@@ -70,9 +71,9 @@ Uvicorn running on http://0.0.0.0:30000 (Press CTRL+C to quit)
 
 ## Running the benchmark (basic usage)
 
-> [!NOTE]
+<Note>
 > The following steps are to be performed on your local machine. (_outside_ the Docker container.)
-
+</Note>
 
 ### Text-to-Image Generation Using Input File
 **Create an input file:**
@@ -174,8 +175,9 @@ EOF
 
 **Run the benchmark:**
 
->[!IMPORTANT]
-> Use `--export-level raw` to get the raw input/output payloads.
+<Warning>
+Use `--export-level raw` to get the raw input/output payloads.
+</Warning>
 
 ```bash
 aiperf profile \
@@ -236,10 +238,11 @@ with open(input_file, 'r') as f:
 ```
 
 **Run the script:**
-> [!TIP]
-> The script is setup to use the default directory and file names for the input and output files, but can be modified to use different files.<br/>
->
-> Usage: `python extract_images.py <input_file> <output_dir>`
+<Tip>
+The script is setup to use the default directory and file names for the input and output files, but can be modified to use different files.<br/>
+
+Usage: `python extract_images.py <input_file> <output_dir>`
+</Tip>
 
 ```bash
 python extract_images.py
