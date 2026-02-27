@@ -6,29 +6,29 @@ SPDX-License-Identifier: Apache-2.0
 ```mermaid
 flowchart TD
     %% Core Mixins Hierarchy
-    A["BaseMixin<br/><em>Ensures proper inheritance chain</em>"] */} B["AIPerfLoggerMixin<br/><em>Lazy-evaluated logging with f-strings</em>"]
-    B */} C["HooksMixin<br/><em>Extensible hook system for behavior</em>"]
-    B */} D["TaskManagerMixin<br/><em>Async task and background operations</em>"]
+    A["BaseMixin<br/><em>Ensures proper inheritance chain</em>"] --> B["AIPerfLoggerMixin<br/><em>Lazy-evaluated logging with f-strings</em>"]
+    B --> C["HooksMixin<br/><em>Extensible hook system for behavior</em>"]
+    B --> D["TaskManagerMixin<br/><em>Async task and background operations</em>"]
 
-    C */} E["AIPerfLifecycleMixin<br/><em>Component lifecycle state management</em>"]
-    D */} E
+    C --> E["AIPerfLifecycleMixin<br/><em>Component lifecycle state management</em>"]
+    D --> E
 
-    E */} F["MessageBusClientMixin<br/><em>Message bus communication capabilities</em>"]
+    E --> F["MessageBusClientMixin<br/><em>Message bus communication capabilities</em>"]
 
     %% Service Base Classes
-    F */} G["BaseService<br/><em>Foundation for AIPerf services</em>"]
-    G */} H["BaseComponentService<br/><em>Component services with status reporting</em>"]
+    F --> G["BaseService<br/><em>Foundation for AIPerf services</em>"]
+    G --> H["BaseComponentService<br/><em>Component services with status reporting</em>"]
 
     %% Special SystemController path
-    G */} I[SystemController]
+    G --> I[SystemController]
 
     %% Main Component Services
-    H */} J[DatasetManager]
-    H */} K[TimingManager]
-    H */} L[RecordsManager]
-    H */} M[RecordProcessor]
-    H */} N[WorkerManager]
-    H */} O[Worker]
+    H --> J[DatasetManager]
+    H --> K[TimingManager]
+    H --> L[RecordsManager]
+    H --> M[RecordProcessor]
+    H --> N[WorkerManager]
+    H --> O[Worker]
 
     %% Modern styling with better colors and shapes
     classDef baseMixin fill:#e1f5fe,stroke:#0277bd,stroke-width:2px,color:#000000,font-weight:bold
