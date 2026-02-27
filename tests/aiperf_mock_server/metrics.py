@@ -176,6 +176,14 @@ PASSAGES_RANKED_TOTAL = Counter(
     registry=AIPERF_MOCK_REGISTRY,
 )
 
+# Image retrieval metrics
+IMAGES_PROCESSED_TOTAL = Counter(
+    "aiperf_mock_images_processed_total",
+    "Total number of images processed by image retrieval",
+    ["endpoint"],
+    registry=AIPERF_MOCK_REGISTRY,
+)
+
 # Server uptime (updated on /metrics scrape)
 SERVER_UPTIME_SECONDS = Gauge(
     "aiperf_mock_uptime_seconds",

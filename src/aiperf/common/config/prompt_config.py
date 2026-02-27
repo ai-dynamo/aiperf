@@ -233,6 +233,7 @@ class PromptConfig(BaseConfig):
     batch_size: Annotated[
         int,
         Field(
+            ge=0,
             description="Number of text inputs to include in each request for batch processing endpoints. Supported by `embeddings` "
             "and `rankings` endpoint types where models can process multiple inputs simultaneously for efficiency. "
             "Set to 1 for single-input requests. Not applicable to `chat` or `completions` endpoints.",
