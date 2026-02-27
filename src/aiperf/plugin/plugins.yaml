@@ -138,9 +138,9 @@ api_router:
   #   class: aiperf.api.routers.dataset:DatasetRouter
   #   description: Dataset metadata and file streaming with compression support.
 
-  # metrics:
-  #   class: aiperf.api.routers.metrics:MetricsRouter
-  #   description: Real-time metrics state and Prometheus/JSON endpoints.
+  metrics:
+    class: aiperf.api.routers.metrics:MetricsRouter
+    description: Real-time metrics state and Prometheus/JSON endpoints.
 
   # progress:
   #   class: aiperf.api.routers.progress:ProgressRouter
