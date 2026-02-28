@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,7 @@ from aiperf.plugin.enums import CustomDatasetType, PluginType
 
 
 class CustomDatasetComposer(BaseDatasetComposer):
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer):
+    def __init__(self, config: UserConfig, tokenizer: Tokenizer | None):
         super().__init__(config, tokenizer)
 
     def create_dataset(self) -> list[Conversation]:
@@ -194,6 +195,11 @@ class CustomDatasetComposer(BaseDatasetComposer):
         """
         kwargs = {}
         if dataset_type == CustomDatasetType.MOONCAKE_TRACE:
+            if self.prompt_generator is None:
+                raise ValueError(
+                    "Mooncake trace datasets require a tokenizer for prompt synthesis. "
+                    "Ensure the endpoint supports tokenization or provide a --tokenizer."
+                )
             kwargs["prompt_generator"] = self.prompt_generator
         elif dataset_type == CustomDatasetType.RANDOM_POOL:
             kwargs["num_conversations"] = self.config.input.conversation.num

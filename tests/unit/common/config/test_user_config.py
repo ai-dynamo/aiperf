@@ -13,6 +13,7 @@ from aiperf.common.config import (
     InputConfig,
     LoadGeneratorConfig,
     OutputConfig,
+    PrefixPromptConfig,
     PromptConfig,
     RankingsConfig,
     RankingsPassagesConfig,
@@ -1379,3 +1380,118 @@ class TestUserCentricRateValidation:
         assert config.loadgen.num_users == 10
         assert config.loadgen.user_centric_rate == 5.0
         assert config.loadgen.request_count == 100
+
+
+# =============================================================================
+# Non-tokenizing endpoint validation
+# =============================================================================
+
+
+class TestNonTokenizingEndpointValidation:
+    """Tests for default_no_text_for_non_tokenizing_endpoints validator."""
+
+    @staticmethod
+    def _make_image_retrieval(**kwargs) -> UserConfig:
+        return make_config(
+            endpoint=make_endpoint(endpoint_type=EndpointType.IMAGE_RETRIEVAL),
+            **kwargs,
+        )
+
+    def test_defaults_input_tokens_mean_to_zero(self):
+        config = self._make_image_retrieval()
+        assert config.input.prompt.input_tokens.mean == 0
+
+    def test_defaults_input_tokens_stddev_to_zero(self):
+        config = self._make_image_retrieval()
+        assert config.input.prompt.input_tokens.stddev == 0
+
+    def test_defaults_batch_size_to_zero(self):
+        config = self._make_image_retrieval()
+        assert config.input.prompt.batch_size == 0
+
+    def test_rejects_explicit_input_tokens_stddev(self):
+        with pytest.raises(ValidationError, match="--synthetic-input-tokens-stddev"):
+            self._make_image_retrieval(
+                input_config=InputConfig(
+                    prompt=PromptConfig(input_tokens=InputTokensConfig(stddev=32))
+                ),
+            )
+
+    def test_rejects_explicit_input_tokens_mean(self):
+        with pytest.raises(ValidationError, match="--synthetic-input-tokens-mean"):
+            self._make_image_retrieval(
+                input_config=InputConfig(
+                    prompt=PromptConfig(input_tokens=InputTokensConfig(mean=128))
+                ),
+            )
+
+    def test_rejects_explicit_batch_size(self):
+        with pytest.raises(ValidationError, match="--batch-size-text"):
+            self._make_image_retrieval(
+                input_config=InputConfig(prompt=PromptConfig(batch_size=4)),
+            )
+
+    def test_rejects_sequence_distribution(self):
+        with pytest.raises(ValidationError, match="--sequence-distribution"):
+            self._make_image_retrieval(
+                input_config=InputConfig(
+                    prompt=PromptConfig(sequence_distribution="128,64:50;256,128:50")
+                ),
+            )
+
+    def test_rejects_prefix_prompt_options(self):
+        with pytest.raises(ValidationError, match="Prefix prompt options"):
+            self._make_image_retrieval(
+                input_config=InputConfig(
+                    prompt=PromptConfig(
+                        prefix_prompt=PrefixPromptConfig(pool_size=5, length=100)
+                    )
+                ),
+            )
+
+    def test_allows_tokenizing_endpoint_with_text_options(self):
+        config = make_config(
+            endpoint=make_endpoint(endpoint_type=EndpointType.CHAT),
+            input_config=InputConfig(
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=128))
+            ),
+        )
+        assert config.input.prompt.input_tokens.mean == 128
+
+
+class TestNonTokenEndpointTokenizerValidation:
+    """Tests for reject_tokenizer_for_non_token_endpoints validator."""
+
+    def test_rejects_explicit_tokenizer_name(self):
+        with pytest.raises(ValidationError, match="Tokenizer options cannot be used"):
+            make_config(
+                endpoint=make_endpoint(endpoint_type=EndpointType.IMAGE_RETRIEVAL),
+                tokenizer=TokenizerConfig(name="some-tokenizer"),
+            )
+
+    def test_rejects_explicit_tokenizer_revision(self):
+        with pytest.raises(ValidationError, match="Tokenizer options cannot be used"):
+            make_config(
+                endpoint=make_endpoint(endpoint_type=EndpointType.IMAGE_RETRIEVAL),
+                tokenizer=TokenizerConfig(revision="v2.0"),
+            )
+
+    def test_rejects_explicit_trust_remote_code(self):
+        with pytest.raises(ValidationError, match="Tokenizer options cannot be used"):
+            make_config(
+                endpoint=make_endpoint(endpoint_type=EndpointType.IMAGE_RETRIEVAL),
+                tokenizer=TokenizerConfig(trust_remote_code=True),
+            )
+
+    def test_allows_default_tokenizer_on_non_token_endpoint(self):
+        config = make_config(
+            endpoint=make_endpoint(endpoint_type=EndpointType.IMAGE_RETRIEVAL),
+        )
+        assert config.tokenizer.name is None
+
+    def test_allows_tokenizer_on_tokenizing_endpoint(self):
+        config = make_config(
+            endpoint=make_endpoint(endpoint_type=EndpointType.CHAT),
+            tokenizer=TokenizerConfig(name="some-tokenizer"),
+        )
+        assert config.tokenizer.name == "some-tokenizer"

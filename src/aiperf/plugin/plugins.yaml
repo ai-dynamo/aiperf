@@ -263,6 +263,19 @@ endpoint:
       requires_polling: true
       metrics_title: Video Generation Metrics
 
+  image_retrieval:
+    class: aiperf.endpoints.nim_image_retrieval:ImageRetrievalEndpoint
+    description: |
+      NIM Image Retrieval endpoint. Sends images to NIM-based image inference
+      services for retrieval tasks such as bounding box detection. Uses /v1/infer path.
+    metadata:
+      endpoint_path: /v1/infer
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: false
+      supports_images: true
+      metrics_title: Image Retrieval Metrics
+
   nim_embeddings:
     class: aiperf.endpoints.nim_embeddings:NIMEmbeddingsEndpoint
     description: |
