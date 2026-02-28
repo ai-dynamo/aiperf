@@ -32,12 +32,12 @@ from rich.console import Console
 
 from tools._core import (
     CONSTRAINT_SYMBOLS,
-    SPDX_HEADER_MD,
     CLIExtractionError,
     GeneratedFile,
     Generator,
     GeneratorResult,
     main,
+    md_frontmatter,
     normalize_text,
     print_step,
     print_warning,
@@ -376,7 +376,7 @@ def _format_param(param: Param) -> list[str]:
 def generate_markdown(app: Any, data: dict[str, dict[str, list[Param]]]) -> str:
     """Generate full markdown documentation."""
     lines = [
-        *SPDX_HEADER_MD,
+        *md_frontmatter("Command Line Options"),
         "",
         "# Command Line Options",
         "",

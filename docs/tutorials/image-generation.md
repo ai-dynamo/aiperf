@@ -1,7 +1,8 @@
-{/*
-SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
-*/}
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: SGLang Image Generation
+---
 
 # Profile Image Generation Models with AIPerf
 
@@ -260,19 +261,19 @@ Prompt:
 ```
 {"text": "A serene mountain landscape at sunset"}
 ```
-![](../media/extracted-images/image-0001-00-00.jpg)
+![Generated image: a serene mountain landscape at sunset](../media/extracted-images/image-0001-00-00.jpg)
 
 Prompt:
 ```
 {"text": "A futuristic city with flying cars"}
 ```
-![](../media/extracted-images/image-0002-00-00.jpg)
+![Generated image: a futuristic city with flying cars](../media/extracted-images/image-0002-00-00.jpg)
 
 Prompt:
 ```
 {"text": "A cute robot playing with a kitten"}
 ```
-![](../media/extracted-images/image-0003-00-00.jpg)
+![Generated image: a cute robot playing with a kitten](../media/extracted-images/image-0003-00-00.jpg)
 
 ## Conclusion
 

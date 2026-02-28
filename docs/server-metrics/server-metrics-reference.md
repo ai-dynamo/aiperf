@@ -1,7 +1,8 @@
-{/*
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-*/}
+sidebar-title: Server Metrics Reference
+---
 # AIPerf Server Metrics Reference
 
 Comprehensive reference for server metrics collected during AIPerf benchmark runs from NVIDIA Dynamo, vLLM, SGLang, and TensorRT-LLM inference servers.

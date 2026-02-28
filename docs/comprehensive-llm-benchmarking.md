@@ -1,7 +1,8 @@
-{/*
+---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-*/}
+sidebar-title: Comprehensive LLM Benchmarking
+---
 # AIPerf: Comprehensive LLM Benchmarking
 
 **Presentation Date**: November 13, 2025<br/>

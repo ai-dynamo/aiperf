@@ -1,7 +1,8 @@
-{/*
-SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
-*/}
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Environment Variables
+---
 
 # Environment Variables
 
@@ -17,10 +18,9 @@ export AIPERF_WORKER_CPU_UTILIZATION_FACTOR=0.8
 export AIPERF_ZMQ_RCVTIMEO=600000
 ```
 
-<Warning>
-Environment variable names, default values, and definitions are subject to change.
-These settings may be modified, renamed, or removed in future releases.
-</Warning>
+> [!WARNING]
+> Environment variable names, default values, and definitions are subject to change.
+> These settings may be modified, renamed, or removed in future releases.
 
 ## APISERVER
 

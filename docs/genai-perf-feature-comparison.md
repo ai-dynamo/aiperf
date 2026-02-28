@@ -1,7 +1,8 @@
-{/*
+---
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-*/}
+sidebar-title: GenAI-Perf vs AIPerf CLI Feature Comparison Matrix
+---
 # GenAI-Perf vs AIPerf CLI Feature Comparison Matrix
 
 This comparison matrix shows the supported CLI options between GenAI-Perf and AIPerf.

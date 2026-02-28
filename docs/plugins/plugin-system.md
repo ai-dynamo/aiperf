@@ -1,7 +1,8 @@
-{/*
+---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-*/}
+sidebar-title: Plugin System
+---
 # AIPerf Plugin System
 
 The AIPerf plugin system provides a flexible, extensible architecture for customizing benchmark behavior. It uses YAML-based configuration with lazy loading, priority-based conflict resolution, and dynamic enum generation.

@@ -1,7 +1,8 @@
-{/*
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-*/}
+sidebar-title: Server Metrics Parquet Export Schema
+---
 # AIPerf Server Metrics Parquet Export Schema
 
 Schema reference for the `server_metrics_export.parquet` file. Optimized for SQL analytics with DuckDB, pandas, and Polars.

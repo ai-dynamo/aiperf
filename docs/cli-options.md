@@ -1,7 +1,8 @@
-{/*
-SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
-*/}
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Command Line Options
+---
 
 # Command Line Options
 
@@ -668,7 +669,7 @@ Standard deviation for turn delays in milliseconds. Creates variability in user 
 
 #### `--conversation-turn-delay-ratio`, `--session-delay-ratio` `<float>`
 
-Multiplier for scaling all turn delays within conversations. Applied after mean/stddev calculation: `actual_delay = calculated_delay × ratio`. Use to proportionally adjust timing without changing distribution shape. Values < 1 speed up conversations, > 1 slow them down. Set to 0 to eliminate delays entirely.
+Multiplier for scaling all turn delays within conversations. Applied after mean/stddev calculation: `actual_delay = calculated_delay × ratio`. Use to proportionally adjust timing without changing distribution shape. Values &lt; 1 speed up conversations, > 1 slow them down. Set to 0 to eliminate delays entirely.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `1.0`_
 

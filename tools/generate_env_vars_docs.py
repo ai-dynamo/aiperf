@@ -24,12 +24,12 @@ from dataclasses import dataclass
 
 from tools._core import (
     CONSTRAINT_SYMBOLS,
-    SPDX_HEADER_MD,
     GeneratedFile,
     Generator,
     GeneratorResult,
     ParseError,
     main,
+    md_frontmatter,
     normalize_text,
     print_step,
 )
@@ -184,7 +184,7 @@ def _format_default(default: str) -> str:
 def generate_markdown(settings_list: list[Settings]) -> str:
     """Generate markdown documentation."""
     lines = [
-        *SPDX_HEADER_MD,
+        *md_frontmatter("Environment Variables"),
         "",
         "# Environment Variables",
         "",

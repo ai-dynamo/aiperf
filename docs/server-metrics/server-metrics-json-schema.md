@@ -1,7 +1,8 @@
-{/*
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-*/}
+sidebar-title: Server Metrics JSON Export Schema
+---
 # AIPerf Server Metrics JSON Export Schema
 
 This document describes the structure and semantics of every field in the AIPerf server metrics JSON export format.

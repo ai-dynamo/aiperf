@@ -1,7 +1,8 @@
-{/*
-SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
-*/}
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: HTTP Trace Metrics Guide
+---
 
 # HTTP Trace Metrics Guide
 
@@ -373,5 +374,5 @@ The k6 `http_req_tls_handshaking` metric is **not separated** in AIPerf. TLS tim
 ## Related Documentation
 
 - [Working with Profile Export Files](./working-with-profile-exports.md) - How to parse and analyze AIPerf output files
-- [Source: trace_models.py](../../src/aiperf/common/models/trace_models.py) - Trace data model definitions
-- [Source: http_trace_metrics.py](../../src/aiperf/metrics/types/http_trace_metrics.py) - HTTP trace metric implementations
+- [Source: trace_models.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/trace_models.py) - Trace data model definitions
+- [Source: http_trace_metrics.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/types/http_trace_metrics.py) - HTTP trace metric implementations
