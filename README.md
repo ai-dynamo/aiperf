@@ -123,3 +123,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding conventions
 - Output sequence length constraints (`--output-tokens-mean`) cannot be guaranteed unless you pass `ignore_eos` and/or `min_tokens` via `--extra-inputs` to an inference server that supports them.
 - Very high concurrency settings (typically >15,000) may lead to port exhaustion on some systems. Adjust system limits or reduce concurrency if connection failures occur.
 - Startup errors caused by invalid configuration settings can cause AIPerf to hang indefinitely. Terminate the process and check configuration settings.
+- Copying selected text may not work reliably in the dashboard UI. Use the `c` key to copy all logs.
