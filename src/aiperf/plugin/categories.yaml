@@ -86,6 +86,7 @@ dataset_composer:
 
 custom_dataset_loader:
   protocol: aiperf.dataset.protocols:CustomDatasetLoaderProtocol
+  metadata_class: aiperf.plugin.schema.schemas:CustomDatasetLoaderMetadata
   enum: CustomDatasetType
   description: |
     Custom dataset loaders parse different JSONL file formats into conversations.

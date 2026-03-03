@@ -379,11 +379,27 @@ dataset_composer:
 # Auto-detection: the custom composer tries loaders in priority order based on can_load().
 # =============================================================================
 custom_dataset_loader:
+  bailian_trace:
+    class: aiperf.dataset.loader.bailian_trace:BailianTraceDatasetLoader
+    description: |
+      Alibaba Bailian trace dataset loader for Qwen model serving traces from
+      https://github.com/alibaba-edu/qwen-bailian-usagetraces-anon.
+      Loads JSONL traces with chat_id, parent_chat_id (-1 for root), timestamp
+      (seconds), input/output lengths, turn numbers, and hash_ids for salted
+      SipHash block-based prompt caching (block_size=16). Supports multi-turn
+      conversation chains and fixed_schedule timing mode.
+    metadata:
+      is_trace: true
+      default_block_size: 16
+
   mooncake_trace:
     class: aiperf.dataset.loader.mooncake_trace:MooncakeTraceDatasetLoader
     description: |
       Mooncake trace dataset loader for loading Alibaba Mooncake trace format with
       timestamp-based replay support. Designed for fixed_schedule timing mode.
+    metadata:
+      is_trace: true
+      default_block_size: 512
 
   multi_turn:
     class: aiperf.dataset.loader.multi_turn:MultiTurnDatasetLoader

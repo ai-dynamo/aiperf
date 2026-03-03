@@ -29,9 +29,9 @@ from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
 from aiperf.common.enums import GPUTelemetryMode, ServerMetricsFormat
 from aiperf.common.utils import load_json_str
+from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     ArrivalPattern,
-    CustomDatasetType,
     EndpointType,
     GPUTelemetryCollectorType,
     TimingMode,
@@ -118,10 +118,10 @@ class UserConfig(BaseConfig):
                 _logger.info(
                     f"No request count value provided for fixed schedule mode, setting to dataset entry count: {self.loadgen.request_count}"
                 )
-        elif self._should_use_fixed_schedule_for_mooncake_trace():
+        elif self._should_use_fixed_schedule_for_trace_dataset():
             self._timing_mode = TimingMode.FIXED_SCHEDULE
             _logger.info(
-                "Automatically enabling fixed schedule mode for mooncake_trace dataset with timestamps"
+                f"Automatically enabling fixed schedule mode for {self.input.custom_dataset_type} dataset with timestamps"
             )
             if (
                 self.loadgen.request_count is None
@@ -129,7 +129,7 @@ class UserConfig(BaseConfig):
             ):
                 self.loadgen.request_count = self._count_dataset_entries()
                 _logger.info(
-                    f"No request count value provided for mooncake trace dataset, setting to dataset entry count: {self.loadgen.request_count}"
+                    f"No request count value provided for trace dataset, setting to dataset entry count: {self.loadgen.request_count}"
                 )
         elif self.loadgen.user_centric_rate is not None:
             # User-centric rate mode: per-user rate limiting (LMBenchmark parity)
@@ -348,13 +348,15 @@ class UserConfig(BaseConfig):
 
         return self
 
-    def _should_use_fixed_schedule_for_mooncake_trace(self) -> bool:
-        """Check if mooncake_trace dataset has timestamps and should use fixed schedule.
+    def _should_use_fixed_schedule_for_trace_dataset(self) -> bool:
+        """Check if a trace dataset has timestamps and should use fixed schedule.
 
         Returns:
-            bool: True if fixed schedule should be enabled for this mooncake trace
+            True if fixed schedule should be enabled for this trace dataset.
         """
-        if self.input.custom_dataset_type != CustomDatasetType.MOONCAKE_TRACE:
+        if self.input.custom_dataset_type is None or not plugins.is_trace_dataset(
+            self.input.custom_dataset_type
+        ):
             return False
 
         if not self.input.file:

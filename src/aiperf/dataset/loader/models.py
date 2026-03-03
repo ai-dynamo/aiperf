@@ -3,7 +3,7 @@
 
 from typing import Literal, TypeVar
 
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.common.models import AIPerfBaseModel, Audio, Image, Text, Video
 from aiperf.plugin.enums import CustomDatasetType
@@ -251,7 +251,57 @@ class MooncakeTrace(AIPerfBaseModel):
         return self
 
 
+class BailianTrace(AIPerfBaseModel):
+    """Defines the schema for Alibaba Bailian trace data.
+
+    See https://github.com/alibaba-edu/qwen-bailian-usagetraces-anon for the
+    upstream dataset and full documentation.
+
+    Each entry represents a single request in a conversation chain. Multi-turn
+    conversations are linked via ``chat_id`` and ``parent_chat_id``: entries
+    sharing the same root ``chat_id`` (reachable through ``parent_chat_id``)
+    belong to the same session and are ordered by ``turn``.
+
+    Important: Bailian traces use a block size of 16 tokens per salted SipHash
+    block.  Use ``--isl-block-size 16`` when using this format (this is set
+    automatically in CLI flows).
+
+    Examples:
+    - Root request:  ``{"chat_id": 159, "parent_chat_id": -1, "timestamp": 61.114, "input_length": 521, "output_length": 132, "type": "text", "turn": 1, "hash_ids": [1089, 1090, 1091]}``
+    - Follow-up:     ``{"chat_id": 160, "parent_chat_id": 159, "timestamp": 62.5, "input_length": 400, "output_length": 80, "type": "text", "turn": 2, "hash_ids": [1089, 1090]}``
+
+    Note:
+    The ``type`` field in Bailian JSONL is the request type (text/search/image/file),
+    not the dataset type. Use ``--custom-dataset-type bailian_trace`` when loading
+    this format.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    chat_id: int = Field(description="Randomized chat identifier")
+    parent_chat_id: int = Field(
+        default=-1,
+        description="Parent chat ID for multi-turn conversation chains. -1 indicates a root request.",
+    )
+    timestamp: float = Field(
+        description="Seconds since request arrival. Converted to milliseconds internally.",
+    )
+    input_length: int = Field(description="Input token count")
+    output_length: int = Field(description="Output token count")
+    request_type: str = Field(
+        default="",
+        alias="type",
+        description="Request type from the trace (text/search/image/file). Aliased from 'type' in JSONL.",
+    )
+    turn: int = Field(default=1, description="Conversation turn number")
+    hash_ids: list[int] = Field(
+        default_factory=list,
+        description="Salted SipHash block IDs (16 tokens per block)",
+    )
+
+
 CustomDatasetT = TypeVar(
-    "CustomDatasetT", bound=SingleTurn | MultiTurn | RandomPool | MooncakeTrace
+    "CustomDatasetT",
+    bound=SingleTurn | MultiTurn | RandomPool | MooncakeTrace | BailianTrace,
 )
 """A union type of all custom data types."""

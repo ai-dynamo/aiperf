@@ -61,12 +61,13 @@ class InputTokensConfig(BaseConfig):
     ] = InputTokensDefaults.STDDEV
 
     block_size: Annotated[
-        int,
+        int | None,
         Field(
-            default=512,
-            description="Token block size for hash-based prompt caching in `mooncake_trace` datasets. When `hash_ids` are provided in trace entries, "
+            default=None,
+            description="Token block size for hash-based prompt caching in trace datasets (`mooncake_trace`, `bailian_trace`). When `hash_ids` are provided in trace entries, "
             "prompts are divided into blocks of this size. Each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation "
-            "of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`.",
+            "of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. "
+            "When not set, the trace loader's `default_block_size` from plugin metadata is used (e.g. 16 for `bailian_trace`, 512 for `mooncake_trace`).",
         ),
         CLIParameter(
             name=(
@@ -76,7 +77,7 @@ class InputTokensConfig(BaseConfig):
             ),
             group=_CLI_GROUP,
         ),
-    ] = InputTokensDefaults.BLOCK_SIZE
+    ] = None
 
 
 class OutputTokensConfig(BaseConfig):
