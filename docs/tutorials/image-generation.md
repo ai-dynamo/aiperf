@@ -6,7 +6,11 @@ SPDX-License-Identifier: Apache-2.0
 # Profile Image Generation Models with AIPerf
 
 ## Overview
-This guide shows how to benchmark image generation APIs using a Docker-based server and AIPerf. You'll learn how to set up the server, create an input file, and run the benchmark. You'll also learn how to view the results, and even extract the generated images!
+This guide shows how to benchmark image generation APIs using a Docker-based server and AIPerf. You'll learn how to:
+
+- Set up the server
+- Create an input file and run the benchmark
+- View the results and extract the generated images
 
 ## References
 For the most up-to-date information, please refer to the following resources:
@@ -42,7 +46,7 @@ docker run --gpus all \
 
 **Install the dependencies:**
 ```bash
-uv pip install yunchang remote_pdb imageio diffusers diffusion --system --break-system-packages
+pip install yunchang remote_pdb imageio diffusers diffusion
 ```
 
 **Set the server arguments:**
