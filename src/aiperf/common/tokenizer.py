@@ -53,7 +53,10 @@ def _supports_kwarg(obj: object, method_name: str, kwarg: str) -> bool:
     method = getattr(obj, method_name, None)
     if method is None:
         return False
-    return kwarg in inspect.signature(method).parameters
+    try:
+        return kwarg in inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def _is_offline_mode() -> bool:
@@ -161,8 +164,15 @@ class Tokenizer:
         if self._tokenizer is None:
             return
         if _supports_kwarg(self._tokenizer, "encode", "allow_special_tokens"):
-            self._call_args = {"allow_special_tokens": False}
             self._encode_args = {"allow_special_tokens": False}
+        elif not _supports_kwarg(self._tokenizer, "encode", "add_special_tokens"):
+            self._encode_args = {}
+
+        if _supports_kwarg(self._tokenizer, "__call__", "allow_special_tokens"):
+            self._call_args = {"allow_special_tokens": False}
+        elif not _supports_kwarg(self._tokenizer, "__call__", "add_special_tokens"):
+            self._call_args = {}
+
         if not _supports_kwarg(self._tokenizer, "decode", "skip_special_tokens"):
             self._decode_args = {}
 

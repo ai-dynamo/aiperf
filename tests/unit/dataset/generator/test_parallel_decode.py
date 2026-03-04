@@ -198,7 +198,7 @@ class TestWorkerFunctions:
     def test_init_worker_loads_tokenizer(self, mock_tokenizer_class):
         """Test that _init_worker loads the tokenizer."""
         pd_module._worker_tokenizer = None
-        pd_module._worker_tokenizer_name = None
+        pd_module._worker_tokenizer_key = None
 
         mock_tokenizer = MagicMock()
         mock_tokenizer_class.from_pretrained.return_value = mock_tokenizer
@@ -212,7 +212,7 @@ class TestWorkerFunctions:
             resolve_alias=False,
         )
         assert pd_module._worker_tokenizer is mock_tokenizer
-        assert pd_module._worker_tokenizer_name == "gpt2"
+        assert pd_module._worker_tokenizer_key == ("gpt2", False, "main")
 
     @patch("aiperf.common.tokenizer.Tokenizer")
     def test_init_worker_sets_offline_mode(self, mock_tokenizer_class, monkeypatch):
@@ -220,7 +220,7 @@ class TestWorkerFunctions:
         monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
         monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
         pd_module._worker_tokenizer = None
-        pd_module._worker_tokenizer_name = None
+        pd_module._worker_tokenizer_key = None
 
         mock_tokenizer_class.from_pretrained.return_value = MagicMock()
 
@@ -234,7 +234,7 @@ class TestWorkerFunctions:
         """Test that _init_worker reuses tokenizer if same name."""
         mock_tokenizer = MagicMock()
         pd_module._worker_tokenizer = mock_tokenizer
-        pd_module._worker_tokenizer_name = "gpt2"
+        pd_module._worker_tokenizer_key = ("gpt2", False, "main")
 
         pd_module._init_worker("gpt2")
 
@@ -247,7 +247,7 @@ class TestWorkerFunctions:
         """Test that _init_worker reloads tokenizer if different name."""
         old_tokenizer = MagicMock()
         pd_module._worker_tokenizer = old_tokenizer
-        pd_module._worker_tokenizer_name = "gpt2"
+        pd_module._worker_tokenizer_key = ("gpt2", False, "main")
 
         new_tokenizer = MagicMock()
         mock_tokenizer_class.from_pretrained.return_value = new_tokenizer
@@ -261,7 +261,7 @@ class TestWorkerFunctions:
             resolve_alias=False,
         )
         assert pd_module._worker_tokenizer is new_tokenizer
-        assert pd_module._worker_tokenizer_name == "llama"
+        assert pd_module._worker_tokenizer_key == ("llama", False, "main")
 
     def test_decode_tokens_uses_worker_tokenizer(self):
         """Test that _decode_tokens uses the worker tokenizer."""
@@ -282,7 +282,7 @@ class TestWorkerFunctions:
     ):
         """Test that _init_worker forwards trust_remote_code and revision."""
         pd_module._worker_tokenizer = None
-        pd_module._worker_tokenizer_name = None
+        pd_module._worker_tokenizer_key = None
         mock_tokenizer_class.from_pretrained.return_value = MagicMock()
 
         pd_module._init_worker("kimi-vl", trust_remote_code=True, revision="v1.2")

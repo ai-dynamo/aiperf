@@ -66,7 +66,7 @@ class ErrorDetails(AIPerfBaseModel):
         return hash((self.code, self.type, self.message))
 
     @staticmethod
-    def _build_cause_chain(e: BaseException) -> list[str] | None:
+    def _build_cause_chain(e: BaseException | None) -> list[str] | None:
         """Build list of exception type names from the exception chain.
 
         Follows both explicit chaining (__cause__, set by ``raise X from Y``)

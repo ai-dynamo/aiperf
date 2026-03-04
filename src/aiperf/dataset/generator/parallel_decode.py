@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 # Module-level tokenizer for worker processes (initialized once per worker)
 _worker_tokenizer: "Tokenizer | None" = None
-_worker_tokenizer_name: str | None = None
+_worker_tokenizer_key: tuple[str, bool, str] | None = None
 
 
 def _init_worker(
@@ -40,8 +40,9 @@ def _init_worker(
         trust_remote_code: Whether to trust remote code when loading.
         revision: The specific model version to use.
     """
-    global _worker_tokenizer, _worker_tokenizer_name
-    if _worker_tokenizer is None or _worker_tokenizer_name != tokenizer_name:
+    global _worker_tokenizer, _worker_tokenizer_key
+    requested_key = (tokenizer_name, trust_remote_code, revision)
+    if _worker_tokenizer is None or _worker_tokenizer_key != requested_key:
         # The main process already downloaded and cached the tokenizer, so force
         # offline mode to skip network requests and alias resolution.
         os.environ["HF_HUB_OFFLINE"] = "1"
@@ -55,7 +56,7 @@ def _init_worker(
             revision=revision,
             resolve_alias=False,
         )
-        _worker_tokenizer_name = tokenizer_name
+        _worker_tokenizer_key = requested_key
 
 
 def _decode_tokens(token_ids: list[int]) -> str:

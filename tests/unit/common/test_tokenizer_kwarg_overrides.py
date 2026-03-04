@@ -92,6 +92,28 @@ class KwargsOnlyTokenizerBackend:
     eos_token_id = 0
 
 
+class MismatchedCallEncodeBackend:
+    """Backend where encode uses allow_special_tokens but __call__ uses add_special_tokens."""
+
+    def encode(
+        self, text: str, allow_special_tokens: bool = True, **kwargs
+    ) -> list[int]:
+        if kwargs:
+            raise TypeError(f"Unexpected kwargs in encode: {kwargs}")
+        return list(range(len(text.split())))
+
+    def decode(self, token_ids: list[int], skip_special_tokens: bool = False) -> str:
+        return " ".join(f"t{i}" for i in token_ids)
+
+    def __call__(self, text: str, add_special_tokens: bool = True, **kwargs) -> dict:
+        if kwargs:
+            raise TypeError(f"Unexpected kwargs in __call__: {kwargs}")
+        return {"input_ids": self.encode(text)}
+
+    bos_token_id = 1
+    eos_token_id = 2
+
+
 # -- _supports_kwarg tests --
 
 
@@ -128,6 +150,14 @@ class TestSupportsKwarg:
         backend = KwargsOnlyTokenizerBackend()
         assert _supports_kwarg(backend, "encode", "add_special_tokens") is False
         assert _supports_kwarg(backend, "encode", "allow_special_tokens") is False
+
+    def test_non_introspectable_callable_returns_false(self):
+        """C extension methods that can't be introspected should return False."""
+
+        class WithBuiltinMethod:
+            encode = object.__init_subclass__  # raises ValueError in inspect.signature
+
+        assert _supports_kwarg(WithBuiltinMethod(), "encode", "anything") is False
 
     @pytest.mark.parametrize(
         ("method", "kwarg", "expected"),
@@ -174,6 +204,13 @@ class TestApplyKwargOverrides:
         tok = self._make_tokenizer(MinimalDecodeTokenizerBackend())
         assert tok._encode_args == {"add_special_tokens": False}
         assert tok._decode_args == {}
+
+    def test_mismatched_call_encode_sets_args_independently(self):
+        """When encode uses allow_special_tokens but __call__ uses add_special_tokens."""
+        tok = self._make_tokenizer(MismatchedCallEncodeBackend())
+        assert tok._encode_args == {"allow_special_tokens": False}
+        assert tok._call_args == {"add_special_tokens": False}
+        assert tok._decode_args == {"skip_special_tokens": True}
 
     def test_none_tokenizer_is_noop(self):
         tok = Tokenizer()
@@ -246,3 +283,9 @@ class TestKwargOverridesEndToEnd:
         tok = self._make_tokenizer(KimiLikeTokenizerBackend())
         result = tok.encode("hello", allow_special_tokens=True)
         assert isinstance(result, list)
+
+    def test_mismatched_call_encode_does_not_raise(self):
+        """Backend with different kwargs on encode vs __call__ should work."""
+        tok = self._make_tokenizer(MismatchedCallEncodeBackend())
+        assert isinstance(tok.encode("hello world"), list)
+        assert "input_ids" in tok("hello world")
