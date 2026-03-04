@@ -25,6 +25,7 @@ dependencies = [
   "async-timeout>=4.0.0; python_version < '3.11'",
   "aiohttp~=3.13.3",
   "cyclopts>=4,<5",
+  "fastapi>=0.115,<1",
   "ffmpeg-python~=0.2.0",
   "huggingface-hub>=0.34.0,<2.0",
   "jinja2~=3.1.5",  # NOTE: Versions prior to 3.1.5 have vuln exploits
@@ -51,9 +52,11 @@ dependencies = [
   "seaborn~=0.13.2",
   "setproctitle~=1.3.6",
   "soundfile~=0.13.1",
+  "starlette-compress>=1.0.1",
   "textual~=5.3.0",
   "tqdm>=4.67.1",
   "transformers>=4.56.0", # Lowest compatible version for dynamo backends
+  "uvicorn[standard]>=0.34,<1",
   "uvloop~=0.21.0; platform_system != 'Windows'",
   "zstandard>=0.25.0",
 ]
@@ -138,5 +141,5 @@ filterwarnings = [
 ]
 
 [tool.codespell]
-skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py"
+skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html"
 ignore-words-list = "timeslice,timeslices"

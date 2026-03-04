@@ -58,7 +58,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 #### `--category` `<str>`
 
 Category to explore.
-<br>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `ramp`, `record_processor`, `results_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `ramp`, `record_processor`, `results_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -104,7 +104,7 @@ For standard single-node benchmarking, use the `aiperf profile` command instead.
 #### `--type` `<str>` _(Required)_
 
 Service type to run.
-<br>_Choices: [`dataset_manager`, `gpu_telemetry_manager`, `record_processor`, `records_manager`, `server_metrics_manager`, `system_controller`, `timing_manager`, `worker`, `worker_manager`]_
+<br>_Choices: [`api`, `dataset_manager`, `gpu_telemetry_manager`, `record_processor`, `records_manager`, `server_metrics_manager`, `system_controller`, `timing_manager`, `worker`, `worker_manager`]_
 
 #### `--user-config-file` `<str>`
 
@@ -1014,6 +1014,15 @@ Number of `RecordProcessor` services to spawn for parallel metric computation. H
 Select the user interface type for displaying benchmark progress. `dashboard` shows real-time metrics in a Textual TUI, `simple` uses TQDM progress bars, `none` disables UI completely. Defaults to `dashboard` in interactive terminals, `none` when not a TTY (e.g., piped or redirected output). Automatically set to `simple` when using `--verbose` or `--extra-verbose` in a TTY.
 <br>_Choices: [`dashboard`, `none`, `simple`]_
 <br>_Default: `dashboard`_
+
+#### `--api-port` `<int>`
+
+AIPerf API port (enables HTTP + WebSocket endpoints).
+<br>_Constraints: ≥ 1, ≤ 65535_
+
+#### `--api-host` `<str>`
+
+AIPerf API host (requires --api-port or AIPERF_API_SERVER_PORT to be set).
 
 <hr>
 

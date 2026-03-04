@@ -10,6 +10,14 @@
       "title": "Schema Version",
       "type": "string"
     },
+    "api_router": {
+      "title": "API Router Plugins",
+      "type": "object",
+      "description": "API routers are lifecycle-managed components that extend BaseRouter.\nEach router participates in the full service lifecycle, with access\nto ZMQ communication, configuration, and async initialization.\nRouters expose HTTP/WebSocket endpoints via get_router() -> APIRouter.\nOne-to-many mapping: all registered routers are loaded.",
+      "additionalProperties": {
+        "$ref": "#/$defs/ApiRouterPlugin"
+      }
+    },
     "timing_strategy": {
       "title": "Timing Strategy Plugins",
       "type": "object",
@@ -214,6 +222,47 @@
   "title": "PluginsManifest",
   "type": "object",
   "$defs": {
+    "ApiRouterPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "API Router Plugin",
+      "description": "API routers are lifecycle-managed components that extend BaseRouter.\nEach router participates in the full service lifecycle, with access\nto ZMQ communication, configuration, and async initialization.\nRouters expose HTTP/WebSocket endpoints via get_router() -> APIRouter.\nOne-to-many mapping: all registered routers are loaded."
+    },
     "TimingStrategyPlugin": {
       "type": "object",
       "properties": {

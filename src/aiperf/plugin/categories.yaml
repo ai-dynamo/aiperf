@@ -21,6 +21,21 @@
 schema_version: "1.0"
 
 # =============================================================================
+# API Router Category
+# =============================================================================
+
+api_router:
+  protocol: aiperf.api.routers.base_router:BaseRouter
+  enum: APIRouterType
+  description: |
+    API routers are lifecycle-managed components that extend BaseRouter.
+    Each router participates in the full service lifecycle, with access
+    to ZMQ communication, configuration, and async initialization.
+    Routers expose HTTP/WebSocket endpoints via get_router() -> APIRouter.
+    One-to-many mapping: all registered routers are loaded.
+
+
+# =============================================================================
 # Timing Categories
 # =============================================================================
 

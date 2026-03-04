@@ -25,6 +25,14 @@ schema_version: "1.0"
 # Each service runs in a separate process and communicates via ZMQ message bus.
 # =============================================================================
 service:
+  api:
+    class: aiperf.api.api_service:FastAPIService
+    description: |
+      FastAPI-based API service for exposing benchmark metrics and real-time streaming.
+    metadata:
+      required: false
+      auto_start: false
+
   dataset_manager:
     class: aiperf.dataset.dataset_manager:DatasetManager
     description: |
@@ -114,6 +122,45 @@ service:
     metadata:
       required: true
       auto_start: true
+
+# =============================================================================
+# API Routers
+# =============================================================================
+# API routers provide HTTP/WebSocket endpoints for the FastAPI service.
+# One-to-many mapping: all registered routers are loaded at startup.
+# =============================================================================
+api_router:
+  core:
+    class: aiperf.api.routers.core:CoreRouter
+    description: Config, health, and readiness endpoints.
+
+  # dataset:
+  #   class: aiperf.api.routers.dataset:DatasetRouter
+  #   description: Dataset metadata and file streaming with compression support.
+
+  # metrics:
+  #   class: aiperf.api.routers.metrics:MetricsRouter
+  #   description: Real-time metrics state and Prometheus/JSON endpoints.
+
+  # progress:
+  #   class: aiperf.api.routers.progress:ProgressRouter
+  #   description: Benchmark progress tracking and /api/progress endpoint.
+
+  # results:
+  #   class: aiperf.api.routers.results:ResultsRouter
+  #   description: Final benchmark results and artifact file downloads.
+
+  # static:
+  #   class: aiperf.api.routers.static:StaticRouter
+  #   description: Static HTML file serving for dashboard and index pages.
+
+  # websocket:
+  #   class: aiperf.api.routers.websocket:WebSocketRouter
+  #   description: WebSocket endpoint for real-time ZMQ message streaming.
+
+  # workers:
+  #   class: aiperf.api.routers.workers:WorkersRouter
+  #   description: Worker health tracking and /api/workers endpoint.
 
 # =============================================================================
 # Service Managers
