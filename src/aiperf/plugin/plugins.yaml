@@ -25,6 +25,14 @@ schema_version: "1.0"
 # Each service runs in a separate process and communicates via ZMQ message bus.
 # =============================================================================
 service:
+  api:
+    class: aiperf.api.api_service:FastAPIService
+    description: |
+      FastAPI-based API service for exposing benchmark metrics and real-time streaming.
+    metadata:
+      required: false
+      auto_start: false
+
   dataset_manager:
     class: aiperf.dataset.dataset_manager:DatasetManager
     description: |
@@ -114,6 +122,45 @@ service:
     metadata:
       required: true
       auto_start: true
+
+# =============================================================================
+# API Routers
+# =============================================================================
+# API routers provide HTTP/WebSocket endpoints for the FastAPI service.
+# One-to-many mapping: all registered routers are loaded at startup.
+# =============================================================================
+api_router:
+  core:
+    class: aiperf.api.routers.core:CoreRouter
+    description: Config, health, and readiness endpoints.
+
+  # dataset:
+  #   class: aiperf.api.routers.dataset:DatasetRouter
+  #   description: Dataset metadata and file streaming with compression support.
+
+  # metrics:
+  #   class: aiperf.api.routers.metrics:MetricsRouter
+  #   description: Real-time metrics state and Prometheus/JSON endpoints.
+
+  # progress:
+  #   class: aiperf.api.routers.progress:ProgressRouter
+  #   description: Benchmark progress tracking and /api/progress endpoint.
+
+  # results:
+  #   class: aiperf.api.routers.results:ResultsRouter
+  #   description: Final benchmark results and artifact file downloads.
+
+  # static:
+  #   class: aiperf.api.routers.static:StaticRouter
+  #   description: Static HTML file serving for dashboard and index pages.
+
+  # websocket:
+  #   class: aiperf.api.routers.websocket:WebSocketRouter
+  #   description: WebSocket endpoint for real-time ZMQ message streaming.
+
+  # workers:
+  #   class: aiperf.api.routers.workers:WorkersRouter
+  #   description: Worker health tracking and /api/workers endpoint.
 
 # =============================================================================
 # Service Managers
@@ -263,6 +310,19 @@ endpoint:
       requires_polling: true
       metrics_title: Video Generation Metrics
 
+  image_retrieval:
+    class: aiperf.endpoints.nim_image_retrieval:ImageRetrievalEndpoint
+    description: |
+      NIM Image Retrieval endpoint. Sends images to NIM-based image inference
+      services for retrieval tasks such as bounding box detection. Uses /v1/infer path.
+    metadata:
+      endpoint_path: /v1/infer
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: false
+      supports_images: true
+      metrics_title: Image Retrieval Metrics
+
   nim_embeddings:
     class: aiperf.endpoints.nim_embeddings:NIMEmbeddingsEndpoint
     description: |
@@ -366,11 +426,27 @@ dataset_composer:
 # Auto-detection: the custom composer tries loaders in priority order based on can_load().
 # =============================================================================
 custom_dataset_loader:
+  bailian_trace:
+    class: aiperf.dataset.loader.bailian_trace:BailianTraceDatasetLoader
+    description: |
+      Alibaba Bailian trace dataset loader for Qwen model serving traces from
+      https://github.com/alibaba-edu/qwen-bailian-usagetraces-anon.
+      Loads JSONL traces with chat_id, parent_chat_id (-1 for root), timestamp
+      (seconds), input/output lengths, turn numbers, and hash_ids for salted
+      SipHash block-based prompt caching (block_size=16). Supports multi-turn
+      conversation chains and fixed_schedule timing mode.
+    metadata:
+      is_trace: true
+      default_block_size: 16
+
   mooncake_trace:
     class: aiperf.dataset.loader.mooncake_trace:MooncakeTraceDatasetLoader
     description: |
       Mooncake trace dataset loader for loading Alibaba Mooncake trace format with
       timestamp-based replay support. Designed for fixed_schedule timing mode.
+    metadata:
+      is_trace: true
+      default_block_size: 512
 
   multi_turn:
     class: aiperf.dataset.loader.multi_turn:MultiTurnDatasetLoader

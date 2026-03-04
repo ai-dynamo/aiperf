@@ -58,7 +58,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 #### `--category` `<str>`
 
 Category to explore.
-<br>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `ramp`, `record_processor`, `results_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `ramp`, `record_processor`, `results_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -104,7 +104,7 @@ For standard single-node benchmarking, use the `aiperf profile` command instead.
 #### `--type` `<str>` _(Required)_
 
 Service type to run.
-<br>_Choices: [`dataset_manager`, `gpu_telemetry_manager`, `record_processor`, `records_manager`, `server_metrics_manager`, `system_controller`, `timing_manager`, `worker`, `worker_manager`]_
+<br>_Choices: [`api`, `dataset_manager`, `gpu_telemetry_manager`, `record_processor`, `records_manager`, `server_metrics_manager`, `system_controller`, `timing_manager`, `worker`, `worker_manager`]_
 
 #### `--user-config-file` `<str>`
 
@@ -183,7 +183,7 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 #### `--endpoint-type` `<str>`
 
 The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br>_Choices: [`chat`, `cohere_rankings`, `completions`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
+<br>_Choices: [`chat`, `cohere_rankings`, `completions`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
 <br>_Default: `chat`_
 
 #### `--streaming`
@@ -258,11 +258,11 @@ Custom HTTP headers to include with every request. Specify as `Header:Value` pai
 
 #### `--input-file` `<str>`
 
-Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL trace files for `mooncake_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
+Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
 
 #### `--fixed-schedule`
 
-Run requests according to timestamps specified in the input dataset. When enabled, AIPerf replays the exact timing pattern from the dataset. This mode is automatically enabled for `mooncake_trace` datasets.
+Run requests according to timestamps specified in the input dataset. When enabled, AIPerf replays the exact timing pattern from the dataset. This mode is automatically enabled for trace datasets.
 <br>_Flag (no value required)_
 
 #### `--fixed-schedule-auto-offset`
@@ -292,8 +292,8 @@ Pre-configured public dataset to download and use for benchmarking (e.g., `share
 
 #### `--custom-dataset-type` `<str>`
 
-Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace` (timestamped trace files), `random_pool` (directory of reusable prompts). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br>_Choices: [`mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`]_
+Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
+<br>_Choices: [`bailian_trace`, `mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -512,8 +512,7 @@ Standard deviation for synthetic input prompt token lengths. Creates variability
 
 #### `--prompt-input-tokens-block-size`, `--synthetic-input-tokens-block-size`, `--isl-block-size` `<int>`
 
-Token block size for hash-based prompt caching in `mooncake_trace` datasets. When `hash_ids` are provided in trace entries, prompts are divided into blocks of this size. Each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`.
-<br>_Default: `512`_
+Token block size for hash-based prompt caching in trace datasets (`mooncake_trace`, `bailian_trace`). When `hash_ids` are provided in trace entries, prompts are divided into blocks of this size. Each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. When not set, the trace loader's `default_block_size` from plugin metadata is used (e.g. 16 for `bailian_trace`, 512 for `mooncake_trace`).
 
 #### `--seq-dist`, `--sequence-distribution` `<str>`
 
@@ -1015,6 +1014,15 @@ Number of `RecordProcessor` services to spawn for parallel metric computation. H
 Select the user interface type for displaying benchmark progress. `dashboard` shows real-time metrics in a Textual TUI, `simple` uses TQDM progress bars, `none` disables UI completely. Defaults to `dashboard` in interactive terminals, `none` when not a TTY (e.g., piped or redirected output). Automatically set to `simple` when using `--verbose` or `--extra-verbose` in a TTY.
 <br>_Choices: [`dashboard`, `none`, `simple`]_
 <br>_Default: `dashboard`_
+
+#### `--api-port` `<int>`
+
+AIPerf API port (enables HTTP + WebSocket endpoints).
+<br>_Constraints: ≥ 1, ≤ 65535_
+
+#### `--api-host` `<str>`
+
+AIPerf API host (requires --api-port or AIPERF_API_SERVER_PORT to be set).
 
 <hr>
 

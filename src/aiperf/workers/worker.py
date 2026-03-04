@@ -163,8 +163,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
         self.attach_child_lifecycle(self.inference_client)
         self.debug(
-            lambda: f"Created inference client for {self.model_endpoint.endpoint.type}, "
-            f"class: {self.inference_client.__class__.__name__}",
+            lambda: (
+                f"Created inference client for {self.model_endpoint.endpoint.type}, "
+                f"class: {self.inference_client.__class__.__name__}"
+            ),
         )
 
         # Identity must be unique - ZMQ ROUTER uses it to address messages to specific
@@ -233,7 +235,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         await self._dataset_client.initialize()
         self._dataset_configured_event.set()
         self.debug(
-            lambda: f"Dataset client initialized: type={msg.client_metadata.client_type}"
+            lambda: (
+                f"Dataset client initialized: type={msg.client_metadata.client_type}"
+            )
         )
 
     @on_stop
@@ -244,7 +248,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 WorkerShutdown(worker_id=self.service_id)
             )
             self.debug(
-                lambda: f"Sent WorkerShutdown for graceful disconnect ({self.service_id})"
+                lambda: (
+                    f"Sent WorkerShutdown for graceful disconnect ({self.service_id})"
+                )
             )
         except Exception as e:
             self.warning(
@@ -322,8 +328,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Credit was NOT returned - this means the task was cancelled before it started
         # or failed in some way that prevented the finally block from sending the return
         self.debug(
-            lambda id=credit_id: f"Credit {id} task done but NOT returned! "
-            f"Task likely was cancelled before finally block could execute. Returning now."
+            lambda id=credit_id: (
+                f"Credit {id} task done but NOT returned! "
+                f"Task likely was cancelled before finally block could execute. Returning now."
+            )
         )
 
         # Update credit_context with cancellation status
@@ -353,7 +361,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 task.cancel()
             else:
                 self.debug(
-                    lambda id=credit_id: f"Task for credit {id} not found (already completed?)"
+                    lambda id=credit_id: (
+                        f"Task for credit {id} not found (already completed?)"
+                    )
                 )
 
     async def _on_credit_drop_message_task(self, credit_context: CreditContext) -> None:

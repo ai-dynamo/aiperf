@@ -602,7 +602,9 @@ class TestSyntheticDatasetComposer:
         # Simulate missing tokenizer in generator
         composer.prompt_generator = None
 
-        with pytest.raises(AttributeError):
+        with pytest.raises(
+            ValueError, match="Text prompt generation requires a tokenizer"
+        ):
             composer.create_dataset()
 
     def test_reproducibility_with_fixed_seed(self, multimodal_config, mock_tokenizer):

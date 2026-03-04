@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Literal, TypeVar
+from typing import Any, Literal, TypeVar
 
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.common.models import AIPerfBaseModel, Audio, Image, Text, Video
 from aiperf.plugin.enums import CustomDatasetType
@@ -190,29 +190,35 @@ class MooncakeTrace(AIPerfBaseModel):
 
     See https://github.com/kvcache-ai/Mooncake for more details.
 
+    Supports three input modes (exactly one required):
+    - input_length: Synthetic text generated from token count (optionally with hash_ids)
+    - text_input: Literal text string sent as the prompt
+    - messages: List of OpenAI-compatible message dicts sent directly to the API
+
     Examples:
     - Minimal: {"input_length": 10, "hash_ids": [123]}
     - With input_length: {"input_length": 10, "output_length": 4}
     - With text_input: {"text_input": "Hello world", "output_length": 4}
+    - With messages: {"messages": [{"role": "user", "content": "Hello"}], "output_length": 4}
     - With timestamp and hash ID: {"timestamp": 1000, "input_length": 10, "hash_ids": [123]}
-
-    Note:
-    Only one of the following input combinations is allowed:
-    - text_input only (uses text input directly)
-    - input_length only (uses input length to generate synthetic text input)
-    - input_length and hash_ids (uses input length and hash ids to generate reproducible synthetic text input)
     """
 
     type: Literal[CustomDatasetType.MOONCAKE_TRACE] = CustomDatasetType.MOONCAKE_TRACE
-
-    # Exactly one of input_length or text_input must be provided
     input_length: int | None = Field(
         None,
-        description="The input sequence length of a request. Required if text_input is not provided.",
+        description="The input sequence length of a request. Required if text_input and messages are not provided.",
     )
     text_input: str | None = Field(
         None,
-        description="The actual text input for the request. Required if input_length is not provided.",
+        description="The actual text input for the request.",
+    )
+    messages: list[dict[str, Any]] | None = Field(
+        None,
+        description="List of OpenAI-compatible message dicts (each must have a 'role' key) sent directly to the API.",
+    )
+    tools: list[dict[str, Any]] | None = Field(
+        None,
+        description="List of OpenAI-compatible tool definitions. Only allowed when 'messages' is provided.",
     )
 
     # Optional fields
@@ -234,24 +240,104 @@ class MooncakeTrace(AIPerfBaseModel):
 
     @model_validator(mode="after")
     def validate_input(self) -> "MooncakeTrace":
-        """Validate that either input_length or text_input is provided."""
-        if self.input_length is None and self.text_input is None:
-            raise ValueError("Either 'input_length' or 'text_input' must be provided")
-
-        if self.input_length is not None and self.text_input is not None:
+        """Validate that exactly one input mode is provided."""
+        input_modes = [
+            self.input_length is not None,
+            self.text_input is not None,
+            self.messages is not None,
+        ]
+        input_mode_count = sum(input_modes)
+        if input_mode_count == 0:
             raise ValueError(
-                "'input_length' and 'text_input' cannot be provided together. Use only one of them."
+                "Exactly one of 'input_length', 'text_input', or 'messages' must be provided"
+            )
+        if input_mode_count > 1:
+            raise ValueError(
+                "'input_length', 'text_input', and 'messages' are mutually exclusive. Use only one of them."
             )
 
         if self.hash_ids is not None and self.input_length is None:
             raise ValueError(
-                "'hash_ids' is only allowed when 'input_length' is provided, not when 'text_input' is provided"
+                "'hash_ids' is only allowed when 'input_length' is provided, not when 'text_input' or 'messages' are provided"
             )
 
         return self
 
+    @model_validator(mode="after")
+    def validate_messages(self) -> "MooncakeTrace":
+        """Validate the messages and tools field structure."""
+        if self.tools is not None:
+            if self.messages is None:
+                raise ValueError("'tools' is only allowed when 'messages' is provided")
+            if not self.tools:
+                raise ValueError("'tools' must be a non-empty list")
+
+        if self.messages is None:
+            return self
+
+        if not self.messages:
+            raise ValueError("'messages' must be a non-empty list")
+
+        for i, msg in enumerate(self.messages):
+            if not isinstance(msg, dict) or "role" not in msg:
+                raise ValueError(
+                    f"Each message must have a 'role' key, but message at index {i} does not"
+                )
+
+        return self
+
+
+class BailianTrace(AIPerfBaseModel):
+    """Defines the schema for Alibaba Bailian trace data.
+
+    See https://github.com/alibaba-edu/qwen-bailian-usagetraces-anon for the
+    upstream dataset and full documentation.
+
+    Each entry represents a single request in a conversation chain. Multi-turn
+    conversations are linked via ``chat_id`` and ``parent_chat_id``: entries
+    sharing the same root ``chat_id`` (reachable through ``parent_chat_id``)
+    belong to the same session and are ordered by ``turn``.
+
+    Important: Bailian traces use a block size of 16 tokens per salted SipHash
+    block.  Use ``--isl-block-size 16`` when using this format (this is set
+    automatically in CLI flows).
+
+    Examples:
+    - Root request:  ``{"chat_id": 159, "parent_chat_id": -1, "timestamp": 61.114, "input_length": 521, "output_length": 132, "type": "text", "turn": 1, "hash_ids": [1089, 1090, 1091]}``
+    - Follow-up:     ``{"chat_id": 160, "parent_chat_id": 159, "timestamp": 62.5, "input_length": 400, "output_length": 80, "type": "text", "turn": 2, "hash_ids": [1089, 1090]}``
+
+    Note:
+    The ``type`` field in Bailian JSONL is the request type (text/search/image/file),
+    not the dataset type. Use ``--custom-dataset-type bailian_trace`` when loading
+    this format.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    chat_id: int = Field(description="Randomized chat identifier")
+    parent_chat_id: int = Field(
+        default=-1,
+        description="Parent chat ID for multi-turn conversation chains. -1 indicates a root request.",
+    )
+    timestamp: float = Field(
+        description="Seconds since request arrival. Converted to milliseconds internally.",
+    )
+    input_length: int = Field(description="Input token count")
+    output_length: int = Field(description="Output token count")
+    request_type: str = Field(
+        default="",
+        alias="type",
+        description="Request type from the trace (text/search/image/file). Aliased from 'type' in JSONL.",
+    )
+    turn: int = Field(default=1, description="Conversation turn number")
+    hash_ids: list[int] = Field(
+        default_factory=list,
+        description="Salted SipHash block IDs (16 tokens per block)",
+    )
+
 
 CustomDatasetT = TypeVar(
-    "CustomDatasetT", bound=SingleTurn | MultiTurn | RandomPool | MooncakeTrace
+    "CustomDatasetT",
+    bound=SingleTurn | MultiTurn | RandomPool | MooncakeTrace | BailianTrace,
 )
 """A union type of all custom data types."""

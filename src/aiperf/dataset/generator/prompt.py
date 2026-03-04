@@ -7,6 +7,7 @@ from pathlib import Path
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config import PromptConfig
+from aiperf.common.config.config_defaults import InputTokensDefaults
 from aiperf.common.exceptions import (
     ConfigurationError,
     InvalidStateError,
@@ -166,9 +167,12 @@ class PromptGenerator(BaseGenerator):
             A synthetic prompt as a string.
         """
         if hash_ids:
-            return self._generate_cached_prompt(
-                mean, hash_ids, self.config.input_tokens.block_size
+            if mean is None:
+                raise ValueError("mean must be provided when hash_ids is set.")
+            block_size = (
+                self.config.input_tokens.block_size or InputTokensDefaults.BLOCK_SIZE
             )
+            return self._generate_cached_prompt(mean, hash_ids, block_size)
 
         num_tokens = self.calculate_num_tokens(mean, stddev)
         return self.generate_prompt(num_tokens)

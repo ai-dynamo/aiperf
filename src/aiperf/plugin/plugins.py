@@ -26,6 +26,7 @@ from aiperf.plugin.constants import (
 )
 from aiperf.plugin.extensible_enums import ExtensibleStrEnum, _normalize_name
 from aiperf.plugin.schema.schemas import (
+    CustomDatasetLoaderMetadata,
     EndpointMetadata,
     PlotMetadata,
     PluginsManifest,
@@ -923,6 +924,7 @@ if TYPE_CHECKING:
     # fmt: off
     # ruff: noqa: I001
     from aiperf.accuracy.protocols import AccuracyBenchmarkProtocol, AccuracyGraderProtocol
+    from aiperf.api.routers.base_router import BaseRouter
     from aiperf.common.protocols import CommunicationClientProtocol, CommunicationProtocol, ServiceProtocol
     from aiperf.controller.protocols import ServiceManagerProtocol
     from aiperf.dataset.composer.base import BaseDatasetComposer
@@ -931,7 +933,7 @@ if TYPE_CHECKING:
     from aiperf.exporters.protocols import ConsoleExporterProtocol, DataExporterProtocol
     from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
     from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerProtocol
-    from aiperf.plugin.enums import AccuracyBenchmarkType, AccuracyGraderType, ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, RampType, RecordProcessorType, ResultsProcessorType, ServiceRunType, ServiceType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
+    from aiperf.plugin.enums import APIRouterType, AccuracyBenchmarkType, AccuracyGraderType, ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, RampType, RecordProcessorType, ResultsProcessorType, ServiceRunType, ServiceType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
     from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
     from aiperf.post_processors.protocols import RecordProcessorProtocol
     from aiperf.timing.intervals import IntervalGeneratorProtocol
@@ -944,6 +946,10 @@ if TYPE_CHECKING:
     from typing import Literal, overload
     # </generated-imports>
     # <generated-overloads>
+    @overload
+    def get_class(category: Literal[PluginType.API_ROUTER, "api_router"], name_or_class_path: APIRouterType | str) -> type[BaseRouter]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.API_ROUTER, "api_router"]) -> Iterator[tuple[PluginEntry, type[BaseRouter]]]: ...
     @overload
     def get_class(category: Literal[PluginType.TIMING_STRATEGY, "timing_strategy"], name_or_class_path: TimingMode | str) -> type[TimingStrategyProtocol]: ...
     @overload
@@ -1165,12 +1171,39 @@ def get_service_metadata(name: str) -> ServiceMetadata:
     return get_entry("service", name).get_typed_metadata(ServiceMetadata)
 
 
+def get_dataset_loader_metadata(name: str) -> CustomDatasetLoaderMetadata:
+    """Get typed metadata for a custom dataset loader plugin.
+
+    Args:
+        name: Dataset loader plugin name (e.g., 'mooncake_trace', 'bailian_trace').
+
+    Returns:
+        Validated CustomDatasetLoaderMetadata instance.
+    """
+    return get_entry("custom_dataset_loader", name).get_typed_metadata(
+        CustomDatasetLoaderMetadata
+    )
+
+
+def is_trace_dataset(name: str) -> bool:
+    """Check if a custom dataset loader is a trace-format dataset.
+
+    Args:
+        name: Dataset loader plugin name (e.g., 'mooncake_trace', 'single_turn').
+
+    Returns:
+        True if the loader handles trace-format datasets.
+    """
+    return get_dataset_loader_metadata(name).is_trace
+
+
 # Mapping of categories to their metadata classes (for categories with typed metadata)
 _CATEGORY_METADATA_CLASSES: dict[str, type] = {
     "endpoint": EndpointMetadata,
     "transport": TransportMetadata,
     "plot": PlotMetadata,
     "service": ServiceMetadata,
+    "custom_dataset_loader": CustomDatasetLoaderMetadata,
 }
 
 

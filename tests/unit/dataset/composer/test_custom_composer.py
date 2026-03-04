@@ -64,7 +64,7 @@ class TestCoreFunctionality:
         composer._create_loader_instance(dataset_type)
         assert isinstance(composer.loader, expected_instance)
 
-    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
+    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
     def test_create_dataset_trace(
@@ -80,7 +80,7 @@ class TestCoreFunctionality:
         assert all(isinstance(turn, Turn) for c in conversations for turn in c.turns)
         assert all(len(turn.texts) == 1 for c in conversations for turn in c.turns)
 
-    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
+    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
     def test_max_tokens_config(
@@ -104,7 +104,7 @@ class TestCoreFunctionality:
                 # Should be roughly around the mean of 120 (within 3 stddev)
                 assert 96 < turn.max_tokens < 144
 
-    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
+    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
     @patch("pathlib.Path.iterdir", return_value=[])
@@ -205,13 +205,22 @@ class TestSamplingStrategy:
 class TestSynthesisValidation:
     """Test class for synthesis configuration validation."""
 
-    def test_synthesis_allowed_with_mooncake_trace(self, trace_config, mock_tokenizer):
-        """Test that synthesis options are allowed with mooncake_trace dataset type."""
+    @pytest.mark.parametrize(
+        "dataset_type",
+        [
+            CustomDatasetType.MOONCAKE_TRACE,
+            CustomDatasetType.BAILIAN_TRACE,
+        ],
+    )
+    def test_synthesis_allowed_with_trace_datasets(
+        self, trace_config, mock_tokenizer, dataset_type
+    ):
+        """Test that synthesis options are allowed with trace dataset types."""
         trace_config.input.synthesis = SynthesisConfig(speedup_ratio=2.0)
         composer = CustomDatasetComposer(trace_config, mock_tokenizer)
 
         # Should not raise
-        composer._validate_synthesis_config(CustomDatasetType.MOONCAKE_TRACE)
+        composer._validate_synthesis_config(dataset_type)
 
     @pytest.mark.parametrize(
         "dataset_type",
@@ -221,17 +230,17 @@ class TestSynthesisValidation:
             CustomDatasetType.RANDOM_POOL,
         ],
     )
-    def test_synthesis_raises_error_with_non_mooncake_types(
+    def test_synthesis_raises_error_with_non_trace_types(
         self, custom_config, mock_tokenizer, dataset_type
     ):
-        """Test that synthesis options raise error with non-mooncake dataset types."""
+        """Test that synthesis options raise error with non-trace dataset types."""
         custom_config.input.synthesis = SynthesisConfig(speedup_ratio=2.0)
         composer = CustomDatasetComposer(custom_config, mock_tokenizer)
 
         with pytest.raises(ValueError) as exc:
             composer._validate_synthesis_config(dataset_type)
 
-        assert "only supported with mooncake_trace" in str(exc.value)
+        assert "only supported with trace datasets" in str(exc.value)
         assert dataset_type.value in str(exc.value)
 
     @pytest.mark.parametrize(
@@ -253,7 +262,7 @@ class TestSynthesisValidation:
         with pytest.raises(ValueError) as exc:
             composer._validate_synthesis_config(CustomDatasetType.SINGLE_TURN)
 
-        assert "only supported with mooncake_trace" in str(exc.value)
+        assert "only supported with trace datasets" in str(exc.value)
 
     def test_default_synthesis_allowed_with_any_type(
         self, custom_config, mock_tokenizer

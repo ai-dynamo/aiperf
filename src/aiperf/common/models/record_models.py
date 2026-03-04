@@ -715,6 +715,18 @@ class RankingsResponseData(BaseResponseData):
     )
 
 
+class ImageRetrievalResponseData(BaseResponseData):
+    """Parsed image retrieval response data."""
+
+    data: list[dict[str, Any]] = Field(
+        ..., description="The image retrieval data from the response."
+    )
+
+    def get_text(self) -> str:
+        """Get the text of the response (empty for image retrieval)."""
+        return ""
+
+
 class ImageDataItem(AIPerfBaseModel):
     """Parsed image item response data."""
 
@@ -839,6 +851,7 @@ class ParsedResponse(AIPerfBaseModel):
         | TextResponseData
         | EmbeddingResponseData
         | RankingsResponseData
+        | ImageRetrievalResponseData
         | ImageResponseData
         | VideoResponseData
         | BaseResponseData

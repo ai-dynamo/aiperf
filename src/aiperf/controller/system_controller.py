@@ -232,6 +232,13 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.info("Server metrics disabled via --no-server-metrics")
             self._should_wait_for_server_metrics = False
 
+        # Start AIPerf API if enabled
+        api_port = self.service_config.api_port or Environment.API_SERVER.PORT
+        api_host = self.service_config.api_host or Environment.API_SERVER.HOST
+        if api_port is not None and api_host is not None:
+            self.info(f"Starting AIPerf API server at http://{api_host}:{api_port}/")
+            await self.service_manager.run_service(ServiceType.API)
+
         async with self.try_operation_or_stop("Register Services"):
             await self.service_manager.wait_for_all_services_registration(
                 stop_event=self._stop_requested_event,

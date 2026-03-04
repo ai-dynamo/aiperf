@@ -87,7 +87,7 @@ class AIPerfTextualApp(App):
         ("escape", "restore_all_panels", "Restore View"),
         Binding("ctrl+s", "screenshot", "Save Screenshot", show=False),
         Binding("l", "toggle_hide_log_viewer", "Toggle Logs", show=False),
-        Binding("c", "copy_logs", "Copy Logs", show=False),
+        Binding("c", "copy_logs", "Copy Logs"),
     ]
 
     def __init__(
