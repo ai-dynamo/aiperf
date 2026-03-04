@@ -28,7 +28,7 @@ API server settings. Controls the host and port of the API server.
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
 | `AIPERF_API_SERVER_HOST` | `'127.0.0.1'` | — | Host to bind the API server to |
-| `AIPERF_API_SERVER_PORT` | `None` | — | Port to bind the API server to |
+| `AIPERF_API_SERVER_PORT` | `None` | ≥ 1, ≤ 65535 | Port to bind the API server to |
 | `AIPERF_API_SERVER_CORS_ORIGINS` | `[]` | — | List of CORS origins to allow (empty = no CORS, ['*'] = all origins) |
 | `AIPERF_API_SERVER_SHUTDOWN_TIMEOUT` | `5.0` | ≥ 1.0, ≤ 300.0 | Timeout in seconds for graceful API server shutdown before force-cancelling |
 

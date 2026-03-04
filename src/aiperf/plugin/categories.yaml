@@ -25,11 +25,13 @@ schema_version: "1.0"
 # =============================================================================
 
 api_router:
-  protocol: fastapi.routing:APIRouter
+  protocol: aiperf.api.routers.base_router:BaseRouter
   enum: APIRouterType
   description: |
-    API routers provide HTTP/WebSocket endpoints for the FastAPI service.
-    Each router is a FastAPI APIRouter instance included at startup.
+    API routers are lifecycle-managed components that extend BaseRouter.
+    Each router participates in the full service lifecycle, with access
+    to ZMQ communication, configuration, and async initialization.
+    Routers expose HTTP/WebSocket endpoints via get_router() -> APIRouter.
     One-to-many mapping: all registered routers are loaded.
 
 
@@ -99,6 +101,7 @@ dataset_composer:
 
 custom_dataset_loader:
   protocol: aiperf.dataset.protocols:CustomDatasetLoaderProtocol
+  metadata_class: aiperf.plugin.schema.schemas:CustomDatasetLoaderMetadata
   enum: CustomDatasetType
   description: |
     Custom dataset loaders parse different JSONL file formats into conversations.

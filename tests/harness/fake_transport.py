@@ -24,6 +24,7 @@ from aiperf_mock_server.app import (
     _build_embedding_response_data,
     _build_hf_tei_ranking_response_data,
     _build_image_response_data,
+    _build_image_retrieval_response_data,
     _build_nim_ranking_response_data,
     _build_solido_rag_response_data,
     _build_tgi_response_data,
@@ -38,6 +39,7 @@ from aiperf_mock_server.models import (
     EmbeddingRequest,
     HFTEIRerankRequest,
     ImageGenerationRequest,
+    ImageRetrievalRequest,
     RankingRequest,
     SolidoRAGRequest,
     TGIGenerateRequest,
@@ -341,6 +343,8 @@ class FakeTransport(BaseTransport):
                     self._do_simple,
                     build_response=_build_image_response_data,
                 )
+            case EndpointType.IMAGE_RETRIEVAL:
+                return await self._do_image_retrieval(payload)
             case EndpointType.HUGGINGFACE_GENERATE:
                 return await self._dispatch(
                     payload,
@@ -408,6 +412,19 @@ class FakeTransport(BaseTransport):
         )
         return self._make_json_record(
             inp.start_perf_ns, inp.build_response(inp.ctx, ranked_scores)
+        )
+
+    async def _do_image_retrieval(self, payload: RequestInputT) -> RequestRecord:
+        """Handle image retrieval requests (bypasses _dispatch since no ctx needed)."""
+        start_perf_ns = time.perf_counter_ns()
+        req = self._parse_payload(payload, ImageRetrievalRequest)
+        await _wait_for_processing(
+            self.config.image_retrieval_base_latency,
+            self.config.image_retrieval_per_image_latency,
+            len(req.input),
+        )
+        return self._make_json_record(
+            start_perf_ns, _build_image_retrieval_response_data(req)
         )
 
 

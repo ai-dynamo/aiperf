@@ -138,6 +138,10 @@ class FastAPIService(BaseComponentService):
     @on_start
     async def _start_api_server(self) -> None:
         """Start the FastAPI server."""
+        if self.api_port is None:
+            raise ValueError(
+                "API port is not configured. Set --api-port or AIPERF_API_SERVER_PORT."
+            )
         config = uvicorn.Config(
             self.app,
             host=self.api_host,
@@ -159,7 +163,7 @@ class FastAPIService(BaseComponentService):
             )
         )
 
-    def _on_server_task_done(self, task: asyncio.Task) -> None:
+    def _on_server_task_done(self, task: asyncio.Task[None]) -> None:
         """Surface unhandled server errors and trigger graceful shutdown."""
         if task.cancelled():
             return
@@ -188,7 +192,7 @@ class FastAPIService(BaseComponentService):
                         timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT,
                     )
             except asyncio.CancelledError:
-                pass
+                raise
 
         self.info("AIPerf FastAPI server stopped")
 

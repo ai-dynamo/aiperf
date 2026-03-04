@@ -3,7 +3,10 @@
 
 import sys
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
+
+if TYPE_CHECKING:
+    from aiperf.plugin.schema.schemas import EndpointMetadata
 
 from orjson import JSONDecodeError
 from pydantic import BeforeValidator, Field, model_validator
@@ -26,9 +29,9 @@ from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
 from aiperf.common.enums import GPUTelemetryMode, ServerMetricsFormat
 from aiperf.common.utils import load_json_str
+from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     ArrivalPattern,
-    CustomDatasetType,
     EndpointType,
     GPUTelemetryCollectorType,
     TimingMode,
@@ -65,6 +68,17 @@ class UserConfig(BaseConfig):
     """
 
     _timing_mode: TimingMode = TimingMode.REQUEST_RATE
+
+    def _endpoint_metadata(self) -> "EndpointMetadata":
+        """Get the endpoint metadata for the current endpoint type."""
+        try:
+            return self._cached_endpoint_metadata
+        except AttributeError:
+            from aiperf.plugin import plugins
+
+            meta = plugins.get_endpoint_metadata(self.endpoint.type)
+            self._cached_endpoint_metadata = meta
+            return meta
 
     @model_validator(mode="after")
     def validate_cli_args(self) -> Self:
@@ -104,10 +118,10 @@ class UserConfig(BaseConfig):
                 _logger.info(
                     f"No request count value provided for fixed schedule mode, setting to dataset entry count: {self.loadgen.request_count}"
                 )
-        elif self._should_use_fixed_schedule_for_mooncake_trace():
+        elif self._should_use_fixed_schedule_for_trace_dataset():
             self._timing_mode = TimingMode.FIXED_SCHEDULE
             _logger.info(
-                "Automatically enabling fixed schedule mode for mooncake_trace dataset with timestamps"
+                f"Automatically enabling fixed schedule mode for {self.input.custom_dataset_type} dataset with timestamps"
             )
             if (
                 self.loadgen.request_count is None
@@ -115,7 +129,7 @@ class UserConfig(BaseConfig):
             ):
                 self.loadgen.request_count = self._count_dataset_entries()
                 _logger.info(
-                    f"No request count value provided for mooncake trace dataset, setting to dataset entry count: {self.loadgen.request_count}"
+                    f"No request count value provided for trace dataset, setting to dataset entry count: {self.loadgen.request_count}"
                 )
         elif self.loadgen.user_centric_rate is not None:
             # User-centric rate mode: per-user rate limiting (LMBenchmark parity)
@@ -334,13 +348,15 @@ class UserConfig(BaseConfig):
 
         return self
 
-    def _should_use_fixed_schedule_for_mooncake_trace(self) -> bool:
-        """Check if mooncake_trace dataset has timestamps and should use fixed schedule.
+    def _should_use_fixed_schedule_for_trace_dataset(self) -> bool:
+        """Check if a trace dataset has timestamps and should use fixed schedule.
 
         Returns:
-            bool: True if fixed schedule should be enabled for this mooncake trace
+            True if fixed schedule should be enabled for this trace dataset.
         """
-        if self.input.custom_dataset_type != CustomDatasetType.MOONCAKE_TRACE:
+        if self.input.custom_dataset_type is None or not plugins.is_trace_dataset(
+            self.input.custom_dataset_type
+        ):
             return False
 
         if not self.input.file:
@@ -711,10 +727,7 @@ class UserConfig(BaseConfig):
 
     def _get_artifact_service_kind(self) -> str:
         """Get the service kind name based on the endpoint config."""
-        # Lazy import to avoid circular dependency
-        from aiperf.plugin import plugins
-
-        metadata = plugins.get_endpoint_metadata(self.endpoint.type)
+        metadata = self._endpoint_metadata()
         return f"{metadata.service_kind}-{self.endpoint.type}"
 
     def _get_artifact_stimulus(self) -> str:
@@ -956,6 +969,71 @@ class UserConfig(BaseConfig):
                 f"Rankings endpoints: ({', '.join(rankings_endpoints)})."
                 "Please use only one set of options."
             )
+        return self
+
+    @model_validator(mode="after")
+    def default_no_text_for_non_tokenizing_endpoints(self) -> Self:
+        """Reject explicit text options and zero out text defaults for non-tokenizing
+        endpoints (e.g., image_retrieval)."""
+        metadata = self._endpoint_metadata()
+        if metadata.tokenizes_input:
+            return self
+
+        def err(option: str) -> ValueError:
+            return ValueError(
+                f"{option} cannot be used with "
+                f"--endpoint-type {self.endpoint.type} because it does not "
+                "support text input."
+            )
+
+        if (
+            "mean" in self.input.prompt.input_tokens.model_fields_set
+            and self.input.prompt.input_tokens.mean > 0
+        ):
+            raise err("--synthetic-input-tokens-mean")
+        else:
+            self.input.prompt.input_tokens.mean = 0
+
+        if (
+            "stddev" in self.input.prompt.input_tokens.model_fields_set
+            and self.input.prompt.input_tokens.stddev > 0
+        ):
+            raise err("--synthetic-input-tokens-stddev")
+        else:
+            self.input.prompt.input_tokens.stddev = 0
+
+        if (
+            "batch_size" in self.input.prompt.model_fields_set
+            and self.input.prompt.batch_size > 0
+        ):
+            raise err("--batch-size-text")
+        else:
+            self.input.prompt.batch_size = 0
+
+        if self.input.prompt.sequence_distribution is not None:
+            raise err("--sequence-distribution")
+
+        if self.input.prompt.prefix_prompt.model_fields_set:
+            raise err("Prefix prompt options")
+
+        return self
+
+    @model_validator(mode="after")
+    def reject_tokenizer_for_non_token_endpoints(self) -> Self:
+        """Reject --tokenizer* flags when the endpoint neither tokenizes input nor
+        produces tokens."""
+        metadata = self._endpoint_metadata()
+        if metadata.tokenizes_input or metadata.produces_tokens:
+            return self
+
+        user_set = self.tokenizer.model_fields_set - {"resolved_names"}
+        if user_set:
+            raise ValueError(
+                "Tokenizer options cannot be used with "
+                f"--endpoint-type {self.endpoint.type} because it does not "
+                "tokenize input or produce tokens."
+            )
+
         return self
 
     @model_validator(mode="after")

@@ -8,7 +8,6 @@ from __future__ import annotations
 import gzip
 import io
 import pathlib
-import tempfile
 
 import pytest
 from pytest import param
@@ -74,13 +73,12 @@ class TestFileStreaming:
     """Test file streaming compression functions."""
 
     @pytest.fixture
-    def temp_file(self) -> pathlib.Path:
+    def temp_file(self, tmp_path: pathlib.Path) -> pathlib.Path:
         """Create a temporary test file."""
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".dat") as f:
-            # Write test data (repeating pattern for good compression)
-            test_data = b"Hello World! " * 1000
-            f.write(test_data)
-            return pathlib.Path(f.name)
+        file_path = tmp_path / "test.dat"
+        test_data = b"Hello World! " * 1000
+        file_path.write_bytes(test_data)
+        return file_path
 
     async def test_stream_file_compressed_gzip(self, temp_file: pathlib.Path) -> None:
         """Test gzip file compression streaming."""
@@ -92,7 +90,6 @@ class TestFileStreaming:
         # Verify it's valid gzip by decompressing
         decompressed = gzip.decompress(compressed)
         assert decompressed == temp_file.read_bytes()
-        temp_file.unlink()
 
     @pytest.mark.skipif(not is_zstd_available(), reason="zstandard not installed")
     async def test_stream_file_compressed_zstd(self, temp_file: pathlib.Path) -> None:
@@ -108,7 +105,6 @@ class TestFileStreaming:
         decompressor = zstandard.ZstdDecompressor()
         decompressed = decompressor.stream_reader(io.BytesIO(compressed)).read()
         assert decompressed == temp_file.read_bytes()
-        temp_file.unlink()
 
     async def test_stream_file_compressed_identity(
         self, temp_file: pathlib.Path
@@ -122,7 +118,6 @@ class TestFileStreaming:
 
         result = b"".join(chunks)
         assert result == temp_file.read_bytes()
-        temp_file.unlink()
 
 
 class TestQualityValueParsing:
