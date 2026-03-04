@@ -104,7 +104,7 @@ def build_info_labels(user_config: UserConfig) -> InfoLabels:
     if user_config.benchmark_id:
         labels["benchmark_id"] = user_config.benchmark_id
 
-    labels["model"] = ",".join(user_config.endpoint.model_names)
+    labels["model"] = ",".join(sorted(user_config.endpoint.model_names))
     labels["endpoint_type"] = user_config.endpoint.type
     labels["streaming"] = str(user_config.endpoint.streaming).lower()
 
