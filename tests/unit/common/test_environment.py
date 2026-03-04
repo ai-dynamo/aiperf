@@ -109,24 +109,68 @@ class TestAPIServerSettings:
         assert settings.PORT is None
         assert settings.CORS_ORIGINS == []
 
-    def test_api_server_settings_env_port_overrides_default(self, monkeypatch) -> None:
+    def test_api_server_settings_env_port_overrides_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("AIPERF_API_SERVER_PORT", "8080")
         settings = _APIServerSettings()
         assert settings.PORT == 8080
 
-    def test_api_server_settings_env_host_overrides_default(self, monkeypatch) -> None:
+    @pytest.mark.parametrize(
+        "bad_port",
+        [
+            param("0", id="zero"),
+            param("-1", id="negative"),
+            param("70000", id="above_max"),
+        ],
+    )
+    def test_api_server_settings_port_out_of_range_raises(
+        self, bad_port: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AIPERF_API_SERVER_PORT", bad_port)
+        with pytest.raises(ValueError):
+            _APIServerSettings()
+
+    def test_api_server_settings_env_host_overrides_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("AIPERF_API_SERVER_HOST", "0.0.0.0")
         settings = _APIServerSettings()
         assert settings.HOST == "0.0.0.0"
 
     def test_api_server_settings_env_cors_origins_parses_list(
-        self, monkeypatch
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv(
             "AIPERF_API_SERVER_CORS_ORIGINS", '["http://localhost:3000"]'
         )
         settings = _APIServerSettings()
         assert settings.CORS_ORIGINS == ["http://localhost:3000"]
+
+    def test_api_server_settings_shutdown_timeout_default(self) -> None:
+        settings = _APIServerSettings()
+        assert settings.SHUTDOWN_TIMEOUT == 5.0
+
+    def test_api_server_settings_env_shutdown_timeout_overrides_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AIPERF_API_SERVER_SHUTDOWN_TIMEOUT", "30.0")
+        settings = _APIServerSettings()
+        assert settings.SHUTDOWN_TIMEOUT == 30.0
+
+    @pytest.mark.parametrize(
+        "bad_value",
+        [
+            param("0.5", id="below_minimum"),
+            param("301", id="above_maximum"),
+        ],
+    )
+    def test_api_server_settings_shutdown_timeout_out_of_range_raises(
+        self, bad_value: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AIPERF_API_SERVER_SHUTDOWN_TIMEOUT", bad_value)
+        with pytest.raises(ValueError):
+            _APIServerSettings()
 
     def test_environment_api_server_subsystem_exists(self) -> None:
         env = _Environment()

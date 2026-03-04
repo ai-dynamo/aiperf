@@ -56,6 +56,23 @@ class IntegrationTestDefaults:
     ui: str = "simple"
 
 
+def _needs_tokenizer(args: list[str]) -> bool:
+    """Check if the endpoint type in the args requires a tokenizer."""
+    try:
+        idx = args.index("--endpoint-type")
+        endpoint_type = args[idx + 1]
+    except (ValueError, IndexError):
+        return True
+
+    from aiperf.plugin import plugins
+
+    try:
+        meta = plugins.get_endpoint_metadata(endpoint_type)
+    except Exception:
+        return True
+    return meta.tokenizes_input or meta.produces_tokens
+
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_integration_tokenizer():
     """Set up tokenizer caching for integration tests.
@@ -278,7 +295,7 @@ async def aiperf_runner(
             ]
             # Add default tokenizer if not specified to use pre-cached tokenizer
             # This avoids 429 rate limiting from HuggingFace during tests
-            if "--tokenizer" not in args:
+            if "--tokenizer" not in args and _needs_tokenizer(args):
                 full_args += [
                     "--tokenizer",
                     IntegrationTestDefaults.model,
@@ -393,7 +410,7 @@ class AIPerfSignalCLI:
             str(self._temp_output_dir),
         ]
         # Add default tokenizer if not specified to use pre-cached tokenizer
-        if "--tokenizer" not in args:
+        if "--tokenizer" not in args and _needs_tokenizer(args):
             full_args += [
                 "--tokenizer",
                 IntegrationTestDefaults.model,

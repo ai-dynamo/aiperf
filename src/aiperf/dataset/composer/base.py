@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
@@ -16,14 +17,13 @@ from aiperf.dataset.generator.video import VideoGenerator
 
 
 class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer, **kwargs):
+    def __init__(self, config: UserConfig, tokenizer: Tokenizer | None, **kwargs):
         self.config = config
         super().__init__(config=config, tokenizer=tokenizer, **kwargs)
 
-        # Create generators
-        self.prompt_generator = PromptGenerator(
-            config.input.prompt,
-            tokenizer,
+        # Create generators (prompt generator requires a tokenizer)
+        self.prompt_generator: PromptGenerator | None = (
+            PromptGenerator(config.input.prompt, tokenizer) if tokenizer else None
         )
         self.image_generator = ImageGenerator(config.input.image)
         self.audio_generator = AudioGenerator(config.input.audio)
@@ -146,7 +146,10 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
     @property
     def prefix_prompt_enabled(self) -> bool:
-        return self.config.input.prompt.prefix_prompt.length > 0
+        return (
+            self.prompt_generator is not None
+            and self.config.input.prompt.prefix_prompt.length > 0
+        )
 
     def _finalize_conversations(self, conversations: list[Conversation]) -> None:
         """Finalize conversations by adding conversation-level context prompts.
@@ -169,6 +172,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         Args:
             conversations: List of conversations to inject prompts into
         """
+        if self.prompt_generator is None:
+            return
+
         config = self.config.input.prompt.prefix_prompt
         has_shared_system = config.shared_system_prompt_length is not None
         has_user_context = config.user_context_prompt_length is not None

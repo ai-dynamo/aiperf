@@ -10,7 +10,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from aiperf.api.api_service import FastAPIService
-from aiperf.common.config import ServiceConfig
+from aiperf.common.config import ServiceConfig, UserConfig
 
 # =============================================================================
 # Compression encoding selection
@@ -34,10 +34,18 @@ class TestSelectEncoding:
     )  # fmt: skip
     def test_select_encoding(self, accept_encoding: str | None, expected: str) -> None:
         """Test encoding selection based on Accept-Encoding header."""
-        from aiperf.common.compression import CompressionEncoding, select_encoding
+        from aiperf.common.compression import (
+            CompressionEncoding,
+            is_zstd_available,
+            select_encoding,
+        )
 
         result = select_encoding(accept_encoding)
-        assert result == CompressionEncoding(expected)
+        expected_encoding = CompressionEncoding(expected)
+        if expected_encoding == CompressionEncoding.ZSTD and not is_zstd_available():
+            assert result == CompressionEncoding.GZIP
+        else:
+            assert result == expected_encoding
 
 
 # =============================================================================
@@ -71,22 +79,28 @@ class TestServiceBaseUrl:
 class TestFastAPIServiceInit:
     """Test FastAPIService.__init__ via direct instantiation."""
 
-    def test_init_sets_host_port_from_config(self, mock_fastapi_service) -> None:
+    def test_init_sets_host_port_from_config(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
         assert mock_fastapi_service.api_host == "127.0.0.1"
         assert mock_fastapi_service.api_port == 9999
 
-    def test_init_creates_app(self, mock_fastapi_service) -> None:
+    def test_init_creates_app(self, mock_fastapi_service: FastAPIService) -> None:
         assert mock_fastapi_service.app is not None
         assert mock_fastapi_service.app.title == "AIPerf API"
 
-    def test_init_defaults_server_to_none(self, mock_fastapi_service) -> None:
+    def test_init_defaults_server_to_none(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
         assert mock_fastapi_service._server is None
         assert mock_fastapi_service._server_task is None
 
-    def test_init_loads_routers(self, mock_fastapi_service) -> None:
+    def test_init_loads_routers(self, mock_fastapi_service: FastAPIService) -> None:
         assert len(mock_fastapi_service._routers) > 0
 
-    def test_init_with_custom_host(self, mock_zmq, api_user_config) -> None:
+    def test_init_with_custom_host(
+        self, mock_zmq: None, api_user_config: UserConfig
+    ) -> None:
         sc = ServiceConfig(api_port=8080, api_host="0.0.0.0")
         service = FastAPIService(
             service_config=sc,
@@ -101,7 +115,10 @@ class TestFastAPIServiceCORSMiddleware:
     """Test CORS middleware is added when cors_origins is set."""
 
     def test_cors_middleware_added_when_origins_set(
-        self, mock_zmq, api_user_config, monkeypatch
+        self,
+        mock_zmq: None,
+        api_user_config: UserConfig,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(
             "aiperf.common.environment.Environment.API_SERVER",
@@ -121,7 +138,10 @@ class TestFastAPIServiceCORSMiddleware:
         assert "CORSMiddleware" in middleware_names
 
     def test_no_cors_middleware_when_origins_empty(
-        self, mock_zmq, api_user_config, monkeypatch
+        self,
+        mock_zmq: None,
+        api_user_config: UserConfig,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(
             "aiperf.common.environment.Environment.API_SERVER",
@@ -143,7 +163,17 @@ class TestFastAPIServiceStartStop:
     """Test _start_api_server and _stop_api_server."""
 
     @pytest.mark.asyncio
-    async def test_start_creates_server_and_task(self, mock_fastapi_service) -> None:
+    async def test_start_raises_when_port_not_configured(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
+        mock_fastapi_service.api_port = None
+        with pytest.raises(ValueError, match="API port is not configured"):
+            await mock_fastapi_service._start_api_server()
+
+    @pytest.mark.asyncio
+    async def test_start_creates_server_and_task(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
         mock_server = MagicMock()
         mock_server.serve = AsyncMock()
 
@@ -161,7 +191,9 @@ class TestFastAPIServiceStartStop:
             await mock_fastapi_service._server_task
 
     @pytest.mark.asyncio
-    async def test_stop_sets_should_exit_and_waits(self, mock_fastapi_service) -> None:
+    async def test_stop_sets_should_exit_and_waits(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
         mock_server = MagicMock()
         completed = asyncio.Event()
 
@@ -178,7 +210,9 @@ class TestFastAPIServiceStartStop:
         assert mock_server.should_exit is True
 
     @pytest.mark.asyncio
-    async def test_stop_cancels_on_timeout(self, mock_fastapi_service) -> None:
+    async def test_stop_cancels_on_timeout(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
         mock_server = MagicMock()
 
         async def hang_forever():
@@ -207,21 +241,28 @@ class TestFastAPIServiceStartStop:
         assert task.cancelled()
 
     @pytest.mark.asyncio
-    async def test_stop_handles_no_server(self, mock_fastapi_service) -> None:
+    async def test_stop_handles_no_server(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
         mock_fastapi_service._server = None
         mock_fastapi_service._server_task = None
         await mock_fastapi_service._stop_api_server()
 
     @pytest.mark.asyncio
-    async def test_stop_handles_cancelled_error(self, mock_fastapi_service) -> None:
-        """Test _stop_api_server handles CancelledError from wait_for."""
+    async def test_stop_propagates_cancelled_error(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
+        """Test _stop_api_server re-raises CancelledError for cooperative cancellation."""
         mock_server = MagicMock()
         mock_fastapi_service._server = mock_server
         mock_fastapi_service._server_task = asyncio.create_task(asyncio.sleep(100))
 
-        with patch(
-            "aiperf.api.api_service.asyncio.wait_for",
-            side_effect=asyncio.CancelledError,
+        with (
+            patch(
+                "aiperf.api.api_service.asyncio.wait_for",
+                side_effect=asyncio.CancelledError,
+            ),
+            pytest.raises(asyncio.CancelledError),
         ):
             await mock_fastapi_service._stop_api_server()
 
@@ -229,7 +270,7 @@ class TestFastAPIServiceStartStop:
 
     @pytest.mark.asyncio
     async def test_on_server_task_done_schedules_stop_on_exception(
-        self, mock_fastapi_service
+        self, mock_fastapi_service: FastAPIService
     ) -> None:
         """Test _on_server_task_done schedules stop when server task fails."""
         task = MagicMock()
@@ -244,7 +285,9 @@ class TestFastAPIServiceStartStop:
             await asyncio.sleep(0)
             mock_stop.assert_called_once()
 
-    def test_on_server_task_done_ignores_cancelled(self, mock_fastapi_service) -> None:
+    def test_on_server_task_done_ignores_cancelled(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
         """Test _on_server_task_done does nothing for cancelled tasks."""
         task = MagicMock()
         task.cancelled.return_value = True
@@ -252,7 +295,9 @@ class TestFastAPIServiceStartStop:
         task.exception.assert_not_called()
         assert mock_fastapi_service._stop_task is None
 
-    def test_on_server_task_done_no_exception(self, mock_fastapi_service) -> None:
+    def test_on_server_task_done_no_exception(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
         """Test _on_server_task_done does nothing when task succeeds."""
         task = MagicMock()
         task.cancelled.return_value = False
@@ -264,7 +309,9 @@ class TestFastAPIServiceStartStop:
 class TestFastAPIServiceLifespan:
     """Test FastAPI lifespan hooks."""
 
-    def test_lifespan_logs_startup_and_shutdown(self, mock_fastapi_service) -> None:
+    def test_lifespan_logs_startup_and_shutdown(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
         """Test that lifespan logs on startup and shutdown."""
         mock_fastapi_service.info = MagicMock()
 

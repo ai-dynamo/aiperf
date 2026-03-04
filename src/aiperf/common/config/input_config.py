@@ -26,6 +26,7 @@ from aiperf.common.config.synthesis_config import SynthesisConfig
 from aiperf.common.config.video_config import VideoConfig
 from aiperf.common.enums import PublicDatasetType
 from aiperf.common.exceptions import InvalidStateError, MetricTypeError
+from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     CustomDatasetType,
     DatasetSamplingStrategy,
@@ -104,10 +105,10 @@ class InputConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
-    def validate_synthesis_requires_mooncake_trace(self) -> Self:
-        """Validate that synthesis options require mooncake_trace dataset type.
+    def validate_synthesis_requires_trace_dataset(self) -> Self:
+        """Validate that synthesis options require a trace dataset type.
 
-        Only validates when custom_dataset_type is explicitly set to a non-mooncake
+        Only validates when custom_dataset_type is explicitly set to a non-trace
         type. If custom_dataset_type is None (auto-detect), we allow synthesis
         options and defer validation to runtime when the actual type is determined.
         """
@@ -118,13 +119,13 @@ class InputConfig(BaseConfig):
                 or self.synthesis.max_osl is not None
             )
             and self.custom_dataset_type is not None
-            and self.custom_dataset_type != CustomDatasetType.MOONCAKE_TRACE
+            and not plugins.is_trace_dataset(self.custom_dataset_type)
         ):
             raise ValueError(
                 "Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
                 "--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier, "
                 "--synthesis-max-isl, --synthesis-max-osl) "
-                "require --custom-dataset-type mooncake_trace"
+                "require a trace dataset type (e.g., mooncake_trace, bailian_trace)"
             )
         return self
 
@@ -191,7 +192,7 @@ class InputConfig(BaseConfig):
         Any,
         Field(
             description="Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. "
-            "Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL trace files for `mooncake_trace`, "
+            "Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), "
             "directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.",
         ),
         BeforeValidator(parse_file),
@@ -207,7 +208,7 @@ class InputConfig(BaseConfig):
         bool,
         Field(
             description="Run requests according to timestamps specified in the input dataset. When enabled, AIPerf replays "
-            "the exact timing pattern from the dataset. This mode is automatically enabled for `mooncake_trace` datasets."
+            "the exact timing pattern from the dataset. This mode is automatically enabled for trace datasets."
         ),
         CLIParameter(
             name=(
@@ -277,7 +278,7 @@ class InputConfig(BaseConfig):
         Field(
             description="Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. "
             "Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), "
-            "`mooncake_trace` (timestamped trace files), `random_pool` (directory of reusable prompts). "
+            "`mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts). "
             "Requires `--input-file`. Mutually exclusive with `--public-dataset`.",
         ),
         CLIParameter(

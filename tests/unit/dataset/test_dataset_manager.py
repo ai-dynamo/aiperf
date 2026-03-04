@@ -5,9 +5,11 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from aiperf.common.config import EndpointConfig, InputConfig, ServiceConfig, UserConfig
 from aiperf.common.config.config_defaults import InputDefaults
+from aiperf.common.config.tokenizer_config import TokenizerConfig
 from aiperf.common.enums import PublicDatasetType
 from aiperf.common.exceptions import ServiceError
 from aiperf.common.messages import (
@@ -583,3 +585,82 @@ class TestKubernetesMode:
         assert manager._conversation_ids_cache == []
         # Should NOT have created a dataset client
         assert manager._dataset_client is None
+
+
+class TestDatasetManagerTokenizerSkip:
+    """Test tokenizer skip logic for non-tokenizing endpoints."""
+
+    @pytest.fixture
+    def _mock_dataset_steps(self):
+        """Mock dataset configuration steps to isolate tokenizer logic."""
+        with (
+            patch.object(DatasetManager, "_configure_dataset", new_callable=AsyncMock),
+            patch.object(
+                DatasetManager,
+                "_generate_inputs_json_file",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                DatasetManager,
+                "_configure_dataset_client_and_free_memory",
+                new_callable=AsyncMock,
+            ),
+        ):
+            yield
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("_mock_dataset_steps")
+    async def test_tokenizer_skipped_for_non_tokenizing_endpoint(self):
+        """Test that tokenizer is not loaded when endpoint has tokenizes_input=false."""
+        user_config = UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["nvidia/nemoretriever-page-elements-v3"],
+                type="image_retrieval",
+            ),
+            input=InputConfig(),
+        )
+        service_config = ServiceConfig()
+        dataset_manager = DatasetManager(service_config, user_config)
+        await dataset_manager.initialize()
+        dataset_manager.publish = AsyncMock()
+
+        with patch.object(
+            DatasetManager, "_configure_tokenizer", new_callable=AsyncMock
+        ) as mock_configure_tokenizer:
+            await dataset_manager._profile_configure_command(
+                ProfileConfigureCommand(config=user_config, service_id="test_service")
+            )
+            mock_configure_tokenizer.assert_not_called()
+
+        assert dataset_manager.tokenizer is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("_mock_dataset_steps", "mock_tokenizer")
+    async def test_tokenizer_loaded_for_tokenizing_endpoint(self):
+        """Test that tokenizer is loaded when endpoint has tokenizes_input=true."""
+        user_config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"], type="chat"),
+            input=InputConfig(),
+        )
+        service_config = ServiceConfig()
+        dataset_manager = DatasetManager(service_config, user_config)
+        await dataset_manager.initialize()
+        dataset_manager.publish = AsyncMock()
+
+        await dataset_manager._profile_configure_command(
+            ProfileConfigureCommand(config=user_config, service_id="test_service")
+        )
+
+        assert dataset_manager.tokenizer is not None
+
+    def test_tokenizer_rejected_when_explicitly_set_on_non_tokenizing_endpoint(self):
+        """Tokenizer options are rejected for endpoints that don't tokenize input or produce tokens."""
+        with pytest.raises(ValidationError, match="Tokenizer options cannot be used"):
+            UserConfig(
+                endpoint=EndpointConfig(
+                    model_names=["nvidia/nemoretriever-page-elements-v3"],
+                    type="image_retrieval",
+                ),
+                input=InputConfig(),
+                tokenizer=TokenizerConfig(name="test-model"),
+            )

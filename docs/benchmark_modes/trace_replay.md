@@ -49,6 +49,7 @@ Required fields for trace replay:
 - `input_length`: Number of input tokens
 - `output_length`: Number of output tokens
 - `hash_ids`: List of block hashes (optional)
+- `tools`: List of OpenAI-compatible tool definitions (optional, requires `messages`)
 
 Example entry:
 
@@ -85,6 +86,29 @@ aiperf profile \
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 The `--fixed-schedule` flag tells AIPerf to send requests at the exact timestamps specified in the trace. This reproduces the original timing pattern.
+
+## Using Pre-formatted Messages
+
+Instead of synthetic prompts generated from `input_length` and `hash_ids`, you can provide an OpenAI-compatible `messages` array directly per trace entry. This is useful for replaying captured conversations (e.g., coding agent sessions) with exact prompt content.
+
+Each entry's `messages` field contains the full conversation history up to that point. In multi-turn sessions, later entries include prior turns so the server receives the complete context:
+
+```json
+{"session_id": "sess-1", "messages": [{"role": "user", "content": "Hello"}], "output_length": 50, "timestamp": 0}
+{"session_id": "sess-1", "messages": [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi!"}, {"role": "user", "content": "How are you?"}], "output_length": 30, "timestamp": 2000}
+```
+
+The `messages` field is mutually exclusive with `input_length` and `text_input`. When set, the messages array is sent directly to the API payload, bypassing prompt synthesis entirely. The model's actual response is not carried forward between turns -- each turn uses its pre-defined messages.
+
+### Tool Definitions
+
+When replaying conversations that involve tool use (function calling), include the `tools` field alongside `messages` to provide the tool definitions the model needs:
+
+```json
+{"messages": [{"role": "user", "content": "What's the weather?"}], "tools": [{"type": "function", "function": {"name": "get_weather", "description": "Get weather", "parameters": {"type": "object", "properties": {"location": {"type": "string"}}}}}], "output_length": 50, "timestamp": 0}
+```
+
+The `tools` field is only valid when `messages` is provided. It is injected directly into the API payload as the `tools` parameter.
 
 ## Profile using real Mooncake Trace
 

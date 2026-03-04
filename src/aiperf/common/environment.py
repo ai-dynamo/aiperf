@@ -67,6 +67,8 @@ class _APIServerSettings(BaseSettings):
         description="Host to bind the API server to",
     )
     PORT: int | None = Field(
+        ge=1,
+        le=65535,
         default=None,
         description="Port to bind the API server to",
     )

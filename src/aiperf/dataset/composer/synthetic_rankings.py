@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config import InputDefaults, UserConfig
@@ -15,7 +16,7 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
     Each dataset entry contains one query and multiple passages.
     """
 
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer):
+    def __init__(self, config: UserConfig, tokenizer: Tokenizer | None):
         super().__init__(config, tokenizer)
 
         self.session_id_generator = SessionIDGenerator(seed=config.input.random_seed)
@@ -54,7 +55,17 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
         return conversations
 
     def _create_turn(self, num_passages: int) -> Turn:
-        """Create a single ranking turn with one synthetic query and multiple synthetic passages."""
+        """Create a single ranking turn with one synthetic query and multiple synthetic passages.
+
+        Raises:
+            ValueError: If prompt_generator is not available (tokenizer was not configured).
+        """
+        if self.prompt_generator is None:
+            raise ValueError(
+                "Rankings dataset generation requires a tokenizer. Either provide a "
+                "--tokenizer or use an endpoint that supports tokenization."
+            )
+
         turn = Turn()
 
         query_text = self.prompt_generator.generate_prompt(
