@@ -4,7 +4,6 @@
 """Tests for the Prometheus formatter."""
 
 import math
-from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -37,7 +36,7 @@ def make_metric_result(
     p95: float | None = None,
     p99: float | None = None,
     std: float | None = None,
-    **kwargs: Any,
+    **kwargs,
 ) -> MetricResult:
     """Create a MetricResult with sensible defaults."""
     return MetricResult(

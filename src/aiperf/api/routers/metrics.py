@@ -50,7 +50,7 @@ class MetricsRouter(RealtimeMetricsMixin, BaseRouter):
         self,
         service_config: ServiceConfig,
         user_config: UserConfig,
-        **kwargs: Any,
+        **kwargs,
     ) -> None:
         super().__init__(
             service_config=service_config, user_config=user_config, **kwargs
@@ -113,10 +113,6 @@ def build_info_labels(user_config: UserConfig) -> InfoLabels:
 
     if user_config.loadgen.request_rate is not None:
         labels["request_rate"] = str(user_config.loadgen.request_rate)
-
-    labels["config"] = user_config.model_dump_json(
-        exclude_none=True, exclude_unset=True
-    )
 
     return labels
 

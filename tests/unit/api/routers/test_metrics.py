@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -31,7 +30,7 @@ def make_metric_result(
     p95: float | None = None,
     p99: float | None = None,
     std: float | None = None,
-    **kwargs: Any,
+    **kwargs,
 ) -> MetricResult:
     """Create a MetricResult with sensible defaults."""
     return MetricResult(

@@ -151,7 +151,7 @@ def _format_info_metric(info_labels: InfoLabels) -> str:
     if not info_labels:
         return ""
 
-    labels_str = format_labels({"version": aiperf_version or "unknown", **info_labels})
+    labels_str = format_labels({**info_labels, "version": aiperf_version or "unknown"})
     lines = [
         "# HELP aiperf_info AIPerf benchmark information",
         "# TYPE aiperf_info gauge",
@@ -203,7 +203,7 @@ def _format_summary(ctx: MetricContext) -> list[str]:
     summary_name = f"{ctx.base_name}{ctx.unit_suffix}"
 
     quantile_lines = [
-        f"{summary_name}{format_labels({'quantile': quantile, **ctx.metric_labels})} {_format_value(value)}"
+        f"{summary_name}{format_labels({**ctx.metric_labels, 'quantile': quantile})} {_format_value(value)}"
         for stat, quantile in QUANTILE_STATS.items()
         if (value := getattr(ctx.metric, stat, None)) is not None
     ]
