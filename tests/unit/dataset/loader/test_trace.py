@@ -47,7 +47,7 @@ class TestMooncakeTrace:
         """Test that input_length and text_input cannot be provided together."""
         with pytest.raises(
             ValidationError,
-            match="'input_length' and 'text_input' cannot be provided together",
+            match="mutually exclusive",
         ):
             MooncakeTrace(
                 input_length=100,
@@ -65,12 +65,12 @@ class TestMooncakeTrace:
         assert data.output_length == 50
 
     def test_validation_missing_input_fields_errors(self):
-        """Test validation errors when neither input_length nor text_input provided."""
+        """Test validation errors when no input mode is provided."""
         from pydantic import ValidationError
 
         with pytest.raises(
             ValidationError,
-            match="Either 'input_length' or 'text_input' must be provided",
+            match="Exactly one of",
         ):
             MooncakeTrace(hash_ids=[123], timestamp=1000)
 
@@ -81,7 +81,7 @@ class TestMooncakeTrace:
         # When hash_ids is provided but no input is provided, should fail with general input validation
         with pytest.raises(
             ValidationError,
-            match="Either 'input_length' or 'text_input' must be provided",
+            match="Exactly one of",
         ):
             MooncakeTrace(hash_ids=[123], timestamp=1000)
 
@@ -97,7 +97,7 @@ class TestMooncakeTrace:
         # Validation prevents text_input + hash_ids combination
         with pytest.raises(
             ValidationError,
-            match="'hash_ids' is only allowed when 'input_length' is provided, not when 'text_input' is provided",
+            match="'hash_ids' is only allowed when 'input_length' is provided",
         ):
             MooncakeTrace(text_input="test input", hash_ids=[123], timestamp=1000)
 
@@ -461,6 +461,90 @@ class TestMooncakeTraceDatasetLoader:
         assert len(conversation.turns) == 2
         assert conversation.turns[0].texts[0].contents[0] == "Hello, how are you?"
         assert conversation.turns[1].texts[0].contents[0] == "What is the weather like?"
+
+    def test_convert_to_conversations_multi_turn_messages_on_turns(
+        self, mock_prompt_generator, default_user_config
+    ):
+        """Test that each turn carries its own raw_messages in multi-turn conversations."""
+        messages_turn1 = [{"role": "user", "content": "Hello"}]
+        messages_turn2 = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi!"},
+            {"role": "user", "content": "How are you?"},
+        ]
+        trace_data = {
+            "session1": [
+                MooncakeTrace(
+                    messages=messages_turn1, output_length=10, timestamp=1000
+                ),
+                MooncakeTrace(messages=messages_turn2, output_length=20, delay=500),
+            ]
+        }
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        conversations = loader.convert_to_conversations(trace_data)
+
+        assert len(conversations) == 1
+        conversation = conversations[0]
+        assert len(conversation.turns) == 2
+
+        assert conversation.turns[0].raw_messages == messages_turn1
+        assert conversation.turns[0].max_tokens == 10
+        assert conversation.turns[1].raw_messages == messages_turn2
+        assert conversation.turns[1].max_tokens == 20
+
+    def test_convert_to_conversations_messages_with_tools(
+        self, mock_prompt_generator, default_user_config
+    ):
+        """Test that tools flow through to Turn.raw_tools."""
+        messages = [{"role": "user", "content": "What's the weather?"}]
+        tools = [
+            {"type": "function", "function": {"name": "get_weather", "parameters": {}}}
+        ]
+        trace_data = {
+            "session1": [
+                MooncakeTrace(
+                    messages=messages, tools=tools, output_length=50, timestamp=0
+                ),
+            ]
+        }
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        conversations = loader.convert_to_conversations(trace_data)
+
+        assert len(conversations) == 1
+        turn = conversations[0].turns[0]
+        assert turn.raw_messages == messages
+        assert turn.raw_tools == tools
+        assert turn.max_tokens == 50
+
+    def test_convert_to_conversations_messages_without_tools(
+        self, mock_prompt_generator, default_user_config
+    ):
+        """Test that raw_tools is None when tools not provided."""
+        messages = [{"role": "user", "content": "Hello"}]
+        trace_data = {
+            "session1": [
+                MooncakeTrace(messages=messages, output_length=10, timestamp=0),
+            ]
+        }
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        conversations = loader.convert_to_conversations(trace_data)
+
+        assert conversations[0].turns[0].raw_tools is None
 
     def test_load_dataset_with_session_ids(
         self, create_jsonl_file, mock_prompt_generator, default_user_config
@@ -1359,3 +1443,63 @@ class TestMooncakeTraceSynthesisIntegration:
         # Timestamp should be unchanged
         traces = list(dataset.values())
         assert traces[0][0].timestamp == 1000
+
+    # ============================================================================
+    # messages field synthesis
+    # ============================================================================
+
+    def test_speedup_ratio_applied_to_messages_traces(self, mock_prompt_generator):
+        """Test that speedup_ratio scales timestamps for traces with messages."""
+        messages = [{"role": "user", "content": "Hello"}]
+        data = {
+            "session-1": [
+                MooncakeTrace(
+                    messages=messages,
+                    output_length=64,
+                    timestamp=1000,
+                ),
+                MooncakeTrace(
+                    messages=messages,
+                    output_length=64,
+                    timestamp=2000,
+                ),
+            ],
+        }
+        user_config = make_synthesis_config(speedup_ratio=2.0)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+
+        result = loader._apply_synthesis(data)
+
+        assert result["session-1"][0].timestamp == 500
+        assert result["session-1"][1].timestamp == 1000
+
+    def test_synthesis_preserves_messages_field(self, mock_prompt_generator):
+        """Test that synthesis preserves the messages field."""
+        messages = [{"role": "user", "content": "Hello"}]
+        data = {
+            "session-1": [
+                MooncakeTrace(
+                    messages=messages,
+                    output_length=64,
+                    timestamp=1000,
+                ),
+            ],
+        }
+        user_config = make_synthesis_config(speedup_ratio=4.0)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+
+        result = loader._apply_synthesis(data)
+
+        trace = result["session-1"][0]
+        assert trace.messages == messages
+        assert trace.timestamp == 250

@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from aiperf.common.models import Turn
 from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
 from aiperf.dataset.loader.models import MooncakeTrace
 
@@ -66,6 +67,26 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
             session_id = trace.session_id or self.session_id_generator.next()
             data[session_id].append(trace)
         return dict(data)
+
+    # ------------------------------------------------------------------
+    # Conversation-building hooks
+    # ------------------------------------------------------------------
+
+    def _get_text_input(self, trace: MooncakeTrace) -> str | None:
+        if trace.messages is not None:
+            return ""
+        return trace.text_input
+
+    def _build_turn(self, trace: MooncakeTrace, prompt: str) -> Turn:
+        if trace.messages is not None:
+            return Turn(
+                timestamp=trace.timestamp,
+                delay=trace.delay,
+                max_tokens=trace.output_length,
+                raw_messages=trace.messages,
+                raw_tools=trace.tools,
+            )
+        return super()._build_turn(trace, prompt)
 
     # ------------------------------------------------------------------
     # Synthesis hooks

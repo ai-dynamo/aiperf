@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Literal, TypeVar
+from typing import Any, Literal, TypeVar
 
 from pydantic import ConfigDict, Field, model_validator
 
@@ -190,29 +190,35 @@ class MooncakeTrace(AIPerfBaseModel):
 
     See https://github.com/kvcache-ai/Mooncake for more details.
 
+    Supports three input modes (exactly one required):
+    - input_length: Synthetic text generated from token count (optionally with hash_ids)
+    - text_input: Literal text string sent as the prompt
+    - messages: List of OpenAI-compatible message dicts sent directly to the API
+
     Examples:
     - Minimal: {"input_length": 10, "hash_ids": [123]}
     - With input_length: {"input_length": 10, "output_length": 4}
     - With text_input: {"text_input": "Hello world", "output_length": 4}
+    - With messages: {"messages": [{"role": "user", "content": "Hello"}], "output_length": 4}
     - With timestamp and hash ID: {"timestamp": 1000, "input_length": 10, "hash_ids": [123]}
-
-    Note:
-    Only one of the following input combinations is allowed:
-    - text_input only (uses text input directly)
-    - input_length only (uses input length to generate synthetic text input)
-    - input_length and hash_ids (uses input length and hash ids to generate reproducible synthetic text input)
     """
 
     type: Literal[CustomDatasetType.MOONCAKE_TRACE] = CustomDatasetType.MOONCAKE_TRACE
-
-    # Exactly one of input_length or text_input must be provided
     input_length: int | None = Field(
         None,
-        description="The input sequence length of a request. Required if text_input is not provided.",
+        description="The input sequence length of a request. Required if text_input and messages are not provided.",
     )
     text_input: str | None = Field(
         None,
-        description="The actual text input for the request. Required if input_length is not provided.",
+        description="The actual text input for the request.",
+    )
+    messages: list[dict[str, Any]] | None = Field(
+        None,
+        description="List of OpenAI-compatible message dicts (each must have a 'role' key) sent directly to the API.",
+    )
+    tools: list[dict[str, Any]] | None = Field(
+        None,
+        description="List of OpenAI-compatible tool definitions. Only allowed when 'messages' is provided.",
     )
 
     # Optional fields
@@ -234,19 +240,49 @@ class MooncakeTrace(AIPerfBaseModel):
 
     @model_validator(mode="after")
     def validate_input(self) -> "MooncakeTrace":
-        """Validate that either input_length or text_input is provided."""
-        if self.input_length is None and self.text_input is None:
-            raise ValueError("Either 'input_length' or 'text_input' must be provided")
-
-        if self.input_length is not None and self.text_input is not None:
+        """Validate that exactly one input mode is provided."""
+        input_modes = [
+            self.input_length is not None,
+            self.text_input is not None,
+            self.messages is not None,
+        ]
+        input_mode_count = sum(input_modes)
+        if input_mode_count == 0:
             raise ValueError(
-                "'input_length' and 'text_input' cannot be provided together. Use only one of them."
+                "Exactly one of 'input_length', 'text_input', or 'messages' must be provided"
+            )
+        if input_mode_count > 1:
+            raise ValueError(
+                "'input_length', 'text_input', and 'messages' are mutually exclusive. Use only one of them."
             )
 
         if self.hash_ids is not None and self.input_length is None:
             raise ValueError(
-                "'hash_ids' is only allowed when 'input_length' is provided, not when 'text_input' is provided"
+                "'hash_ids' is only allowed when 'input_length' is provided, not when 'text_input' or 'messages' are provided"
             )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_messages(self) -> "MooncakeTrace":
+        """Validate the messages and tools field structure."""
+        if self.tools is not None:
+            if self.messages is None:
+                raise ValueError("'tools' is only allowed when 'messages' is provided")
+            if not self.tools:
+                raise ValueError("'tools' must be a non-empty list")
+
+        if self.messages is None:
+            return self
+
+        if not self.messages:
+            raise ValueError("'messages' must be a non-empty list")
+
+        for i, msg in enumerate(self.messages):
+            if not isinstance(msg, dict) or "role" not in msg:
+                raise ValueError(
+                    f"Each message must have a 'role' key, but message at index {i} does not"
+                )
 
         return self
 
