@@ -73,7 +73,13 @@ _INSIGHTS: dict[str, TokenizerErrorInsight] = {
     "ModuleNotFoundError": TokenizerErrorInsight(
         title="Missing Python Package",
         causes=["A required package is not installed"],
-        investigation=["Check error for module name"],
+        investigation=["Check error message for the package name"],
+        fixes=["Install: [green]pip install <package>[/green]"],
+    ),
+    "ImportError": TokenizerErrorInsight(
+        title="Missing Python Package",
+        causes=["A required package is not installed"],
+        investigation=["Check error message for the package name"],
         fixes=["Install: [green]pip install <package>[/green]"],
     ),
     "PermissionError": TokenizerErrorInsight(
@@ -94,6 +100,12 @@ _INSIGHTS: dict[str, TokenizerErrorInsight] = {
         investigation=["Check error message for details"],
         fixes=["Clear cache and retry", "Check network connectivity"],
     ),
+    "ValueError": TokenizerErrorInsight(
+        title="Tokenizer Load Error",
+        causes=["Tokenizer configuration or validation error"],
+        investigation=["Check error message for details"],
+        fixes=["Review the error cause for specific instructions"],
+    ),
     "AmbiguousTokenizerNameError": TokenizerErrorInsight(
         title="Ambiguous Tokenizer Name",
         causes=["Name matched multiple HuggingFace tokenizers"],
@@ -111,7 +123,14 @@ _FALLBACK_INSIGHT = TokenizerErrorInsight(
     ],
 )
 
-_MODULE_NOT_FOUND_RE = re.compile(r"no module named ['\"]([^'\"]+)['\"]", re.IGNORECASE)
+_TRUST_REMOTE_CODE_RE = re.compile(r"trust_remote_code", re.IGNORECASE)
+_MISSING_PACKAGE_PATTERNS = [
+    re.compile(r"no module named ['\"]([^'\"]+)['\"]", re.IGNORECASE),
+    re.compile(
+        r"requires the following packages.*?:\s*([a-zA-Z0-9_][a-zA-Z0-9_, -]*)",
+        re.IGNORECASE,
+    ),
+]
 _TOKENIZER_NAME_PATTERNS = [
     re.compile(r"can't load tokenizer for ['\"]([^'\"]+)['\"]", re.IGNORECASE),
     re.compile(r"['\"]([^'\"]+)['\"] is not a local folder", re.IGNORECASE),
@@ -147,19 +166,32 @@ def _detect_error(
     if not cause_chain:
         return _FALLBACK_INSIGHT
 
+    # Check for trust_remote_code before type-specific matching
+    if error_message and _TRUST_REMOTE_CODE_RE.search(error_message):
+        return TokenizerErrorInsight(
+            title="Custom Tokenizer Code",
+            causes=["Tokenizer requires executing custom Python code from HuggingFace"],
+            investigation=[
+                "Review code at the model's HuggingFace repository before trusting"
+            ],
+            fixes=[
+                "Add: [green]--tokenizer-trust-remote-code[/green]",
+            ],
+        )
+
     for type_name in reversed(cause_chain):
-        if (
-            type_name == "ModuleNotFoundError"
-            and error_message
-            and (match := _MODULE_NOT_FOUND_RE.search(error_message))
-        ):
-            module = match.group(1).split(".")[0]
-            return TokenizerErrorInsight(
-                title=f"Missing Package: {module}",
-                causes=[f"The [cyan]{module}[/cyan] package is not installed"],
-                investigation=[f"Check: [cyan]pip show {module}[/cyan]"],
-                fixes=[f"Install: [green]pip install {module}[/green]"],
-            )
+        if type_name in ("ModuleNotFoundError", "ImportError") and error_message:
+            for pattern in _MISSING_PACKAGE_PATTERNS:
+                if match := pattern.search(error_message):
+                    packages = match.group(1).split(".")[0].strip().rstrip(".")
+                    return TokenizerErrorInsight(
+                        title=f"Missing Package: {packages}",
+                        causes=[
+                            f"The [cyan]{packages}[/cyan] package is not installed"
+                        ],
+                        investigation=[f"Check: [cyan]pip show {packages}[/cyan]"],
+                        fixes=[f"Install: [green]pip install {packages}[/green]"],
+                    )
         if type_name in _INSIGHTS:
             return _INSIGHTS[type_name]
 
@@ -261,13 +293,29 @@ def display_tokenizer_ambiguous_name(
     _display_panel("Ambiguous Tokenizer Name", content, console)
 
 
+def _reproduce_traceback(name: str) -> str | None:
+    """Try loading the tokenizer to capture the full traceback for diagnostics."""
+    import traceback
+
+    try:
+        from transformers import AutoTokenizer
+
+        AutoTokenizer.from_pretrained(name, trust_remote_code=True)
+    except Exception:
+        return traceback.format_exc()
+    return None
+
+
 def display_tokenizer_validation_error(
     name: str,
     cause_chain: list[str] | None = None,
     error_message: str | None = None,
+    cause_message: str | None = None,
     console: Console | None = None,
 ) -> None:
-    insight = _detect_error(cause_chain, error_message)
+    combined = "\n".join(filter(None, [error_message, cause_message]))
+    insight = _detect_error(cause_chain, combined or None)
+    is_fallback = insight is _FALLBACK_INSIGHT
     fixes = [*insight.fixes, _SERVER_TOKEN_FIX]
 
     content = (
@@ -281,4 +329,10 @@ def display_tokenizer_validation_error(
         + "\n\n"
         "[bold]Suggested Fixes:[/bold]\n  • " + "\n  • ".join(fixes)
     )
+
+    if is_fallback and name != "<unknown>":
+        tb = _reproduce_traceback(name)
+        if tb:
+            content += f"\n\n[bold]Traceback:[/bold]\n[dim]{tb.strip()}[/dim]"
+
     _display_panel(insight.title, content, console)
