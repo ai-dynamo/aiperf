@@ -72,7 +72,7 @@ aiperf profile \
 
 Example output:
 
-```
+```bash
                                                 NVIDIA AIPerf | LLM Metrics
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃                               Metric ┃       avg ┃       min ┃       max ┃       p99 ┃       p90 ┃       p50 ┃      std ┃
@@ -97,7 +97,6 @@ CSV Export: /home/user/aiperf/artifacts/llama3.2:1b-openai-chat-concurrency1/pro
 JSON Export: /home/user/aiperf/artifacts/llama3.2:1b-openai-chat-concurrency1/profile_export_aiperf.json
 Log File: /home/user/aiperf/artifacts/llama3.2:1b-openai-chat-concurrency1/logs/aiperf.log
 ```
-</div>
 
 ## Features
 
