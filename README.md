@@ -17,17 +17,87 @@ AIPerf is a comprehensive benchmarking tool that measures the performance of gen
 
 ## Quick Start
 
-```bash
-pip install aiperf
+This quick start guide leverages [Ollama](https://ollama.com/) via
+[Docker Desktop](https://www.docker.com/products/docker-desktop/).
 
+### Setting up a Local Server
+
+In order to set up a Ollama server, run Llama-3.2-1B using the following commands:
+
+```bash
+docker run -d \
+  --name ollama \
+  -p 11434:11434 \
+  -v ollama-data:/root/.ollama
+docker exec -it ollama ollama pull llama3.2:1b
+```
+
+### Basic Usage
+
+Create a virtual environment and install AIPerf:
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install aiperf
+```
+
+To run a simple benchmark against your Ollama server:
+
+```bash
 aiperf profile \
-  --model Qwen/Qwen3-0.6B \
-  --url http://localhost:8000 \
+  --model "llama3.2:1b" \
+  --streaming \
   --endpoint-type chat \
+  --tokenizer meta-llama/Llama-3.2-1B \
+  --url http://localhost:11434
+```
+
+
+> **NOTE:** Make sure to request access to [meta-llama/Llama-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B) and to export your `HF_TOKEN` in your environment.
+
+
+### Example with Custom Configuration
+
+```bash
+aiperf profile \
+  --model "llama3.2:1b" \
+  --streaming \
+  --endpoint-type chat \
+  --tokenizer meta-llama/Llama-3.2-1B \
+  --url http://localhost:11434
   --concurrency 10 \
   --request-count 100 \
-  --streaming
 ```
+
+Example output:
+
+```
+                                                NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┓
+┃                               Metric ┃       avg ┃       min ┃       max ┃       p99 ┃       p90 ┃       p50 ┃      std ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━┩
+│             Time to First Token (ms) │  2,216.93 │  2,000.18 │  3,582.84 │  3,463.36 │  2,388.06 │  2,046.77 │   461.66 │
+│            Time to Second Token (ms) │     89.74 │     16.27 │    362.12 │    342.01 │    161.09 │     61.54 │    97.10 │
+│      Time to First Output Token (ms) │  2,216.93 │  2,000.18 │  3,582.84 │  3,463.36 │  2,388.06 │  2,046.77 │   461.66 │
+│                 Request Latency (ms) │ 20,394.54 │ 15,126.40 │ 29,818.83 │ 29,227.59 │ 23,906.52 │ 19,572.33 │ 3,945.06 │
+│             Inter Token Latency (ms) │     51.01 │     41.32 │     58.72 │     58.69 │     58.38 │     52.88 │     6.28 │
+│     Output Token Throughput Per User │     19.92 │     17.03 │     24.20 │     24.13 │     23.46 │     18.91 │     2.57 │
+│                    (tokens/sec/user) │           │           │           │           │           │           │          │
+│      Output Sequence Length (tokens) │    357.50 │    278.00 │    458.00 │    453.77 │    415.70 │    364.00 │    52.39 │
+│       Input Sequence Length (tokens) │    550.00 │    550.00 │    550.00 │    550.00 │    550.00 │    550.00 │     0.00 │
+│ Output Token Throughput (tokens/sec) │     17.49 │       N/A │       N/A │       N/A │       N/A │       N/A │      N/A │
+│    Request Throughput (requests/sec) │      0.05 │       N/A │       N/A │       N/A │       N/A │       N/A │      N/A │
+│             Request Count (requests) │     10.00 │       N/A │       N/A │       N/A │       N/A │       N/A │      N/A │
+└──────────────────────────────────────┴───────────┴───────────┴───────────┴───────────┴───────────┴───────────┴──────────┘
+
+CLI Command: aiperf profile --model 'llama3.2:1b' --streaming --endpoint-type 'chat' --tokenizer 'meta-llama/Llama-3.2-1B' --url 'http://localhost:11434'
+Benchmark Duration: 204.45 sec
+CSV Export: /home/user/aiperf/artifacts/llama3.2:1b-openai-chat-concurrency1/profile_export_aiperf.csv
+JSON Export: /home/user/aiperf/artifacts/llama3.2:1b-openai-chat-concurrency1/profile_export_aiperf.json
+Log File: /home/user/aiperf/artifacts/llama3.2:1b-openai-chat-concurrency1/logs/aiperf.log
+```
+</div>
 
 ## Features
 
