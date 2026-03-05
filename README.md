@@ -28,7 +28,8 @@ In order to set up a Ollama server, run Llama-3.2-1B using the following command
 docker run -d \
   --name ollama \
   -p 11434:11434 \
-  -v ollama-data:/root/.ollama
+  -v ollama-data:/root/.ollama \
+  ollama/ollama:latest
 docker exec -it ollama ollama pull llama3.2:1b
 ```
 
@@ -67,7 +68,7 @@ aiperf profile \
   --tokenizer meta-llama/Llama-3.2-1B \
   --url http://localhost:11434
   --concurrency 10 \
-  --request-count 100 \
+  --request-count 100
 ```
 
 Example output:
