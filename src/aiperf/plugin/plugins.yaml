@@ -142,13 +142,13 @@ api_router:
     class: aiperf.api.routers.metrics:MetricsRouter
     description: Real-time metrics state and Prometheus/JSON endpoints.
 
-  # progress:
-  #   class: aiperf.api.routers.progress:ProgressRouter
-  #   description: Benchmark progress tracking and /api/progress endpoint.
+  progress:
+    class: aiperf.api.routers.progress:ProgressRouter
+    description: Benchmark progress tracking and /api/progress endpoint.
 
-  # results:
-  #   class: aiperf.api.routers.results:ResultsRouter
-  #   description: Final benchmark results and artifact file downloads.
+  results:
+    class: aiperf.api.routers.results:ResultsRouter
+    description: Final benchmark results and artifact file downloads.
 
   # static:
   #   class: aiperf.api.routers.static:StaticRouter
@@ -158,9 +158,9 @@ api_router:
   #   class: aiperf.api.routers.websocket:WebSocketRouter
   #   description: WebSocket endpoint for real-time ZMQ message streaming.
 
-  # workers:
-  #   class: aiperf.api.routers.workers:WorkersRouter
-  #   description: Worker health tracking and /api/workers endpoint.
+  workers:
+    class: aiperf.api.routers.workers:WorkersRouter
+    description: Worker health tracking and /api/workers endpoint.
 
 # =============================================================================
 # Service Managers
