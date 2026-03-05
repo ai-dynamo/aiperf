@@ -113,7 +113,7 @@ navigation:
   - page: Sequence Length Distributions for Advanced Benchmarking
     path: ../../docs/tutorials/sequence-distributions.md
   - page: SGLang Image Generation
-    path: ../../docs/tutorials/sglang-image-generation.md
+    path: ../../docs/tutorials/image-generation.md
   - page: SGLang Video Generation
     path: ../../docs/tutorials/sglang-video-generation.md
   - page: Synthetic Video Generation

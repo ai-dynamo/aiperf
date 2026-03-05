@@ -8,7 +8,7 @@ title: NVIDIA AIPerf Documentation
 
 versions:
   - display-name: Next
-    path: ./versions/next.yml
+    path: ./versions/dev.yml
 
 navbar-links:
   - type: github

@@ -40,7 +40,7 @@ This document describes datasets that AIPerf can use to generate stimulus. Addit
     <tr>
     <td><strong>Mooncake</strong></td>
     <td style="text-align: center;">✅</td>
-    <td>Mooncake trace file <a href="benchmark_modes/trace_replay.md"><code>--input-file your_trace_file.jsonl --custom-dataset-type mooncake_trace</code></a></td>
+    <td>Mooncake trace file <a href="benchmark-modes/trace-replay.md"><code>--input-file your_trace_file.jsonl --custom-dataset-type mooncake_trace</code></a></td>
     </tr>
     <tr>
       <td><strong>ShareGPT</strong></td>

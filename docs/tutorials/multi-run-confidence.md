@@ -706,6 +706,6 @@ aiperf profile --num-profile-runs 5 [other options]
 - **No CI overlap**: Strong evidence of difference
 
 For more details, see:
-- [CLI Options](../cli_options.md) - Full parameter reference
-- [Metrics Reference](../metrics_reference.md) - Detailed metric descriptions
+- [CLI Options](../cli-options.md) - Full parameter reference
+- [Metrics Reference](../metrics-reference.md) - Detailed metric descriptions
 - [Architecture](../architecture.md) - How multi-run orchestration works
