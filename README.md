@@ -81,7 +81,7 @@ aiperf profile \
 - [Rankings](docs/tutorials/rankings.md) - Profile ranking models
 - [Audio](docs/tutorials/audio.md) - Profile audio language models
 - [Vision](docs/tutorials/vision.md) - Profile vision language models
-- [SGLang Image Generation](docs/tutorials/sglang-image-generation.md) - Image generation benchmarking
+- [Image Generation](docs/tutorials/image-generation.md) - Benchmark any OpenAI-compatible image generation API
 - [SGLang Video Generation](docs/tutorials/sglang-video-generation.md) - Video generation benchmarking
 - [Synthetic Video](docs/tutorials/synthetic-video.md) - Synthetic video generation
 
