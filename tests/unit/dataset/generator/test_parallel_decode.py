@@ -271,9 +271,7 @@ class TestWorkerFunctions:
 
         result = pd_module._decode_tokens([1, 2, 3])
 
-        mock_tokenizer.decode.assert_called_once_with(
-            [1, 2, 3], skip_special_tokens=False
-        )
+        mock_tokenizer.decode.assert_called_once_with([1, 2, 3])
         assert result == "decoded text"
 
     @patch("aiperf.common.tokenizer.Tokenizer")

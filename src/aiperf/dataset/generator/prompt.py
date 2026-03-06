@@ -234,7 +234,7 @@ class PromptGenerator(BaseGenerator):
         final_prompt = self._build_token_sequence(num_tokens, hash_ids, block_size)
 
         # Decode and cache the result
-        decoded = self.tokenizer.decode(final_prompt, skip_special_tokens=False)
+        decoded = self.tokenizer.decode(final_prompt)
         self._decoded_cache[cache_key] = decoded
         return decoded
 

@@ -73,7 +73,7 @@ def _decode_tokens(token_ids: list[int]) -> str:
     """
     if _worker_tokenizer is None:
         raise RuntimeError("Worker tokenizer not initialized")
-    return _worker_tokenizer.decode(token_ids, skip_special_tokens=False)
+    return _worker_tokenizer.decode(token_ids)
 
 
 def parallel_decode(
@@ -113,10 +113,7 @@ def parallel_decode(
             trust_remote_code=trust_remote_code,
             revision=revision,
         )
-        return [
-            tokenizer.decode(tokens, skip_special_tokens=False)
-            for tokens in token_sequences
-        ]
+        return [tokenizer.decode(tokens) for tokens in token_sequences]
 
     num_workers = max_workers or min(mp.cpu_count() or 4, 8)
 
