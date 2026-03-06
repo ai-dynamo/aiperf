@@ -152,7 +152,10 @@ class Tokenizer:
         self._resolved_name: str | None = None
         self._call_args = {"add_special_tokens": False}
         self._encode_args = {"add_special_tokens": False}
-        self._decode_args = {"skip_special_tokens": True}
+        # Prompt generation inserts BOS/EOS tokens as block separators
+        # (see PromptGenerator._build_token_sequence). Skipping special tokens
+        # during decode would silently strip those separators.
+        self._decode_args = {"skip_special_tokens": False}
 
     def _require_init(self) -> None:
         """Raise NotInitializedError if tokenizer is not initialized."""
