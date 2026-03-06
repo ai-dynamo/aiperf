@@ -34,6 +34,7 @@ from aiperf.common.models import (
     Conversation,
     ErrorDetails,
     ModelEndpointInfo,
+    ProcessHealth,
     ReasoningResponseData,
     RequestInfo,
     RequestRecord,
@@ -263,12 +264,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     )
     async def _health_check_task(self) -> None:
         """Task to report the health of the worker to the worker manager."""
-        await self.publish(self.create_health_message())
+        health = await asyncio.to_thread(self.get_process_health)
+        await self.publish(self.create_health_message(health))
 
-    def create_health_message(self) -> WorkerHealthMessage:
+    def create_health_message(self, health: ProcessHealth) -> WorkerHealthMessage:
         return WorkerHealthMessage(
             service_id=self.service_id,
-            health=self.get_process_health(),
+            health=health,
             task_stats=self.task_stats,
         )
 
@@ -688,7 +690,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
         )
         if self.is_debug_enabled:
-            memory_usage = self.get_process_health().memory_usage / BYTES_PER_MIB
+            health = await asyncio.to_thread(self.get_process_health)
+            memory_usage = health.memory_usage / BYTES_PER_MIB
             self.memory_usage_before_profiling = memory_usage
             self.debug(f"Memory usage before profiling: {memory_usage:.2f} MiB")
 
