@@ -6,6 +6,7 @@ navigation:
   path: ../../docs/index.md
 
 - section: Getting Started
+  collapsed: true
   contents:
   - page: Profiling with AIPerf
     path: ../../docs/tutorial.md
@@ -17,8 +18,10 @@ navigation:
     path: ../../docs/genai-perf-feature-comparison.md
 
 - section: Tutorials
+  collapsed: true
   contents:
   - section: Model & Endpoint Guides
+    collapsed: true
     contents:
     - page: Profile OpenAI-Compatible Text APIs Using AIPerf
       path: ../../docs/tutorials/openai-text-endpoints.md
@@ -41,6 +44,7 @@ navigation:
     - page: Template Endpoint
       path: ../../docs/tutorials/template-endpoint.md
   - section: Datasets & Inputs
+    collapsed: true
     contents:
     - page: Custom Dataset Guide
       path: ../../docs/tutorials/custom-dataset.md
@@ -55,6 +59,7 @@ navigation:
     - page: Prefix Data Synthesis Tutorial
       path: ../../docs/tutorials/prefix-synthesis.md
   - section: Load Patterns & Scheduling
+    collapsed: true
     contents:
     - page: "Arrival Patterns: Simulating Realistic Traffic"
       path: ../../docs/tutorials/arrival-patterns.md
@@ -75,6 +80,7 @@ navigation:
     - page: Warmup Phase Configuration
       path: ../../docs/tutorials/warmup.md
   - section: Metrics & Analysis
+    collapsed: true
     contents:
     - page: Benchmark Goodput with AIPerf
       path: ../../docs/tutorials/goodput.md
@@ -93,6 +99,7 @@ navigation:
     - page: GPU Telemetry with AIPerf
       path: ../../docs/tutorials/gpu-telemetry.md
   - section: Configuration
+    collapsed: true
     contents:
     - page: User Interface
       path: ../../docs/tutorials/ui-types.md
@@ -102,6 +109,7 @@ navigation:
       path: ../../docs/reproducibility.md
 
 - section: Benchmark Modes
+  collapsed: true
   contents:
   - page: Load Generator Options Reference
     path: ../../docs/benchmark-modes/timing-modes-reference.md
@@ -109,6 +117,7 @@ navigation:
     path: ../../docs/benchmark-modes/trace-replay.md
 
 - section: Reference
+  collapsed: true
   contents:
   - page: Command Line Options
     path: ../../docs/cli-options.md
@@ -122,6 +131,7 @@ navigation:
     path: ../../docs/reference/tokenizer-auto-detection.md
 
 - section: Server Metrics
+  collapsed: true
   contents:
   - page: Server Metrics Collection
     path: ../../docs/server-metrics/server-metrics.md
@@ -133,6 +143,7 @@ navigation:
     path: ../../docs/server-metrics/server-metrics-parquet-schema.md
 
 - section: Plugins
+  collapsed: true
   contents:
   - page: AIPerf Plugin System
     path: ../../docs/plugins/plugin-system.md
@@ -140,11 +151,13 @@ navigation:
     path: ../../docs/plugins/creating-your-first-plugin.md
 
 - section: API
+  collapsed: true
   contents:
   - page: Prefix Synthesis API Reference
     path: ../../docs/api/synthesis.md
 
 - section: Architecture & Internals
+  collapsed: true
   contents:
   - page: Architecture of AIPerf
     path: ../../docs/architecture.md
