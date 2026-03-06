@@ -22,7 +22,7 @@ This quick start guide leverages [Ollama](https://ollama.com/) via
 
 ### Setting up a Local Server
 
-In order to set up a Ollama server, run `granite4:350m` using the following commands:
+In order to set up an Ollama server, run `granite4:350m` using the following commands:
 
 ```bash
 docker run -d \
