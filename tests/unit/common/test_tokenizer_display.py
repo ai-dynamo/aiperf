@@ -178,6 +178,20 @@ class TestDisplayTokenizerValidationError:
                 "Network Timeout",
                 ["timeout", "local"],
             ),
+            # ImportError with package extraction (transformers-style)
+            (
+                ["TokenizerError", "ImportError"],
+                "requires the following packages that were not found in your environment: tiktoken",
+                "Missing Package: tiktoken",
+                ["tiktoken", "pip install tiktoken"],
+            ),
+            # trust_remote_code required
+            (
+                ["TokenizerError", "ValueError"],
+                "contains custom code which must be executed. Please pass trust_remote_code=True",
+                "Custom Tokenizer Code",
+                ["--tokenizer-trust-remote-code"],
+            ),
             # Fallback for unknown error
             (
                 ["TokenizerError", "UnknownError"],
@@ -208,6 +222,8 @@ class TestDisplayTokenizerValidationError:
             "invalid_revision",
             "permission_error",
             "timeout",
+            "import_error_tiktoken",
+            "trust_remote_code",
             "unknown_fallback",
             "ambiguous_name_error",
             "no_cause_chain_fallback",

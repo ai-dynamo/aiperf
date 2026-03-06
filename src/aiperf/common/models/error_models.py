@@ -66,15 +66,27 @@ class ErrorDetails(AIPerfBaseModel):
         return hash((self.code, self.type, self.message))
 
     @staticmethod
-    def _build_cause_chain(e: BaseException) -> list[str] | None:
-        """Build list of exception type names from __cause__ chain."""
-        chain = []
+    def _build_cause_chain(e: BaseException | None) -> list[str] | None:
+        """Build list of exception type names from the exception chain.
+
+        Follows both explicit chaining (__cause__, set by ``raise X from Y``)
+        and implicit chaining (__context__, set when raising inside an except
+        block). This is critical because libraries like ``transformers`` often
+        re-raise without ``from``, so the root-cause type (e.g. GatedRepoError)
+        only appears in __context__.
+        """
+        chain: list[str] = []
         seen: set[int] = set()
         exc: BaseException | None = e
         while exc is not None and id(exc) not in seen:
             chain.append(exc.__class__.__name__)
             seen.add(id(exc))
-            exc = exc.__cause__
+            if exc.__cause__ is not None:
+                exc = exc.__cause__
+            elif exc.__suppress_context__:
+                break
+            else:
+                exc = exc.__context__
         return chain if chain else None
 
     @classmethod

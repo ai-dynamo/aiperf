@@ -4,6 +4,7 @@
 """HuggingFace tokenizer wrapper with sensible defaults."""
 
 import contextlib
+import inspect
 import io
 import logging
 import os
@@ -45,6 +46,17 @@ class AmbiguousTokenizerNameError(ValueError):
         super().__init__(
             f"'{name}' is ambiguous. Did you mean: {', '.join(s[0] for s in suggestions[:3])}?"
         )
+
+
+def _supports_kwarg(obj: object, method_name: str, kwarg: str) -> bool:
+    """Check if a method on an object accepts a specific keyword argument."""
+    method = getattr(obj, method_name, None)
+    if method is None:
+        return False
+    try:
+        return kwarg in inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def _is_offline_mode() -> bool:
@@ -147,6 +159,23 @@ class Tokenizer:
         if self._tokenizer is None:
             raise NotInitializedError("Tokenizer is not initialized.")
 
+    def _apply_kwarg_overrides(self) -> None:
+        """Override default args for tokenizers that use non-standard kwargs (e.g. Kimi)."""
+        if self._tokenizer is None:
+            return
+        if _supports_kwarg(self._tokenizer, "encode", "allow_special_tokens"):
+            self._encode_args = {"allow_special_tokens": False}
+        elif not _supports_kwarg(self._tokenizer, "encode", "add_special_tokens"):
+            self._encode_args = {}
+
+        if _supports_kwarg(self._tokenizer, "__call__", "allow_special_tokens"):
+            self._call_args = {"allow_special_tokens": False}
+        elif not _supports_kwarg(self._tokenizer, "__call__", "add_special_tokens"):
+            self._call_args = {}
+
+        if not _supports_kwarg(self._tokenizer, "decode", "skip_special_tokens"):
+            self._decode_args = {}
+
     @staticmethod
     def resolve_alias(name: str) -> AliasResolutionResult:
         """Resolve a tokenizer name alias to its canonical repository ID."""
@@ -208,6 +237,7 @@ class Tokenizer:
                     revision=revision,
                 )
                 tokenizer_cls._resolved_name = resolved_name
+                tokenizer_cls._apply_kwarg_overrides()
         except AmbiguousTokenizerNameError:
             raise
         except Exception as e:
@@ -285,6 +315,7 @@ class Tokenizer:
                     revision=revision,
                     local_files_only=True,
                 )
+            tokenizer_cls._apply_kwarg_overrides()
             return tokenizer_cls
         finally:
             huggingface_hub.model_info = _original_model_info

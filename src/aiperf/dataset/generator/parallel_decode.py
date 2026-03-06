@@ -22,10 +22,14 @@ if TYPE_CHECKING:
 
 # Module-level tokenizer for worker processes (initialized once per worker)
 _worker_tokenizer: "Tokenizer | None" = None
-_worker_tokenizer_name: str | None = None
+_worker_tokenizer_key: tuple[str, bool, str] | None = None
 
 
-def _init_worker(tokenizer_name: str) -> None:
+def _init_worker(
+    tokenizer_name: str,
+    trust_remote_code: bool = False,
+    revision: str = "main",
+) -> None:
     """Initialize tokenizer in worker process.
 
     This function is called once per worker process when the ProcessPoolExecutor
@@ -33,9 +37,12 @@ def _init_worker(tokenizer_name: str) -> None:
 
     Args:
         tokenizer_name: Name or path of the pretrained tokenizer to load.
+        trust_remote_code: Whether to trust remote code when loading.
+        revision: The specific model version to use.
     """
-    global _worker_tokenizer, _worker_tokenizer_name
-    if _worker_tokenizer is None or _worker_tokenizer_name != tokenizer_name:
+    global _worker_tokenizer, _worker_tokenizer_key
+    requested_key = (tokenizer_name, trust_remote_code, revision)
+    if _worker_tokenizer is None or _worker_tokenizer_key != requested_key:
         # The main process already downloaded and cached the tokenizer, so force
         # offline mode to skip network requests and alias resolution.
         os.environ["HF_HUB_OFFLINE"] = "1"
@@ -44,9 +51,12 @@ def _init_worker(tokenizer_name: str) -> None:
         from aiperf.common.tokenizer import Tokenizer
 
         _worker_tokenizer = Tokenizer.from_pretrained(
-            tokenizer_name, resolve_alias=False
+            tokenizer_name,
+            trust_remote_code=trust_remote_code,
+            revision=revision,
+            resolve_alias=False,
         )
-        _worker_tokenizer_name = tokenizer_name
+        _worker_tokenizer_key = requested_key
 
 
 def _decode_tokens(token_ids: list[int]) -> str:
@@ -63,7 +73,7 @@ def _decode_tokens(token_ids: list[int]) -> str:
     """
     if _worker_tokenizer is None:
         raise RuntimeError("Worker tokenizer not initialized")
-    return _worker_tokenizer.decode(token_ids, skip_special_tokens=False)
+    return _worker_tokenizer.decode(token_ids)
 
 
 def parallel_decode(
@@ -71,6 +81,8 @@ def parallel_decode(
     tokenizer_name: str,
     max_workers: int | None = None,
     chunksize: int = 50,
+    trust_remote_code: bool = False,
+    revision: str = "main",
 ) -> list[str]:
     """Decode multiple token sequences in parallel using ProcessPoolExecutor.
 
@@ -83,6 +95,8 @@ def parallel_decode(
         tokenizer_name: Name or path of the pretrained tokenizer to use in workers.
         max_workers: Number of worker processes. Defaults to min(cpu_count, 8).
         chunksize: Number of items per worker batch for map().
+        trust_remote_code: Whether to trust remote code when loading.
+        revision: The specific model version to use.
 
     Returns:
         List of decoded strings in the same order as input.
@@ -94,11 +108,12 @@ def parallel_decode(
     if len(token_sequences) < 10:
         from aiperf.common.tokenizer import Tokenizer
 
-        tokenizer = Tokenizer.from_pretrained(tokenizer_name)
-        return [
-            tokenizer.decode(tokens, skip_special_tokens=False)
-            for tokens in token_sequences
-        ]
+        tokenizer = Tokenizer.from_pretrained(
+            tokenizer_name,
+            trust_remote_code=trust_remote_code,
+            revision=revision,
+        )
+        return [tokenizer.decode(tokens) for tokens in token_sequences]
 
     num_workers = max_workers or min(mp.cpu_count() or 4, 8)
 
@@ -118,7 +133,7 @@ def parallel_decode(
         with ProcessPoolExecutor(
             max_workers=num_workers,
             initializer=_init_worker,
-            initargs=(tokenizer_name,),
+            initargs=(tokenizer_name, trust_remote_code, revision),
         ) as executor:
             results = list(
                 executor.map(_decode_tokens, token_sequences, chunksize=chunksize)
