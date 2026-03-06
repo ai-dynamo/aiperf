@@ -18,7 +18,7 @@ AIPerf is a comprehensive benchmarking tool that measures the performance of gen
 ## Quick Start
 
 This quick start guide leverages [Ollama](https://ollama.com/) via
-[Docker Desktop](https://www.docker.com/products/docker-desktop/).
+ [Docker Desktop](https://www.docker.com/products/docker-desktop/).
 
 ### Setting up a Local Server
 
