@@ -22,7 +22,7 @@ This quick start guide leverages [Ollama](https://ollama.com/) via
 
 ### Setting up a Local Server
 
-In order to set up a Ollama server, run Llama-3.2-1B using the following commands:
+In order to set up a Ollama server, run `granite4:350m` using the following commands:
 
 ```bash
 docker run -d \
@@ -30,7 +30,7 @@ docker run -d \
   -p 11434:11434 \
   -v ollama-data:/root/.ollama \
   ollama/ollama:latest
-docker exec -it ollama ollama pull llama3.2:1b
+docker exec -it ollama ollama pull granite4:350m
 ```
 
 ### Basic Usage
@@ -47,56 +47,53 @@ To run a simple benchmark against your Ollama server:
 
 ```bash
 aiperf profile \
-  --model "llama3.2:1b" \
+  --model "granite4:350m" \
   --streaming \
   --endpoint-type chat \
-  --tokenizer meta-llama/Llama-3.2-1B \
+  --tokenizer ibm-granite/granite-4.0-micro \
   --url http://localhost:11434
 ```
-
-
-> **NOTE:** Make sure to request access to [meta-llama/Llama-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B) and to export your `HF_TOKEN` in your environment.
 
 
 ### Example with Custom Configuration
 
 ```bash
 aiperf profile \
-  --model "llama3.2:1b" \
+  --model "granite4:350m" \
   --streaming \
   --endpoint-type chat \
-  --tokenizer meta-llama/Llama-3.2-1B \
+  --tokenizer ibm-granite/granite-4.0-micro \
   --url http://localhost:11434
   --concurrency 10 \
-  --request-count 100
+  --request-count 30
 ```
 
 Example output:
 
 ```bash
-                                                NVIDIA AIPerf | LLM Metrics
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┓
-┃                               Metric ┃       avg ┃       min ┃       max ┃       p99 ┃       p90 ┃       p50 ┃      std ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━┩
-│             Time to First Token (ms) │  2,216.93 │  2,000.18 │  3,582.84 │  3,463.36 │  2,388.06 │  2,046.77 │   461.66 │
-│            Time to Second Token (ms) │     89.74 │     16.27 │    362.12 │    342.01 │    161.09 │     61.54 │    97.10 │
-│      Time to First Output Token (ms) │  2,216.93 │  2,000.18 │  3,582.84 │  3,463.36 │  2,388.06 │  2,046.77 │   461.66 │
-│                 Request Latency (ms) │ 20,394.54 │ 15,126.40 │ 29,818.83 │ 29,227.59 │ 23,906.52 │ 19,572.33 │ 3,945.06 │
-│             Inter Token Latency (ms) │     51.01 │     41.32 │     58.72 │     58.69 │     58.38 │     52.88 │     6.28 │
-│     Output Token Throughput Per User │     19.92 │     17.03 │     24.20 │     24.13 │     23.46 │     18.91 │     2.57 │
-│                    (tokens/sec/user) │           │           │           │           │           │           │          │
-│      Output Sequence Length (tokens) │    357.50 │    278.00 │    458.00 │    453.77 │    415.70 │    364.00 │    52.39 │
-│       Input Sequence Length (tokens) │    550.00 │    550.00 │    550.00 │    550.00 │    550.00 │    550.00 │     0.00 │
-│ Output Token Throughput (tokens/sec) │     17.49 │       N/A │       N/A │       N/A │       N/A │       N/A │      N/A │
-│    Request Throughput (requests/sec) │      0.05 │       N/A │       N/A │       N/A │       N/A │       N/A │      N/A │
-│             Request Count (requests) │     10.00 │       N/A │       N/A │       N/A │       N/A │       N/A │      N/A │
-└──────────────────────────────────────┴───────────┴───────────┴───────────┴───────────┴───────────┴───────────┴──────────┘
+                                               NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┓
+┃                               Metric ┃       avg ┃      min ┃       max ┃       p99 ┃       p90 ┃       p50 ┃      std ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━┩
+│             Time to First Token (ms) │  7,463.28 │ 7,125.81 │  9,484.24 │  9,295.48 │  7,596.62 │  7,240.23 │   677.23 │
+│            Time to Second Token (ms) │     68.73 │    32.01 │    102.86 │    102.55 │     99.80 │     67.37 │    24.95 │
+│      Time to First Output Token (ms) │  7,463.28 │ 7,125.81 │  9,484.24 │  9,295.48 │  7,596.62 │  7,240.23 │   677.23 │
+│                 Request Latency (ms) │ 13,829.40 │ 9,029.36 │ 27,905.46 │ 27,237.77 │ 21,228.48 │ 11,338.31 │ 5,614.32 │
+│             Inter Token Latency (ms) │     65.31 │    53.06 │     81.31 │     81.24 │     80.64 │     63.79 │     9.09 │
+│     Output Token Throughput Per User │     15.60 │    12.30 │     18.85 │     18.77 │     18.08 │     15.68 │     2.05 │
+│                    (tokens/sec/user) │           │          │           │           │           │           │          │
+│      Output Sequence Length (tokens) │     95.20 │    29.00 │    295.00 │    283.12 │    176.20 │     63.00 │    77.08 │
+│       Input Sequence Length (tokens) │    550.00 │   550.00 │    550.00 │    550.00 │    550.00 │    550.00 │     0.00 │
+│ Output Token Throughput (tokens/sec) │      6.85 │      N/A │       N/A │       N/A │       N/A │       N/A │      N/A │
+│    Request Throughput (requests/sec) │      0.07 │      N/A │       N/A │       N/A │       N/A │       N/A │      N/A │
+│             Request Count (requests) │     10.00 │      N/A │       N/A │       N/A │       N/A │       N/A │      N/A │
+└──────────────────────────────────────┴───────────┴──────────┴───────────┴───────────┴───────────┴───────────┴──────────┘
 
-CLI Command: aiperf profile --model 'llama3.2:1b' --streaming --endpoint-type 'chat' --tokenizer 'meta-llama/Llama-3.2-1B' --url 'http://localhost:11434'
-Benchmark Duration: 204.45 sec
-CSV Export: /home/user/aiperf/artifacts/llama3.2:1b-openai-chat-concurrency1/profile_export_aiperf.csv
-JSON Export: /home/user/aiperf/artifacts/llama3.2:1b-openai-chat-concurrency1/profile_export_aiperf.json
-Log File: /home/user/aiperf/artifacts/llama3.2:1b-openai-chat-concurrency1/logs/aiperf.log
+CLI Command: aiperf profile --model 'granite4:350m' --streaming --endpoint-type 'chat' --tokenizer 'ibm-granite/granite-4.0-micro' --url 'http://localhost:11434'
+Benchmark Duration: 138.89 sec
+CSV Export: /home/user/aiperf/artifacts/granite4:350m-openai-chat-concurrency1/profile_export_aiperf.csv
+JSON Export: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency1/profile_export_aiperf.json
+Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency1/logs/aiperf.log
 ```
 
 ## Features
