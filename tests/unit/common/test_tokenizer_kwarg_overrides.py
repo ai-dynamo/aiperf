@@ -189,7 +189,7 @@ class TestApplyKwargOverrides:
         tok = self._make_tokenizer(StandardTokenizerBackend())
         assert tok._encode_args == {"add_special_tokens": False}
         assert tok._call_args == {"add_special_tokens": False}
-        assert tok._decode_args == {"skip_special_tokens": True}
+        assert tok._decode_args == {"skip_special_tokens": False}
 
     def test_kimi_like_overrides_encode_and_call_args(self):
         tok = self._make_tokenizer(KimiLikeTokenizerBackend())
@@ -210,14 +210,14 @@ class TestApplyKwargOverrides:
         tok = self._make_tokenizer(MismatchedCallEncodeBackend())
         assert tok._encode_args == {"allow_special_tokens": False}
         assert tok._call_args == {"add_special_tokens": False}
-        assert tok._decode_args == {"skip_special_tokens": True}
+        assert tok._decode_args == {"skip_special_tokens": False}
 
     def test_none_tokenizer_is_noop(self):
         tok = Tokenizer()
         tok._apply_kwarg_overrides()
         assert tok._encode_args == {"add_special_tokens": False}
         assert tok._call_args == {"add_special_tokens": False}
-        assert tok._decode_args == {"skip_special_tokens": True}
+        assert tok._decode_args == {"skip_special_tokens": False}
 
 
 # -- End-to-end: encode/decode through Tokenizer wrapper --
