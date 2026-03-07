@@ -6,7 +6,6 @@ navigation:
   path: ../../docs/index.md
 
 - section: Getting Started
-  collapsed: true
   contents:
   - page: Profiling with AIPerf
     path: ../../docs/tutorial.md
@@ -18,7 +17,6 @@ navigation:
     path: ../../docs/genai-perf-feature-comparison.md
 
 - section: Tutorials
-  collapsed: true
   contents:
   - section: Model & Endpoint Guides
     collapsed: true
