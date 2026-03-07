@@ -64,8 +64,8 @@ aiperf profile \
   --endpoint-type chat \
   --tokenizer ibm-granite/granite-4.0-micro \
   --url http://localhost:11434
-  --concurrency 10 \
-  --request-count 30
+  --concurrency 5 \
+  --request-count 10
 ```
 
 Example output:
