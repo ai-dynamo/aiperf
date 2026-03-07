@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: SGLang Video Generation
+---
 
 # SGLang Video Generation
 
@@ -56,8 +57,9 @@ docker run --gpus all \
     lmsysorg/sglang:dev
 ```
 
-> [!NOTE]
-> The following steps are to be performed _inside_ the SGLang Docker container.
+<Note>
+The following steps are to be performed _inside_ the SGLang Docker container.
+</Note>
 
 **Install the diffusion dependencies:**
 ```bash
@@ -66,9 +68,10 @@ uv pip install "sglang[diffusion]" --prerelease=allow --system
 
 **Set the server arguments:**
 
-> [!IMPORTANT]
-> The following arguments set up the SGLang server to use Wan2.1-T2V-1.3B on port 30010.
-> Adjust `--num-gpus`, `--ulysses-degree`, and `--ring-degree` based on your GPU configuration.
+<Warning>
+The following arguments set up the SGLang server to use Wan2.1-T2V-1.3B on port 30010.
+Adjust `--num-gpus`, `--ulysses-degree`, and `--ring-degree` based on your GPU configuration.
+</Warning>
 
 **Single GPU setup:**
 ```bash
@@ -128,8 +131,9 @@ sglang serve \
 
 ## Running the Benchmark
 
-> [!NOTE]
-> The following steps are to be performed on your local machine (_outside_ the SGLang Docker container).
+<Note>
+The following steps are to be performed on your local machine (_outside_ the SGLang Docker container).
+</Note>
 
 ### Basic Usage: Text-to-Video with Input File
 

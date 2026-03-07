@@ -1,7 +1,8 @@
-<!--
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+sidebar-title: Server Metrics Reference
+---
 # AIPerf Server Metrics Reference
 
 Comprehensive reference for server metrics collected during AIPerf benchmark runs from NVIDIA Dynamo, vLLM, SGLang, and TensorRT-LLM inference servers.
@@ -546,4 +547,4 @@ Labels that appear across multiple metrics:
 
 ---
 
-*For detailed implementation and usage examples, see the [Server Metrics Tutorial](server-metrics.md). For aggregated statistics, see the [JSON Schema Reference](server_metrics_json_schema.md). For raw time-series analysis, see the [Parquet Schema Reference](server_metrics_parquet_schema.md).*
+*For detailed implementation and usage examples, see the [Server Metrics Tutorial](server-metrics.md). For aggregated statistics, see the [JSON Schema Reference](server-metrics-json-schema.md). For raw time-series analysis, see the [Parquet Schema Reference](server-metrics-parquet-schema.md).*

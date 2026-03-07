@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Custom Dataset Guide
+---
 
 # Custom Dataset Guide
 
@@ -65,7 +66,7 @@ Use single_turn when you need **deterministic, sequential execution** where requ
 
 ### Basic Text Example
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 cat > prompts.jsonl << 'EOF'
 {"text": "What is machine learning?"}
@@ -84,7 +85,7 @@ aiperf profile \
     --url localhost:8000 \
     --concurrency 2
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Output:**
 ```
@@ -124,10 +125,10 @@ CLI Command: aiperf profile --model 'Qwen/Qwen3-0.6B' --endpoint-type 'chat' --i
 2
 Benchmark Duration: 15.81 sec
 CSV Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.csv
+artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.csv
 JSON Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.json
-Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
+artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.json
+Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
 ```
 
 ---
@@ -149,7 +150,7 @@ Use multi_turn when you need **conversations with context** where each turn buil
 
 ### Basic Conversation
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 cat > conversations.jsonl << 'EOF'
 {"session_id": "chat_1", "turns": [{"text": "What is machine learning?"}, {"text": "Can you give me an example?"}]}
@@ -165,7 +166,7 @@ aiperf profile \
     --url localhost:8000 \
     --concurrency 2
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Output:**
 ```
@@ -203,10 +204,10 @@ CLI Command: aiperf profile --model 'Qwen/Qwen3-0.6B' --endpoint-type 'chat' --i
 --concurrency 2
 Benchmark Duration: 10.60 sec
 CSV Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.csv
+artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.csv
 JSON Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.json
-Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
+artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.json
+Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
 ```
 
 **Key Points:**
@@ -235,7 +236,7 @@ Use random_pool when you need **random sampling with replacement** for unpredict
 
 ### Basic Single-File Sampling
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 cat > pool.jsonl << 'EOF'
 {"text": "What is machine learning?"}
@@ -259,7 +260,7 @@ aiperf profile \
     --random-seed 42 \
     --url localhost:8000
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Output:**
 ```
@@ -298,10 +299,10 @@ CLI Command: aiperf profile --model 'Qwen/Qwen3-0.6B' --endpoint-type 'chat' --i
 --random-seed 42 --url 'localhost:8000'
 Benchmark Duration: 42.74 sec
 CSV Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/profile_export_aiperf.csv
+artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/profile_export_aiperf.csv
 JSON Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/profile_export_aiperf.json
-Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/logs/aiperf.log
+artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/profile_export_aiperf.json
+Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/logs/aiperf.log
 ```
 
 **Behavior:**

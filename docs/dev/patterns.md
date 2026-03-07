@@ -1,7 +1,8 @@
-<!--
+---
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+sidebar-title: Code Patterns
+---
 # AIPerf Code Patterns
 
 Code examples for common development tasks. Referenced from CLAUDE.md.

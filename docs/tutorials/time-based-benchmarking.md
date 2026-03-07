@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Time-Based Benchmarking
+---
 
 # Time-Based Benchmarking
 
@@ -37,8 +38,9 @@ Requests are sent continuously until the duration expires. AIPerf then waits for
 - **Grace period default**: 30 seconds (use `inf` to wait forever, `0` for immediate completion)
 - Responses received within grace period are included in metrics; responses still pending when grace expires are not
 
-> [!IMPORTANT]
-> `--benchmark-grace-period` requires `--benchmark-duration` to be set.
+<Warning>
+`--benchmark-grace-period` requires `--benchmark-duration` to be set.
+</Warning>
 
 ## Combining with Request Count
 
@@ -166,4 +168,4 @@ JSON Export: artifacts/Qwen_Qwen2.5-7B-Instruct-chat-concurrency20/profile_expor
 
 - [Warmup Phase](./warmup.md) — Configure pre-benchmark warmup
 - [User-Centric Timing](./user-centric-timing.md) — Multi-turn benchmarking (auto-sets infinite grace)
-- [Timing Modes Reference](../benchmark_modes/timing-modes-reference.md) — Complete CLI compatibility matrix
+- [Timing Modes Reference](../benchmark-modes/timing-modes-reference.md) — Complete CLI compatibility matrix

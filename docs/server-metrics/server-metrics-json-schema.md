@@ -1,7 +1,8 @@
-<!--
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+sidebar-title: Server Metrics JSON Export Schema
+---
 # AIPerf Server Metrics JSON Export Schema
 
 This document describes the structure and semantics of every field in the AIPerf server metrics JSON export format.
@@ -37,12 +38,12 @@ Note: The `--url` endpoint (`localhost:10000`) is automatically scraped for serv
 - Include Parquet: `--server-metrics-formats json csv parquet`
 - JSON only: `--server-metrics-formats json`
 
-The Parquet format exports raw time-series data with delta calculations in columnar format, optimized for SQL analytics with DuckDB, pandas, or Polars. See [Parquet Schema Reference](server_metrics_parquet_schema.md) for the complete schema.
+The Parquet format exports raw time-series data with delta calculations in columnar format, optimized for SQL analytics with DuckDB, pandas, or Polars. See [Parquet Schema Reference](server-metrics-parquet-schema.md) for the complete schema.
 
 **Related documentation:**
 - [Server Metrics Tutorial](server-metrics.md) - Quick start guide and usage examples
-- [Server Metrics Reference](server_metrics_reference.md) - Metric definitions by backend (vLLM, SGLang, TRT-LLM, Dynamo)
-- [Parquet Schema Reference](server_metrics_parquet_schema.md) - Raw time-series data schema
+- [Server Metrics Reference](server-metrics-reference.md) - Metric definitions by backend (vLLM, SGLang, TRT-LLM, Dynamo)
+- [Parquet Schema Reference](server-metrics-parquet-schema.md) - Raw time-series data schema
 
 ### Data Access
 
@@ -794,8 +795,8 @@ The +Inf bucket sum is calculated as `total_sum - estimated_finite_sum`. Observa
 
 **Phase 4 - Generate finite observations with sum constraint:**
 For each bucket, observations are placed using one of several strategies based on learned statistics:
-- **F3 two-point mass**: When variance is extremely tight (< 1% of bucket width)
-- **Blended distribution**: When variance is tight (< 20%) and mean is near center (< 30% offset)
+- **F3 two-point mass**: When variance is extremely tight (&lt; 1% of bucket width)
+- **Blended distribution**: When variance is tight (&lt; 20%) and mean is near center (&lt; 30% offset)
 - **Variance-aware distribution**: When variance is moderate
 - **Shifted uniform**: Fallback when only mean is learned (no variance data)
 - **Pure uniform**: Final fallback using bucket midpoint

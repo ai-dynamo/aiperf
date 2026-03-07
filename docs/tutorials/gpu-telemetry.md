@@ -1,7 +1,8 @@
-<!--
+---
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+sidebar-title: GPU Telemetry with AIPerf
+---
 
 # GPU Telemetry with AIPerf
 
@@ -43,18 +44,21 @@ AIPerf provides GPU telemetry collection with the `--gpu-telemetry` flag. Here's
 | **pynvml + dashboard** | `aiperf profile --model MODEL ... --gpu-telemetry pynvml dashboard` | Local GPUs via pynvml library | ✅ Yes | ✅ Yes ([see dashboard](#real-time-dashboard-view)) | ✅ Yes |
 | **Disabled** | `aiperf profile --model MODEL ... --no-gpu-telemetry` | None | ❌ No | ❌ No | ❌ No |
 
-> [!IMPORTANT]
-> **DCGM mode (default):** The default endpoints `http://localhost:9400/metrics` and `http://localhost:9401/metrics` are always attempted for telemetry collection, regardless of whether the `--gpu-telemetry` flag is used. The flag primarily controls whether metrics are displayed on the console and allows you to specify additional custom DCGM exporter endpoints.
->
-> **pynvml mode:** When using `--gpu-telemetry pynvml`, DCGM endpoints are NOT used. Metrics are collected directly from local GPUs via the nvidia-ml-py library.
->
-> To completely disable GPU telemetry collection, use `--no-gpu-telemetry`.
+<Warning>
+**DCGM mode (default):** The default endpoints `http://localhost:9400/metrics` and `http://localhost:9401/metrics` are always attempted for telemetry collection, regardless of whether the `--gpu-telemetry` flag is used. The flag primarily controls whether metrics are displayed on the console and allows you to specify additional custom DCGM exporter endpoints.
 
-> [!NOTE]
-> When specifying custom DCGM exporter URLs, the `http://` prefix is optional. URLs like `localhost:9400` will automatically be treated as `http://localhost:9400`. Both formats work identically.
+**pynvml mode:** When using `--gpu-telemetry pynvml`, DCGM endpoints are NOT used. Metrics are collected directly from local GPUs via the nvidia-ml-py library.
 
-> [!TIP]
-> For simple local GPU monitoring without DCGM setup, use `--gpu-telemetry pynvml`. This collects metrics directly from the NVIDIA driver using the nvidia-ml-py library. See [Path 3: pynvml](#3-using-pynvml-local-gpu-monitoring) for details.
+To completely disable GPU telemetry collection, use `--no-gpu-telemetry`.
+</Warning>
+
+<Note>
+When specifying custom DCGM exporter URLs, the `http://` prefix is optional. URLs like `localhost:9400` will automatically be treated as `http://localhost:9400`. Both formats work identically.
+</Note>
+
+<Tip>
+For simple local GPU monitoring without DCGM setup, use `--gpu-telemetry pynvml`. This collects metrics directly from the NVIDIA driver using the nvidia-ml-py library. See [Path 3: pynvml](#3-using-pynvml-local-gpu-monitoring) for details.
+</Tip>
 
 ### Real-Time Dashboard View
 
@@ -196,8 +200,9 @@ GPU Telemetry: artifacts/Qwen_Qwen3-0.6B-chat-concurrency4/gpu_telemetry_export.
 
 The GPU telemetry table displays real-time metrics collected from DCGM during the benchmark. Each GPU is shown with its metrics aggregated across the benchmark duration.
 
-> [!TIP]
-> The `dashboard` keyword enables a live terminal UI for real-time GPU telemetry visualization. Press `5` to maximize the GPU Telemetry panel during the benchmark run.
+<Tip>
+The `dashboard` keyword enables a live terminal UI for real-time GPU telemetry visualization. Press `5` to maximize the GPU Telemetry panel during the benchmark run.
+</Tip>
 
 ---
 
@@ -273,8 +278,9 @@ docker run -d --name vllm-server \
   --port 8000
 ```
 
-> [!TIP]
-> You can customize the `custom_gpu_metrics.csv` file by commenting out metrics you don't need. Lines starting with `#` are ignored.
+<Tip>
+You can customize the `custom_gpu_metrics.csv` file by commenting out metrics you don't need. Lines starting with `#` are ignored.
+</Tip>
 
 **Key Configuration:**
 - `-p 9401:9400` - Forward container's port 9400 to host's port 9401 (AIPerf's default)
@@ -309,8 +315,9 @@ git clone -b ${AIPERF_REPO_TAG} --depth 1 https://github.com/ai-dynamo/aiperf.gi
 uv pip install ./aiperf
 ```
 
-> [!NOTE]
-> Replace the vLLM command above with your preferred backend (SGLang, TRT-LLM, etc.). The DCGM setup works with any server.
+<Note>
+Replace the vLLM command above with your preferred backend (SGLang, TRT-LLM, etc.). The DCGM setup works with any server.
+</Note>
 
 ## Verify Everything is Running
 
@@ -347,8 +354,9 @@ aiperf profile \
     --gpu-telemetry
 ```
 
-> [!TIP]
-> The `dashboard` keyword enables a live terminal UI for real-time GPU telemetry visualization. Press `5` to maximize the GPU Telemetry panel during the benchmark run.
+<Tip>
+The `dashboard` keyword enables a live terminal UI for real-time GPU telemetry visualization. Press `5` to maximize the GPU Telemetry panel during the benchmark run.
+</Tip>
 
 ---
 
@@ -394,8 +402,9 @@ aiperf profile \
     --gpu-telemetry pynvml
 ```
 
-> [!TIP]
-> Add `dashboard` after `pynvml` for the real-time terminal UI: `--gpu-telemetry pynvml dashboard`
+<Tip>
+Add `dashboard` after `pynvml` for the real-time terminal UI: `--gpu-telemetry pynvml dashboard`
+</Tip>
 
 ## Metrics Collected via pynvml
 
@@ -415,8 +424,9 @@ The nvidia-ml-py library (pynvml) collects the following metrics directly from t
 | JPEG Utilization | JPEG decoder utilization | % |
 | Power Violation | Throttling duration due to power limits | µs |
 
-> [!NOTE]
-> Not all metrics are available on all GPU models. AIPerf gracefully handles missing metrics and reports only what the hardware supports.
+<Note>
+Not all metrics are available on all GPU models. AIPerf gracefully handles missing metrics and reports only what the hardware supports.
+</Note>
 
 ## Comparing DCGM vs pynvml
 
@@ -491,11 +501,13 @@ The CSV format is identical to DCGM exporter configuration. See the **vLLM setup
 - XID Errors
 - Power Violation
 
-> [!NOTE]
-> The file path can be absolute or relative. Use `.csv` extension so AIPerf can distinguish it from DCGM endpoint URLs.
+<Note>
+The file path can be absolute or relative. Use `.csv` extension so AIPerf can distinguish it from DCGM endpoint URLs.
+</Note>
 
-> [!TIP]
-> You can start with the example CSV from the vLLM setup section and customize it by commenting out metrics you don't need or adding new DCGM metrics.
+<Tip>
+You can start with the example CSV from the vLLM setup section and customize it by commenting out metrics you don't need or adding new DCGM metrics.
+</Tip>
 
 ## Example Console Display:
 

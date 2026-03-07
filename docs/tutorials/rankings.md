@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Profile Ranking Models with AIPerf
+---
 
 # Profile Ranking Models with AIPerf
 
@@ -70,7 +71,9 @@ INFO     Results saved to: artifacts/BAAI_bge-reranker-base-rankings/
 JSON Export: artifacts/BAAI_bge-reranker-base-rankings/profile_export_aiperf.json
 ```
 
-> **Note:** The rankings-specific token options cannot be used together with `--prompt-input-tokens-mean` or `--prompt-input-tokens-stddev`. Use the rankings-specific options for controlling token counts in rankings queries and passages.
+<Note>
+The rankings-specific token options cannot be used together with `--prompt-input-tokens-mean` or `--prompt-input-tokens-stddev`. Use the rankings-specific options for controlling token counts in rankings queries and passages.
+</Note>
 
 ### Profile using Custom Inputs
 

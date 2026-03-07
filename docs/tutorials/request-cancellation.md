@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Request Cancellation Testing
+---
 
 # Request Cancellation Testing
 
@@ -35,8 +36,9 @@ The cancellation timer starts at **T2** ("request fully sent") for two reasons:
 
 2. **Reproducibility**: The delay is measured from a fixed point (request fully sent) rather than being affected by variable queue times or connection setup. This means running the same benchmark twice with `--request-cancellation-delay 0.5` will cancel requests at the same point in their lifecycle, regardless of system load.
 
-> [!NOTE]
-> If the server responds before the delay expires, the request completes normally and is **not** cancelled. Only requests still waiting for a response when the timer expires are cancelled.
+<Note>
+If the server responds before the delay expires, the request completes normally and is **not** cancelled. Only requests still waiting for a response when the timer expires are cancelled.
+</Note>
 
 ### Understanding the Delay Parameter
 
@@ -46,8 +48,9 @@ The cancellation timer starts at **T2** ("request fully sent") for two reasons:
 | `0.5` | Wait 0.5 seconds after sending, then disconnect |
 | `5` | Wait 5 seconds after sending, then disconnect |
 
-> [!TIP]
-> A delay of **0 means "send the full request, then immediately disconnect"**. The server receives the complete request but the client closes the connection before receiving any response. Longer delays allow partial responses to be received before disconnection.
+<Tip>
+A delay of **0 means "send the full request, then immediately disconnect"**. The server receives the complete request but the client closes the connection before receiving any response. Longer delays allow partial responses to be received before disconnection.
+</Tip>
 
 ### Testing Disaggregated Inference Systems
 
@@ -79,7 +82,7 @@ timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost
 
 Test with a small percentage of cancelled requests:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 # Profile with 10% request cancellation
 aiperf profile \
@@ -98,7 +101,7 @@ aiperf profile \
     --request-count 50 \
     --warmup-request-count 5
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Sample Output (Successful Run):**
 ```
@@ -139,7 +142,7 @@ JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency8/profile_export_aiperf.j
 
 Test service resilience under frequent cancellations:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 # Profile with 50% request cancellation
 aiperf profile \
@@ -155,7 +158,7 @@ aiperf profile \
     --concurrency 10 \
     --request-count 40
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Sample Output (Successful Run):**
 ```
@@ -187,7 +190,7 @@ JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/profile_export_aiperf.
 
 Test immediate disconnection where the client closes the connection right after sending the request:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 # Profile with immediate cancellation (0 delay)
 aiperf profile \
@@ -203,7 +206,7 @@ aiperf profile \
     --concurrency 15 \
     --request-count 60
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Sample Output (Successful Run):**
 ```

@@ -1,7 +1,8 @@
-<!--
+---
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+sidebar-title: Metrics Reference
+---
 # AIPerf Metrics Reference
 
 This document provides a comprehensive reference of all metrics available in AIPerf for benchmarking LLM inference performance. Metrics are organized by computation type to help you understand when and how each metric is calculated.
@@ -146,8 +147,9 @@ any knowledge of the individual request/response data.
 
 ## Streaming Metrics
 
-> [!NOTE]
-> All metrics in this section require the `--streaming` flag with a token-producing endpoint and at least one non-empty response chunk.
+<Note>
+All metrics in this section require the `--streaming` flag with a token-producing endpoint and at least one non-empty response chunk.
+</Note>
 
 ### Time to First Token (TTFT)
 
@@ -266,8 +268,9 @@ inter_chunk_latency = [request.content_responses[i].perf_ns - request.content_re
 
 **Type:** [Record Metric](#record-metrics)
 
-> [!IMPORTANT]
-> This metric is computed per-request, and it excludes the TTFT from the equation, so it is **not** directly comparable to the [Output Token Throughput](#output-token-throughput) metric.
+<Warning>
+This metric is computed per-request, and it excludes the TTFT from the equation, so it is **not** directly comparable to the [Output Token Throughput](#output-token-throughput) metric.
+</Warning>
 
 The token generation rate experienced by an individual user/request, measured as the inverse of inter-token latency. This represents single-request streaming performance.
 
@@ -303,8 +306,9 @@ prefill_throughput_per_user = input_sequence_length / time_to_first_token_second
 
 ## Token Based Metrics
 
-> [!NOTE]
-> All metrics in this section require token-producing endpoints that return text content (chat, completion, etc.). These metrics are not available for embeddings or other non-generative endpoints.
+<Note>
+All metrics in this section require token-producing endpoints that return text content (chat, completion, etc.). These metrics are not available for embeddings or other non-generative endpoints.
+</Note>
 
 ### Output Token Count
 
@@ -412,8 +416,9 @@ total_isl = sum(r.input_sequence_length for r in records if r.valid)
 
 **Type:** [Derived Metric](#derived-metrics)
 
-> [!IMPORTANT]
-> This metric is computed as a single value across all requests and includes TTFT in the equation, so it is **not** directly comparable to the [Output Token Throughput Per User](#output-token-throughput-per-user) metric.
+<Warning>
+This metric is computed as a single value across all requests and includes TTFT in the equation, so it is **not** directly comparable to the [Output Token Throughput Per User](#output-token-throughput-per-user) metric.
+</Warning>
 
 The aggregate token generation rate across all concurrent requests, measured as total tokens per second. This represents the system's overall token generation capacity.
 
@@ -448,8 +453,9 @@ total_token_throughput = (total_isl + total_osl) / benchmark_duration_seconds
 
 ## Image Metrics
 
-> [!NOTE]
-> All metrics in this section require image-capable endpoints (e.g., image generation APIs). These metrics are not available for text-only or other non-image endpoints.
+<Note>
+All metrics in this section require image-capable endpoints (e.g., image generation APIs). These metrics are not available for text-only or other non-image endpoints.
+</Note>
 
 ### Number of Images
 
@@ -502,8 +508,9 @@ image_latency = request_latency_ms / num_images
 
 ## Video Metrics
 
-> [!NOTE]
-> All metrics in this section require video-producing endpoints (e.g., SGLang video generation). These metrics rely on server-reported fields in the response and are not available for non-video endpoints.
+<Note>
+All metrics in this section require video-producing endpoints (e.g., SGLang video generation). These metrics rely on server-reported fields in the response and are not available for non-video endpoints.
+</Note>
 
 ### Video Inference Time
 
@@ -541,8 +548,9 @@ video_peak_memory = response.data.peak_memory_mb
 
 ## Reasoning Metrics
 
-> [!NOTE]
-> All metrics in this section require models and backends that expose reasoning content in a separate `reasoning_content` field, distinct from the regular `content` field.
+<Note>
+All metrics in this section require models and backends that expose reasoning content in a separate `reasoning_content` field, distinct from the regular `content` field.
+</Note>
 
 ### Reasoning Token Count
 
@@ -579,8 +587,9 @@ total_reasoning_tokens = sum(r.reasoning_token_count for r in records if r.valid
 
 ## Usage Field Metrics
 
-> [!NOTE]
-> All metrics in this section track API-reported token counts from the `usage` field in API responses. These are **not displayed in console output** but are available in exports. These metrics are useful for comparing client-side token counts with server-reported counts to detect discrepancies.
+<Note>
+All metrics in this section track API-reported token counts from the `usage` field in API responses. These are **not displayed in console output** but are available in exports. These metrics are useful for comparing client-side token counts with server-reported counts to detect discrepancies.
+</Note>
 
 ### Usage Prompt Tokens
 
@@ -704,8 +713,9 @@ total_usage_total_tokens = sum(r.usage_total_tokens for r in records if r.valid)
 
 ## Usage Discrepancy Metrics
 
-> [!NOTE]
-> These metrics measure the percentage difference between API-reported token counts (`usage` fields) and client-computed token counts. They are **not displayed in console output** but help identify tokenizer mismatches or counting discrepancies.
+<Note>
+These metrics measure the percentage difference between API-reported token counts (`usage` fields) and client-computed token counts. They are **not displayed in console output** but help identify tokenizer mismatches or counting discrepancies.
+</Note>
 
 ### Usage Prompt Tokens Diff %
 
@@ -778,14 +788,15 @@ usage_discrepancy_count = sum(1 for r in records if r.any_diff > threshold)
 
 ## OSL Mismatch Metrics
 
-> [!NOTE]
-> These metrics measure the difference between requested output sequence length (`--osl`/`max_tokens`) and actual output tokens generated. They help identify when the server is not honoring the requested output length, typically because EOS tokens stop generation early. These metrics are **not displayed in console output** but are available in exports and used by the end-of-benchmark warning.
+<Note>
+These metrics measure the difference between requested output sequence length (`--osl`/`max_tokens`) and actual output tokens generated. They help identify when the server is not honoring the requested output length, typically because EOS tokens stop generation early. These metrics are **not displayed in console output** but are available in exports and used by the end-of-benchmark warning.
+</Note>
 
 ### OSL Mismatch Diff %
 
 **Type:** [Record Metric](#record-metrics)
 
-The signed percentage difference between actual output sequence length and requested OSL. Negative values mean the server stopped early (actual < requested), positive values mean it generated more than requested.
+The signed percentage difference between actual output sequence length and requested OSL. Negative values mean the server stopped early (actual &lt; requested), positive values mean it generated more than requested.
 
 **Formula:**
 ```python
@@ -837,8 +848,9 @@ osl_mismatch_count = sum(1 for r in records if diff_tokens > threshold_tokens)
 
 ## Goodput Metrics
 
-> [!NOTE]
-> Goodput metrics measure the throughput of requests that meet user-defined Service Level Objectives (SLOs). See the [Goodput tutorial](tutorials/goodput.md) for configuration details.
+<Note>
+Goodput metrics measure the throughput of requests that meet user-defined Service Level Objectives (SLOs). See the [Goodput tutorial](tutorials/goodput.md) for configuration details.
+</Note>
 
 ### Good Request Count
 
@@ -878,8 +890,9 @@ goodput = good_request_count / benchmark_duration_seconds
 
 ## Error Metrics
 
-> [!NOTE]
-> These metrics are computed only for failed/error requests and are **not displayed in console output**.
+<Note>
+These metrics are computed only for failed/error requests and are **not displayed in console output**.
+</Note>
 
 ### Error Input Sequence Length
 
@@ -916,8 +929,9 @@ total_error_isl = sum(r.input_sequence_length for r in records if not r.valid)
 
 ## General Metrics
 
-> [!NOTE]
-> Metrics in this section are available for all benchmark runs with no special requirements.
+<Note>
+Metrics in this section are available for all benchmark runs with no special requirements.
+</Note>
 
 ### Request Latency
 
@@ -1027,8 +1041,9 @@ benchmark_duration = max_response_timestamp - min_request_timestamp
 
 ## HTTP Trace Metrics
 
-> [!NOTE]
-> All metrics in this section require HTTP trace data to be collected during requests. These metrics provide detailed HTTP request lifecycle timing following k6 naming conventions. See the [HTTP Trace Metrics tutorial](tutorials/http-trace-metrics.md) for configuration details.
+<Note>
+All metrics in this section require HTTP trace data to be collected during requests. These metrics provide detailed HTTP request lifecycle timing following k6 naming conventions. See the [HTTP Trace Metrics tutorial](tutorials/http-trace-metrics.md) for configuration details.
+</Note>
 
 ### HTTP Blocked
 
@@ -1282,8 +1297,9 @@ http_req_chunks_received = len(trace.response_chunks)
 
 ## Multi-Run Aggregate Metrics
 
-> [!NOTE]
-> These metrics are only available when using `--num-profile-runs > 1` for confidence reporting.
+<Note>
+These metrics are only available when using `--num-profile-runs > 1` for confidence reporting.
+</Note>
 
 When running multiple profile iterations with `--num-profile-runs`, AIPerf computes aggregate statistics across all runs to quantify measurement variance and repeatability. These statistics are written to `aggregate/profile_export_aiperf_aggregate.json` and `aggregate/profile_export_aiperf_aggregate.csv`.
 

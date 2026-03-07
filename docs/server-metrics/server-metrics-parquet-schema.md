@@ -1,7 +1,8 @@
-<!--
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+sidebar-title: Server Metrics Parquet Export Schema
+---
 # AIPerf Server Metrics Parquet Export Schema
 
 Schema reference for the `server_metrics_export.parquet` file. Optimized for SQL analytics with DuckDB, pandas, and Polars.
@@ -51,7 +52,7 @@ Negative deltas (counter resets) are clamped to 0.
 | `sum` | `float64` | Yes | Histogram | Cumulative sum delta from reference |
 | `count` | `float64` | Yes | Histogram | Cumulative count delta from reference |
 | `bucket_le` | `string` | Yes | Histogram | Bucket upper bound (e.g., `0.1`, `+Inf`) |
-| `bucket_count` | `float64` | Yes | Histogram | Cumulative bucket count delta (observations <= `bucket_le`) |
+| `bucket_count` | `float64` | Yes | Histogram | Cumulative bucket count delta (observations &lt;= `bucket_le`) |
 
 ### Dynamic Label Columns
 
@@ -254,7 +255,7 @@ combined = pd.concat(dfs, ignore_index=True)
 
 ### Histogram Percentile Estimation
 
-Reconstruct percentiles from bucket data. Note that `bucket_count` values are **cumulative** (each bucket includes all observations with value <= `bucket_le`), matching Prometheus histogram semantics:
+Reconstruct percentiles from bucket data. Note that `bucket_count` values are **cumulative** (each bucket includes all observations with value &lt;= `bucket_le`), matching Prometheus histogram semantics:
 
 ```python
 import numpy as np
@@ -309,4 +310,4 @@ result = duckdb.query("""
 
 ---
 
-*For aggregated statistics, see [JSON Schema](server_metrics_json_schema.md). For metric definitions, see [Server Metrics Reference](server_metrics_reference.md). For usage examples, see the [Server Metrics Tutorial](server-metrics.md).*
+*For aggregated statistics, see [JSON Schema](server-metrics-json-schema.md). For metric definitions, see [Server Metrics Reference](server-metrics-reference.md). For usage examples, see the [Server Metrics Tutorial](server-metrics.md).*

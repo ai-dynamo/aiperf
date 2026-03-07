@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Gradual Ramping
+---
 
 # Gradual Ramping
 
@@ -147,7 +148,9 @@ Request Rate (QPS)
           15s   30s   45s   60s              Time
 ```
 
-> **Note**: The starting rate is calculated proportionally: `start = target * (update_interval / duration)`. With default settings (0.1s updates), ramping to 100 QPS over 60 seconds starts at ~0.17 QPS (not zero).
+<Note>
+The starting rate is calculated proportionally: `start = target * (update_interval / duration)`. With default settings (0.1s updates), ramping to 100 QPS over 60 seconds starts at ~0.17 QPS (not zero).
+</Note>
 
 ### Combining Rate and Concurrency Ramping
 
@@ -340,4 +343,4 @@ This creates smooth traffic curves without sudden jumps.
 
 - [Prefill Concurrency](./prefill-concurrency.md) — Memory-safe long-context benchmarking with prefill limiting
 - [Request Rate with Concurrency](./request-rate-concurrency.md) — Combining rate and concurrency controls
-- [Timing Modes Reference](../benchmark_modes/timing-modes-reference.md) — Complete CLI compatibility matrix
+- [Timing Modes Reference](../benchmark-modes/timing-modes-reference.md) — Complete CLI compatibility matrix

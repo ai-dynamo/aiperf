@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Custom Prompt Benchmarking
+---
 
 # Custom Prompt Benchmarking
 
@@ -38,7 +39,7 @@ timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost
 
 ### Running the Benchmark
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 # Create an input file with specific text inputs
 ```bash
 # Create an input file to use for benchmarking
@@ -63,7 +64,7 @@ aiperf profile \
     --concurrency 2 \
     --warmup-request-count 1
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Sample Output (Successful Run):**
 ```

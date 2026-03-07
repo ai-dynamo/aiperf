@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: "Prefill Concurrency: Fine-Grained Benchmarking Control"
+---
 
 # Prefill Concurrency: Fine-Grained Benchmarking Control
 
@@ -53,11 +54,13 @@ With --prefill-concurrency 3:
 
 Once a request receives its first token, it releases its prefill slot and moves to decode—allowing the next request to start prefilling.
 
-> [!IMPORTANT]
-> Requires `--streaming` to be enabled. Without streaming, AIPerf can't detect when the first token arrives.
+<Warning>
+Requires `--streaming` to be enabled. Without streaming, AIPerf can't detect when the first token arrives.
+</Warning>
 
-> [!WARNING]
-> **Coordinated omission trade-off:** When requests wait for prefill slots, the benchmark operates as a closed loop, throttling itself to match server capacity. This is [coordinated omission](https://www.scylladb.com/2021/04/22/on-coordinated-omission/)—your measured latencies will be **lower** than what users would experience if traffic kept arriving at the original rate. For accurate latency measurement, use open-loop benchmarking (request rate without prefill limits).
+<Warning>
+**Coordinated omission trade-off:** When requests wait for prefill slots, the benchmark operates as a closed loop, throttling itself to match server capacity. This is [coordinated omission](https://www.scylladb.com/2021/04/22/on-coordinated-omission/)—your measured latencies will be **lower** than what users would experience if traffic kept arriving at the original rate. For accurate latency measurement, use open-loop benchmarking (request rate without prefill limits).
+</Warning>
 
 ## Two Concurrency Limits
 
@@ -252,4 +255,4 @@ Requests arrive at 10 QPS, up to 100 can be active, but only 10 can prefill at o
 - [Gradual Ramping](./ramping.md) — Smooth ramp-up for all concurrency dimensions
 - [Request Rate with Concurrency](./request-rate-concurrency.md) — Combining rate and concurrency controls
 - [User-Centric Timing](./user-centric-timing.md) — Multi-turn benchmarking for KV cache
-- [Timing Modes Reference](../benchmark_modes/timing-modes-reference.md) — Complete CLI compatibility matrix
+- [Timing Modes Reference](../benchmark-modes/timing-modes-reference.md) — Complete CLI compatibility matrix

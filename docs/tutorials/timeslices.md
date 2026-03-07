@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Time Slicing for Performance Analysis
+---
 
 # Time Slicing for Performance Analysis
 
@@ -191,16 +192,18 @@ To be announced...
 
 ## Best Practices
 
-> [!WARNING]
-> **Timeslice Boundaries:**
-> - Timeslices are calculated based on absolute wall clock time divisions
-> - The first timeslice may be shorter if requests don't start exactly at a timeslice boundary
-> - The last timeslice may be shorter if the benchmark ends mid-slice
+<Warning>
+**Timeslice Boundaries:**
+- Timeslices are calculated based on absolute wall clock time divisions
+- The first timeslice may be shorter if requests don't start exactly at a timeslice boundary
+- The last timeslice may be shorter if the benchmark ends mid-slice
+</Warning>
 
-> [!WARNING]
-> **Statistical Considerations:**
-> - Very short slices may have high variance and unstable metrics
-> - Low-concurrency benchmarks need longer slices for adequate sample size
+<Warning>
+**Statistical Considerations:**
+- Very short slices may have high variance and unstable metrics
+- Low-concurrency benchmarks need longer slices for adequate sample size
+</Warning>
 
 ## Troubleshooting
 

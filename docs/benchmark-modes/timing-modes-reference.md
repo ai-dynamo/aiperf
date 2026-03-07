@@ -1,7 +1,8 @@
-<!--
+---
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+sidebar-title: Load Generator Options Reference
+---
 # Load Generator Options Reference
 
 This guide provides a comprehensive reference for all load generator CLI options in AIPerf, including a compatibility matrix showing which options work together.

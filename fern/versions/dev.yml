@@ -1,0 +1,167 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+navigation:
+- page: Welcome to AIPerf Documentation
+  path: ../../docs/index.md
+
+- section: Getting Started
+  contents:
+  - page: Profiling with AIPerf
+    path: ../../docs/tutorial.md
+  - page: "AIPerf: Comprehensive LLM Benchmarking"
+    path: ../../docs/comprehensive-llm-benchmarking.md
+  - page: Migrating from GenAI-Perf
+    path: ../../docs/migrating.md
+  - page: GenAI-Perf vs AIPerf CLI Feature Comparison Matrix
+    path: ../../docs/genai-perf-feature-comparison.md
+
+- section: Tutorials
+  contents:
+  - section: Model & Endpoint Guides
+    collapsed: true
+    contents:
+    - page: Profile OpenAI-Compatible Text APIs Using AIPerf
+      path: ../../docs/tutorials/openai-text-endpoints.md
+    - page: Profile Hugging Face TGI Models with AIPerf
+      path: ../../docs/tutorials/huggingface-tgi.md
+    - page: Profile Vision Language Models with AIPerf
+      path: ../../docs/tutorials/vision.md
+    - page: Profile Audio Language Models with AIPerf
+      path: ../../docs/tutorials/audio.md
+    - page: Profile Embedding Models with AIPerf
+      path: ../../docs/tutorials/embeddings.md
+    - page: Profile Ranking Models with AIPerf
+      path: ../../docs/tutorials/rankings.md
+    - page: SGLang Image Generation
+      path: ../../docs/tutorials/image-generation.md
+    - page: SGLang Video Generation
+      path: ../../docs/tutorials/sglang-video-generation.md
+    - page: Synthetic Video Generation
+      path: ../../docs/tutorials/synthetic-video.md
+    - page: Template Endpoint
+      path: ../../docs/tutorials/template-endpoint.md
+  - section: Datasets & Inputs
+    collapsed: true
+    contents:
+    - page: Custom Dataset Guide
+      path: ../../docs/tutorials/custom-dataset.md
+    - page: Custom Prompt Benchmarking
+      path: ../../docs/tutorials/custom-prompt-benchmarking.md
+    - page: Profile with ShareGPT Dataset
+      path: ../../docs/tutorials/sharegpt.md
+    - page: Multi-Turn Conversations
+      path: ../../docs/tutorials/multi-turn.md
+    - page: Sequence Length Distributions for Advanced Benchmarking
+      path: ../../docs/tutorials/sequence-distributions.md
+    - page: Prefix Data Synthesis Tutorial
+      path: ../../docs/tutorials/prefix-synthesis.md
+  - section: Load Patterns & Scheduling
+    collapsed: true
+    contents:
+    - page: "Arrival Patterns: Simulating Realistic Traffic"
+      path: ../../docs/tutorials/arrival-patterns.md
+    - page: Fixed Schedule Benchmarking
+      path: ../../docs/tutorials/fixed-schedule.md
+    - page: Gradual Ramping
+      path: ../../docs/tutorials/ramping.md
+    - page: Request Rate with Max Concurrency
+      path: ../../docs/tutorials/request-rate-concurrency.md
+    - page: "Prefill Concurrency: Fine-Grained Benchmarking Control"
+      path: ../../docs/tutorials/prefill-concurrency.md
+    - page: Time-Based Benchmarking
+      path: ../../docs/tutorials/time-based-benchmarking.md
+    - page: Multi-URL Load Balancing
+      path: ../../docs/tutorials/multi-url-load-balancing.md
+    - page: Request Cancellation Testing
+      path: ../../docs/tutorials/request-cancellation.md
+    - page: Warmup Phase Configuration
+      path: ../../docs/tutorials/warmup.md
+  - section: Metrics & Analysis
+    collapsed: true
+    contents:
+    - page: Benchmark Goodput with AIPerf
+      path: ../../docs/tutorials/goodput.md
+    - page: Multi-Run Confidence Reporting
+      path: ../../docs/tutorials/multi-run-confidence.md
+    - page: Time Slicing for Performance Analysis
+      path: ../../docs/tutorials/timeslices.md
+    - page: HTTP Trace Metrics Guide
+      path: ../../docs/tutorials/http-trace-metrics.md
+    - page: Working with Profile Export Files
+      path: ../../docs/tutorials/working-with-profile-exports.md
+    - page: Visualization and Plotting with AIPerf
+      path: ../../docs/tutorials/plot.md
+    - page: User-Centric Timing for KV Cache Benchmarking
+      path: ../../docs/tutorials/user-centric-timing.md
+    - page: GPU Telemetry with AIPerf
+      path: ../../docs/tutorials/gpu-telemetry.md
+  - section: Configuration
+    collapsed: true
+    contents:
+    - page: User Interface
+      path: ../../docs/tutorials/ui-types.md
+    - page: Using Local Tokenizers Without HuggingFace
+      path: ../../docs/tutorials/local-tokenizer.md
+    - page: "Random Number Generation & Reproducibility"
+      path: ../../docs/reproducibility.md
+
+- section: Benchmark Modes
+  collapsed: true
+  contents:
+  - page: Load Generator Options Reference
+    path: ../../docs/benchmark-modes/timing-modes-reference.md
+  - page: Trace Replay with Mooncake Traces
+    path: ../../docs/benchmark-modes/trace-replay.md
+
+- section: Reference
+  collapsed: true
+  contents:
+  - page: Command Line Options
+    path: ../../docs/cli-options.md
+  - page: Environment Variables
+    path: ../../docs/environment-variables.md
+  - page: AIPerf Metrics Reference
+    path: ../../docs/metrics-reference.md
+  - page: Benchmark Datasets
+    path: ../../docs/benchmark-datasets.md
+  - page: Pre-Flight Tokenizer Auto Detection
+    path: ../../docs/reference/tokenizer-auto-detection.md
+
+- section: Server Metrics
+  collapsed: true
+  contents:
+  - page: Server Metrics Collection
+    path: ../../docs/server-metrics/server-metrics.md
+  - page: AIPerf Server Metrics Reference
+    path: ../../docs/server-metrics/server-metrics-reference.md
+  - page: AIPerf Server Metrics JSON Export Schema
+    path: ../../docs/server-metrics/server-metrics-json-schema.md
+  - page: AIPerf Server Metrics Parquet Export Schema
+    path: ../../docs/server-metrics/server-metrics-parquet-schema.md
+
+- section: Plugins
+  collapsed: true
+  contents:
+  - page: AIPerf Plugin System
+    path: ../../docs/plugins/plugin-system.md
+  - page: Creating Your First AIPerf Plugin
+    path: ../../docs/plugins/creating-your-first-plugin.md
+
+- section: API
+  collapsed: true
+  contents:
+  - page: Prefix Synthesis API Reference
+    path: ../../docs/api/synthesis.md
+
+- section: Architecture & Internals
+  collapsed: true
+  contents:
+  - page: Architecture of AIPerf
+    path: ../../docs/architecture.md
+  - page: Metrics Flow
+    path: ../../docs/diagrams/metrics-flow.md
+  - page: Mixins
+    path: ../../docs/diagrams/mixins.md
+  - page: AIPerf Code Patterns
+    path: ../../docs/dev/patterns.md

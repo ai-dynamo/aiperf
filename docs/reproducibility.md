@@ -1,10 +1,11 @@
-<!--
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+sidebar-title: Random Number Generation & Reproducibility
+---
 # Random Number Generation & Reproducibility
 
-**Quick Links:**<br>
+**Quick Links:**<br/>
 [Overview](#overview) • [What Is Reproducible](#what-is-reproducible-what-is-not) • [User Guide](#user-guide) • [Developer Guide](#developer-guide) • [Reference](#reference)
 
 ---
@@ -15,11 +16,13 @@
 
 AIPerf provides **deterministic reproducibility** for all seed-controlled randomness using hash-based RNG derivation. This enables reproducible dataset generation while maintaining realistic load testing performance.
 
-> [!IMPORTANT]
-> **Default behavior:** Without `--random-seed`, AIPerf produces **non-deterministic** results. Set `--random-seed <integer>` for reproducibility.
+<Warning>
+**Default behavior:** Without `--random-seed`, AIPerf produces **non-deterministic** results. Set `--random-seed <integer>` for reproducibility.
+</Warning>
 
-> [!WARNING]
-> **Distributed System Constraints:** Even with `--random-seed`, **performance metrics and worker assignment are NOT reproducible** due to system non-determinism (network timing, async I/O, ZMQ load balancing).
+<Warning>
+**Distributed System Constraints:** Even with `--random-seed`, **performance metrics and worker assignment are NOT reproducible** due to system non-determinism (network timing, async I/O, ZMQ load balancing).
+</Warning>
 
 **Reproducible (with `--random-seed`):**
 - ✅ Dataset content (prompts, images, audio)
@@ -41,16 +44,16 @@ AIPerf provides **deterministic reproducibility** for all seed-controlled random
 
 ### ✅ Reproducible with --random-seed
 
-**Dataset:** Prompt text/tokens, image dimensions/formats, audio duration/formats, session IDs<br>
-**Sampling:** Random selection, shuffle order, conversation selection<br>
-**Timing Decisions:** Poisson interval values, cancellation decisions<br>
+**Dataset:** Prompt text/tokens, image dimensions/formats, audio duration/formats, session IDs<br/>
+**Sampling:** Random selection, shuffle order, conversation selection<br/>
+**Timing Decisions:** Poisson interval values, cancellation decisions<br/>
 
 ### ❌ NOT Reproducible
 
-**Worker/Execution:** Which worker handles which request, request start/completion order, async I/O timing<br>
-**Performance:** TTFT, ITL, latency, throughput<br>
-**System:** Timestamps, process IDs, request IDs (ZMQ routing)<br>
-**Server:** LLM output text, output token counts, errors/failures<br>
+**Worker/Execution:** Which worker handles which request, request start/completion order, async I/O timing<br/>
+**Performance:** TTFT, ITL, latency, throughput<br/>
+**System:** Timestamps, process IDs, request IDs (ZMQ routing)<br/>
+**Server:** LLM output text, output token counts, errors/failures<br/>
 
 ### Why This Architecture?
 
@@ -77,9 +80,8 @@ AIPerf achieves its high throughput through parallel workers, ZMQ load balancing
 
 Reproducibility is enforced by automated tests on every commit:
 
-- **[test_random_generator_canary.py](../tests/integration/test_random_generator_canary.py)**: Compares payloads against reference snapshots to detect regressions
-- **[test_deterministic_behavior.py](../tests/integration/test_deterministic_behavior.py)**: Verifies byte-for-byte identical outputs with same seed, different outputs with different seeds, tested with 5+ parallel workers
-
+- **[test_random_generator_canary.py](https://github.com/ai-dynamo/aiperf/blob/main/tests/integration/test_random_generator_canary.py)**: Compares payloads against reference snapshots to detect regressions
+- **[test_deterministic_behavior.py](https://github.com/ai-dynamo/aiperf/blob/main/tests/integration/test_deterministic_behavior.py)**: Verifies byte-for-byte identical outputs with same seed, different outputs with different seeds, tested with 5+ parallel workers
 ---
 
 ## User Guide
@@ -141,8 +143,9 @@ done
 
 ### How to Use RNGs in Your Code
 
-> [!IMPORTANT]
-> Workers do NOT use RNGs. Only use RNGs in **DatasetManager** (content generation) or **TimingManager** (request timing) components.
+<Warning>
+Workers do NOT use RNGs. Only use RNGs in **DatasetManager** (content generation) or **TimingManager** (request timing) components.
+</Warning>
 
 ```python
 from aiperf.common import random_generator as rng
@@ -174,33 +177,33 @@ Uses SHA-256 to derive independent seeds: `SHA-256(root_seed:identifier)` → ch
 
 ### Common Mistakes
 
-**❌ Deriving in methods** → Returns same first value every call.<br>
+**❌ Deriving in methods** → Returns same first value every call.<br/>
 **✅ Derive in `__init__`.**
 
-**❌ Using Python's `random`** → Fragile (global state affected by any code).<br>
+**❌ Using Python's `random`** → Fragile (global state affected by any code).<br/>
 **✅ Use `rng.derive()`.**
 
-**❌ Adding operations to existing RNG** → Shifts all subsequent values.<br>
+**❌ Adding operations to existing RNG** → Shifts all subsequent values.<br/>
 **✅ Derive new RNG for new feature.**
 
 ## FAQ
 
-**Q: Performance metrics still vary with same seed. Why?**<br>
+**Q: Performance metrics still vary with same seed. Why?**<br/>
 A: Expected. Seeds control dataset content, not network timing or worker scheduling. See [What Is Reproducible](#what-is-reproducible-what-is-not).
 
-**Q: Same seed across different configs?**<br>
+**Q: Same seed across different configs?**<br/>
 A: Yes. Same seed + different config = different but reproducible results.
 
-**Q: Multiple workers—how does this work?**<br>
+**Q: Multiple workers—how does this work?**<br/>
 A: Workers set global seed (defensive) but don't derive RNGs. DatasetManager pre-generates content, workers pull from this fixed pool. Validated with 5+ workers.
 
-**Q: Are RNGs thread-safe?**<br>
+**Q: Are RNGs thread-safe?**<br/>
 A: No, but not an issue—each process uses RNGs in its own space. If adding multi-threaded RNG usage, derive per-thread.
 
-**Q: Session IDs reproducible?**<br>
+**Q: Session IDs reproducible?**<br/>
 A: Yes. With seed: sequential (`session_000000`, `session_000001`). Without: UUIDs.
 
-**Q: Performance impact?**<br>
+**Q: Performance impact?**<br/>
 A: None measurable. Network I/O dominates by 1000×.
 
 ## Reference
@@ -270,4 +273,4 @@ my_rng = rng.derive(identifier: str) -> RandomGenerator
 rng.reset()
 ```
 
-See [random_generator.py](../src/aiperf/common/random_generator.py) for the RandomGenerator class and full API details.
+See [random_generator.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/random_generator.py) for the RandomGenerator class and full API details.

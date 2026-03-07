@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: HTTP Trace Metrics Guide
+---
 
 # HTTP Trace Metrics Guide
 
@@ -108,11 +109,13 @@ http_req_total = http_req_blocked + http_req_dns_lookup + http_req_connecting
                + http_req_sending + http_req_waiting + http_req_receiving
 ```
 
-> **Note:** `http_req_total` and `http_req_duration` may differ slightly because:
-> - `http_req_duration` is measured end-to-end (includes response finalization time)
-> - `http_req_total` is computed from components (ends at last chunk, before finalization)
->
-> Use `http_req_total` when you need the breakdown to add up exactly. Use `http_req_duration` when you want the most accurate single measurement of request/response exchange time.
+<Note>
+`http_req_total` and `http_req_duration` may differ slightly because:
+- `http_req_duration` is measured end-to-end (includes response finalization time)
+- `http_req_total` is computed from components (ends at last chunk, before finalization)
+
+Use `http_req_total` when you need the breakdown to add up exactly. Use `http_req_duration` when you want the most accurate single measurement of request/response exchange time.
+</Note>
 
 ### Important Distinctions
 
@@ -226,7 +229,9 @@ When exported to `profile_export.jsonl`, trace data uses **wall-clock timestamps
 }
 ```
 
-> **Note:** Computed duration fields (`blocked_ns`, `dns_lookup_ns`, `connection_reused_ns`) are **omitted** from `trace_data` when the underlying event did not occur. The corresponding metrics (e.g., `http_req_blocked`) will report `0` for aggregation purposes, but the trace field itself is absent.
+<Note>
+Computed duration fields (`blocked_ns`, `dns_lookup_ns`, `connection_reused_ns`) are **omitted** from `trace_data` when the underlying event did not occur. The corresponding metrics (e.g., `http_req_blocked`) will report `0` for aggregation purposes, but the trace field itself is absent.
+</Note>
 
 ### Trace Data Fields
 
@@ -369,5 +374,5 @@ The k6 `http_req_tls_handshaking` metric is **not separated** in AIPerf. TLS tim
 ## Related Documentation
 
 - [Working with Profile Export Files](./working-with-profile-exports.md) - How to parse and analyze AIPerf output files
-- [Source: trace_models.py](../../src/aiperf/common/models/trace_models.py) - Trace data model definitions
-- [Source: http_trace_metrics.py](../../src/aiperf/metrics/types/http_trace_metrics.py) - HTTP trace metric implementations
+- [Source: trace_models.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/trace_models.py) - Trace data model definitions
+- [Source: http_trace_metrics.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/types/http_trace_metrics.py) - HTTP trace metric implementations

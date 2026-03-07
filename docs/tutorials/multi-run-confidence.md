@@ -1,3 +1,9 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Multi-Run Confidence Reporting
+---
+
 # Multi-Run Confidence Reporting
 
 ## Overview
@@ -395,7 +401,7 @@ The CV is a normalized measure of variability: `CV = std / mean`
 
 **Interpretation Guidelines:**
 
-- **CV < 0.05 (5%)**: Excellent repeatability, low noise
+- **CV &lt; 0.05 (5%)**: Excellent repeatability, low noise
   - Results are very stable
   - High confidence in measurements
   - Small differences are likely meaningful
@@ -602,7 +608,7 @@ This provides a good balance of precision and time investment.
 ### 2. Check CV First
 
 After running, look at the CV for your key metrics:
-- CV < 10%: Results are trustworthy
+- CV &lt; 10%: Results are trustworthy
 - CV > 10%: Consider more runs or investigate variance
 
 ### 3. Use Warmup
@@ -695,11 +701,11 @@ aiperf profile --num-profile-runs 5 [other options]
 ```
 
 **Key Metrics:**
-- **CV < 10%**: Good repeatability
+- **CV &lt; 10%**: Good repeatability
 - **Narrow CI**: High precision
 - **No CI overlap**: Strong evidence of difference
 
 For more details, see:
-- [CLI Options](../cli_options.md) - Full parameter reference
-- [Metrics Reference](../metrics_reference.md) - Detailed metric descriptions
+- [CLI Options](../cli-options.md) - Full parameter reference
+- [Metrics Reference](../metrics-reference.md) - Detailed metric descriptions
 - [Architecture](../architecture.md) - How multi-run orchestration works

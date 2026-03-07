@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Benchmark Goodput with AIPerf
+---
 
 # Benchmark Goodput with AIPerf
 
@@ -39,7 +40,7 @@ timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost
 
 #### Run AIPerf with Goodput Constraints
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 aiperf profile \
     -m Qwen/Qwen3-0.6B \
@@ -49,7 +50,7 @@ aiperf profile \
     --request-count 20 \
     --goodput "time_to_first_token:100 inter_token_latency:3.40"
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 Example output:
 
