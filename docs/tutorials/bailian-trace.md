@@ -34,13 +34,10 @@ curl -s localhost:8000/v1/chat/completions \
 
 Bailian traces are JSONL files where each line represents a single request.
 
-Required fields:
 - `chat_id`: Randomized unique chat identifier
 - `timestamp`: Request arrival time in seconds (converted to milliseconds internally)
 - `input_length`: Input token count
 - `output_length`: Output token count
-
-Optional fields:
 - `parent_chat_id`: Parent chat ID linking turns in a session; `-1` for root (default: `-1`)
 - `type`: Request type (e.g. `text`, `image`, `file`)
 - `turn`: Conversation turn number (default: `1`)
@@ -61,20 +58,14 @@ Entries with the same root `chat_id` form a session and are replayed in `turn` o
 
 Download the public Bailian trace dataset:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
-```bash
-# Install Git LFS first if not available: macOS: brew install git-lfs (see https://git-lfs.com)
-git lfs install
-
-# Clone the dataset repository
-git clone https://github.com/alibaba-edu/qwen-bailian-usagetraces-anon
-```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
-
 The repository includes four traces representing different workload types: `qwen_traceA_blksz_16.jsonl`, `qwen_traceB_blksz_16.jsonl`, `qwen_coder_blksz_16.jsonl`, and `qwen_thinking_blksz_16.jsonl`. Substitute any of them in the command below.
 
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
+# Install Git LFS if not available: macOS: brew install git-lfs (see https://git-lfs.com)
+git lfs install
+git clone https://github.com/alibaba-edu/qwen-bailian-usagetraces-anon
+
 # Create a small subset for a quick test
 head -n 50 qwen-bailian-usagetraces-anon/qwen_traceA_blksz_16.jsonl > bailian_short.jsonl
 
