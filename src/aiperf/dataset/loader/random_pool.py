@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from aiperf.common import random_generator as rng
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import MediaType
-from aiperf.common.models import Conversation, Turn
+from aiperf.common.models import Conversation, Image, Text, Turn
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import RandomPool
@@ -82,6 +82,8 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         super().__init__(filename=filename, user_config=user_config, **kwargs)
         self._rng = rng.derive("dataset.loader.random_pool")
         self.num_conversations = num_conversations
+        self.batch_size_image = user_config.input.image.batch_size
+        self.batch_size_text = user_config.input.prompt.batch_size
 
     @staticmethod
     def _validate_path(path: Path) -> int:
@@ -224,7 +226,9 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
     ) -> list[Conversation]:
         """Convert random pool data to conversation objects.
 
-        Each RandomPool entry becomes a single-turn conversation with a unique session ID.
+        When batch_size_image > 1 or batch_size_text > 1, uses flat pool
+        sampling to form a single turn with multiple items per conversation.
+        Otherwise, each RandomPool entry becomes a single-turn conversation.
 
         Args:
             data: A dictionary mapping filename to list of RandomPool objects.
@@ -232,6 +236,9 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         Returns:
             A list of conversations.
         """
+        if self.batch_size_image > 1 or self.batch_size_text > 1:
+            return self._convert_to_conversations_batched(data)
+
         conversations = [
             Conversation(session_id=self.session_id_generator.next())
             for _ in range(self.num_conversations)
@@ -260,6 +267,90 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         for i, batched_turns in enumerate(zip(*sampled_dataset.values(), strict=False)):
             turn = self._merge_turns(batched_turns)
             conversations[i].turns.append(turn)
+
+        return conversations
+
+    def _build_flat_image_pool(self, data: dict[Filename, list[RandomPool]]) -> list[str]:
+        """Collect all image strings from all pool entries into a flat list.
+
+        Args:
+            data: A dictionary mapping filename to list of RandomPool objects.
+
+        Returns:
+            A flat list of image strings (paths, URLs, or base64 data URLs).
+        """
+        pool: list[str] = []
+        for items in data.values():
+            for item in items:
+                if item.image is not None:
+                    pool.append(item.image)
+                if item.images is not None:
+                    for img in item.images:
+                        if isinstance(img, str):
+                            pool.append(img)
+                        else:
+                            pool.extend(img.contents)
+        return pool
+
+    def _build_flat_text_pool(self, data: dict[Filename, list[RandomPool]]) -> list[str]:
+        """Collect all text strings from all pool entries into a flat list.
+
+        Args:
+            data: A dictionary mapping filename to list of RandomPool objects.
+
+        Returns:
+            A flat list of text strings.
+        """
+        pool: list[str] = []
+        for items in data.values():
+            for item in items:
+                if item.text is not None:
+                    pool.append(item.text)
+                if item.texts is not None:
+                    for txt in item.texts:
+                        if isinstance(txt, str):
+                            pool.append(txt)
+                        else:
+                            pool.extend(txt.contents)
+        return pool
+
+    def _convert_to_conversations_batched(
+        self, data: dict[Filename, list[RandomPool]]
+    ) -> list[Conversation]:
+        """Convert pool data to conversations using flat pool batch sampling.
+
+        Builds a flat pool per modality from all pool entries, then for each
+        conversation samples batch_size_image images and/or batch_size_text
+        texts (with replacement) to form a single turn.
+
+        Args:
+            data: A dictionary mapping filename to list of RandomPool objects.
+
+        Returns:
+            A list of conversations, each with one turn containing a batch of items.
+        """
+        image_pool = self._build_flat_image_pool(data) if self.batch_size_image > 1 else []
+        text_pool = self._build_flat_text_pool(data) if self.batch_size_text > 1 else []
+
+        conversations = []
+        for _ in range(self.num_conversations):
+            images: list[Image] = []
+            if image_pool:
+                sampled = self._rng.choices(image_pool, k=self.batch_size_image)
+                processed = [
+                    self._handle_media_content(p, MediaType.IMAGE) for p in sampled
+                ]
+                images = [Image(name="", contents=processed)]
+
+            texts: list[Text] = []
+            if text_pool:
+                sampled_texts = self._rng.choices(text_pool, k=self.batch_size_text)
+                texts = [Text(name="", contents=sampled_texts)]
+
+            turn = Turn(texts=texts, images=images)
+            conv = Conversation(session_id=self.session_id_generator.next())
+            conv.turns.append(turn)
+            conversations.append(conv)
 
         return conversations
 
