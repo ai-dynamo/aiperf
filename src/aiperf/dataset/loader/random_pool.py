@@ -81,7 +81,7 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
     ):
         super().__init__(filename=filename, user_config=user_config, **kwargs)
         self._rng = rng.derive("dataset.loader.random_pool")
-        self.num_conversations = num_conversations
+        self.num_conversations = num_conversations if num_conversations is not None else 100
         self.batch_size_image = user_config.input.image.batch_size
         self.batch_size_text = user_config.input.prompt.batch_size
 
