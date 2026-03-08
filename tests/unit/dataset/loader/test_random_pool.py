@@ -494,7 +494,9 @@ class TestRandomPoolBatchSize:
         config = self._make_config(default_user_config, batch_size_image=2)
         data = {
             "f.jsonl": [
-                RandomPool(images=["https://example.com/x.png", "https://example.com/y.png"]),
+                RandomPool(
+                    images=["https://example.com/x.png", "https://example.com/y.png"]
+                ),
             ]
         }
         loader = RandomPoolDatasetLoader(
@@ -509,7 +511,9 @@ class TestRandomPoolBatchSize:
 
     def test_batch_mode_both_image_and_text(self, default_user_config):
         """When both batch sizes > 1, conversations contain both image and text batches."""
-        config = self._make_config(default_user_config, batch_size_image=2, batch_size_text=3)
+        config = self._make_config(
+            default_user_config, batch_size_image=2, batch_size_text=3
+        )
         data = {
             "f.jsonl": [
                 RandomPool(image="https://example.com/img1.png", text="text1"),
@@ -600,8 +604,14 @@ class TestRandomPoolBatchSize:
         config = self._make_config(default_user_config, batch_size_image=2)
         data = {
             "f.jsonl": [
-                RandomPool(image="https://example.com/img1.png", audio="https://example.com/a1.wav"),
-                RandomPool(image="https://example.com/img2.png", audio="https://example.com/a2.wav"),
+                RandomPool(
+                    image="https://example.com/img1.png",
+                    audio="https://example.com/a1.wav",
+                ),
+                RandomPool(
+                    image="https://example.com/img2.png",
+                    audio="https://example.com/a2.wav",
+                ),
             ]
         }
         loader = RandomPoolDatasetLoader(

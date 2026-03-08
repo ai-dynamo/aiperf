@@ -81,7 +81,9 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
     ):
         super().__init__(filename=filename, user_config=user_config, **kwargs)
         self._rng = rng.derive("dataset.loader.random_pool")
-        self.num_conversations = num_conversations if num_conversations is not None else 100
+        self.num_conversations = (
+            num_conversations if num_conversations is not None else 100
+        )
         self.batch_size_image = user_config.input.image.batch_size
         self.batch_size_text = user_config.input.prompt.batch_size
 
@@ -270,7 +272,9 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
 
         return conversations
 
-    def _build_flat_image_pool(self, data: dict[Filename, list[RandomPool]]) -> list[str]:
+    def _build_flat_image_pool(
+        self, data: dict[Filename, list[RandomPool]]
+    ) -> list[str]:
         """Collect all image strings from all pool entries into a flat list.
 
         Args:
@@ -292,7 +296,9 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
                             pool.extend(img.contents)
         return pool
 
-    def _build_flat_text_pool(self, data: dict[Filename, list[RandomPool]]) -> list[str]:
+    def _build_flat_text_pool(
+        self, data: dict[Filename, list[RandomPool]]
+    ) -> list[str]:
         """Collect all text strings from all pool entries into a flat list.
 
         Args:
@@ -314,7 +320,9 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
                             pool.extend(txt.contents)
         return pool
 
-    def _build_flat_audio_pool(self, data: dict[Filename, list[RandomPool]]) -> list[str]:
+    def _build_flat_audio_pool(
+        self, data: dict[Filename, list[RandomPool]]
+    ) -> list[str]:
         """Collect all audio strings from all pool entries into a flat list.
 
         Args:
@@ -336,7 +344,9 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
                             pool.extend(aud.contents)
         return pool
 
-    def _build_flat_video_pool(self, data: dict[Filename, list[RandomPool]]) -> list[str]:
+    def _build_flat_video_pool(
+        self, data: dict[Filename, list[RandomPool]]
+    ) -> list[str]:
         """Collect all video strings from all pool entries into a flat list.
 
         Args:
@@ -399,7 +409,8 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
             if audio_pool:
                 sampled_audios = self._rng.choices(audio_pool, k=1)
                 processed_audios = [
-                    self._handle_media_content(a, MediaType.AUDIO) for a in sampled_audios
+                    self._handle_media_content(a, MediaType.AUDIO)
+                    for a in sampled_audios
                 ]
                 audios = [Audio(name="", contents=processed_audios)]
 
@@ -407,7 +418,8 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
             if video_pool:
                 sampled_videos = self._rng.choices(video_pool, k=1)
                 processed_videos = [
-                    self._handle_media_content(v, MediaType.VIDEO) for v in sampled_videos
+                    self._handle_media_content(v, MediaType.VIDEO)
+                    for v in sampled_videos
                 ]
                 videos = [Video(name="", contents=processed_videos)]
 
