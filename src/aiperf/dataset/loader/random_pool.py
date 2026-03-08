@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from aiperf.common import random_generator as rng
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import MediaType
-from aiperf.common.models import Conversation, Image, Text, Turn
+from aiperf.common.models import Audio, Conversation, Image, Text, Turn, Video
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import RandomPool
@@ -314,14 +314,60 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
                             pool.extend(txt.contents)
         return pool
 
+    def _build_flat_audio_pool(self, data: dict[Filename, list[RandomPool]]) -> list[str]:
+        """Collect all audio strings from all pool entries into a flat list.
+
+        Args:
+            data: A dictionary mapping filename to list of RandomPool objects.
+
+        Returns:
+            A flat list of audio strings.
+        """
+        pool: list[str] = []
+        for items in data.values():
+            for item in items:
+                if item.audio is not None:
+                    pool.append(item.audio)
+                if item.audios is not None:
+                    for aud in item.audios:
+                        if isinstance(aud, str):
+                            pool.append(aud)
+                        else:
+                            pool.extend(aud.contents)
+        return pool
+
+    def _build_flat_video_pool(self, data: dict[Filename, list[RandomPool]]) -> list[str]:
+        """Collect all video strings from all pool entries into a flat list.
+
+        Args:
+            data: A dictionary mapping filename to list of RandomPool objects.
+
+        Returns:
+            A flat list of video strings.
+        """
+        pool: list[str] = []
+        for items in data.values():
+            for item in items:
+                if item.video is not None:
+                    pool.append(item.video)
+                if item.videos is not None:
+                    for vid in item.videos:
+                        if isinstance(vid, str):
+                            pool.append(vid)
+                        else:
+                            pool.extend(vid.contents)
+        return pool
+
     def _convert_to_conversations_batched(
         self, data: dict[Filename, list[RandomPool]]
     ) -> list[Conversation]:
         """Convert pool data to conversations using flat pool batch sampling.
 
-        Builds a flat pool per modality from all pool entries, then for each
-        conversation samples batch_size_image images and/or batch_size_text
-        texts (with replacement) to form a single turn.
+        Builds a flat pool per modality from all pool entries. For each conversation,
+        samples batch_size_image images, batch_size_text texts, and 1 audio/video
+        (with replacement) from their respective pools. Modalities absent from the
+        pool are omitted; modalities present but whose batch size is 1 (the default)
+        are still sampled so no data is silently dropped when only one batch size > 1.
 
         Args:
             data: A dictionary mapping filename to list of RandomPool objects.
@@ -329,8 +375,10 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         Returns:
             A list of conversations, each with one turn containing a batch of items.
         """
-        image_pool = self._build_flat_image_pool(data) if self.batch_size_image > 1 else []
-        text_pool = self._build_flat_text_pool(data) if self.batch_size_text > 1 else []
+        image_pool = self._build_flat_image_pool(data)
+        text_pool = self._build_flat_text_pool(data)
+        audio_pool = self._build_flat_audio_pool(data)
+        video_pool = self._build_flat_video_pool(data)
 
         conversations = []
         for _ in range(self.num_conversations):
@@ -347,7 +395,23 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
                 sampled_texts = self._rng.choices(text_pool, k=self.batch_size_text)
                 texts = [Text(name="", contents=sampled_texts)]
 
-            turn = Turn(texts=texts, images=images)
+            audios: list[Audio] = []
+            if audio_pool:
+                sampled_audios = self._rng.choices(audio_pool, k=1)
+                processed_audios = [
+                    self._handle_media_content(a, MediaType.AUDIO) for a in sampled_audios
+                ]
+                audios = [Audio(name="", contents=processed_audios)]
+
+            videos: list[Video] = []
+            if video_pool:
+                sampled_videos = self._rng.choices(video_pool, k=1)
+                processed_videos = [
+                    self._handle_media_content(v, MediaType.VIDEO) for v in sampled_videos
+                ]
+                videos = [Video(name="", contents=processed_videos)]
+
+            turn = Turn(texts=texts, images=images, audios=audios, videos=videos)
             conv = Conversation(session_id=self.session_id_generator.next())
             conv.turns.append(turn)
             conversations.append(conv)

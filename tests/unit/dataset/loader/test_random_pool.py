@@ -543,3 +543,75 @@ class TestRandomPoolBatchSize:
             turn = conv.turns[0]
             assert len(turn.texts) == 1
             assert len(turn.texts[0].contents) == 1
+
+    def test_image_batch_preserves_text_at_default_size(self, default_user_config):
+        """When only batch_size_image > 1, text (at default size 1) must still appear."""
+        config = self._make_config(default_user_config, batch_size_image=3)
+        data = {
+            "f.jsonl": [
+                RandomPool(image="https://example.com/img1.png", text="query1"),
+                RandomPool(image="https://example.com/img2.png", text="query2"),
+            ]
+        }
+        loader = RandomPoolDatasetLoader(
+            filename="dummy.jsonl", user_config=config, num_conversations=2
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        for conv in conversations:
+            turn = conv.turns[0]
+            # 3 images batched
+            assert len(turn.images) == 1
+            assert len(turn.images[0].contents) == 3
+            # text still present (1 item, not dropped)
+            assert len(turn.texts) == 1
+            assert len(turn.texts[0].contents) == 1
+            assert turn.texts[0].contents[0] in {"query1", "query2"}
+
+    def test_text_batch_preserves_image_at_default_size(self, default_user_config):
+        """When only batch_size_text > 1, image (at default size 1) must still appear."""
+        config = self._make_config(default_user_config, batch_size_text=4)
+        data = {
+            "f.jsonl": [
+                RandomPool(image="https://example.com/img1.png", text="query1"),
+                RandomPool(image="https://example.com/img2.png", text="query2"),
+            ]
+        }
+        loader = RandomPoolDatasetLoader(
+            filename="dummy.jsonl", user_config=config, num_conversations=2
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        for conv in conversations:
+            turn = conv.turns[0]
+            # 4 texts batched
+            assert len(turn.texts) == 1
+            assert len(turn.texts[0].contents) == 4
+            # image still present (1 item, not dropped)
+            assert len(turn.images) == 1
+            assert len(turn.images[0].contents) == 1
+            assert turn.images[0].contents[0] in {
+                "https://example.com/img1.png",
+                "https://example.com/img2.png",
+            }
+
+    def test_batch_mode_preserves_audio(self, default_user_config):
+        """Audio entries must not be dropped when batch mode is triggered by image batch size."""
+        config = self._make_config(default_user_config, batch_size_image=2)
+        data = {
+            "f.jsonl": [
+                RandomPool(image="https://example.com/img1.png", audio="https://example.com/a1.wav"),
+                RandomPool(image="https://example.com/img2.png", audio="https://example.com/a2.wav"),
+            ]
+        }
+        loader = RandomPoolDatasetLoader(
+            filename="dummy.jsonl", user_config=config, num_conversations=2
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        audio_urls = {"https://example.com/a1.wav", "https://example.com/a2.wav"}
+        for conv in conversations:
+            turn = conv.turns[0]
+            assert len(turn.images[0].contents) == 2
+            assert len(turn.audios) == 1
+            assert turn.audios[0].contents[0] in audio_urls
