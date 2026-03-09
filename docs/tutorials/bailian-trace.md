@@ -56,18 +56,18 @@ Entries with the same root `chat_id` form a session and are replayed in `turn` o
 
 ## Download and Profile
 
-Download the public Bailian trace dataset:
+Download a trace file from the public Bailian dataset:
 
 The repository includes four traces representing different workload types: `qwen_traceA_blksz_16.jsonl`, `qwen_traceB_blksz_16.jsonl`, `qwen_coder_blksz_16.jsonl`, and `qwen_thinking_blksz_16.jsonl`. Substitute any of them in the command below.
 
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
-# Install Git LFS if not available: macOS: brew install git-lfs (see https://git-lfs.com)
-git lfs install
-git clone https://github.com/alibaba-edu/qwen-bailian-usagetraces-anon
+# Download a trace file
+curl -Lo qwen_traceA_blksz_16.jsonl \
+  https://github.com/alibaba-edu/qwen-bailian-usagetraces-anon/raw/refs/heads/main/qwen_traceA_blksz_16.jsonl
 
 # Create a small subset for a quick test
-head -n 50 qwen-bailian-usagetraces-anon/qwen_traceA_blksz_16.jsonl > bailian_short.jsonl
+head -n 50 qwen_traceA_blksz_16.jsonl > bailian_short.jsonl
 
 # Run trace replay
 aiperf profile \
