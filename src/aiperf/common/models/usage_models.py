@@ -30,12 +30,16 @@ class Usage(dict):
     @property
     def prompt_tokens(self) -> int | None:
         """Get prompt/input token count from API usage dict."""
-        return self.get("prompt_tokens") or self.get("input_tokens")
+        if "prompt_tokens" in self:
+            return self["prompt_tokens"]
+        return self.get("input_tokens")
 
     @property
     def completion_tokens(self) -> int | None:
         """Get completion/output token count from API usage dict."""
-        return self.get("completion_tokens") or self.get("output_tokens")
+        if "completion_tokens" in self:
+            return self["completion_tokens"]
+        return self.get("output_tokens")
 
     @property
     def total_tokens(self) -> int | None:
@@ -50,6 +54,7 @@ class Usage(dict):
         or output_tokens_details.reasoning_tokens.
         """
         for details_key in self.COMPLETION_DETAILS_KEYS:
-            if reasoning_tokens := self.get(details_key, {}).get("reasoning_tokens"):
-                return reasoning_tokens
+            details = self.get(details_key)
+            if isinstance(details, dict) and "reasoning_tokens" in details:
+                return details["reasoning_tokens"]
         return None

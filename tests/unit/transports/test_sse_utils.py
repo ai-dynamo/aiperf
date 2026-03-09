@@ -692,6 +692,7 @@ def create_mock_sse_iterator():
     return _factory
 
 
+@pytest.mark.asyncio
 class TestAsyncSSEStreamReaderParsing:
     """Tests for SSE stream reader buffer management and delimiter handling."""
 
@@ -810,6 +811,7 @@ class TestAsyncSSEStreamReaderParsing:
         assert messages[-1].packets[0].value == f"msg{count - 1}"
 
 
+@pytest.mark.asyncio
 class TestAsyncSSEStreamReaderErrorHandling:
     """Test suite for AsyncSSEStreamReader integration with error handling."""
 

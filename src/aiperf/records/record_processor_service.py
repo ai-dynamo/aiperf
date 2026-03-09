@@ -180,7 +180,8 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         # Free remaining large data structures (processors are done at this point).
         trace_data = record.trace_data
         error = record.error
-        record.responses = None
+        if self.user_config.output.export_level != ExportLevel.RAW:
+            record.responses = None
         record.turns = None
         record.trace_data = None
         record.request_headers = None
