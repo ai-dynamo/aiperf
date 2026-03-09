@@ -81,7 +81,7 @@ class ComponentIntegrationTestDefaults:
     ui: str = "simple"
 
 
-@pytest.fixture(autouse=True, scope="session")
+@pytest.fixture(autouse=True, scope="package")
 def mock_os_exit():
     """Patch os._exit to raise an exception instead of exiting the process."""
     with patch(
@@ -91,7 +91,7 @@ def mock_os_exit():
         yield
 
 
-@pytest.fixture(autouse=True, scope="session")
+@pytest.fixture(autouse=True, scope="package")
 def mock_os_kill_sigkill():
     """Patch os.kill to prevent SIGKILL from killing the test process.
 
@@ -115,7 +115,7 @@ def mock_os_kill_sigkill():
         yield
 
 
-@pytest.fixture(autouse=True, scope="session")
+@pytest.fixture(autouse=True, scope="package")
 def no_server_metrics_flush_period():
     """Fixture to disable server metrics flush period."""
     original_flush_period = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
@@ -124,7 +124,7 @@ def no_server_metrics_flush_period():
     Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = original_flush_period
 
 
-@pytest.fixture(autouse=True, scope="session")
+@pytest.fixture(autouse=True, scope="package")
 def mock_tokenizer_from_pretrained():
     """Patch Tokenizer.from_pretrained to use FakeTokenizer."""
     with patch(
@@ -141,7 +141,7 @@ def _mock_tokenize(text: str) -> tuple[str, ...]:
     return (TOKEN,) * round(len(text) / TOKEN_LEN)
 
 
-@pytest.fixture(autouse=True, scope="session")
+@pytest.fixture(autouse=True, scope="package")
 def mock_server_tokenize():
     """Patch mock server _tokenize to match FakeTokenizer.
 
@@ -158,7 +158,7 @@ def mock_server_tokenize():
 _MOCK_CORPUS_TEXT = TOKEN * 10000  # 10000 tokens of "token$"
 
 
-@pytest.fixture(autouse=True, scope="session")
+@pytest.fixture(autouse=True, scope="package")
 def mock_corpus_file():
     """Patch open() to return mock corpus when reading shakespeare.txt."""
     import builtins
