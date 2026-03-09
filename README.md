@@ -63,6 +63,7 @@ aiperf profile \
 
 ### Workloads and Data
 - [Trace Benchmarking](docs/benchmark_modes/trace_replay.md) - Deterministic workload replay
+- [Bailian Traces](docs/tutorials/bailian-trace.md) - Bailian production trace replay
 - [Custom Prompt Benchmarking](docs/tutorials/custom-prompt-benchmarking.md) - Send exact prompts as-is
 - [Custom Dataset](docs/tutorials/custom-dataset.md) - Custom dataset formats
 - [ShareGPT Dataset](docs/tutorials/sharegpt.md) - Profile with ShareGPT dataset
