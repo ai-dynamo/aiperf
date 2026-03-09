@@ -38,7 +38,7 @@ docker exec -it ollama ollama pull granite4:350m
 Create a virtual environment and install AIPerf:
 
 ```bash
-python -m venv venv
+python3 -m venv venv
 source venv/bin/activate
 pip install aiperf
 ```
