@@ -70,6 +70,9 @@ aiperf profile \
 
 Example output:
 
+
+**NOTE:** The example performance is reflective of a CPU-only run and does not represent an official benchmark.
+
 ```bash
                                                NVIDIA AIPerf | LLM Metrics
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┓
