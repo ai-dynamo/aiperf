@@ -1,31 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Plugin management CLI commands.
-
-aiperf plugins                       # Show installed packages with details
-aiperf plugins --all                 # Show all categories and plugins
-aiperf plugins endpoint              # List endpoint types
-aiperf plugins endpoint openai       # Details about openai endpoint
-aiperf plugins --validate            # Validate plugins.yaml
-"""
+"""Display helpers for plugin CLI commands."""
 
 from __future__ import annotations
 
-from typing import Annotated
+from collections import Counter
 
-import cyclopts
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType
 from aiperf.plugin.types import TypeNotFoundError
-
-plugins_app = cyclopts.App(
-    name="plugins",
-    help="Explore AIPerf plugins: aiperf plugins [category] [type]",
-)
 
 console = Console()
 
@@ -48,14 +34,11 @@ def _hint(msg: str) -> None:
 
 def show_packages_detailed() -> None:
     """Show installed packages with full details (default view)."""
-    from collections import Counter
-
     pkg_names = plugins.list_packages()
     if not pkg_names:
         console.print("[yellow]No packages found[/yellow]")
         return
 
-    # Count plugins per package
     counts = Counter(entry.package for entry in plugins.iter_entries())
 
     table = Table(title="Installed Packages", show_lines=True, expand=True)
@@ -84,7 +67,6 @@ def show_categories_overview() -> None:
         console.print("[yellow]No categories found[/yellow]")
         return
 
-    # Categories
     table = Table(title="Plugin Categories", show_lines=True, expand=True)
     table.add_column("Category", style="cyan", no_wrap=True)
     table.add_column("Plugins", ratio=1)
@@ -166,37 +148,3 @@ def run_validate() -> None:
     color = "green" if all_passed else "red"
     msg = "All checks passed" if all_passed else "Validation failed"
     console.print(f"\n[bold {color}]{msg}[/]")
-
-
-@plugins_app.default
-def plugins_cli_command(
-    category: Annotated[
-        PluginType | None, cyclopts.Parameter(help="Category to explore")
-    ] = None,
-    name: Annotated[
-        str | None, cyclopts.Parameter(help="Type name for details")
-    ] = None,
-    *,
-    all_plugins: Annotated[
-        bool,
-        cyclopts.Parameter(
-            name=["--all", "-a"], help="Show all categories and plugins"
-        ),
-    ] = False,
-    validate: Annotated[
-        bool,
-        cyclopts.Parameter(name=["--validate", "-v"], help="Validate plugins.yaml"),
-    ] = False,
-) -> None:
-    """Explore AIPerf plugins."""
-    match (all_plugins, validate, category, name):
-        case (_, True, _, _):
-            run_validate()
-        case (True, _, _, _):
-            show_categories_overview()
-        case (_, _, None, _):
-            show_packages_detailed()
-        case (_, _, cat, None):
-            show_category_types(cat)
-        case (_, _, cat, n):
-            show_type_details(cat, n)

@@ -12,17 +12,9 @@ sidebar-title: Command Line Options
 
 Install shell completion for this application.
 
-### [`plugins`](#aiperf-plugins)
-
-Explore AIPerf plugins: aiperf plugins [category] [type]
-
 ### [`analyze-trace`](#aiperf-analyze-trace)
 
-Analyze mooncake trace for prefix statistics
-
-### [`service`](#aiperf-service)
-
-Run an AIPerf service in a single process.
+Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
 
 ### [`profile`](#aiperf-profile)
 
@@ -33,6 +25,14 @@ Run the Profile subcommand.
 ### [`plot`](#aiperf-plot)
 
 Generate visualizations from AIPerf profiling data.
+
+### [`plugins`](#aiperf-plugins)
+
+Explore AIPerf plugins: aiperf plugins [category] [type]
+
+### [`service`](#aiperf-service)
+
+Run an AIPerf service in a single process.
 
 <hr/>
 
@@ -52,32 +52,9 @@ Output path for the completion script. If not specified, uses shell-specific def
 
 <hr/>
 
-## `aiperf plugins`
-
-Explore AIPerf plugins: aiperf plugins [category] [type]
-
-#### `--category` `<str>`
-
-Category to explore.
-<br/>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `ramp`, `record_processor`, `results_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
-
-#### `--name` `<str>`
-
-Type name for details.
-
-#### `-a`, `--all`, `--no-all`
-
-Show all categories and plugins.
-
-#### `-v`, `--validate`, `--no-validate`
-
-Validate plugins.yaml.
-
-<hr/>
-
 ## `aiperf analyze-trace`
 
-Analyze mooncake trace for prefix statistics
+Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
 
 #### `--input-file` `<str>` _(Required)_
 
@@ -91,41 +68,6 @@ KV cache block size for analysis (default: 512).
 #### `--output-file` `<str>`
 
 Optional output path for analysis report (JSON).
-
-<hr/>
-
-## `aiperf service`
-
-Run an AIPerf service in a single process.
-
-_Advanced use only — intended for developers and Kubernetes/distributed deployments where services run in separate containers or nodes._
-
-For standard single-node benchmarking, use the `aiperf profile` command instead.
-
-#### `--type` `<str>` _(Required)_
-
-Service type to run.
-<br/>_Choices: [`api`, `dataset_manager`, `gpu_telemetry_manager`, `record_processor`, `records_manager`, `server_metrics_manager`, `system_controller`, `timing_manager`, `worker`, `worker_manager`]_
-
-#### `--user-config-file` `<str>`
-
-Path to the user configuration file (JSON or YAML). Falls back to AIPERF_CONFIG_USER_FILE environment variable.
-
-#### `--service-config-file` `<str>`
-
-Path to the service configuration file (JSON or YAML). Falls back to AIPERF_CONFIG_SERVICE_FILE environment variable, then to default ServiceConfig if neither is set.
-
-#### `--service-id` `<str>`
-
-Unique identifier for the service instance. Useful when running multiple instances of the same service type.
-
-#### `--health-host` `<str>`
-
-Host to bind the health server to. Falls back to AIPERF_SERVICE_HEALTH_HOST environment variable.
-
-#### `--health-port` `<int>`
-
-HTTP port for health endpoints (/healthz, /readyz). Required for Kubernetes liveness and readiness probes. Falls back to AIPERF_SERVICE_HEALTH_PORT environment variable.
 
 <hr/>
 
@@ -1084,3 +1026,61 @@ Host for dashboard server (only used with --dashboard). Defaults to 127.0.0.1.
 
 Port for dashboard server (only used with --dashboard). Defaults to 8050.
 <br/>_Default: `8050`_
+
+<hr/>
+
+## `aiperf plugins`
+
+Explore AIPerf plugins: aiperf plugins [category] [type]
+
+#### `--category` `<str>`
+
+Category to explore.
+<br/>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `ramp`, `record_processor`, `results_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+
+#### `--name` `<str>`
+
+Type name for details.
+
+#### `-a`, `--all`, `--no-all`
+
+Show all categories and plugins.
+
+#### `-v`, `--validate`, `--no-validate`
+
+Validate plugins.yaml.
+
+<hr/>
+
+## `aiperf service`
+
+Run an AIPerf service in a single process.
+
+_Advanced use only — intended for developers and Kubernetes/distributed deployments where services run in separate containers or nodes._
+
+For standard single-node benchmarking, use the `aiperf profile` command instead.
+
+#### `--type` `<str>` _(Required)_
+
+Service type to run.
+<br/>_Choices: [`api`, `dataset_manager`, `gpu_telemetry_manager`, `record_processor`, `records_manager`, `server_metrics_manager`, `system_controller`, `timing_manager`, `worker`, `worker_manager`]_
+
+#### `--user-config-file` `<str>`
+
+Path to the user configuration file (JSON or YAML). Falls back to AIPERF_CONFIG_USER_FILE environment variable.
+
+#### `--service-config-file` `<str>`
+
+Path to the service configuration file (JSON or YAML). Falls back to AIPERF_CONFIG_SERVICE_FILE environment variable, then to default ServiceConfig if neither is set.
+
+#### `--service-id` `<str>`
+
+Unique identifier for the service instance. Useful when running multiple instances of the same service type.
+
+#### `--health-host` `<str>`
+
+Host to bind the health server to. Falls back to AIPERF_SERVICE_HEALTH_HOST environment variable.
+
+#### `--health-port` `<int>`
+
+HTTP port for health endpoints (/healthz, /readyz). Required for Kubernetes liveness and readiness probes. Falls back to AIPERF_SERVICE_HEALTH_PORT environment variable.

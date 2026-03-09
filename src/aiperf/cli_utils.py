@@ -1,31 +1,34 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
+# NOTE: These should be inline imported in cli commands to avoid
+# pulling in heavy dependencies at CLI startup time.
+
+from __future__ import annotations
+
+import sys
 from contextlib import AbstractContextManager
-from typing import TYPE_CHECKING
 
-# NOTE: Do as little imports as possible in this file to ensure the CLI is fast to start up
+from rich.align import AlignMethod
+from rich.console import Console, RenderableType
+from rich.panel import Panel
+from rich.style import StyleType
+from rich.text import Text
 
-if TYPE_CHECKING:
-    from rich.align import AlignMethod
-    from rich.console import RenderableType
-    from rich.style import StyleType
+from aiperf.common.aiperf_logger import AIPerfLogger
 
+console = Console()
 
-def warn_command_not_implemented(command: str) -> None:
-    """Warn the user that the subcommand is not implemented."""
-    raise_startup_error_and_exit(
-        f"Command [bold red]{command}[/bold red] is not yet implemented",
-        title="Not Implemented",
-    )
+_logger = AIPerfLogger("aiperf")
 
 
 def raise_startup_error_and_exit(
-    message: "RenderableType",
-    text_color: "StyleType | None" = None,
+    message: RenderableType,
+    text_color: StyleType | None = None,
     title: str = "Error",
     exit_code: int = 1,
-    border_style: "StyleType" = "bold red",
-    title_align: "AlignMethod" = "left",
+    border_style: StyleType = "bold red",
+    title_align: AlignMethod = "left",
 ) -> None:
     """Raise a startup error and exit the program.
 
@@ -37,15 +40,9 @@ def raise_startup_error_and_exit(
         border_style: The border style to use.
         title_align: The alignment of the title.
     """
-    import sys
-
-    from rich.console import Console
-    from rich.panel import Panel
-
     if isinstance(message, str):
         message = f"[{text_color}]{message}[/{text_color}]" if text_color else message
 
-    console = Console()
     console.print(
         Panel(
             renderable=message,
@@ -74,8 +71,8 @@ class exit_on_error(AbstractContextManager):
     def __init__(
         self,
         *exceptions: type[BaseException],
-        message: "RenderableType" = "{e}",
-        text_color: "StyleType | None" = None,
+        message: RenderableType = "{e}",
+        text_color: StyleType | None = None,
         title: str = "Error",
         exit_code: int = 1,
         show_traceback: bool = True,
@@ -98,10 +95,6 @@ class exit_on_error(AbstractContextManager):
             not self.exceptions
             and not isinstance(exc_value, (SystemExit | KeyboardInterrupt))
         ) or issubclass(exc_type, self.exceptions):
-            from rich.console import Console
-
-            console = Console()
-
             # Only show full traceback if requested
             # Don't show locals as they are very noisy and not useful for most errors
             if self.show_traceback:
@@ -128,11 +121,7 @@ class exit_on_error(AbstractContextManager):
 
 def print_developer_mode_warning() -> None:
     """Print a warning message to the console if developer mode is enabled."""
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.text import Text
 
-    console = Console()
     panel = Panel(
         Text(
             "Developer Mode is active. This is a developer-only feature. Use at your own risk.",
@@ -148,10 +137,8 @@ def print_developer_mode_warning() -> None:
 
 def warn_osl_without_ignore_eos() -> None:
     """Log a warning when --osl is used without ignore_eos or min_tokens in extra inputs."""
-    import logging
 
-    logger = logging.getLogger("aiperf")
-    logger.warning(
+    _logger.warning(
         "Using --osl without ignore_eos or min_tokens in --extra-inputs. "
         "Output sequence length cannot be guaranteed unless the server honors these parameters. "
         "Consider: --extra-inputs ignore_eos:true (generate until max_tokens) "
