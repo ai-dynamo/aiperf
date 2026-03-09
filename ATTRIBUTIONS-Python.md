@@ -521,7 +521,7 @@ PERFORMANCE OF THIS SOFTWARE.
   - `Repository`: https://github.com/aio-libs/aiohappyeyeballs
 
 
-## aiohttp (3.12.15)
+## aiohttp (3.13.3)
 
 ### Licenses
 License: `Apache-2.0 AND MIT`
@@ -1087,7 +1087,7 @@ SOFTWARE.
   - `Tidelift`: https://tidelift.com/subscription/pkg/pypi-attrs?utm_source=pypi-attrs&utm_medium=pypi
 
 
-## certifi (2025.10.5)
+## certifi (2026.2.25)
 
 ### Licenses
 License: `MPL-2.0`
@@ -1162,7 +1162,7 @@ documentation is licensed as follows:
   - `Source Code`: https://github.com/python-cffi/cffi
 
 
-## charset-normalizer (3.4.4)
+## charset-normalizer (3.4.5)
 
 ### Licenses
 License: `MIT`
@@ -1199,7 +1199,7 @@ SOFTWARE.
   - `Issue tracker`: https://github.com/jawah/charset_normalizer/issues
 
 
-## cyclopts (4.2.3)
+## cyclopts (4.8.0)
 
 ### Licenses
 License: `Apache-2.0`
@@ -1450,7 +1450,7 @@ SOFTWARE.
   - `repository`: https://github.com/rr-/docstring_parser
 
 
-## docutils (0.22.2)
+## docutils (0.22.4)
 
 ### Licenses
 License: `BSD License`
@@ -1834,7 +1834,7 @@ License: `Apache Software License`
   - `Homepage`: https://github.com/kkroening/ffmpeg-python
 
 
-## filelock (3.20.0)
+## filelock (3.25.1)
 
 ### Licenses
 License: `Unlicense`
@@ -2097,7 +2097,7 @@ Apache License
   - `Homepage`: https://github.com/aio-libs/frozenlist
 
 
-## fsspec (2025.10.0)
+## fsspec (2026.2.0)
 
 ### Licenses
 License: `BSD-3-Clause`
@@ -2174,7 +2174,7 @@ THE SOFTWARE.
   - `Source`: https://github.com/PythonCharmers/python-future
 
 
-## hf-xet (1.2.0)
+## hf-xet (1.3.2)
 
 ### Licenses
 License: `Apache Software License`
@@ -2391,7 +2391,7 @@ License: `Apache Software License`
   - `Repository`: https://github.com/huggingface/xet-core.git
 
 
-## huggingface-hub (0.36.0)
+## huggingface-hub (1.6.0)
 
 ### Licenses
 License: `Apache`
@@ -2729,7 +2729,7 @@ IN THE SOFTWARE.
   - `Homepage`: https://github.com/jmespath/jmespath.py
 
 
-## linkify-it-py (2.0.3)
+## linkify-it-py (2.1.0)
 
 ### Licenses
 License: `MIT`
@@ -2990,7 +2990,7 @@ IN THE SOFTWARE.
   - `Homepage`: https://github.com/executablebooks/mdurl
 
 
-## multidict (6.7.0)
+## multidict (6.7.1)
 
 ### Licenses
 License: `Apache License 2.0`
@@ -3025,7 +3025,7 @@ License: `Apache License 2.0`
   - `Homepage`: https://github.com/aio-libs/multidict
 
 
-## numpy (1.26.4)
+## numpy (2.4.3)
 
 ### Licenses
 License: `BSD License`
@@ -3409,7 +3409,7 @@ limitations under the License.
   - `source`: https://github.com/ijl/orjson
 
 
-## packaging (25.0)
+## packaging (26.0)
 
 ### Licenses
 License: `Apache Software License`
@@ -3634,7 +3634,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source`: https://github.com/pypa/packaging
 
 
-## pillow (11.1.0)
+## pillow (12.1.1)
 
 ### Licenses
 License: `MIT-CMU`
@@ -4996,7 +4996,7 @@ the FAQ for more information on the distribution of modified source versions.
   - `Source`: https://github.com/python-pillow/Pillow
 
 
-## platformdirs (4.5.0)
+## platformdirs (4.9.4)
 
 ### Licenses
 License: `MIT`
@@ -5515,7 +5515,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Homepage`: https://github.com/giampaolo/psutil
 
 
-## pycparser (2.23)
+## pycparser (3.0)
 
 ### Licenses
 License: `BSD-3-Clause`
@@ -5555,7 +5555,7 @@ OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Homepage`: https://github.com/eliben/pycparser
 
 
-## pydantic (2.11.10)
+## pydantic (2.12.5)
 
 ### Licenses
 License: `MIT`
@@ -5593,7 +5593,7 @@ SOFTWARE.
   - `Source`: https://github.com/pydantic/pydantic
 
 
-## pydantic-core (2.33.2)
+## pydantic-core (2.41.5)
 
 ### Licenses
 License: `MIT`
@@ -5629,7 +5629,7 @@ SOFTWARE.
   - `Source`: https://github.com/pydantic/pydantic-core
 
 
-## pydantic-settings (2.10.1)
+## pydantic-settings (2.13.1)
 
 ### Licenses
 License: `MIT`
@@ -5709,7 +5709,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source`: https://github.com/pygments/pygments
 
 
-## python-dotenv (1.2.1)
+## python-dotenv (1.2.2)
 
 ### Licenses
 License: `BSD-3-Clause`
@@ -6439,7 +6439,7 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
   - `Tracker`: https://github.com/zeromq/pyzmq/issues
 
 
-## regex (2025.10.23)
+## regex (2026.2.28)
 
 ### Licenses
 License: `Apache-2.0 AND CNRI-Python`
@@ -6893,7 +6893,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
   - `Source`: https://github.com/wasi-master/rich-rst
 
 
-## ruamel-yaml (0.18.16)
+## ruamel-yaml (0.18.17)
 
 ### Licenses
 License: `MIT License`
@@ -6905,7 +6905,7 @@ License: `MIT License`
   - `Tracker`: https://sourceforge.net/p/ruamel-yaml/tickets/
 
 
-## ruamel-yaml-clib (0.2.14)
+## ruamel-yaml-clib (0.2.15)
 
 ### Licenses
 License: `MIT`
@@ -6917,7 +6917,7 @@ License: `MIT`
   - `Tracker`: https://sourceforge.net/p/ruamel-yaml-clib/tickets/
 
 
-## safetensors (0.6.2)
+## safetensors (0.7.0)
 
 ### Licenses
 License: `Apache Software License`
@@ -7252,7 +7252,7 @@ SOFTWARE.
   - `Repository`: https://github.com/Textualize/textual
 
 
-## tokenizers (0.22.1)
+## tokenizers (0.22.2)
 
 ### Licenses
 License: `Apache Software License`
@@ -7262,7 +7262,7 @@ License: `Apache Software License`
   - `Source`: https://github.com/huggingface/tokenizers
 
 
-## tqdm (4.67.1)
+## tqdm (4.67.3)
 
 ### Licenses
 License: `MPL-2.0 AND MIT`
@@ -7327,7 +7327,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
   - `wiki`: https://github.com/tqdm/tqdm/wiki
 
 
-## transformers (4.57.1)
+## transformers (5.3.0)
 
 ### Licenses
 License: `Apache 2.0 License`
@@ -7877,7 +7877,7 @@ SOFTWARE.
   - `Source`: https://github.com/pydantic/typing-inspection
 
 
-## uc-micro-py (1.0.3)
+## uc-micro-py (2.0.0)
 
 ### Licenses
 License: `MIT`
@@ -7936,7 +7936,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
   - `Homepage`: https://github.com/tsutsu3/uc.micro-py
 
 
-## urllib3 (2.5.0)
+## urllib3 (2.6.3)
 
 ### Licenses
 License: `MIT`
@@ -8214,7 +8214,7 @@ Copyright (C) 2016-present the uvloop authors and contributors.
   - `github`: https://github.com/MagicStack/uvloop
 
 
-## yarl (1.22.0)
+## yarl (1.23.0)
 
 ### Licenses
 License: `Apache-2.0`
