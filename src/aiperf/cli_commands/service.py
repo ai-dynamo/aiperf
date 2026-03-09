@@ -10,10 +10,10 @@ from cyclopts import App
 from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.plugin.enums import ServiceType
 
-service_app = App(name="service")
+app = App(name="service")
 
 
-@service_app.default
+@app.default
 def service(
     service_type: Annotated[
         ServiceType, CLIParameter(name="--type", help="Service type to run.")
