@@ -73,7 +73,7 @@ def _needs_tokenizer(args: list[str]) -> bool:
     return meta.tokenizes_input or meta.produces_tokens
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="package", autouse=True)
 def setup_integration_tokenizer():
     """Set up tokenizer caching for integration tests.
 
@@ -257,7 +257,7 @@ def mock_server_factory() -> Callable[..., AsyncIterator[AIPerfMockServer]]:
     return create_server
 
 
-@pytest_asyncio.fixture(scope="session", loop_scope="session")
+@pytest_asyncio.fixture(scope="package", loop_scope="package")
 async def aiperf_mock_server() -> AsyncGenerator[AIPerfMockServer, None]:
     """Start AIPerf Mock Server for testing.
 
