@@ -8,8 +8,8 @@ from pathlib import Path
 import orjson
 import pytest
 
-from aiperf.cli_commands.analyze_trace import _build_stats_table, analyze_trace
 from aiperf.dataset.synthesis import MetricStats
+from aiperf.dataset.synthesis.cli import _build_stats_table, analyze_trace
 
 
 class TestBuildStatsTable:

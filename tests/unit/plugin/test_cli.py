@@ -12,10 +12,10 @@ import pytest
 from pytest import param
 from rich.console import Console
 
-from aiperf.cli_commands.plugins_cli import (
+from aiperf.cli_commands.plugins import plugins
+from aiperf.plugin.cli import (
     _hint,
     _title,
-    plugins_cli_command,
     run_validate,
     show_categories_overview,
     show_category_types,
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 @pytest.fixture
 def mock_console() -> Generator[MagicMock, None, None]:
     """Mock the console for output capture."""
-    with patch("aiperf.cli_commands.plugins_cli.console") as mock:
+    with patch("aiperf.plugin.cli.console") as mock:
         yield mock
 
 
@@ -45,21 +45,21 @@ def capture_console() -> Generator[tuple[Console, StringIO], None, None]:
     """Create a console that captures output to a StringIO buffer."""
     buffer = StringIO()
     console = Console(file=buffer, force_terminal=True, width=120)
-    with patch("aiperf.cli_commands.plugins_cli.console", console):
+    with patch("aiperf.plugin.cli.console", console):
         yield console, buffer
 
 
 @pytest.fixture
 def mock_plugins() -> Generator[MagicMock, None, None]:
     """Mock the plugins module for testing."""
-    with patch("aiperf.cli_commands.plugins_cli.plugins") as mock:
+    with patch("aiperf.plugin.cli.plugins") as mock:
         yield mock
 
 
 @pytest.fixture
 def mock_validate_all() -> Generator[MagicMock, None, None]:
     """Mock plugins.validate_all for testing."""
-    with patch("aiperf.cli_commands.plugins_cli.plugins.validate_all") as mock:
+    with patch("aiperf.plugin.cli.plugins.validate_all") as mock:
         yield mock
 
 
@@ -552,26 +552,26 @@ class TestPluginsCliCommand:
         expected_call: str,
     ) -> None:
         """Test CLI command routing without category."""
-        with patch(f"aiperf.cli_commands.plugins_cli.{expected_call}") as mock_fn:
-            plugins_cli_command(
+        with patch(f"aiperf.plugin.cli.{expected_call}") as mock_fn:
+            plugins(
                 category=category, name=name, all_plugins=all_plugins, validate=validate
             )
             mock_fn.assert_called_once()
 
     def test_category_only_shows_types(self, mock_console: MagicMock) -> None:
         """Test that category without name shows types."""
-        with patch("aiperf.cli_commands.plugins_cli.show_category_types") as mock_show:
+        with patch("aiperf.plugin.cli.show_category_types") as mock_show:
             mock_category = MagicMock()
-            plugins_cli_command(
+            plugins(
                 category=mock_category, name=None, all_plugins=False, validate=False
             )
             mock_show.assert_called_once_with(mock_category)
 
     def test_category_and_name_shows_details(self, mock_console: MagicMock) -> None:
         """Test that category with name shows type details."""
-        with patch("aiperf.cli_commands.plugins_cli.show_type_details") as mock_show:
+        with patch("aiperf.plugin.cli.show_type_details") as mock_show:
             mock_category = MagicMock()
-            plugins_cli_command(
+            plugins(
                 category=mock_category, name="chat", all_plugins=False, validate=False
             )
             mock_show.assert_called_once_with(mock_category, "chat")
