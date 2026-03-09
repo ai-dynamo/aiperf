@@ -39,7 +39,7 @@ Bailian traces are JSONL files where each line represents a single request.
 - `input_length`: Input token count
 - `output_length`: Output token count
 - `parent_chat_id`: Parent chat ID linking turns in a session; `-1` for root (default: `-1`)
-- `type`: Request type (e.g. `text`, `image`, `file`)
+- `type`: Request type (`text`, `search`, `image`, `file`)
 - `turn`: Conversation turn number (default: `1`)
 - `hash_ids`: Salted SipHash block IDs for KV cache simulation (16 tokens per block)
 
