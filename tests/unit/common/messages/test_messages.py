@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import json
+import time
 
 import orjson
 import pytest
@@ -53,6 +54,47 @@ def test_status_message():
     assert json.loads(message.model_dump_json(exclude_none=True)) == json.loads(
         '{"message_type":"status","state":"initialized","service_id":"test","service_type":"worker","request_ns":1234567890}'
     )
+
+
+class TestBaseStatusMessageTimestamp:
+    """Tests for BaseStatusMessage default_factory timestamp behavior."""
+
+    def test_request_ns_differs_between_instances(self):
+        """Each instance gets its own timestamp via default_factory, not a shared class-level value."""
+        msg1 = StatusMessage(
+            state=LifecycleState.RUNNING,
+            service_id="svc-1",
+            service_type=ServiceType.WORKER,
+        )
+        msg2 = StatusMessage(
+            state=LifecycleState.RUNNING,
+            service_id="svc-2",
+            service_type=ServiceType.WORKER,
+        )
+        assert msg1.request_ns != msg2.request_ns, (
+            "default_factory should produce unique timestamps per instance"
+        )
+
+    def test_request_ns_is_recent(self):
+        """Auto-filled timestamp is close to current time."""
+        before = time.time_ns()
+        msg = HeartbeatMessage(
+            state=LifecycleState.RUNNING,
+            service_id="svc",
+            service_type=ServiceType.WORKER,
+        )
+        after = time.time_ns()
+        assert before <= msg.request_ns <= after
+
+    def test_explicit_request_ns_not_overwritten(self):
+        """Explicitly provided request_ns is preserved."""
+        msg = StatusMessage(
+            state=LifecycleState.RUNNING,
+            service_id="svc",
+            service_type=ServiceType.WORKER,
+            request_ns=42,
+        )
+        assert msg.request_ns == 42
 
 
 class TestMessageToJsonBytes:

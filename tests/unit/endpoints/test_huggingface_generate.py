@@ -13,7 +13,11 @@ from aiperf.common.models.model_endpoint_info import (
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.common.models.record_models import InferenceServerResponse, Turn
+from aiperf.common.models.record_models import (
+    InferenceServerResponse,
+    TextResponseData,
+    Turn,
+)
 from aiperf.endpoints.huggingface_generate import HuggingFaceGenerateEndpoint
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import EndpointType
@@ -41,7 +45,7 @@ class TestHuggingFaceGenerateEndpoint:
     def endpoint(self, model_endpoint):
         ep = HuggingFaceGenerateEndpoint(model_endpoint)
         ep.debug = Mock()
-        ep.make_text_response_data = Mock(return_value={"text": "parsed"})
+        ep.make_text_response_data = Mock(return_value=TextResponseData(text="parsed"))
         return ep
 
     def test_metadata_values(self):

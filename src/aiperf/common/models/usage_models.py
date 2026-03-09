@@ -1,12 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any, ClassVar
+from __future__ import annotations
 
-from pydantic import RootModel
+from typing import ClassVar
 
 
-class Usage(RootModel[dict[str, Any]]):
+class Usage(dict):
     """Usage wraps API-reported token consumption data with a unified interface.
 
     Inference frameworks like vLLM, TensorRT-LLM, and TGI return token usage
@@ -14,8 +14,8 @@ class Usage(RootModel[dict[str, Any]]):
     output_tokens). Usage normalizes these differences through properties while
     preserving the full underlying dictionary for framework-specific fields.
 
-    The model serializes as a plain dict and accepts any dict structure,
-    allowing framework-specific fields to pass through unchanged.
+    Inherits from dict so it serializes as a plain dict and accepts any dict
+    structure, allowing framework-specific fields to pass through unchanged.
     """
 
     PROMPT_DETAILS_KEYS: ClassVar[list[str]] = [
@@ -26,12 +26,6 @@ class Usage(RootModel[dict[str, Any]]):
         "completion_tokens_details",
         "output_tokens_details",
     ]
-
-    def get(self, key: str, default: Any | None = ...) -> Any | None:
-        """Get a value from the usage dictionary."""
-        if default is ...:
-            return self.root.get(key)
-        return self.root.get(key, default)
 
     @property
     def prompt_tokens(self) -> int | None:
