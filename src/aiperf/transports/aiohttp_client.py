@@ -56,7 +56,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         method: str,
         url: str,
         headers: dict[str, str],
-        data: str | None = None,
+        data: bytes | None = None,
         on_request_sent: asyncio.Event | None = None,
         first_token_callback: "FirstTokenCallback | None" = None,
         trace_data: AioHttpTraceData | None = None,
@@ -96,7 +96,7 @@ class AioHttpClient(AIPerfLoggerMixin):
 
         # Create trace config for comprehensive timing
         # Pass expected body size for chunk-based completion detection
-        expected_request_body_size = len(data.encode("utf-8")) if data else None
+        expected_request_body_size = len(data) if data else None
         trace_config = create_aiohttp_trace_config(
             record.trace_data,
             on_request_sent_event=on_request_sent,
@@ -269,7 +269,7 @@ class AioHttpClient(AIPerfLoggerMixin):
     async def post_request(
         self,
         url: str,
-        payload: str,
+        payload: bytes,
         headers: dict[str, str],
         *,
         cancel_after_ns: int | None = None,
@@ -282,7 +282,7 @@ class AioHttpClient(AIPerfLoggerMixin):
 
         Args:
             url: Target URL
-            payload: Request body as string
+            payload: Request body as bytes
             headers: Request headers
             cancel_after_ns: If set, cancel the request this many nanoseconds after
                 it's fully sent. The request is always sent before cancellation.
@@ -318,7 +318,7 @@ class AioHttpClient(AIPerfLoggerMixin):
     async def _request_with_cancellation(
         self,
         url: str,
-        payload: str,
+        payload: bytes,
         headers: dict[str, str],
         cancel_after_ns: int,
         first_token_callback: "FirstTokenCallback | None" = None,
