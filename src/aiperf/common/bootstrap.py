@@ -48,10 +48,16 @@ def bootstrap_and_run_service(
             the child process logging will be set up.
         kwargs: Additional keyword arguments to pass to the service constructor.
     """
-    # Ignore SIGINT in child processes so only the parent handles Ctrl+C.
-    # The parent (SystemController) will coordinate graceful shutdown of children.
+    # Ignore SIGINT and SIGTERM in child processes. SIGINT is ignored so only
+    # the parent handles Ctrl+C. SIGTERM is ignored because graceful shutdown is
+    # handled via the message bus (ShutdownCommand); process.terminate() is only
+    # called after the message bus path has already timed out, and the manager
+    # falls through to SIGKILL after the join timeout anyway. Ignoring SIGTERM
+    # prevents SIGSEGV crashes that occur when SIGTERM arrives while C extension
+    # code (uvloop, zmq, aiohttp, orjson) is executing.
     if multiprocessing.parent_process() is not None:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
     from aiperf.plugin import plugins
     from aiperf.plugin.enums import PluginType
@@ -139,18 +145,6 @@ def bootstrap_and_run_service(
         # Always reset and then initialize the global random generator to ensure a clean state
         rng.reset()
         rng.init(user_config.input.random_seed)
-
-        # Install SIGTERM handler so process.terminate() triggers graceful shutdown
-        # instead of killing the process immediately. Without this, SIGTERM arriving
-        # while C extension code is executing (uvloop, zmq, aiohttp, orjson) can cause
-        # SIGSEGV because the default SIGTERM action is immediate process death.
-        loop = asyncio.get_running_loop()
-
-        def _on_sigterm() -> None:
-            if not service.stop_requested:
-                loop.create_task(service.stop())
-
-        loop.add_signal_handler(signal.SIGTERM, _on_sigterm)
 
         try:
             await service.initialize()
