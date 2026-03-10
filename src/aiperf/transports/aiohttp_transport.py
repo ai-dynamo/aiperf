@@ -122,7 +122,9 @@ class AioHttpTransport(BaseTransport):
     async def _init_aiohttp_client(self) -> None:
         """Initialize the AioHttpClient and lease manager if sticky-user-sessions strategy is used."""
         self.aiohttp_client = AioHttpClient(
-            timeout=self.model_endpoint.endpoint.timeout, tcp_kwargs=self.tcp_kwargs
+            timeout=self.model_endpoint.endpoint.timeout,
+            tcp_kwargs=self.tcp_kwargs,
+            collect_trace_chunks=self.model_endpoint.endpoint.collect_trace_chunks,
         )
         if (
             self.model_endpoint.endpoint.connection_reuse_strategy
@@ -256,7 +258,7 @@ class AioHttpTransport(BaseTransport):
         try:
             url = self.build_url(request_info)
             headers = self.build_headers(request_info)
-            json_str = orjson.dumps(payload).decode("utf-8")
+            json_bytes = orjson.dumps(payload)
 
             match reuse_strategy:
                 case ConnectionReuseStrategy.NEVER:
@@ -295,7 +297,7 @@ class AioHttpTransport(BaseTransport):
 
             record = await self.aiohttp_client.post_request(
                 url,
-                json_str,
+                json_bytes,
                 headers,
                 cancel_after_ns=request_info.cancel_after_ns,
                 first_token_callback=first_token_callback,
@@ -396,7 +398,7 @@ class AioHttpTransport(BaseTransport):
         if self.aiohttp_client is None:
             raise NotInitializedError("AioHttpClient not initialized")
         record = await self.aiohttp_client.post_request(
-            url, orjson.dumps(payload).decode("utf-8"), headers
+            url, orjson.dumps(payload), headers
         )
         result = self._parse_video_response(record, "submit")
         if isinstance(result, ErrorDetails):

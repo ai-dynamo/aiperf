@@ -1,20 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import sys
 import time
-from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any, AnyStr, Protocol, runtime_checkable
+from typing import Annotated, Any, AnyStr, Protocol, runtime_checkable
 
 import orjson
 from pydantic import (
+    ConfigDict,
     Field,
+    PlainSerializer,
     RootModel,
     SerializeAsAny,
     field_validator,
 )
-from typing_extensions import Self
+from pydantic.functional_validators import AfterValidator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import STAT_KEYS
@@ -55,7 +59,7 @@ class MetricResult(JsonMetricResult):
         description="The sum of all the metric values across all records",
     )
 
-    def to_display_unit(self) -> "MetricResult":
+    def to_display_unit(self) -> MetricResult:
         """Convert the metric result to its display unit."""
         from aiperf.metrics.display_units import to_display_unit
         from aiperf.metrics.metric_registry import MetricRegistry
@@ -248,52 +252,39 @@ class InferenceServerResponse(Protocol):
         ...
 
 
-class BaseInferenceServerResponse(AIPerfBaseModel, ABC):
-    """Base class for inference server response implementations.
+@dataclass(slots=True)
+class SSEField:
+    """Lightweight field in an SSE message.
 
-    Provides shared functionality for all response types. The interface
-    is defined by the InferenceServerResponse Protocol in protocols.py,
-    allowing for flexible implementations and easy mocking.
-
-    This base class ensures concrete implementations provide:
-    - perf_ns: Timestamp in nanoseconds
-    - get_raw(): Raw response data
-    - get_text(): Text representation
-    - get_json(): Parsed JSON representation
+    Using dataclass(slots=True) instead of Pydantic for memory efficiency during
+    high-throughput streaming. Each SSE message can have multiple fields, and with
+    thousands of concurrent requests each generating hundreds of chunks, Pydantic overhead
+    was the #1 memory allocator.
     """
 
-    perf_ns: int = Field(
-        ...,
-        description="The timestamp of the response in nanoseconds (perf_counter_ns).",
-    )
+    name: SSEFieldType | str
+    """The name of the field. e.g. 'data', 'event', 'id', 'retry', 'comment'."""
 
-    @abstractmethod
-    def get_raw(self) -> Any | None:
-        """Get the raw representation of the response."""
-        ...
-
-    @abstractmethod
-    def get_text(self) -> str | None:
-        """Get the text representation of the response."""
-        ...
-
-    @abstractmethod
-    def get_json(self) -> JsonObject | None:
-        """Get the JSON representation of the response."""
-        ...
+    value: str | None = None
+    """The value of the field."""
 
 
-class TextResponse(BaseInferenceServerResponse):
-    """Raw text response from a inference client including an optional content type."""
+@dataclass(slots=True)
+class TextResponse:
+    """Raw text response from an inference client including an optional content type."""
 
-    content_type: str | None = Field(
-        default=None,
-        description="The content type of the response. e.g. 'text/plain', 'application/json'.",
-    )
-    text: str = Field(
-        ...,
-        description="The text of the response.",
-    )
+    # Reject extra fields so Pydantic's union discrimination (e.g. in
+    # RequestRecord.responses) doesn't match the wrong dataclass type.
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
+    perf_ns: int
+    """The performance timestamp of the response in nanoseconds (perf_counter_ns)."""
+
+    text: str
+    """The raw text body of the response."""
+
+    content_type: str | None = None
+    """The content type of the response. e.g. 'text/plain', 'application/json'."""
 
     def get_raw(self) -> Any | None:
         """Get the raw representation of the response."""
@@ -313,17 +304,22 @@ class TextResponse(BaseInferenceServerResponse):
             return None
 
 
-class BinaryResponse(BaseInferenceServerResponse):
+@dataclass(slots=True)
+class BinaryResponse:
     """Raw binary response from an inference client for non-text content types."""
 
-    content_type: str | None = Field(
-        default=None,
-        description="The content type of the response. e.g. 'video/mp4', 'application/octet-stream'.",
-    )
-    raw_bytes: bytes = Field(
-        ...,
-        description="The raw binary content of the response.",
-    )
+    # Reject extra fields so Pydantic's union discrimination (e.g. in
+    # RequestRecord.responses) doesn't match the wrong dataclass type.
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
+    perf_ns: int
+    """The performance timestamp of the response in nanoseconds (perf_counter_ns)."""
+
+    raw_bytes: bytes
+    """The raw binary body of the response."""
+
+    content_type: str | None = None
+    """The content type of the response. e.g. 'video/mp4', 'application/octet-stream'."""
 
     def get_raw(self) -> Any | None:
         """Get the raw representation of the response."""
@@ -338,30 +334,27 @@ class BinaryResponse(BaseInferenceServerResponse):
         return None
 
 
-class SSEField(AIPerfBaseModel):
-    """Base model for a single field in an SSE message."""
+@dataclass(slots=True)
+class SSEMessage:
+    """Individual SSE message from an SSE stream. Delimited by \\n\\n.
 
-    name: SSEFieldType | str = Field(
-        ...,
-        description="The name of the field. e.g. 'data', 'event', 'id', 'retry', 'comment'.",
-    )
-    value: str | None = Field(
-        default=None,
-        description="The value of the field.",
-    )
+    Uses dataclass(slots=True) instead of Pydantic for ~6x faster construction
+    and ~10x smaller memory footprint per instance. Pydantic handles serialization
+    and deserialization automatically when this appears inside Pydantic model fields.
+    """
 
+    # Reject extra fields so Pydantic's union discrimination (e.g. in
+    # RequestRecord.responses) doesn't match the wrong dataclass type.
+    __pydantic_config__ = ConfigDict(extra="forbid")
 
-class SSEMessage(BaseInferenceServerResponse):
-    """Individual SSE message from an SSE stream. Delimited by \n\n."""
+    perf_ns: int
+    """The performance timestamp of the message in nanoseconds (perf_counter_ns)."""
 
-    # Note: "fields" is a restricted keyword in pydantic
-    packets: list[SSEField] = Field(
-        default_factory=list,
-        description="The fields contained in the message.",
-    )
+    packets: list[SSEField] = field(default_factory=list)
+    """The parsed SSE fields (data, event, id, retry, comment) in this message."""
 
     @classmethod
-    def parse(cls, raw_message: AnyStr, perf_ns: int) -> Self:
+    def parse(cls, raw_message: AnyStr, perf_ns: int) -> SSEMessage:
         """Parse a raw SSE message into an SSEMessage object.
 
         Parsing logic based on the official HTML SSE Living Standard:
@@ -386,13 +379,16 @@ class SSEMessage(BaseInferenceServerResponse):
             # Detect continuation: if the previous packet's value is an incomplete
             # JSON object (starts with '{' but doesn't end with '}') and this line
             # isn't a new data field, the server embedded a literal newline in the
-            # JSON value. Append this line as a continuation.
+            # JSON value. Append this line as a continuation. This can happen when
+            # ignore_eos=True and the model emits weird tokens.
             if (
                 prev_value
                 and prev_value.startswith("{")
                 and not prev_value.endswith("}")
                 and not line.startswith("data:")
             ):
+                # Use \\n (JSON escape) not \n (raw newline) — the original raw 0x0A
+                # byte is illegal in JSON strings; \n is the valid encoding.
                 message.packets[-1].value = f"{prev_value}\\n{line}"
                 continue
 
@@ -408,6 +404,9 @@ class SSEMessage(BaseInferenceServerResponse):
                 # Field name is empty, so this is a comment
                 field_name = SSEFieldType.COMMENT
 
+            # Spec says strip only one leading space; we strip() all whitespace
+            # to normalize inconsistent servers for downstream exact comparisons
+            # (e.g. "[DONE]", SSEEventType.ERROR).
             message.packets.append(
                 SSEField(name=field_name.strip(), value=value.strip())
             )
@@ -662,33 +661,40 @@ class RequestRecord(AIPerfBaseModel):
             self.error = ErrorDetails.from_exception(err)
 
 
-class BaseResponseData(AIPerfBaseModel):
+@dataclass(slots=True)
+class BaseResponseData:
     """Base class for all response data."""
+
+    # Reject extra fields so Pydantic's union discrimination (e.g. in
+    # ParsedResponse.data) doesn't match the wrong dataclass type.
+    __pydantic_config__ = ConfigDict(extra="forbid")
 
     def get_text(self) -> str:
         """Get the text of the response."""
         return ""
 
 
+@dataclass(slots=True)
 class TextResponseData(BaseResponseData):
     """Parsed text response data."""
 
-    text: str = Field(..., description="The parsed text of the response.")
+    text: str
+    """The parsed text of the response."""
 
     def get_text(self) -> str:
         """Get the text of the response."""
         return self.text
 
 
+@dataclass(slots=True)
 class ReasoningResponseData(BaseResponseData):
     """Parsed reasoning response data."""
 
-    content: str | None = Field(
-        default=None, description="The parsed content of the response."
-    )
-    reasoning: str | None = Field(
-        default=None, description="The parsed reasoning of the response."
-    )
+    content: str | None = None
+    """The parsed content of the response."""
+
+    reasoning: str | None = None
+    """The parsed reasoning of the response."""
 
     def get_text(self) -> str:
         """Get the text of the response."""
@@ -699,151 +705,131 @@ class RAGSources(RootModel[dict[str, Any] | list[Any]]):
     """RAG sources can be either a dictionary or list format."""
 
 
+@dataclass(slots=True)
 class EmbeddingResponseData(BaseResponseData):
     """Parsed embedding response data."""
 
-    embeddings: list[list[float]] = Field(
-        ..., description="The embedding vectors from the response."
-    )
+    embeddings: list[list[float]]
+    """The embedding vectors from the response."""
 
 
+@dataclass(slots=True)
 class RankingsResponseData(BaseResponseData):
     """Parsed rankings response data."""
 
-    rankings: list[dict[str, Any]] = Field(
-        ..., description="The rankings results from the response."
-    )
+    rankings: list[dict[str, Any]]
+    """The rankings results from the response."""
 
 
+@dataclass(slots=True)
 class ImageRetrievalResponseData(BaseResponseData):
     """Parsed image retrieval response data."""
 
-    data: list[dict[str, Any]] = Field(
-        ..., description="The image retrieval data from the response."
-    )
+    data: list[dict[str, Any]]
+    """The image retrieval data from the response."""
 
     def get_text(self) -> str:
         """Get the text of the response (empty for image retrieval)."""
         return ""
 
 
-class ImageDataItem(AIPerfBaseModel):
+@dataclass(slots=True)
+class ImageDataItem:
     """Parsed image item response data."""
 
-    url: str | None = Field(
-        default=None,
-        description="The URL of the generated image.",
-    )
-    b64_json: str | None = Field(
-        default=None,
-        description="The base64 encoded image.",
-    )
-    revised_prompt: str | None = Field(
-        default=None,
-        description="The revised prompt that was used for image generation.",
-    )
-    partial_image_index: int | None = Field(
-        default=None,
-        description="The index of the partial image in the response.",
-    )
+    url: str | None = None
+    """The URL of the generated image."""
+
+    b64_json: str | None = None
+    """The base64 encoded image."""
+
+    revised_prompt: str | None = None
+    """The revised prompt that was used for image generation."""
+
+    partial_image_index: int | None = None
+    """The index of the partial image in the response."""
 
 
+@dataclass(slots=True)
 class ImageResponseData(BaseResponseData):
     """Parsed image response data."""
 
-    images: list[ImageDataItem] = Field(
-        default_factory=list, description="The generated images from the response."
-    )
-    size: str | None = Field(
-        default=None,
-        description="The size of the generated images.",
-    )
-    quality: str | None = Field(
-        default=None,
-        description="The quality of the generated images.",
-    )
-    output_format: str | None = Field(
-        default=None,
-        description="The output format of the generated images.",
-    )
-    background: str | None = Field(
-        default=None,
-        description="The background of the generated images.",
-    )
+    images: list[ImageDataItem] = field(default_factory=list)
+    """The generated images from the response."""
+
+    size: str | None = None
+    """The size of the generated images."""
+
+    quality: str | None = None
+    """The quality of the generated images."""
+
+    output_format: str | None = None
+    """The output format of the generated images."""
+
+    background: str | None = None
+    """The background of the generated images."""
 
 
+@dataclass(slots=True)
 class VideoResponseData(BaseResponseData):
     """Parsed video generation response data.
 
     Matches SGLang/OpenAI VideoResponse schema for async job-based video generation.
     """
 
-    video_id: str | None = Field(
-        default=None,
-        description="Unique identifier for the video job.",
-    )
-    object: str | None = Field(
-        default=None,
-        description="Object type, always 'video'.",
-    )
-    status: str | None = Field(
-        default=None,
-        description="Job status: queued, in_progress, completed, failed.",
-    )
-    progress: int | None = Field(
-        default=None,
-        description="Completion percentage (0-100).",
-    )
-    url: str | None = Field(
-        default=None,
-        description="URL to download completed video (only when status=completed).",
-    )
-    size: str | None = Field(
-        default=None,
-        description="Video resolution (e.g., '1280x720').",
-    )
-    seconds: str | None = Field(
-        default=None,
-        description="Video duration in seconds.",
-    )
-    quality: str | None = Field(
-        default=None,
-        description="Quality setting for the generated video.",
-    )
-    model: str | None = Field(
-        default=None,
-        description="Model used for generation.",
-    )
-    created_at: int | None = Field(
-        default=None,
-        description="Unix timestamp of job creation.",
-    )
-    completed_at: int | None = Field(
-        default=None,
-        description="Unix timestamp of job completion.",
-    )
-    expires_at: int | None = Field(
-        default=None,
-        description="Unix timestamp when video assets expire.",
-    )
-    inference_time_s: float | None = Field(
-        default=None,
-        description="Generation time in seconds (SGLang metric).",
-    )
-    peak_memory_mb: float | None = Field(
-        default=None,
-        description="Peak memory usage in MB (SGLang metric).",
-    )
-    error: dict[str, Any] | None = Field(
-        default=None,
-        description="Error details if job failed.",
-    )
+    video_id: str | None = None
+    """Unique identifier for the video job."""
+
+    object: str | None = None
+    """Object type, always 'video'."""
+
+    status: str | None = None
+    """Job status: queued, in_progress, completed, failed."""
+
+    progress: int | None = None
+    """Completion percentage (0-100)."""
+
+    url: str | None = None
+    """URL to download completed video (only when status=completed)."""
+
+    size: str | None = None
+    """Video resolution (e.g., '1280x720')."""
+
+    seconds: str | None = None
+    """Video duration in seconds."""
+
+    quality: str | None = None
+    """Quality setting for the generated video."""
+
+    model: str | None = None
+    """Model used for generation."""
+
+    created_at: int | None = None
+    """Unix timestamp of job creation."""
+
+    completed_at: int | None = None
+    """Unix timestamp of job completion."""
+
+    expires_at: int | None = None
+    """Unix timestamp when video assets expire."""
+
+    inference_time_s: float | None = None
+    """Generation time in seconds (SGLang metric)."""
+
+    peak_memory_mb: float | None = None
+    """Peak memory usage in MB (SGLang metric)."""
+
+    error: dict[str, Any] | None = None
+    """Error details if job failed."""
 
 
-class ParsedResponse(AIPerfBaseModel):
+@dataclass(slots=True)
+class ParsedResponse:
     """Parsed response from a inference client."""
 
-    perf_ns: int = Field(description="The performance timestamp of the response.")
+    perf_ns: int
+    """The performance timestamp of the response in nanoseconds (perf_counter_ns)."""
+
     # NOTE: SerializeAsAny is used to allow for generic subclass support at runtime,
     #       allowing for user-defined response data classes.
     data: SerializeAsAny[
@@ -856,55 +842,61 @@ class ParsedResponse(AIPerfBaseModel):
         | VideoResponseData
         | BaseResponseData
         | None
-    ] = Field(
-        default=None,
-        description="The parsed response data. This can be any of the response data classes, "
-        "or a user-defined response data class that inherits from BaseResponseData. "
-        "May be None for usage-only responses in streaming mode.",
-    )
-    usage: Usage | None = Field(
-        default=None,
-        description="API-reported usage information. Structure varies by provider. "
-        "Access token counts via properties like: usage.prompt_tokens, usage.completion_tokens, or "
-        "by accessing the usage dictionary directly.",
-    )
-    sources: RAGSources | None = Field(
-        default=None,
-        description="The sources used in the RAG query of the response. This can be a dictionary of source documents, "
-        "a list of sources, or None. Only applicable to responses with RAG response data.",
-    )
-    metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Additional metadata from the response that is useful for analysis (rate limits, content filters, etc.)",
-    )
+    ] = None
+    """The parsed response data. Can be any of the response data classes,
+    or a user-defined class inheriting from BaseResponseData.
+    May be None for usage-only responses in streaming mode."""
+
+    usage: (
+        Annotated[dict[str, Any], AfterValidator(Usage), PlainSerializer(dict)] | None
+    ) = None
+    """API-reported usage information. Structure varies by provider.
+    Access token counts via properties like usage.prompt_tokens, usage.completion_tokens,
+    or by accessing the usage dictionary directly."""
+
+    sources: RAGSources | None = None
+    """The sources used in the RAG query of the response. Can be a dictionary of source
+    documents, a list of sources, or None. Only applicable to RAG responses."""
+
+    metadata: dict[str, Any] = field(default_factory=dict)
+    """Additional metadata from the response useful for analysis (rate limits, content filters, etc.)."""
+
+    def __post_init__(self) -> None:
+        # Coerce raw dicts to Usage, since dataclass __init__ doesn't run
+        # Pydantic validation like BaseModel did.
+        if self.usage is not None and not isinstance(self.usage, Usage):
+            self.usage = Usage(self.usage)
 
 
-class TokenCounts(AIPerfBaseModel):
+@dataclass(slots=True)
+class TokenCounts:
     """Token counts for a record."""
 
-    input: int | None = Field(
-        default=None,
-        description="The number of tokens in the input. If None, the number of tokens could not be calculated.",
-    )
-    output: int | None = Field(
-        default=None,
-        description="The number of output tokens across all responses. If None, the number of tokens could not be calculated.",
-    )
-    reasoning: int | None = Field(
-        default=None,
-        description="The number of reasoning tokens across all responses. If None, the number of tokens could not be calculated, or the model does not support reasoning.",
-    )
+    input: int | None = None
+    """The number of input tokens. None if token count could not be calculated."""
+
+    output: int | None = None
+    """The number of output tokens across all responses. None if token count could not be calculated."""
+
+    reasoning: int | None = None
+    """The number of reasoning tokens. None if token count could not be calculated or the model does not support reasoning."""
 
 
-class ParsedResponseRecord(AIPerfBaseModel):
-    """Record of a request and its associated responses, already parsed and ready for metrics."""
+@dataclass
+class ParsedResponseRecord:
+    """Record of a request and its associated responses, already parsed and ready for metrics.
 
-    request: RequestRecord = Field(..., description="The original request record")
-    responses: list[ParsedResponse] = Field(..., description="The parsed responses.")
-    token_counts: TokenCounts | None = Field(
-        default=None,
-        description="The token counts for the response. If None, the token counts could not be calculated.",
-    )
+    Uses @dataclass without slots to allow @cached_property (requires __dict__).
+    """
+
+    request: RequestRecord
+    """The original request record."""
+
+    responses: list[ParsedResponse]
+    """The parsed responses."""
+
+    token_counts: TokenCounts | None = None
+    """The token counts for the response. None if the token counts could not be calculated."""
 
     @cached_property
     def start_perf_ns(self) -> int:

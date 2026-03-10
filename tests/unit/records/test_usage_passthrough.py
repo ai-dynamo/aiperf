@@ -217,4 +217,4 @@ class TestUsagePassthrough:
                 assert actual_usage is None
             else:
                 assert actual_usage is not None
-                assert actual_usage.root == expected
+                assert dict(actual_usage) == expected

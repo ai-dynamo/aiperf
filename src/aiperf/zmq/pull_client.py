@@ -144,6 +144,7 @@ class ZMQPullClient(BaseZMQClient):
             # Use AUTO-LOOKUP: parse JSON to dict, extract type, validate
             # This is 40-60% faster for large messages (>2KB)
             message = Message.from_json(message_json_bytes)
+            del message_json_bytes  # free raw bytes before handler runs
 
             # Call callbacks with Message object
             if message.message_type in self._pull_callbacks:

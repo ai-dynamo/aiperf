@@ -6,7 +6,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from aiperf.common.enums import CreditPhase
-from aiperf.common.models import TextResponse
 from aiperf.common.utils import compute_time_ns
 from aiperf.records.record_processor_service import RecordProcessor
 
@@ -47,26 +46,26 @@ class TestRecordProcessorCreateMetricRecordMetadata:
         assert metadata.worker_id == worker_id
         assert metadata.record_processor_id == "test-processor-id"
 
-    def test_create_metadata_responses_take_precedence_over_end_perf_ns(
+    def test_create_metadata_last_response_perf_ns_takes_precedence(
         self, mock_record_processor, sample_request_record
     ):
-        """Test that responses[-1].perf_ns takes precedence over end_perf_ns when responses exist."""
+        """Test that last_response_perf_ns takes precedence over end_perf_ns."""
         last_response_perf_ns = sample_request_record.start_perf_ns + 150_000
         sample_request_record.end_perf_ns = (
             sample_request_record.start_perf_ns + 200_000
         )
-        sample_request_record.responses = [
-            TextResponse(perf_ns=last_response_perf_ns, text="test"),
-        ]
         sample_request_record.credit_num = 2
 
         worker_id = "worker-2"
 
         metadata = RecordProcessor._create_metric_record_metadata(
-            mock_record_processor, sample_request_record, worker_id
+            mock_record_processor,
+            sample_request_record,
+            worker_id,
+            last_response_perf_ns=last_response_perf_ns,
         )
 
-        # Should use last response time (not end_perf_ns)
+        # Should use last_response_perf_ns (not end_perf_ns)
         expected_end_ns = compute_time_ns(
             sample_request_record.timestamp_ns,
             sample_request_record.start_perf_ns,

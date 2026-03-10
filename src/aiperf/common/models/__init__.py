@@ -54,7 +54,6 @@ from aiperf.common.models.model_endpoint_info import (
 )
 from aiperf.common.models.progress_models import WorkerProcessingStats, WorkerStats
 from aiperf.common.models.record_models import (
-    BaseInferenceServerResponse,
     BaseResponseData,
     BinaryResponse,
     EmbeddingResponseData,
@@ -142,7 +141,6 @@ __all__ = [
     "AioHttpTraceDataExport",
     "Audio",
     "AutoRoutedModel",
-    "BaseInferenceServerResponse",
     "BasePhaseStats",
     "BaseResponseData",
     "BaseSeries",

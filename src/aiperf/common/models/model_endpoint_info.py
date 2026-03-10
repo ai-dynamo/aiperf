@@ -116,6 +116,11 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointDefaults.DOWNLOAD_VIDEO_CONTENT,
         description="For video generation endpoints, download the video content after generation completes.",
     )
+    collect_trace_chunks: bool = Field(
+        default=False,
+        description="Collect per-chunk trace data (timestamps and sizes) for HTTP trace export. "
+        "When False, only aggregate metrics are tracked (counts, totals, first/last timestamps).",
+    )
 
     @property
     def base_url(self) -> str:
@@ -151,6 +156,7 @@ class EndpointInfo(AIPerfBaseModel):
             use_server_token_count=user_config.endpoint.use_server_token_count,
             connection_reuse_strategy=user_config.endpoint.connection_reuse_strategy,
             download_video_content=user_config.endpoint.download_video_content,
+            collect_trace_chunks=user_config.output.export_http_trace,
         )
 
 

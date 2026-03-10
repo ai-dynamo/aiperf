@@ -134,7 +134,7 @@ class TestChatEndpointUsageSpecific:
 
         assert parsed is not None
         assert isinstance(parsed.data, ReasoningResponseData)
-        assert parsed.usage.root["completion_tokens_details"]["reasoning_tokens"] == 50
+        assert parsed.usage["completion_tokens_details"]["reasoning_tokens"] == 50
         assert parsed.usage.reasoning_tokens == 50
 
     def test_parse_with_modern_naming(self, endpoint):
@@ -156,8 +156,8 @@ class TestChatEndpointUsageSpecific:
         parsed = endpoint.parse_response(mock_response)
 
         assert parsed is not None
-        assert parsed.usage.root["input_tokens"] == 25
-        assert parsed.usage.root["output_tokens"] == 15
+        assert parsed.usage["input_tokens"] == 25
+        assert parsed.usage["output_tokens"] == 15
         assert parsed.usage.reasoning_tokens == 5
 
     @pytest.mark.parametrize(
@@ -196,9 +196,9 @@ class TestChatEndpointUsageSpecific:
 
         assert parsed is not None
         assert parsed.usage is not None
-        assert parsed.usage.root.get("prompt_tokens") == expected_prompt
-        assert parsed.usage.root.get("completion_tokens") == expected_completion
-        assert parsed.usage.root.get("total_tokens") == expected_total
+        assert parsed.usage.get("prompt_tokens") == expected_prompt
+        assert parsed.usage.get("completion_tokens") == expected_completion
+        assert parsed.usage.get("total_tokens") == expected_total
 
 
 class TestUsageModelProperties:

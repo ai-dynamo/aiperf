@@ -19,10 +19,10 @@ Python 3.10+ async AI benchmarking tool for measuring LLM inference server perfo
 ## Coding Standards
 
 - async/await for ALL I/O - no `time.sleep`, no blocking calls.
-- `Field(description="...")` on EVERY Pydantic field.
+- `Field(description="...")` on EVERY Pydantic field. Docstrings on dataclass fields.
 - Type hints on ALL functions (params and return).
 - KISS + DRY: minimal code, optimize for reader.
-- `AIPerfBaseModel` for data, `BaseConfig` for configuration.
+- `AIPerfBaseModel` for data, `BaseConfig` for configuration. `@dataclass(slots=True)` for hot-path inner models created at high volume (e.g. SSE chunks, parsed responses) where Pydantic overhead matters. Use `__pydantic_config__ = ConfigDict(extra="forbid")` on dataclasses that participate in Pydantic union discrimination.
 - `BaseComponentService` for services, `BaseService` for SystemController only.
 - Message bus for inter-service communication - no shared mutable state.
 - CLI commands: one file per command in `cli_commands/`, lazily loaded via import strings in `cli.py`. See `docs/dev/patterns.md`.
