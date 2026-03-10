@@ -1127,7 +1127,7 @@ Time to First Byte (TTFB) - time waiting for the server to respond. This metric 
 
 **Formula:**
 ```python
-http_req_waiting = response_chunks[0][0] - request_send_end_perf_ns
+http_req_waiting = response_receive_start_perf_ns - request_send_end_perf_ns
 ```
 
 **Notes:**
@@ -1145,7 +1145,7 @@ Time spent receiving response data from the remote host. This metric measures th
 
 **Formula:**
 ```python
-http_req_receiving = response_chunks[-1][0] - response_chunks[0][0]
+http_req_receiving = response_receive_end_perf_ns - response_receive_start_perf_ns
 ```
 
 **Notes:**
@@ -1218,7 +1218,7 @@ Total bytes sent in the HTTP request (headers + body).
 
 **Formula:**
 ```python
-http_req_data_sent = sum(size for _, size in request_chunks)
+http_req_data_sent = trace.request_bytes_total
 ```
 
 **Notes:**
@@ -1235,7 +1235,7 @@ Total bytes received in the HTTP response (headers + body).
 
 **Formula:**
 ```python
-http_req_data_received = sum(size for _, size in response_chunks)
+http_req_data_received = trace.response_bytes_total
 ```
 
 **Notes:**
@@ -1269,12 +1269,11 @@ Number of transport-level write operations during the request. Useful for debugg
 
 **Formula:**
 ```python
-http_req_chunks_sent = len(trace.request_chunks)
+http_req_chunks_sent = trace.request_chunks_count
 ```
 
 **Notes:**
 - Not displayed in console output (`NO_CONSOLE` flag).
-- Only available for AioHttpTraceData.
 
 ---
 
@@ -1286,12 +1285,11 @@ Number of transport-level read operations during the response. Useful for debugg
 
 **Formula:**
 ```python
-http_req_chunks_received = len(trace.response_chunks)
+http_req_chunks_received = trace.response_chunks_count
 ```
 
 **Notes:**
 - Not displayed in console output (`NO_CONSOLE` flag).
-- Only available for AioHttpTraceData.
 
 ---
 

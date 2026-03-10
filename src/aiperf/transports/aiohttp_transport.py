@@ -122,7 +122,9 @@ class AioHttpTransport(BaseTransport):
     async def _init_aiohttp_client(self) -> None:
         """Initialize the AioHttpClient and lease manager if sticky-user-sessions strategy is used."""
         self.aiohttp_client = AioHttpClient(
-            timeout=self.model_endpoint.endpoint.timeout, tcp_kwargs=self.tcp_kwargs
+            timeout=self.model_endpoint.endpoint.timeout,
+            tcp_kwargs=self.tcp_kwargs,
+            collect_trace_chunks=self.model_endpoint.endpoint.collect_trace_chunks,
         )
         if (
             self.model_endpoint.endpoint.connection_reuse_strategy

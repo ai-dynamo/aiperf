@@ -139,35 +139,43 @@ class TestHuggingFaceGenerateEndpoint:
         assert isinstance(result, ParsedResponse)
         endpoint.make_text_response_data.assert_called_once_with("hi there")
 
-    def test_parse_streaming_generated_text_field(self, endpoint):
+    def test_parse_streaming_generated_text_only_returns_none(self, endpoint):
+        """Events with only generated_text but no token are ignored."""
         response = Mock(spec=InferenceServerResponse)
         response.get_json.return_value = {"generated_text": "final"}
         response.perf_ns = 123
 
         result = endpoint._parse_streaming(response)
 
-        assert isinstance(result, ParsedResponse)
-        endpoint.make_text_response_data.assert_called_once_with("final")
+        assert result is None
 
-    def test_parse_streaming_skips_non_data_and_bad_json(self, endpoint):
-        bad_packet = Mock()
-        bad_packet.name = "data"
-        bad_packet.value = "{bad_json"
-        other_packet = Mock()
-        other_packet.name = "event"
-        other_packet.value = "ignored"
-        response = Mock(
-            spec=InferenceServerResponse,
-            packets=[bad_packet, other_packet],
-            perf_ns=555,
-        )
+    def test_parse_streaming_final_event_ignores_generated_text(self, endpoint):
+        """TGI final events have both token.text and generated_text; only use token.text."""
+        response = Mock(spec=InferenceServerResponse)
+        response.get_json.return_value = {
+            "token": {"text": "world"},
+            "generated_text": "hello world",
+        }
+        response.perf_ns = 456
+
+        result = endpoint._parse_streaming(response)
+
+        assert isinstance(result, ParsedResponse)
+        endpoint.make_text_response_data.assert_called_once_with("world")
+
+    def test_parse_streaming_bad_json_returns_none(self, endpoint):
+        response = Mock(spec=InferenceServerResponse)
+        response.get_json.return_value = None
+        response.perf_ns = 555
 
         result = endpoint._parse_streaming(response)
         assert result is None
         endpoint.debug.assert_called()
 
-    def test_parse_streaming_empty_packets(self, endpoint):
-        response = Mock(spec=InferenceServerResponse, packets=[], perf_ns=1)
+    def test_parse_streaming_no_text_fields(self, endpoint):
+        response = Mock(spec=InferenceServerResponse)
+        response.get_json.return_value = {"some_other_field": "value"}
+        response.perf_ns = 1
         result = endpoint._parse_streaming(response)
         assert result is None
         endpoint.debug.assert_called()

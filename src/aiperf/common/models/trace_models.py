@@ -26,14 +26,14 @@ class TraceDataExport(AIPerfBaseModel):
             │◄── sending_ns ────►│◄── waiting_ns ────►│◄── receiving_ns ────►│
             │                    │              │     │                      │
         request start      request_send_end     first body chunk        last body chunk
-                            (last chunk sent)   (response_chunks[0])
+                            (last chunk sent)   (response_receive_start)
                                                 │
                                                 ├── response_headers_received_ns
     ```
     ```
     Request Lifecycle ──────────────────────────────────────────────────────────────────────────────►
         │              │              │                │                    │                       │
-        │◄─ dns_ns ───►│◄ connect_ns ►│◄─ sending_ns ─►│◄──── waiting_ns ──►│◄──── receiving_ns ───►│
+        │◄dns_lookup_ns►│◄connecting_ns►│◄─ sending_ns ─►│◄──── waiting_ns ──►│◄──── receiving_ns ───►│
         │              │              │                │                 |  │                       │
     dns resolution   TCP+TLS      request send     request_send_end    first body chunk      last body chunk
     (cache miss)    handshake     (last chunk)     (ready for server)  (response starts)     (response complete)
@@ -60,7 +60,6 @@ class TraceDataExport(AIPerfBaseModel):
 
 
     Computed Durations (k6/HAR compatible):
-        - request_send_end_ns: True request completion (computed from last chunk)
         - sending_ns: Request send time (k6: http_req_sending, HAR: send)
         - waiting_ns: TTFB to first body byte (k6: http_req_waiting, HAR: wait)
         - receiving_ns: Response transfer time (k6: http_req_receiving, HAR: receive)
@@ -97,7 +96,20 @@ class TraceDataExport(AIPerfBaseModel):
     request_chunks: list[tuple[int, int]] = Field(
         default_factory=list,
         description="Request chunks as (timestamp_ns, size_bytes) tuples. "
+        "Only populated when --export-http-trace is enabled. "
         "Transport-layer writes, not application messages.",
+    )
+    request_send_end_ns: int | None = Field(
+        default=None,
+        description="When the request body finished being sent - last chunk written to socket (wall-clock time.time_ns()).",
+    )
+    request_chunks_count: int = Field(
+        default=0,
+        description="Number of request chunks sent.",
+    )
+    request_bytes_total: int = Field(
+        default=0,
+        description="Total bytes sent in request chunks.",
     )
 
     # Response Receive Phase (matches BaseTraceData field names)
@@ -124,7 +136,16 @@ class TraceDataExport(AIPerfBaseModel):
     response_chunks: list[tuple[int, int]] = Field(
         default_factory=list,
         description="Response chunks as (timestamp_ns, size_bytes) tuples. "
+        "Only populated when --export-http-trace is enabled. "
         "Transport-layer reads, not application messages.",
+    )
+    response_chunks_count: int = Field(
+        default=0,
+        description="Number of response chunks received.",
+    )
+    response_bytes_total: int = Field(
+        default=0,
+        description="Total bytes received in response chunks.",
     )
     response_receive_end_ns: int | None = Field(
         default=None,
@@ -136,18 +157,6 @@ class TraceDataExport(AIPerfBaseModel):
         default=None,
         description="When an exception occurred during the request (wall-clock time.time_ns()).",
     )
-
-    # Computed Properties
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def request_send_end_ns(self) -> int | None:
-        """When the request body finished being sent (last chunk written to socket).
-
-        Computed from the last request chunk timestamp. This is the true "request send
-        complete" time - more accurate than response_headers_received_ns which includes
-        network round-trip time.
-        """
-        return self.request_chunks[-1][0] if self.request_chunks else None
 
     # Computed Durations (k6/HAR compatible)
     @computed_field  # type: ignore[prop-decorator]
@@ -162,18 +171,20 @@ class TraceDataExport(AIPerfBaseModel):
     @property
     def waiting_ns(self) -> int | None:
         """TTFB (body) / server processing time (k6: http_req_waiting, HAR: wait)."""
-        if self.request_send_end_ns and self.response_chunks:
-            return self.response_chunks[0][0] - self.request_send_end_ns
+        if self.request_send_end_ns and self.response_receive_start_ns:
+            return self.response_receive_start_ns - self.request_send_end_ns
         return None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def receiving_ns(self) -> int | None:
         """Response transfer time (k6: http_req_receiving, HAR: receive)."""
-        if self.response_chunks:
-            if len(self.response_chunks) > 1:
-                return self.response_chunks[-1][0] - self.response_chunks[0][0]
-            return 0  # Single chunk - no transfer time
+        if self.response_chunks_count == 0:
+            return None
+        if self.response_chunks_count == 1:
+            return 0
+        if self.response_receive_start_ns and self.response_receive_end_ns:
+            return self.response_receive_end_ns - self.response_receive_start_ns
         return None
 
     @computed_field  # type: ignore[prop-decorator]
@@ -306,15 +317,19 @@ class BaseTraceData(AIPerfBaseModel):
       - request_send_start_perf_ns: Request send start
       - request_headers: Request headers dictionary
       - request_headers_sent_perf_ns: Request headers sent complete
-      - request_chunks: List of (timestamp_perf_ns, size_bytes) tuples
-      - request_send_end_perf_ns: Request send end (computed from last chunk)
+      - request_chunks: List of (timestamp_perf_ns, size_bytes) tuples (only with --export-http-trace)
+      - request_send_end_perf_ns: Request send end (last chunk written to socket)
+      - request_chunks_count: Number of request chunks sent
+      - request_bytes_total: Total bytes sent
 
     Response Receive Phase:
       - response_status_code: Response status code
       - response_receive_start_perf_ns: Response receive start (first body chunk)
       - response_headers: Response headers dictionary
       - response_headers_received_perf_ns: Response headers received (aiohttp on_request_end)
-      - response_chunks: List of (timestamp_perf_ns, size_bytes) tuples
+      - response_chunks: List of (timestamp_perf_ns, size_bytes) tuples (only with --export-http-trace)
+      - response_chunks_count: Number of response chunks received
+      - response_bytes_total: Total bytes received
       - response_receive_end_perf_ns: Response receive end
 
     Error Tracking:
@@ -369,7 +384,23 @@ class BaseTraceData(AIPerfBaseModel):
     request_chunks: list[tuple[int, int]] = Field(
         default_factory=list,
         description="Request chunks as (timestamp_perf_ns, size_bytes) tuples. "
+        "Only populated when collect_trace_chunks is enabled (--export-http-trace). "
         "Maps to aiohttp's on_request_chunk_sent events. These are transport-layer writes, not application messages.",
+    )
+    request_send_end_perf_ns: int | None = Field(
+        default=None,
+        description="When the request body finished being sent (last chunk written to socket, perf_counter_ns). "
+        "This is the true 'request send complete' time - more accurate than response_headers_received_perf_ns "
+        "which fires after response headers are received (includes network round-trip). "
+        "Set by on_request_chunk_sent trace callback on each chunk; final value is the last chunk timestamp.",
+    )
+    request_chunks_count: int = Field(
+        default=0,
+        description="Number of request chunks sent.",
+    )
+    request_bytes_total: int = Field(
+        default=0,
+        description="Total bytes sent in request chunks.",
     )
 
     # Response Receive Phase
@@ -396,7 +427,16 @@ class BaseTraceData(AIPerfBaseModel):
     response_chunks: list[tuple[int, int]] = Field(
         default_factory=list,
         description="Response chunks as (timestamp_perf_ns, size_bytes) tuples. "
+        "Only populated when collect_trace_chunks is enabled (--export-http-trace). "
         "Maps to aiohttp's on_response_chunk_received events. These are transport-layer reads, not application messages (SSE events).",
+    )
+    response_chunks_count: int = Field(
+        default=0,
+        description="Number of response chunks received.",
+    )
+    response_bytes_total: int = Field(
+        default=0,
+        description="Total bytes received in response chunks.",
     )
     response_receive_end_perf_ns: int | None = Field(
         default=None,
@@ -409,19 +449,6 @@ class BaseTraceData(AIPerfBaseModel):
         description="When an exception occurred during the request (perf_counter_ns). "
         "Maps to aiohttp's on_request_exception event.",
     )
-
-    @property
-    def request_send_end_perf_ns(self) -> int | None:
-        """When the request body finished being sent (last chunk written to socket).
-
-        Computed from the last on_request_chunk_sent timestamp. This is the true
-        "request send complete" time - more accurate than response_headers_received_perf_ns
-        which fires after response headers are received (includes network round-trip).
-
-        Returns:
-            Timestamp of last request chunk sent, or None if no chunks recorded.
-        """
-        return self.request_chunks[-1][0] if self.request_chunks else None
 
     def _convert_perf_to_wall(self, perf_ns: int | None) -> int | None:
         """Convert perf_counter timestamp to wall-clock timestamp.
