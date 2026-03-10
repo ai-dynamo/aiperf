@@ -140,6 +140,18 @@ def bootstrap_and_run_service(
         rng.reset()
         rng.init(user_config.input.random_seed)
 
+        # Install SIGTERM handler so process.terminate() triggers graceful shutdown
+        # instead of killing the process immediately. Without this, SIGTERM arriving
+        # while C extension code is executing (uvloop, zmq, aiohttp, orjson) can cause
+        # SIGSEGV because the default SIGTERM action is immediate process death.
+        loop = asyncio.get_running_loop()
+
+        def _on_sigterm() -> None:
+            if not service.stop_requested:
+                loop.create_task(service.stop())
+
+        loop.add_signal_handler(signal.SIGTERM, _on_sigterm)
+
         try:
             await service.initialize()
             await service.start()
