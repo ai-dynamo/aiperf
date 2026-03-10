@@ -13,7 +13,7 @@ This document provides attribution information for third-party software componen
 
 **Component Information:**
 - **Software**: FFmpeg
-- **Version**: 7.1
+- **Version**: 8.0.1
 - **Website**: https://ffmpeg.org/
 - **License**: LGPL v2.1+
 - **Usage**: Video and audio processing library (included in runtime container)
@@ -38,7 +38,7 @@ This document provides attribution information for third-party software componen
 **Source Code Availability:**
 
 The FFmpeg source code used to build this container is available at:
-- Official release: https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz
+- Official release: https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz
 - Our build configuration is documented in the Dockerfile
 
 **Compliance Notes:**
@@ -170,4 +170,4 @@ GPL is compatible with Apache 2.0 when:
 - Proper attribution is provided (as above)
 
 ---
-*Last updated: November 3, 2025*
+*Last updated: March 9, 2026*
