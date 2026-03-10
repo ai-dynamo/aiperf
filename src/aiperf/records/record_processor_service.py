@@ -20,7 +20,9 @@ from aiperf.common.models import (
     ParsedResponseRecord,
     RequestRecord,
 )
+from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+from aiperf.common.models.trace_models import BaseTraceData
 from aiperf.common.protocols import PushClientProtocol
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import compute_time_ns
@@ -177,19 +179,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         )
         raw_results = await self._process_record(parsed_record, metadata)
 
-        # Free remaining large data structures (processors are done at this point).
-        trace_data = record.trace_data
-        error = record.error
-        if self.user_config.output.export_level != ExportLevel.RAW:
-            record.responses = None
-        record.turns = None
-        record.trace_data = None
-        record.request_headers = None
-        if record.request_info:
-            record.request_info.turns = None
-            record.request_info.system_message = None
-            record.request_info.user_context_message = None
-        parsed_record.responses = None
+        trace_data, error = self._free_record_data(record, parsed_record)
 
         results = []
         for result in raw_results:
@@ -209,6 +199,33 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 error=error,
             )
         )
+
+    def _free_record_data(
+        self, record: RequestRecord, parsed_record: ParsedResponseRecord
+    ) -> tuple[BaseTraceData | None, ErrorDetails | None]:
+        """Free large data structures from the record after all processors have run.
+
+        All metrics and post-processors consume these fields during _process_record().
+        The only data sent downstream in MetricRecordsMessage is metadata, results,
+        trace_data, and error -- so everything else can be released here.
+
+        We assign None to fields typed as non-optional lists (turns, responses) to let
+        the GC reclaim the underlying objects. Using .clear() would keep the empty list
+        alive, and reassigning [] would allocate a new object for no reason.
+        """
+        trace_data = record.trace_data
+        error = record.error
+        if self.user_config.output.export_level != ExportLevel.RAW:
+            record.responses = None
+        record.turns = None
+        record.trace_data = None
+        record.request_headers = None
+        if record.request_info:
+            record.request_info.turns = None
+            record.request_info.system_message = None
+            record.request_info.user_context_message = None
+        parsed_record.responses = None
+        return trace_data, error
 
     async def _process_record(
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata

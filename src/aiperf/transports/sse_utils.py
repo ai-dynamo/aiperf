@@ -124,7 +124,6 @@ class AsyncSSEStreamReader:
             buffer += chunk
 
             # Parse complete messages from buffer.
-            # Check \n\n first (more common with LLM servers), fall back to \r\n\r\n.
             while True:
                 # A delimiter can span two chunks: all but its last byte may
                 # already be in the buffer from the previous chunk. We must back
@@ -134,6 +133,13 @@ class AsyncSSEStreamReader:
 
                 # Only \n\n and \r\n\r\n are checked. The spec also allows \r\r
                 # and mixed combos like \n\r\n, but no real LLM server produces those.
+                #
+                # We check \n\n first (more common with LLM servers) and only fall
+                # back to \r\n\r\n when absent. This is deliberate: a server uses
+                # one delimiter style for the entire stream, so searching for both and
+                # picking the earliest would double the C-level find() cost on every
+                # iteration for no practical correctness gain. Profiling showed this
+                # search dominating CPU time against fast mock servers with high OSL.
                 delimiter_index = buffer.find(b"\n\n", scan_from)
                 delimiter_length = 2
 
