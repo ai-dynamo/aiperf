@@ -238,7 +238,12 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         Returns:
             A list of conversations.
         """
-        if self.batch_size_image > 1 or self.batch_size_text > 1:
+        if (
+            self.batch_size_image == 0
+            or self.batch_size_text == 0
+            or self.batch_size_image > 1
+            or self.batch_size_text > 1
+        ):
             return self._convert_to_conversations_batched(data)
 
         conversations = [
@@ -393,7 +398,7 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         conversations = []
         for _ in range(self.num_conversations):
             images: list[Image] = []
-            if image_pool:
+            if image_pool and self.batch_size_image > 0:
                 sampled = self._rng.choices(image_pool, k=self.batch_size_image)
                 processed = [
                     self._handle_media_content(p, MediaType.IMAGE) for p in sampled
@@ -401,7 +406,7 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
                 images = [Image(name="", contents=processed)]
 
             texts: list[Text] = []
-            if text_pool:
+            if text_pool and self.batch_size_text > 0:
                 sampled_texts = self._rng.choices(text_pool, k=self.batch_size_text)
                 texts = [Text(name="", contents=sampled_texts)]
 
