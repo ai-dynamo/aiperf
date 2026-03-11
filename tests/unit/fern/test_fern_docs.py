@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import socket
 import subprocess
 import threading
 
@@ -21,7 +22,14 @@ import pytest
 FERN_READY_PATTERN = re.compile(r"Docs preview server ready")
 FERN_ERROR_PATTERN = re.compile(r"\[error\]")
 FERN_DEV_TIMEOUT_S = 120
-FERN_DEV_PORT = 13799
+
+
+def _get_free_port() -> int:
+    """Return an available ephemeral port by binding to port 0."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
 
 _fern_installed = shutil.which("fern") is not None
 
@@ -67,8 +75,9 @@ def test_fern_docs_dev_starts() -> None:
     Fails if an error is detected or the server does not become ready
     within the timeout.
     """
+    port = _get_free_port()
     proc = subprocess.Popen(
-        ["fern", "docs", "dev", "--port", str(FERN_DEV_PORT)],
+        ["fern", "docs", "dev", "--port", str(port)],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
