@@ -123,6 +123,7 @@ markers = [
     "component_integration: marks tests as component integration tests",
     "statistical: marks tests requiring statistical validation with large samples, and may not be stable by default",
     "server_unit: marks tests as unit tests for the mock server",
+    "fern: marks tests that validate Fern documentation (requires fern CLI)",
 ]
 # Better console output
 console_output_style = "progress"
@@ -131,7 +132,7 @@ verbosity_assertions = 2
 # Deselect performance, ffmpeg, and stress, and statistical, and component_integration, and integration, and server_unit tests by default
 # To run them: pytest -m performance, pytest -m ffmpeg, pytest -m stress, pytest -m statistical
 # IDE note: When running a specific test file/function from IDE, markers are often bypassed
-addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit'"
+addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit and not fern'"
 # Filter out known warnings from third-party libraries and test infrastructure
 filterwarnings = [
     "ignore::RuntimeWarning:looptime",
