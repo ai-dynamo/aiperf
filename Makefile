@@ -23,7 +23,8 @@
 		test-component-integration test-component-integration-ci test-component-integration-verbose \
 		add-copyright generate-cli-docs generate-env-vars-docs generate-plugin-enums \
 		generate-plugin-overloads check-plugin-overloads generate-plugin-schemas \
-		generate-all-plugin-files generate-all-docs test-stress stress-tests internal-help help
+		generate-all-plugin-files generate-all-docs test-stress stress-tests \
+		test-fern-docs internal-help help
 
 
 # Include user-defined environment variables
@@ -256,6 +257,11 @@ component-integration-tests-verbose test-component-integration-verbose: #? run c
 	@printf "$(yellow)Note: Sequential mode shows real-time AIPerf output$(reset)\n"
 	$(activate_venv) && pytest tests/component_integration/ -m 'component_integration and not stress and not performance' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
 	@printf "$(bold)$(green)AIPerf Fake Component Integration tests passed!$(reset)\n"
+
+test-fern-docs: #? validate Fern documentation (check, strict check, dev server).
+	@printf "$(bold)$(blue)Running Fern documentation checks...$(reset)\n"
+	$(activate_venv) && pytest tests/unit/fern/ -m fern -v --tb=short $(args)
+	@printf "$(bold)$(green)Fern documentation checks passed!$(reset)\n"
 
 generate-cli-docs: #? generate the CLI documentation.
 	$(activate_venv) && ./tools/generate_cli_docs.py
