@@ -150,7 +150,7 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 )
                 # Cancel any remaining tasks to prevent resource leaks
                 await self.cancel_all_tasks()
-                yield_to_event_loop()
+                await yield_to_event_loop()
 
         buffer_to_flush = self._buffer
         self._buffer = []

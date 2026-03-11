@@ -158,3 +158,88 @@ class TestMultiProcessServiceManager:
         await service_manager.wait_for_all_services_registration(
             stop_event=stop_event, timeout_seconds=5.0
         )
+
+
+class TestWaitForProcess:
+    """Test _wait_for_process graceful shutdown and SIGKILL escalation."""
+
+    @pytest.fixture
+    def service_manager(
+        self, service_config, user_config
+    ) -> MultiProcessServiceManager:
+        return MultiProcessServiceManager(
+            required_services={ServiceType.DATASET_MANAGER: 1},
+            service_config=service_config,
+            user_config=user_config,
+        )
+
+    @pytest.fixture
+    def _make_process_info(self) -> "callable":
+        def _factory(
+            *, is_alive_sequence: list[bool], pid: int = 12345
+        ) -> MultiProcessRunInfo:
+            mock_process = MagicMock(spec=Process)
+            mock_process.is_alive.side_effect = is_alive_sequence
+            mock_process.pid = pid
+            mock_process.join.return_value = None
+            return MultiProcessRunInfo.model_construct(
+                process=mock_process,
+                service_type=ServiceType.DATASET_MANAGER,
+                service_id="test_service",
+            )
+
+        return _factory
+
+    @pytest.mark.asyncio
+    async def test_skips_already_dead_process(
+        self, service_manager: MultiProcessServiceManager
+    ):
+        """Process that is already dead should be skipped entirely."""
+        info = MultiProcessRunInfo.model_construct(
+            process=MagicMock(spec=Process, is_alive=MagicMock(return_value=False)),
+            service_type=ServiceType.DATASET_MANAGER,
+            service_id="already_dead",
+        )
+        await service_manager._wait_for_process(info)
+        info.process.terminate.assert_not_called()
+        info.process.kill.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_none_process(
+        self, service_manager: MultiProcessServiceManager
+    ):
+        """None process (never started) should be skipped entirely."""
+        info = MultiProcessRunInfo.model_construct(
+            process=None,
+            service_type=ServiceType.DATASET_MANAGER,
+            service_id="none_process",
+        )
+        await service_manager._wait_for_process(info)
+
+    @pytest.mark.asyncio
+    async def test_terminate_succeeds_no_kill(
+        self, service_manager: MultiProcessServiceManager, _make_process_info
+    ):
+        """Process that exits after SIGTERM should not be killed."""
+        # First is_alive=True (guard check), second is_alive=False (after join)
+        info = _make_process_info(is_alive_sequence=[True, False])
+
+        await service_manager._wait_for_process(info)
+
+        info.process.terminate.assert_called_once()
+        info.process.join.assert_called_once()
+        info.process.kill.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_terminate_fails_escalates_to_kill(
+        self, service_manager: MultiProcessServiceManager, _make_process_info
+    ):
+        """Process still alive after join timeout should be killed with SIGKILL."""
+        # First is_alive=True (guard check), second is_alive=True (after join — still running)
+        info = _make_process_info(is_alive_sequence=[True, True])
+
+        await service_manager._wait_for_process(info)
+
+        info.process.terminate.assert_called_once()
+        info.process.join.assert_called_once()
+        info.process.kill.assert_called_once()

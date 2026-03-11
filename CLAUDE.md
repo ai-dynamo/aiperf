@@ -8,7 +8,7 @@ Python 3.10+ async AI benchmarking tool for measuring LLM inference server perfo
 
 **Reference documentation:**
 - [`docs/architecture.md`](docs/architecture.md) - Three-plane architecture, core components, credit system, data flow, communication patterns
-- [`docs/dev/patterns.md`](docs/dev/patterns.md) - Code examples for services, models, messages, plugins, error handling, logging, testing
+- [`docs/dev/patterns.md`](docs/dev/patterns.md) - Code examples for CLI commands, services, models, messages, plugins, error handling, logging, testing
 - [`docs/cli_options.md`](docs/cli_options.md) - Complete CLI command and option reference
 - [`docs/environment_variables.md`](docs/environment_variables.md) - All `AIPERF_*` environment variables by subsystem
 - [`docs/metrics_reference.md`](docs/metrics_reference.md) - Metric definitions, formulas, and requirements
@@ -18,12 +18,13 @@ Python 3.10+ async AI benchmarking tool for measuring LLM inference server perfo
 ## Coding Standards
 
 - async/await for ALL I/O - no `time.sleep`, no blocking calls.
-- `Field(description="...")` on EVERY Pydantic field.
+- `Field(description="...")` on EVERY Pydantic field. Docstrings on dataclass fields.
 - Type hints on ALL functions (params and return).
 - KISS + DRY: minimal code, optimize for reader.
-- `AIPerfBaseModel` for data, `BaseConfig` for configuration.
+- `AIPerfBaseModel` for data, `BaseConfig` for configuration. `@dataclass(slots=True)` for hot-path inner models created at high volume (e.g. SSE chunks, parsed responses) where Pydantic overhead matters. Use `__pydantic_config__ = ConfigDict(extra="forbid")` on dataclasses that participate in Pydantic union discrimination.
 - `BaseComponentService` for services, `BaseService` for SystemController only.
 - Message bus for inter-service communication - no shared mutable state.
+- CLI commands: one file per command in `cli_commands/`, lazily loaded via import strings in `cli.py`. See `docs/dev/patterns.md`.
 - YAML plugin registry for extensible features (`plugins.yaml`).
 - Lambda for expensive logs: `self.debug(lambda: f"{self._x()}")`. Direct string for cheap ones.
 - Always `orjson.loads(s)`, `orjson.dumps(d)` for JSON.

@@ -61,7 +61,7 @@ def make_parsed_response(
             usage_data["completion_tokens_details"] = {
                 "reasoning_tokens": reasoning_tokens
             }
-        usage = Usage(root=usage_data) if usage_data else None
+        usage = Usage(usage_data) if usage_data else None
 
     return ParsedResponse(
         perf_ns=perf_ns,
@@ -199,6 +199,87 @@ class TestInvalidRecords:
         assert result.token_counts.input == 8
         assert result.responses == []
         assert record.error is not None
+
+
+@pytest.mark.asyncio
+class TestAsyncTokenizerEncode:
+    """Tests for async _compute_token_count using asyncio.to_thread."""
+
+    async def test_compute_token_count_returns_correct_count(
+        self, setup_inference_parser, spy_tokenizer
+    ):
+        """_compute_token_count returns the token count via async encode."""
+        result = await setup_inference_parser._compute_token_count(
+            spy_tokenizer, ["Hello world test"]
+        )
+        assert result == 3
+        spy_tokenizer.encode.assert_called_once_with("Hello world test")
+
+    async def test_compute_token_count_with_separator(
+        self, setup_inference_parser, spy_tokenizer
+    ):
+        """Texts are joined with the separator before encoding."""
+        result = await setup_inference_parser._compute_token_count(
+            spy_tokenizer, ["Hello", "world", "test"], separator=" "
+        )
+        assert result == 3
+        spy_tokenizer.encode.assert_called_once_with("Hello world test")
+
+    async def test_compute_token_count_empty_texts(
+        self, setup_inference_parser, spy_tokenizer
+    ):
+        """Empty text list returns None without calling encode."""
+        result = await setup_inference_parser._compute_token_count(spy_tokenizer, [])
+        assert result is None
+        spy_tokenizer.encode.assert_not_called()
+
+    async def test_compute_token_count_single_text(
+        self, setup_inference_parser, spy_tokenizer
+    ):
+        """Single text with no separator works correctly."""
+        result = await setup_inference_parser._compute_token_count(
+            spy_tokenizer, ["one"]
+        )
+        assert result == 1
+
+    async def test_compute_token_count_called_via_compute_input(
+        self, setup_inference_parser, spy_tokenizer, sample_turn
+    ):
+        """compute_input_token_count delegates to async _compute_token_count."""
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+        record = RequestRecord(
+            request_info=create_test_request_info(turns=[sample_turn]),
+            model_name="test-model",
+            turns=[sample_turn],
+        )
+
+        result = await setup_inference_parser.compute_input_token_count(record)
+
+        assert result == 8
+        assert spy_tokenizer.encode.call_count == 1
+
+    async def test_client_side_token_counts_uses_async(
+        self, setup_inference_parser, spy_tokenizer
+    ):
+        """_compute_client_side_token_counts calls async _compute_token_count for output/reasoning."""
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+        record = RequestRecord(
+            request_info=create_test_request_info(turns=[]),
+            model_name="test-model",
+            turns=[],
+        )
+
+        setup_parser_responses(
+            setup_inference_parser,
+            [make_parsed_response(text="output tokens here")],
+        )
+
+        result = await setup_inference_parser._compute_client_side_token_counts(
+            record, [make_parsed_response(text="output tokens here")]
+        )
+
+        assert result.output == 3
+        assert spy_tokenizer.encode.called
 
 
 @pytest.mark.asyncio

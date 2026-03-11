@@ -265,7 +265,7 @@ def extract_commands(app: Any) -> list[tuple[str, str]]:
             help_text = help_text()
         if help_text:
             help_text = _extract_text(help_text).split("\n")[0].strip()
-        commands.append((name, help_text))
+        commands.append((name, help_text or ""))
     return commands
 
 
@@ -483,6 +483,16 @@ def generate_markdown(app: Any, data: dict[str, dict[str, list[Param]]]) -> str:
 # =============================================================================
 
 
+def _resolve_lazy_commands(app: Any) -> None:
+    """Resolve any lazily-loaded ``CommandSpec`` entries so the generator can
+    inspect help text and parameters."""
+    from cyclopts.command_spec import CommandSpec
+
+    for name, cmd in list(app._commands.items()):
+        if isinstance(cmd, CommandSpec):
+            app._commands[name] = cmd.resolve(app)
+
+
 class CLIDocsGenerator(Generator):
     """Generate CLI documentation."""
 
@@ -502,6 +512,9 @@ class CLIDocsGenerator(Generator):
                     "hint": "Ensure aiperf is installed: uv pip install -e .",
                 },
             ) from e
+
+        # Resolve any lazily-loaded commands so help text and params are available
+        _resolve_lazy_commands(app)
 
         # Extract commands
         commands = extract_commands(app)

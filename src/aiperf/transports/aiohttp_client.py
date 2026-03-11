@@ -38,12 +38,14 @@ class AioHttpClient(AIPerfLoggerMixin):
         self,
         timeout: float | None = None,
         tcp_kwargs: dict[str, Any] | None = None,
+        collect_trace_chunks: bool = False,
         **kwargs,
     ) -> None:
         """Initialize the AioHttpClient."""
         super().__init__(**kwargs)
         self.tcp_connector = create_tcp_connector(**tcp_kwargs or {})
         self.timeout = aiohttp.ClientTimeout(total=timeout)
+        self.collect_trace_chunks = collect_trace_chunks
 
     async def close(self) -> None:
         """Close the client."""
@@ -56,7 +58,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         method: str,
         url: str,
         headers: dict[str, str],
-        data: str | None = None,
+        data: bytes | None = None,
         on_request_sent: asyncio.Event | None = None,
         first_token_callback: "FirstTokenCallback | None" = None,
         trace_data: AioHttpTraceData | None = None,
@@ -96,11 +98,13 @@ class AioHttpClient(AIPerfLoggerMixin):
 
         # Create trace config for comprehensive timing
         # Pass expected body size for chunk-based completion detection
-        expected_request_body_size = len(data.encode("utf-8")) if data else None
+        expected_request_body_size = len(data) if data else None
+        collect_chunks = self.collect_trace_chunks
         trace_config = create_aiohttp_trace_config(
             record.trace_data,
             on_request_sent_event=on_request_sent,
             expected_request_body_size=expected_request_body_size,
+            collect_chunks=collect_chunks,
         )
 
         try:
@@ -155,20 +159,23 @@ class AioHttpClient(AIPerfLoggerMixin):
                             # Note: We manually track chunks here because iter_any() bypasses aiohttp's
                             # trace callback system. We also set response_receive_start/end_perf_ns
                             # since on_response_chunk_received won't be called.
+                            _trace = record.trace_data
+                            _collect = collect_chunks
+                            _chunks_append = (
+                                _trace.response_chunks.append if _collect else None
+                            )
                             awaiting_first_chunk = True
                             async for chunk in response.content.iter_any():
                                 chunk_ns = time.perf_counter_ns()
-                                record.trace_data.response_chunks.append(
-                                    (chunk_ns, len(chunk))
-                                )
+                                chunk_len = len(chunk)
+                                _trace.response_chunks_count += 1
+                                _trace.response_bytes_total += chunk_len
+                                if _chunks_append is not None:
+                                    _chunks_append((chunk_ns, chunk_len))
                                 if awaiting_first_chunk:
-                                    record.trace_data.response_receive_start_perf_ns = (
-                                        chunk_ns
-                                    )
+                                    _trace.response_receive_start_perf_ns = chunk_ns
                                     awaiting_first_chunk = False
-                                record.trace_data.response_receive_end_perf_ns = (
-                                    chunk_ns
-                                )
+                                _trace.response_receive_end_perf_ns = chunk_ns
                                 yield chunk
 
                         # Separate code paths for performance: avoid callback checks
@@ -269,7 +276,7 @@ class AioHttpClient(AIPerfLoggerMixin):
     async def post_request(
         self,
         url: str,
-        payload: str,
+        payload: bytes,
         headers: dict[str, str],
         *,
         cancel_after_ns: int | None = None,
@@ -282,7 +289,7 @@ class AioHttpClient(AIPerfLoggerMixin):
 
         Args:
             url: Target URL
-            payload: Request body as string
+            payload: Request body as bytes
             headers: Request headers
             cancel_after_ns: If set, cancel the request this many nanoseconds after
                 it's fully sent. The request is always sent before cancellation.
@@ -318,7 +325,7 @@ class AioHttpClient(AIPerfLoggerMixin):
     async def _request_with_cancellation(
         self,
         url: str,
-        payload: str,
+        payload: bytes,
         headers: dict[str, str],
         cancel_after_ns: int,
         first_token_callback: "FirstTokenCallback | None" = None,

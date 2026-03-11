@@ -200,19 +200,19 @@ class MultiProcessServiceManager(BaseServiceManager):
         if not info.process or not info.process.is_alive():
             return
 
-        try:
-            info.process.terminate()
-            await asyncio.to_thread(
-                info.process.join, timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT
-            )
-            self.debug(
-                f"Service {info.service_type} process stopped (pid: {info.process.pid})"
-            )
-        except asyncio.TimeoutError:
+        info.process.terminate()
+        await asyncio.to_thread(
+            info.process.join, timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT
+        )
+        if info.process.is_alive():
             self.warning(
                 f"Service {info.service_type} process (pid: {info.process.pid}) did not terminate gracefully, killing"
             )
             info.process.kill()
+        else:
+            self.debug(
+                lambda: f"Service {info.service_type} process stopped (pid: {info.process.pid})"
+            )
 
     async def wait_for_all_services_start(
         self,

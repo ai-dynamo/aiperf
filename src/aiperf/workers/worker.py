@@ -144,7 +144,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.debug(lambda: f"Worker process __init__ (pid: {self._process.pid})")
 
         self.event_loop_monitor = EventLoopMonitor(self.service_id)
-        self.event_loop_monitor.set_callback(self._on_event_loop_blocked_callback)
 
         self.task_stats: WorkerTaskStats = WorkerTaskStats()
 
@@ -207,13 +206,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 bind=False,
             )
         )
-
-    async def _on_event_loop_blocked_callback(self, delta_ms: float) -> None:
-        """Callback to handle event loop blocking.
-
-        This callback is called when the event loop is blocked for longer than the threshold.
-        """
-        self.warning(f"Event loop is blocked for {delta_ms:.2f}ms")
 
     @on_start
     async def _send_worker_ready_message(self) -> None:

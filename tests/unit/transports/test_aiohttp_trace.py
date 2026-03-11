@@ -225,7 +225,7 @@ class TestCreateAioHttpTraceConfig:
 
     @pytest.mark.asyncio
     async def test_request_chunk_sent(self):
-        """Request chunk sent events are tracked."""
+        """Request chunk sent events track aggregates; chunk list empty by default."""
         trace_data = AioHttpTraceData()
         trace_config = create_aiohttp_trace_config(trace_data)
 
@@ -240,41 +240,64 @@ class TestCreateAioHttpTraceConfig:
                 mock_session, mock_trace_ctx, mock_params
             )
 
-        # Verify all chunks are tracked (tuples of (timestamp, size))
-        assert len(trace_data.request_chunks) == 3
-        assert [size for _, size in trace_data.request_chunks] == [
-            6,
-            6,
-            6,
-        ]  # len("chunkN")
+        # Aggregates are always tracked
+        assert trace_data.request_chunks_count == 3
+        assert trace_data.request_bytes_total == 18  # 3 * len("chunkN")
+        assert trace_data.request_send_end_perf_ns is not None
 
-        # Timestamps should be in increasing order
+        # Chunk list is empty by default (collect_chunks=False)
+        assert len(trace_data.request_chunks) == 0
+
+    @pytest.mark.asyncio
+    async def test_request_chunk_sent_with_collect_chunks(self):
+        """Request chunk sent events populate chunk list when collect_chunks=True."""
+        trace_data = AioHttpTraceData()
+        trace_config = create_aiohttp_trace_config(trace_data, collect_chunks=True)
+
+        mock_session = Mock(spec=aiohttp.ClientSession)
+        mock_trace_ctx = Mock()
+
+        for chunk_data in [b"chunk1", b"chunk2", b"chunk3"]:
+            mock_params = Mock()
+            mock_params.chunk = chunk_data
+            await trace_config.on_request_chunk_sent[0](
+                mock_session, mock_trace_ctx, mock_params
+            )
+
+        # Chunk list is populated
+        assert len(trace_data.request_chunks) == 3
+        assert [size for _, size in trace_data.request_chunks] == [6, 6, 6]
         assert trace_data.request_chunks[0][0] <= trace_data.request_chunks[1][0]
         assert trace_data.request_chunks[1][0] <= trace_data.request_chunks[2][0]
 
+        # Aggregates also tracked
+        assert trace_data.request_chunks_count == 3
+        assert trace_data.request_bytes_total == 18
+
     @pytest.mark.asyncio
     async def test_response_chunk_received(self):
-        """Response chunk received events are tracked."""
+        """Response chunk received events track aggregates; chunk list empty by default."""
         trace_data = AioHttpTraceData()
         trace_config = create_aiohttp_trace_config(trace_data)
 
         mock_session = Mock(spec=aiohttp.ClientSession)
         mock_trace_ctx = Mock()
 
-        # First chunk (note: response metadata is captured in on_request_end, not here)
+        # First chunk
         mock_params = Mock()
         mock_params.chunk = b"first chunk"
-
         await trace_config.on_response_chunk_received[0](
             mock_session, mock_trace_ctx, mock_params
         )
 
-        # Verify first chunk tracked (tuples of (timestamp, size))
-        assert len(trace_data.response_chunks) == 1
-        assert trace_data.response_chunks[0][1] == 11  # len("first chunk")
-        # Verify start/end timestamps are set
+        # Aggregates tracked
+        assert trace_data.response_chunks_count == 1
+        assert trace_data.response_bytes_total == 11
         assert trace_data.response_receive_start_perf_ns is not None
         assert trace_data.response_receive_end_perf_ns is not None
+
+        # Chunk list empty by default
+        assert len(trace_data.response_chunks) == 0
 
         # Second chunk
         mock_params.chunk = b"second chunk"
@@ -282,14 +305,36 @@ class TestCreateAioHttpTraceConfig:
             mock_session, mock_trace_ctx, mock_params
         )
 
-        # Verify second chunk tracked
-        assert len(trace_data.response_chunks) == 2
-        assert trace_data.response_chunks[1][1] == 12  # len("second chunk")
-        # Verify end timestamp updated
+        assert trace_data.response_chunks_count == 2
+        assert trace_data.response_bytes_total == 23  # 11 + 12
         assert (
             trace_data.response_receive_end_perf_ns
             >= trace_data.response_receive_start_perf_ns
         )
+
+    @pytest.mark.asyncio
+    async def test_response_chunk_received_with_collect_chunks(self):
+        """Response chunk received events populate chunk list when collect_chunks=True."""
+        trace_data = AioHttpTraceData()
+        trace_config = create_aiohttp_trace_config(trace_data, collect_chunks=True)
+
+        mock_session = Mock(spec=aiohttp.ClientSession)
+        mock_trace_ctx = Mock()
+
+        mock_params = Mock()
+        mock_params.chunk = b"first chunk"
+        await trace_config.on_response_chunk_received[0](
+            mock_session, mock_trace_ctx, mock_params
+        )
+        assert len(trace_data.response_chunks) == 1
+        assert trace_data.response_chunks[0][1] == 11
+
+        mock_params.chunk = b"second chunk"
+        await trace_config.on_response_chunk_received[0](
+            mock_session, mock_trace_ctx, mock_params
+        )
+        assert len(trace_data.response_chunks) == 2
+        assert trace_data.response_chunks[1][1] == 12
 
     @pytest.mark.asyncio
     async def test_request_exception_event(self):
@@ -542,7 +587,7 @@ class TestAioHttpTraceIntegration:
         await trace_config.on_request_end[0](mock_session, mock_trace_ctx, mock_params)
 
         # No response chunks received (empty body)
-        assert len(trace_data.response_chunks) == 0
+        assert trace_data.response_chunks_count == 0
         # But response status is captured in on_request_end
         assert trace_data.response_status_code == 204
 

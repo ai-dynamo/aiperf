@@ -29,7 +29,7 @@ class EventLoopMonitor(AIPerfLoggerMixin):
     Configurable via Environment.SERVICE:
     - AIPERF_SERVICE_EVENT_LOOP_HEALTH_ENABLED: Enable/disable monitoring (default: True)
     - AIPERF_SERVICE_EVENT_LOOP_HEALTH_INTERVAL: Sleep interval in seconds (default: 0.25)
-    - AIPERF_SERVICE_EVENT_LOOP_HEALTH_WARN_THRESHOLD_MS: Warning threshold in ms (default: 10)
+    - AIPERF_SERVICE_EVENT_LOOP_HEALTH_WARN_THRESHOLD_MS: Warning threshold in ms (default: 25)
     """
 
     def __init__(self, service_id: str, **kwargs) -> None:

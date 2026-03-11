@@ -607,6 +607,9 @@ class TestRecordExportResultsProcessorHttpTrace:
             request_chunks=[
                 (base_perf_ns + 100000, 1024)
             ],  # 100us after start, 1KB sent
+            request_send_end_perf_ns=base_perf_ns + 100000,
+            request_chunks_count=1,
+            request_bytes_total=1024,
             # Response receive phase
             response_status_code=200,
             response_reason="OK",
@@ -616,6 +619,8 @@ class TestRecordExportResultsProcessorHttpTrace:
                 (base_perf_ns + 50100000, 512),  # First chunk at 50.1ms
                 (base_perf_ns + 100000000, 256),  # Last chunk at 100ms
             ],
+            response_chunks_count=2,
+            response_bytes_total=768,
             response_receive_end_perf_ns=base_perf_ns + 100000000,
             # Connection info
             local_ip="127.0.0.1",

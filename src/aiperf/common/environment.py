@@ -674,8 +674,8 @@ class _ServiceSettings(BaseSettings):
     EVENT_LOOP_HEALTH_WARN_THRESHOLD_MS: float = Field(
         gt=1.0,
         le=10000.0,
-        default=10.0,
-        description="Warning threshold in milliseconds for event loop latency (default: 10ms). "
+        default=25.0,
+        description="Warning threshold in milliseconds for event loop latency (default: 25ms). "
         "If the actual sleep duration exceeds the expected duration by this amount, a warning is logged.",
     )
     # Health server settings for Kubernetes probes

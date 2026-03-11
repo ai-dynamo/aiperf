@@ -7,7 +7,7 @@ This module provides:
 - Command building utilities (build_timing_command, build_burst_command)
 - Assertion helpers for common test patterns
 - Base test classes for shared test logic (BaseCreditFlowTests, BaseConcurrencyTests)
-- Session-scoped realistic_latency fixture for FakeTransport timing simulation
+- Package-scoped realistic_latency fixture for FakeTransport timing simulation
 
 Analyzer classes (CreditFlowAnalyzer, TimingAnalyzer, etc.) are imported from
 tests.harness.analyzers for reuse across all test modules.
@@ -34,7 +34,7 @@ from tests.harness.fake_transport import FakeTransport
 from tests.harness.utils import AIPerfCLI, AIPerfResults
 
 
-@pytest.fixture(autouse=True, scope="session")
+@pytest.fixture(autouse=True, scope="package")
 def realistic_latency():
     """Enable realistic latency simulation for FakeTransport.
 

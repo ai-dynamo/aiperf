@@ -77,27 +77,27 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
     def _parse_streaming(
         self, response: InferenceServerResponse
     ) -> ParsedResponse | None:
-        """Parse Hugging Face TGI streaming response (single-packet version)."""
-        try:
-            chunks: list[str] = []
+        """Parse Hugging Face TGI streaming response (single SSE event).
 
+        Each event is parsed independently; the caller accumulates across events.
+        Always use token.text (the incremental token), never generated_text
+        (which is the full accumulated text on the final event and would duplicate
+        all prior tokens).
+        """
+        try:
             json_obj = response.get_json()
             if not json_obj:
                 self.debug("Empty or invalid streaming JSON response.")
                 return None
 
             token_obj = json_obj.get("token")
-            if token_obj and (text := token_obj.get("text")):
-                chunks.append(text)
+            text = token_obj.get("text") if token_obj else None
 
-            if text := json_obj.get("generated_text"):
-                chunks.append(text)
-
-            if not chunks:
-                self.debug(lambda: "No text chunks collected from TGI stream.")
+            if not text:
+                self.debug("No token text in TGI stream event.")
                 return None
 
-            data = self.make_text_response_data("".join(chunks))
+            data = self.make_text_response_data(text)
             return ParsedResponse(perf_ns=response.perf_ns, data=data)
 
         except Exception as e:
