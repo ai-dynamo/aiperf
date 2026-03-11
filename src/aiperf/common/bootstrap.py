@@ -48,10 +48,16 @@ def bootstrap_and_run_service(
             the child process logging will be set up.
         kwargs: Additional keyword arguments to pass to the service constructor.
     """
-    # Ignore SIGINT in child processes so only the parent handles Ctrl+C.
-    # The parent (SystemController) will coordinate graceful shutdown of children.
+    # Ignore SIGINT and SIGTERM in child processes. SIGINT is ignored so only
+    # the parent handles Ctrl+C. SIGTERM is ignored because graceful shutdown is
+    # handled via the message bus (ShutdownCommand); process.terminate() is only
+    # called after the message bus path has already timed out, and the manager
+    # falls through to SIGKILL after the join timeout anyway. Ignoring SIGTERM
+    # prevents SIGSEGV crashes that occur when SIGTERM arrives while C extension
+    # code (uvloop, zmq, aiohttp, orjson) is executing.
     if multiprocessing.parent_process() is not None:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
     from aiperf.plugin import plugins
     from aiperf.plugin.enums import PluginType
