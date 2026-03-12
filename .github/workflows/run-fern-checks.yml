@@ -18,7 +18,7 @@ jobs:
       with:
         node-version: "20"
     - name: Install Fern CLI
-      run: npm install -g fern-api@4.22.0
+      run: npm install -g fern-api@$(jq -r '.version' fern/fern.config.json)
     - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:
