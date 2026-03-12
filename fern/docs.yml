@@ -3,6 +3,7 @@
 
 instances:
   - url: aiperf.docs.buildwithfern.com
+    custom-domain: https://docs.nvidia.com/aiperf # specify your custom domain when you are ready to go live
 
 title: NVIDIA AIPerf Documentation
 
@@ -25,6 +26,7 @@ layout:
 experimental:
   mdx-components:
     - ./components
+  basepath-aware: true
 colors:
   accentPrimary:
     dark: '#76B900'
