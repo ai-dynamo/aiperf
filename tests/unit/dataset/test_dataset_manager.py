@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from aiperf.common.config import EndpointConfig, InputConfig, ServiceConfig, UserConfig
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.tokenizer_config import TokenizerConfig
-from aiperf.common.enums import PublicDatasetType
+from aiperf.plugin.enums import PublicDatasetType
 from aiperf.common.exceptions import ServiceError
 from aiperf.common.messages import (
     ConversationRequestMessage,

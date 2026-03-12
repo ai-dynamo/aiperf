@@ -346,6 +346,13 @@ class CustomDatasetLoaderMetadata(BaseModel):
         ),
     )
 
+class PublicDatasetLoaderMetadata(BaseModel):
+    """Metadata schema for public dataset loader plugins.
+
+    Referenced by: categories.yaml public_dataset_loader.metadata_class
+    Used in: plugins.yaml public_dataset_loader entries
+    """
+
 
 class ServiceMetadata(BaseModel):
     """Metadata schema for service plugins.
