@@ -25,6 +25,7 @@ layout:
 experimental:
   mdx-components:
     - ./components
+  basepath-aware: true
 colors:
   accentPrimary:
     dark: '#76B900'
