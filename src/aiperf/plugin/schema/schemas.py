@@ -346,6 +346,7 @@ class CustomDatasetLoaderMetadata(BaseModel):
         ),
     )
 
+
 class PublicDatasetLoaderMetadata(BaseModel):
     """Metadata schema for public dataset loader plugins.
 
