@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, TypeAlias
@@ -15,6 +16,8 @@ from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import RandomPool
 from aiperf.plugin.enums import CustomDatasetType, DatasetSamplingStrategy
+
+logger = logging.getLogger(__name__)
 
 # Type aliases
 Filename: TypeAlias = str
@@ -34,6 +37,13 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
       - supports client-side batching for each data (e.g. batch size > 1)
       - supports named fields for each modality (e.g. text_field_a, text_field_b, etc.)
       - DOES NOT support multi-turn or its features (e.g. delay, sessions, etc.)
+
+    Note on batching and associations:
+    When entries have paired data across modalities (e.g. {"image": "cat.png", "text": "describe
+    this cat"}), enabling batch sizes > 1 flattens each modality into an independent pool and
+    samples from them separately. This intentionally breaks per-entry associations — the name
+    "random_pool" implies independent sampling. Use the single_turn dataset type instead if exact
+    request structure with preserved pairings is required.
 
     Example:
 
@@ -86,6 +96,8 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         )
         self.batch_size_image = user_config.input.image.batch_size
         self.batch_size_text = user_config.input.prompt.batch_size
+        self.batch_size_audio = user_config.input.audio.batch_size
+        self.batch_size_video = user_config.input.video.batch_size
 
     @staticmethod
     def _validate_path(path: Path) -> int:
@@ -228,9 +240,12 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
     ) -> list[Conversation]:
         """Convert random pool data to conversation objects.
 
-        When batch_size_image > 1 or batch_size_text > 1, uses flat pool
-        sampling to form a single turn with multiple items per conversation.
-        Otherwise, each RandomPool entry becomes a single-turn conversation.
+        When any batch size deviates from 1, uses flat pool sampling to form a single
+        turn with multiple items per conversation. Otherwise, each RandomPool entry
+        becomes a single-turn conversation.
+
+        Sampling is always done with replacement, so duplicates within a single request
+        are possible when batch_size exceeds pool size.
 
         Args:
             data: A dictionary mapping filename to list of RandomPool objects.
@@ -238,11 +253,15 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         Returns:
             A list of conversations.
         """
+        logger.info(
+            "Sampling random_pool dataset entries with replacement. "
+            "Duplicates within a single request are possible when batch_size exceeds pool size."
+        )
         if (
-            self.batch_size_image == 0
-            or self.batch_size_text == 0
-            or self.batch_size_image > 1
-            or self.batch_size_text > 1
+            self.batch_size_image != 1
+            or self.batch_size_text != 1
+            or self.batch_size_audio != 1
+            or self.batch_size_video != 1
         ):
             return self._convert_to_conversations_batched(data)
 
@@ -277,100 +296,35 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
 
         return conversations
 
-    def _build_flat_image_pool(
-        self, data: dict[Filename, list[RandomPool]]
+    def _build_flat_pool(
+        self,
+        data: dict[Filename, list[RandomPool]],
+        singular: str,
+        plural: str,
     ) -> list[str]:
-        """Collect all image strings from all pool entries into a flat list.
+        """Collect all strings for a given modality from all pool entries into a flat list.
 
         Args:
             data: A dictionary mapping filename to list of RandomPool objects.
+            singular: The field name for a single item (e.g. "image").
+            plural: The field name for a list of items (e.g. "images").
 
         Returns:
-            A flat list of image strings (paths, URLs, or base64 data URLs).
+            A flat list of strings for the given modality.
         """
         pool: list[str] = []
         for items in data.values():
             for item in items:
-                if item.image is not None:
-                    pool.append(item.image)
-                if item.images is not None:
-                    for img in item.images:
-                        if isinstance(img, str):
-                            pool.append(img)
+                value = getattr(item, singular)
+                if value is not None:
+                    pool.append(value)
+                values = getattr(item, plural)
+                if values is not None:
+                    for v in values:
+                        if isinstance(v, str):
+                            pool.append(v)
                         else:
-                            pool.extend(img.contents)
-        return pool
-
-    def _build_flat_text_pool(
-        self, data: dict[Filename, list[RandomPool]]
-    ) -> list[str]:
-        """Collect all text strings from all pool entries into a flat list.
-
-        Args:
-            data: A dictionary mapping filename to list of RandomPool objects.
-
-        Returns:
-            A flat list of text strings.
-        """
-        pool: list[str] = []
-        for items in data.values():
-            for item in items:
-                if item.text is not None:
-                    pool.append(item.text)
-                if item.texts is not None:
-                    for txt in item.texts:
-                        if isinstance(txt, str):
-                            pool.append(txt)
-                        else:
-                            pool.extend(txt.contents)
-        return pool
-
-    def _build_flat_audio_pool(
-        self, data: dict[Filename, list[RandomPool]]
-    ) -> list[str]:
-        """Collect all audio strings from all pool entries into a flat list.
-
-        Args:
-            data: A dictionary mapping filename to list of RandomPool objects.
-
-        Returns:
-            A flat list of audio strings.
-        """
-        pool: list[str] = []
-        for items in data.values():
-            for item in items:
-                if item.audio is not None:
-                    pool.append(item.audio)
-                if item.audios is not None:
-                    for aud in item.audios:
-                        if isinstance(aud, str):
-                            pool.append(aud)
-                        else:
-                            pool.extend(aud.contents)
-        return pool
-
-    def _build_flat_video_pool(
-        self, data: dict[Filename, list[RandomPool]]
-    ) -> list[str]:
-        """Collect all video strings from all pool entries into a flat list.
-
-        Args:
-            data: A dictionary mapping filename to list of RandomPool objects.
-
-        Returns:
-            A flat list of video strings.
-        """
-        pool: list[str] = []
-        for items in data.values():
-            for item in items:
-                if item.video is not None:
-                    pool.append(item.video)
-                if item.videos is not None:
-                    for vid in item.videos:
-                        if isinstance(vid, str):
-                            pool.append(vid)
-                        else:
-                            pool.extend(vid.contents)
+                            pool.extend(v.contents)
         return pool
 
     def _convert_to_conversations_batched(
@@ -379,10 +333,14 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         """Convert pool data to conversations using flat pool batch sampling.
 
         Builds a flat pool per modality from all pool entries. For each conversation,
-        samples batch_size_image images, batch_size_text texts, and 1 audio/video
-        (with replacement) from their respective pools. Modalities absent from the
-        pool are omitted; modalities present but whose batch size is 1 (the default)
-        are still sampled so no data is silently dropped when only one batch size > 1.
+        samples batch_size_image images, batch_size_text texts, batch_size_audio audios,
+        and batch_size_video videos (all with replacement) from their respective pools.
+        Modalities absent from the pool are omitted; modalities present but whose batch
+        size is 0 are suppressed; modalities present at batch size 1 (the default) are
+        still sampled so no data is silently dropped when only one batch size > 1.
+
+        Note: per-entry associations (e.g. a paired text+image) are not preserved —
+        each modality is sampled independently from its flat pool.
 
         Args:
             data: A dictionary mapping filename to list of RandomPool objects.
@@ -390,10 +348,10 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         Returns:
             A list of conversations, each with one turn containing a batch of items.
         """
-        image_pool = self._build_flat_image_pool(data)
-        text_pool = self._build_flat_text_pool(data)
-        audio_pool = self._build_flat_audio_pool(data)
-        video_pool = self._build_flat_video_pool(data)
+        image_pool = self._build_flat_pool(data, "image", "images")
+        text_pool = self._build_flat_pool(data, "text", "texts")
+        audio_pool = self._build_flat_pool(data, "audio", "audios")
+        video_pool = self._build_flat_pool(data, "video", "videos")
 
         conversations = []
         for _ in range(self.num_conversations):
@@ -411,8 +369,8 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
                 texts = [Text(name="", contents=sampled_texts)]
 
             audios: list[Audio] = []
-            if audio_pool:
-                sampled_audios = self._rng.choices(audio_pool, k=1)
+            if audio_pool and self.batch_size_audio > 0:
+                sampled_audios = self._rng.choices(audio_pool, k=self.batch_size_audio)
                 processed_audios = [
                     self._handle_media_content(a, MediaType.AUDIO)
                     for a in sampled_audios
@@ -420,8 +378,8 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
                 audios = [Audio(name="", contents=processed_audios)]
 
             videos: list[Video] = []
-            if video_pool:
-                sampled_videos = self._rng.choices(video_pool, k=1)
+            if video_pool and self.batch_size_video > 0:
+                sampled_videos = self._rng.choices(video_pool, k=self.batch_size_video)
                 processed_videos = [
                     self._handle_media_content(v, MediaType.VIDEO)
                     for v in sampled_videos

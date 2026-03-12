@@ -6,7 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from aiperf.common.config import ImageConfig, InputConfig, PromptConfig
+from aiperf.common.config import (
+    AudioConfig,
+    ImageConfig,
+    InputConfig,
+    PromptConfig,
+    VideoConfig,
+)
 from aiperf.common.models import Audio, Image, Text, Video
 from aiperf.dataset.loader.models import RandomPool
 from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
@@ -401,7 +407,13 @@ class TestRandomPoolDatasetLoader:
 class TestRandomPoolBatchSize:
     """Tests for batch size support in RandomPoolDatasetLoader."""
 
-    def _make_config(self, batch_size_image=1, batch_size_text=1):
+    def _make_config(
+        self,
+        batch_size_image=1,
+        batch_size_text=1,
+        batch_size_audio=1,
+        batch_size_video=1,
+    ):
         from aiperf.common.config import EndpointConfig, UserConfig
 
         return UserConfig(
@@ -409,6 +421,8 @@ class TestRandomPoolBatchSize:
             input=InputConfig(
                 image=ImageConfig(batch_size=batch_size_image),
                 prompt=PromptConfig(batch_size=batch_size_text),
+                audio=AudioConfig(batch_size=batch_size_audio),
+                video=VideoConfig(batch_size=batch_size_video),
             ),
         )
 
@@ -887,3 +901,181 @@ class TestRandomPoolBatchSize:
             num_conversations=None,
         )
         assert loader.num_conversations == 100
+
+    def test_batch_size_audio_produces_correct_audio_count(self, default_user_config):
+        """Each conversation should contain batch_size_audio audios sampled from the flat pool."""
+        config = self._make_config(batch_size_audio=3)
+        data = {
+            "audios.jsonl": [
+                RandomPool(audio="https://example.com/a1.wav"),
+                RandomPool(audio="https://example.com/a2.wav"),
+                RandomPool(audio="https://example.com/a3.wav"),
+                RandomPool(audio="https://example.com/a4.wav"),
+            ]
+        }
+        loader = RandomPoolDatasetLoader(
+            filename="dummy.jsonl", user_config=config, num_conversations=2
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 2
+        for conv in conversations:
+            assert len(conv.turns) == 1
+            turn = conv.turns[0]
+            assert len(turn.audios) == 1
+            assert len(turn.audios[0].contents) == 3
+
+    def test_batch_size_video_produces_correct_video_count(self, default_user_config):
+        """Each conversation should contain batch_size_video videos sampled from the flat pool."""
+        config = self._make_config(batch_size_video=2)
+        data = {
+            "videos.jsonl": [
+                RandomPool(video="https://example.com/v1.mp4"),
+                RandomPool(video="https://example.com/v2.mp4"),
+                RandomPool(video="https://example.com/v3.mp4"),
+            ]
+        }
+        loader = RandomPoolDatasetLoader(
+            filename="dummy.jsonl", user_config=config, num_conversations=2
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 2
+        for conv in conversations:
+            assert len(conv.turns) == 1
+            turn = conv.turns[0]
+            assert len(turn.videos) == 1
+            assert len(turn.videos[0].contents) == 2
+
+    def test_batch_size_audio_sampled_from_pool(self, default_user_config):
+        """Sampled audios should come from the pool entries."""
+        config = self._make_config(batch_size_audio=2)
+        pool_audios = [
+            "https://example.com/a.wav",
+            "https://example.com/b.wav",
+            "https://example.com/c.wav",
+        ]
+        data = {"f.jsonl": [RandomPool(audio=a) for a in pool_audios]}
+        loader = RandomPoolDatasetLoader(
+            filename="dummy.jsonl", user_config=config, num_conversations=5
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        for conv in conversations:
+            for aud_content in conv.turns[0].audios[0].contents:
+                assert aud_content in pool_audios
+
+    def test_batch_size_video_sampled_from_pool(self, default_user_config):
+        """Sampled videos should come from the pool entries."""
+        config = self._make_config(batch_size_video=2)
+        pool_videos = [
+            "https://example.com/v1.mp4",
+            "https://example.com/v2.mp4",
+            "https://example.com/v3.mp4",
+        ]
+        data = {"f.jsonl": [RandomPool(video=v) for v in pool_videos]}
+        loader = RandomPoolDatasetLoader(
+            filename="dummy.jsonl", user_config=config, num_conversations=5
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        for conv in conversations:
+            for vid_content in conv.turns[0].videos[0].contents:
+                assert vid_content in pool_videos
+
+    def test_audio_batch_size_triggers_batched_path(self, default_user_config):
+        """Setting batch_size_audio != 1 should trigger the batched path."""
+        config = self._make_config(batch_size_audio=2)
+        data = {
+            "f.jsonl": [
+                RandomPool(text="query1", audio="https://example.com/a1.wav"),
+                RandomPool(text="query2", audio="https://example.com/a2.wav"),
+            ]
+        }
+        loader = RandomPoolDatasetLoader(
+            filename="dummy.jsonl", user_config=config, num_conversations=2
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 2
+        for conv in conversations:
+            turn = conv.turns[0]
+            assert len(turn.audios) == 1
+            assert len(turn.audios[0].contents) == 2
+
+    def test_video_batch_size_triggers_batched_path(self, default_user_config):
+        """Setting batch_size_video != 1 should trigger the batched path."""
+        config = self._make_config(batch_size_video=2)
+        data = {
+            "f.jsonl": [
+                RandomPool(text="query1", video="https://example.com/v1.mp4"),
+                RandomPool(text="query2", video="https://example.com/v2.mp4"),
+            ]
+        }
+        loader = RandomPoolDatasetLoader(
+            filename="dummy.jsonl", user_config=config, num_conversations=2
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 2
+        for conv in conversations:
+            turn = conv.turns[0]
+            assert len(turn.videos) == 1
+            assert len(turn.videos[0].contents) == 2
+
+    def test_batch_size_audio_zero_disables_audio(self, default_user_config):
+        """batch_size_audio=0 should suppress audio output even when audios are in the pool."""
+        config = self._make_config(batch_size_image=2, batch_size_audio=0)
+        data = {
+            "f.jsonl": [
+                RandomPool(
+                    image="https://example.com/img1.png",
+                    audio="https://example.com/a1.wav",
+                ),
+                RandomPool(
+                    image="https://example.com/img2.png",
+                    audio="https://example.com/a2.wav",
+                ),
+            ]
+        }
+        loader = RandomPoolDatasetLoader(
+            filename="dummy.jsonl", user_config=config, num_conversations=2
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        for conv in conversations:
+            turn = conv.turns[0]
+            assert turn.audios == []
+            assert len(turn.images[0].contents) == 2
+
+    def test_batch_size_video_zero_disables_video(self, default_user_config):
+        """batch_size_video=0 should suppress video output even when videos are in the pool."""
+        config = self._make_config(batch_size_image=2, batch_size_video=0)
+        data = {
+            "f.jsonl": [
+                RandomPool(
+                    image="https://example.com/img1.png",
+                    video="https://example.com/v1.mp4",
+                ),
+                RandomPool(
+                    image="https://example.com/img2.png",
+                    video="https://example.com/v2.mp4",
+                ),
+            ]
+        }
+        loader = RandomPoolDatasetLoader(
+            filename="dummy.jsonl", user_config=config, num_conversations=2
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        for conv in conversations:
+            turn = conv.turns[0]
+            assert turn.videos == []
+            assert len(turn.images[0].contents) == 2
+
+    def test_audio_video_batch_sizes_read_from_config(self, default_user_config):
+        """batch_size_audio and batch_size_video should be read from the user config."""
+        config = self._make_config(batch_size_audio=2, batch_size_video=3)
+        loader = RandomPoolDatasetLoader(filename="dummy.jsonl", user_config=config)
+        assert loader.batch_size_audio == 2
+        assert loader.batch_size_video == 3
