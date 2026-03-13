@@ -24,12 +24,12 @@ from aiperf.common.config.prompt_config import PromptConfig
 from aiperf.common.config.rankings_config import RankingsConfig
 from aiperf.common.config.synthesis_config import SynthesisConfig
 from aiperf.common.config.video_config import VideoConfig
-from aiperf.common.enums import PublicDatasetType
 from aiperf.common.exceptions import InvalidStateError, MetricTypeError
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     CustomDatasetType,
     DatasetSamplingStrategy,
+    PublicDatasetType,
 )
 
 _logger = AIPerfLogger(__name__)
@@ -265,7 +265,7 @@ class InputConfig(BaseConfig):
         Field(
             description="Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). "
             "AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. "
-            "See `PublicDatasetType` enum for available datasets.",
+            "Run `aiperf plugins public_dataset_loader` to list available datasets.",
         ),
         CLIParameter(
             name=("--public-dataset"),
