@@ -225,7 +225,7 @@ End offset in milliseconds for fixed schedule replay. Stops issuing requests aft
 
 #### `--public-dataset` `<str>`
 
-Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. See `PublicDatasetType` enum for available datasets.
+Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets.
 <br/>_Choices: [`sharegpt`]_
 
 #### `--custom-dataset-type` `<str>`

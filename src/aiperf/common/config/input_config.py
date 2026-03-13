@@ -265,7 +265,7 @@ class InputConfig(BaseConfig):
         Field(
             description="Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). "
             "AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. "
-            "See `PublicDatasetType` enum for available datasets.",
+            "Run `aiperf plugins public_dataset_loader` to list available datasets.",
         ),
         CLIParameter(
             name=("--public-dataset"),

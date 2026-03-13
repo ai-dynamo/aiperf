@@ -1167,9 +1167,9 @@ public_dataset_loader:
   sharegpt:
     class: aiperf.dataset.loader.sharegpt:ShareGPTLoader
     description: |
-      ShareGPT conversation dataset from HuggingFace. Downloads and processes
-      multi-turn human/assistant conversations for LLM benchmarking. Filters
-      conversations by sequence length and token counts.
+      ShareGPT dataset from HuggingFace. Downloads and processes the first
+      prompt/completion pair from each conversation as a single-turn request.
+      Filters entries by sequence length and token counts.
 
 # =============================================================================
 # ZMQ Proxies
