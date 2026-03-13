@@ -209,7 +209,7 @@ class PlotConfig:
         try:
             yaml = YAML(typ="safe")
             with open(self.resolved_path, encoding="utf-8") as f:
-                config = yaml.load(f)
+                config = yaml.safe_load(f)
 
             if not isinstance(config, dict):
                 raise ValueError(
