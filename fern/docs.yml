@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 instances:
-  - url: aiperf.docs.buildwithfern.com
+  - url: aiperf.docs.buildwithfern.com/aiperf
     custom-domain: https://docs.nvidia.com/aiperf # specify your custom domain when you are ready to go live
 
 title: NVIDIA AIPerf Documentation
