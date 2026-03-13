@@ -28,7 +28,7 @@ def _load_config_file(path: Path) -> dict[str, Any]:
     elif suffix in (".yaml", ".yml"):
         yaml = YAML(pure=True)
         with open(path) as f:
-            data = yaml.load(f)
+            data = yaml.safe_load(f)
     else:
         raise ValueError(
             f"Unsupported config file format: {suffix}. Use .json, .yaml, or .yml"
