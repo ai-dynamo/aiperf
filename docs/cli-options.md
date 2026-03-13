@@ -225,17 +225,12 @@ End offset in milliseconds for fixed schedule replay. Stops issuing requests aft
 
 #### `--public-dataset` `<str>`
 
-Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. See `PublicDatasetType` enum for available datasets.
-
-**Choices:**
-
-| | | |
-|-------|:-------:|-------------|
-| `sharegpt` |  | ShareGPT dataset from HuggingFace. Multi-turn conversational dataset with user/assistant exchanges. |
+Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets.
+<br/>_Choices: [`sharegpt`]_
 
 #### `--custom-dataset-type` `<str>`
 
-Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
+Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations — use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
 <br/>_Choices: [`bailian_trace`, `mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`]_
 
 #### `--dataset-sampling-strategy` `<str>`
@@ -832,6 +827,26 @@ Disable warmup for profile runs after the first. Only applies when --num-profile
 Automatically set random seed for consistent workloads across runs. Only applies when --num-profile-runs > 1. When True (default), automatically sets --random-seed=42 if not specified, ensuring identical workloads across all runs for valid statistical comparison. When False, preserves None seed, resulting in different workloads per run (not recommended for confidence reporting as it produces invalid statistics). If --random-seed is explicitly set, that value is always used regardless of this setting.
 <br/>_Default: `True`_
 
+#### `--convergence-metric` `<str>`
+
+Target metric name for adaptive convergence stopping. When set with --num-profile-runs > 1, enables adaptive mode that stops early once the metric stabilizes according to --convergence-mode. Uses --num-profile-runs as the maximum run cap. Example metrics: time_to_first_token, request_latency, inter_token_latency.
+
+#### `--convergence-stat` `<str>`
+
+Statistic to evaluate for convergence when using ci_width or cv mode. Common values: avg, p50, p90, p95, p99. Only applies when --convergence-metric is set.
+<br/>_Default: `avg`_
+
+#### `--convergence-threshold` `<float>`
+
+Threshold for convergence detection. For ci_width mode: maximum CI width as a fraction of the mean (default 0.10 = 10%). For cv mode: maximum coefficient of variation (default 0.10 = 10%). For distribution mode: KS test p-value threshold (default 0.10). Only applies when --convergence-metric is set.
+<br/>_Constraints: > 0, &lt; 1_
+<br/>_Default: `0.1`_
+
+#### `--convergence-mode` `<str>`
+
+Statistical method for convergence detection. ci_width: Stop when Student's t confidence interval width relative to mean is below threshold. cv: Stop when coefficient of variation (std/mean) is below threshold. distribution: Stop when KS test p-value indicates latest run matches prior runs. Only applies when --convergence-metric is set.
+<br/>_Default: `ci_width`_
+
 ### Accuracy
 
 #### `--accuracy-benchmark` `<str>`
@@ -1036,7 +1051,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 #### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `ramp`, `record_processor`, `results_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 

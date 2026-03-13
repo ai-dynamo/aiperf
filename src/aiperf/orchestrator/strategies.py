@@ -2,17 +2,24 @@
 # SPDX-License-Identifier: Apache-2.0
 """Execution strategies for multi-run orchestration."""
 
+from __future__ import annotations
+
 import logging
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from aiperf.common.config import UserConfig
 from aiperf.orchestrator.models import RunResult
 
+if TYPE_CHECKING:
+    from aiperf.orchestrator.convergence.base import ConvergenceCriterion
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "AdaptiveStrategy",
     "ExecutionStrategy",
     "FixedTrialsStrategy",
 ]
@@ -344,6 +351,115 @@ class FixedTrialsStrategy(ExecutionStrategy):
         Returns:
             Configuration with all warmup parameters set to None
         """
+        config = config.model_copy(deep=True)
+        config.loadgen.disable_warmup()
+        return config
+
+
+class AdaptiveStrategy(ExecutionStrategy):
+    """Strategy that stops early when a convergence criterion is satisfied.
+
+    Composes with any ConvergenceCriterion to decide when metrics have
+    stabilized, bounded by configurable min/max run counts. Uses the same
+    run labeling, path structure, seed handling, and warmup disabling as
+    FixedTrialsStrategy for artifact compatibility.
+    """
+
+    DEFAULT_SEED = 42
+
+    def __init__(
+        self,
+        criterion: ConvergenceCriterion,
+        min_runs: int = 3,
+        max_runs: int = 10,
+        cooldown_seconds: float = 0.0,
+        auto_set_seed: bool = True,
+        disable_warmup_after_first: bool = True,
+    ) -> None:
+        if cooldown_seconds < 0:
+            raise ValueError(
+                f"Invalid cooldown_seconds: {cooldown_seconds}. Must be non-negative."
+            )
+        if min_runs < 1:
+            raise ValueError(f"Invalid min_runs: {min_runs}. Must be at least 1.")
+        if max_runs < min_runs:
+            raise ValueError(
+                f"Invalid max_runs: {max_runs}. Must be >= min_runs ({min_runs})."
+            )
+
+        self.criterion = criterion
+        self.min_runs = min_runs
+        self.max_runs = max_runs
+        self.cooldown_seconds = cooldown_seconds
+        self.auto_set_seed = auto_set_seed
+        self.disable_warmup_after_first = disable_warmup_after_first
+
+    def should_continue(self, results: list[RunResult]) -> bool:
+        """Continue unless max reached or criterion converged (after min)."""
+        n = len(results)
+        if n >= self.max_runs:
+            return False
+        if n < self.min_runs:
+            return True
+        try:
+            converged = self.criterion.is_converged(results)
+        except Exception:
+            logger.exception(
+                "Convergence criterion raised an error; treating as not converged"
+            )
+            converged = False
+        return not converged
+
+    def get_next_config(
+        self, base_config: UserConfig, results: list[RunResult]
+    ) -> UserConfig:
+        """Return config for next run, mirroring FixedTrialsStrategy behavior."""
+        config = base_config
+
+        if self.auto_set_seed:
+            config = self._ensure_random_seed(config)
+
+        if len(results) > 0 and self.disable_warmup_after_first:
+            config = self._disable_warmup(config)
+
+        return config
+
+    def get_run_label(self, run_index: int) -> str:
+        """Generate zero-padded label matching FixedTrialsStrategy: run_0001, etc."""
+        label = f"run_{run_index + 1:04d}"
+        return self._sanitize_label(label)
+
+    def get_cooldown_seconds(self) -> float:
+        """Return configured cooldown duration."""
+        return self.cooldown_seconds
+
+    def get_run_path(self, base_dir: Path, run_index: int) -> Path:
+        """Build path for a run's artifacts: base_dir/profile_runs/run_NNNN/."""
+        base_dir = Path(base_dir)
+        label = self.get_run_label(run_index)
+        return base_dir / "profile_runs" / label
+
+    def get_aggregate_path(self, base_dir: Path) -> Path:
+        """Build path for aggregate artifacts: base_dir/aggregate/."""
+        base_dir = Path(base_dir)
+        return base_dir / "aggregate"
+
+    def _sanitize_label(self, label: str) -> str:
+        sanitized = re.sub(r"[/\\]|\.\.", "", label)
+        sanitized = re.sub(r'[<>:"|?*]', "", sanitized)
+        return sanitized
+
+    def _ensure_random_seed(self, config: UserConfig) -> UserConfig:
+        if config.input.random_seed is None:
+            logger.info(
+                f"No --random-seed specified. Using default seed {self.DEFAULT_SEED} "
+                f"for multi-run consistency. All runs will use identical workloads."
+            )
+            config = config.model_copy(deep=True)
+            config.input.random_seed = self.DEFAULT_SEED
+        return config
+
+    def _disable_warmup(self, config: UserConfig) -> UserConfig:
         config = config.model_copy(deep=True)
         config.loadgen.disable_warmup()
         return config

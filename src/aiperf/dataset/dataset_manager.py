@@ -16,7 +16,6 @@ from aiperf.common.enums import (
     CommandType,
     CreditPhase,
     MessageType,
-    PublicDatasetType,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_request, on_stop
@@ -39,7 +38,6 @@ from aiperf.common.models import (
     SessionPayloads,
 )
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.dataset.loader import ShareGPTLoader
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     ComposerType,
@@ -276,22 +274,17 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 temp_file_path.unlink()
 
     async def _load_public_dataset(self) -> list[Conversation]:
-        public_dataset_type = self.user_config.input.public_dataset
-        match public_dataset_type:
-            case PublicDatasetType.SHAREGPT:
-                loader = ShareGPTLoader(self.user_config, self.tokenizer)
-            case _:
-                raise ValueError(
-                    f"Unsupported public dataset type: {public_dataset_type}"
-                )
+        dataset_type = self.user_config.input.public_dataset
+        LoaderClass = plugins.get_class(PluginType.PUBLIC_DATASET_LOADER, dataset_type)
+        loader = LoaderClass(user_config=self.user_config, tokenizer=self.tokenizer)
 
-        dataset = await loader.load_dataset()
-        # Only use loader's recommended strategy if user hasn't explicitly set one
-        if "dataset_sampling_strategy" not in self.user_config.input.model_fields_set:
+        if self.user_config.input.dataset_sampling_strategy is None:
             self.user_config.input.dataset_sampling_strategy = (
-                loader.get_recommended_sampling_strategy()
+                LoaderClass.get_preferred_sampling_strategy()
             )
-        return await loader.convert_to_conversations(dataset)
+
+        data = await loader.load_dataset()
+        return await loader.convert_to_conversations(data)
 
     def _load_custom_dataset(self) -> list[Conversation]:
         ComposerClass = plugins.get_class(

@@ -82,6 +82,14 @@
         "$ref": "#/$defs/CustomDatasetLoaderPlugin"
       }
     },
+    "public_dataset_loader": {
+      "title": "Public Dataset Loader Plugins",
+      "type": "object",
+      "description": "Public dataset loaders fetch shared benchmark datasets without requiring a local file.\nSupports HTTP-downloaded and HuggingFace-hosted datasets.\nOne-to-one mapping: selected based on --public-dataset configuration.",
+      "additionalProperties": {
+        "$ref": "#/$defs/PublicDatasetLoaderPlugin"
+      }
+    },
     "endpoint": {
       "title": "Endpoint Plugins",
       "type": "object",
@@ -603,6 +611,39 @@
       ],
       "title": "Custom Dataset Loader Plugin",
       "description": "Custom dataset loaders parse different JSONL file formats into conversations.\nSupports single-turn, multi-turn, random-pool, and trace formats.\nAuto-detection: loaders are tried in priority order based on can_load()."
+    },
+    "PublicDatasetLoaderPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "description": "Metadata schema for public dataset loader plugins.\n\nReferenced by: categories.yaml public_dataset_loader.metadata_class\nUsed in: plugins.yaml public_dataset_loader entries",
+          "properties": {},
+          "title": "PublicDatasetLoaderMetadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Public Dataset Loader Plugin",
+      "description": "Public dataset loaders fetch shared benchmark datasets without requiring a local file.\nSupports HTTP-downloaded and HuggingFace-hosted datasets.\nOne-to-one mapping: selected based on --public-dataset configuration."
     },
     "EndpointPlugin": {
       "type": "object",

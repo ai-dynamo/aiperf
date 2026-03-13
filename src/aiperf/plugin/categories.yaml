@@ -108,6 +108,16 @@ custom_dataset_loader:
     Supports single-turn, multi-turn, random-pool, and trace formats.
     Auto-detection: loaders are tried in priority order based on can_load().
 
+public_dataset_loader:
+  protocol: aiperf.dataset.protocols:PublicDatasetLoaderProtocol
+  metadata_class: aiperf.plugin.schema.schemas:PublicDatasetLoaderMetadata
+  enum: PublicDatasetType
+  description: |
+    Public dataset loaders fetch shared benchmark datasets without requiring a local file.
+    Supports HTTP-downloaded and HuggingFace-hosted datasets.
+    One-to-one mapping: selected based on --public-dataset configuration.
+
+
 # =============================================================================
 # Endpoint and Transport Categories
 # =============================================================================

@@ -471,6 +471,66 @@ class LoadGeneratorConfig(BaseConfig):
         ),
     ] = True
 
+    convergence_metric: Annotated[
+        str | None,
+        Field(
+            description="Target metric name for adaptive convergence stopping. "
+            "When set with --num-profile-runs > 1, enables adaptive mode that stops "
+            "early once the metric stabilizes according to --convergence-mode. "
+            "Uses --num-profile-runs as the maximum run cap. "
+            "Example metrics: time_to_first_token, request_latency, inter_token_latency.",
+        ),
+        CLIParameter(
+            name=("--convergence-metric",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
+    convergence_stat: Annotated[
+        str,
+        Field(
+            description="Statistic to evaluate for convergence when using ci_width or cv mode. "
+            "Common values: avg, p50, p90, p95, p99. "
+            "Only applies when --convergence-metric is set.",
+        ),
+        CLIParameter(
+            name=("--convergence-stat",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = "avg"
+
+    convergence_threshold: Annotated[
+        float,
+        Field(
+            gt=0,
+            lt=1,
+            description="Threshold for convergence detection. "
+            "For ci_width mode: maximum CI width as a fraction of the mean (default 0.10 = 10%). "
+            "For cv mode: maximum coefficient of variation (default 0.10 = 10%). "
+            "For distribution mode: KS test p-value threshold (default 0.10). "
+            "Only applies when --convergence-metric is set.",
+        ),
+        CLIParameter(
+            name=("--convergence-threshold",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = 0.10
+
+    convergence_mode: Annotated[
+        str,
+        Field(
+            description="Statistical method for convergence detection. "
+            "ci_width: Stop when Student's t confidence interval width relative to mean is below threshold. "
+            "cv: Stop when coefficient of variation (std/mean) is below threshold. "
+            "distribution: Stop when KS test p-value indicates latest run matches prior runs. "
+            "Only applies when --convergence-metric is set.",
+        ),
+        CLIParameter(
+            name=("--convergence-mode",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = "ci_width"
+
     def disable_warmup(self) -> None:
         """Disable all warmup-related parameters.
 
@@ -510,6 +570,22 @@ class LoadGeneratorConfig(BaseConfig):
                        profile_run_cooldown_seconds, or set_consistent_seed are explicitly
                        set when num_profile_runs == 1.
         """
+        # Validate convergence_mode is a known value (always, regardless of num_profile_runs)
+        valid_modes = {"ci_width", "cv", "distribution"}
+        if self.convergence_mode not in valid_modes:
+            raise ValueError(
+                f"--convergence-mode must be one of {sorted(valid_modes)}, "
+                f"got '{self.convergence_mode}'."
+            )
+
+        # Validate convergence_stat is a known statistic (always)
+        valid_stats = {"avg", "p50", "p90", "p95", "p99", "min", "max"}
+        if self.convergence_stat not in valid_stats:
+            raise ValueError(
+                f"--convergence-stat must be one of {sorted(valid_stats)}, "
+                f"got '{self.convergence_stat}'."
+            )
+
         if self.num_profile_runs == 1:
             # Check if confidence_level was explicitly set by the user
             if "confidence_level" in self.model_fields_set:
@@ -538,5 +614,25 @@ class LoadGeneratorConfig(BaseConfig):
                     "--set-consistent-seed only applies when --num-profile-runs > 1. "
                     "Remove --set-consistent-seed or increase --num-profile-runs."
                 )
+
+            # Check if convergence_metric was explicitly set by the user
+            if "convergence_metric" in self.model_fields_set:
+                raise ValueError(
+                    "--convergence-metric only applies when --num-profile-runs > 1. "
+                    "Remove --convergence-metric or increase --num-profile-runs."
+                )
+
+            # Check if other convergence flags were explicitly set
+            convergence_flags = {
+                "convergence_stat": "--convergence-stat",
+                "convergence_threshold": "--convergence-threshold",
+                "convergence_mode": "--convergence-mode",
+            }
+            for field_name, flag_name in convergence_flags.items():
+                if field_name in self.model_fields_set:
+                    raise ValueError(
+                        f"{flag_name} only applies when --num-profile-runs > 1. "
+                        f"Remove {flag_name} or increase --num-profile-runs."
+                    )
 
         return self

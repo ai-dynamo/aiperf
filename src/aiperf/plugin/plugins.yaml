@@ -1158,6 +1158,20 @@ communication_client:
       from publishers with topic filtering and subscription management.
 
 # =============================================================================
+# Public Dataset Loaders
+# =============================================================================
+# Public dataset loaders fetch shared benchmark datasets without requiring a
+# local file. Selected via --public-dataset configuration option.
+# =============================================================================
+public_dataset_loader:
+  sharegpt:
+    class: aiperf.dataset.loader.sharegpt:ShareGPTLoader
+    description: |
+      ShareGPT dataset from HuggingFace. Downloads and processes the first
+      prompt/completion pair from each conversation as a single-turn request.
+      Filters entries by sequence length and token counts.
+
+# =============================================================================
 # ZMQ Proxies
 # =============================================================================
 # ZMQ proxies provide message routing between different socket patterns.

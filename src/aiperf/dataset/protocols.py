@@ -51,6 +51,26 @@ class CustomDatasetLoaderProtocol(Protocol):
 
 
 @runtime_checkable
+class PublicDatasetLoaderProtocol(Protocol):
+    """Protocol for public dataset loaders that fetch datasets remotely and convert them to Conversations."""
+
+    @classmethod
+    def get_preferred_sampling_strategy(cls) -> "DatasetSamplingStrategy":
+        """Get the preferred dataset sampling strategy for this loader.
+
+        Returns:
+            DatasetSamplingStrategy: The preferred sampling strategy
+        """
+        ...
+
+    async def load_dataset(self) -> dict[str, Any]: ...
+
+    async def convert_to_conversations(
+        self, data: dict[str, Any]
+    ) -> list[Conversation]: ...
+
+
+@runtime_checkable
 class DatasetSamplingStrategyProtocol(Protocol):
     """
     Protocol for dataset sampling strategies.

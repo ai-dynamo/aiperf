@@ -139,12 +139,17 @@ def _run_multi_benchmark(
 
     Executes num_profile_runs benchmarks with the same configuration,
     then aggregates results and computes confidence statistics.
+
+    When convergence flags are set, uses AdaptiveStrategy for early stopping
+    and runs both ConfidenceAggregation and DetailedAggregation.
     """
     from aiperf.common.aiperf_logger import AIPerfLogger
+    from aiperf.common.enums import ExportLevel
     from aiperf.common.logging import setup_rich_logging
     from aiperf.exporters.aggregate import (
         AggregateConfidenceCsvExporter,
         AggregateConfidenceJsonExporter,
+        AggregateDetailedJsonExporter,
         AggregateExporterConfig,
     )
     from aiperf.orchestrator.aggregation.confidence import ConfidenceAggregation
@@ -182,21 +187,85 @@ def _run_multi_benchmark(
     num_runs = user_config.loadgen.num_profile_runs
     confidence_level = user_config.loadgen.confidence_level
     cooldown = user_config.loadgen.profile_run_cooldown_seconds
+    convergence_metric = user_config.loadgen.convergence_metric
+    use_adaptive = convergence_metric is not None
+
+    # Validate convergence configuration
+    if use_adaptive:
+        if num_runs <= 1:
+            raise ValueError(
+                "--convergence-metric requires --num-profile-runs > 1. "
+                "Set --num-profile-runs to at least 2 to enable adaptive convergence."
+            )
+        if (
+            user_config.loadgen.convergence_mode == "distribution"
+            and user_config.output.export_level == ExportLevel.SUMMARY
+        ):
+            raise ValueError(
+                "--convergence-mode distribution requires per-request JSONL data, "
+                "but --export-level is set to 'summary'. "
+                "Use --export-level records or --export-level raw."
+            )
 
     logger.info("=" * 80)
     logger.info("Starting Multi-Run Confidence Reporting")
     logger.info(f"  Number of runs: {num_runs}")
     logger.info(f"  Confidence level: {confidence_level:.0%}")
     logger.info(f"  Cooldown between runs: {cooldown}s")
+    if use_adaptive:
+        logger.info(f"  Convergence mode: {user_config.loadgen.convergence_mode}")
+        logger.info(f"  Convergence metric: {convergence_metric}")
+        logger.info(
+            f"  Convergence threshold: {user_config.loadgen.convergence_threshold}"
+        )
     logger.info("=" * 80)
 
     # Create strategy
-    strategy = FixedTrialsStrategy(
-        num_trials=num_runs,
-        cooldown_seconds=cooldown,
-        auto_set_seed=user_config.loadgen.set_consistent_seed,
-        disable_warmup_after_first=user_config.loadgen.profile_run_disable_warmup_after_first,
-    )
+    if use_adaptive:
+        from aiperf.orchestrator.convergence import (
+            CIWidthConvergence,
+            CVConvergence,
+            DistributionConvergence,
+        )
+        from aiperf.orchestrator.strategies import AdaptiveStrategy
+
+        mode = user_config.loadgen.convergence_mode
+        threshold = user_config.loadgen.convergence_threshold
+
+        if mode == "ci_width":
+            criterion = CIWidthConvergence(
+                metric=convergence_metric,
+                stat=user_config.loadgen.convergence_stat,
+                threshold=threshold,
+                confidence_level=confidence_level,
+            )
+        elif mode == "cv":
+            criterion = CVConvergence(
+                metric=convergence_metric,
+                threshold=threshold,
+                stat=user_config.loadgen.convergence_stat,
+            )
+        else:
+            criterion = DistributionConvergence(
+                metric=convergence_metric,
+                p_value_threshold=threshold,
+            )
+
+        strategy = AdaptiveStrategy(
+            criterion=criterion,
+            min_runs=3,
+            max_runs=num_runs,
+            cooldown_seconds=cooldown,
+            auto_set_seed=user_config.loadgen.set_consistent_seed,
+            disable_warmup_after_first=user_config.loadgen.profile_run_disable_warmup_after_first,
+        )
+    else:
+        strategy = FixedTrialsStrategy(
+            num_trials=num_runs,
+            cooldown_seconds=cooldown,
+            auto_set_seed=user_config.loadgen.set_consistent_seed,
+            disable_warmup_after_first=user_config.loadgen.profile_run_disable_warmup_after_first,
+        )
 
     # Create orchestrator
     orchestrator = MultiRunOrchestrator(
@@ -254,17 +323,38 @@ def _run_multi_benchmark(
             json_exporter = AggregateConfidenceJsonExporter(exporter_config)
             csv_exporter = AggregateConfidenceCsvExporter(exporter_config)
 
-            json_path, csv_path = await asyncio.gather(
+            tasks = [
                 json_exporter.export(),
                 csv_exporter.export(),
-            )
+            ]
 
-            return json_path, csv_path
+            # Run DetailedAggregation when adaptive mode is active
+            if use_adaptive:
+                from aiperf.orchestrator.aggregation.detailed import DetailedAggregation
 
-        json_path, csv_path = asyncio.run(export_artifacts())
+                detailed_aggregation = DetailedAggregation()
+                detailed_result = await asyncio.to_thread(
+                    detailed_aggregation.aggregate, results
+                )
+                detailed_result.metadata["cooldown_seconds"] = cooldown
 
+                detailed_config = AggregateExporterConfig(
+                    result=detailed_result,
+                    output_dir=aggregate_dir,
+                )
+                detailed_exporter = AggregateDetailedJsonExporter(detailed_config)
+                tasks.append(detailed_exporter.export())
+
+            return await asyncio.gather(*tasks)
+
+        export_paths = asyncio.run(export_artifacts())
+
+        json_path = export_paths[0]
+        csv_path = export_paths[1]
         logger.info(f"Aggregate JSON written to: {json_path}")
         logger.info(f"Aggregate CSV written to: {csv_path}")
+        if use_adaptive and len(export_paths) > 2:
+            logger.info(f"Detailed aggregate JSON written to: {export_paths[2]}")
 
         # Print summary
         _print_aggregate_summary(aggregate_result, logger)
