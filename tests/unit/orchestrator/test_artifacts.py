@@ -239,6 +239,8 @@ class TestAggregateExporters:
 
         assert data["schema_version"] == "1.0.0"
         assert "aiperf_version" in data
+        assert "description" in data
+        assert "Collated per-request metrics" in data["description"]
         assert data["metadata"]["aggregation_type"] == "detailed"
         assert data["metadata"]["num_profile_runs"] == 3
         assert data["metadata"]["num_successful_runs"] == 3

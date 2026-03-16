@@ -19,6 +19,13 @@ class AggregateDetailedJsonExporter(AggregateBaseExporter):
         output = {
             "schema_version": "1.0.0",
             "aiperf_version": aiperf_version,
+            "description": (
+                "Collated per-request metrics across all runs. "
+                "Pools individual request-level values from every run into a single population "
+                "and computes combined percentiles (p50, p90, p95, p99). "
+                "Contrast with profile_export_aiperf_aggregate.json, which computes statistics "
+                "over run-level summary values."
+            ),
             "metadata": {
                 "aggregation_type": self._result.aggregation_type,
                 "num_profile_runs": self._result.num_runs,
