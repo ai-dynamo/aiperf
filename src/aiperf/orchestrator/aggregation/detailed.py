@@ -2,18 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Detailed aggregation strategy using per-request JSONL data."""
 
-import logging
-from pathlib import Path
-
 import numpy as np
-import orjson
 
 from aiperf.orchestrator.aggregation.base import AggregateResult, AggregationStrategy
+from aiperf.orchestrator.jsonl_loader import DEFAULT_JSONL_FILENAME, load_all_metrics
 from aiperf.orchestrator.models import RunResult
-
-logger = logging.getLogger(__name__)
-
-JSONL_FILENAME = "profile_export.jsonl"
 
 
 class DetailedAggregation(AggregationStrategy):
@@ -24,6 +17,9 @@ class DetailedAggregation(AggregationStrategy):
     phase into a single population per metric, producing accurate distribution
     statistics (p50, p90, p95, p99) over the full request population.
     """
+
+    def __init__(self, jsonl_filename: str = DEFAULT_JSONL_FILENAME) -> None:
+        self._jsonl_filename = jsonl_filename
 
     def get_aggregation_type(self) -> str:
         """Return aggregation type identifier."""
@@ -49,7 +45,7 @@ class DetailedAggregation(AggregationStrategy):
         for run in successful:
             if run.artifacts_path is None:
                 continue
-            run_metrics = self._load_all_metrics(run.artifacts_path)
+            run_metrics = load_all_metrics(run.artifacts_path, self._jsonl_filename)
             if not run_metrics:
                 continue
             for metric_name, values in run_metrics.items():
@@ -95,76 +91,3 @@ class DetailedAggregation(AggregationStrategy):
             metrics=metrics,
             metadata={"run_labels": [r.label for r in successful]},
         )
-
-    def _load_all_metrics(self, artifacts_path: Path) -> dict[str, list[float]]:
-        """Read all per-request metric values from a run's JSONL export.
-
-        Args:
-            artifacts_path: Path to the run's artifacts directory.
-
-        Returns:
-            Dict mapping metric name to list of float values.
-            Empty dict if the file is missing, empty, or unreadable.
-        """
-        jsonl_path = artifacts_path / JSONL_FILENAME
-        if not jsonl_path.exists():
-            return {}
-
-        metrics: dict[str, list[float]] = {}
-        try:
-            with open(jsonl_path, "rb") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        record = orjson.loads(line)
-                    except orjson.JSONDecodeError:
-                        logger.warning(
-                            "Skipping malformed JSONL line in %s", jsonl_path
-                        )
-                        continue
-
-                    if not isinstance(record, dict):
-                        logger.warning(
-                            "Skipping non-dict JSONL record in %s", jsonl_path
-                        )
-                        continue
-
-                    metadata = record.get("metadata", {})
-                    if not isinstance(metadata, dict):
-                        continue
-                    if metadata.get("benchmark_phase") != "profiling":
-                        continue
-                    if record.get("error") is not None:
-                        continue
-
-                    record_metrics = record.get("metrics", {})
-                    if not isinstance(record_metrics, dict):
-                        continue
-
-                    for metric_name, metric_entry in record_metrics.items():
-                        value = (
-                            metric_entry.get("value")
-                            if isinstance(metric_entry, dict)
-                            else None
-                        )
-                        if value is None:
-                            continue
-                        try:
-                            float_value = float(value)
-                        except (ValueError, TypeError):
-                            logger.warning(
-                                "Skipping non-numeric metric value for %s in %s",
-                                metric_name,
-                                jsonl_path,
-                            )
-                            continue
-                        if metric_name not in metrics:
-                            metrics[metric_name] = []
-                        metrics[metric_name].append(float_value)
-        except OSError:
-            logger.exception("I/O error reading %s", jsonl_path)
-            return {}
-
-        return metrics

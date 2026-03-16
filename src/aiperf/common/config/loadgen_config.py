@@ -10,6 +10,7 @@ from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import LoadGeneratorDefaults
 from aiperf.common.config.groups import Groups
+from aiperf.common.enums import ConvergenceMode, ConvergenceStat
 from aiperf.plugin.enums import ArrivalPattern
 
 
@@ -487,7 +488,7 @@ class LoadGeneratorConfig(BaseConfig):
     ] = None
 
     convergence_stat: Annotated[
-        str,
+        ConvergenceStat,
         Field(
             description="Statistic to evaluate for convergence when using ci_width or cv mode. "
             "Common values: avg, p50, p90, p95, p99. "
@@ -497,7 +498,7 @@ class LoadGeneratorConfig(BaseConfig):
             name=("--convergence-stat",),
             group=Groups.MULTI_RUN,
         ),
-    ] = "avg"
+    ] = ConvergenceStat.AVG
 
     convergence_threshold: Annotated[
         float,
@@ -517,7 +518,7 @@ class LoadGeneratorConfig(BaseConfig):
     ] = 0.10
 
     convergence_mode: Annotated[
-        str,
+        ConvergenceMode,
         Field(
             description="Statistical method for convergence detection. "
             "ci_width: Stop when Student's t confidence interval width relative to mean is below threshold. "
@@ -530,7 +531,7 @@ class LoadGeneratorConfig(BaseConfig):
             name=("--convergence-mode",),
             group=Groups.MULTI_RUN,
         ),
-    ] = "ci_width"
+    ] = ConvergenceMode.CI_WIDTH
 
     def disable_warmup(self) -> None:
         """Disable all warmup-related parameters.
@@ -571,21 +572,31 @@ class LoadGeneratorConfig(BaseConfig):
                        profile_run_cooldown_seconds, or set_consistent_seed are explicitly
                        set when num_profile_runs == 1.
         """
-        # Validate convergence_mode is a known value (always, regardless of num_profile_runs)
-        valid_modes = {"ci_width", "cv", "distribution"}
-        if self.convergence_mode not in valid_modes:
+        # Validate convergence_stat is not used with distribution mode
+        # (distribution operates on per-request distributions, not summary stats)
+        if (
+            "convergence_stat" in self.model_fields_set
+            and self.convergence_mode == ConvergenceMode.DISTRIBUTION
+        ):
             raise ValueError(
-                f"--convergence-mode must be one of {sorted(valid_modes)}, "
-                f"got '{self.convergence_mode}'."
+                "--convergence-stat is not applicable with --convergence-mode distribution. "
+                "Distribution mode uses per-request data directly and ignores the stat parameter. "
+                "Remove --convergence-stat or use --convergence-mode ci_width or cv."
             )
 
-        # Validate convergence_stat is a known statistic (always)
-        valid_stats = {"avg", "p50", "p90", "p95", "p99", "min", "max"}
-        if self.convergence_stat not in valid_stats:
-            raise ValueError(
-                f"--convergence-stat must be one of {sorted(valid_stats)}, "
-                f"got '{self.convergence_stat}'."
-            )
+        # Require --convergence-metric when any other convergence flag is explicitly set
+        convergence_dependent_flags = {
+            "convergence_mode": "--convergence-mode",
+            "convergence_threshold": "--convergence-threshold",
+            "convergence_stat": "--convergence-stat",
+        }
+        if self.convergence_metric is None:
+            for field_name, flag_name in convergence_dependent_flags.items():
+                if field_name in self.model_fields_set:
+                    raise ValueError(
+                        f"{flag_name} requires --convergence-metric to be set. "
+                        f"Either add --convergence-metric or remove {flag_name}."
+                    )
 
         # Require --convergence-metric when any other convergence flag is explicitly set
         convergence_dependent_flags = {

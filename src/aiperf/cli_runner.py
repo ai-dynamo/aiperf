@@ -144,7 +144,7 @@ def _run_multi_benchmark(
     and runs both ConfidenceAggregation and DetailedAggregation.
     """
     from aiperf.common.aiperf_logger import AIPerfLogger
-    from aiperf.common.enums import ExportLevel
+    from aiperf.common.enums import ConvergenceMode, ExportLevel
     from aiperf.common.logging import setup_rich_logging
     from aiperf.exporters.aggregate import (
         AggregateConfidenceCsvExporter,
@@ -198,7 +198,7 @@ def _run_multi_benchmark(
                 "Set --num-profile-runs to at least 2 to enable adaptive convergence."
             )
         if (
-            user_config.loadgen.convergence_mode == "distribution"
+            user_config.loadgen.convergence_mode == ConvergenceMode.DISTRIBUTION
             and user_config.output.export_level == ExportLevel.SUMMARY
         ):
             raise ValueError(
@@ -218,6 +218,11 @@ def _run_multi_benchmark(
         logger.info(
             f"  Convergence threshold: {user_config.loadgen.convergence_threshold}"
         )
+        if user_config.loadgen.convergence_mode == ConvergenceMode.DISTRIBUTION:
+            logger.info(
+                "  Note: distribution mode converges when KS p-value > threshold "
+                "(higher threshold = stricter, opposite of ci_width/cv)"
+            )
     logger.info("=" * 80)
 
     # Create strategy
@@ -232,14 +237,14 @@ def _run_multi_benchmark(
         mode = user_config.loadgen.convergence_mode
         threshold = user_config.loadgen.convergence_threshold
 
-        if mode == "ci_width":
+        if mode == ConvergenceMode.CI_WIDTH:
             criterion = CIWidthConvergence(
                 metric=convergence_metric,
                 stat=user_config.loadgen.convergence_stat,
                 threshold=threshold,
                 confidence_level=confidence_level,
             )
-        elif mode == "cv":
+        elif mode == ConvergenceMode.CV:
             criterion = CVConvergence(
                 metric=convergence_metric,
                 threshold=threshold,
@@ -249,11 +254,19 @@ def _run_multi_benchmark(
             criterion = DistributionConvergence(
                 metric=convergence_metric,
                 p_value_threshold=threshold,
+                jsonl_filename=str(user_config.output._profile_export_jsonl_file),
+            )
+
+        effective_min_runs = min(3, num_runs)
+        if effective_min_runs < 3:
+            logger.warning(
+                f"--num-profile-runs={num_runs} is below the recommended minimum of 3. "
+                "Convergence checks will have reduced statistical power."
             )
 
         strategy = AdaptiveStrategy(
             criterion=criterion,
-            min_runs=3,
+            min_runs=effective_min_runs,
             max_runs=num_runs,
             cooldown_seconds=cooldown,
             auto_set_seed=user_config.loadgen.set_consistent_seed,
@@ -314,6 +327,18 @@ def _run_multi_benchmark(
         # This avoids multiple asyncio.run() calls and is more efficient
         import asyncio
 
+        # Compute detailed aggregation synchronously before async export
+        # (CPU-bound work with no benefit from async offload)
+        detailed_result = None
+        if use_adaptive and user_config.output.export_level != ExportLevel.SUMMARY:
+            from aiperf.orchestrator.aggregation.detailed import DetailedAggregation
+
+            detailed_aggregation = DetailedAggregation(
+                jsonl_filename=str(user_config.output._profile_export_jsonl_file),
+            )
+            detailed_result = detailed_aggregation.aggregate(results)
+            detailed_result.metadata["cooldown_seconds"] = cooldown
+
         async def export_artifacts():
             """Export aggregate artifacts asynchronously."""
             # Create directory asynchronously
@@ -328,18 +353,7 @@ def _run_multi_benchmark(
                 csv_exporter.export(),
             ]
 
-            # Run DetailedAggregation when adaptive mode is active and JSONL data is available.
-            # DetailedAggregation reads per-request JSONL which is only produced when
-            # export_level is RECORDS or RAW (not SUMMARY).
-            if use_adaptive and user_config.output.export_level != ExportLevel.SUMMARY:
-                from aiperf.orchestrator.aggregation.detailed import DetailedAggregation
-
-                detailed_aggregation = DetailedAggregation()
-                detailed_result = await asyncio.to_thread(
-                    detailed_aggregation.aggregate, results
-                )
-                detailed_result.metadata["cooldown_seconds"] = cooldown
-
+            if detailed_result is not None:
                 detailed_config = AggregateExporterConfig(
                     result=detailed_result,
                     output_dir=aggregate_dir,

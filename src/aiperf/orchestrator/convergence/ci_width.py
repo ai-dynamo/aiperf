@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """CI width convergence criterion using Student's t confidence interval."""
 
+import logging
 import math
 
 import numpy as np
@@ -9,6 +10,8 @@ from scipy.stats import t as t_dist
 
 from aiperf.orchestrator.convergence.base import ConvergenceCriterion
 from aiperf.orchestrator.models import RunResult
+
+logger = logging.getLogger(__name__)
 
 
 class CIWidthConvergence(ConvergenceCriterion):
@@ -31,15 +34,23 @@ class CIWidthConvergence(ConvergenceCriterion):
     def is_converged(self, results: list[RunResult]) -> bool:
         """Check whether the CI width ratio is below the threshold.
 
-        Returns False when fewer than min_runs successful runs have the metric,
-        when only one run has the metric, or when the mean is zero.
+        Returns False when fewer than min_runs (or 2, whichever is larger)
+        successful runs have the metric, or when the mean is zero.
         """
         values = self._extract_values(results)
 
-        if len(values) < self._min_runs:
-            return False
-
-        if len(values) < 2:
+        if len(values) < max(self._min_runs, 2):
+            if len(values) == 0 and len(results) >= self._min_runs:
+                logger.warning(
+                    "Convergence metric '%s' (stat '%s') not found in any run's summary metrics; "
+                    "convergence will never trigger. Check --convergence-metric spelling. "
+                    "Available metrics: %s",
+                    self._metric,
+                    self._stat,
+                    sorted(
+                        {k for r in results if r.success for k in r.summary_metrics}
+                    ),
+                )
             return False
 
         mean = np.mean(values)
@@ -51,7 +62,7 @@ class CIWidthConvergence(ConvergenceCriterion):
         se = std / math.sqrt(n)
         t_crit = t_dist.ppf((1 + self._confidence_level) / 2, df=n - 1)
         ci_half = t_crit * se
-        ci_width_ratio = (2 * ci_half) / mean
+        ci_width_ratio = (2 * ci_half) / abs(mean)
 
         return bool(ci_width_ratio < self._threshold)
 

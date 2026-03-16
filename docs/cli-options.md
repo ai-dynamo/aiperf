@@ -834,6 +834,7 @@ Target metric name for adaptive convergence stopping. When set with --num-profil
 #### `--convergence-stat` `<str>`
 
 Statistic to evaluate for convergence when using ci_width or cv mode. Common values: avg, p50, p90, p95, p99. Only applies when --convergence-metric is set.
+<br/>_Choices: [`avg`, `p50`, `p90`, `p95`, `p99`, `min`, `max`]_
 <br/>_Default: `avg`_
 
 #### `--convergence-threshold` `<float>`
@@ -845,7 +846,14 @@ Threshold for convergence detection. For ci_width mode: maximum CI width as a fr
 #### `--convergence-mode` `<str>`
 
 Statistical method for convergence detection. ci_width: Stop when Student's t confidence interval width relative to mean is below threshold. cv: Stop when coefficient of variation (std/mean) is below threshold. distribution: Stop when KS test p-value indicates latest run matches prior runs (requires --export-level records or --export-level raw; rejected with --export-level summary). Only applies when --convergence-metric is set.
-<br/>_Default: `ci_width`_
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `ci_width` | _default_ | Stop when Student's t confidence interval width relative to mean is below threshold. |
+| `cv` |  | Stop when coefficient of variation (std/mean) is below threshold. |
+| `distribution` |  | Stop when KS test p-value indicates latest run matches prior runs. |
 
 ### Accuracy
 

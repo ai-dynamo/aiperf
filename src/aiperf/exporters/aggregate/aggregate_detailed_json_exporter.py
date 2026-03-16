@@ -14,12 +14,7 @@ class AggregateDetailedJsonExporter(AggregateBaseExporter):
         return "profile_export_aiperf_detailed.json"
 
     def _generate_content(self) -> str:
-        from importlib.metadata import version as get_version
-
-        try:
-            aiperf_version = get_version("aiperf")
-        except Exception:
-            aiperf_version = "unknown"
+        from aiperf import __version__ as aiperf_version
 
         output = {
             "schema_version": "1.0.0",

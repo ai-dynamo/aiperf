@@ -260,7 +260,7 @@ class TestAggregateExporters:
         config = AggregateExporterConfig(result=aggregate, output_dir=output_dir)
         exporter = AggregateDetailedJsonExporter(config)
 
-        with patch("importlib.metadata.version", side_effect=Exception("not found")):
+        with patch("aiperf.__version__", "unknown"):
             json_path = await exporter.export()
 
         with open(json_path) as f:

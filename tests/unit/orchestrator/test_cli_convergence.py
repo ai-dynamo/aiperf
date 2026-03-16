@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import ExportLevel
@@ -231,7 +232,7 @@ class TestCliConvergenceDefaults:
     def test_invalid_convergence_mode_raises(self):
         from aiperf.common.config import LoadGeneratorConfig
 
-        with pytest.raises(ValueError, match="--convergence-mode must be one of"):
+        with pytest.raises(ValidationError, match="Input should be"):
             LoadGeneratorConfig(convergence_mode="invalid")
 
     def test_convergence_metric_set_with_single_run_raises_in_validator(self):

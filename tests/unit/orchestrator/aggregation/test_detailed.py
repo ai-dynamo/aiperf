@@ -432,8 +432,9 @@ class TestDetailedAggregation:
         results = [RunResult(label="run_0001", success=True, artifacts_path=run_dir)]
         agg = DetailedAggregation()
 
-        with patch.object(
-            agg, "_load_all_metrics", return_value={"phantom_metric": []}
+        with patch(
+            "aiperf.orchestrator.aggregation.detailed.load_all_metrics",
+            return_value={"phantom_metric": []},
         ):
             result = agg.aggregate(results)
 

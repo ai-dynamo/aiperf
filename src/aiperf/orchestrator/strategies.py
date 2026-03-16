@@ -360,12 +360,12 @@ class AdaptiveStrategy(ExecutionStrategy):
     """Strategy that stops early when a convergence criterion is satisfied.
 
     Composes with any ConvergenceCriterion to decide when metrics have
-    stabilized, bounded by configurable min/max run counts. Uses the same
-    run labeling, path structure, seed handling, and warmup disabling as
-    FixedTrialsStrategy for artifact compatibility.
+    stabilized, bounded by configurable min/max run counts. Delegates
+    run labeling, path structure, seed handling, and warmup disabling to
+    a FixedTrialsStrategy instance for artifact compatibility.
     """
 
-    DEFAULT_SEED = 42
+    DEFAULT_SEED = FixedTrialsStrategy.DEFAULT_SEED
 
     def __init__(
         self,
@@ -376,10 +376,6 @@ class AdaptiveStrategy(ExecutionStrategy):
         auto_set_seed: bool = True,
         disable_warmup_after_first: bool = True,
     ) -> None:
-        if cooldown_seconds < 0:
-            raise ValueError(
-                f"Invalid cooldown_seconds: {cooldown_seconds}. Must be non-negative."
-            )
         if min_runs < 1:
             raise ValueError(f"Invalid min_runs: {min_runs}. Must be at least 1.")
         if max_runs < min_runs:
@@ -390,9 +386,24 @@ class AdaptiveStrategy(ExecutionStrategy):
         self.criterion = criterion
         self.min_runs = min_runs
         self.max_runs = max_runs
-        self.cooldown_seconds = cooldown_seconds
-        self.auto_set_seed = auto_set_seed
-        self.disable_warmup_after_first = disable_warmup_after_first
+        self._delegate = FixedTrialsStrategy(
+            num_trials=max_runs,
+            cooldown_seconds=cooldown_seconds,
+            auto_set_seed=auto_set_seed,
+            disable_warmup_after_first=disable_warmup_after_first,
+        )
+
+    @property
+    def cooldown_seconds(self) -> float:
+        return self._delegate.cooldown_seconds
+
+    @property
+    def auto_set_seed(self) -> bool:
+        return self._delegate.auto_set_seed
+
+    @property
+    def disable_warmup_after_first(self) -> bool:
+        return self._delegate.disable_warmup_after_first
 
     def should_continue(self, results: list[RunResult]) -> bool:
         """Continue unless max reached or criterion converged (after min)."""
@@ -413,53 +424,21 @@ class AdaptiveStrategy(ExecutionStrategy):
     def get_next_config(
         self, base_config: UserConfig, results: list[RunResult]
     ) -> UserConfig:
-        """Return config for next run, mirroring FixedTrialsStrategy behavior."""
-        config = base_config
-
-        if self.auto_set_seed:
-            config = self._ensure_random_seed(config)
-
-        if len(results) > 0 and self.disable_warmup_after_first:
-            config = self._disable_warmup(config)
-
-        return config
+        """Return config for next run, delegating to FixedTrialsStrategy."""
+        return self._delegate.get_next_config(base_config, results)
 
     def get_run_label(self, run_index: int) -> str:
         """Generate zero-padded label matching FixedTrialsStrategy: run_0001, etc."""
-        label = f"run_{run_index + 1:04d}"
-        return self._sanitize_label(label)
+        return self._delegate.get_run_label(run_index)
 
     def get_cooldown_seconds(self) -> float:
         """Return configured cooldown duration."""
-        return self.cooldown_seconds
+        return self._delegate.get_cooldown_seconds()
 
     def get_run_path(self, base_dir: Path, run_index: int) -> Path:
         """Build path for a run's artifacts: base_dir/profile_runs/run_NNNN/."""
-        base_dir = Path(base_dir)
-        label = self.get_run_label(run_index)
-        return base_dir / "profile_runs" / label
+        return self._delegate.get_run_path(base_dir, run_index)
 
     def get_aggregate_path(self, base_dir: Path) -> Path:
         """Build path for aggregate artifacts: base_dir/aggregate/."""
-        base_dir = Path(base_dir)
-        return base_dir / "aggregate"
-
-    def _sanitize_label(self, label: str) -> str:
-        sanitized = re.sub(r"[/\\]|\.\.", "", label)
-        sanitized = re.sub(r'[<>:"|?*]', "", sanitized)
-        return sanitized
-
-    def _ensure_random_seed(self, config: UserConfig) -> UserConfig:
-        if config.input.random_seed is None:
-            logger.info(
-                f"No --random-seed specified. Using default seed {self.DEFAULT_SEED} "
-                f"for multi-run consistency. All runs will use identical workloads."
-            )
-            config = config.model_copy(deep=True)
-            config.input.random_seed = self.DEFAULT_SEED
-        return config
-
-    def _disable_warmup(self, config: UserConfig) -> UserConfig:
-        config = config.model_copy(deep=True)
-        config.loadgen.disable_warmup()
-        return config
+        return self._delegate.get_aggregate_path(base_dir)

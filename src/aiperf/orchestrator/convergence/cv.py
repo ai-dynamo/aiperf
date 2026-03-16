@@ -2,10 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """CV convergence criterion using coefficient of variation."""
 
+import logging
+
 import numpy as np
 
 from aiperf.orchestrator.convergence.base import ConvergenceCriterion
 from aiperf.orchestrator.models import RunResult
+
+logger = logging.getLogger(__name__)
 
 
 class CVConvergence(ConvergenceCriterion):
@@ -32,13 +36,24 @@ class CVConvergence(ConvergenceCriterion):
         values = self._extract_values(results)
 
         if len(values) < self._min_runs:
+            if len(values) == 0 and len(results) >= self._min_runs:
+                logger.warning(
+                    "Convergence metric '%s' (stat '%s') not found in any run's summary metrics; "
+                    "convergence will never trigger. Check --convergence-metric spelling. "
+                    "Available metrics: %s",
+                    self._metric,
+                    self._stat,
+                    sorted(
+                        {k for r in results if r.success for k in r.summary_metrics}
+                    ),
+                )
             return False
 
         mean = np.mean(values)
         if mean == 0.0:
             return False
 
-        cv = float(np.std(values, ddof=1) / mean)
+        cv = float(np.std(values, ddof=1) / abs(mean))
         return cv < self._threshold
 
     def _extract_values(self, results: list[RunResult]) -> list[float]:
