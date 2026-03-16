@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for CLI convergence wiring in _run_multi_benchmark."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,6 +24,7 @@ def _make_user_config(
     convergence_stat: str = "avg",
     convergence_threshold: float = 0.10,
     export_level: ExportLevel = ExportLevel.RECORDS,
+    artifact_directory: Path | None = None,
 ) -> UserConfig:
     """Build a UserConfig with multi-run and convergence settings."""
     config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
@@ -32,6 +34,8 @@ def _make_user_config(
     config.loadgen.convergence_stat = convergence_stat
     config.loadgen.convergence_threshold = convergence_threshold
     config.output.export_level = export_level
+    if artifact_directory is not None:
+        config.output.artifact_directory = artifact_directory
     return config
 
 
@@ -100,12 +104,14 @@ class TestCliConvergenceStrategyWiring:
     """Tests for strategy and criterion creation based on convergence flags."""
 
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
-    def test_no_convergence_flags_uses_fixed_trials(self, mock_orch_cls):
+    def test_no_convergence_flags_uses_fixed_trials(self, mock_orch_cls, tmp_path):
         mock_orch = MagicMock()
         mock_orch.execute.return_value = _make_successful_results(3)
         mock_orch_cls.return_value = mock_orch
 
-        config = _make_user_config(num_profile_runs=3, convergence_metric=None)
+        config = _make_user_config(
+            num_profile_runs=3, convergence_metric=None, artifact_directory=tmp_path
+        )
 
         from aiperf.cli_runner import _run_multi_benchmark
 
@@ -115,7 +121,9 @@ class TestCliConvergenceStrategyWiring:
         assert isinstance(strategy, FixedTrialsStrategy)
 
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
-    def test_ci_width_mode_creates_adaptive_with_ci_width(self, mock_orch_cls):
+    def test_ci_width_mode_creates_adaptive_with_ci_width(
+        self, mock_orch_cls, tmp_path
+    ):
         mock_orch = MagicMock()
         mock_orch.execute.return_value = _make_successful_results(3)
         mock_orch_cls.return_value = mock_orch
@@ -126,6 +134,7 @@ class TestCliConvergenceStrategyWiring:
             convergence_mode="ci_width",
             convergence_stat="p99",
             convergence_threshold=0.05,
+            artifact_directory=tmp_path,
         )
 
         from aiperf.cli_runner import _run_multi_benchmark
@@ -141,7 +150,7 @@ class TestCliConvergenceStrategyWiring:
         assert strategy.max_runs == 5
 
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
-    def test_cv_mode_creates_adaptive_with_cv(self, mock_orch_cls):
+    def test_cv_mode_creates_adaptive_with_cv(self, mock_orch_cls, tmp_path):
         mock_orch = MagicMock()
         mock_orch.execute.return_value = _make_successful_results(3)
         mock_orch_cls.return_value = mock_orch
@@ -151,6 +160,7 @@ class TestCliConvergenceStrategyWiring:
             convergence_metric="request_latency",
             convergence_mode="cv",
             convergence_threshold=0.08,
+            artifact_directory=tmp_path,
         )
 
         from aiperf.cli_runner import _run_multi_benchmark
@@ -164,7 +174,9 @@ class TestCliConvergenceStrategyWiring:
         assert strategy.criterion._threshold == 0.08
 
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
-    def test_distribution_mode_creates_adaptive_with_distribution(self, mock_orch_cls):
+    def test_distribution_mode_creates_adaptive_with_distribution(
+        self, mock_orch_cls, tmp_path
+    ):
         mock_orch = MagicMock()
         mock_orch.execute.return_value = _make_successful_results(3)
         mock_orch_cls.return_value = mock_orch
@@ -175,6 +187,7 @@ class TestCliConvergenceStrategyWiring:
             convergence_mode="distribution",
             convergence_threshold=0.05,
             export_level=ExportLevel.RECORDS,
+            artifact_directory=tmp_path,
         )
 
         from aiperf.cli_runner import _run_multi_benchmark
@@ -230,4 +243,45 @@ class TestCliConvergenceDefaults:
         ):
             LoadGeneratorConfig(
                 convergence_metric="time_to_first_token", num_profile_runs=1
+            )
+
+    def test_convergence_mode_without_metric_raises(self):
+        from aiperf.common.config import LoadGeneratorConfig
+
+        with pytest.raises(
+            ValueError,
+            match="--convergence-mode requires --convergence-metric to be set",
+        ):
+            LoadGeneratorConfig(convergence_mode="cv", num_profile_runs=5)
+
+    def test_convergence_threshold_without_metric_raises(self):
+        from aiperf.common.config import LoadGeneratorConfig
+
+        with pytest.raises(
+            ValueError,
+            match="--convergence-threshold requires --convergence-metric to be set",
+        ):
+            LoadGeneratorConfig(convergence_threshold=0.05, num_profile_runs=5)
+
+    def test_convergence_stat_without_metric_raises(self):
+        from aiperf.common.config import LoadGeneratorConfig
+
+        with pytest.raises(
+            ValueError,
+            match="--convergence-stat requires --convergence-metric to be set",
+        ):
+            LoadGeneratorConfig(convergence_stat="p99", num_profile_runs=5)
+
+    def test_convergence_stat_with_distribution_mode_raises(self):
+        from aiperf.common.config import LoadGeneratorConfig
+
+        with pytest.raises(
+            ValueError,
+            match="--convergence-stat is not applicable with --convergence-mode distribution",
+        ):
+            LoadGeneratorConfig(
+                convergence_metric="time_to_first_token",
+                convergence_mode="distribution",
+                convergence_stat="p99",
+                num_profile_runs=5,
             )

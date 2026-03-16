@@ -522,7 +522,8 @@ class LoadGeneratorConfig(BaseConfig):
             description="Statistical method for convergence detection. "
             "ci_width: Stop when Student's t confidence interval width relative to mean is below threshold. "
             "cv: Stop when coefficient of variation (std/mean) is below threshold. "
-            "distribution: Stop when KS test p-value indicates latest run matches prior runs. "
+            "distribution: Stop when KS test p-value indicates latest run matches prior runs "
+            "(requires --export-level records or --export-level raw; rejected with --export-level summary). "
             "Only applies when --convergence-metric is set.",
         ),
         CLIParameter(
@@ -586,6 +587,32 @@ class LoadGeneratorConfig(BaseConfig):
                 f"got '{self.convergence_stat}'."
             )
 
+        # Require --convergence-metric when any other convergence flag is explicitly set
+        convergence_dependent_flags = {
+            "convergence_mode": "--convergence-mode",
+            "convergence_threshold": "--convergence-threshold",
+            "convergence_stat": "--convergence-stat",
+        }
+        if self.convergence_metric is None:
+            for field_name, flag_name in convergence_dependent_flags.items():
+                if field_name in self.model_fields_set:
+                    raise ValueError(
+                        f"{flag_name} requires --convergence-metric to be set. "
+                        f"Either add --convergence-metric or remove {flag_name}."
+                    )
+
+        # --convergence-stat is only meaningful for ci_width and cv modes;
+        # distribution mode operates on per-request distributions, not summary stats
+        if (
+            "convergence_stat" in self.model_fields_set
+            and self.convergence_mode == "distribution"
+        ):
+            raise ValueError(
+                "--convergence-stat is not applicable with --convergence-mode distribution. "
+                "Distribution mode uses per-request data directly and ignores the stat parameter. "
+                "Remove --convergence-stat or use --convergence-mode ci_width or cv."
+            )
+
         if self.num_profile_runs == 1:
             # Check if confidence_level was explicitly set by the user
             if "confidence_level" in self.model_fields_set:
@@ -623,12 +650,7 @@ class LoadGeneratorConfig(BaseConfig):
                 )
 
             # Check if other convergence flags were explicitly set
-            convergence_flags = {
-                "convergence_stat": "--convergence-stat",
-                "convergence_threshold": "--convergence-threshold",
-                "convergence_mode": "--convergence-mode",
-            }
-            for field_name, flag_name in convergence_flags.items():
+            for field_name, flag_name in convergence_dependent_flags.items():
                 if field_name in self.model_fields_set:
                     raise ValueError(
                         f"{flag_name} only applies when --num-profile-runs > 1. "

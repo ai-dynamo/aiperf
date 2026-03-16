@@ -328,8 +328,10 @@ def _run_multi_benchmark(
                 csv_exporter.export(),
             ]
 
-            # Run DetailedAggregation when adaptive mode is active
-            if use_adaptive:
+            # Run DetailedAggregation when adaptive mode is active and JSONL data is available.
+            # DetailedAggregation reads per-request JSONL which is only produced when
+            # export_level is RECORDS or RAW (not SUMMARY).
+            if use_adaptive and user_config.output.export_level != ExportLevel.SUMMARY:
                 from aiperf.orchestrator.aggregation.detailed import DetailedAggregation
 
                 detailed_aggregation = DetailedAggregation()
@@ -353,7 +355,11 @@ def _run_multi_benchmark(
         csv_path = export_paths[1]
         logger.info(f"Aggregate JSON written to: {json_path}")
         logger.info(f"Aggregate CSV written to: {csv_path}")
-        if use_adaptive and len(export_paths) > 2:
+        if (
+            use_adaptive
+            and user_config.output.export_level != ExportLevel.SUMMARY
+            and len(export_paths) > 2
+        ):
             logger.info(f"Detailed aggregate JSON written to: {export_paths[2]}")
 
         # Print summary

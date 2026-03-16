@@ -844,7 +844,7 @@ Threshold for convergence detection. For ci_width mode: maximum CI width as a fr
 
 #### `--convergence-mode` `<str>`
 
-Statistical method for convergence detection. ci_width: Stop when Student's t confidence interval width relative to mean is below threshold. cv: Stop when coefficient of variation (std/mean) is below threshold. distribution: Stop when KS test p-value indicates latest run matches prior runs. Only applies when --convergence-metric is set.
+Statistical method for convergence detection. ci_width: Stop when Student's t confidence interval width relative to mean is below threshold. cv: Stop when coefficient of variation (std/mean) is below threshold. distribution: Stop when KS test p-value indicates latest run matches prior runs (requires --export-level records or --export-level raw; rejected with --export-level summary). Only applies when --convergence-metric is set.
 <br/>_Default: `ci_width`_
 
 ### Accuracy
