@@ -3,7 +3,13 @@
 
 from typing import Annotated, Any
 
-from pydantic import BeforeValidator, Field, model_validator
+from pydantic import (
+    BeforeValidator,
+    Field,
+    SerializationInfo,
+    field_serializer,
+    model_validator,
+)
 from typing_extensions import Self
 
 from aiperf.common import random_generator as rng
@@ -25,6 +31,7 @@ from aiperf.common.config.rankings_config import RankingsConfig
 from aiperf.common.config.synthesis_config import SynthesisConfig
 from aiperf.common.config.video_config import VideoConfig
 from aiperf.common.exceptions import InvalidStateError, MetricTypeError
+from aiperf.common.redact import redact_header_tuples
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     CustomDatasetType,
@@ -348,3 +355,13 @@ class InputConfig(BaseConfig):
     rankings: RankingsConfig = RankingsConfig()
     synthesis: SynthesisConfig = SynthesisConfig()
     conversation: ConversationConfig = ConversationConfig()
+
+    @field_serializer("headers")
+    @classmethod
+    def _redact_sensitive_headers(
+        cls, v: list[tuple[str, str]], info: SerializationInfo
+    ) -> list[tuple[str, str]]:
+        """Redact values of sensitive headers (Authorization, X-API-Key, etc.)."""
+        if info.context and info.context.get("include_secrets"):
+            return v
+        return redact_header_tuples(v)

@@ -14,6 +14,7 @@ from aiperf.common.models import (
     RequestInfo,
     RequestRecord,
 )
+from aiperf.common.redact import redact_headers
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 
@@ -193,5 +194,5 @@ class InferenceClient(AIPerfLifecycleMixin):
 
         # Preserve headers set by transport; only use endpoint headers if not set
         if record.request_headers is None:
-            record.request_headers = request_info.endpoint_headers
+            record.request_headers = redact_headers(request_info.endpoint_headers)
         return record

@@ -147,7 +147,10 @@ class MultiRunOrchestrator:
             # This prevents validation errors on deserialization for fields with conditional validators
             config_data = {
                 "user_config": config.model_dump(
-                    mode="json", exclude_defaults=True, exclude_none=True
+                    mode="json",
+                    exclude_defaults=True,
+                    exclude_none=True,
+                    context={"include_secrets": True},
                 ),
                 "service_config": self.service_config.model_dump(
                     mode="json", exclude_defaults=True, exclude_none=True
