@@ -297,7 +297,7 @@ def _run_multi_benchmark(
     failed_runs = [r for r in results if not r.success]
 
     logger.info("=" * 80)
-    logger.info(f"All runs complete: {len(successful_runs)}/{num_runs} successful")
+    logger.info(f"All runs complete: {len(successful_runs)}/{len(results)} successful")
     if failed_runs:
         logger.warning(f"Failed runs: {', '.join(r.label for r in failed_runs)}")
     logger.info("=" * 80)

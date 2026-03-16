@@ -598,32 +598,6 @@ class LoadGeneratorConfig(BaseConfig):
                         f"Either add --convergence-metric or remove {flag_name}."
                     )
 
-        # Require --convergence-metric when any other convergence flag is explicitly set
-        convergence_dependent_flags = {
-            "convergence_mode": "--convergence-mode",
-            "convergence_threshold": "--convergence-threshold",
-            "convergence_stat": "--convergence-stat",
-        }
-        if self.convergence_metric is None:
-            for field_name, flag_name in convergence_dependent_flags.items():
-                if field_name in self.model_fields_set:
-                    raise ValueError(
-                        f"{flag_name} requires --convergence-metric to be set. "
-                        f"Either add --convergence-metric or remove {flag_name}."
-                    )
-
-        # --convergence-stat is only meaningful for ci_width and cv modes;
-        # distribution mode operates on per-request distributions, not summary stats
-        if (
-            "convergence_stat" in self.model_fields_set
-            and self.convergence_mode == "distribution"
-        ):
-            raise ValueError(
-                "--convergence-stat is not applicable with --convergence-mode distribution. "
-                "Distribution mode uses per-request data directly and ignores the stat parameter. "
-                "Remove --convergence-stat or use --convergence-mode ci_width or cv."
-            )
-
         if self.num_profile_runs == 1:
             # Check if confidence_level was explicitly set by the user
             if "confidence_level" in self.model_fields_set:
