@@ -56,6 +56,16 @@ class SingleTurn(AIPerfBaseModel):
         description="Amount of milliseconds to wait before sending the turn. Supports floating point, but scheduling accuracy is at the millisecond level.",
     )
     role: str | None = Field(default=None, description="Role of the turn.")
+    raw_messages: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Pre-formatted OpenAI-compatible messages array. "
+        "When set, bypasses normal turn-based message construction in endpoints.",
+    )
+    raw_tools: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Pre-formatted OpenAI-compatible tool definitions. "
+        "When set alongside raw_messages, injected into the API payload.",
+    )
 
     @model_validator(mode="after")
     def validate_mutually_exclusive_fields(self) -> "SingleTurn":
@@ -73,6 +83,15 @@ class SingleTurn(AIPerfBaseModel):
         return self
 
     @model_validator(mode="after")
+    def validate_raw_messages_fields(self) -> "SingleTurn":
+        """Ensure raw_messages is non-empty and raw_tools requires raw_messages."""
+        if self.raw_messages is not None and not self.raw_messages:
+            raise ValueError("raw_messages must be a non-empty list")
+        if self.raw_tools is not None and self.raw_messages is None:
+            raise ValueError("raw_tools requires raw_messages to be set")
+        return self
+
+    @model_validator(mode="after")
     def validate_at_least_one_modality(self) -> "SingleTurn":
         """Ensure at least one modality is provided"""
         if not any(
@@ -85,6 +104,7 @@ class SingleTurn(AIPerfBaseModel):
                 self.audios,
                 self.video,
                 self.videos,
+                self.raw_messages,
             ]
         ):
             raise ValueError("At least one modality must be provided")

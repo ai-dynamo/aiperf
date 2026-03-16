@@ -168,6 +168,8 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
                             timestamp=single_turn.timestamp,
                             delay=single_turn.delay,
                             role=single_turn.role,
+                            raw_messages=single_turn.raw_messages,
+                            raw_tools=single_turn.raw_tools,
                         )
                     )
             conversations.append(conversation)

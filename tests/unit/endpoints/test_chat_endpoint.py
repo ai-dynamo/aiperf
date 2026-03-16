@@ -472,3 +472,77 @@ class TestChatEndpoint:
         assert payload["messages"] == raw_messages
         assert payload["temperature"] == 0.7
         assert payload["max_completion_tokens"] == 50
+
+    def test_format_payload_accumulated_raw_messages_multi_turn(
+        self, endpoint, model_endpoint
+    ):
+        """Test accumulated raw_messages across multiple turns."""
+        turn1 = Turn(
+            raw_messages=[
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there!"},
+            ],
+        )
+        turn2 = Turn(
+            texts=[Text(contents=["Follow up question"])],
+            role="user",
+        )
+        turn3 = Turn(
+            raw_messages=[
+                {"role": "user", "content": "Final question"},
+            ],
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn1, turn2, turn3],
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert len(payload["messages"]) == 4
+        assert payload["messages"][0] == {"role": "user", "content": "Hello"}
+        assert payload["messages"][1] == {"role": "assistant", "content": "Hi there!"}
+        assert payload["messages"][2]["role"] == "user"
+        assert payload["messages"][2]["content"] == "Follow up question"
+        assert payload["messages"][3] == {"role": "user", "content": "Final question"}
+
+    def test_format_payload_accumulated_raw_messages_uses_raw_tools_from_last_turn(
+        self, endpoint, model_endpoint
+    ):
+        """Test that raw_tools from last turn is used with accumulated raw_messages."""
+        raw_tools = [
+            {"type": "function", "function": {"name": "lookup", "parameters": {}}}
+        ]
+        turn1 = Turn(
+            raw_messages=[{"role": "user", "content": "Hello"}],
+        )
+        turn2 = Turn(
+            raw_messages=[{"role": "user", "content": "Use a tool"}],
+            raw_tools=raw_tools,
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn1, turn2],
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["tools"] == raw_tools
+        assert len(payload["messages"]) == 2
+
+    def test_format_payload_single_turn_with_raw_messages_still_works(
+        self, endpoint, model_endpoint
+    ):
+        """Test that a single turn with raw_messages uses accumulated path."""
+        raw_messages = [
+            {"role": "system", "content": "Be helpful"},
+            {"role": "user", "content": "Hi"},
+        ]
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[Turn(raw_messages=raw_messages)],
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["messages"] == raw_messages

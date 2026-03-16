@@ -41,8 +41,8 @@ class ChatEndpoint(BaseEndpoint):
         turns = request_info.turns
         model_endpoint = request_info.model_endpoint
 
-        if turns[-1].raw_messages is not None:
-            messages = turns[-1].raw_messages
+        if any(turn.raw_messages is not None for turn in turns):
+            messages = self._build_accumulated_raw_messages(turns)
         else:
             messages = self._create_messages(
                 turns, request_info.system_message, request_info.user_context_message
@@ -125,6 +125,30 @@ class ChatEndpoint(BaseEndpoint):
             }
             self._set_message_content(message, turn)
             messages.append(message)
+        return messages
+
+    def _build_accumulated_raw_messages(
+        self, turns: list[Turn]
+    ) -> list[dict[str, Any]]:
+        """Build accumulated messages from turns that may mix raw_messages and regular turns.
+
+        Turns with raw_messages have their messages extended into the list.
+        Turns without raw_messages (e.g. response turns) are converted via _set_message_content().
+
+        Args:
+            turns: List of turns in the request
+
+        Returns:
+            List of accumulated message dicts for OpenAI Chat Completions API
+        """
+        messages: list[dict[str, Any]] = []
+        for turn in turns:
+            if turn.raw_messages is not None:
+                messages.extend(turn.raw_messages)
+            else:
+                message: dict[str, Any] = {"role": turn.role or _DEFAULT_ROLE}
+                self._set_message_content(message, turn)
+                messages.append(message)
         return messages
 
     def _set_message_content(self, message: dict[str, Any], turn: Turn) -> None:
