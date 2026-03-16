@@ -11,7 +11,7 @@ class AggregateDetailedJsonExporter(AggregateBaseExporter):
     """Exports detailed aggregate results (per-request combined percentiles) to JSON."""
 
     def get_file_name(self) -> str:
-        return "profile_export_aiperf_detailed.json"
+        return "profile_export_aiperf_collated.json"
 
     def _generate_content(self) -> str:
         from aiperf import __version__ as aiperf_version

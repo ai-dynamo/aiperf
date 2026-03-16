@@ -374,7 +374,7 @@ def _run_multi_benchmark(
             and user_config.output.export_level != ExportLevel.SUMMARY
             and len(export_paths) > 2
         ):
-            logger.info(f"Detailed aggregate JSON written to: {export_paths[2]}")
+            logger.info(f"Collated aggregate JSON written to: {export_paths[2]}")
 
         # Print summary
         _print_aggregate_summary(aggregate_result, logger)

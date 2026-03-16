@@ -153,7 +153,7 @@ artifacts/
     aggregate/
       profile_export_aiperf_aggregate.json
       profile_export_aiperf_aggregate.csv
-      profile_export_aiperf_detailed.json   # only with adaptive convergence + records/raw export
+      profile_export_aiperf_collated.json   # only with adaptive convergence + records/raw export
 ```
 
 ### Auto-Generated Directory Name
@@ -663,45 +663,39 @@ Three statistical methods are available via `--convergence-mode`:
 
 ```bash
 aiperf profile \
-  --model llama-3-8b \
-  --endpoint-type openai_chat \
-  --url http://localhost:8000/v1/chat/completions \
   --num-profile-runs 10 \
   --convergence-metric request_latency \
   --convergence-mode ci_width \
   --convergence-threshold 0.10 \
   --convergence-stat avg \
-  --concurrency 10
+  --concurrency 10 \
+  ...
 ```
 
 **CV (Coefficient of Variation)**: Stops when the CV (std/mean) across run-level values drops below the threshold.
 
 ```bash
 aiperf profile \
-  --model llama-3-8b \
-  --endpoint-type openai_chat \
-  --url http://localhost:8000/v1/chat/completions \
   --num-profile-runs 10 \
   --convergence-metric time_to_first_token \
   --convergence-mode cv \
   --convergence-threshold 0.05 \
   --convergence-stat p99 \
-  --concurrency 10
+  --concurrency 10 \
+  ...
 ```
 
 **Distribution (KS Test)**: Uses a two-sample Kolmogorov-Smirnov test on per-request JSONL data to detect when the latest run's distribution matches prior runs. Catches bimodal behavior and tail shifts that summary statistics miss.
 
 ```bash
 aiperf profile \
-  --model llama-3-8b \
-  --endpoint-type openai_chat \
-  --url http://localhost:8000/v1/chat/completions \
   --num-profile-runs 10 \
   --convergence-metric inter_token_latency \
   --convergence-mode distribution \
   --convergence-threshold 0.10 \
   --export-level records \
-  --concurrency 10
+  --concurrency 10 \
+  ...
 ```
 
 > Distribution mode requires `--export-level records` or `--export-level raw` because it reads per-request JSONL data. It is rejected with `--export-level summary`.
@@ -749,7 +743,7 @@ Available metrics: ['inter_token_latency', 'request_latency', 'request_throughpu
 
 ## Detailed Aggregation
 
-When adaptive convergence is enabled and `--export-level` is `records` or `raw`, AIPerf produces an additional `profile_export_aiperf_detailed.json` in the aggregate directory. This reads per-request JSONL from all runs, combines them into a single population per metric, and computes true combined percentiles (p50, p90, p95, p99).
+When adaptive convergence is enabled and `--export-level` is `records` or `raw`, AIPerf produces an additional `profile_export_aiperf_collated.json` in the aggregate directory. This reads per-request JSONL from all runs, combines them into a single population per metric, and computes true combined percentiles (p50, p90, p95, p99).
 
 This complements the standard confidence aggregation — confidence aggregation operates on run-level summary stats, while detailed aggregation gives a combined distribution view over all requests.
 
@@ -771,10 +765,10 @@ artifacts/
     aggregate/
       profile_export_aiperf_aggregate.json
       profile_export_aiperf_aggregate.csv
-      profile_export_aiperf_detailed.json   # new: per-request combined percentiles
+      profile_export_aiperf_collated.json   # per-request combined percentiles
 ```
 
-### Example Detailed Output
+### Example Collated Output
 
 ```json
 {
@@ -867,6 +861,11 @@ Multi-run confidence reporting helps you:
 **Quick Start:**
 ```bash
 aiperf profile --num-profile-runs 5 [other options]
+```
+
+**With Adaptive Convergence:**
+```bash
+aiperf profile --num-profile-runs 10 --convergence-metric request_latency --convergence-mode ci_width [other options]
 ```
 
 **With Adaptive Convergence:**

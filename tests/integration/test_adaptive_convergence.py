@@ -76,8 +76,8 @@ class TestAdaptiveConvergence:
             assert len(agg_data["metrics"]) > 0
 
         # Verify detailed aggregate JSON
-        detailed_json = aggregate_dir / "profile_export_aiperf_detailed.json"
-        assert detailed_json.exists(), "Detailed aggregate JSON should exist"
+        detailed_json = aggregate_dir / "profile_export_aiperf_collated.json"
+        assert detailed_json.exists(), "Collated aggregate JSON should exist"
 
         with open(detailed_json, "rb") as f:
             detailed_data = orjson.loads(f.read())
@@ -133,9 +133,9 @@ class TestAdaptiveConvergence:
         agg_json = aggregate_dir / "profile_export_aiperf_aggregate.json"
         assert agg_json.exists(), "Confidence aggregate should exist"
 
-        detailed_json = aggregate_dir / "profile_export_aiperf_detailed.json"
+        detailed_json = aggregate_dir / "profile_export_aiperf_collated.json"
         assert not detailed_json.exists(), (
-            "Detailed aggregate should NOT exist without convergence flags"
+            "Collated aggregate should NOT exist without convergence flags"
         )
 
     async def test_adaptive_cv_mode(
@@ -173,7 +173,7 @@ class TestAdaptiveConvergence:
         # Verify both aggregation outputs
         aggregate_dir = temp_output_dir / "aggregate"
         assert (aggregate_dir / "profile_export_aiperf_aggregate.json").exists()
-        assert (aggregate_dir / "profile_export_aiperf_detailed.json").exists()
+        assert (aggregate_dir / "profile_export_aiperf_collated.json").exists()
 
     async def test_adaptive_request_rate_mode(
         self,

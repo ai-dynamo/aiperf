@@ -232,7 +232,7 @@ class TestAggregateExporters:
         json_path = await exporter.export()
 
         assert json_path.exists()
-        assert json_path.name == "profile_export_aiperf_detailed.json"
+        assert json_path.name == "profile_export_aiperf_collated.json"
 
         with open(json_path) as f:
             data = json.load(f)
