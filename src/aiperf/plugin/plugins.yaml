@@ -419,6 +419,13 @@ dataset_composer:
       Synthetic rankings dataset composer that generates ranking tasks with query
       and passage pairs for ranking model evaluation and benchmarking.
 
+  public:
+    class: aiperf.dataset.composer.public:PublicDatasetComposer
+    description: |
+      Public dataset composer that loads benchmark datasets from remote sources
+      (HuggingFace, URLs) using the plugin-registered public dataset loaders.
+      Handles metadata-driven loader instantiation and turn finalization.
+
 # =============================================================================
 # Custom Dataset Loaders
 # =============================================================================
@@ -1170,6 +1177,16 @@ public_dataset_loader:
       ShareGPT dataset from HuggingFace. Downloads and processes the first
       prompt/completion pair from each conversation as a single-turn request.
       Filters entries by sequence length and token counts.
+
+  aimo:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      AIMO NuminaMath-TIR math reasoning dataset from HuggingFace (AI-MO).
+      Loads competition math problems as single-turn requests.
+    metadata:
+      hf_dataset_name: AI-MO/NuminaMath-TIR
+      hf_split: train
+      prompt_column: problem
 
 # =============================================================================
 # ZMQ Proxies

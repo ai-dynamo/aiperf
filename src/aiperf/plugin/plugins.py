@@ -31,6 +31,7 @@ from aiperf.plugin.schema.schemas import (
     PlotMetadata,
     PluginsManifest,
     PluginSpec,
+    PublicDatasetLoaderMetadata,
     ServiceMetadata,
     TransportMetadata,
 )
@@ -1186,6 +1187,20 @@ def get_dataset_loader_metadata(name: str) -> CustomDatasetLoaderMetadata:
     """
     return get_entry("custom_dataset_loader", name).get_typed_metadata(
         CustomDatasetLoaderMetadata
+    )
+
+
+def get_public_dataset_loader_metadata(name: str) -> PublicDatasetLoaderMetadata:
+    """Get typed metadata for a public dataset loader plugin.
+
+    Args:
+        name: Public dataset loader plugin name (e.g., 'aimo', 'sharegpt').
+
+    Returns:
+        Validated PublicDatasetLoaderMetadata instance.
+    """
+    return get_entry("public_dataset_loader", name).get_typed_metadata(
+        PublicDatasetLoaderMetadata
     )
 
 

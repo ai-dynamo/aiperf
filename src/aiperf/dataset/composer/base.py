@@ -19,6 +19,7 @@ from aiperf.dataset.generator.video import VideoGenerator
 class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
     def __init__(self, config: UserConfig, tokenizer: Tokenizer | None, **kwargs):
         self.config = config
+        self.tokenizer = tokenizer
         super().__init__(config=config, tokenizer=tokenizer, **kwargs)
 
         # Create generators (prompt generator requires a tokenizer)
