@@ -185,6 +185,11 @@ class InferenceClient(AIPerfLifecycleMixin):
         # and reduce memory usage (placeholders instead of large image/audio/video data)
         record.turns = [turn.copy_with_stripped_media() for turn in request_info.turns]
 
+        # Copy pre-computed modality estimates from the current turn to the record
+        current_turn = request_info.turns[request_info.turn_index]
+        if current_turn.input_modalities_local is not None:
+            record.input_modalities_local = current_turn.input_modalities_local
+
         # If this is the first turn, calculate the credit drop latency
         if request_info.turn_index == 0 and request_info.drop_perf_ns is not None:
             record.credit_drop_latency = (

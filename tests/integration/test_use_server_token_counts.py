@@ -32,7 +32,7 @@ class TestUseServerTokenCounts:
         - output_token_count should equal usage_completion_tokens - usage_reasoning_tokens
         - reasoning_token_count should equal usage_reasoning_tokens
         - Usage prompt diff metric should be present (compares client vs server input)
-        - Usage completion/reasoning diff metrics should NOT be present (deleted)
+        - Usage completion/reasoning diff metrics should NOT be present (require --tokenize-output)
         """
         streaming_flag = "--streaming" if streaming else ""
         async with mock_server_factory(fast=True, workers=1) as aiperf_mock_server:
@@ -75,6 +75,7 @@ class TestUseServerTokenCounts:
             assert "usage_prompt_tokens_diff_pct" in json_data
             assert "usage_discrepancy_count" in json_data
 
-            # Completion and reasoning diff metrics have been removed
+            # Completion and reasoning diff metrics require --tokenize-output to
+            # populate both server and client values; without it they produce no value.
             assert "usage_completion_tokens_diff_pct" not in json_data
             assert "usage_reasoning_tokens_diff_pct" not in json_data

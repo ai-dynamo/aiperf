@@ -46,6 +46,7 @@ from aiperf.common.models.health_models import (
     IOCounters,
     ProcessHealth,
 )
+from aiperf.common.models.modality_token_counts import ModalityTokenCounts
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -190,6 +191,7 @@ __all__ = [
     "JsonMetricResult",
     "Media",
     "MemoryMapClientMetadata",
+    "ModalityTokenCounts",
     "MetricFamily",
     "MetricRecordInfo",
     "MetricRecordMetadata",

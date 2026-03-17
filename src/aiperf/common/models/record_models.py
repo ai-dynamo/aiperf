@@ -28,6 +28,7 @@ from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.export_models import JsonMetricResult
+from aiperf.common.models.modality_token_counts import ModalityTokenCounts
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
@@ -614,6 +615,11 @@ class RequestRecord(AIPerfBaseModel):
         description="Deep copy of the request turns. This is a copy of the turns from request_info, "
         "made to avoid mutating the original session data when stripping multimodal content.",
     )
+    input_modalities_local: ModalityTokenCounts | None = Field(
+        default=None,
+        description="Per-modality input token estimates, copied from Turn data. "
+        "Pre-computed during dataset configuration via AutoProcessor.",
+    )
 
     @field_validator("trace_data", mode="before")
     @classmethod
@@ -879,12 +885,28 @@ class ParsedResponse:
 
 @dataclass(slots=True)
 class TokenCounts:
-    """Token counts for a record."""
+    """Token counts for a record.
+
+    Totals (``input``, ``output``, ``reasoning``) are server-preferred with
+    local fallback. Per-modality breakdown is always locally estimated via
+    AutoProcessor.
+
+    Two layers for input modalities:
+    - ``input_modalities_local``: raw local estimates from AutoProcessor
+    - ``input_modalities``: scaled proportionally to the server total
+
+    The invariant ``input_modalities.total == input`` holds when both
+    ``input_modalities`` and ``input`` are non-None.
+    """
 
     input: int | None = None
     """Server-reported prompt token count from the API usage field."""
     input_local: int | None = None
     """Input tokens computed by the client-side tokenizer."""
+    input_modalities_local: ModalityTokenCounts | None = None
+    """Per-modality input token estimates from AutoProcessor (raw, unscaled)."""
+    input_modalities: ModalityTokenCounts | None = None
+    """Per-modality input token counts scaled to the server-reported total."""
     output: int | None = None
     """Server-reported output token count (completion minus reasoning)."""
     output_local: int | None = None

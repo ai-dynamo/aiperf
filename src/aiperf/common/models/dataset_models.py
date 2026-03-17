@@ -9,6 +9,7 @@ from pydantic import Field
 
 from aiperf.common.enums import MediaType
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.modality_token_counts import ModalityTokenCounts
 from aiperf.common.types import MediaTypeT
 from aiperf.plugin.enums import DatasetClientStoreType, DatasetSamplingStrategy
 
@@ -158,6 +159,11 @@ class Turn(AIPerfBaseModel):
     videos: list[Video] = Field(
         default=[], description="Collection of video data in each turn."
     )
+    input_modalities_local: ModalityTokenCounts | None = Field(
+        default=None,
+        description="Per-modality input token estimates from AutoProcessor. "
+        "Pre-computed during dataset configuration.",
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -209,6 +215,7 @@ class Turn(AIPerfBaseModel):
                 )
                 for vid in self.videos
             ],
+            input_modalities_local=self.input_modalities_local,
         )
 
 

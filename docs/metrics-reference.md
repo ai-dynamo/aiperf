@@ -404,6 +404,7 @@ else:
 - When the server reports `usage.prompt_tokens`, that value is used for ISL (and thus for console display and derived metrics).
 - Falls back to client-side tokenization when server does not report prompt token counts, unless `--no-tokenize-input` is explicitly specified.
 - Client-side tokenization uses `add_special_tokens=False` to count only content tokens.
+- When non-text input modalities (e.g., images) are detected, ISL reflects the **total** prompt token count from the server's `usage.prompt_tokens`. The per-modality breakdown (text vs image tokens) is available via `token_counts.input_modalities` and the `text_input_token_count` and `image_input_token_count` metrics.
 - Automatically disabled for user-provided input datasets; use `--tokenize-input` to force.
 - Use `--no-tokenize-input` to disable client-side input tokenization entirely (no fallback).
 - Useful for understanding the relationship between input size and latency/throughput.
@@ -577,6 +578,114 @@ image_latency = request_latency_ms / num_images
 
 **Notes:**
 - Lower values indicate faster per-image generation.
+
+---
+
+## Multimodal Input Metrics
+
+<Note>
+These metrics provide per-modality input token breakdowns for requests that contain non-text modalities (e.g., images in prompts). They are distinct from the Image Metrics above, which measure image generation endpoints. All metrics in this section are file-only (not shown in console) and require image-bearing input data.
+</Note>
+
+### Image Input Token Count
+
+**Type:** [Record Metric](#record-metrics)
+
+The number of image input tokens for a single request. When AutoProcessor pre-computed estimates are available, values are scaled proportionally to the server total. Otherwise, derived by subtracting the client text token count from the server total (fallback).
+
+**Formula:**
+```python
+image_input_token_count = token_counts.input_modalities.image
+```
+
+**Notes:**
+- Two estimation paths: (1) AutoProcessor (preferred) pre-computes per-modality estimates during dataset configuration, then scales to server total; (2) subtraction fallback uses `usage.prompt_tokens - client_text_tokens`.
+- Requires `--tokenize-input` to enable local estimation.
+- Clamped to 0 (with warning) if the client tokenizer overcounts text tokens relative to the server.
+- Only populated when images are present; None otherwise.
+- Exported to JSON/CSV only (not shown in console).
+
+---
+
+### Text Input Token Count
+
+**Type:** [Record Metric](#record-metrics)
+
+The number of text-only input tokens for a single request. When AutoProcessor estimates are available, scaled proportionally to the server total. Otherwise, the client-side tokenizer text count is used directly.
+
+**Formula:**
+```python
+text_input_token_count = token_counts.input_modalities.text
+```
+
+**Notes:**
+- Exported to JSON/CSV only (not shown in console).
+
+---
+
+### Tokens Per Image
+
+**Type:** [Record Metric](#record-metrics)
+
+Image tokens divided by the number of images in a single request. When a request contains multiple images, the total image token count is a single aggregate (server total minus client text tokens), so this metric divides that aggregate by the number of images to approximate the per-image cost.
+
+**Formula:**
+```python
+tokens_per_image = image_input_token_count / num_images
+```
+
+**Notes:**
+- Useful for understanding how image resolution or content affects token consumption.
+- Exported to JSON/CSV only (not shown in console).
+
+---
+
+### Image Token Ratio
+
+**Type:** [Record Metric](#record-metrics)
+
+The ratio of image tokens to total input tokens for a single request. A value of 0.9 means 90% of the input tokens are from images.
+
+**Formula:**
+```python
+image_token_ratio = image_input_token_count / input_sequence_length
+```
+
+**Notes:**
+- Exported to JSON/CSV only (not shown in console).
+
+---
+
+### Total Image Input Tokens
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sum of all image input tokens across all requests in the benchmark.
+
+**Formula:**
+```python
+total_image_input_tokens = sum(r.image_input_token_count for r in records if r.valid)
+```
+
+**Notes:**
+- Exported to JSON/CSV only (not shown in console).
+
+---
+
+### Image Input Token Throughput
+
+**Type:** [Derived Metric](#derived-metrics)
+
+Image input tokens processed per second across the benchmark.
+
+**Formula:**
+```python
+image_input_token_throughput = total_image_input_tokens / benchmark_duration_seconds
+```
+
+**Notes:**
+- Measures how fast the server is ingesting image tokens.
+- Useful for comparing image processing throughput across model configurations and image resolutions.
 
 ---
 

@@ -37,6 +37,7 @@ from aiperf.common.models import (
     RequestInfo,
     SessionPayloads,
 )
+from aiperf.common.processor import Processor
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
@@ -327,6 +328,16 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         else:
             conversations = self._load_synthetic_dataset()
 
+        # Estimate per-modality input token counts when images are present
+        has_images = any(
+            img.contents
+            for conv in conversations
+            for turn in conv.turns
+            for img in turn.images
+        )
+        if has_images:
+            await self._estimate_modality_counts(conversations)
+
         self.dataset = {conv.session_id: conv for conv in conversations}
         self._conversation_ids_cache = [
             conversation.session_id for conversation in conversations
@@ -373,6 +384,61 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 client_metadata=client_metadata,
             )
         )
+
+    async def _estimate_modality_counts(
+        self, conversations: list[Conversation]
+    ) -> None:
+        """Estimate per-modality input token counts for turns with images.
+
+        Loads an AutoProcessor for the model and estimates text vs image token
+        counts for each turn that contains images. Results are stored on
+        turn.input_modalities_local and serialized to mmap with the data.
+        """
+        model_name = self.user_config.endpoint.model_names[0]
+        tokenizer_config = self.user_config.tokenizer
+        tokenizer_name = tokenizer_config.get_tokenizer_name_for_model(model_name)
+
+        processor = await asyncio.to_thread(
+            Processor.from_pretrained,
+            tokenizer_name,
+            trust_remote_code=tokenizer_config.trust_remote_code,
+            revision=tokenizer_config.revision,
+        )
+        if processor is None:
+            self.info(
+                f"AutoProcessor not available for '{tokenizer_name}'. "
+                "Per-modality token breakdown will use subtraction fallback."
+            )
+            return
+
+        self.info(
+            f"Estimating per-modality input token counts using AutoProcessor for '{tokenizer_name}'"
+        )
+        count = 0
+        for conv in conversations:
+            for turn in conv.turns:
+                has_images = any(img.contents for img in turn.images)
+                if not has_images:
+                    continue
+                try:
+                    text_parts = []
+                    for text in turn.texts:
+                        text_parts.extend(text.contents)
+                    image_data = []
+                    for img in turn.images:
+                        image_data.extend(img.contents)
+                    turn.input_modalities_local = await asyncio.to_thread(
+                        processor.estimate_input_modality_counts,
+                        text_parts,
+                        image_data,
+                    )
+                    count += 1
+                except Exception as e:
+                    self.warning(
+                        f"Failed to estimate modality counts for turn in "
+                        f"conversation '{conv.session_id}': {e!r}"
+                    )
+        self.info(f"Estimated modality counts for {count} turns with images")
 
     @on_request(MessageType.CONVERSATION_REQUEST)
     async def _handle_conversation_request(

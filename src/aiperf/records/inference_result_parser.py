@@ -14,6 +14,7 @@ from aiperf.common.models import (
     ParsedResponseRecord,
     RequestRecord,
 )
+from aiperf.common.models.modality_token_counts import ModalityTokenCounts
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import ReasoningResponseData, TokenCounts
 from aiperf.common.tokenizer import Tokenizer
@@ -305,6 +306,10 @@ class InferenceResultParser(CommunicationMixin):
         Client-side output/reasoning tokenization is stored in `output_local`/`reasoning_local`
         either as a fallback (when server doesn't report) or when `--tokenize-output` is enabled.
 
+        When pre-computed modality estimates (`input_modalities_local`) are available
+        from AutoProcessor, they are scaled proportionally to the server total.
+        Otherwise, falls back to tokenizer-based subtraction for image token estimation.
+
         Args:
             request_record: The request record containing input data
             responses: List of parsed responses from the server
@@ -367,26 +372,82 @@ class InferenceResultParser(CommunicationMixin):
             except Exception as e:
                 self.warning(f"Client-side output/reasoning tokenization failed: {e}")
 
+        # Modality breakdown
+        input_modalities_local: ModalityTokenCounts | None = None
+        input_modalities: ModalityTokenCounts | None = None
+
+        if request_record.input_modalities_local is not None:
+            # AutoProcessor pre-computed estimates available
+            input_modalities_local = request_record.input_modalities_local
+            server_total = input_token_count
+            if server_total is not None:
+                input_modalities = input_modalities_local.scale_to(server_total)
+        elif self._request_has_images(request_record):
+            # Fallback: subtraction approach (text tokenizer count vs server total)
+            input_modalities_local, input_modalities = (
+                self._estimate_modality_by_subtraction(input_local, input_token_count)
+            )
+
         return TokenCounts(
             input=input_token_count,
             input_local=input_local,
+            input_modalities_local=input_modalities_local,
+            input_modalities=input_modalities,
             output=output_server,
             output_local=output_local,
             reasoning=reasoning_server,
             reasoning_local=reasoning_local,
         )
 
+    def _estimate_modality_by_subtraction(
+        self,
+        text_token_count: int | None,
+        server_total: int | None,
+    ) -> tuple[ModalityTokenCounts | None, ModalityTokenCounts | None]:
+        """Estimate modality breakdown using subtraction (text tokenizer count vs server total).
+
+        This is the fallback when AutoProcessor estimates are not available.
+
+        Returns:
+            Tuple of (input_modalities_local, input_modalities).
+        """
+        if text_token_count is None or server_total is None:
+            if server_total is not None:
+                self.warning(
+                    "Images detected but client-side text tokenization returned no count. "
+                    "ISL will reflect server-reported total; image token breakdown is unavailable."
+                )
+            elif text_token_count is not None:
+                self.warning(
+                    "Images detected in input but server did not report usage.prompt_tokens. "
+                    "ISL will reflect text tokens only; image token count is unknown."
+                )
+            return None, None
+
+        image_tokens = server_total - text_token_count
+        if image_tokens < 0:
+            self.warning(
+                f"Server reported fewer prompt tokens ({server_total}) than "
+                f"client-side text token count ({text_token_count}). "
+                "Clamping image input tokens to 0."
+            )
+            image_tokens = 0
+
+        local = ModalityTokenCounts(text=text_token_count, image=image_tokens)
+        # For subtraction, the "local" estimate is already derived from the server total,
+        # so local and scaled are the same
+        return local, ModalityTokenCounts(text=text_token_count, image=image_tokens)
+
+    def _request_has_images(self, request_record: RequestRecord) -> bool:
+        """Check if the request contains any images in its turns."""
+        return any(
+            image.contents for turn in request_record.turns for image in turn.images
+        )
+
     def _parse_output_and_reasoning_texts(
         self, responses: list[ParsedResponse]
     ) -> tuple[list[str], list[str]]:
-        """Parse all the output and reasoning texts from the responses.
-
-        Args:
-            responses: List of parsed responses from the server
-
-        Returns:
-            Tuple of lists of output and reasoning texts
-        """
+        """Parse all the output and reasoning texts from the responses."""
         output_texts: list[str] = []
         reasoning_texts: list[str] = []
         for response in responses:
@@ -405,16 +466,7 @@ class InferenceResultParser(CommunicationMixin):
     async def _compute_token_count(
         self, tokenizer: Tokenizer, texts: list[str], separator: str = ""
     ) -> int | None:
-        """Compute the number of tokens in the texts by joining them with an optional separator (default none) and encoding with the tokenizer.
-
-        Args:
-            tokenizer: The tokenizer to use
-            texts: List of texts to compute the token count for
-            separator: The separator to use between the texts
-
-        Returns:
-            The number of tokens in the texts, or None if the texts are empty
-        """
+        """Compute the number of tokens in the texts by joining them with an optional separator."""
         if not texts:
             return None
         text = separator.join(texts)
@@ -428,12 +480,6 @@ class InferenceResultParser(CommunicationMixin):
 
         Searches backwards through responses for the last non-None value.
         This handles streaming where usage appears in the final chunk.
-
-        Args:
-            responses: List of parsed responses from the server
-
-        Returns:
-            Server-reported prompt token count, or None if unavailable
         """
         for response in reversed(responses):
             if response.usage and response.usage.prompt_tokens is not None:
@@ -447,12 +493,6 @@ class InferenceResultParser(CommunicationMixin):
 
         Reasoning tokens are nested in completion_tokens_details.reasoning_tokens
         per the OpenAI API specification.
-
-        Args:
-            responses: List of parsed responses from the server
-
-        Returns:
-            Server-reported reasoning tokens, or None if unavailable
         """
         for response in reversed(responses):
             if response.usage and response.usage.reasoning_tokens is not None:
@@ -467,13 +507,6 @@ class InferenceResultParser(CommunicationMixin):
         Returns ONLY non-reasoning completion tokens. The server's completion_tokens
         includes both reasoning and output, so we subtract reasoning_tokens to get
         the pure output count (matching our client-side semantics).
-
-        Args:
-            responses: List of parsed responses from the server
-            reasoning_token_count: The reasoning token count to subtract from completion tokens
-
-        Returns:
-            Server-reported output tokens (excluding reasoning), or None if unavailable
         """
         for response in reversed(responses):
             if response.usage:
