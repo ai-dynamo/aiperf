@@ -170,6 +170,12 @@ class InferenceClient(AIPerfLifecycleMixin):
         if self.is_trace_enabled:
             self.trace(f"Calling inference API for turn: {request_info.turns[-1]}")
         record = await self._send_request_internal(request_info, first_token_callback)
+        # Redact sensitive headers on the request_info now that the transport has
+        # consumed them.  This prevents raw credentials from flowing back through
+        # ZMQ messages (which are TRACE-logged as serialised JSON / repr).
+        request_info.endpoint_headers = (
+            redact_headers(request_info.endpoint_headers) or {}
+        )
         return self._enrich_request_record(record=record, request_info=request_info)
 
     def _enrich_request_record(
