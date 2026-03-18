@@ -53,7 +53,7 @@ class TestChatEndpoint:
         assert "messages" in payload
         assert len(payload["messages"]) == 1
         assert payload["messages"][0]["content"] == "Hello, world!"
-        assert payload["messages"][0]["name"] == ""
+        assert "name" not in payload["messages"][0]
 
     def test_format_payload_multi_modal(self, endpoint, model_endpoint):
         """Test multi-modal message with text and images."""
