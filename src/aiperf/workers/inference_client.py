@@ -202,6 +202,10 @@ class InferenceClient(AIPerfLifecycleMixin):
 
         # Always redact at this boundary to guarantee no raw headers leak downstream,
         # even if a transport pre-populates record.request_headers.
-        source_headers = record.request_headers or request_info.endpoint_headers
+        source_headers = (
+            record.request_headers
+            if record.request_headers is not None
+            else request_info.endpoint_headers
+        )
         record.request_headers = redact_headers(source_headers)
         return record

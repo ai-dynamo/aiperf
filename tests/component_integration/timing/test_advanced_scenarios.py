@@ -133,8 +133,8 @@ class TestRequestCancellationRate:
 
         Scenario:
         - 25% request timeout rate (--request-cancellation-rate)
-        - 8 sessions x 3 turns = 24 total requests
-        - Expected ~6 request ERRORS (status 499), NOT credit cancellations
+        - 10 sessions x 4 turns = 40 total requests
+        - Expected ~10 request ERRORS (status 499), NOT credit cancellations
         - Verify all credits returned (with errors)
         """
         config = TimingTestConfig(
@@ -178,7 +178,7 @@ class TestRequestCancellationRate:
         error_count = sum(1 for p in return_payloads if p.payload.error is not None)
         success_count = sum(1 for p in return_payloads if p.payload.error is None)
 
-        # 25% rate on 24 requests: expect roughly 6 timeouts (seed-deterministic)
+        # 25% rate on 40 requests: expect roughly 10 timeouts (seed-deterministic)
         assert 2 <= error_count <= 12, (
             f"Expected ~25% timeouts ({total_requests}*0.25≈{total_requests * 0.25:.0f}), got {error_count}"
         )
@@ -212,7 +212,7 @@ class TestBenchmarkDurationAndGracePeriod:
         Scenario:
         - Very low QPS (10 QPS) so we can measure duration effect
         - Duration = 0.5 seconds -> should issue ~5 requests
-        - 100 sessions available but duration stops early
+        - 30 sessions available but duration stops early
         """
         cmd = f"""
             aiperf profile \

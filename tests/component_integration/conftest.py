@@ -135,7 +135,7 @@ def hf_offline_mode():
     os.environ["HF_HUB_OFFLINE"] = "1"
     yield
     if prev is None:
-        del os.environ["HF_HUB_OFFLINE"]
+        os.environ.pop("HF_HUB_OFFLINE", None)
     else:
         os.environ["HF_HUB_OFFLINE"] = prev
 
