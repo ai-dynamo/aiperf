@@ -223,6 +223,23 @@ class TestInferenceClient:
         assert call_args[0][0] == request_info
         assert record == expected_record
 
+    @pytest.mark.asyncio
+    async def test_send_request_raises_on_empty_turns(self, inference_client):
+        """Test that send_request raises ValueError when turns is empty."""
+        request_info = RequestInfo(
+            model_endpoint=inference_client.model_endpoint,
+            turns=[],
+            turn_index=0,
+            credit_num=42,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="test-id",
+            x_correlation_id="test-corr",
+            conversation_id="test-conv",
+        )
+
+        with pytest.raises(ValueError, match="no turns"):
+            await inference_client.send_request(request_info)
+
     def test_enrich_request_record_uses_last_turn_model(self, inference_client):
         """Test _enrich_request_record uses turns[-1] not turns[turn_index].
 
