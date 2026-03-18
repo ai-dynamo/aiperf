@@ -96,6 +96,36 @@ class CommandResponseStatus(CaseInsensitiveStrEnum):
     UNHANDLED = "unhandled"  # The command was received but not handled by any hook
 
 
+class ConversationContextMode(CaseInsensitiveStrEnum):
+    """Controls how prior turns are accumulated in multi-turn conversations.
+
+    Two dimensions determine behavior:
+
+    - **Turn format**: ``DELTAS`` (incremental per-turn content) vs
+      ``MESSAGE_ARRAY`` (each turn carries its complete message list).
+    - **Response inclusion**: ``WITH_RESPONSES`` (pre-canned assistant turns
+      are present in the dataset) vs ``WITHOUT_RESPONSES`` (only user content;
+      live inference responses are captured at runtime).
+    """
+
+    DELTAS_WITHOUT_RESPONSES = "deltas_without_responses"
+    """Standard multi-turn chat. Each dataset turn is a user-only delta.
+    AIPerf accumulates turns and threads live inference responses into the history."""
+
+    DELTAS_WITH_RESPONSES = "deltas_with_responses"
+    """Delta-compressed prompts. Each dataset turn is a delta that may include
+    pre-canned assistant responses. AIPerf accumulates but discards live responses."""
+
+    MESSAGE_ARRAY_WITH_RESPONSES = "message_array_with_responses"
+    """Self-contained prompts. Each turn carries a complete message array (including
+    assistant responses) and is sent as-is. Default for Mooncake traces with
+    pre-built ``messages`` arrays."""
+
+    MESSAGE_ARRAY_WITHOUT_RESPONSES = "message_array_without_responses"
+    """Reserved. Each turn would carry a complete user-only message array, requiring
+    live response merging between turns. Not yet implemented."""
+
+
 class ConnectionReuseStrategy(CaseInsensitiveStrEnum):
     """Transport connection reuse strategy. Controls how and when connections are reused across requests."""
 
@@ -133,6 +163,31 @@ class ExportLevel(CaseInsensitiveStrEnum):
 
     RAW = "raw"
     """Export raw parsed records with full request/response data (most detailed)"""
+
+
+class ConvergenceMode(CaseInsensitiveStrEnum):
+    """Statistical method for convergence detection in adaptive multi-run mode."""
+
+    CI_WIDTH = "ci_width"
+    """Stop when Student's t confidence interval width relative to mean is below threshold."""
+
+    CV = "cv"
+    """Stop when coefficient of variation (std/mean) is below threshold."""
+
+    DISTRIBUTION = "distribution"
+    """Stop when KS test p-value indicates latest run matches prior runs."""
+
+
+class ConvergenceStat(CaseInsensitiveStrEnum):
+    """Statistic to evaluate for convergence when using ci_width or cv mode."""
+
+    AVG = "avg"
+    P50 = "p50"
+    P90 = "p90"
+    P95 = "p95"
+    P99 = "p99"
+    MIN = "min"
+    MAX = "max"
 
 
 class GPUTelemetryMode(CaseInsensitiveStrEnum):

@@ -31,7 +31,7 @@ class TestGPUTelemetryBasic:
                 --model {Defaults.model} \
                 --url http://localhost:8000 \
                 --gpu-telemetry http://localhost:9402/metrics \
-                --benchmark-duration 2 \
+                --num-sessions 5 \
                 --concurrency 2 \
                 --workers-max {Defaults.workers_max} \
                 --ui {Defaults.ui}

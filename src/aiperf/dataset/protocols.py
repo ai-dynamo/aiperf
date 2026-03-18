@@ -3,6 +3,7 @@
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation
 from aiperf.common.protocols import AIPerfLifecycleProtocol
 
@@ -43,6 +44,15 @@ class CustomDatasetLoaderProtocol(Protocol):
         """
         ...
 
+    @classmethod
+    def get_default_context_mode(cls) -> ConversationContextMode | None:
+        """Dataset-level default context mode for conversations without an explicit one.
+
+        Returns:
+            ConversationContextMode or None to fall through to the global default.
+        """
+        ...
+
     def load_dataset(self) -> dict[str, list["CustomDatasetT"]]: ...
 
     def convert_to_conversations(
@@ -60,6 +70,15 @@ class PublicDatasetLoaderProtocol(Protocol):
 
         Returns:
             DatasetSamplingStrategy: The preferred sampling strategy
+        """
+        ...
+
+    @classmethod
+    def get_default_context_mode(cls) -> ConversationContextMode | None:
+        """Dataset-level default context mode for conversations without an explicit one.
+
+        Returns:
+            ConversationContextMode or None to fall through to the global default.
         """
         ...
 

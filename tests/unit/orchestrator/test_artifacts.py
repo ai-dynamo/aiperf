@@ -3,10 +3,12 @@
 """Tests for aggregate exporters."""
 
 import json
+from unittest.mock import patch
 
 from aiperf.exporters.aggregate import (
     AggregateConfidenceCsvExporter,
     AggregateConfidenceJsonExporter,
+    AggregateDetailedJsonExporter,
     AggregateExporterConfig,
 )
 from aiperf.orchestrator.aggregation.base import AggregateResult
@@ -210,3 +212,60 @@ class TestAggregateExporters:
         assert json_result.min == 95.0
         assert json_result.max == 105.0
         assert json_result.unit == "ms"
+
+    async def test_write_detailed_json(self, tmp_path):
+        """Test writing detailed aggregate result to JSON."""
+        aggregate = AggregateResult(
+            aggregation_type="detailed",
+            num_runs=3,
+            num_successful_runs=3,
+            failed_runs=[],
+            metrics={
+                "ttft": {"avg": 105.0, "p50": 100.0, "p99": 120.0, "unit": "ms"},
+            },
+            metadata={"source": "combined_percentiles"},
+        )
+
+        output_dir = tmp_path / "aggregate"
+        config = AggregateExporterConfig(result=aggregate, output_dir=output_dir)
+        exporter = AggregateDetailedJsonExporter(config)
+        json_path = await exporter.export()
+
+        assert json_path.exists()
+        assert json_path.name == "profile_export_aiperf_collated.json"
+
+        with open(json_path) as f:
+            data = json.load(f)
+
+        assert data["schema_version"] == "1.0.0"
+        assert "aiperf_version" in data
+        assert "description" in data
+        assert "Collated per-request metrics" in data["description"]
+        assert data["metadata"]["aggregation_type"] == "detailed"
+        assert data["metadata"]["num_profile_runs"] == 3
+        assert data["metadata"]["num_successful_runs"] == 3
+        assert data["metadata"]["source"] == "combined_percentiles"
+        assert data["metrics"]["ttft"]["avg"] == 105.0
+
+    async def test_detailed_json_version_fallback(self, tmp_path):
+        """Test that version falls back to 'unknown' when importlib fails."""
+        aggregate = AggregateResult(
+            aggregation_type="detailed",
+            num_runs=1,
+            num_successful_runs=1,
+            failed_runs=[],
+            metrics={},
+            metadata={},
+        )
+
+        output_dir = tmp_path / "aggregate"
+        config = AggregateExporterConfig(result=aggregate, output_dir=output_dir)
+        exporter = AggregateDetailedJsonExporter(config)
+
+        with patch("aiperf.__version__", "unknown"):
+            json_path = await exporter.export()
+
+        with open(json_path) as f:
+            data = json.load(f)
+
+        assert data["aiperf_version"] == "unknown"

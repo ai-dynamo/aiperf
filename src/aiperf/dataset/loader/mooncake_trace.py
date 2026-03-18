@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Turn
 from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
 from aiperf.dataset.loader.models import MooncakeTrace
@@ -71,6 +72,19 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
     # ------------------------------------------------------------------
     # Conversation-building hooks
     # ------------------------------------------------------------------
+
+    def _infer_context_mode(
+        self, traces: list[MooncakeTrace]
+    ) -> ConversationContextMode | None:
+        """Auto-detect MESSAGE_ARRAY_WITH_RESPONSES when all traces use pre-built messages."""
+        raw_msg_trace_count = sum(1 for trace in traces if trace.messages is not None)
+        if raw_msg_trace_count == len(traces):
+            return ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        if raw_msg_trace_count > 0:
+            raise ValueError(
+                "Mixed Mooncake sessions with both raw `messages` and synthesized prompts are unsupported."
+            )
+        return None
 
     def _get_text_input(self, trace: MooncakeTrace) -> str | None:
         if trace.messages is not None:

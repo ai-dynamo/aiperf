@@ -6,6 +6,7 @@ from typing import Any, Generic, TypeVar
 
 from aiperf.common.config.config_defaults import InputTokensDefaults
 from aiperf.common.config.user_config import UserConfig
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.generator.parallel_decode import parallel_decode
 from aiperf.dataset.generator.prompt import PromptGenerator
@@ -215,6 +216,16 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         """
         return getattr(trace, "text_input", None)
 
+    def _infer_context_mode(
+        self, traces: list[TraceT]
+    ) -> ConversationContextMode | None:
+        """Infer context_mode from trace data when not explicitly set.
+
+        Override in subclasses to auto-detect based on trace content.
+        Default returns None (falls through to global DELTAS_WITHOUT_RESPONSES default).
+        """
+        return None
+
     def _build_turn(self, trace: TraceT, prompt: str) -> Turn:
         """Build a :class:`Turn` from trace data and a generated prompt.
 
@@ -299,7 +310,12 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         # Phase 3: Build final conversation objects
         conversations: list[Conversation] = []
         for session_id, trace_prompt_pairs in conversations_data.items():
-            conversation = Conversation(session_id=session_id)
+            traces_in_session = [trace for trace, _ in trace_prompt_pairs]
+            context_mode = self._infer_context_mode(traces_in_session)
+
+            conversation = Conversation(
+                session_id=session_id, context_mode=context_mode
+            )
             for trace, prompt in trace_prompt_pairs:
                 conversation.turns.append(self._build_turn(trace, prompt))
             conversations.append(conversation)
