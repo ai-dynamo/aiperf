@@ -3,7 +3,13 @@
 
 from typing import Annotated
 
-from pydantic import BeforeValidator, Field, model_validator
+from pydantic import (
+    BeforeValidator,
+    Field,
+    SerializationInfo,
+    field_serializer,
+    model_validator,
+)
 from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -16,6 +22,7 @@ from aiperf.common.enums import (
     ConnectionReuseStrategy,
     ModelSelectionStrategy,
 )
+from aiperf.common.redact import REDACTED_VALUE
 from aiperf.plugin.enums import (
     EndpointType,
     TransportType,
@@ -181,6 +188,7 @@ class EndpointConfig(BaseConfig):
         Field(
             description="API authentication key for the endpoint. When provided, automatically included in request headers as "
             "`Authorization: Bearer <api_key>`.",
+            repr=False,
         ),
         CLIParameter(
             name=("--api-key"),
@@ -263,3 +271,11 @@ class EndpointConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.DOWNLOAD_VIDEO_CONTENT
+
+    @field_serializer("api_key")
+    @classmethod
+    def _redact_api_key(cls, v: str | None, info: SerializationInfo) -> str | None:
+        """Redact api_key during serialization unless context explicitly allows it."""
+        if info.context and info.context.get("include_secrets"):
+            return v
+        return REDACTED_VALUE if v else v

@@ -13,6 +13,7 @@ for _factory_logger in [
 ]:
     logging.getLogger(_factory_logger).setLevel(logging.ERROR)
 
+import os
 import platform
 import signal
 import sys
@@ -122,6 +123,21 @@ def no_server_metrics_flush_period():
     Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = 0
     yield
     Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = original_flush_period
+
+
+@pytest.fixture(autouse=True, scope="package")
+def hf_offline_mode():
+    """Disable HuggingFace Hub network calls for the duration of this package.
+
+    Scoped to package so it doesn't bleed into unit tests or other suites.
+    """
+    prev = os.environ.get("HF_HUB_OFFLINE")
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    yield
+    if prev is None:
+        os.environ.pop("HF_HUB_OFFLINE", None)
+    else:
+        os.environ["HF_HUB_OFFLINE"] = prev
 
 
 @pytest.fixture(autouse=True, scope="package")

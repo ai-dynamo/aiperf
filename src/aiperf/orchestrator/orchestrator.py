@@ -147,15 +147,18 @@ class MultiRunOrchestrator:
             # This prevents validation errors on deserialization for fields with conditional validators
             config_data = {
                 "user_config": config.model_dump(
-                    mode="json", exclude_defaults=True, exclude_none=True
+                    mode="json",
+                    exclude_defaults=True,
+                    exclude_none=True,
+                    context={"include_secrets": True},
                 ),
                 "service_config": self.service_config.model_dump(
                     mode="json", exclude_defaults=True, exclude_none=True
                 ),
             }
 
-            # Write config to artifact directory for debugging and reproducibility
-            # This allows users to see exactly what config was used for each run
+            # Write config with secrets for subprocess to read.
+            # Overwritten with redacted version after the subprocess finishes.
             config_file = artifacts_path / "run_config.json"
             with open(config_file, "wb") as f:
                 f.write(orjson.dumps(config_data, option=orjson.OPT_INDENT_2))
@@ -179,6 +182,18 @@ class MultiRunOrchestrator:
                 stderr=subprocess.PIPE,  # Capture for error reporting
                 text=True,
             )
+
+            # Overwrite config file with redacted version so secrets don't persist in artifacts
+            redacted_config_data = {
+                "user_config": config.model_dump(
+                    mode="json", exclude_defaults=True, exclude_none=True
+                ),
+                "service_config": self.service_config.model_dump(
+                    mode="json", exclude_defaults=True, exclude_none=True
+                ),
+            }
+            with open(config_file, "wb") as f:
+                f.write(orjson.dumps(redacted_config_data, option=orjson.OPT_INDENT_2))
 
             if result.returncode != 0:
                 error_msg = f"Benchmark failed with exit code {result.returncode}"

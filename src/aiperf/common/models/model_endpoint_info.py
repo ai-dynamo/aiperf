@@ -85,6 +85,8 @@ class EndpointInfo(AIPerfBaseModel):
     api_key: str | None = Field(
         default=EndpointDefaults.API_KEY,
         description="API key to use for the endpoint.",
+        repr=False,
+        exclude=True,
     )
     ssl_options: dict[str, Any] | None = Field(
         default=None,

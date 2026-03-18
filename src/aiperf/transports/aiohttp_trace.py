@@ -61,6 +61,7 @@ from time import perf_counter_ns, time_ns
 import aiohttp
 
 from aiperf.common.models import AioHttpTraceData
+from aiperf.common.redact import redact_headers
 
 
 def create_aiohttp_trace_config(
@@ -272,7 +273,7 @@ def create_aiohttp_trace_config(
     ) -> None:
         """Called when request headers finish being sent."""
         trace_data.request_headers_sent_perf_ns = _perf_counter_ns()
-        trace_data.request_headers = dict(params.headers)
+        trace_data.request_headers = redact_headers(dict(params.headers))
 
     # ============================================================================
     # RESPONSE EVENTS
