@@ -122,7 +122,8 @@ class ConversationContextMode(CaseInsensitiveStrEnum):
     pre-built ``messages`` arrays."""
 
     MESSAGE_ARRAY_WITHOUT_RESPONSES = "message_array_without_responses"
-    """Reserved. Each turn carries a complete user-only message array. Not yet implemented."""
+    """Reserved. Each turn would carry a complete user-only message array, requiring
+    live response merging between turns. Not yet implemented."""
 
 
 class ConnectionReuseStrategy(CaseInsensitiveStrEnum):

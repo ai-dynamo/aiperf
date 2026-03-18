@@ -5,7 +5,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any, ClassVar
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from aiperf.common.enums import ConversationContextMode, MediaType
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -253,6 +253,18 @@ class DatasetMetadata(AIPerfBaseModel):
         "Individual conversations can override this via their own context_mode field.",
     )
 
+    @field_validator("default_context_mode")
+    @classmethod
+    def _reject_unimplemented_context_mode(
+        cls,
+        v: ConversationContextMode | None,
+    ) -> ConversationContextMode | None:
+        if v == ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES:
+            raise ValueError(
+                f"{ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES} is not yet supported"
+            )
+        return v
+
     @cached_property
     def total_turn_count(self) -> int:
         """Get the total number of turns in the dataset."""
@@ -281,6 +293,19 @@ class Conversation(AIPerfBaseModel):
         description="How prior turns are accumulated for this conversation. "
         "When None, inherits the dataset-level default.",
     )
+
+    @field_validator("context_mode")
+    @classmethod
+    def _reject_unimplemented_context_mode(
+        cls,
+        v: ConversationContextMode | None,
+    ) -> ConversationContextMode | None:
+        if v == ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES:
+            raise ValueError(
+                f"{ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES} is not yet supported"
+            )
+        return v
+
     turns: list[Turn] = Field(
         default=[], description="List of turns in the conversation."
     )

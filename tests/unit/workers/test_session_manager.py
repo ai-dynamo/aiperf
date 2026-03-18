@@ -7,10 +7,13 @@ len(conversation.turns), which is critical for ramp-up users who start mid-sessi
 """
 
 import pytest
+from pydantic import ValidationError
 from pytest import param
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation, Turn
+from aiperf.common.models.dataset_models import DatasetMetadata
+from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.workers.session_manager import UserSession, UserSessionManager
 
 
@@ -271,7 +274,6 @@ class TestUserSessionShouldStoreResponse:
             (ConversationContextMode.DELTAS_WITHOUT_RESPONSES, True),
             (ConversationContextMode.DELTAS_WITH_RESPONSES, False),
             (ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES, False),
-            (ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES, True),
             param(None, True, id="default-deltas-without-responses"),
         ],
     )  # fmt: skip
@@ -397,3 +399,25 @@ class TestUserSessionContextModeWorkflow:
         turns = session.turn_list
         assert len(turns) == 1
         assert turns[0].messages[0]["content"] == "Q1"
+
+
+# ============================================================
+# message_array_without_responses rejected
+# ============================================================
+
+
+class TestMessageArrayWithoutResponsesRejected:
+    """MESSAGE_ARRAY_WITHOUT_RESPONSES is reserved and must be rejected early."""
+
+    def test_conversation_rejects_unsupported_mode(self) -> None:
+        with pytest.raises(ValidationError, match="not yet supported"):
+            Conversation(
+                context_mode=ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES,
+            )
+
+    def test_dataset_metadata_rejects_unsupported_default_mode(self) -> None:
+        with pytest.raises(ValidationError, match="not yet supported"):
+            DatasetMetadata(
+                sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+                default_context_mode=ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES,
+            )

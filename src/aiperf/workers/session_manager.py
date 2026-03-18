@@ -61,10 +61,7 @@ class UserSession(AIPerfBaseModel):
             )
 
         turn = self.conversation.turns[turn_index]
-        if self.context_mode in (
-            ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
-            ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES,
-        ):
+        if self.context_mode == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES:
             self.turn_list = [turn]
         else:
             self.turn_list.append(turn)
@@ -77,10 +74,7 @@ class UserSession(AIPerfBaseModel):
         Responses are stored when the dataset does not include them (WITHOUT_RESPONSES),
         so AIPerf must capture them live.
         """
-        return self.context_mode in (
-            ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
-            ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES,
-        )
+        return self.context_mode == ConversationContextMode.DELTAS_WITHOUT_RESPONSES
 
     def store_response(self, response_turn: Turn) -> None:
         """

@@ -95,7 +95,7 @@ Default for:
 
 ### `message_array_without_responses`
 
-Reserved for future use. Each turn would carry a complete user-only message array. Not yet implemented.
+Reserved for future use. Each turn would carry a complete user-only message array, requiring live response merging between turns. Not yet implemented.
 
 ## How It Works
 
