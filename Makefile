@@ -138,7 +138,7 @@ docker-run: #? run the docker container.
 	docker run -it --rm $(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_TAG) $(args)
 
 version: #? print the version of the project.
-	@PATH=$(UV_PATH):$(PATH) uv version
+	@PATH="$(UV_PATH):$(PATH)" uv version
 
 install-mock-server: #? install the mock server in editable mode.
 	$(activate_venv) && uv pip install -e "tests/aiperf_mock_server[dev]"
@@ -153,7 +153,7 @@ clean: #? clean up the pytest and ruff caches, coverage reports, and *.pyc files
 
 setup-venv: #? create the virtual environment.
 	@# Install uv if it is not installed
-	@export PATH=$(UV_PATH):$(PATH) && \
+	@export PATH="$(UV_PATH):$(PATH)" && \
 	if ! command -v uv &> /dev/null; then \
 		printf "$(bold)$(green)Installing uv...$(reset)\n"; \
 		curl -LsSf https://astral.sh/uv/install.sh | sh; \
@@ -162,7 +162,7 @@ setup-venv: #? create the virtual environment.
 	fi
 
 	@# Create virtual environment if it does not exist
-	@export PATH=$(UV_PATH):$(PATH) && \
+	@export PATH="$(UV_PATH):$(PATH)" && \
 	if [ ! -d "$(VENV_PATH)" ]; then \
 		printf "$(bold)$(green)Creating virtual environment...$(reset)\n"; \
 		uv venv --python $(PYTHON_VERSION); \
@@ -175,19 +175,19 @@ first-time-setup: #? convenience command to setup the environment for the first 
 
 	@# Install the project
 	@printf "$(bold)$(green)Installing project...$(reset)\n"
-	@PATH=$(UV_PATH):$(PATH) $(MAKE) --no-print-directory install
+	@PATH="$(UV_PATH):$(PATH)" $(MAKE) --no-print-directory install
 
 	@# Install the mock server
 	@printf "$(bold)$(green)Installing mock server...$(reset)\n"
-	@PATH=$(UV_PATH):$(PATH) $(MAKE) --no-print-directory install-mock-server
+	@PATH="$(UV_PATH):$(PATH)" $(MAKE) --no-print-directory install-mock-server
 
 	@# Generate plugin enum stubs for IDE autocomplete
 	@printf "$(bold)$(green)Generating plugin enum stubs...$(reset)\n"
-	@PATH=$(UV_PATH):$(PATH) $(MAKE) --no-print-directory generate-plugin-enums
+	@PATH="$(UV_PATH):$(PATH)" $(MAKE) --no-print-directory generate-plugin-enums
 
 	@# Generate plugin overloads for IDE autocomplete
 	@printf "$(bold)$(green)Generating plugin overloads...$(reset)\n"
-	@PATH=$(UV_PATH):$(PATH) $(MAKE) --no-print-directory generate-plugin-overloads
+	@PATH="$(UV_PATH):$(PATH)" $(MAKE) --no-print-directory generate-plugin-overloads
 
 	@# Install pre-commit hooks
 	@printf "$(bold)$(green)Installing pre-commit hooks...$(reset)\n"

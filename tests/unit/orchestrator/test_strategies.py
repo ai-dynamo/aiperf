@@ -3,13 +3,14 @@
 """Tests for execution strategies."""
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.orchestrator.models import RunResult
-from aiperf.orchestrator.strategies import FixedTrialsStrategy
+from aiperf.orchestrator.strategies import AdaptiveStrategy, FixedTrialsStrategy
 
 
 class TestFixedTrialsStrategy:
@@ -330,3 +331,281 @@ class TestFixedTrialsStrategy:
             # Path should end with the label
             assert path.name == label
             assert str(path).endswith(f"profile_runs/{label}")
+
+
+class TestAdaptiveStrategy:
+    """Tests for AdaptiveStrategy."""
+
+    def _make_results(
+        self,
+        count: int,
+        metric: str = "time_to_first_token",
+        value: float = 100.0,
+    ) -> list[RunResult]:
+        """Build a list of successful RunResult with summary metrics."""
+        return [
+            RunResult(
+                label=f"run_{i + 1:04d}",
+                success=True,
+                summary_metrics={metric: JsonMetricResult(unit="ms", avg=value + i)},
+                artifacts_path=Path(f"/tmp/run_{i + 1:04d}"),
+            )
+            for i in range(count)
+        ]
+
+    def _make_mock_criterion(self, converged: bool = False) -> MagicMock:
+        mock = MagicMock()
+        mock.is_converged.return_value = converged
+        return mock
+
+    # -- should_continue: convergence logic --
+
+    def test_criterion_true_stops_after_min_runs(self):
+        """When criterion reports converged, stop as soon as min_runs is met."""
+        criterion = self._make_mock_criterion(converged=True)
+        strategy = AdaptiveStrategy(criterion=criterion, min_runs=3, max_runs=10)
+
+        results = self._make_results(3)
+        assert strategy.should_continue(results) is False
+
+    def test_criterion_false_runs_to_max(self):
+        """When criterion never converges, run until max_runs."""
+        criterion = self._make_mock_criterion(converged=False)
+        strategy = AdaptiveStrategy(criterion=criterion, min_runs=3, max_runs=5)
+
+        for n in range(1, 5):
+            assert strategy.should_continue(self._make_results(n)) is True
+        assert strategy.should_continue(self._make_results(5)) is False
+
+    def test_criterion_flips_true_at_run_4(self):
+        """Criterion flips to converged at run 4 → stops at 4."""
+        criterion = MagicMock()
+        criterion.is_converged.side_effect = [False, True]
+        strategy = AdaptiveStrategy(criterion=criterion, min_runs=3, max_runs=10)
+
+        # Run 3: first convergence check → False → continue
+        assert strategy.should_continue(self._make_results(3)) is True
+        # Run 4: second convergence check → True → stop
+        assert strategy.should_continue(self._make_results(4)) is False
+
+    def test_min_runs_floor_enforced(self):
+        """Even if criterion says converged, continue below min_runs."""
+        criterion = self._make_mock_criterion(converged=True)
+        strategy = AdaptiveStrategy(criterion=criterion, min_runs=5, max_runs=10)
+
+        for n in range(1, 5):
+            assert strategy.should_continue(self._make_results(n)) is True
+        # Criterion is never called below min_runs
+        criterion.is_converged.assert_not_called()
+
+    def test_max_runs_cap_enforced(self):
+        """Stop at max_runs even if criterion says not converged."""
+        criterion = self._make_mock_criterion(converged=False)
+        strategy = AdaptiveStrategy(criterion=criterion, min_runs=3, max_runs=5)
+
+        assert strategy.should_continue(self._make_results(5)) is False
+        assert strategy.should_continue(self._make_results(6)) is False
+
+    def test_empty_results_continues(self):
+        """No results yet → always continue."""
+        criterion = self._make_mock_criterion(converged=True)
+        strategy = AdaptiveStrategy(criterion=criterion, min_runs=3, max_runs=10)
+        assert strategy.should_continue([]) is True
+
+    def test_criterion_exception_treated_as_not_converged(self, caplog):
+        """If criterion raises, log error and treat as not converged."""
+        criterion = MagicMock()
+        criterion.is_converged.side_effect = RuntimeError("boom")
+        strategy = AdaptiveStrategy(criterion=criterion, min_runs=3, max_runs=10)
+
+        results = self._make_results(3)
+        assert strategy.should_continue(results) is True
+        assert "Convergence criterion raised an error" in caplog.text
+
+    # -- Label parity with FixedTrialsStrategy --
+
+    @pytest.mark.parametrize("run_index", [0, 1, 99, 9999])
+    def test_label_parity_with_fixed_trials(self, run_index):
+        """AdaptiveStrategy labels must match FixedTrialsStrategy labels."""
+        criterion = self._make_mock_criterion()
+        adaptive = AdaptiveStrategy(criterion=criterion)
+        fixed = FixedTrialsStrategy(num_trials=10000)
+
+        assert adaptive.get_run_label(run_index) == fixed.get_run_label(run_index)
+
+    # -- Path parity --
+
+    @pytest.mark.parametrize("run_index", [0, 1, 99, 9999])
+    def test_run_path_parity_with_fixed_trials(self, run_index):
+        """AdaptiveStrategy run paths must match FixedTrialsStrategy."""
+        criterion = self._make_mock_criterion()
+        adaptive = AdaptiveStrategy(criterion=criterion)
+        fixed = FixedTrialsStrategy(num_trials=10000)
+        base_dir = Path("/tmp/artifacts")
+
+        assert adaptive.get_run_path(base_dir, run_index) == fixed.get_run_path(
+            base_dir, run_index
+        )
+
+    def test_aggregate_path_parity_with_fixed_trials(self):
+        """AdaptiveStrategy aggregate path must match FixedTrialsStrategy."""
+        criterion = self._make_mock_criterion()
+        adaptive = AdaptiveStrategy(criterion=criterion)
+        fixed = FixedTrialsStrategy(num_trials=5)
+        base_dir = Path("/tmp/artifacts")
+
+        assert adaptive.get_aggregate_path(base_dir) == fixed.get_aggregate_path(
+            base_dir
+        )
+
+    # -- Config parity (seed handling, warmup disabling) --
+
+    def test_auto_set_seed_on_first_run(self):
+        """Auto-sets seed when none specified, matching FixedTrialsStrategy."""
+        criterion = self._make_mock_criterion()
+        strategy = AdaptiveStrategy(criterion=criterion, auto_set_seed=True)
+
+        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config.input.random_seed = None
+
+        new_config = strategy.get_next_config(config, [])
+        assert new_config.input.random_seed == AdaptiveStrategy.DEFAULT_SEED
+        assert config.input.random_seed is None
+
+    def test_auto_set_seed_preserves_user_seed(self):
+        """Preserves user-specified seed."""
+        criterion = self._make_mock_criterion()
+        strategy = AdaptiveStrategy(criterion=criterion, auto_set_seed=True)
+
+        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config.input.random_seed = 999
+
+        new_config = strategy.get_next_config(config, [])
+        assert new_config.input.random_seed == 999
+
+    def test_auto_set_seed_disabled(self):
+        """auto_set_seed=False leaves seed as None."""
+        criterion = self._make_mock_criterion()
+        strategy = AdaptiveStrategy(criterion=criterion, auto_set_seed=False)
+
+        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config.input.random_seed = None
+
+        new_config = strategy.get_next_config(config, [])
+        assert new_config.input.random_seed is None
+
+    def test_disable_warmup_after_first_run(self):
+        """Warmup disabled for runs after the first."""
+        criterion = self._make_mock_criterion()
+        strategy = AdaptiveStrategy(
+            criterion=criterion, disable_warmup_after_first=True
+        )
+
+        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config.loadgen.warmup_request_count = 10
+        config.loadgen.warmup_duration = 30.0
+
+        # First run: warmup preserved
+        first = strategy.get_next_config(config, [])
+        assert first.loadgen.warmup_request_count == 10
+
+        # Second run: warmup disabled
+        results = self._make_results(1)
+        second = strategy.get_next_config(config, results)
+        assert second.loadgen.warmup_request_count is None
+        assert second.loadgen.warmup_duration is None
+
+        # Original unchanged
+        assert config.loadgen.warmup_request_count == 10
+
+    def test_disable_warmup_after_first_disabled(self):
+        """Warmup preserved for all runs when disable_warmup_after_first=False."""
+        criterion = self._make_mock_criterion()
+        strategy = AdaptiveStrategy(
+            criterion=criterion, disable_warmup_after_first=False
+        )
+
+        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config.loadgen.warmup_request_count = 10
+
+        results = self._make_results(1)
+        second = strategy.get_next_config(config, results)
+        assert second.loadgen.warmup_request_count == 10
+
+    def test_config_parity_seed_and_warmup_with_fixed_trials(self):
+        """Full config transformation parity between Adaptive and Fixed strategies."""
+        criterion = self._make_mock_criterion()
+        adaptive = AdaptiveStrategy(
+            criterion=criterion,
+            auto_set_seed=True,
+            disable_warmup_after_first=True,
+        )
+        fixed = FixedTrialsStrategy(
+            num_trials=10,
+            auto_set_seed=True,
+            disable_warmup_after_first=True,
+        )
+
+        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config.input.random_seed = None
+        config.loadgen.warmup_request_count = 10
+
+        results = self._make_results(1)
+
+        adaptive_cfg = adaptive.get_next_config(config, results)
+        fixed_cfg = fixed.get_next_config(config, results)
+
+        assert adaptive_cfg.input.random_seed == fixed_cfg.input.random_seed
+        assert (
+            adaptive_cfg.loadgen.warmup_request_count
+            == fixed_cfg.loadgen.warmup_request_count
+        )
+
+    # -- Cooldown --
+
+    def test_cooldown_seconds_configured(self):
+        criterion = self._make_mock_criterion()
+        strategy = AdaptiveStrategy(criterion=criterion, cooldown_seconds=2.5)
+        assert strategy.get_cooldown_seconds() == 2.5
+
+    def test_cooldown_seconds_default(self):
+        criterion = self._make_mock_criterion()
+        strategy = AdaptiveStrategy(criterion=criterion)
+        assert strategy.get_cooldown_seconds() == 0.0
+
+    # -- Constructor validation --
+
+    def test_invalid_cooldown_raises(self):
+        criterion = self._make_mock_criterion()
+        with pytest.raises(ValueError, match="Invalid cooldown_seconds"):
+            AdaptiveStrategy(criterion=criterion, cooldown_seconds=-1.0)
+
+    def test_invalid_min_runs_raises(self):
+        criterion = self._make_mock_criterion()
+        with pytest.raises(ValueError, match="Invalid min_runs"):
+            AdaptiveStrategy(criterion=criterion, min_runs=0)
+
+    def test_invalid_max_runs_raises(self):
+        criterion = self._make_mock_criterion()
+        with pytest.raises(ValueError, match="Invalid max_runs"):
+            AdaptiveStrategy(criterion=criterion, min_runs=5, max_runs=3)
+
+    # -- Cross-endpoint metric names (chat, embeddings, audio) --
+
+    @pytest.mark.parametrize(
+        "metric_name",
+        [
+            "time_to_first_token",
+            "request_latency",
+            "output_token_throughput",
+        ],
+    )
+    def test_convergence_with_varied_metric_names(self, metric_name):
+        """AdaptiveStrategy works with metrics from different endpoint types."""
+        criterion = MagicMock()
+        criterion.is_converged.return_value = True
+        strategy = AdaptiveStrategy(criterion=criterion, min_runs=3, max_runs=10)
+
+        results = self._make_results(3, metric=metric_name)
+        assert strategy.should_continue(results) is False
+        criterion.is_converged.assert_called_once_with(results)

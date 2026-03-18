@@ -827,6 +827,34 @@ Disable warmup for profile runs after the first. Only applies when --num-profile
 Automatically set random seed for consistent workloads across runs. Only applies when --num-profile-runs > 1. When True (default), automatically sets --random-seed=42 if not specified, ensuring identical workloads across all runs for valid statistical comparison. When False, preserves None seed, resulting in different workloads per run (not recommended for confidence reporting as it produces invalid statistics). If --random-seed is explicitly set, that value is always used regardless of this setting.
 <br/>_Default: `True`_
 
+#### `--convergence-metric` `<str>`
+
+Target metric name for adaptive convergence stopping. When set with --num-profile-runs > 1, enables adaptive mode that stops early once the metric stabilizes according to --convergence-mode. Uses --num-profile-runs as the maximum run cap. Example metrics: time_to_first_token, request_latency, inter_token_latency.
+
+#### `--convergence-stat` `<str>`
+
+Statistic to evaluate for convergence when using ci_width or cv mode. Common values: avg, p50, p90, p95, p99. Only applies when --convergence-metric is set.
+<br/>_Choices: [`avg`, `p50`, `p90`, `p95`, `p99`, `min`, `max`]_
+<br/>_Default: `avg`_
+
+#### `--convergence-threshold` `<float>`
+
+Threshold for convergence detection. For ci_width mode: maximum CI width as a fraction of the mean (default 0.10 = 10%). For cv mode: maximum coefficient of variation (default 0.10 = 10%). For distribution mode: KS test p-value threshold (default 0.10). Only applies when --convergence-metric is set.
+<br/>_Constraints: > 0, &lt; 1_
+<br/>_Default: `0.1`_
+
+#### `--convergence-mode` `<str>`
+
+Statistical method for convergence detection. ci_width: Stop when Student's t confidence interval width relative to mean is below threshold. cv: Stop when coefficient of variation (std/mean) is below threshold. distribution: Stop when KS test p-value indicates latest run matches prior runs (requires --export-level records or --export-level raw; rejected with --export-level summary). Only applies when --convergence-metric is set.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `ci_width` | _default_ | Stop when Student's t confidence interval width relative to mean is below threshold. |
+| `cv` |  | Stop when coefficient of variation (std/mean) is below threshold. |
+| `distribution` |  | Stop when KS test p-value indicates latest run matches prior runs. |
+
 ### Accuracy
 
 #### `--accuracy-benchmark` `<str>`

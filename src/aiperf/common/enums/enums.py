@@ -165,6 +165,31 @@ class ExportLevel(CaseInsensitiveStrEnum):
     """Export raw parsed records with full request/response data (most detailed)"""
 
 
+class ConvergenceMode(CaseInsensitiveStrEnum):
+    """Statistical method for convergence detection in adaptive multi-run mode."""
+
+    CI_WIDTH = "ci_width"
+    """Stop when Student's t confidence interval width relative to mean is below threshold."""
+
+    CV = "cv"
+    """Stop when coefficient of variation (std/mean) is below threshold."""
+
+    DISTRIBUTION = "distribution"
+    """Stop when KS test p-value indicates latest run matches prior runs."""
+
+
+class ConvergenceStat(CaseInsensitiveStrEnum):
+    """Statistic to evaluate for convergence when using ci_width or cv mode."""
+
+    AVG = "avg"
+    P50 = "p50"
+    P90 = "p90"
+    P95 = "p95"
+    P99 = "p99"
+    MIN = "min"
+    MAX = "max"
+
+
 class GPUTelemetryMode(CaseInsensitiveStrEnum):
     """GPU telemetry display mode."""
 
