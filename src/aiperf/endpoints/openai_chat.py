@@ -137,7 +137,6 @@ class ChatEndpoint(BaseEndpoint):
             and len(turn.videos) == 0
         ):
             # Hotfix for Dynamo API which does not yet support a list of messages
-            message["name"] = turn.texts[0].name
             message["content"] = (
                 turn.texts[0].contents[0] if turn.texts[0].contents else ""
             )

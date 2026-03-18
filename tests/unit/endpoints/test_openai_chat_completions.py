@@ -3,6 +3,7 @@
 import pytest
 
 from aiperf.common.enums import ModelSelectionStrategy
+from aiperf.common.models import Image, Text, Turn
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -42,7 +43,6 @@ class TestChatEndpoint:
             "messages": [
                 {
                     "role": turn.role or "user",
-                    "name": turn.texts[0].name,
                     "content": turn.texts[0].contents[0],
                 }
             ],
@@ -65,7 +65,6 @@ class TestChatEndpoint:
             "messages": [
                 {
                     "role": turn.role or "user",
-                    "name": turn.texts[0].name,
                     "content": turn.texts[0].contents[0],
                 }
             ],
@@ -88,7 +87,6 @@ class TestChatEndpoint:
             "messages": [
                 {
                     "role": turn.role or "user",
-                    "name": turn.texts[0].name,
                     "content": turn.texts[0].contents[0],
                 }
             ],
@@ -125,7 +123,6 @@ class TestChatEndpoint:
                 },
                 {
                     "role": turns[1].role,
-                    "name": turns[1].texts[0].name,
                     "content": turns[1].texts[0].contents[0],
                 },
             ],
@@ -168,7 +165,7 @@ class TestChatEndpoint:
         turns = [turn]
         messages = endpoint._create_messages(turns, None, None)
         assert messages[0]["role"] == (turn.role or "user")
-        assert messages[0]["name"] == turn.texts[0].name
+        assert "name" not in messages[0]
         assert messages[0]["content"] == turn.texts[0].contents[0]
 
     def test_create_messages_with_empty_content(
@@ -180,7 +177,7 @@ class TestChatEndpoint:
         turns = [turn]
         messages = endpoint._create_messages(turns, None, None)
         assert messages[0]["role"] == (turn.role or "user")
-        assert messages[0]["name"] == turn.texts[0].name
+        assert "name" not in messages[0]
         assert messages[0]["content"] == ""
 
     def test_create_messages_audio_format_error(
@@ -338,3 +335,42 @@ class TestChatEndpoint:
         assert payload["messages"][1]["content"] == user_context
         # Third message should be the turn
         assert payload["messages"][2]["role"] == (turn.role or "user")
+
+    @pytest.mark.parametrize(
+        "text_name",
+        ["text", "", "query", "passages", "my_file"],
+        ids=["default-text", "empty", "query", "passages", "filename"],
+    )
+    def test_name_field_excluded_from_simple_text_payload(
+        self, model_endpoint, text_name
+    ):
+        """Text.name is internal metadata and must not leak into the API payload.
+
+        Regression test for https://github.com/ai-dynamo/aiperf/issues/769:
+        vLLM with Mistral tokenizer rejects the extra 'name' field.
+        """
+        endpoint = ChatEndpoint(model_endpoint)
+        turn = Turn(
+            texts=[Text(name=text_name, contents=["Hello"])],
+            role="user",
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        payload = endpoint.format_payload(request_info)
+        message = payload["messages"][0]
+        assert "name" not in message
+        assert message["content"] == "Hello"
+        assert message["role"] == "user"
+
+    def test_name_field_excluded_from_multimodal_payload(self, model_endpoint):
+        """Multimodal content-array path also must not include name."""
+        endpoint = ChatEndpoint(model_endpoint)
+        turn = Turn(
+            texts=[Text(name="text", contents=["Hello"])],
+            images=[Image(name="img", contents=["http://example.com/img.png"])],
+            role="user",
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        payload = endpoint.format_payload(request_info)
+        message = payload["messages"][0]
+        assert "name" not in message
+        assert isinstance(message["content"], list)
