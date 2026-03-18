@@ -14,6 +14,7 @@ from aiperf.common.models import (
     RequestInfo,
     RequestRecord,
 )
+from aiperf.common.redact import redact_headers
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 
@@ -169,6 +170,12 @@ class InferenceClient(AIPerfLifecycleMixin):
         if self.is_trace_enabled:
             self.trace(f"Calling inference API for turn: {request_info.turns[-1]}")
         record = await self._send_request_internal(request_info, first_token_callback)
+        # Redact sensitive headers on the request_info now that the transport has
+        # consumed them.  This prevents raw credentials from flowing back through
+        # ZMQ messages (which are TRACE-logged as serialised JSON / repr).
+        request_info.endpoint_headers = (
+            redact_headers(request_info.endpoint_headers) or {}
+        )
         return self._enrich_request_record(record=record, request_info=request_info)
 
     def _enrich_request_record(
@@ -193,7 +200,12 @@ class InferenceClient(AIPerfLifecycleMixin):
                 record.start_perf_ns - request_info.drop_perf_ns
             )
 
-        # Preserve headers set by transport; only use endpoint headers if not set
-        if record.request_headers is None:
-            record.request_headers = request_info.endpoint_headers
+        # Always redact at this boundary to guarantee no raw headers leak downstream,
+        # even if a transport pre-populates record.request_headers.
+        source_headers = (
+            record.request_headers
+            if record.request_headers is not None
+            else request_info.endpoint_headers
+        )
+        record.request_headers = redact_headers(source_headers)
         return record

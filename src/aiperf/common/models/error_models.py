@@ -1,19 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import re
 from typing import Any
 
 from pydantic import Field
 
 from aiperf.common.exceptions import LifecycleOperationError
 from aiperf.common.models.base_models import AIPerfBaseModel
-
-# Pre-compiled regex patterns for credential redaction
-_REDACTIONS = [
-    (re.compile(r"(?i)(authorization:\s*bearer\s+)[^\s,;]+"), r"\1***"),
-    (re.compile(r"(?i)\b(api[-_ ]?key|token|secret)\s*=\s*[^&\s]+"), r"\1=***"),
-    (re.compile(r"(?i)(x-api-key:\s*)[^\s,;]+"), r"\1***"),
-]
+from aiperf.common.redact import redact_string
 
 
 class ErrorDetails(AIPerfBaseModel):
@@ -46,9 +39,7 @@ class ErrorDetails(AIPerfBaseModel):
 
     @staticmethod
     def _safe_repr(value: Any, max_len: int = 4096) -> str:
-        s = repr(value)
-        for pattern, repl in _REDACTIONS:
-            s = pattern.sub(repl, s)
+        s = redact_string(repr(value))
         return s[:max_len] + "…" if len(s) > max_len else s
 
     def __eq__(self, other: Any) -> bool:

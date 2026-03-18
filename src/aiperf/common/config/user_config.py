@@ -84,10 +84,13 @@ class UserConfig(BaseConfig):
     def validate_cli_args(self) -> Self:
         """Set the CLI command based on the command line arguments, if it has not already been set."""
         if not self.cli_command:
+            from aiperf.common.redact import redact_cli_command
+
             args = [coerce_value(x) for x in sys.argv[1:]]
             # Note: Use single quotes to avoid conflicts with double quotes in arguments.
             args = [f"'{x}'" if _should_quote_arg(x) else str(x) for x in args]
-            self.cli_command = " ".join(["aiperf", *args])
+            cmd = " ".join(["aiperf", *args])
+            self.cli_command = redact_cli_command(cmd)
         return self
 
     @model_validator(mode="after")

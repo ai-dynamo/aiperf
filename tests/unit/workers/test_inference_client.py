@@ -16,6 +16,7 @@ from aiperf.common.models.model_endpoint_info import (
     ModelListInfo,
 )
 from aiperf.common.models.record_models import RequestInfo, RequestRecord
+from aiperf.common.redact import REDACTED_VALUE
 from aiperf.plugin.enums import EndpointType, TransportType
 from aiperf.workers.inference_client import InferenceClient, detect_transport_from_url
 
@@ -157,7 +158,7 @@ class TestInferenceClient:
     async def test_send_request_sets_endpoint_headers(
         self, inference_client, model_endpoint, sample_request_info
     ):
-        """Test that send_request sets endpoint_headers on request_info."""
+        """Test that send_request sets endpoint_headers on request_info and redacts after transport."""
         model_endpoint.endpoint.api_key = "test-key"
         model_endpoint.endpoint.headers = [("X-Custom", "value")]
 
@@ -175,8 +176,9 @@ class TestInferenceClient:
 
         await inference_client.send_request(request_info)
 
+        # After send_request, sensitive headers are redacted on request_info
         assert "Authorization" in request_info.endpoint_headers
-        assert request_info.endpoint_headers["Authorization"] == "Bearer test-key"
+        assert request_info.endpoint_headers["Authorization"] == REDACTED_VALUE
         assert request_info.endpoint_headers["X-Custom"] == "value"
 
     @pytest.mark.asyncio

@@ -19,6 +19,7 @@ from aiperf.common.models import (
     RawRecordInfo,
 )
 from aiperf.common.models.record_models import RequestInfo
+from aiperf.common.redact import redact_headers
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -105,7 +106,7 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
             metadata=metadata,
             start_perf_ns=record.request.start_perf_ns,
             payload=payload,
-            request_headers=record.request.request_headers,
+            request_headers=redact_headers(record.request.request_headers),
             response_headers=None,
             status=record.request.status,
             responses=record.request.responses,

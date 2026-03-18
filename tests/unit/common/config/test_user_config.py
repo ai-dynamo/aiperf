@@ -133,16 +133,17 @@ class TestUserConfigSerialization:
             cli_command="test_cli_command",
         )
 
-        # Validate round-trip serialization
+        # Validate round-trip serialization (include_secrets to preserve api_key)
+        ctx = {"include_secrets": True}
         assert (
             UserConfig.model_validate_json(
-                config.model_dump_json(indent=4, exclude_unset=True)
+                config.model_dump_json(indent=4, exclude_unset=True, context=ctx)
             )
             == config
         )
         assert (
             UserConfig.model_validate_json(
-                config.model_dump_json(indent=4, exclude_defaults=True)
+                config.model_dump_json(indent=4, exclude_defaults=True, context=ctx)
             )
             == config
         )

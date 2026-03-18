@@ -23,6 +23,7 @@ from aiperf.common.models import (
     RequestRecord,
     TextResponse,
 )
+from aiperf.common.redact import redact_headers
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import TransportType
 from aiperf.transports.aiohttp_client import AioHttpClient, create_tcp_connector
@@ -304,7 +305,7 @@ class AioHttpTransport(BaseTransport):
                 connector=connector,
                 connector_owner=connector_owner,
             )
-            record.request_headers = headers
+            record.request_headers = redact_headers(headers)
 
             # Release lease for sticky-user-sessions strategy if it's the final turn of the conversation,
             # or the request was cancelled (connection is now dirty/closed), or there was an error.
@@ -331,7 +332,9 @@ class AioHttpTransport(BaseTransport):
             raise
         except Exception as e:
             record = RequestRecord(
-                request_headers=headers or request_info.endpoint_headers,
+                request_headers=redact_headers(
+                    headers or request_info.endpoint_headers
+                ),
                 start_perf_ns=start_perf_ns,
                 end_perf_ns=time.perf_counter_ns(),
                 error=ErrorDetails.from_exception(e),
