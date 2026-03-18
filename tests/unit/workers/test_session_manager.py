@@ -217,15 +217,15 @@ def _make_session(
 
 
 class TestUserSessionContextModeResolution:
-    """Verify context_mode resolves: conversation > dataset default > ACCUMULATE_ALL."""
+    """Verify context_mode resolves: conversation > dataset default > DELTAS_WITHOUT_RESPONSES."""
 
     @pytest.mark.parametrize(
         "conversation_mode,expected",
         [
-            (None, ConversationContextMode.ACCUMULATE_ALL),
-            (ConversationContextMode.ACCUMULATE_ALL, ConversationContextMode.ACCUMULATE_ALL),
-            (ConversationContextMode.DROP_RESPONSES, ConversationContextMode.DROP_RESPONSES),
-            (ConversationContextMode.STANDALONE, ConversationContextMode.STANDALONE),
+            (None, ConversationContextMode.DELTAS_WITHOUT_RESPONSES),
+            (ConversationContextMode.DELTAS_WITHOUT_RESPONSES, ConversationContextMode.DELTAS_WITHOUT_RESPONSES),
+            (ConversationContextMode.DELTAS_WITH_RESPONSES, ConversationContextMode.DELTAS_WITH_RESPONSES),
+            (ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES, ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES),
         ],
     )  # fmt: skip
     def test_context_mode_resolves_correctly(
@@ -239,20 +239,22 @@ class TestUserSessionContextModeResolution:
     def test_dataset_default_used_when_conversation_has_none(self) -> None:
         session = _make_session(
             context_mode=None,
-            default_context_mode=ConversationContextMode.STANDALONE,
+            default_context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
         )
-        assert session.context_mode == ConversationContextMode.STANDALONE
+        assert (
+            session.context_mode == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
 
     def test_conversation_overrides_dataset_default(self) -> None:
         session = _make_session(
-            context_mode=ConversationContextMode.DROP_RESPONSES,
-            default_context_mode=ConversationContextMode.STANDALONE,
+            context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES,
+            default_context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
         )
-        assert session.context_mode == ConversationContextMode.DROP_RESPONSES
+        assert session.context_mode == ConversationContextMode.DELTAS_WITH_RESPONSES
 
     def test_global_default_when_both_none(self) -> None:
         session = _make_session(context_mode=None, default_context_mode=None)
-        assert session.context_mode == ConversationContextMode.ACCUMULATE_ALL
+        assert session.context_mode == ConversationContextMode.DELTAS_WITHOUT_RESPONSES
 
 
 # ============================================================
@@ -266,10 +268,11 @@ class TestUserSessionShouldStoreResponse:
     @pytest.mark.parametrize(
         "mode,expected",
         [
-            (ConversationContextMode.ACCUMULATE_ALL, True),
-            (ConversationContextMode.DROP_RESPONSES, False),
-            (ConversationContextMode.STANDALONE, False),
-            param(None, True, id="default-accumulate-all"),
+            (ConversationContextMode.DELTAS_WITHOUT_RESPONSES, True),
+            (ConversationContextMode.DELTAS_WITH_RESPONSES, False),
+            (ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES, False),
+            (ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES, True),
+            param(None, True, id="default-deltas-without-responses"),
         ],
     )  # fmt: skip
     def test_should_store_response_per_mode(
@@ -287,8 +290,10 @@ class TestUserSessionShouldStoreResponse:
 class TestUserSessionTurnList:
     """Verify turn_list contains correct turns based on context mode."""
 
-    def test_accumulate_all_returns_full_history(self) -> None:
-        session = _make_session(context_mode=ConversationContextMode.ACCUMULATE_ALL)
+    def test_deltas_without_responses_returns_full_history(self) -> None:
+        session = _make_session(
+            context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES
+        )
         session.advance_turn(0)
         session.store_response(Turn(messages=[{"role": "assistant", "content": "A0"}]))
         session.advance_turn(1)
@@ -299,8 +304,10 @@ class TestUserSessionTurnList:
         assert turns[1].messages[0]["content"] == "A0"
         assert turns[2].messages[0]["content"] == "Q1"
 
-    def test_drop_responses_returns_full_history(self) -> None:
-        session = _make_session(context_mode=ConversationContextMode.DROP_RESPONSES)
+    def test_deltas_with_responses_returns_dataset_turns_only(self) -> None:
+        session = _make_session(
+            context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES
+        )
         session.advance_turn(0)
         session.advance_turn(1)
 
@@ -309,8 +316,10 @@ class TestUserSessionTurnList:
         assert turns[0].messages[0]["content"] == "Q0"
         assert turns[1].messages[0]["content"] == "Q1"
 
-    def test_standalone_returns_only_last(self) -> None:
-        session = _make_session(context_mode=ConversationContextMode.STANDALONE)
+    def test_message_array_returns_only_last(self) -> None:
+        session = _make_session(
+            context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
         session.advance_turn(0)
         session.advance_turn(1)
         session.advance_turn(2)
@@ -319,9 +328,10 @@ class TestUserSessionTurnList:
         assert len(turns) == 1
         assert turns[0].messages[0]["content"] == "Q2"
 
-    def test_standalone_single_turn(self) -> None:
+    def test_message_array_single_turn(self) -> None:
         session = _make_session(
-            context_mode=ConversationContextMode.STANDALONE, num_turns=1
+            context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+            num_turns=1,
         )
         session.advance_turn(0)
 
@@ -347,9 +357,11 @@ class TestUserSessionTurnList:
 class TestUserSessionContextModeWorkflow:
     """Verify the full workflow of context mode with store_response gating."""
 
-    def test_accumulate_all_stores_responses_and_sends_full_history(self) -> None:
+    def test_deltas_without_responses_stores_responses_and_sends_full_history(
+        self,
+    ) -> None:
         session = _make_session(
-            context_mode=ConversationContextMode.ACCUMULATE_ALL, num_turns=2
+            context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES, num_turns=2
         )
         session.advance_turn(0)
         assert session.should_store_response() is True
@@ -358,9 +370,11 @@ class TestUserSessionContextModeWorkflow:
 
         assert len(session.turn_list) == 3
 
-    def test_drop_responses_skips_responses_sends_user_turns_only(self) -> None:
+    def test_deltas_with_responses_skips_live_responses_sends_dataset_turns(
+        self,
+    ) -> None:
         session = _make_session(
-            context_mode=ConversationContextMode.DROP_RESPONSES, num_turns=2
+            context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES, num_turns=2
         )
         session.advance_turn(0)
         assert session.should_store_response() is False
@@ -371,9 +385,10 @@ class TestUserSessionContextModeWorkflow:
         assert len(turns) == 2
         assert all(t.messages[0]["role"] == "user" for t in turns)
 
-    def test_standalone_skips_responses_sends_only_current_turn(self) -> None:
+    def test_message_array_skips_responses_sends_only_current_turn(self) -> None:
         session = _make_session(
-            context_mode=ConversationContextMode.STANDALONE, num_turns=2
+            context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+            num_turns=2,
         )
         session.advance_turn(0)
         assert session.should_store_response() is False

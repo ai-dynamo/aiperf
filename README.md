@@ -145,7 +145,6 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Reproducibility](docs/reproducibility.md) - Deterministic datasets with `--random-seed`
 - [Template Endpoint](docs/tutorials/template-endpoint.md) - Custom Jinja2 request templates
 - [Multi-Turn Conversations](docs/tutorials/multi-turn.md) - Multi-turn conversation benchmarking
-- [Conversation Context Mode](docs/tutorials/conversation-context-mode.md) - Control how conversation history accumulates
 - [Local Tokenizer](docs/tutorials/local-tokenizer.md) - Use local tokenizers without HuggingFace
 
 ### Endpoint Types
@@ -181,6 +180,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 | [Benchmark Modes](docs/benchmark_modes/trace_replay.md) | Trace replay and timing modes |
 | [Server Metrics](docs/server_metrics/server-metrics.md) | Prometheus-compatible server metrics collection |
 | [Tokenizer Auto-Detection](docs/reference/tokenizer-auto-detection.md) | Pre-flight tokenizer detection |
+| [Conversation Context Mode](docs/reference/conversation-context-mode.md) | How conversation history accumulates in multi-turn |
 | [Dataset Synthesis API](docs/api/synthesis.md) | Synthesis module API reference |
 | [Code Patterns](docs/dev/patterns.md) | Code examples for services, models, messages, plugins |
 | [Migrating from Genai-Perf](docs/migrating.md) | Migration guide and feature comparison |

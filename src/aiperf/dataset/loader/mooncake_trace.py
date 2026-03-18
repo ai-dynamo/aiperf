@@ -76,10 +76,10 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
     def _infer_context_mode(
         self, traces: list[MooncakeTrace]
     ) -> ConversationContextMode | None:
-        """Auto-detect STANDALONE when all traces use pre-built messages."""
+        """Auto-detect MESSAGE_ARRAY_WITH_RESPONSES when all traces use pre-built messages."""
         raw_msg_trace_count = sum(1 for trace in traces if trace.messages is not None)
         if raw_msg_trace_count == len(traces):
-            return ConversationContextMode.STANDALONE
+            return ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
         if raw_msg_trace_count > 0:
             raise ValueError(
                 "Mixed Mooncake sessions with both raw `messages` and synthesized prompts are unsupported."

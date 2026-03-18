@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from aiperf.common.config import UserConfig
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
@@ -54,6 +55,12 @@ class CustomDatasetComposer(BaseDatasetComposer):
         # Finalize conversation-level context prompts
         self._finalize_conversations(conversations)
         return conversations
+
+    def get_default_context_mode(self) -> ConversationContextMode | None:
+        """Delegate to the loader's format-specific default, if a loader was created."""
+        if self.loader is not None:
+            return self.loader.get_default_context_mode()
+        return None
 
     def _infer_dataset_type(self, file_path: str) -> CustomDatasetType:
         """Infer the custom dataset type from the input file.

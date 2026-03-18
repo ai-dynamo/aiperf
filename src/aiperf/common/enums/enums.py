@@ -99,18 +99,30 @@ class CommandResponseStatus(CaseInsensitiveStrEnum):
 class ConversationContextMode(CaseInsensitiveStrEnum):
     """Controls how prior turns are accumulated in multi-turn conversations.
 
-    The context mode is a property of how the dataset was constructed.
-    It determines what conversation history is included in each request.
+    Two dimensions determine behavior:
+
+    - **Turn format**: ``DELTAS`` (incremental per-turn content) vs
+      ``MESSAGE_ARRAY`` (each turn carries its complete message list).
+    - **Response inclusion**: ``WITH_RESPONSES`` (pre-canned assistant turns
+      are present in the dataset) vs ``WITHOUT_RESPONSES`` (only user content;
+      live inference responses are captured at runtime).
     """
 
-    ACCUMULATE_ALL = "accumulate_all"
-    """Standard multi-turn chat. Both user and assistant turns are kept in history."""
+    DELTAS_WITHOUT_RESPONSES = "deltas_without_responses"
+    """Standard multi-turn chat. Each dataset turn is a user-only delta.
+    AIPerf accumulates turns and threads live inference responses into the history."""
 
-    DROP_RESPONSES = "drop_responses"
-    """Delta-compressed prompts. Dataset turns accumulate but live inference responses are discarded."""
+    DELTAS_WITH_RESPONSES = "deltas_with_responses"
+    """Delta-compressed prompts. Each dataset turn is a delta that may include
+    pre-canned assistant responses. AIPerf accumulates but discards live responses."""
 
-    STANDALONE = "standalone"
-    """Self-contained prompts. Each turn already has full context; no prior turns included."""
+    MESSAGE_ARRAY_WITH_RESPONSES = "message_array_with_responses"
+    """Self-contained prompts. Each turn carries a complete message array (including
+    assistant responses) and is sent as-is. Default for Mooncake traces with
+    pre-built ``messages`` arrays."""
+
+    MESSAGE_ARRAY_WITHOUT_RESPONSES = "message_array_without_responses"
+    """Reserved. Each turn carries a complete user-only message array. Not yet implemented."""
 
 
 class ConnectionReuseStrategy(CaseInsensitiveStrEnum):

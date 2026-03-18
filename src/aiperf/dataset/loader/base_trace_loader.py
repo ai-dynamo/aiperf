@@ -222,7 +222,7 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         """Infer context_mode from trace data when not explicitly set.
 
         Override in subclasses to auto-detect based on trace content.
-        Default returns None (falls through to global ACCUMULATE_ALL default).
+        Default returns None (falls through to global DELTAS_WITHOUT_RESPONSES default).
         """
         return None
 

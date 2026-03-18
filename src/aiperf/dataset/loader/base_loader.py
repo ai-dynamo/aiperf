@@ -37,7 +37,7 @@ class BaseLoader(AIPerfLoggerMixin, ABC):
         """Dataset-level default context mode for conversations without an explicit one.
 
         Override in subclasses when the dataset format implies a specific mode.
-        Returns None to fall through to the global ACCUMULATE_ALL default.
+        Returns None to fall through to the global DELTAS_WITHOUT_RESPONSES default.
         """
         return None
 

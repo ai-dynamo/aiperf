@@ -1,16 +1,23 @@
-<!--
+---
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+sidebar-title: Conversation Context Mode
+---
+
 # Conversation Context Mode
 
 Conversation context mode controls how prior turns are accumulated when building multi-turn chat requests. Different dataset formats imply different accumulation strategies, and AIPerf automatically selects the right one based on your data.
 
+Two dimensions determine the mode:
+
+- **Turn format**: `DELTAS` (incremental per-turn content) vs `MESSAGE_ARRAY` (each turn carries its complete message list)
+- **Response inclusion**: `WITH_RESPONSES` (pre-canned assistant turns in dataset) vs `WITHOUT_RESPONSES` (only user content; live responses captured at runtime)
+
 ## Modes
 
-### `accumulate_all`
+### `deltas_without_responses`
 
-Standard multi-turn chat. The live inference response is stored and included in subsequent requests.
+Standard multi-turn chat. Each dataset turn is a user-only delta. AIPerf accumulates turns and threads live inference responses into the history.
 
 **Dataset:**
 ```
@@ -37,7 +44,7 @@ Default for:
 - ShareGPT
 - Mooncake traces with `hash_ids`
 
-### `drop_responses`
+### `deltas_with_responses`
 
 Delta-compressed prompts. Each dataset turn only contains the *new* messages since the previous turn. AIPerf accumulates these deltas to reconstruct the full conversation. The live inference response is only used for measurement and discarded -- the pre-canned assistant responses in the dataset are used instead.
 
@@ -63,9 +70,9 @@ Request 3: [User "What is ML?"] + [Assistant "ML is...", User "Give an example"]
 Default for:
 - N/A (no built-in loader defaults to this mode yet)
 
-### `standalone`
+### `message_array_with_responses`
 
-Self-contained prompts. Each turn already contains its full context. No session accumulation.
+Self-contained prompts. Each turn already contains its full context (including assistant responses). No session accumulation.
 
 **Dataset:**
 ```
@@ -86,12 +93,16 @@ Each turn is sent exactly as it appears in the dataset.
 Default for:
 - Mooncake traces with pre-built `messages` arrays
 
+### `message_array_without_responses`
+
+Reserved for future use. Each turn would carry a complete user-only message array. Not yet implemented.
+
 ## How It Works
 
 Context mode is resolved through a priority chain:
 
 1. **Per-conversation override** -- A conversation in the dataset can specify its own `context_mode`
 2. **Loader default** -- The dataset loader can declare a default based on dataset format semantics
-3. **Global fallback** -- `accumulate_all`
+3. **Global fallback** -- `deltas_without_responses`
 
 This means most users never need to think about context mode. The loader picks the right default, and individual conversations can override it when needed.

@@ -38,9 +38,9 @@ class UserSession(AIPerfBaseModel):
         default=0, ge=0, description="The index of the current turn in the conversation"
     )
     context_mode: ConversationContextMode = Field(
-        default=ConversationContextMode.ACCUMULATE_ALL,
+        default=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
         description="Resolved context mode for this session. "
-        "Set at creation from conversation-level override, dataset default, or ACCUMULATE_ALL.",
+        "Set at creation from conversation-level override, dataset default, or DELTAS_WITHOUT_RESPONSES.",
     )
 
     def advance_turn(self, turn_index: int) -> Turn:
@@ -61,7 +61,10 @@ class UserSession(AIPerfBaseModel):
             )
 
         turn = self.conversation.turns[turn_index]
-        if self.context_mode == ConversationContextMode.STANDALONE:
+        if self.context_mode in (
+            ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+            ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES,
+        ):
             self.turn_list = [turn]
         else:
             self.turn_list.append(turn)
@@ -69,8 +72,15 @@ class UserSession(AIPerfBaseModel):
         return turn
 
     def should_store_response(self) -> bool:
-        """Whether assistant responses should be stored based on context mode."""
-        return self.context_mode == ConversationContextMode.ACCUMULATE_ALL
+        """Whether assistant responses should be stored based on context mode.
+
+        Responses are stored when the dataset does not include them (WITHOUT_RESPONSES),
+        so AIPerf must capture them live.
+        """
+        return self.context_mode in (
+            ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+            ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES,
+        )
 
     def store_response(self, response_turn: Turn) -> None:
         """
@@ -121,7 +131,7 @@ class UserSessionManager:
         context_mode = (
             conversation.context_mode
             or self._default_context_mode
-            or ConversationContextMode.ACCUMULATE_ALL
+            or ConversationContextMode.DELTAS_WITHOUT_RESPONSES
         )
         user_session = UserSession(
             x_correlation_id=x_correlation_id,

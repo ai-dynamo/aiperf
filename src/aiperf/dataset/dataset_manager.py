@@ -295,11 +295,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
         conversations = composer.create_dataset()
-        self._default_context_mode = (
-            composer.loader.get_default_context_mode()
-            if composer.loader is not None
-            else None
-        )
+        self._default_context_mode = composer.get_default_context_mode()
         return conversations
 
     def _is_rankings_endpoint(self, endpoint_type: str) -> bool:
@@ -315,7 +311,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         ComposerClass = plugins.get_class(PluginType.DATASET_COMPOSER, composer_type)
         composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
-        return composer.create_dataset()
+        conversations = composer.create_dataset()
+        self._default_context_mode = composer.get_default_context_mode()
+        return conversations
 
     async def _configure_dataset(self) -> None:
         if self.user_config is None:

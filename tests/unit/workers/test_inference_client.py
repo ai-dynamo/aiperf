@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pytest import param
 
-from aiperf.common.enums import ModelSelectionStrategy
+from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
+from aiperf.common.models.dataset_models import Text, Turn
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -225,13 +226,10 @@ class TestInferenceClient:
     def test_enrich_request_record_uses_last_turn_model(self, inference_client):
         """Test _enrich_request_record uses turns[-1] not turns[turn_index].
 
-        In STANDALONE mode, turn_list has only 1 element but turn_index
-        reflects the actual conversation position (e.g. 3). Using
-        turns[turn_index] would raise IndexError.
+        In MESSAGE_ARRAY_WITH_RESPONSES mode, turn_list has only 1 element
+        but turn_index reflects the actual conversation position (e.g. 3).
+        Using turns[turn_index] would raise IndexError.
         """
-        from aiperf.common.enums import CreditPhase
-        from aiperf.common.models.dataset_models import Text, Turn
-
         turn = Turn(
             texts=[Text(contents=["standalone turn"])],
             role="user",

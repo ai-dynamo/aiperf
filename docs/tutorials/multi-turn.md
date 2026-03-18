@@ -443,5 +443,5 @@ The delays between turns are controlled by:
 - Use `--random-seed` for reproducible conversation patterns
 
 **See also:**
-- [Conversation Context Mode](conversation-context-mode.md) — Control how conversation history accumulates (delta-compressed, standalone, etc.)
+- [Conversation Context Mode](../reference/conversation-context-mode.md) — Control how conversation history accumulates (deltas vs message arrays, with or without pre-canned responses)
 
