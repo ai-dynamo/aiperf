@@ -89,3 +89,4 @@ aiperf profile \
 - [Fixed Schedule](fixed-schedule.md) - Precise timestamp-based execution for any dataset
 - [Prefix Synthesis](prefix-synthesis.md) - KV cache testing with hash-based prefix data
 - [Multi-Turn Conversations](multi-turn.md) - Multi-turn conversation benchmarking
+- [Conversation Context Mode](../reference/conversation-context-mode.md) - How conversation history accumulates in multi-turn

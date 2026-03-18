@@ -14,6 +14,7 @@ from aiperf.common.config import (
     SynthesisConfig,
     UserConfig,
 )
+from aiperf.common.enums import ConversationContextMode
 from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 from aiperf.plugin.enums import CustomDatasetType
@@ -496,6 +497,92 @@ class TestMooncakeTraceDatasetLoader:
         assert conversation.turns[0].max_tokens == 10
         assert conversation.turns[1].raw_messages == messages_turn2
         assert conversation.turns[1].max_tokens == 20
+
+    def test_infer_context_mode_all_messages_returns_message_array(
+        self, mock_prompt_generator, default_user_config
+    ) -> None:
+        """All traces with pre-built messages infer MESSAGE_ARRAY_WITH_RESPONSES."""
+        traces = [
+            MooncakeTrace(
+                messages=[{"role": "user", "content": "Hello"}],
+                output_length=10,
+                timestamp=1000,
+            ),
+            MooncakeTrace(
+                messages=[{"role": "user", "content": "Hi"}],
+                output_length=20,
+                timestamp=2000,
+            ),
+        ]
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        assert (
+            loader._infer_context_mode(traces)
+            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
+
+    def test_infer_context_mode_no_messages_returns_none(
+        self, mock_prompt_generator, default_user_config
+    ) -> None:
+        """Traces without messages fall through to the global default."""
+        traces = [
+            MooncakeTrace(input_length=100, hash_ids=[1, 2], timestamp=1000),
+            MooncakeTrace(input_length=200, hash_ids=[3, 4], timestamp=2000),
+        ]
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        assert loader._infer_context_mode(traces) is None
+
+    def test_convert_to_conversations_messages_sets_context_mode(
+        self, mock_prompt_generator, default_user_config
+    ) -> None:
+        """Conversations built from all-messages traces have context_mode set."""
+        trace_data = {
+            "session1": [
+                MooncakeTrace(
+                    messages=[{"role": "user", "content": "Hello"}],
+                    output_length=10,
+                    timestamp=1000,
+                ),
+            ]
+        }
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        conversations = loader.convert_to_conversations(trace_data)
+        assert (
+            conversations[0].context_mode
+            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
+
+    def test_infer_context_mode_mixed_messages_raises(
+        self, mock_prompt_generator, default_user_config
+    ):
+        """Test that mixed sessions with both messages and synthesized prompts raise."""
+        traces = [
+            MooncakeTrace(
+                messages=[{"role": "user", "content": "Hello"}],
+                output_length=10,
+                timestamp=1000,
+            ),
+            MooncakeTrace(input_length=100, hash_ids=[1, 2], timestamp=2000),
+        ]
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        with pytest.raises(ValueError, match="Mixed Mooncake sessions"):
+            loader._infer_context_mode(traces)
 
     def test_convert_to_conversations_messages_with_tools(
         self, mock_prompt_generator, default_user_config

@@ -4,6 +4,7 @@
 from abc import ABC, abstractmethod
 
 from aiperf.common.config.user_config import UserConfig
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation
 from aiperf.common.session_id_generator import SessionIDGenerator
@@ -30,6 +31,15 @@ class BaseLoader(AIPerfLoggerMixin, ABC):
         self.session_id_generator = SessionIDGenerator(
             seed=user_config.input.random_seed
         )
+
+    @classmethod
+    def get_default_context_mode(cls) -> ConversationContextMode | None:
+        """Dataset-level default context mode for conversations without an explicit one.
+
+        Override in subclasses when the dataset format implies a specific mode.
+        Returns None to fall through to the global DELTAS_WITHOUT_RESPONSES default.
+        """
+        return None
 
     @abstractmethod
     def load_dataset(self) -> dict[str, list[CustomDatasetT]]: ...
