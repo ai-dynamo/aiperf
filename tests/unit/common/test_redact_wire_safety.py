@@ -213,11 +213,11 @@ class TestInferenceClientWireHeaders:
         )
         await client.initialize()
 
-        captured_request_info = None
+        captured_headers = None
 
         async def fake_send(ri, payload, **kw):
-            nonlocal captured_request_info
-            captured_request_info = ri
+            nonlocal captured_headers
+            captured_headers = dict(ri.endpoint_headers)
             return RequestRecord()
 
         client.transport = MagicMock()
@@ -226,8 +226,8 @@ class TestInferenceClientWireHeaders:
         request_info.turns = [Turn(prompt="hello")]
         await client.send_request(request_info)
 
-        assert captured_request_info is not None
-        assert captured_request_info.endpoint_headers["Authorization"] == BEARER
+        assert captured_headers is not None
+        assert captured_headers["Authorization"] == BEARER
 
     @pytest.mark.asyncio
     async def test_record_headers_redacted_after_enrichment(
