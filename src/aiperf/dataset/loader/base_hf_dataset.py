@@ -21,7 +21,7 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         hf_split: str = "train",
         hf_subset: str | None = None,
         **kwargs,
-    ):
+    ) -> None:
         self.hf_dataset_name = hf_dataset_name
         self.hf_split = hf_split
         self.hf_subset = hf_subset
@@ -36,6 +36,8 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
             dataset = await asyncio.get_event_loop().run_in_executor(
                 None, self._load_hf_dataset
             )
+        except DatasetLoaderError:
+            raise
         except Exception as e:
             raise DatasetLoaderError(
                 f"Failed to load HuggingFace dataset '{self.hf_dataset_name}': {e}"

@@ -55,7 +55,7 @@ class TestBaseHFDatasetLoader:
     async def test_load_hf_dataset_raises_when_datasets_not_installed(self, loader):
         with (
             patch.dict("sys.modules", {"datasets": None}),
-            pytest.raises(DatasetLoaderError, match="datasets.*package"),
+            pytest.raises(DatasetLoaderError, match=r"datasets.*package"),
         ):
             loader._load_hf_dataset()
 
