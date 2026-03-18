@@ -34,17 +34,6 @@ curl -s localhost:8000/v1/chat/completions \
 
 ---
 
-## Install HuggingFace Dependency
-
-The AIMO dataset is loaded via the HuggingFace `datasets` library, which is an optional
-dependency:
-
-```bash
-uv sync --extra hf
-```
-
----
-
 ## Profile with AIMO Dataset
 
 AIPerf loads the AIMO dataset from HuggingFace and uses each problem as a single-turn prompt.

@@ -52,13 +52,6 @@ class TestBaseHFDatasetLoader:
         )
         assert loader.hf_subset == "subset-a"
 
-    async def test_load_hf_dataset_raises_when_datasets_not_installed(self, loader):
-        with (
-            patch.dict("sys.modules", {"datasets": None}),
-            pytest.raises(DatasetLoaderError, match=r"datasets.*package"),
-        ):
-            loader._load_hf_dataset()
-
     async def test_load_dataset_wraps_error_in_dataset_loader_error(self, loader):
         with (
             patch.object(
@@ -85,9 +78,8 @@ class TestBaseHFDatasetLoader:
             prompt_column="q",
         )
         mock_load_dataset = MagicMock(return_value=[])
-        with patch.dict(
-            "sys.modules",
-            {"datasets": MagicMock(load_dataset=mock_load_dataset)},
+        with patch(
+            "aiperf.dataset.loader.base_hf_dataset.hf_load_dataset", mock_load_dataset
         ):
             loader._load_hf_dataset()
 

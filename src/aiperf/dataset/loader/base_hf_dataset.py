@@ -2,7 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+from abc import abstractmethod
 from typing import Any
+
+from datasets import load_dataset as hf_load_dataset
 
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.exceptions import DatasetLoaderError
@@ -33,11 +36,9 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
             f"Loading HuggingFace dataset '{self.hf_dataset_name}' (split={self.hf_split})"
         )
         try:
-            dataset = await asyncio.get_event_loop().run_in_executor(
+            dataset = await asyncio.get_running_loop().run_in_executor(
                 None, self._load_hf_dataset
             )
-        except DatasetLoaderError:
-            raise
         except Exception as e:
             raise DatasetLoaderError(
                 f"Failed to load HuggingFace dataset '{self.hf_dataset_name}': {e}"
@@ -45,27 +46,17 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         return {"dataset": dataset}
 
     def _load_hf_dataset(self) -> Any:
-        try:
-            from datasets import load_dataset  # type: ignore[import]
-        except ImportError as e:
-            raise DatasetLoaderError(
-                "The 'datasets' package is required for HuggingFace dataset loaders. "
-                "Install it with: uv sync --extra hf"
-            ) from e
-
-        return load_dataset(
+        return hf_load_dataset(
             self.hf_dataset_name,
             name=self.hf_subset,
             split=self.hf_split,
             trust_remote_code=False,
         )
 
+    @abstractmethod
     async def convert_to_conversations(
         self, data: dict[str, Any]
-    ) -> list[Conversation]:
-        raise NotImplementedError(
-            "Subclasses must implement convert_to_conversations()"
-        )
+    ) -> list[Conversation]: ...
 
     @classmethod
     def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
