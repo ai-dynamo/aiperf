@@ -192,7 +192,8 @@ class InferenceClient(AIPerfLifecycleMixin):
                 record.start_perf_ns - request_info.drop_perf_ns
             )
 
-        # Preserve headers set by transport; only use endpoint headers if not set
-        if record.request_headers is None:
-            record.request_headers = redact_headers(request_info.endpoint_headers)
+        # Always redact at this boundary to guarantee no raw headers leak downstream,
+        # even if a transport pre-populates record.request_headers.
+        source_headers = record.request_headers or request_info.endpoint_headers
+        record.request_headers = redact_headers(source_headers)
         return record

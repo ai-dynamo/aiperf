@@ -101,7 +101,7 @@ class TestRedactHeaders:
 # =============================================================================
 
 _REDACT_STRING_CASES = [
-    # Bearer token patterns
+    # ── Bearer token: plain text ──
     param(
         "Authorization: Bearer sk-secret-key",
         ["sk-secret-key"],
@@ -113,20 +113,106 @@ _REDACT_STRING_CASES = [
         id="bearer-case-insensitive",
     ),
     param(
+        "AUTHORIZATION: BEARER UPPER_TOKEN",
+        ["UPPER_TOKEN"],
+        id="bearer-all-upper",
+    ),
+    param(
+        "Authorization:Bearer no-space-after-colon",
+        ["no-space-after-colon"],
+        id="bearer-no-space-after-colon",
+    ),
+    # ── Bearer token: JSON-serialized ──
+    param(
         '"Authorization":"Bearer sk-secret-json-key"',
         ["sk-secret-json-key"],
         id="bearer-json-serialized",
     ),
-    # Query-string style key=value
     param(
-        "api_key=supersecret&other=value",
-        ["supersecret"],
-        id="api-key-equals",
+        '"authorization":"bearer json-lower"',
+        ["json-lower"],
+        id="bearer-json-lowercase",
     ),
-    param("api-key=my-secret", ["my-secret"], id="api-hyphen-key-equals"),
-    param("token=abc123", ["abc123"], id="token-equals"),
-    param("secret=xyzzy", ["xyzzy"], id="secret-equals"),
-    # X-API-Key header
+    # ── Bearer token: Python repr ──
+    param(
+        "'Authorization': 'Bearer sk-repr-key'",
+        ["sk-repr-key"],
+        id="bearer-python-repr",
+    ),
+    # ── Basic auth ──
+    param(
+        "Authorization: Basic dXNlcjpwYXNz",
+        ["dXNlcjpwYXNz"],
+        id="auth-basic-plain",
+    ),
+    param(
+        '"Authorization":"Basic dXNlcjpwYXNzSlNPTg=="',
+        ["dXNlcjpwYXNzSlNPTg=="],
+        id="auth-basic-json",
+    ),
+    param(
+        "authorization: basic lower-basic-token",
+        ["lower-basic-token"],
+        id="auth-basic-lowercase",
+    ),
+    # ── Proxy-Authorization: Bearer ──
+    param(
+        "Proxy-Authorization: Bearer proxy-secret-key",
+        ["proxy-secret-key"],
+        id="proxy-auth-bearer-plain",
+    ),
+    param(
+        '"Proxy-Authorization":"Bearer proxy-json-key"',
+        ["proxy-json-key"],
+        id="proxy-auth-bearer-json",
+    ),
+    param(
+        "'Proxy-Authorization': 'Bearer proxy-repr-key'",
+        ["proxy-repr-key"],
+        id="proxy-auth-bearer-repr",
+    ),
+    # ── Proxy-Authorization: Basic ──
+    param(
+        "proxy-authorization: basic dXNlcjpwYXNz",
+        ["dXNlcjpwYXNz"],
+        id="proxy-auth-basic-plain",
+    ),
+    param(
+        '"proxy-authorization":"basic proxy-basic-json"',
+        ["proxy-basic-json"],
+        id="proxy-auth-basic-json",
+    ),
+    # ── SigV4 Authorization (multi-token) ──
+    param(
+        "Authorization: AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=fe5f80f77d5fa3beca038a248ff027d0445342fe2855dfe1e8aa344f27c0d3bb",
+        [
+            "AKIAIOSFODNN7EXAMPLE",
+            "fe5f80f77d5fa3beca038a248ff027d0445342fe2855dfe1e8aa344f27c0d3bb",
+        ],
+        id="sigv4-plain-text",
+    ),
+    param(
+        '"Authorization":"AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=abcdef1234567890"',
+        ["AKIAIOSFODNN7EXAMPLE", "abcdef1234567890"],
+        id="sigv4-json-serialized",
+    ),
+    param(
+        "'Authorization': 'AWS4-HMAC-SHA256 Credential=ASIAEXAMPLE/20260318/us-west-2/bedrock/aws4_request, Signature=deadbeef'",
+        ["ASIAEXAMPLE", "deadbeef"],
+        id="sigv4-python-repr",
+    ),
+    # ── Authorization: opaque token (no scheme keyword) ──
+    param(
+        "Authorization: nvapi-opaque-token-no-bearer",
+        ["nvapi-opaque-token-no-bearer"],
+        id="auth-opaque-no-scheme",
+    ),
+    param(
+        '"Authorization":"raw-opaque-token"',
+        ["raw-opaque-token"],
+        id="auth-opaque-json",
+    ),
+    # ── x-api-key: plain, JSON, repr ──
     param(
         "X-API-Key: nvapi-my-secret-key",
         ["nvapi-my-secret-key"],
@@ -137,18 +223,149 @@ _REDACT_STRING_CASES = [
         ["nvapi-json-secret"],
         id="x-api-key-json",
     ),
-    # ZMQ trace message
+    param(
+        "'x-api-key': 'repr-api-key'",
+        ["repr-api-key"],
+        id="x-api-key-repr",
+    ),
+    param(
+        "x-api-key: lowercase-key",
+        ["lowercase-key"],
+        id="x-api-key-lowercase",
+    ),
+    # ── api-key (Azure OpenAI): plain, JSON ──
+    param(
+        "api-key: azure-openai-key-123",
+        ["azure-openai-key-123"],
+        id="api-key-header-plain",
+    ),
+    param(
+        '"api-key":"azure-json-key"',
+        ["azure-json-key"],
+        id="api-key-header-json",
+    ),
+    param(
+        "API-Key: Mixed-Case-Azure-Key",
+        ["Mixed-Case-Azure-Key"],
+        id="api-key-header-mixed-case",
+    ),
+    # ── ocp-apim-subscription-key: plain, JSON ──
+    param(
+        "Ocp-Apim-Subscription-Key: sub-key-abc",
+        ["sub-key-abc"],
+        id="azure-apim-plain",
+    ),
+    param(
+        '"ocp-apim-subscription-key":"sub-json-key"',
+        ["sub-json-key"],
+        id="azure-apim-json",
+    ),
+    # ── x-goog-api-key: plain, JSON ──
+    param(
+        "X-Goog-Api-Key: AIzaSy-google-key",
+        ["AIzaSy-google-key"],
+        id="google-api-key-plain",
+    ),
+    param(
+        '"x-goog-api-key":"google-json-key"',
+        ["google-json-key"],
+        id="google-api-key-json",
+    ),
+    # ── x-functions-key: plain, JSON ──
+    param(
+        "X-Functions-Key: azure-func-key-xyz",
+        ["azure-func-key-xyz"],
+        id="azure-functions-key-plain",
+    ),
+    param(
+        '"x-functions-key":"func-json-key"',
+        ["func-json-key"],
+        id="azure-functions-key-json",
+    ),
+    # ── aeg-sas-key: plain, JSON ──
+    param(
+        "Aeg-Sas-Key: sas-token-abc123",
+        ["sas-token-abc123"],
+        id="azure-event-grid-plain",
+    ),
+    param(
+        '"aeg-sas-key":"sas-json-key"',
+        ["sas-json-key"],
+        id="azure-event-grid-json",
+    ),
+    # ── x-amz-security-token: plain, JSON ──
+    param(
+        "X-Amz-Security-Token: FwoGZX-aws-token",
+        ["FwoGZX-aws-token"],
+        id="aws-security-token-plain",
+    ),
+    param(
+        '"x-amz-security-token":"FwoGZX-aws-json-token"',
+        ["FwoGZX-aws-json-token"],
+        id="aws-security-token-json",
+    ),
+    # ── Query-string style key=value ──
+    param(
+        "api_key=supersecret&other=value",
+        ["supersecret"],
+        id="api-key-equals",
+    ),
+    param("api-key=my-secret", ["my-secret"], id="api-hyphen-key-equals"),
+    param("api key=space-key", ["space-key"], id="api-space-key-equals"),
+    param("token=abc123", ["abc123"], id="token-equals"),
+    param("secret=xyzzy", ["xyzzy"], id="secret-equals"),
+    param("TOKEN=UPPER_TOKEN", ["UPPER_TOKEN"], id="token-equals-upper"),
+    param("SECRET=UPPER_SECRET", ["UPPER_SECRET"], id="secret-equals-upper"),
+    param("Api_Key=mixed_case", ["mixed_case"], id="api-key-equals-mixed-case"),
+    # ── ZMQ trace messages ──
     param(
         'b\'{"endpoint_headers":{"Authorization":"Bearer sk-zmq-leak-123",'
         '"Content-Type":"application/json"}}\'',
         ["sk-zmq-leak-123"],
-        id="zmq-trace-message",
+        id="zmq-trace-bearer",
     ),
-    # Multiple patterns in one string
+    param(
+        'b\'{"endpoint_headers":{"X-API-Key":"nvapi-zmq-key",'
+        '"Content-Type":"application/json"}}\'',
+        ["nvapi-zmq-key"],
+        id="zmq-trace-x-api-key",
+    ),
+    param(
+        'b\'{"endpoint_headers":{"Authorization":"AWS4-HMAC-SHA256 Credential=AKIA123/date/region/svc/aws4_request, Signature=abc123"}}\'',
+        ["AKIA123", "abc123"],
+        id="zmq-trace-sigv4",
+    ),
+    # ── Exception-style messages ──
+    param(
+        "ClientError: 401 Unauthorized, headers={'Authorization': 'Bearer sk-leaked'}",
+        ["sk-leaked"],
+        id="exception-with-bearer",
+    ),
+    param(
+        "ConnectionError: host=api.openai.com, api-key: sk-conn-err-key",
+        ["sk-conn-err-key"],
+        id="exception-with-api-key-header",
+    ),
+    param(
+        "aiohttp.ClientResponseError: 403, headers: {api-key: forbidden-key-123}",
+        ["forbidden-key-123"],
+        id="exception-with-api-key-in-braces",
+    ),
+    # ── Multiple patterns in one string ──
     param(
         "Authorization: Bearer tok123, api_key=secret456, X-API-Key: key789",
         ["tok123", "secret456", "key789"],
-        id="multiple-patterns",
+        id="multiple-patterns-mixed",
+    ),
+    param(
+        "Proxy-Authorization: Basic proxy-basic, api-key: azure-key-leak, secret=s3cr3t",
+        ["proxy-basic", "azure-key-leak", "s3cr3t"],
+        id="multiple-patterns-proxy-plus-headers",
+    ),
+    param(
+        '"Authorization":"Bearer j1","X-API-Key":"j2","api-key":"j3"',
+        ["j1", "j2", "j3"],
+        id="multiple-patterns-all-json",
     ),
 ]
 
@@ -156,6 +373,20 @@ _REDACT_STRING_PRESERVE_CASES = [
     param("Content-Type: application/json", id="content-type-unchanged"),
     param("", id="empty-string"),
     param("Normal log message with no secrets", id="plain-text"),
+    param("X-Request-ID: abc-123-def", id="x-request-id-unchanged"),
+    param("User-Agent: aiperf/1.0", id="user-agent-unchanged"),
+    param("Accept: text/event-stream", id="accept-unchanged"),
+    param("Cache-Control: no-cache", id="cache-control-unchanged"),
+    param(
+        "model=gpt-4&temperature=0.7&top_p=0.9",
+        id="query-params-no-sensitive-keys",
+    ),
+    param("X-Custom-Header: keep-me", id="custom-header-unchanged"),
+    param("200 OK", id="status-line"),
+    param(
+        '{"model":"gpt-4","temperature":0.7}',
+        id="json-payload-no-secrets",
+    ),
 ]
 
 
@@ -183,6 +414,34 @@ class TestRedactString:
             '"Content-Type":"application/json"}}\''
         )
         result = redact_string(s)
+        assert "application/json" in result
+
+    def test_sigv4_json_preserves_surrounding_fields(self):
+        s = (
+            '{"Authorization":"AWS4-HMAC-SHA256 Credential=AKIA/date/region/svc/req, '
+            'Signature=abc","Content-Type":"application/json","model":"gpt-4"}'
+        )
+        result = redact_string(s)
+        assert "AKIA" not in result
+        assert "abc" not in result
+        assert "application/json" in result
+        assert "gpt-4" in result
+
+    def test_proxy_auth_json_preserves_other_headers(self):
+        s = '"Proxy-Authorization":"Basic secret123","Accept":"text/plain"'
+        result = redact_string(s)
+        assert "secret123" not in result
+        assert "text/plain" in result
+
+    def test_multiple_sensitive_headers_in_json_object(self):
+        s = (
+            '{"X-API-Key":"nvapi-key1","api-key":"azure-key2",'
+            '"Authorization":"Bearer tok3","Content-Type":"application/json"}'
+        )
+        result = redact_string(s)
+        assert "nvapi-key1" not in result
+        assert "azure-key2" not in result
+        assert "tok3" not in result
         assert "application/json" in result
 
 
@@ -303,7 +562,102 @@ _MUST_REDACT_CASES = [
         ["sk-1", "sk-2", "nvapi-3"],
         id="multiple-secrets",
     ),
-    # Cloud provider headers
+    # Double-quoted headers: auth schemes
+    param(
+        'aiperf --header "Authorization:Bearer sk-abc"',
+        ["sk-abc"],
+        id="dq-bearer",
+    ),
+    param(
+        'aiperf --header "Authorization: Bearer sk-with-space"',
+        ["sk-with-space"],
+        id="dq-bearer-space",
+    ),
+    param(
+        'aiperf --header "Authorization:Basic dXNlcjpwYXNz"',
+        ["dXNlcjpwYXNz"],
+        id="dq-basic",
+    ),
+    param(
+        'aiperf --header "Proxy-Authorization:Bearer proxy-tok"',
+        ["proxy-tok"],
+        id="dq-proxy-auth-bearer",
+    ),
+    param(
+        'aiperf --header "proxy-authorization:basic proxy-basic-tok"',
+        ["proxy-basic-tok"],
+        id="dq-proxy-auth-basic-lower",
+    ),
+    # Double-quoted headers: -H shorthand
+    param(
+        'aiperf -H "Authorization:Bearer sk-H-dq"',
+        ["sk-H-dq"],
+        id="dq-H-bearer",
+    ),
+    param(
+        'aiperf -H "X-API-Key:nvapi-secret"',
+        ["nvapi-secret"],
+        id="dq-H-x-api-key",
+    ),
+    # Double-quoted headers: all cloud provider headers
+    param(
+        'aiperf --header "API-Key:azure-dq-key"',
+        ["azure-dq-key"],
+        id="dq-api-key",
+    ),
+    param(
+        'aiperf --header "Ocp-Apim-Subscription-Key:azure-dq-sub"',
+        ["azure-dq-sub"],
+        id="dq-azure-apim",
+    ),
+    param(
+        'aiperf --header "X-Goog-Api-Key:google-dq-key"',
+        ["google-dq-key"],
+        id="dq-google-api-key",
+    ),
+    param(
+        'aiperf --header "X-Functions-Key:azure-dq-func"',
+        ["azure-dq-func"],
+        id="dq-azure-functions",
+    ),
+    param(
+        'aiperf --header "Aeg-Sas-Key:azure-dq-sas"',
+        ["azure-dq-sas"],
+        id="dq-azure-event-grid",
+    ),
+    param(
+        'aiperf --header "X-Amz-Security-Token:aws-dq-token"',
+        ["aws-dq-token"],
+        id="dq-aws-security-token",
+    ),
+    # Double-quoted headers: case variations
+    param(
+        'aiperf --header "authorization:bearer sk-dq-lower"',
+        ["sk-dq-lower"],
+        id="dq-bearer-all-lower",
+    ),
+    param(
+        'aiperf --header "AUTHORIZATION:BEARER SK-DQ-UPPER"',
+        ["SK-DQ-UPPER"],
+        id="dq-bearer-all-upper",
+    ),
+    param(
+        'aiperf --header "x-api-key:dq-lower-x-api"',
+        ["dq-lower-x-api"],
+        id="dq-x-api-key-lower",
+    ),
+    # Mixed single and double quotes in one command
+    param(
+        """aiperf --header 'Authorization:Bearer sq-tok' --header "X-API-Key:dq-key" """,
+        ["sq-tok", "dq-key"],
+        id="mixed-single-double-quotes",
+    ),
+    param(
+        """aiperf --api-key 'sk-1' -H "Authorization:Bearer dq-tok2" --header 'X-API-Key:sq-key3'""",
+        ["sk-1", "dq-tok2", "sq-key3"],
+        id="api-key-plus-mixed-quotes",
+    ),
+    # Cloud provider headers (single-quoted)
     param(
         "aiperf --header 'Ocp-Apim-Subscription-Key:abc-sub-key-123'",
         ["abc-sub-key-123"],
@@ -401,6 +755,38 @@ _MUST_KEEP_CASES = [
         "aiperf --header 'X-API-Version:2024-01'",
         ["X-API-Version:2024-01"],
         id="x-api-version-not-sensitive",
+    ),
+    # Double-quoted non-sensitive headers preserved
+    param(
+        'aiperf --header "Content-Type:application/json"',
+        ["Content-Type:application/json"],
+        id="dq-header-content-type",
+    ),
+    param(
+        'aiperf --header "Accept:text/event-stream"',
+        ["Accept:text/event-stream"],
+        id="dq-header-accept",
+    ),
+    param(
+        'aiperf -H "X-Custom:my-value"',
+        ["X-Custom:my-value"],
+        id="dq-header-custom",
+    ),
+    param(
+        'aiperf --header "X-Request-ID:req-dq-001"',
+        ["X-Request-ID:req-dq-001"],
+        id="dq-header-request-id",
+    ),
+    # Double-quoted look-alikes preserved
+    param(
+        'aiperf --header "X-Authorization:Bearer tok"',
+        ["Bearer tok"],
+        id="dq-x-authorization-not-sensitive",
+    ),
+    param(
+        'aiperf --header "X-API-Version:2024-01"',
+        ["X-API-Version:2024-01"],
+        id="dq-x-api-version-not-sensitive",
     ),
     # Partial matches in non-header contexts
     param(
@@ -526,6 +912,88 @@ _INTERLEAVED_CASES = [
             "--streaming",
         ],
         id="full-realistic-command",
+    ),
+    # Double-quoted interleaved
+    param(
+        'aiperf --header "Authorization:Bearer dq-s1" --header "X-Custom:dq-k1"',
+        ["dq-s1"],
+        ["dq-k1"],
+        id="dq-sensitive-then-non-sensitive",
+    ),
+    param(
+        'aiperf --header "X-Custom:dq-k1" --header "Authorization:Bearer dq-s1"',
+        ["dq-s1"],
+        ["dq-k1"],
+        id="dq-non-sensitive-then-sensitive",
+    ),
+    param(
+        'aiperf -H "Authorization:Bearer dq1" -H "X-API-Key:dq2" -H "API-Key:dq3"',
+        ["dq1", "dq2", "dq3"],
+        [],
+        id="dq-three-sensitive-back-to-back",
+    ),
+    param(
+        'aiperf --header "Accept:dq-keep" --header "Authorization:Bearer dq-hide" --header "X-Trace:dq-keep2"',
+        ["dq-hide"],
+        ["dq-keep", "dq-keep2"],
+        id="dq-sensitive-sandwiched",
+    ),
+    # Mixed single-quoted and double-quoted interleaved
+    param(
+        """aiperf --header 'Authorization:Bearer sq-tok' --header "X-Custom:dq-keep" --header "X-API-Key:dq-secret" """,
+        ["sq-tok", "dq-secret"],
+        ["dq-keep"],
+        id="mixed-sq-dq-interleaved",
+    ),
+    param(
+        """aiperf -H "Authorization:Bearer dq1" -H 'X-Custom:sq-keep' -H "X-Goog-Api-Key:dq2" -H 'Content-Type:sq-ct'""",
+        ["dq1", "dq2"],
+        ["sq-keep", "sq-ct"],
+        id="mixed-alternating-sq-dq",
+    ),
+    # All sensitive header types in double-quoted form
+    param(
+        (
+            'aiperf -H "Authorization:Bearer dq-t1" '
+            '-H "X-API-Key:dq-t2" '
+            '-H "API-Key:dq-t3" '
+            '-H "Proxy-Authorization:Bearer dq-t4" '
+            '-H "Ocp-Apim-Subscription-Key:dq-t5" '
+            '-H "X-Goog-Api-Key:dq-t6" '
+            '-H "X-Functions-Key:dq-t7" '
+            '-H "Aeg-Sas-Key:dq-t8" '
+            '-H "X-Amz-Security-Token:dq-t9"'
+        ),
+        [
+            "dq-t1",
+            "dq-t2",
+            "dq-t3",
+            "dq-t4",
+            "dq-t5",
+            "dq-t6",
+            "dq-t7",
+            "dq-t8",
+            "dq-t9",
+        ],
+        [],
+        id="dq-all-nine-sensitive-header-types",
+    ),
+    # Full realistic command with double-quoted headers
+    param(
+        (
+            'aiperf profile --model "gpt-4" --url "http://localhost:8000" '
+            '--api-key "sk-dq-real" --header "Authorization:Bearer sk-dq-real" '
+            '--header "X-Custom:my-trace" --extra-inputs "temperature:0.7" '
+            "--endpoint-type chat --streaming --concurrency 5"
+        ),
+        ["sk-dq-real"],
+        [
+            "gpt-4",
+            "http://localhost:8000",
+            "my-trace",
+            "temperature:0.7",
+        ],
+        id="full-realistic-double-quoted",
     ),
 ]
 
@@ -737,6 +1205,41 @@ class TestErrorDetailsSafeRepr:
                 "Headers: X-API-Key: my-key-value",
                 "my-key-value",
                 id="x-api-key-header",
+            ),
+            param(
+                "401 Unauthorized: Authorization: Basic dXNlcjpwYXNz",
+                "dXNlcjpwYXNz",
+                id="basic-auth-in-error",
+            ),
+            param(
+                "Proxy-Authorization: Bearer proxy-err-tok",
+                "proxy-err-tok",
+                id="proxy-auth-in-error",
+            ),
+            param(
+                "SigV4 failure: Authorization: AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE/date/region/svc/req, Signature=deadbeef",
+                "AKIAEXAMPLE",
+                id="sigv4-credential-in-error",
+            ),
+            param(
+                "Azure error: api-key: azure-err-key",
+                "azure-err-key",
+                id="api-key-header-in-error",
+            ),
+            param(
+                "Google error: X-Goog-Api-Key: goog-err-key",
+                "goog-err-key",
+                id="google-api-key-in-error",
+            ),
+            param(
+                "AWS error: X-Amz-Security-Token: FwoGZX-err-token",
+                "FwoGZX-err-token",
+                id="aws-token-in-error",
+            ),
+            param(
+                "secret=leaked-in-traceback&debug=true",
+                "leaked-in-traceback",
+                id="secret-query-param-in-error",
             ),
         ],
     )

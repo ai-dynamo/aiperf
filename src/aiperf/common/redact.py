@@ -36,10 +36,25 @@ _SENSITIVE_HEADER_NAMES = frozenset(
 # Patterns must handle plain text ("Authorization: Bearer <key>"),
 # JSON-serialized ('"Authorization":"Bearer <key>"'), and Python repr
 # ("'Authorization': 'Bearer <key>'") forms.
+# Build alternation from non-auth headers for string-level redaction.
+# Authorization/proxy-authorization are handled separately (they have Bearer/Basic schemes).
+_NON_AUTH_SENSITIVE_HEADERS = _SENSITIVE_HEADER_NAMES - {
+    "authorization",
+    "proxy-authorization",
+}
+_NON_AUTH_HEADER_ALT = "|".join(
+    re.escape(h) for h in sorted(_NON_AUTH_SENSITIVE_HEADERS)
+)
+
 _STRING_REDACTION_PATTERNS = [
-    # Authorization: Bearer <key> (plain text, JSON, and Python repr)
+    # Authorization / Proxy-Authorization: redact the entire value including multi-token
+    # schemes like SigV4 (AWS4-HMAC-SHA256 Credential=..., Signature=...).
+    # Uses [^'"\}\n]+ to consume everything up to the enclosing quote/brace/newline,
+    # which correctly handles JSON, Python repr, and plain text contexts.
     (
-        re.compile(r"""(?i)(authorization['":\s]*bearer\s+)[^\s,;'"\}]+"""),
+        re.compile(
+            r"""(?i)((?:proxy-)?authorization['":\s]*(?:bearer|basic)?\s*)[^'"\}\n]+"""
+        ),
         rf"\1{REDACTED_VALUE}",
     ),
     # api_key=<value>, token=<value>, secret=<value> (query string style)
@@ -47,8 +62,11 @@ _STRING_REDACTION_PATTERNS = [
         re.compile(r"(?i)\b(api[-_ ]?key|token|secret)\s*=\s*[^&\s]+"),
         rf"\1={REDACTED_VALUE}",
     ),
-    # X-API-Key: <value> (plain text, JSON, and Python repr)
-    (re.compile(r"""(?i)(x-api-key['":\s]*)[^\s,;'"\}]+"""), rf"\1{REDACTED_VALUE}"),
+    # Other credential-carrying headers (plain text, JSON, Python repr)
+    (
+        re.compile(rf"""(?i)({_NON_AUTH_HEADER_ALT})['":\s]*[^\s,;'"\}}]+"""),
+        rf"\1: {REDACTED_VALUE}",
+    ),
 ]
 
 
@@ -94,8 +112,10 @@ _SENSITIVE_HEADER_ALT = "|".join(re.escape(h) for h in _SENSITIVE_HEADER_NAMES)
 _CLI_SECRET_PATTERNS: Sequence[re.Pattern[str]] = (
     # --api-key <value> or --api-key=<value>
     re.compile(r"(--api-key[\s=])'?[^'\s]+'?"),
-    # Quoted: --header 'Authorization:Bearer token' / -H 'X-API-Key:val'
+    # Single-quoted: --header 'Authorization:Bearer token' / -H 'X-API-Key:val'
     re.compile(rf"((?:--header|-H)\s+)'(?i:{_SENSITIVE_HEADER_ALT})[:\s][^']+'"),
+    # Double-quoted: --header "Authorization:Bearer token"
+    re.compile(rf'((?:--header|-H)\s+)"(?i:{_SENSITIVE_HEADER_ALT})[:\s][^"]+"'),
     # Unquoted with space-separated value: --header Authorization:Bearer token
     re.compile(rf"((?:--header|-H)\s+)(?i:{_SENSITIVE_HEADER_ALT})\S*\s+\S+"),
     # Unquoted single-token: --header X-API-Key:value
