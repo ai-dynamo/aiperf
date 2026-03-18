@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
+from aiperf.common.models.dataset_models import Text
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -223,7 +224,7 @@ class TestInferenceClientWireHeaders:
         client.transport = MagicMock()
         client.transport.send_request = fake_send
 
-        request_info.turns = [Turn(prompt="hello")]
+        request_info.turns = [Turn(texts=[Text(contents=["hello"])])]
         await client.send_request(request_info)
 
         assert captured_headers is not None
@@ -244,7 +245,7 @@ class TestInferenceClientWireHeaders:
         client.transport = MagicMock()
         client.transport.send_request = fake_send
 
-        request_info.turns = [Turn(prompt="hello")]
+        request_info.turns = [Turn(texts=[Text(contents=["hello"])])]
         record = await client.send_request(request_info)
 
         assert record.request_headers is not None
