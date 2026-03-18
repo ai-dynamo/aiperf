@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config import UserConfig
-from aiperf.common.enums import ModelSelectionStrategy
+from aiperf.common.enums import ConversationContextMode, ModelSelectionStrategy
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.tokenizer import Tokenizer
@@ -49,6 +49,14 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             list[Conversation]: A list of conversation objects.
         """
         ...
+
+    def get_default_context_mode(self) -> ConversationContextMode | None:
+        """Dataset-level default context mode inferred by the composer or its loader.
+
+        Override in subclasses that delegate to a loader with format-specific defaults.
+        Returns None to fall through to the global DELTAS_WITHOUT_RESPONSES default.
+        """
+        return None
 
     # TODO: This can be refactored to be similar to the DatasetSamplingStrategyProtocol in order
     # to allow for more flexible model selection strategies in the future.

@@ -5,9 +5,9 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any, ClassVar
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
-from aiperf.common.enums import MediaType
+from aiperf.common.enums import ConversationContextMode, MediaType
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.types import MediaTypeT
 from aiperf.plugin.enums import DatasetClientStoreType, DatasetSamplingStrategy
@@ -246,6 +246,24 @@ class DatasetMetadata(AIPerfBaseModel):
         default=False,
         description="Whether the dataset has timing data (timestamps/delays in turns).",
     )
+    default_context_mode: ConversationContextMode | None = Field(
+        default=None,
+        description="Dataset-level default for how prior turns are accumulated. "
+        "Set by the loader based on dataset format semantics. "
+        "Individual conversations can override this via their own context_mode field.",
+    )
+
+    @field_validator("default_context_mode")
+    @classmethod
+    def _reject_unimplemented_context_mode(
+        cls,
+        v: ConversationContextMode | None,
+    ) -> ConversationContextMode | None:
+        if v == ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES:
+            raise ValueError(
+                f"{ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES} is not yet supported"
+            )
+        return v
 
     @cached_property
     def total_turn_count(self) -> int:
@@ -270,6 +288,24 @@ class Conversation(AIPerfBaseModel):
     session_id: str = Field(
         default="", description="Unique identifier for the conversation."
     )
+    context_mode: ConversationContextMode | None = Field(
+        default=None,
+        description="How prior turns are accumulated for this conversation. "
+        "When None, inherits the dataset-level default.",
+    )
+
+    @field_validator("context_mode")
+    @classmethod
+    def _reject_unimplemented_context_mode(
+        cls,
+        v: ConversationContextMode | None,
+    ) -> ConversationContextMode | None:
+        if v == ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES:
+            raise ValueError(
+                f"{ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES} is not yet supported"
+            )
+        return v
+
     turns: list[Turn] = Field(
         default=[], description="List of turns in the conversation."
     )
