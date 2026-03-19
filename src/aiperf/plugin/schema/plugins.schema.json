@@ -634,7 +634,53 @@
         },
         "metadata": {
           "description": "Metadata schema for public dataset loader plugins.\n\nReferenced by: categories.yaml public_dataset_loader.metadata_class\nUsed in: plugins.yaml public_dataset_loader entries",
-          "properties": {},
+          "properties": {
+            "hf_dataset_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "HuggingFace dataset identifier (e.g. 'AI-MO/NuminaMath-TIR'). Required for HF-backed loaders.",
+              "title": "Hf Dataset Name"
+            },
+            "hf_split": {
+              "default": "train",
+              "description": "HuggingFace dataset split to load (e.g. 'train', 'test', 'validation').",
+              "title": "Hf Split",
+              "type": "string"
+            },
+            "hf_subset": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "HuggingFace dataset subset/config name. Only needed for datasets with multiple configs.",
+              "title": "Hf Subset"
+            },
+            "prompt_column": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Column name containing the prompt/instruction text. Required for HFInstructionResponseDatasetLoader.",
+              "title": "Prompt Column"
+            }
+          },
           "title": "PublicDatasetLoaderMetadata",
           "type": "object"
         }

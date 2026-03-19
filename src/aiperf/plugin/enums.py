@@ -55,7 +55,7 @@ DatasetSamplingStrategy = plugins.create_enum(PluginType.DATASET_SAMPLER, "Datas
 
 ComposerTypeStr: TypeAlias = str
 ComposerType = plugins.create_enum(PluginType.DATASET_COMPOSER, "ComposerType", module=__name__)
-"""Dynamic enum for dataset composer. Example: ComposerType.CUSTOM, ComposerType.SYNTHETIC, ComposerType.SYNTHETIC_RANKINGS"""
+"""Dynamic enum for dataset composer. Example: ComposerType.CUSTOM, ComposerType.PUBLIC, ComposerType.SYNTHETIC"""
 
 CustomDatasetTypeStr: TypeAlias = str
 CustomDatasetType = plugins.create_enum(PluginType.CUSTOM_DATASET_LOADER, "CustomDatasetType", module=__name__)
@@ -63,7 +63,7 @@ CustomDatasetType = plugins.create_enum(PluginType.CUSTOM_DATASET_LOADER, "Custo
 
 PublicDatasetTypeStr: TypeAlias = str
 PublicDatasetType = plugins.create_enum(PluginType.PUBLIC_DATASET_LOADER, "PublicDatasetType", module=__name__)
-"""Dynamic enum for public dataset loader. Example: PublicDatasetType.SHAREGPT"""
+"""Dynamic enum for public dataset loader. Example: PublicDatasetType.AIMO, PublicDatasetType.SHAREGPT"""
 
 EndpointTypeStr: TypeAlias = str
 EndpointType = plugins.create_enum(PluginType.ENDPOINT, "EndpointType", module=__name__)

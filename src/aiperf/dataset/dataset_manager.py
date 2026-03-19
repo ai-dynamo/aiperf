@@ -276,18 +276,12 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 temp_file_path.unlink()
 
     async def _load_public_dataset(self) -> list[Conversation]:
-        dataset_type = self.user_config.input.public_dataset
-        LoaderClass = plugins.get_class(PluginType.PUBLIC_DATASET_LOADER, dataset_type)
-        loader = LoaderClass(user_config=self.user_config, tokenizer=self.tokenizer)
-
-        if self.user_config.input.dataset_sampling_strategy is None:
-            self.user_config.input.dataset_sampling_strategy = (
-                LoaderClass.get_preferred_sampling_strategy()
-            )
-
-        data = await loader.load_dataset()
-        self._default_context_mode = loader.get_default_context_mode()
-        return await loader.convert_to_conversations(data)
+        ComposerClass = plugins.get_class(
+            PluginType.DATASET_COMPOSER, ComposerType.PUBLIC
+        )
+        composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
+        self._default_context_mode = composer.get_default_context_mode()
+        return await composer.create_dataset_async()
 
     def _load_custom_dataset(self) -> list[Conversation]:
         ComposerClass = plugins.get_class(

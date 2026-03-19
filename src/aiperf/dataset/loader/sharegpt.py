@@ -39,6 +39,10 @@ class ShareGPTLoader(BasePublicDatasetLoader):
     def __init__(
         self, user_config: UserConfig, tokenizer: Tokenizer | None = None, **kwargs
     ):
+        if tokenizer is None:
+            raise ValueError(
+                "ShareGPTLoader requires a tokenizer; ensure the endpoint supports tokenization."
+            )
         self.tokenizer = tokenizer
         self.user_config = user_config
         self.output_tokens_mean = self.user_config.input.prompt.output_tokens.mean
