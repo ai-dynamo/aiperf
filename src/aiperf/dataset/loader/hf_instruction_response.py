@@ -27,7 +27,7 @@ class HFInstructionResponseDatasetLoader(BaseHFDatasetLoader):
         user_config: UserConfig,
         prompt_column: str,
         **kwargs,
-    ):
+    ) -> None:
         self.prompt_column = prompt_column
         super().__init__(user_config=user_config, **kwargs)
 

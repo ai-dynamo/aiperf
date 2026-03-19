@@ -87,7 +87,8 @@ class PublicDatasetComposer(BaseDatasetComposer):
 
         if loader_metadata.hf_dataset_name is not None:
             kwargs["hf_dataset_name"] = loader_metadata.hf_dataset_name
-            kwargs["hf_split"] = loader_metadata.hf_split
+            if loader_metadata.hf_split is not None:
+                kwargs["hf_split"] = loader_metadata.hf_split
             if loader_metadata.hf_subset is not None:
                 kwargs["hf_subset"] = loader_metadata.hf_subset
 

@@ -280,6 +280,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             PluginType.DATASET_COMPOSER, ComposerType.PUBLIC
         )
         composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
+        self._default_context_mode = composer.get_default_context_mode()
         return await composer.create_dataset_async()
 
     def _load_custom_dataset(self) -> list[Conversation]:
