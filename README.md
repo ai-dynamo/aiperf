@@ -138,7 +138,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Custom Prompt Benchmarking](docs/tutorials/custom-prompt-benchmarking.md) - Send exact prompts as-is
 - [Custom Dataset](docs/tutorials/custom-dataset.md) - Custom dataset formats
 - [ShareGPT Dataset](docs/tutorials/sharegpt.md) - Profile with ShareGPT dataset
-- [AIMO Dataset](docs/tutorials/aimo.md) - Profile with AIMO math reasoning dataset
+- [AIMO Dataset](docs/tutorials/aimo.md) - Profile with AIMO math reasoning datasets (NuminaMath-TIR, NuminaMath-CoT, NuminaMath-1.5, AIME)
 - [MMStar Dataset](docs/tutorials/mmstar.md) - Profile vision language models with MMStar visual QA benchmark
 - [VisionArena Dataset](docs/tutorials/vision-arena.md) - Profile with real-world vision conversations from Chatbot Arena
 - [LLaVA-OneVision Dataset](docs/tutorials/llava-onevision.md) - Profile with diverse multimodal instruction-following data
