@@ -1188,6 +1188,45 @@ public_dataset_loader:
       hf_split: train
       prompt_column: problem
 
+  mmstar:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      MMStar multimodal visual QA benchmark from HuggingFace (Lin-Chen).
+      Loads visual questions with images as single-turn requests.
+    metadata:
+      hf_dataset_name: Lin-Chen/MMStar
+      hf_split: val
+      prompt_column: question
+      image_column: image
+
+  vision_arena:
+    class: aiperf.dataset.loader.hf_conversation:HFConversationDatasetLoader
+    description: |
+      VisionArena multimodal chat dataset from HuggingFace (lmarena-ai).
+      Loads the first user message and image as a single-turn vision request.
+      Requires HuggingFace authentication.
+    metadata:
+      hf_dataset_name: lmarena-ai/VisionArena-Chat
+      hf_split: train
+      conversation_column: conversation
+      message_content_key: content
+      image_column: images
+      streaming: true
+
+  llava_onevision:
+    class: aiperf.dataset.loader.hf_conversation:HFConversationDatasetLoader
+    description: |
+      LLaVA-OneVision multimodal instruction-following dataset from HuggingFace (lmms-lab).
+      Loads the first user message and image as a single-turn vision request.
+    metadata:
+      hf_dataset_name: lmms-lab/LLaVA-OneVision-Data
+      hf_split: train
+      hf_subset: sharegpt4o
+      conversation_column: conversations
+      message_content_key: value
+      image_column: image
+      streaming: true
+
 # =============================================================================
 # ZMQ Proxies
 # =============================================================================

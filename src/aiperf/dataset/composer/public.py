@@ -95,4 +95,14 @@ class PublicDatasetComposer(BaseDatasetComposer):
         if loader_metadata.prompt_column is not None:
             kwargs["prompt_column"] = loader_metadata.prompt_column
 
+        if loader_metadata.image_column is not None:
+            kwargs["image_column"] = loader_metadata.image_column
+
+        if loader_metadata.conversation_column is not None:
+            kwargs["conversation_column"] = loader_metadata.conversation_column
+            kwargs["message_content_key"] = loader_metadata.message_content_key
+
+        if loader_metadata.streaming:
+            kwargs["streaming"] = loader_metadata.streaming
+
         return kwargs
