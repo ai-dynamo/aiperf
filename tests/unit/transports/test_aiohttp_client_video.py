@@ -42,8 +42,11 @@ class TestAioHttpClientVideo:
             assert binary_response.content_type == "video/mp4"
 
     @pytest.mark.asyncio
-    async def test_post_request_video_submit(self, aiohttp_client):
-        """Test POST request for video job submission."""
+    @pytest.mark.parametrize("status_code", [200, 202])
+    async def test_post_request_video_submit_accepts_success_statuses(
+        self, aiohttp_client, status_code: int
+    ):
+        """Test POST request for video job submission accepts successful statuses."""
         response_text = orjson.dumps(
             {
                 "id": "video-123",
@@ -53,7 +56,7 @@ class TestAioHttpClientVideo:
         ).decode()
 
         mock_response = create_mock_response(
-            status=200,  # Use 200 since client treats != 200 as error
+            status=status_code,
             content_type="application/json",
             text_content=response_text,
         )
@@ -71,7 +74,8 @@ class TestAioHttpClientVideo:
                 {"Content-Type": "application/json"},
             )
 
-            assert record.status == 200
+            assert record.status == status_code
+            assert record.error is None
             assert len(record.responses) == 1
             text_response = record.responses[0]
             assert hasattr(text_response, "text")

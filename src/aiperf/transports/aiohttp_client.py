@@ -132,8 +132,9 @@ class AioHttpClient(AIPerfLoggerMixin):
                 ) as response:
                     record.status = response.status
 
-                    # Check for HTTP errors
-                    if response.status != 200:
+                    # Treat the full 2xx range as success so async job APIs can
+                    # return accepted/created responses without being rejected.
+                    if response.status < 200 or response.status >= 300:
                         error_text = await response.text()
                         record.error = ErrorDetails(
                             code=response.status,

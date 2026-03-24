@@ -9,7 +9,9 @@ import pytest
 
 from aiperf.common.models import ErrorDetails, RequestRecord, TextResponse
 from aiperf.plugin.enums import EndpointType
+from aiperf.transports.aiohttp_client import AioHttpClient
 from aiperf.transports.aiohttp_transport import AioHttpTransport
+from tests.unit.transports.conftest import create_mock_response
 from tests.unit.transports.test_aiohttp_transport import create_request_info
 
 
@@ -341,6 +343,80 @@ class TestVideoContentDownload:
 
 class TestVideoRequestWorkflow:
     """Tests for end-to-end video request workflow."""
+
+    @pytest.mark.asyncio
+    async def test_send_video_request_with_accepted_submit_response(
+        self, video_model_endpoint, video_request_info
+    ):
+        """Test a 202 Accepted submit response proceeds to polling and completes."""
+        transport = AioHttpTransport(model_endpoint=video_model_endpoint)
+        transport.aiohttp_client = AioHttpClient(timeout=600.0)
+
+        submit_response = create_mock_response(
+            status=202,
+            reason="Accepted",
+            content_type="application/json",
+            text_content=orjson.dumps(
+                {
+                    "id": "video-123",
+                    "status": "queued",
+                    "created_at": "2024-01-01T00:00:00Z",
+                }
+            ).decode(),
+        )
+        poll_response = create_mock_response(
+            status=200,
+            content_type="application/json",
+            text_content=orjson.dumps(
+                {
+                    "id": "video-123",
+                    "status": "completed",
+                    "inference_time_s": 5.5,
+                    "peak_memory_mb": 8192.0,
+                }
+            ).decode(),
+        )
+
+        request_contexts = []
+        for response in (submit_response, poll_response):
+            context_manager = AsyncMock()
+            context_manager.__aenter__.return_value = response
+            context_manager.__aexit__.return_value = None
+            request_contexts.append(context_manager)
+
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_session = AsyncMock()
+            mock_session.request = Mock(side_effect=request_contexts)
+
+            def session_factory(*args, **kwargs):
+                session_context = AsyncMock()
+                session_context.__aenter__.return_value = mock_session
+                session_context.__aexit__.return_value = None
+                return session_context
+
+            mock_session_class.side_effect = session_factory
+
+            try:
+                record = await transport.send_request(
+                    video_request_info, {"prompt": "A cat playing piano"}
+                )
+            finally:
+                await transport.aiohttp_client.close()
+
+        assert record.error is None
+        assert record.status == 200
+        assert len(record.responses) == 2
+        assert orjson.loads(record.responses[0].text)["status"] == "queued"
+        assert orjson.loads(record.responses[1].text)["status"] == "completed"
+        assert mock_session.request.call_count == 2
+        assert mock_session.request.call_args_list[0].args[:2] == (
+            "POST",
+            "http://localhost:8000/v1/videos",
+        )
+        assert mock_session.request.call_args_list[1].args[:2] == (
+            "GET",
+            "http://localhost:8000/v1/videos/video-123",
+        )
 
     @pytest.mark.asyncio
     async def test_send_video_request_with_polling_success(
