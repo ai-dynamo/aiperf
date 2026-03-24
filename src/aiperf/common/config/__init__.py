@@ -42,6 +42,14 @@ from aiperf.common.config.image_config import (
 )
 from aiperf.common.config.input_config import InputConfig
 from aiperf.common.config.loadgen_config import LoadGeneratorConfig
+from aiperf.common.config.media_mix_config import (
+    AudioProfileConfig,
+    ImageProfileConfig,
+    MediaMixArchetype,
+    ModalityEntry,
+    TextOverrideConfig,
+    VideoProfileConfig,
+)
 from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.prompt_config import (
     InputTokensConfig,
@@ -98,7 +106,11 @@ __all__ = [
     "InputDefaults",
     "InputTokensConfig",
     "InputTokensDefaults",
+    "AudioProfileConfig",
+    "ImageProfileConfig",
     "LoadGeneratorConfig",
+    "MediaMixArchetype",
+    "ModalityEntry",
     "LoadGeneratorDefaults",
     "MLflowDefaults",
     "OutputConfig",
@@ -117,6 +129,7 @@ __all__ = [
     "ServiceConfig",
     "ServiceDefaults",
     "SynthesisConfig",
+    "TextOverrideConfig",
     "TokenizerConfig",
     "TokenizerDefaults",
     "TurnConfig",
@@ -129,6 +142,7 @@ __all__ = [
     "VideoAudioDefaults",
     "VideoConfig",
     "VideoDefaults",
+    "VideoProfileConfig",
     "WorkersConfig",
     "WorkersDefaults",
     "ZMQDualBindConfig",

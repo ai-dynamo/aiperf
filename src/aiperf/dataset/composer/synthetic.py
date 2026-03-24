@@ -9,6 +9,7 @@ from aiperf.common.models import Audio, Conversation, Image, Text, Turn, Video
 from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.composer.base import BaseDatasetComposer
+from aiperf.dataset.composer.media_mix_resolver import MediaMixResolver, ResolvedTurn
 
 
 class SyntheticDatasetComposer(BaseDatasetComposer):
@@ -28,7 +29,13 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 f"Using default sampling strategy for synthetic dataset: {InputDefaults.DATASET_SAMPLING_STRATEGY}"
             )
 
-        if (
+        # Initialize media mix resolver if configured
+        self._media_mix_resolver: MediaMixResolver | None = None
+        if config.input.media_mix:
+            self._media_mix_resolver = MediaMixResolver(config.input.media_mix)
+
+        # Validate that at least one data source is enabled (skip when media mix is active)
+        if self._media_mix_resolver is None and (
             not self.include_prompt
             and not self.include_image
             and not self.include_audio
@@ -79,6 +86,9 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         Returns:
             Turn: A dataset representation of a single turn.
         """
+        if self._media_mix_resolver is not None:
+            return self._create_media_mix_turn(is_first)
+
         turn = Turn()
 
         if self.include_prompt:
@@ -107,6 +117,110 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         self._finalize_turn(turn)
 
         return turn
+
+    def _create_media_mix_turn(self, is_first: bool) -> Turn:
+        """Create a turn using media mix archetype sampling.
+
+        Args:
+            is_first: Whether the turn is the first turn in the conversation.
+
+        Returns:
+            Turn: A dataset turn with modalities determined by the sampled archetype.
+        """
+        turn = Turn()
+        resolved = self._media_mix_resolver.resolve_turn()
+
+        if resolved.include_text and self.prompt_generator is not None:
+            turn.texts.append(
+                self._generate_text_payloads_with_override(turn, is_first, resolved)
+            )
+
+        for generator, batch_size in resolved.image_generators:
+            image = Image(name="image_url")
+            for _ in range(batch_size):
+                image.contents.append(generator.generate())
+            turn.images.append(image)
+
+        for generator, batch_size in resolved.audio_generators:
+            audio = Audio(name="input_audio")
+            for _ in range(batch_size):
+                audio.contents.append(generator.generate())
+            turn.audios.append(audio)
+
+        for generator, batch_size in resolved.video_generators:
+            video = Video(name="video_url")
+            for _ in range(batch_size):
+                data = generator.generate()
+                if data:
+                    video.contents.append(data)
+            turn.videos.append(video)
+
+        if not is_first and self.config.input.conversation.turn.delay.mean > 0:
+            delay = self._delay_sampler_rng.sample_positive_normal_integer(
+                self.config.input.conversation.turn.delay.mean,
+                self.config.input.conversation.turn.delay.stddev,
+            )
+            turn.delay = delay * self.config.input.conversation.turn.delay.ratio
+
+        # Cache overridden ISL/OSL so _finalize_turn picks them up
+        turn_id = id(turn)
+        osl = resolved.output_tokens_mean
+        if osl is not None:
+            isl = (
+                resolved.input_tokens_mean or self.config.input.prompt.input_tokens.mean
+            )
+            self._turn_sequence_cache[turn_id] = (isl, osl)
+
+        self._finalize_turn(turn)
+        return turn
+
+    def _generate_text_payloads_with_override(
+        self, turn: Turn, is_first: bool, resolved: ResolvedTurn
+    ) -> Text:
+        """Generate text payloads with per-archetype ISL/OSL overrides.
+
+        Args:
+            turn: The turn object (used for caching sequence lengths).
+            is_first: Whether the turn is the first turn in the conversation.
+            resolved: Resolved turn with optional text overrides.
+
+        Returns:
+            Text: A text payload object.
+        """
+        if self.prompt_generator is None:
+            raise ValueError(
+                "Text prompt generation requires a tokenizer. Either provide a "
+                "--tokenizer or use an endpoint that supports tokenization."
+            )
+
+        text = Text(name="text")
+
+        # Use override ISL or fall back to global config
+        isl = (
+            resolved.input_tokens_mean
+            if resolved.input_tokens_mean is not None
+            else self.config.input.prompt.input_tokens.mean
+        )
+        stddev = (
+            resolved.input_tokens_stddev
+            if resolved.input_tokens_stddev is not None
+            else (
+                0
+                if self._seq_distribution is not None
+                else self.config.input.prompt.input_tokens.stddev
+            )
+        )
+
+        for _ in range(self.config.input.prompt.batch_size):
+            content = self.prompt_generator.generate(mean=isl, stddev=stddev)
+
+            if is_first and self.prefix_prompt_enabled:
+                prefix = self.prompt_generator.get_random_prefix_prompt()
+                content = f"{prefix} {content}"
+
+            text.contents.append(content)
+
+        return text
 
     def _generate_text_payloads(self, turn: Turn, is_first: bool) -> Text:
         """Generate text payloads for a single turn.

@@ -22,13 +22,14 @@ class ImageGenerator(BaseGenerator):
     The dimensions can be randomized based on mean and standard deviation values.
     """
 
-    def __init__(self, config: ImageConfig, **kwargs):
+    def __init__(self, config: ImageConfig, rng_namespace: str = "", **kwargs):
         super().__init__(**kwargs)
 
         # Separate RNGs for independent concerns
-        self._dimensions_rng = rng.derive("dataset.image.dimensions")
-        self._format_rng = rng.derive("dataset.image.format")
-        self._source_rng = rng.derive("dataset.image.source")
+        ns = f".{rng_namespace}" if rng_namespace else ""
+        self._dimensions_rng = rng.derive(f"dataset.image{ns}.dimensions")
+        self._format_rng = rng.derive(f"dataset.image{ns}.format")
+        self._source_rng = rng.derive(f"dataset.image{ns}.source")
 
         self.config = config
 

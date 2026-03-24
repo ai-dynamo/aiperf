@@ -1,0 +1,212 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+import pytest
+
+from aiperf.common.config.image_config import ImageHeightConfig, ImageWidthConfig
+from aiperf.common.config.media_mix_config import (
+    AudioProfileConfig,
+    ImageProfileConfig,
+    MediaMixArchetype,
+    ModalityEntry,
+    TextOverrideConfig,
+    VideoProfileConfig,
+    parse_media_mix,
+)
+from aiperf.common.config.prompt_config import InputTokensConfig, OutputTokensConfig
+from aiperf.common.enums import ImageFormat
+
+
+class TestParseMediaMix:
+    def test_parse_none_returns_none(self):
+        assert parse_media_mix(None) is None
+
+    def test_parse_list_passthrough(self):
+        data = [{"weight": 1.0, "modalities": []}]
+        assert parse_media_mix(data) is data
+
+    def test_parse_shorthand_string(self):
+        result = parse_media_mix("image:0.6,video:0.4")
+        assert len(result) == 2
+        assert result[0] == {"_shorthand": True, "modality": "image", "weight": 0.6}
+        assert result[1] == {"_shorthand": True, "modality": "video", "weight": 0.4}
+
+    def test_parse_shorthand_three_modalities(self):
+        result = parse_media_mix("image:0.5,audio:0.3,video:0.2")
+        assert len(result) == 3
+        assert result[0]["modality"] == "image"
+        assert result[1]["modality"] == "audio"
+        assert result[2]["modality"] == "video"
+
+    def test_parse_shorthand_with_spaces(self):
+        result = parse_media_mix("image : 0.6 , video : 0.4")
+        assert len(result) == 2
+        assert result[0]["weight"] == 0.6
+
+    def test_parse_shorthand_unknown_modality_raises(self):
+        with pytest.raises(ValueError, match="Unknown modality 'text'"):
+            parse_media_mix("text:0.5")
+
+    def test_parse_shorthand_invalid_weight_raises(self):
+        with pytest.raises(ValueError, match="Invalid weight"):
+            parse_media_mix("image:abc")
+
+    def test_parse_shorthand_zero_weight_raises(self):
+        with pytest.raises(ValueError, match="must be positive"):
+            parse_media_mix("image:0")
+
+    def test_parse_shorthand_negative_weight_raises(self):
+        with pytest.raises(ValueError, match="must be positive"):
+            parse_media_mix("image:-0.5")
+
+    def test_parse_shorthand_no_colon_raises(self):
+        with pytest.raises(ValueError, match="Expected 'modality:weight'"):
+            parse_media_mix("image")
+
+    def test_parse_shorthand_empty_raises(self):
+        with pytest.raises(ValueError, match="cannot be empty"):
+            parse_media_mix("")
+
+
+class TestImageProfileConfig:
+    def test_valid_profile(self):
+        profile = ImageProfileConfig(
+            weight=1.0,
+            width=ImageWidthConfig(mean=1024, stddev=128),
+            height=ImageHeightConfig(mean=768, stddev=96),
+            format=ImageFormat.JPEG,
+        )
+        assert profile.weight == 1.0
+        assert profile.width.mean == 1024
+        assert profile.format == ImageFormat.JPEG
+
+    def test_zero_weight_raises(self):
+        with pytest.raises(ValueError):
+            ImageProfileConfig(weight=0, width=ImageWidthConfig(mean=1024))
+
+
+class TestAudioProfileConfig:
+    def test_valid_profile(self):
+        profile = AudioProfileConfig(weight=0.5)
+        assert profile.weight == 0.5
+        assert profile.num_channels == 1
+
+
+class TestVideoProfileConfig:
+    def test_valid_profile(self):
+        profile = VideoProfileConfig(weight=1.0, width=1280, height=720)
+        assert profile.width == 1280
+        assert profile.fps == 4
+
+
+class TestModalityEntry:
+    def test_image_with_image_profiles(self):
+        entry = ModalityEntry(
+            modality="image",
+            batch_size=2,
+            profiles=[
+                ImageProfileConfig(
+                    weight=1.0,
+                    width=ImageWidthConfig(mean=256),
+                    height=ImageHeightConfig(mean=256),
+                )
+            ],
+        )
+        assert entry.modality == "image"
+        assert entry.batch_size == 2
+
+    def test_audio_with_audio_profiles(self):
+        entry = ModalityEntry(
+            modality="audio",
+            profiles=[AudioProfileConfig(weight=1.0)],
+        )
+        assert entry.modality == "audio"
+
+    def test_video_with_video_profiles(self):
+        entry = ModalityEntry(
+            modality="video",
+            profiles=[VideoProfileConfig(weight=1.0, width=640, height=480)],
+        )
+        assert entry.modality == "video"
+
+    def test_mismatched_profile_type_raises(self):
+        with pytest.raises(ValueError, match="Expected ImageProfileConfig"):
+            ModalityEntry(
+                modality="image",
+                profiles=[AudioProfileConfig(weight=1.0)],
+            )
+
+    def test_empty_profiles_raises(self):
+        with pytest.raises(ValueError):
+            ModalityEntry(modality="image", profiles=[])
+
+
+class TestMediaMixArchetype:
+    def test_text_only_archetype(self):
+        archetype = MediaMixArchetype(weight=1.0, modalities=[])
+        assert archetype.include_text is True
+        assert archetype.weight == 1.0
+
+    def test_text_disabled_with_modalities(self):
+        archetype = MediaMixArchetype(
+            weight=1.0,
+            text=False,
+            modalities=[
+                ModalityEntry(
+                    modality="image",
+                    profiles=[
+                        ImageProfileConfig(
+                            weight=1.0,
+                            width=ImageWidthConfig(mean=256),
+                            height=ImageHeightConfig(mean=256),
+                        )
+                    ],
+                )
+            ],
+        )
+        assert archetype.include_text is False
+
+    def test_text_disabled_no_modalities_raises(self):
+        with pytest.raises(ValueError, match="at least one modality or text enabled"):
+            MediaMixArchetype(weight=1.0, text=False, modalities=[])
+
+    def test_text_override_config(self):
+        archetype = MediaMixArchetype(
+            weight=1.0,
+            text=TextOverrideConfig(
+                input_tokens=InputTokensConfig(mean=100, stddev=20),
+                output_tokens=OutputTokensConfig(mean=500),
+            ),
+        )
+        assert archetype.include_text is True
+        assert isinstance(archetype.text, TextOverrideConfig)
+        assert archetype.text.input_tokens.mean == 100
+
+    def test_text_none_means_enabled(self):
+        archetype = MediaMixArchetype(weight=1.0)
+        assert archetype.include_text is True
+
+    def test_zero_weight_raises(self):
+        with pytest.raises(ValueError):
+            MediaMixArchetype(weight=0)
+
+
+class TestTextOverrideConfig:
+    def test_partial_override(self):
+        config = TextOverrideConfig(
+            input_tokens=InputTokensConfig(mean=100),
+        )
+        assert config.input_tokens.mean == 100
+        assert config.output_tokens is None
+
+    def test_full_override(self):
+        config = TextOverrideConfig(
+            input_tokens=InputTokensConfig(mean=100, stddev=10),
+            output_tokens=OutputTokensConfig(mean=500, stddev=50),
+        )
+        assert config.input_tokens.mean == 100
+        assert config.output_tokens.mean == 500
+
+    def test_empty_override(self):
+        config = TextOverrideConfig()
+        assert config.input_tokens is None
+        assert config.output_tokens is None
