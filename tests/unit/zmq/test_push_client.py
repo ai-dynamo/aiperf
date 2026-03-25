@@ -10,6 +10,7 @@ import pytest
 import zmq
 import zmq.asyncio
 
+from aiperf.common.channel_codecs import RECORDS_CODEC
 from aiperf.common.enums import MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import CommunicationError, NotInitializedError
@@ -73,6 +74,41 @@ class TestZMQPushClientPush:
             or '"message_type": "heartbeat"' in sent_str
         )
         assert "test-123" in sent_str
+
+    @pytest.mark.asyncio
+    async def test_push_uses_custom_codec(
+        self, mock_zmq_socket, mock_zmq_context, sample_message
+    ):
+        """Test that push encodes bytes through the configured codec."""
+        client = ZMQPushClient(
+            address="tcp://127.0.0.1:5555",
+            bind=True,
+            codec=RECORDS_CODEC,
+        )
+        await client.initialize()
+
+        await client.push(sample_message)
+
+        sent_data = mock_zmq_socket.send.call_args[0][0]
+        assert isinstance(sent_data, bytes)
+        assert b'"message_type"' not in sent_data
+
+        decoded = RECORDS_CODEC.decode(sent_data)
+        assert decoded.message_type == sample_message.message_type
+        assert decoded.request_id == sample_message.request_id
+
+    @pytest.mark.asyncio
+    async def test_push_raw_sends_pre_serialized_bytes_unchanged(
+        self, mock_zmq_socket, mock_zmq_context
+    ):
+        """Test that push_raw bypasses codec serialization and sends the provided bytes."""
+        client = ZMQPushClient(address="tcp://127.0.0.1:5555", bind=True)
+        await client.initialize()
+
+        payload = b"\x82\xa1t\xa4test"
+        await client.push_raw(payload)
+
+        mock_zmq_socket.send.assert_called_once_with(payload)
 
     @pytest.mark.asyncio
     async def test_push_retries_on_zmq_again(self, mock_zmq_context):

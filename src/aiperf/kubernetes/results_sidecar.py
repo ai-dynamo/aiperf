@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 RESULTS_DIR = Path(os.environ.get("AIPERF_RESULTS_DIR", "/results"))
 SERVER_PORT = int(os.environ.get("AIPERF_RESULTS_SIDECAR_PORT", "9091"))
 READY_MARKER_NAME = ".aiperf_results_ready.json"
+CHECKPOINTS_DIR_NAME = "checkpoints"
 
 _CONTENT_TYPES: dict[str, str] = {
     ".json": "application/json",
@@ -61,6 +62,11 @@ class ResultsListResponse(AIPerfBaseModel):
 def ready_marker_path(base_dir: Path) -> Path:
     """Return the sidecar readiness marker path."""
     return base_dir / READY_MARKER_NAME
+
+
+def checkpoints_dir(base_dir: Path) -> Path:
+    """Return the checkpoint directory under the results directory."""
+    return base_dir / CHECKPOINTS_DIR_NAME
 
 
 def write_ready_marker(base_dir: Path, *, was_cancelled: bool = False) -> Path:
@@ -95,6 +101,15 @@ def _is_ready(base_dir: Path) -> bool:
     return ready_marker_path(base_dir).is_file()
 
 
+def _is_checkpoint_path(base_dir: Path, path: Path) -> bool:
+    """Whether a path points at a checkpoint artifact under the results dir."""
+    try:
+        relative = path.relative_to(base_dir.resolve())
+    except ValueError:
+        return False
+    return bool(relative.parts) and relative.parts[0] == CHECKPOINTS_DIR_NAME
+
+
 def create_app(results_dir: Path | None = None) -> FastAPI:
     """Create the FastAPI app for serving controller-side results."""
     base_dir = results_dir or RESULTS_DIR
@@ -109,30 +124,44 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
 
     @app.get("/api/results/list", response_model=ResultsListResponse)
     async def list_results() -> ResultsListResponse:
-        if not _is_ready(base_dir) or not await aio_os.path.isdir(base_dir):
+        if not await aio_os.path.isdir(base_dir):
             return ResultsListResponse()
 
         def _list_files() -> list[ResultFileInfo]:
-            return sorted(
-                [
+            files: list[ResultFileInfo] = []
+
+            if _is_ready(base_dir):
+                files.extend(
                     ResultFileInfo(name=entry.name, size=entry.stat().st_size)
                     for entry in base_dir.iterdir()
                     if entry.is_file() and entry.name != READY_MARKER_NAME
-                ],
-                key=lambda item: item.name,
-            )
+                )
+
+            cp_dir = checkpoints_dir(base_dir)
+            if cp_dir.is_dir():
+                files.extend(
+                    ResultFileInfo(
+                        name=entry.relative_to(base_dir).as_posix(),
+                        size=entry.stat().st_size,
+                    )
+                    for entry in cp_dir.rglob("*")
+                    if entry.is_file()
+                )
+
+            return sorted(files, key=lambda item: item.name)
 
         files = await asyncio.to_thread(_list_files)
         return ResultsListResponse(files=files)
 
     @app.get("/api/results/files/{filename:path}")
     async def get_result_file(filename: str, request: Request) -> StreamingResponse:
-        if not _is_ready(base_dir):
-            raise HTTPException(status_code=404, detail="Results not ready")
-
         file_path = _safe_resolve(base_dir, filename)
         if file_path is None or file_path.name == READY_MARKER_NAME:
             raise HTTPException(status_code=400, detail="Invalid filename")
+        if not _is_ready(base_dir) and not _is_checkpoint_path(
+            base_dir.resolve(), file_path
+        ):
+            raise HTTPException(status_code=404, detail="Results not ready")
         if not await aio_os.path.isfile(file_path):
             raise HTTPException(
                 status_code=404, detail=f"Result file not found: {filename}"

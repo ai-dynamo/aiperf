@@ -208,6 +208,8 @@ def make_credit(
     is_final: bool | None = None,
     phase: CreditPhase = "profiling",
     corr_id: str | None = None,
+    url_index: int | None = None,
+    allow_worker_migration: bool = False,
 ) -> Credit:
     if num_turns is not None:
         n = num_turns
@@ -223,6 +225,8 @@ def make_credit(
         turn_index=turn,
         num_turns=n,
         issued_at_ns=time.time_ns(),
+        url_index=url_index,
+        allow_worker_migration=allow_worker_migration,
     )
 
 
@@ -231,12 +235,16 @@ def make_turn(
     turn: int = 0,
     num_turns: int = 1,
     corr_id: str | None = None,
+    url_index: int | None = None,
+    allow_worker_migration: bool = False,
 ) -> TurnToSend:
     return TurnToSend(
         conversation_id=conv_id,
         x_correlation_id=corr_id or f"corr-{conv_id}",
         turn_index=turn,
         num_turns=num_turns,
+        url_index=url_index,
+        allow_worker_migration=allow_worker_migration,
     )
 
 

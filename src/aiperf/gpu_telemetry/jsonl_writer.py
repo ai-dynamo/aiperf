@@ -52,6 +52,7 @@ class GPUTelemetryJSONLWriter(
             run=run,
             output_file=output_file,
             batch_size=Environment.GPU.EXPORT_BATCH_SIZE,
+            flush_interval=Environment.GPU.EXPORT_FLUSH_INTERVAL,
             **kwargs,
         )
 

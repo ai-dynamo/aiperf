@@ -225,8 +225,13 @@ def apply_worker_config(config: AIPerfConfig, total_workers: int) -> int:
     config.runtime.workers_per_pod = workers_per_pod
     config.runtime.workers = num_pods * workers_per_pod
 
-    rp_per_pod = max(1, workers_per_pod // K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR)
-    config.runtime.record_processors_per_pod = rp_per_pod
+    # Respect user-provided record_processors_per_pod when set in the spec.
+    if config.runtime.record_processors_per_pod is None:
+        rp_per_pod = max(
+            1, workers_per_pod // K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR
+        )
+        config.runtime.record_processors_per_pod = rp_per_pod
+    rp_per_pod = config.runtime.record_processors_per_pod
     config.runtime.record_processors = rp_per_pod * num_pods
 
     return num_pods

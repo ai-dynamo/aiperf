@@ -215,6 +215,10 @@ class ConversationMetadata(AIPerfBaseModel):
         ...,
         description="The ID of the conversation.",
     )
+    context_mode: ConversationContextMode | None = Field(
+        default=None,
+        description="Resolved or explicit context mode for this conversation.",
+    )
     turns: list[TurnMetadata] = Field(
         default_factory=list,
         description="The metadata of the turns in the conversation.",
@@ -320,6 +324,7 @@ class Conversation(AIPerfBaseModel):
         """Get the metadata of the conversation."""
         return ConversationMetadata(
             conversation_id=self.session_id,
+            context_mode=self.context_mode,
             turns=[turn.metadata() for turn in self.turns],
         )
 

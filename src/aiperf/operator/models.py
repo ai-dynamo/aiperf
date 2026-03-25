@@ -74,6 +74,9 @@ class FetchResult:
     downloaded: list[str]
     """List of file paths successfully downloaded to the results directory."""
 
+    checkpoints: list[str] = dataclasses.field(default_factory=list)
+    """Checkpoint artifact paths downloaded for partial recovery."""
+
     error: str = ""
     """Error message if fetch failed or returned partial results."""
 

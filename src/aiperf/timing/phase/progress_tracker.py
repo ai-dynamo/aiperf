@@ -107,12 +107,19 @@ class PhaseProgressTracker:
         self,
         is_final_turn: bool,
         cancelled: bool,
+        *,
+        session_ended: bool | None = None,
+        session_cancelled: bool | None = None,
     ) -> bool:
         """Atomically increment returned count.
 
         Args:
             is_final_turn: Whether this turn is the final turn of a session.
             cancelled: Whether the credit was cancelled.
+            session_ended: Whether this return ended the session. Defaults to
+                is_final_turn.
+            session_cancelled: Whether the ended session should count as cancelled.
+                Defaults to the request's cancelled status when session_ended=True.
 
         Returns:
             True if ALL credits returned (this was the final return).
@@ -124,7 +131,12 @@ class PhaseProgressTracker:
         Note: Late arrivals (after phase complete) are handled by caller
         checking lifecycle.is_complete before calling this method.
         """
-        return self._counter.increment_returned(is_final_turn, cancelled)
+        return self._counter.increment_returned(
+            is_final_turn,
+            cancelled,
+            session_ended=session_ended,
+            session_cancelled=session_cancelled,
+        )
 
     def increment_prefill_released(self) -> None:
         """Increment prefill released count.

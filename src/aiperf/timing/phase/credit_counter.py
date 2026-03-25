@@ -203,7 +203,14 @@ class CreditCounter:
 
         return credit_index, session_index, is_final_credit
 
-    def increment_returned(self, is_final_turn: bool, cancelled: bool) -> bool:
+    def increment_returned(
+        self,
+        is_final_turn: bool,
+        cancelled: bool,
+        *,
+        session_ended: bool | None = None,
+        session_cancelled: bool | None = None,
+    ) -> bool:
         """Atomically increment returned count and check phase completion.
 
         Lock-free: no async calls.
@@ -211,18 +218,29 @@ class CreditCounter:
         Args:
             is_final_turn: Whether the returned turn is the final turn of its session
             cancelled: Whether the credit was cancelled
+            session_ended: Whether this return ended the session. Defaults to
+                is_final_turn.
+            session_cancelled: Whether the ended session should count as cancelled.
+                Defaults to the request's cancelled status when session_ended=True.
 
         Returns:
             True if ALL sent credits have now been returned or cancelled
             (phase sending must be complete for this to ever return True).
         """
+        if session_ended is None:
+            session_ended = is_final_turn
+        if session_ended and session_cancelled is None:
+            session_cancelled = cancelled
+
         if cancelled:
             self._requests_cancelled += 1
-            if is_final_turn:
-                self._cancelled_sessions += 1
         else:
             self._requests_completed += 1
-            if is_final_turn:
+
+        if session_ended:
+            if session_cancelled:
+                self._cancelled_sessions += 1
+            else:
                 self._completed_sessions += 1
 
         return self.check_all_returned_or_cancelled()

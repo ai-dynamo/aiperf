@@ -3,6 +3,7 @@
 """Mixin for buffered JSONL writing with automatic flushing."""
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Generic
 
@@ -10,7 +11,7 @@ import aiofiles
 import orjson
 
 from aiperf.common.environment import Environment
-from aiperf.common.hooks import on_init, on_stop
+from aiperf.common.hooks import background_task, on_init, on_stop
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.types import BaseModelT
 from aiperf.common.utils import yield_to_event_loop
@@ -35,6 +36,7 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         self,
         output_file: Path,
         batch_size: int,
+        flush_interval: float,
         **kwargs,
     ):
         """Initialize the buffered JSONL writer.
@@ -51,6 +53,8 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         self._file_lock = asyncio.Lock()
         self._buffer: list[bytes] = []  # Store bytes for binary mode
         self._batch_size = batch_size
+        self._flush_interval = flush_interval
+        self._last_flush_monotonic = time.monotonic()
 
     @on_init
     async def _open_file(self) -> None:
@@ -130,8 +134,19 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 bulk_data = b"\n".join(buffer_to_flush) + b"\n"
                 await self._file_handle.write(bulk_data)
                 await self._file_handle.flush()
+                self._last_flush_monotonic = time.monotonic()
             except Exception as e:
                 self.exception(f"Failed to flush buffer: {e!r}")
+
+    @background_task(interval=lambda self: self._flush_interval, immediate=False)
+    async def _flush_buffer_periodically(self) -> None:
+        """Flush buffered records on a time boundary even at low throughput."""
+        if not self._buffer:
+            return
+
+        buffer_to_flush = self._buffer
+        self._buffer = []
+        await self._flush_buffer(buffer_to_flush)
 
     @on_stop
     async def _close_file(self) -> None:

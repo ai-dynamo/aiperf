@@ -116,6 +116,40 @@ class TestSessionTracking:
             assert indices == sorted(indices)
             assert indices[0] == 0
 
+    async def test_handle_session_ended_cleans_up_user(
+        self,
+    ) -> None:
+        """Detached or terminal sessions should release per-user state immediately."""
+        cfg = CreditPhaseConfig(
+            phase="profiling",
+            timing_mode=TimingMode.USER_CENTRIC_RATE,
+            request_rate=10.0,
+            num_users=2,
+            total_expected_requests=4,
+        )
+        conversation_source = MagicMock()
+        conversation_source.dataset_metadata.average_turn_count = 3
+        strategy = UserCentricStrategy(
+            config=cfg,
+            conversation_source=conversation_source,
+            scheduler=MagicMock(),
+            stop_checker=MagicMock(),
+            credit_issuer=MagicMock(),
+            lifecycle=MagicMock(),
+        )
+
+        sampled = MagicMock()
+        sampled.x_correlation_id = "user-1"
+        user = User(user_id=1, sampled=sampled, max_turns=3)
+        strategy._session_to_user[user.x_correlation_id] = user
+        assert user.x_correlation_id in strategy._session_to_user
+
+        await strategy.handle_session_ended(
+            MagicMock(x_correlation_id=user.x_correlation_id)
+        )
+
+        assert user.x_correlation_id not in strategy._session_to_user
+
 
 @pytest.mark.asyncio
 class TestStopConditions:

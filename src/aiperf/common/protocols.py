@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from typing import Any
 
     from aiperf.common.enums import LifecycleState
+    from aiperf.common.message_codecs import MessageCodecProtocol
     from aiperf.common.models import (
         MessageCallbackMapT,
         MessageOutputT,
@@ -288,6 +289,7 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
+        codec: MessageCodecProtocol | None = None,
     ) -> PushClientProtocol:
         """Create a PUSH client for the given address, which will be automatically
         started and stopped with the CommunicationProtocol instance."""
@@ -300,6 +302,7 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         socket_ops: dict | None = None,
         max_pull_concurrency: int | None = None,
         additional_bind_address: str | None = None,
+        codec: MessageCodecProtocol | None = None,
     ) -> PullClientProtocol:
         """Create a PULL client for the given address, which will be automatically
         started and stopped with the CommunicationProtocol instance."""

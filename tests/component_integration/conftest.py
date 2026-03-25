@@ -52,11 +52,19 @@ class TeeStream:
         self.buffer = StringIO()
 
     def write(self, data: str) -> int:
-        self.original.write(data)
+        try:
+            self.original.write(data)
+        except ValueError:
+            # Late finalizer logs can fire after pytest closes the captured stream.
+            # Keep buffering so the test harness still captures the output cleanly.
+            pass
         return self.buffer.write(data)
 
     def flush(self) -> None:
-        self.original.flush()
+        try:
+            self.original.flush()
+        except ValueError:
+            pass
 
     def getvalue(self) -> str:
         return self.buffer.getvalue()

@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from aiperf.credit.messages import CreditReturn, FirstToken
     from aiperf.credit.structs import Credit
     from aiperf.timing.concurrency import ConcurrencyManager
+    from aiperf.timing.conversation_source import ConversationSource
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
     from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
@@ -44,6 +45,16 @@ class PhaseCallbackContext:
     stop_checker: StopConditionChecker
     strategy: TimingStrategyProtocol
     concurrency_manager: ConcurrencyManager
+    conversation_source: ConversationSource
+
+
+@dataclass(slots=True)
+class ReturnDisposition:
+    """Callback outcome for a returned credit."""
+
+    should_continue: bool
+    session_ended: bool
+    session_cancelled: bool | None = None
 
 
 # =============================================================================
@@ -90,6 +101,7 @@ class CreditCallbackHandler:
         lifecycle: PhaseLifecycle,
         stop_checker: StopConditionChecker,
         strategy: TimingStrategyProtocol,
+        conversation_source: ConversationSource,
     ) -> None:
         """Register phase for callback handling.
 
@@ -109,6 +121,7 @@ class CreditCallbackHandler:
             stop_checker=stop_checker,
             strategy=strategy,
             concurrency_manager=self._concurrency_manager,
+            conversation_source=conversation_source,
         )
         _logger.debug(lambda: f"Registered callback handler for phase {phase}")
 
@@ -160,10 +173,14 @@ class CreditCallbackHandler:
             )
             return
 
+        disposition = self._get_return_disposition(credit_return, handler)
+
         # 1. ATOMIC COUNTING (no await before this!)
         is_final_returned = handler.progress.increment_returned(
             credit.is_final_turn,
             credit_return.cancelled,
+            session_ended=disposition.session_ended,
+            session_cancelled=disposition.session_cancelled,
         )
 
         # 2. Track prefill release if TTFT never arrived
@@ -172,18 +189,68 @@ class CreditCallbackHandler:
 
         # 3. Release concurrency slots
         self._release_slots_for_return(
-            phase, credit, credit_return, is_final_returned, handler
+            phase,
+            credit,
+            credit_return,
+            is_final_returned,
+            disposition.session_ended,
+            handler,
         )
 
         # 4. Signal completion if this was the final return
         if is_final_returned:
             handler.progress.all_credits_returned_event.set()
 
-        # 5. Notify timing strategy for subsequent turns when phase can still send
-        # Timing strategy queues subsequent turns for rate-limited issuance.
-        # Skipped when phase can't send
-        if handler.stop_checker.can_send_any_turn():
+        # 5. Cleanup ended sessions or notify strategy for subsequent turns.
+        if disposition.session_ended:
+            handle_session_ended = getattr(
+                handler.strategy, "handle_session_ended", None
+            )
+            if handle_session_ended is not None:
+                await handle_session_ended(credit)
+        elif handler.stop_checker.can_send_any_turn() and disposition.should_continue:
             await handler.strategy.handle_credit_return(credit)
+
+    def _get_return_disposition(
+        self,
+        credit_return: CreditReturn,
+        handler: PhaseCallbackContext,
+    ) -> ReturnDisposition:
+        """Determine whether a returned credit can advance the conversation.
+
+        Lost-worker recovery synthesizes cancelled returns on the router. Those
+        should only continue multi-turn sessions when the dataset already carries
+        assistant responses, because another worker can then reconstruct context
+        without the lost worker's live session state.
+        """
+        credit = credit_return.credit
+        if credit.is_final_turn:
+            return ReturnDisposition(
+                should_continue=False,
+                session_ended=True,
+                session_cancelled=credit_return.cancelled,
+            )
+
+        if not self._requires_worker_migration(credit_return):
+            return ReturnDisposition(should_continue=True, session_ended=False)
+
+        if credit.allow_worker_migration:
+            return ReturnDisposition(should_continue=True, session_ended=False)
+
+        return ReturnDisposition(
+            should_continue=False,
+            session_ended=True,
+            session_cancelled=True,
+        )
+
+    @staticmethod
+    def _requires_worker_migration(credit_return: CreditReturn) -> bool:
+        """Whether continuation depends on routing the session to a different worker."""
+        if credit_return.worker_detached:
+            return True
+
+        error = credit_return.error or ""
+        return credit_return.cancelled and error.startswith("worker_unavailable:")
 
     def _release_slots_for_return(
         self,
@@ -191,6 +258,7 @@ class CreditCallbackHandler:
         credit: Credit,
         credit_return: CreditReturn,
         is_final_returned: bool,
+        session_ended: bool,
         handler: PhaseCallbackContext,
     ) -> None:
         """Release slots based on credit state.
@@ -210,7 +278,7 @@ class CreditCallbackHandler:
         concurrency = handler.concurrency_manager
 
         # Release session slot when conversation ends (final turn, whether completed or cancelled)
-        if credit.is_final_turn:
+        if session_ended:
             concurrency.release_session_slot(phase)
 
         # On phase end, release slots for sessions still in flight.

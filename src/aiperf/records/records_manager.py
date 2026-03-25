@@ -7,11 +7,13 @@ import time
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import orjson
 
 from aiperf.common.base_component_service import BaseComponentService
+from aiperf.common.channel_codecs import RECORDS_CODEC
 from aiperf.config.zmq import ZMQDualBindConfig
 
 if TYPE_CHECKING:
@@ -75,7 +77,7 @@ from aiperf.gpu_telemetry.protocols import (
     GPUTelemetryProcessorProtocol,
 )
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType, ResultsProcessorType, UIType
+from aiperf.plugin.enums import PluginType, ResultsProcessorType, ServiceRunType, UIType
 from aiperf.post_processors.protocols import ResultsProcessorProtocol
 from aiperf.records.error_tracker import ErrorTracker
 from aiperf.records.records_tracker import RecordsTracker
@@ -96,6 +98,14 @@ class ErrorTrackingState:
     error_counts: dict[ErrorDetails, int] = field(
         default_factory=lambda: defaultdict(int)
     )
+
+
+def _write_json_file_atomic(path: Path, content: bytes) -> None:
+    """Write a JSON file atomically so readers never observe a partial write."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_bytes(content)
+    tmp.replace(path)
 
 
 class RecordsManager(PullClientMixin, BaseComponentService):
@@ -131,6 +141,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             pull_client_bind=True,
             pull_client_max_concurrency=Environment.ZMQ.PULL_MAX_CONCURRENCY,
             pull_client_additional_bind_address=additional_bind_address,
+            pull_client_codec=RECORDS_CODEC,
             **kwargs,
         )
 
@@ -148,6 +159,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._server_metrics_processors: list[ServerMetricsProcessorProtocol] = []  # fmt: skip
         self._gpu_telemetry_accumulator: GPUTelemetryAccumulatorProtocol | None = None  # fmt: skip
         self._server_metrics_accumulator: ServerMetricsAccumulatorProtocol | None = None  # fmt: skip
+        self._last_checkpoint_records: int = 0
 
         for entry in plugins.iter_entries(PluginType.RESULTS_PROCESSOR):
             try:
@@ -606,6 +618,66 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         return metric_results
 
+    def _current_results_record_count(self) -> int:
+        """Return the total processed record count across all result phases."""
+        return sum(
+            self._records_tracker.create_stats_for_phase(phase).total_records
+            for phase in self._records_tracker.get_results_phases()
+        )
+
+    def _build_partial_profile_results(
+        self, records: list[MetricResult]
+    ) -> ProfileResults:
+        """Build a partial profile result snapshot from current in-memory state."""
+        start_ns, end_ns = self._records_tracker.get_results_time_window()
+        error_summary = []
+        for phase in self._records_tracker.get_results_phases():
+            error_summary.extend(self._error_tracker.get_error_summary_for_phase(phase))
+
+        return ProfileResults(
+            records=records,
+            completed=self._current_results_record_count(),
+            start_ns=start_ns or time.time_ns(),
+            end_ns=end_ns or time.time_ns(),
+            error_summary=error_summary,
+            was_cancelled=any(
+                self._records_tracker.was_phase_cancelled(phase)
+                for phase in self._records_tracker.get_results_phases()
+            ),
+        )
+
+    @background_task(interval=Environment.RECORD.CHECKPOINT_INTERVAL, immediate=False)
+    async def _write_partial_checkpoint_task(self) -> None:
+        """Periodically persist a partial aggregate snapshot for recovery."""
+        if self.run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES:
+            return
+
+        total_records = self._current_results_record_count()
+        if total_records == 0 or total_records == self._last_checkpoint_records:
+            return
+
+        records = await self._generate_realtime_metrics()
+        if not records:
+            return
+
+        profile_results = self._build_partial_profile_results(records)
+        export_data = self._generate_json_export_data(
+            records,
+            profile_results,
+            include_telemetry=False,
+        )
+        export_data.checkpoint = True
+        export_data.records_completed = total_records
+        export_data.generated_at_ns = time.time_ns()
+
+        payload = export_data.model_dump_json(
+            indent=2, exclude_unset=True, exclude_none=True
+        ).encode("utf-8")
+        checkpoint_path = self.run.cfg.artifacts.profile_export_partial_json_file
+        await asyncio.to_thread(_write_json_file_atomic, checkpoint_path, payload)
+        self._last_checkpoint_records = total_records
+        self.debug(f"Wrote partial checkpoint to {checkpoint_path}")
+
     async def _process_results(self, cancelled: bool) -> ProcessRecordsResult:
         """Process the results across all non-excluded phases."""
         self.debug(lambda: f"Processing records (cancelled: {cancelled})")
@@ -822,6 +894,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self,
         records: list[MetricResult],
         profile_results: ProfileResults,
+        *,
+        include_telemetry: bool = True,
     ) -> JsonExportData:
         """Generate JsonExportData for ConfigMap publishing.
 
@@ -856,7 +930,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         # Get telemetry data if available
         telemetry_data = None
-        if self._gpu_telemetry_accumulator and not self.run.cfg.gpu_telemetry_disabled:
+        if (
+            include_telemetry
+            and self._gpu_telemetry_accumulator
+            and not self.run.cfg.gpu_telemetry_disabled
+        ):
             phase_stats = self._records_tracker.create_stats_for_phase("profiling")
             telemetry_data = self._gpu_telemetry_accumulator.export_results(
                 start_ns=phase_stats.start_ns or time.time_ns(),

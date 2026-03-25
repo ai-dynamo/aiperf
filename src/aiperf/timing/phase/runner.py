@@ -220,6 +220,7 @@ class PhaseRunner(TaskManagerMixin):
                 lifecycle=self._lifecycle,
                 stop_checker=self._stop_checker,
                 strategy=strategy,
+                conversation_source=self._conversation_source,
             )
 
             self._concurrency_manager.configure_for_phase(

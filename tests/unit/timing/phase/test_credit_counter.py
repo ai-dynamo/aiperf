@@ -135,6 +135,19 @@ class TestCreditCounter:
         c.increment_returned(is_final_turn=True, cancelled=True)
         assert c.cancelled_sessions == 1 and c.completed_sessions == 0
 
+    def test_increment_returned_can_cancel_session_after_completed_turn(self) -> None:
+        c = CreditCounter(cfg())
+        c.increment_sent(turn(idx=0, num=2))
+        c.increment_returned(
+            is_final_turn=False,
+            cancelled=False,
+            session_ended=True,
+            session_cancelled=True,
+        )
+        assert c.requests_completed == 1
+        assert c.cancelled_sessions == 1
+        assert c.completed_sessions == 0
+
     def test_increment_returned_all_done(self) -> None:
         c = CreditCounter(cfg())
         c.increment_sent(turn())

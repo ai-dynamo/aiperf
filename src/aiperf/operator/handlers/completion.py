@@ -15,6 +15,7 @@ from aiperf.kubernetes.client import get_api
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.kubernetes.kr8s_resources import AsyncJobSet
+from aiperf.kubernetes.results_sidecar import CHECKPOINTS_DIR_NAME
 from aiperf.operator import events
 from aiperf.operator.client_cache import get_or_create_progress_client, job_key
 from aiperf.operator.environment import OperatorEnvironment
@@ -209,13 +210,25 @@ async def fetch_results_with_retry(
     # (e.g. metrics fetched but files not yet) survives retries.
     # Use None (not yet attempted) vs [] (attempted, no files) to avoid
     # treating a valid empty download list as "not yet fetched".
-    state: dict[str, Any] = {"metrics": None, "downloaded": None}
+    state: dict[str, Any] = {"metrics": None, "downloaded": None, "checkpoints": None}
 
     # Key result files that indicate a complete export. If downloads
     # succeed but none of these are present, export is still in progress
     # and we should retry to capture the full set.
     _KEY_FILES = {"profile_export_aiperf.json", "profile_export_aiperf.csv"}
     sidecar_port = K8sEnvironment.PORTS.RESULTS_SIDECAR
+
+    def _split_downloaded(
+        paths: list[str] | None,
+    ) -> tuple[list[str], list[str]]:
+        final_files: list[str] = []
+        checkpoint_files: list[str] = []
+        for path in paths or []:
+            if path.startswith(f"{CHECKPOINTS_DIR_NAME}/"):
+                checkpoint_files.append(path)
+            else:
+                final_files.append(path)
+        return final_files, checkpoint_files
 
     def _merge_downloaded(
         current: list[str] | None, new: list[str] | None
@@ -233,7 +246,13 @@ async def fetch_results_with_retry(
         if OperatorEnvironment.RESULTS.DIR.exists():
             downloaded = await client.download_all_results(controller_host, dest_dir)
             if downloaded:
-                state["downloaded"] = _merge_downloaded(state["downloaded"], downloaded)
+                final_files, checkpoint_files = _split_downloaded(downloaded)
+                state["downloaded"] = _merge_downloaded(
+                    state["downloaded"], final_files
+                )
+                state["checkpoints"] = _merge_downloaded(
+                    state["checkpoints"], checkpoint_files
+                )
 
             has_key_file = bool(_KEY_FILES & set(state["downloaded"] or []))
             if not has_key_file and sidecar_port != K8sEnvironment.PORTS.API_SERVICE:
@@ -242,21 +261,33 @@ async def fetch_results_with_retry(
                         controller_host, dest_dir
                     )
                 if sidecar_downloaded:
+                    final_files, checkpoint_files = _split_downloaded(
+                        sidecar_downloaded
+                    )
                     state["downloaded"] = _merge_downloaded(
-                        state["downloaded"], sidecar_downloaded
+                        state["downloaded"], final_files
+                    )
+                    state["checkpoints"] = _merge_downloaded(
+                        state["checkpoints"], checkpoint_files
                     )
 
         if state["metrics"] is not None and state["downloaded"] is not None:
             has_key_file = bool(_KEY_FILES & set(state["downloaded"]))
             if has_key_file:
                 return FetchResult(
-                    metrics=state["metrics"], downloaded=state["downloaded"]
+                    metrics=state["metrics"],
+                    downloaded=state["downloaded"],
+                    checkpoints=state["checkpoints"] or [],
                 )
             logger.info(
                 f"Downloaded {len(state['downloaded'])} files but missing key "
                 f"export files, retrying..."
             )
-        raise _IncompleteResultsError(state["metrics"], state["downloaded"] or [])
+        raise _IncompleteResultsError(
+            state["metrics"],
+            state["downloaded"] or [],
+            state["checkpoints"] or [],
+        )
 
     try:
         return await retry_with_backoff(
@@ -272,6 +303,7 @@ async def fetch_results_with_retry(
         return FetchResult(
             metrics=state["metrics"],
             downloaded=state["downloaded"] or [],
+            checkpoints=state["checkpoints"] or [],
             error=f"Failed to fetch results: {e}",
         )
 
@@ -279,9 +311,15 @@ async def fetch_results_with_retry(
 class _IncompleteResultsError(Exception):
     """Raised when results are partially fetched (metrics or files missing)."""
 
-    def __init__(self, metrics: dict[str, Any] | None, downloaded: list[str]) -> None:
+    def __init__(
+        self,
+        metrics: dict[str, Any] | None,
+        downloaded: list[str],
+        checkpoints: list[str],
+    ) -> None:
         self.metrics = metrics
         self.downloaded = downloaded
+        self.checkpoints = checkpoints
         super().__init__("Incomplete results")
 
     def to_fetch_result(self, job_id: str) -> FetchResult:
@@ -301,7 +339,10 @@ class _IncompleteResultsError(Exception):
             logger.warning(f"File download failed for {job_id}, metrics retrieved")
 
         return FetchResult(
-            metrics=self.metrics, downloaded=self.downloaded, error=error
+            metrics=self.metrics,
+            downloaded=self.downloaded,
+            checkpoints=self.checkpoints,
+            error=error,
         )
 
 
@@ -319,29 +360,40 @@ def _parse_metrics_from_files(
 
     dest_dir = OperatorEnvironment.RESULTS.DIR / namespace / job_id
 
-    # Try both compressed and uncompressed variants
-    json_file = dest_dir / "profile_export_aiperf.json"
-    zst_file = dest_dir / "profile_export_aiperf.json.zst"
-
     try:
-        if zst_file.exists():
-            import io
+        candidate_paths: list[Path] = []
+        for name in downloaded:
+            candidate = dest_dir / name
+            candidate_paths.append(candidate)
+        candidate_paths.extend(
+            [
+                dest_dir / "profile_export_aiperf.json.zst",
+                dest_dir / "profile_export_aiperf.json",
+            ]
+        )
 
-            import zstandard
+        seen: set[Path] = set()
+        for path in candidate_paths:
+            if path in seen or not path.exists():
+                continue
+            seen.add(path)
 
-            raw = (
-                zstandard.ZstdDecompressor()
-                .stream_reader(io.BytesIO(zst_file.read_bytes()))
-                .read()
-            )
-            data = orjson.loads(raw)
-        elif json_file.exists():
-            data = orjson.loads(json_file.read_bytes())
-        else:
-            return None
+            if path.suffix == ".zst":
+                import io
 
-        if isinstance(data, dict) and data.get("request_throughput"):
-            return data
+                import zstandard
+
+                raw = (
+                    zstandard.ZstdDecompressor()
+                    .stream_reader(io.BytesIO(path.read_bytes()))
+                    .read()
+                )
+                data = orjson.loads(raw)
+            else:
+                data = orjson.loads(path.read_bytes())
+
+            if isinstance(data, dict) and data.get("request_throughput"):
+                return data
     except Exception as e:
         logger.warning(f"Failed to parse metrics from {dest_dir}: {e}")
     return None

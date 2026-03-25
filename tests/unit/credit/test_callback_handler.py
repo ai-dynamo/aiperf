@@ -7,6 +7,7 @@ Tests credit lifecycle callbacks from CreditRouter.
 
 import asyncio
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -62,6 +63,14 @@ def mock_strategy():
     """Mock timing strategy."""
     mock = MagicMock()
     mock.handle_credit_return = AsyncMock()
+    mock.handle_session_ended = AsyncMock()
+    return mock
+
+
+@pytest.fixture
+def mock_conversation_source():
+    """Mock conversation source."""
+    mock = MagicMock()
     return mock
 
 
@@ -78,6 +87,7 @@ def registered_handler(
     mock_lifecycle,
     mock_stop_checker,
     mock_strategy,
+    mock_conversation_source,
 ):
     """Create CreditCallbackHandler with phase registered."""
     callback_handler.register_phase(
@@ -86,6 +96,7 @@ def registered_handler(
         lifecycle=mock_lifecycle,
         stop_checker=mock_stop_checker,
         strategy=mock_strategy,
+        conversation_source=mock_conversation_source,
     )
     return callback_handler
 
@@ -96,6 +107,7 @@ def make_credit(
     turn_index: int = 0,
     num_turns: int = 1,
     phase: CreditPhase = "profiling",
+    allow_worker_migration: bool = False,
 ) -> Credit:
     """Create a Credit for testing."""
     return Credit(
@@ -106,6 +118,7 @@ def make_credit(
         turn_index=turn_index,
         num_turns=num_turns,
         issued_at_ns=time.time_ns(),
+        allow_worker_migration=allow_worker_migration,
     )
 
 
@@ -141,6 +154,7 @@ class TestPhaseRegistration:
             lifecycle=MagicMock(),
             stop_checker=MagicMock(),
             strategy=MagicMock(),
+            conversation_source=MagicMock(),
         )
 
         assert "profiling" in callback_handler._phase_handlers
@@ -169,6 +183,8 @@ class TestCreditReturnBasicFlow:
         mock_progress.increment_returned.assert_called_once_with(
             credit.is_final_turn,
             False,  # cancelled=False
+            session_ended=credit.is_final_turn,
+            session_cancelled=False,
         )
 
     async def test_on_credit_return_tracks_cancelled_status(
@@ -183,6 +199,8 @@ class TestCreditReturnBasicFlow:
         mock_progress.increment_returned.assert_called_once_with(
             credit.is_final_turn,
             True,  # cancelled=True
+            session_ended=credit.is_final_turn,
+            session_cancelled=True,
         )
 
     async def test_on_credit_return_releases_session_slot_on_final_turn(
@@ -268,7 +286,11 @@ class TestCreditReturnFinalHandling:
             progress=progress,
             lifecycle=MagicMock(is_complete=False),
             stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=False)),
-            strategy=MagicMock(handle_credit_return=AsyncMock()),
+            strategy=MagicMock(
+                handle_credit_return=AsyncMock(),
+                handle_session_ended=AsyncMock(),
+            ),
+            conversation_source=MagicMock(),
         )
 
         credit = make_credit(turn_index=0, num_turns=1)  # Final turn
@@ -306,6 +328,106 @@ class TestNextTurnDispatch:
         credit_return2 = make_credit_return(credit2)
         await registered_handler.on_credit_return("worker-1", credit_return2)
         mock_strategy.handle_credit_return.assert_not_called()
+
+    async def test_worker_unavailable_stops_continuation_without_dataset_responses(
+        self,
+        registered_handler,
+        mock_strategy,
+        mock_conversation_source,
+    ):
+        """Lost-worker recovery should not advance sessions that need live responses."""
+        credit = make_credit(turn_index=0, num_turns=3)
+        credit_return = CreditReturn(
+            credit=credit,
+            cancelled=True,
+            first_token_sent=False,
+            error="worker_unavailable: worker lost mid-session",
+        )
+
+        await registered_handler.on_credit_return("worker-1", credit_return)
+
+        mock_strategy.handle_credit_return.assert_not_called()
+        mock_strategy.handle_session_ended.assert_awaited_once_with(credit)
+
+    async def test_worker_unavailable_continues_with_dataset_responses(
+        self,
+        registered_handler,
+        mock_strategy,
+        mock_conversation_source,
+    ):
+        """Lost-worker recovery may continue when dataset responses reconstruct context."""
+        credit = make_credit(turn_index=0, num_turns=3, allow_worker_migration=True)
+        credit_return = CreditReturn(
+            credit=credit,
+            cancelled=True,
+            first_token_sent=False,
+            error="worker_unavailable: worker lost mid-session",
+        )
+
+        await registered_handler.on_credit_return("worker-1", credit_return)
+
+        mock_strategy.handle_credit_return.assert_called_once_with(credit)
+        mock_strategy.handle_session_ended.assert_not_called()
+
+    async def test_detached_worker_completion_stops_session_without_dataset_responses(
+        self,
+        registered_handler,
+        mock_strategy,
+        mock_conversation_source,
+        mock_progress,
+        mock_concurrency,
+    ):
+        """A completed turn from a detached worker cannot continue without dataset responses."""
+        credit = make_credit(turn_index=0, num_turns=3)
+        credit_return = CreditReturn(
+            credit=credit,
+            cancelled=False,
+            first_token_sent=True,
+            worker_detached=True,
+        )
+
+        await registered_handler.on_credit_return("worker-1", credit_return)
+
+        mock_progress.increment_returned.assert_called_once_with(
+            credit.is_final_turn,
+            False,
+            session_ended=True,
+            session_cancelled=True,
+        )
+        mock_concurrency.release_session_slot.assert_called_once_with("profiling")
+        mock_strategy.handle_credit_return.assert_not_called()
+        mock_strategy.handle_session_ended.assert_awaited_once_with(credit)
+
+    async def test_terminal_return_ignores_missing_handle_session_ended(
+        self,
+        callback_handler,
+        mock_progress,
+        mock_lifecycle,
+        mock_stop_checker,
+        mock_conversation_source,
+    ):
+        """Legacy strategy plugins without handle_session_ended should still work."""
+        legacy_strategy = SimpleNamespace(handle_credit_return=AsyncMock())
+        callback_handler.register_phase(
+            phase="profiling",
+            progress=mock_progress,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=legacy_strategy,
+            conversation_source=mock_conversation_source,
+        )
+        credit = make_credit(turn_index=2, num_turns=3)
+
+        await callback_handler.on_credit_return(
+            "worker-1",
+            CreditReturn(
+                credit=credit,
+                cancelled=False,
+                first_token_sent=True,
+            ),
+        )
+
+        legacy_strategy.handle_credit_return.assert_not_called()
 
 
 # =============================================================================
@@ -387,7 +509,10 @@ class TestEdgeCases:
         await registered_handler.on_credit_return("worker-1", credit_return)
 
         mock_progress.increment_returned.assert_called_once_with(
-            credit.is_final_turn, cancelled
+            credit.is_final_turn,
+            cancelled,
+            session_ended=credit.is_final_turn,
+            session_cancelled=cancelled,
         )
         if not first_token_sent:
             mock_concurrency.release_prefill_slot.assert_called_once()

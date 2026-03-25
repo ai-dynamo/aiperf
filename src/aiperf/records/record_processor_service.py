@@ -7,6 +7,7 @@ import traceback
 from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
+from aiperf.common.channel_codecs import RAW_INFERENCE_CODEC, RECORDS_CODEC
 from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommAddress, CommandType, ExportLevel, MessageType
 
@@ -15,8 +16,11 @@ if TYPE_CHECKING:
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.hooks import on_command, on_pull_message
+from aiperf.common.inference_wire import (
+    InferenceResultsWireMessage,
+    wire_message_to_request_record,
+)
 from aiperf.common.messages import (
-    InferenceResultsMessage,
     MetricRecordsMessage,
 )
 from aiperf.common.mixins import PullClientMixin
@@ -55,10 +59,12 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             pull_client_address=CommAddress.RAW_INFERENCE_PROXY_BACKEND,
             pull_client_bind=False,
             pull_client_max_concurrency=Environment.ZMQ.PULL_MAX_CONCURRENCY,
+            pull_client_codec=RAW_INFERENCE_CODEC,
             **kwargs,
         )
         self.records_push_client: PushClientProtocol = self.comms.create_push_client(
             CommAddress.RECORDS,
+            codec=RECORDS_CODEC,
         )
         self.tokenizers: dict[str, Tokenizer] = {}
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
@@ -174,9 +180,12 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         )
 
     @on_pull_message(MessageType.INFERENCE_RESULTS)
-    async def _on_inference_results(self, message: InferenceResultsMessage) -> None:
+    async def _on_inference_results(self, message: InferenceResultsWireMessage) -> None:
         """Handle an inference results message."""
-        record = message.record
+        worker_id, record = wire_message_to_request_record(
+            config=self.run.cfg,
+            message=message,
+        )
 
         # Capture last response timestamp before parsing frees raw SSE data.
         last_response_perf_ns = (
@@ -191,7 +200,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             record.responses = None
 
         metadata = self._create_metric_record_metadata(
-            record, message.service_id, last_response_perf_ns
+            record, worker_id, last_response_perf_ns
         )
         raw_results = await self._process_record(parsed_record, metadata)
 

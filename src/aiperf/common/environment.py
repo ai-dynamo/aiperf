@@ -251,6 +251,12 @@ class _GPUSettings(BaseSettings):
         default=100,
         description="Batch size for telemetry record export results processor",
     )
+    EXPORT_FLUSH_INTERVAL: float = Field(
+        ge=0.1,
+        le=300.0,
+        default=2.0,
+        description="Maximum seconds telemetry JSONL records may remain buffered before being flushed to disk",
+    )
     REACHABILITY_TIMEOUT: int = Field(
         ge=1,
         le=300,
@@ -467,6 +473,12 @@ class _RecordSettings(BaseSettings):
         default=100,
         description="Batch size for record export results processor",
     )
+    EXPORT_FLUSH_INTERVAL: float = Field(
+        ge=0.1,
+        le=300.0,
+        default=2.0,
+        description="Maximum seconds record JSONL data may remain buffered before being flushed to disk",
+    )
     RAW_EXPORT_BATCH_SIZE: int = Field(
         ge=1,
         le=1000000,
@@ -492,6 +504,12 @@ class _RecordSettings(BaseSettings):
         le=100000.0,
         default=300.0,
         description="Timeout in seconds for processing record results",
+    )
+    CHECKPOINT_INTERVAL: float = Field(
+        ge=1.0,
+        le=3600.0,
+        default=30.0,
+        description="Interval in seconds between controller-side partial checkpoint writes",
     )
 
 
@@ -526,6 +544,12 @@ class _ServerMetricsSettings(BaseSettings):
         le=1000000,
         default=100,
         description="Batch size for server metrics jsonl writer export results processor",
+    )
+    EXPORT_FLUSH_INTERVAL: float = Field(
+        ge=0.1,
+        le=300.0,
+        default=2.0,
+        description="Maximum seconds server metrics JSONL records may remain buffered before being flushed to disk",
     )
     REACHABILITY_TIMEOUT: int = Field(
         ge=1,

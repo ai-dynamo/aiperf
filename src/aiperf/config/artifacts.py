@@ -183,6 +183,16 @@ class ArtifactsConfig(BaseConfig):
         return self.dir / f"profile_export_{self.prefix}.json"
 
     @property
+    def checkpoints_dir(self) -> Path:
+        """Get the directory used for partial recovery checkpoints."""
+        return self.dir / "checkpoints"
+
+    @property
+    def profile_export_partial_json_file(self) -> Path:
+        """Get the path for the latest partial checkpoint JSON export."""
+        return self.checkpoints_dir / f"profile_export_{self.prefix}_partial.json"
+
+    @property
     def profile_export_timeslices_csv_file(self) -> Path:
         """Get the path for the timeslices CSV export file."""
         return self.dir / f"profile_export_{self.prefix}_timeslices.csv"

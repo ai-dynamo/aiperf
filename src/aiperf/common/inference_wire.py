@@ -1,11 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Parallel msgspec worker->record-processor wire model.
+"""Msgspec worker->record-processor wire model.
 
-This module defines a trimmed, msgspec-based projection of the current
-``InferenceResultsMessage`` payload. It is intentionally implemented in
-parallel with the existing Pydantic/JSON path so we can measure size and
-compatibility before switching the live transport.
+This module defines the trimmed MessagePack/msgspec payload used on the
+worker->record-processor channel.
 """
 
 from __future__ import annotations
@@ -16,6 +14,7 @@ import msgspec
 import orjson
 from msgspec import Struct
 
+from aiperf.common.enums import MessageType
 from aiperf.common.models import ErrorDetails, RequestInfo, RequestRecord, Turn
 from aiperf.common.models.dataset_models import Image, Text
 from aiperf.common.models.record_models import (
@@ -156,6 +155,7 @@ class InferenceResultsWireMessage(
     tag_field="t",
     tag="iwr",
 ):
+    message_type: MessageType = MessageType.INFERENCE_RESULTS
     service_id: str
     record: InferenceWireRecord
 
@@ -275,7 +275,7 @@ def build_inference_results_wire_message(
     include_status: bool = False,
     include_trace_data: bool = False,
 ) -> InferenceResultsWireMessage:
-    """Project a full RequestRecord into the alternate msgspec wire model."""
+    """Project a full RequestRecord into the worker->RP wire model."""
     request_info = record.request_info
     if request_info is None:
         raise ValueError("RequestRecord.request_info is required for wire projection")
@@ -337,14 +337,14 @@ def build_inference_results_wire_message(
 def encode_inference_results_wire_message(
     message: InferenceResultsWireMessage,
 ) -> bytes:
-    """Encode the alternate msgspec wire message as MessagePack bytes."""
+    """Encode the worker->RP wire message as MessagePack bytes."""
     return _wire_encoder.encode(message)
 
 
 def decode_inference_results_wire_message(
     data: bytes,
 ) -> InferenceResultsWireMessage:
-    """Decode MessagePack bytes into the alternate wire message."""
+    """Decode MessagePack bytes into the worker->RP wire message."""
     return _wire_decoder.decode(data)
 
 
@@ -353,7 +353,7 @@ def wire_record_to_request_record(
     config: BenchmarkConfig,
     wire_record: InferenceWireRecord,
 ) -> RequestRecord:
-    """Rehydrate the alternate wire projection back into the current RequestRecord shape."""
+    """Rehydrate the wire projection back into the current RequestRecord shape."""
     prompt = wire_record.prompt
     turns = [_wire_to_turn(turn) for turn in (prompt.turns if prompt else ())]
 
@@ -407,7 +407,7 @@ def wire_message_to_request_record(
     config: BenchmarkConfig,
     message: InferenceResultsWireMessage,
 ) -> tuple[str, RequestRecord]:
-    """Decode the alternate envelope into the current runtime types."""
+    """Decode the wire envelope into the current runtime types."""
     return (
         message.service_id,
         wire_record_to_request_record(config=config, wire_record=message.record),

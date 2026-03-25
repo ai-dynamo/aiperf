@@ -7,6 +7,7 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
+from aiperf.common.channel_codecs import RECORDS_CODEC
 from aiperf.common.control_structs import Command, ServerMetricsStatus
 from aiperf.common.enums import (
     CommAddress,
@@ -65,6 +66,7 @@ class ServerMetricsManager(BaseComponentService):
 
         self.records_push_client: PushClientProtocol = self.comms.create_push_client(
             CommAddress.RECORDS,
+            codec=RECORDS_CODEC,
         )
 
         self._collectors: dict[str, ServerMetricsDataCollector] = {}

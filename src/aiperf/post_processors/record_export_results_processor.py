@@ -56,6 +56,7 @@ class RecordExportResultsProcessor(
         super().__init__(
             output_file=output_file,
             batch_size=Environment.RECORD.EXPORT_BATCH_SIZE,
+            flush_interval=Environment.RECORD.EXPORT_FLUSH_INTERVAL,
             run=run,
             **kwargs,
         )

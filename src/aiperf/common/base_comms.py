@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, cast
 
+from aiperf.common.message_codecs import MessageCodecProtocol
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.protocols import (
     CommunicationClientProtocol,
@@ -85,10 +86,17 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
+        codec: MessageCodecProtocol | None = None,
     ) -> PushClientProtocol:
         return cast(
             PushClientProtocol,
-            self.create_client(CommClientType.PUSH, address, bind, socket_ops),
+            self.create_client(
+                CommClientType.PUSH,
+                address,
+                bind,
+                socket_ops,
+                codec=codec,
+            ),
         )
 
     def create_pull_client(
@@ -98,6 +106,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         socket_ops: dict | None = None,
         max_pull_concurrency: int | None = None,
         additional_bind_address: str | None = None,
+        codec: MessageCodecProtocol | None = None,
     ) -> PullClientProtocol:
         return cast(
             PullClientProtocol,
@@ -108,6 +117,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
                 socket_ops,
                 max_pull_concurrency=max_pull_concurrency,
                 additional_bind_address=additional_bind_address,
+                codec=codec,
             ),
         )
 

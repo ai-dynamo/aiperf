@@ -1,10 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from aiperf.common.inference_wire import build_inference_results_wire_message
+from aiperf.common.messages import MetricRecordsMessage
+from aiperf.common.models.record_models import MetricRecordMetadata
 from aiperf.common.utils import compute_time_ns
 from aiperf.records.record_processor_service import RecordProcessor
 
@@ -173,3 +176,60 @@ class TestRecordProcessorCreateMetricRecordMetadata:
 
         assert getattr(metadata, expected_metadata_field) is None
         assert metadata.worker_id == worker_id
+
+
+class TestRecordProcessorWireMessages:
+    @pytest.mark.asyncio
+    async def test_on_inference_results_accepts_wire_message(
+        self,
+        sample_request_record,
+        sample_parsed_record,
+    ) -> None:
+        """RecordProcessor should consume the msgspec wire envelope and emit MetricRecordsMessage."""
+        processor = MagicMock(spec=RecordProcessor)
+        processor.run = MagicMock()
+        processor.run.cfg = sample_request_record.request_info.config.model_copy(
+            deep=True
+        )
+        processor.run.cfg.output.records = []
+        processor.service_id = "record-processor-1"
+        processor.inference_result_parser = MagicMock()
+        processor.inference_result_parser.parse_request_record = AsyncMock(
+            return_value=sample_parsed_record
+        )
+        processor._process_record = AsyncMock(return_value=[{"request_latency": 12.5}])
+        processor._free_record_data = MagicMock(return_value=(None, None))
+        metadata = MetricRecordMetadata(
+            request_num=1,
+            session_num=1,
+            conversation_id="conversation-1",
+            turn_index=0,
+            request_start_ns=100,
+            request_end_ns=200,
+            worker_id="worker-7",
+            record_processor_id="record-processor-1",
+            benchmark_phase="profiling",
+        )
+        processor._create_metric_record_metadata = MagicMock(return_value=metadata)
+        processor.records_push_client = MagicMock()
+        processor.records_push_client.push = AsyncMock()
+
+        record = sample_request_record.model_copy(deep=True)
+        record.responses = []
+        record.turns = record.request_info.turns
+        wire_message = build_inference_results_wire_message(
+            service_id="worker-7",
+            record=record,
+        )
+
+        await RecordProcessor._on_inference_results(processor, wire_message)
+
+        processor.inference_result_parser.parse_request_record.assert_awaited_once()
+        processor._create_metric_record_metadata.assert_called_once()
+        metadata_args = processor._create_metric_record_metadata.call_args[0]
+        assert metadata_args[1] == "worker-7"
+
+        pushed_message = processor.records_push_client.push.call_args.args[0]
+        assert isinstance(pushed_message, MetricRecordsMessage)
+        assert pushed_message.metadata is metadata
+        assert pushed_message.results == [{"request_latency": 12.5}]

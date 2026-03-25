@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import DatasetSamplingStrategy, PluginType
@@ -69,6 +70,52 @@ class TestConversationSource:
     def test_get_metadata_raises_for_invalid(self, src):
         with pytest.raises(KeyError, match="No metadata for conversation bad"):
             src.get_metadata("bad")
+
+    def test_get_context_mode_resolves_override_then_default(self):
+        ds = DatasetMetadata(
+            conversations=[
+                ConversationMetadata(
+                    conversation_id="c1",
+                    context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES,
+                    turns=[TurnMetadata()],
+                ),
+                ConversationMetadata(
+                    conversation_id="c2",
+                    turns=[TurnMetadata()],
+                ),
+            ],
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+            default_context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+        )
+        src = _mk_source(ds)
+
+        assert (
+            src.get_context_mode("c1") == ConversationContextMode.DELTAS_WITH_RESPONSES
+        )
+        assert (
+            src.get_context_mode("c2")
+            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
+
+    def test_build_first_turn_preserves_worker_migration_capability(self):
+        ds = DatasetMetadata(
+            conversations=[
+                ConversationMetadata(
+                    conversation_id="c1",
+                    context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES,
+                    turns=[TurnMetadata()],
+                ),
+                ConversationMetadata(
+                    conversation_id="c2",
+                    turns=[TurnMetadata()],
+                ),
+            ],
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+        src = _mk_source(ds)
+
+        assert src.next().build_first_turn().allow_worker_migration is True
+        assert src.next().build_first_turn().allow_worker_migration is False
 
 
 class TestMultiTurn:

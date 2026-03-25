@@ -23,6 +23,11 @@ from typing import Any, ClassVar
 from aiperf.common.base_comms import BaseCommunication
 from aiperf.common.enums import CommAddress
 from aiperf.common.hooks import on_stop
+from aiperf.common.message_codecs import (
+    JSON_MESSAGE_CODEC,
+    MessageCodecProtocol,
+    codec_cache_key,
+)
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.types import CommAddressType, MessageCallbackMapT, MessageTypeT
 from aiperf.plugin import plugins
@@ -91,12 +96,14 @@ class FakeCommunicationClient(AIPerfLifecycleMixin):
         identity: str,
         bus: FakeCommunicationBus,
         additional_bind_address: str | None = None,
+        codec: MessageCodecProtocol | None = None,
     ) -> None:
         super().__init__(id=identity)
         self.bus = bus
         self.address = address
         self.identity = identity
         self.additional_bind_address = additional_bind_address
+        self.codec = codec or JSON_MESSAGE_CODEC
 
     def capture_sent_payload(
         self,
@@ -167,7 +174,7 @@ class FakeStreamingRouterClient(FakeCommunicationClient):
         """Send to dealer - dynamically looks up dealer by identity."""
         self.capture_sent_payload(message, receiver_identity=identity)
         for comm in self.bus.communications:
-            if dealer_client := comm.dealer_clients.get(identity):
+            if dealer_client := comm.dealer_clients.get((self.address, identity)):
                 if dealer_client.handler:
                     dealer_client.capture_received_payload(
                         message, sender_identity=self.identity
@@ -269,8 +276,14 @@ class FakePushClient(FakeCommunicationClient):
 
     client_type = CommClientType.PUSH
 
-    def __init__(self, address: str, identity: str, bus: FakeCommunicationBus) -> None:
-        super().__init__(address, identity, bus)
+    def __init__(
+        self,
+        address: str,
+        identity: str,
+        bus: FakeCommunicationBus,
+        codec: MessageCodecProtocol | None = None,
+    ) -> None:
+        super().__init__(address, identity, bus, codec=codec)
         self.round_robin_index: int = 0
 
     async def push(self, message: Any) -> None:
@@ -293,10 +306,8 @@ class FakePushClient(FakeCommunicationClient):
             await callback(message)
 
     async def push_raw(self, data: bytes) -> None:
-        """Push pre-serialized JSON bytes by deserializing and routing normally."""
-        from aiperf.common.messages import Message
-
-        message = Message.from_json(data)
+        """Push pre-serialized bytes by deserializing with the configured codec."""
+        message = self.codec.decode(data)
         await self.push(message)
 
 
@@ -311,9 +322,14 @@ class FakePullClient(FakeCommunicationClient):
         identity: str,
         bus: FakeCommunicationBus,
         additional_bind_address: str | None = None,
+        codec: MessageCodecProtocol | None = None,
     ) -> None:
         super().__init__(
-            address, identity, bus, additional_bind_address=additional_bind_address
+            address,
+            identity,
+            bus,
+            additional_bind_address=additional_bind_address,
+            codec=codec,
         )
         self.callbacks: dict[Any, Callable] = {}  # ONE callback per type
 
@@ -459,9 +475,7 @@ class FakeCommunication(BaseCommunication):
         self.router_clients: dict[str, list[FakeStreamingRouterClient]] = defaultdict(
             list
         )
-        self.dealer_clients: dict[str, FakeStreamingDealerClient] = defaultdict(
-            list
-        )  # by identity
+        self.dealer_clients: dict[tuple[str, str], FakeStreamingDealerClient] = {}
         self.pub_clients: dict[str, list[FakePubClient]] = defaultdict(list)
         self.sub_clients: list[FakeSubClient] = []
         self.push_clients: dict[str, list[FakePushClient]] = defaultdict(list)
@@ -470,13 +484,40 @@ class FakeCommunication(BaseCommunication):
         self.reply_clients: dict[str, list[FakeReplyClient]] = defaultdict(list)
         # Client cache for deduplication on the same service like the real communication layer
         self.clients_cache: dict[
-            tuple[CommClientType, str, bool], FakeCommunicationClient
+            tuple[CommClientType, str, bool, Any], FakeCommunicationClient
         ] = {}
         # Register with bus for cross-wiring
         self.bus.register(self)
         self.warning(
             "*** Using FakeCommunication to bypass ZMQ. This is for component integration testing only. ***"
         )
+
+    @staticmethod
+    def _freeze_cache_value(value: Any) -> Any:
+        """Convert kwargs into a deterministic, hashable cache key fragment."""
+        if isinstance(value, dict):
+            return tuple(
+                sorted(
+                    (
+                        FakeCommunication._freeze_cache_value(k),
+                        FakeCommunication._freeze_cache_value(v),
+                    )
+                    for k, v in value.items()
+                )
+            )
+        if isinstance(value, list | tuple):
+            return tuple(FakeCommunication._freeze_cache_value(v) for v in value)
+        if isinstance(value, set | frozenset):
+            return tuple(
+                sorted(FakeCommunication._freeze_cache_value(v) for v in value)
+            )
+        if hasattr(value, "cache_key"):
+            return ("codec", codec_cache_key(value))
+        if isinstance(value, type):
+            return ("type", value.__module__, value.__qualname__)
+        if value is None or isinstance(value, str | int | float | bool | bytes):
+            return value
+        return ("repr", repr(value))
 
     @classmethod
     def set_shared_bus(cls, bus: FakeCommunicationBus) -> None:
@@ -533,9 +574,20 @@ class FakeCommunication(BaseCommunication):
     ) -> FakeCommunicationClient:
         """Create fake client and auto-wire to counterparts."""
         addr = self.get_address(address)
+        codec = kwargs.get("codec")
 
         # Check cache first (matching ZMQ behavior)
-        cache_key = (client_type, addr, bind)
+        cache_kwargs = {
+            **kwargs,
+            "socket_ops": socket_ops,
+            "max_pull_concurrency": max_pull_concurrency,
+        }
+        cache_key = (
+            client_type,
+            addr,
+            bind,
+            self._freeze_cache_value(cache_kwargs),
+        )
         if cache_key in self.clients_cache:
             return self.clients_cache[cache_key]
 
@@ -553,7 +605,7 @@ class FakeCommunication(BaseCommunication):
 
             case CommClientType.STREAMING_DEALER:
                 client = FakeStreamingDealerClient(addr, identity, self.bus)
-                self.dealer_clients[identity] = client
+                self.dealer_clients[(addr, identity)] = client
 
             case CommClientType.PUB:
                 client = FakePubClient(addr, identity, self.bus)
@@ -564,12 +616,16 @@ class FakeCommunication(BaseCommunication):
                 self.sub_clients.append(client)
 
             case CommClientType.PUSH:
-                client = FakePushClient(addr, identity, self.bus)
+                client = FakePushClient(addr, identity, self.bus, codec=codec)
                 self.push_clients[addr].append(client)
 
             case CommClientType.PULL:
                 client = FakePullClient(
-                    addr, identity, self.bus, additional_bind_address=additional_bind
+                    addr,
+                    identity,
+                    self.bus,
+                    additional_bind_address=additional_bind,
+                    codec=codec,
                 )
                 self.pull_clients.append(client)
 

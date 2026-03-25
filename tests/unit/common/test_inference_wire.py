@@ -10,6 +10,7 @@ from aiperf.common.inference_wire import (
     wire_message_to_request_record,
 )
 from aiperf.common.models import (
+    BaseTraceData,
     BinaryResponse,
     Image,
     RequestRecord,
@@ -166,3 +167,84 @@ class TestInferenceWire:
         )
         assert wire_message.record.prompt.turns[0].image_count == 1
         assert wire_message.record.metadata.requested_max_tokens == 19
+
+    def test_round_trips_trace_data_when_enabled(
+        self,
+        sample_request_info,
+    ) -> None:
+        """Trace payload should survive the msgspec wire path when explicitly included."""
+        request_info = sample_request_info.model_copy(deep=True)
+        record = RequestRecord(
+            request_info=request_info,
+            model_name="test-model",
+            timestamp_ns=10,
+            start_perf_ns=11,
+            responses=[],
+            turns=request_info.turns,
+            trace_data=BaseTraceData(
+                trace_type="httpcore",
+                request_send_start_perf_ns=111,
+                request_send_end_perf_ns=222,
+                response_status_code=200,
+            ),
+        )
+
+        wire_message = build_inference_results_wire_message(
+            service_id="worker-1",
+            record=record,
+            include_trace_data=True,
+        )
+        rebuilt_service_id, rebuilt_record = wire_message_to_request_record(
+            config=request_info.config,
+            message=decode_inference_results_wire_message(
+                encode_inference_results_wire_message(wire_message)
+            ),
+        )
+
+        assert rebuilt_service_id == "worker-1"
+        assert wire_message.record.trace_data is not None
+        assert wire_message.record.trace_data["trace_type"] == "httpcore"
+        assert rebuilt_record.trace_data is not None
+        assert rebuilt_record.trace_data.trace_type == "httpcore"
+        assert rebuilt_record.trace_data.request_send_start_perf_ns == 111
+        assert rebuilt_record.trace_data.response_status_code == 200
+
+    def test_omits_raw_export_fields_when_not_requested(
+        self,
+        sample_request_info,
+    ) -> None:
+        """Raw-export-only baggage should stay off the wire unless explicitly requested."""
+        request_info = sample_request_info.model_copy(deep=True)
+        record = RequestRecord(
+            request_info=request_info,
+            request_headers={"Authorization": "Bearer secret"},
+            model_name="test-model",
+            timestamp_ns=10,
+            start_perf_ns=11,
+            status=202,
+            responses=[],
+            turns=request_info.turns,
+            raw_payload={"messages": [{"role": "user", "content": "hidden"}]},
+            trace_data=BaseTraceData(trace_type="httpcore"),
+        )
+
+        wire_message = build_inference_results_wire_message(
+            service_id="worker-1",
+            record=record,
+            include_request_headers=False,
+            include_status=False,
+            include_trace_data=False,
+        )
+        _, rebuilt_record = wire_message_to_request_record(
+            config=request_info.config,
+            message=wire_message,
+        )
+
+        assert wire_message.record.request_headers is None
+        assert wire_message.record.status is None
+        assert wire_message.record.trace_data is None
+        assert wire_message.record.raw_payload is None
+        assert rebuilt_record.request_headers is None
+        assert rebuilt_record.status is None
+        assert rebuilt_record.trace_data is None
+        assert not hasattr(rebuilt_record, "raw_payload")

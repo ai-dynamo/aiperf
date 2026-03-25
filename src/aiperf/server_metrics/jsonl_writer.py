@@ -60,6 +60,7 @@ class ServerMetricsJSONLWriter(
             run=run,
             output_file=output_file,
             batch_size=Environment.SERVER_METRICS.EXPORT_BATCH_SIZE,
+            flush_interval=Environment.SERVER_METRICS.EXPORT_FLUSH_INTERVAL,
             **kwargs,
         )
 

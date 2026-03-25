@@ -37,6 +37,10 @@ class Credit(
                          Note: this is NOT the same as the credit being cancelled!
         url_index: Index of the URL to use when multiple --url values are configured (optional).
                    None means use the default (first) URL.
+        allow_worker_migration: True when the session can safely continue on a
+                                different worker after worker loss because the
+                                dataset already contains the needed assistant
+                                responses.
     """
 
     id: int
@@ -48,6 +52,7 @@ class Credit(
     issued_at_ns: int
     cancel_after_ns: int | None = None
     url_index: int | None = None
+    allow_worker_migration: bool = False
     session_num: int | None = None
 
     @property
@@ -91,12 +96,17 @@ class TurnToSend(Struct, frozen=True):
         x_correlation_id: Conversation instance ID for sticky routing (X-Correlation-ID header).
         turn_index: The index of the turn in the conversation (0-based).
         num_turns: The total number of turns in the conversation.
+        url_index: Preserved backend affinity for multi-URL runs.
+        allow_worker_migration: Whether a later worker may continue this session
+                                after the original worker is lost.
     """
 
     conversation_id: str
     x_correlation_id: str
     turn_index: int
     num_turns: int
+    url_index: int | None = None
+    allow_worker_migration: bool = False
 
     @property
     def is_final_turn(self) -> bool:
@@ -110,4 +120,6 @@ class TurnToSend(Struct, frozen=True):
             x_correlation_id=credit.x_correlation_id,
             turn_index=credit.turn_index + 1,
             num_turns=credit.num_turns,
+            url_index=credit.url_index,
+            allow_worker_migration=credit.allow_worker_migration,
         )

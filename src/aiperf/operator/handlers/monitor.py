@@ -31,6 +31,7 @@ from aiperf.operator.client_cache import (
 )
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.handlers.completion import (
+    _parse_metrics_from_files,
     fetch_results_with_retry,
     handle_completion,
 )
@@ -430,6 +431,48 @@ async def _maybe_recover_terminated_controller(
             sb,
             result=result,
         )
+        return True
+
+    if result.checkpoints:
+        dest_dir = OperatorEnvironment.RESULTS.DIR / namespace / job_id
+        checkpoint_metrics = _parse_metrics_from_files(
+            result.checkpoints, namespace, job_id
+        )
+        if checkpoint_metrics:
+            sb.set_results(checkpoint_metrics)
+
+            summary = MetricsSummary.from_metrics(checkpoint_metrics)
+            summary_dict = summary.to_status_dict()
+            if summary_dict:
+                sb.set_summary(summary_dict)
+
+        error = (
+            f"Controller container terminated before final export; "
+            f"recovered {len(result.checkpoints)} partial checkpoint file(s)"
+        )
+        sb.set_phase(Phase.FAILED).set_error(error).set_completion_time()
+        sb.set_results_path(str(dest_dir))
+        sb.conditions.set_true(
+            ConditionType.RESULTS_AVAILABLE,
+            "PartialCheckpointRecovered",
+            f"Recovered {len(result.checkpoints)} partial checkpoint file(s)",
+        )
+        sb.finalize()
+        events.results_stored(body, str(dest_dir), len(result.checkpoints))
+        events.failed(body, job_id, error)
+
+        try:
+            js = await AsyncJobSet.get(jobset_name, namespace=namespace, api=api)
+            await js.delete()
+            logger.info(
+                "Deleted JobSet %s after partial checkpoint recovery", jobset_name
+            )
+        except kr8s.NotFoundError:
+            pass
+        except kr8s.ServerError as e:
+            logger.warning(
+                f"Failed to delete JobSet {jobset_name} after checkpoint recovery: {e}"
+            )
         return True
 
     error = f"Controller container terminated before results were recoverable: {reason}"

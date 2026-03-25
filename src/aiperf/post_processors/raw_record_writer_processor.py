@@ -69,6 +69,7 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
         super().__init__(
             output_file=output_file,
             batch_size=Environment.RECORD.RAW_EXPORT_BATCH_SIZE,
+            flush_interval=Environment.RECORD.EXPORT_FLUSH_INTERVAL,
             service_id=service_id,
             run=run,
             **kwargs,

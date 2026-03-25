@@ -40,7 +40,21 @@ operator:
   nodeSelector: {}
 
   # operator.tolerations is a list of pod tolerations
-  tolerations: []
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: user-workload
+      effect: NoSchedule
+    - key: dedicated
+      operator: Equal
+      value: user-workload
+      effect: NoExecute
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+    - key: kubernetes.io/arch
+      operator: Exists
+      effect: NoSchedule
 
   # operator.affinity is the pod affinity configuration
   affinity: {}
@@ -93,7 +107,7 @@ rbac:
 # storage is the results storage configuration
 storage:
   # storage.enabled enables persistent storage for benchmark results
-  enabled: true
+  enabled: false
 
   # storage.size is the PVC storage size
   size: 1Ti
@@ -139,7 +153,7 @@ kueue:
 # defaults contains default settings for AIPerfJob resources
 defaults:
   # defaults.image is the default container image for benchmark jobs
-  image: "nvcr.io/nvidia/aiperf:latest"
+  image: "nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260325-001648-d769db8b6"
 
   # defaults.imagePullPolicy is the default image pull policy for benchmark jobs
   imagePullPolicy: "IfNotPresent"

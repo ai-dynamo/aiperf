@@ -277,6 +277,14 @@ class TestArtifactsConfig:
         assert config.artifacts.benchmark_id is not None
         assert len(config.artifacts.benchmark_id) > 0
 
+    def test_checkpoints_directory_and_file(self, base_kwargs: dict) -> None:
+        config = _build(base_kwargs, request_count=100)
+        assert config.artifacts.checkpoints_dir == config.artifacts.dir / "checkpoints"
+        assert (
+            config.artifacts.profile_export_partial_json_file
+            == config.artifacts.checkpoints_dir / "profile_export_aiperf_partial.json"
+        )
+
 
 class TestGpuTelemetry:
     """GPU telemetry configuration."""

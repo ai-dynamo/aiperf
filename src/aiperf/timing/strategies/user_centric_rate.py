@@ -349,3 +349,7 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             user.next_send_time,
             self._credit_issuer.issue_credit(turn),
         )
+
+    async def handle_session_ended(self, credit: Credit) -> None:
+        """Drop per-session state once the conversation can no longer continue."""
+        self._session_to_user.pop(credit.x_correlation_id, None)

@@ -223,6 +223,7 @@ class TestFetchResultsWithRetry:
 
         assert result.metrics == {"metrics": {"throughput": 100}}
         assert result.downloaded == ["profile_export_aiperf.json"]
+        assert result.checkpoints == []
 
     @pytest.mark.asyncio
     async def test_retries_on_failure(self, temp_results_dir: Path) -> None:
@@ -247,6 +248,7 @@ class TestFetchResultsWithRetry:
             )
 
         assert result.metrics == {"metrics": {"ok": True}}
+        assert result.checkpoints == []
 
     @pytest.mark.asyncio
     async def test_returns_partial_results_after_max_retries(
@@ -272,6 +274,7 @@ class TestFetchResultsWithRetry:
 
         assert result.metrics == {"metrics": {"partial": True}}
         assert result.downloaded == []
+        assert result.checkpoints == []
 
     @pytest.mark.asyncio
     async def test_skips_download_when_results_dir_missing(
@@ -326,7 +329,42 @@ class TestFetchResultsWithRetry:
             )
 
         assert result.downloaded == ["profile_export_aiperf.json"]
+        assert result.checkpoints == []
         sidecar_client.download_all_results.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_tracks_checkpoint_downloads_separately(
+        self, temp_results_dir: Path
+    ) -> None:
+        """Verify checkpoint artifacts are kept separate from final exports."""
+        mock_client = AsyncMock()
+        mock_client.get_metrics = AsyncMock(return_value=None)
+        mock_client.download_all_results = AsyncMock(
+            return_value=["checkpoints/profile_export_aiperf_partial.json"]
+        )
+
+        sidecar_client = AsyncMock()
+        sidecar_client.download_all_results = AsyncMock(return_value=[])
+        sidecar_client.__aenter__ = AsyncMock(return_value=sidecar_client)
+        sidecar_client.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.completion.get_or_create_progress_client",
+                return_value=mock_client,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.completion.ProgressClient",
+                return_value=sidecar_client,
+            ),
+            mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
+        ):
+            result = await _fetch_results_with_retry(
+                "controller-host", "default", "job-123", max_retries=0, retry_delay=0.01
+            )
+
+        assert result.downloaded == []
+        assert result.checkpoints == ["checkpoints/profile_export_aiperf_partial.json"]
 
 
 # =============================================================================
@@ -1032,23 +1070,17 @@ class TestHandleCompletion:
             ]
         }
 
-        mock_client = AsyncMock()
-        mock_client.get_metrics = AsyncMock(return_value=mock_metrics)
-        mock_client.download_all_results = AsyncMock(
-            return_value=["profile_export_aiperf.json"]
-        )
-
         mock_api = AsyncMock()
         mock_js = AsyncMock()
 
         with (
-            mock_patch(
-                "aiperf.operator.handlers.completion.get_or_create_progress_client",
-                return_value=mock_client,
-            ),
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
             mock_patch("aiperf.operator.events.completed"),
             mock_patch("aiperf.operator.events.results_stored"),
+            mock_patch(
+                "aiperf.operator.handlers.completion.index_job_completed",
+                new_callable=AsyncMock,
+            ),
             mock_patch(
                 "aiperf.operator.handlers.completion.get_api",
                 new_callable=AsyncMock,
@@ -1067,6 +1099,9 @@ class TestHandleCompletion:
                 job_id="job-123",
                 status={"workers": {"total": 2}},
                 sb=sb,
+                result=FetchResult(
+                    metrics=mock_metrics, downloaded=["profile_export_aiperf.json"]
+                ),
             )
 
         assert kopf_patch.status["phase"] == Phase.COMPLETED
@@ -1084,18 +1119,14 @@ class TestHandleCompletion:
         kopf_patch.status = {}
         sb = StatusBuilder(kopf_patch, {"workers": {"total": 2}})
 
-        mock_client = AsyncMock()
-        mock_client.get_metrics = AsyncMock(return_value=None)
-        mock_client.download_all_results = AsyncMock(return_value=[])
-
         with (
-            mock_patch(
-                "aiperf.operator.handlers.completion.get_or_create_progress_client",
-                return_value=mock_client,
-            ),
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
             mock_patch("aiperf.operator.events.completed"),
             mock_patch("aiperf.operator.events.results_failed"),
+            mock_patch(
+                "aiperf.operator.handlers.completion.index_job_completed",
+                new_callable=AsyncMock,
+            ),
         ):
             await _handle_completion(
                 body={},
@@ -1104,6 +1135,7 @@ class TestHandleCompletion:
                 job_id="job-123",
                 status={"workers": {"total": 2}},
                 sb=sb,
+                result=FetchResult(metrics=None, downloaded=[]),
             )
 
         assert kopf_patch.status["phase"] == Phase.COMPLETED
@@ -1123,18 +1155,14 @@ class TestHandleCompletion:
             kopf_patch, {"workers": {"total": 1}, "startTime": start_time}
         )
 
-        mock_client = AsyncMock()
-        mock_client.get_metrics = AsyncMock(return_value={"metrics": {}})
-        mock_client.download_all_results = AsyncMock(return_value=[])
-
         with (
-            mock_patch(
-                "aiperf.operator.handlers.completion.get_or_create_progress_client",
-                return_value=mock_client,
-            ),
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
             mock_patch("aiperf.operator.events.completed") as mock_completed,
             mock_patch("aiperf.operator.events.results_failed"),
+            mock_patch(
+                "aiperf.operator.handlers.completion.index_job_completed",
+                new_callable=AsyncMock,
+            ),
         ):
             await _handle_completion(
                 body={},
@@ -1143,6 +1171,7 @@ class TestHandleCompletion:
                 job_id="job-123",
                 status={"workers": {"total": 1}, "startTime": start_time},
                 sb=sb,
+                result=FetchResult(metrics={"metrics": {}}, downloaded=[]),
             )
 
         # Duration should have been calculated and passed to event_completed
@@ -1785,7 +1814,8 @@ class TestRecoverTerminatedController:
                 "aiperf.operator.handlers.monitor.fetch_results_with_retry",
                 new_callable=AsyncMock,
                 return_value=FetchResult(
-                    metrics=None, downloaded=["profile_export_aiperf.json"]
+                    metrics=None,
+                    downloaded=["profile_export_aiperf.json"],
                 ),
             ),
             mock_patch(
@@ -1872,6 +1902,94 @@ class TestRecoverTerminatedController:
 
         assert handled is True
         assert kopf_patch.status["phase"] == Phase.FAILED
+        mock_failed_event.assert_called_once()
+        mock_jobset.delete.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_recovers_partial_checkpoint_when_final_export_missing(
+        self, temp_results_dir: Path
+    ) -> None:
+        """Verify checkpoint-only salvage marks the job failed with partial results."""
+        from aiperf.operator.handlers.monitor import (
+            _maybe_recover_terminated_controller,
+        )
+        from aiperf.operator.status import ConditionType, StatusBuilder
+
+        kopf_patch = MagicMock()
+        kopf_patch.status = {}
+        sb = StatusBuilder(kopf_patch, {"workers": {"total": 1}})
+
+        controller_pod = MagicMock()
+        controller_pod.name = "controller-0-0"
+        controller_pod.raw = {
+            "status": {
+                "containerStatuses": [
+                    {
+                        "name": "control-plane",
+                        "state": {
+                            "terminated": {"reason": "OOMKilled", "exitCode": 137}
+                        },
+                    },
+                    {
+                        "name": "results-sidecar",
+                        "state": {"running": {"startedAt": "2026-01-01T00:00:00Z"}},
+                    },
+                ]
+            }
+        }
+
+        checkpoint_dir = temp_results_dir / "default" / "job-1" / "checkpoints"
+        checkpoint_dir.mkdir(parents=True)
+        (checkpoint_dir / "profile_export_aiperf_partial.json").write_text(
+            '{"request_throughput":{"unit":"req/s","avg":123.0}}'
+        )
+
+        mock_jobset = AsyncMock()
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.Pod.list",
+                return_value=_async_pod_list(controller_pod),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.fetch_results_with_retry",
+                new_callable=AsyncMock,
+                return_value=FetchResult(
+                    metrics=None,
+                    downloaded=[],
+                    checkpoints=["checkpoints/profile_export_aiperf_partial.json"],
+                ),
+            ),
+            mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
+            mock_patch("aiperf.operator.events.results_stored") as mock_results_stored,
+            mock_patch("aiperf.operator.events.failed") as mock_failed_event,
+            mock_patch(
+                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
+                new_callable=AsyncMock,
+                return_value=mock_jobset,
+            ),
+        ):
+            handled = await _maybe_recover_terminated_controller(
+                AsyncMock(),
+                {},
+                "default",
+                "test-jobset",
+                "job-1",
+                {"workers": {"total": 1}},
+                sb,
+                "default/job-1",
+            )
+
+        assert handled is True
+        assert kopf_patch.status["phase"] == Phase.FAILED
+        assert kopf_patch.status["resultsPath"] == str(
+            temp_results_dir / "default" / "job-1"
+        )
+        assert (
+            kopf_patch.status["conditions"][0]["type"]
+            == ConditionType.RESULTS_AVAILABLE
+        )
+        mock_results_stored.assert_called_once()
         mock_failed_event.assert_called_once()
         mock_jobset.delete.assert_called_once()
 
@@ -2054,20 +2172,14 @@ class TestHandleCompletionBackfill:
         kopf_patch.status = {}
         sb = StatusBuilder(kopf_patch, {"workers": {"total": 3}})
 
-        mock_client = AsyncMock()
-        mock_client.get_metrics = AsyncMock(return_value=None)
-        mock_client.download_all_results = AsyncMock(return_value=[])
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-
         with (
-            mock_patch(
-                "aiperf.operator.client_cache.ProgressClient",
-                return_value=mock_client,
-            ),
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
             mock_patch("aiperf.operator.events.completed"),
             mock_patch("aiperf.operator.events.results_failed"),
+            mock_patch(
+                "aiperf.operator.handlers.completion.index_job_completed",
+                new_callable=AsyncMock,
+            ),
         ):
             await _handle_completion(
                 body={},
@@ -2076,6 +2188,7 @@ class TestHandleCompletionBackfill:
                 job_id="job-backfill",
                 status={"workers": {"total": 3}},
                 sb=sb,
+                result=FetchResult(metrics=None, downloaded=[]),
             )
 
         # Find the WorkersReady condition
@@ -2099,20 +2212,14 @@ class TestHandleCompletionBackfill:
         kopf_patch.status = {}
         sb = StatusBuilder(kopf_patch, {"workers": {"total": 1}})
 
-        mock_client = AsyncMock()
-        mock_client.get_metrics = AsyncMock(return_value=None)
-        mock_client.download_all_results = AsyncMock(return_value=[])
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-
         with (
-            mock_patch(
-                "aiperf.operator.client_cache.ProgressClient",
-                return_value=mock_client,
-            ),
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
             mock_patch("aiperf.operator.events.completed"),
             mock_patch("aiperf.operator.events.results_failed"),
+            mock_patch(
+                "aiperf.operator.handlers.completion.index_job_completed",
+                new_callable=AsyncMock,
+            ),
         ):
             await _handle_completion(
                 body={},
@@ -2121,6 +2228,7 @@ class TestHandleCompletionBackfill:
                 job_id="job-backfill",
                 status={"workers": {"total": 1}},
                 sb=sb,
+                result=FetchResult(metrics=None, downloaded=[]),
             )
 
         conditions = kopf_patch.status.get("conditions", [])

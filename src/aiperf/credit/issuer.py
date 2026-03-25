@@ -209,15 +209,12 @@ class CreditIssuer:
         )
         issued_at_ns = self._lifecycle.clock.now_ns()
 
-        # Get URL index from strategy (for multi-URL load balancing)
-        # Only advance the round-robin on the first turn of a conversation.
-        # Subsequent turns will use the url_index stored in the worker's UserSession.
+        # Preserve URL affinity on continuation turns so migration keeps the
+        # session on the same backend in multi-URL runs.
         is_first_turn = turn.turn_index == 0
-        url_index = (
-            self._url_selection_strategy.next_url_index()
-            if self._url_selection_strategy and is_first_turn
-            else None
-        )
+        url_index = turn.url_index
+        if url_index is None and self._url_selection_strategy and is_first_turn:
+            url_index = self._url_selection_strategy.next_url_index()
 
         credit = Credit(
             id=credit_index,
@@ -230,6 +227,7 @@ class CreditIssuer:
             issued_at_ns=issued_at_ns,
             cancel_after_ns=cancel_after_ns,
             url_index=url_index,
+            allow_worker_migration=turn.allow_worker_migration,
         )
 
         await self._credit_router.send_credit(credit=credit)

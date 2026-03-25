@@ -100,12 +100,17 @@ class CreditReturn(
         first_token_sent: True if FirstToken was sent before this return.
             Used by orchestrator to release prefill slot if not already released.
         error: Error message if the request failed (None on success).
+        worker_detached: True if the router received this return after the worker
+            had already announced shutdown and been removed from routing. Timing
+            uses this to decide whether a later turn can be reconstructed on a
+            different worker.
     """
 
     credit: Credit
     cancelled: bool = False
     first_token_sent: bool = False
     error: str | None = None
+    worker_detached: bool = False
 
 
 class FirstToken(Struct, frozen=True, kw_only=True, tag_field="t", tag="ft"):

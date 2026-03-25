@@ -13,6 +13,7 @@ from aiperf.common.hooks import (
     on_init,
     provides_hooks,
 )
+from aiperf.common.message_codecs import MessageCodecProtocol
 from aiperf.common.mixins.communication_mixin import CommunicationMixin
 from aiperf.common.types import MessageTypeT
 
@@ -35,6 +36,7 @@ class PullClientMixin(CommunicationMixin, ABC):
         pull_client_bind: bool = False,
         max_pull_concurrency: int | None = None,
         pull_client_additional_bind_address: str | None = None,
+        pull_client_codec: MessageCodecProtocol | None = None,
         **kwargs,
     ) -> None:
         super().__init__(run=run, **kwargs)
@@ -44,6 +46,7 @@ class PullClientMixin(CommunicationMixin, ABC):
             bind=pull_client_bind,
             max_pull_concurrency=max_pull_concurrency,
             additional_bind_address=pull_client_additional_bind_address,
+            codec=pull_client_codec,
         )
 
     @on_init

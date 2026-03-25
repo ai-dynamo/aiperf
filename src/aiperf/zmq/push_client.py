@@ -2,12 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+from typing import Any
 
 import zmq.asyncio
 
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import CommunicationError
-from aiperf.common.messages import Message
+from aiperf.common.message_codecs import JSON_MESSAGE_CODEC, MessageCodecProtocol
 from aiperf.zmq.zmq_base_client import BaseZMQClient
 
 
@@ -48,6 +49,7 @@ class ZMQPushClient(BaseZMQClient):
         address: str,
         bind: bool,
         socket_ops: dict | None = None,
+        codec: MessageCodecProtocol | None = None,
         **kwargs,
     ) -> None:
         """
@@ -59,10 +61,11 @@ class ZMQPushClient(BaseZMQClient):
             socket_ops (dict, optional): Additional socket options to set.
         """
         super().__init__(zmq.SocketType.PUSH, address, bind, socket_ops, **kwargs)
+        self._codec = codec or JSON_MESSAGE_CODEC
 
     async def _push_message(
         self,
-        message: Message,
+        message: Any,
         retry_count: int = 0,
         max_retries: int | None = None,
     ) -> None:
@@ -77,10 +80,10 @@ class ZMQPushClient(BaseZMQClient):
             max_retries = Environment.ZMQ.PUSH_MAX_RETRIES
 
         try:
-            data_json_bytes = message.to_json_bytes()
-            await self.socket.send(data_json_bytes)
+            data = self._codec.encode(message)
+            await self.socket.send(data)
             if self.is_trace_enabled:
-                self.trace(f"Pushed json data: {data_json_bytes}")
+                self.trace(f"Pushed encoded data: {len(data)} bytes")
         except (asyncio.CancelledError, zmq.ContextTerminated):
             self.debug("Push client cancelled or context terminated")
             return
@@ -96,12 +99,12 @@ class ZMQPushClient(BaseZMQClient):
         except Exception as e:
             raise CommunicationError(f"Failed to push data: {e}") from e
 
-    async def push(self, message: Message) -> None:
+    async def push(self, message: Any) -> None:
         """Push data to a target. The message will be routed automatically
         based on the message type.
 
         Args:
-            message: Message to be sent must be a Message object
+            message: Message object or msgspec struct understood by this client's codec
         """
         await self._check_initialized()
 
@@ -114,7 +117,7 @@ class ZMQPushClient(BaseZMQClient):
         to avoid blocking the event loop with model_dump + orjson on large messages.
 
         Args:
-            data: Pre-serialized JSON bytes
+            data: Pre-serialized wire bytes
         """
         await self._check_initialized()
 

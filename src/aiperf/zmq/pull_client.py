@@ -8,7 +8,7 @@ import zmq.asyncio
 
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_stop
-from aiperf.common.messages import Message
+from aiperf.common.message_codecs import JSON_MESSAGE_CODEC, MessageCodecProtocol
 from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.timing.concurrency import DynamicConcurrencyLimit
@@ -54,6 +54,7 @@ class ZMQPullClient(BaseZMQClient):
         socket_ops: dict | None = None,
         max_pull_concurrency: int | None = None,
         additional_bind_address: str | None = None,
+        codec: MessageCodecProtocol | None = None,
         **kwargs,
     ) -> None:
         """
@@ -76,8 +77,9 @@ class ZMQPullClient(BaseZMQClient):
             **kwargs,
         )
         self._pull_callbacks: dict[
-            MessageTypeT, Callable[[Message], Coroutine[Any, Any, None]]
+            MessageTypeT, Callable[[Any], Coroutine[Any, Any, None]]
         ] = {}
+        self._codec = codec or JSON_MESSAGE_CODEC
 
         self.semaphore = DynamicConcurrencyLimit(
             max_pull_concurrency or Environment.ZMQ.PULL_MAX_CONCURRENCY
@@ -99,13 +101,10 @@ class ZMQPullClient(BaseZMQClient):
                 # logic to properly load balance the requests.
                 await self.semaphore.acquire()
 
-                message_json_bytes = await self.socket.recv()
+                message_bytes = await self.socket.recv()
                 if self.is_trace_enabled:
-                    self.trace(
-                        f"Received message from pull socket: {message_json_bytes}"
-                    )
-                # Use AUTO-LOOKUP approach (no prefix) - optimal for large messages
-                self.execute_async(self._process_message(message_json_bytes))
+                    self.trace(f"Received message from pull socket: {message_bytes}")
+                self.execute_async(self._process_message(message_bytes))
                 self._msg_count += 1
                 # Yield periodically to allow scheduled handlers to run
                 # and prevent event loop starvation during message bursts.
@@ -133,7 +132,7 @@ class ZMQPullClient(BaseZMQClient):
         """Wait for all tasks to complete."""
         await self.cancel_all_tasks()
 
-    async def _process_message(self, message_json_bytes: bytes) -> None:
+    async def _process_message(self, message_bytes: bytes) -> None:
         """Process a message from the pull socket.
 
         This method is called by the background task when a message is received from
@@ -141,17 +140,22 @@ class ZMQPullClient(BaseZMQClient):
         callback function.
         """
         try:
-            # Use AUTO-LOOKUP: parse JSON to dict, extract type, validate
-            # This is 40-60% faster for large messages (>2KB)
-            message = Message.from_json(message_json_bytes)
-            del message_json_bytes  # free raw bytes before handler runs
+            message = self._codec.decode(message_bytes)
+            del message_bytes  # free raw bytes before handler runs
+
+            message_type = getattr(message, "message_type", None)
+            if message_type is None:
+                self.warning(
+                    f"Pull message decoded without message_type: {type(message).__name__}"
+                )
+                return
 
             # Call callbacks with Message object
-            if message.message_type in self._pull_callbacks:
-                await self._pull_callbacks[message.message_type](message)
+            if message_type in self._pull_callbacks:
+                await self._pull_callbacks[message_type](message)
             else:
                 self.warning(
-                    f"Pull message received for message type {message.message_type} without callback"
+                    f"Pull message received for message type {message_type} without callback"
                 )
         finally:
             # always release the semaphore to allow receiving more messages
@@ -160,7 +164,7 @@ class ZMQPullClient(BaseZMQClient):
     def register_pull_callback(
         self,
         message_type: MessageTypeT,
-        callback: Callable[[Message], Coroutine[Any, Any, None]],
+        callback: Callable[[Any], Coroutine[Any, Any, None]],
     ) -> None:
         """Register a ZMQ Pull data callback for a given message type.
 

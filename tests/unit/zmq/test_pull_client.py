@@ -5,13 +5,19 @@ Tests for pull_client.py - ZMQPullClient class.
 """
 
 import asyncio
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 import zmq
 
+from aiperf.common.channel_codecs import RAW_INFERENCE_CODEC
 from aiperf.common.enums import LifecycleState, MessageType
 from aiperf.common.environment import Environment
+from aiperf.common.inference_wire import (
+    InferenceResultsWireMessage,
+    build_inference_results_wire_message,
+    encode_inference_results_wire_message,
+)
 from aiperf.common.messages import HeartbeatMessage, Message
 from aiperf.zmq.pull_client import ZMQPullClient
 
@@ -248,3 +254,71 @@ class TestZMQPullClientConcurrency:
 
         assert client.semaphore.stats.release_count == 1
         assert client.semaphore.stats.wait_count == 0
+
+
+class _MissingMessageTypeCodec:
+    cache_key = "missing-message-type"
+
+    def encode(self, message):  # pragma: no cover - not used in this test
+        raise NotImplementedError
+
+    def decode(self, data: bytes):
+        return object()
+
+
+class TestZMQPullClientCodecs:
+    @pytest.mark.asyncio
+    async def test_process_message_uses_custom_codec_and_routes_msgspec_struct(
+        self,
+        mock_zmq,
+        sample_request_record,
+    ):
+        """The pull client should dispatch msgspec-struct messages by message_type."""
+        record = sample_request_record.model_copy(deep=True)
+        record.responses = []
+        record.turns = record.request_info.turns
+        wire_bytes = encode_inference_results_wire_message(
+            build_inference_results_wire_message(
+                service_id="worker-1",
+                record=record,
+            )
+        )
+        await mock_zmq.recv_queue.put(wire_bytes)
+
+        client = ZMQPullClient(
+            address="tcp://127.0.0.1:5555",
+            bind=False,
+            codec=RAW_INFERENCE_CODEC,
+        )
+        received: list[InferenceResultsWireMessage] = []
+        received_event = asyncio.Event()
+
+        async def callback(message: InferenceResultsWireMessage) -> None:
+            received.append(message)
+            received_event.set()
+
+        client.register_pull_callback(MessageType.INFERENCE_RESULTS, callback)
+
+        await client.initialize()
+        await client.start()
+        await asyncio.wait_for(received_event.wait(), timeout=1.0)
+        await client.stop()
+
+        assert len(received) == 1
+        assert received[0].service_id == "worker-1"
+        assert received[0].record.metadata.credit_num == record.request_info.credit_num
+
+    @pytest.mark.asyncio
+    async def test_process_message_warns_when_decoded_message_has_no_message_type(self):
+        """The pull client should reject decoded payloads that cannot be routed."""
+        client = ZMQPullClient(
+            address="tcp://127.0.0.1:5555",
+            bind=False,
+            codec=_MissingMessageTypeCodec(),
+        )
+        client.warning = Mock()
+
+        await client._process_message(b"ignored")
+
+        client.warning.assert_called_once()
+        assert "without message_type" in client.warning.call_args[0][0]

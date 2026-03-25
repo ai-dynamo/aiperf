@@ -232,6 +232,9 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         else:
             self._continuation_turns.put_nowait(turn)
 
+    async def handle_session_ended(self, credit: Credit) -> None:
+        """No strategy-local cleanup is needed when a session ends."""
+
     def set_request_rate(self, new_rate: float) -> None:
         """Update the request rate dynamically.
 
