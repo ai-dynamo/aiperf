@@ -6,10 +6,9 @@ sidebar-title: Profile with LLaVA-OneVision Dataset
 
 # Profile with LLaVA-OneVision Dataset
 
-AIPerf supports benchmarking using the LLaVA-OneVision dataset, a large multimodal
-instruction-tuning examples covering charts,
-diagrams, scientific figures, natural photos, and more. It provides diverse visual content
-distributions for testing vision language model performance across a wide range of image types.
+AIPerf supports benchmarking using the LLaVA-OneVision dataset, which contains a large
+multimodal collection of instruction-tuning examples covering charts, diagrams, scientific
+figures, natural photos, and more.
 
 This guide uses the `sharegpt4o` subset — GPT-4o annotated ShareGPT conversations with natural
 scene images.
