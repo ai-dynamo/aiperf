@@ -13,7 +13,7 @@ This module runs before any service processes are spawned and has two jobs:
    download model files into the HF disk cache. These run in a
    ``ProcessPoolExecutor`` so the parent process never imports the
    Rust-backed tokenizer internals that create threads and other state
-   incompatible with ``fork()``.  Once the cache is warm, child service
+   incompatible with ``fork()``. Once the cache is warm, child service
    processes set ``HF_HUB_OFFLINE=1`` (see ``bootstrap.py``) and load
    from disk with zero network traffic, eliminating the thundering-herd
    problem that occurs when N record processors all hit the Hub concurrently.
@@ -185,6 +185,10 @@ def validate_tokenizer_early(
     from rich.console import Console
 
     from aiperf.common.enums import DatasetType
+    from aiperf.common.tokenizer import (
+        _TIKTOKEN_ENCODING_NAMES,
+        BUILTIN_TOKENIZER_NAME,
+    )
     from aiperf.plugin import plugins
 
     endpoint_meta = plugins.get_endpoint_metadata(config.endpoint.type)
@@ -207,8 +211,15 @@ def validate_tokenizer_early(
         if tokenizer_cfg and tokenizer_cfg.name
         else list(model_names)
     )
-    console = Console()
 
+    if tokenizer_cfg and (
+        tokenizer_cfg.name == BUILTIN_TOKENIZER_NAME
+        or tokenizer_cfg.name in _TIKTOKEN_ENCODING_NAMES
+    ):
+        logger.debug("Using tiktoken tokenizer, skipping HF alias resolution")
+        return {model: tokenizer_cfg.name for model in model_names}
+
+    console = Console()
     resolved = _resolve_aliases(names, logger, console)
 
     # Skip if already in offline mode -- the cache is assumed warm.
@@ -225,7 +236,6 @@ def validate_tokenizer_early(
             console=console,
         )
 
-    # Build final mapping
     if tokenizer_cfg and tokenizer_cfg.name:
         return {model: resolved[tokenizer_cfg.name] for model in model_names}
     return resolved
