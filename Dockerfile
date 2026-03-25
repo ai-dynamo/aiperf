@@ -133,6 +133,12 @@ RUN mkdir -p /app /app/artifacts /app/.cache \
     && chown -R 1000:1000 /app \
     && chmod -R 755 /app
 
+# Pre-cache tiktoken o200k_base encoding for --tokenizer builtin (MIT license, see ATTRIBUTIONS.md)
+RUN mkdir -p /opt/tiktoken_cache \
+    && CACHE_KEY=$(python -c "import hashlib; print(hashlib.sha1(b'https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken').hexdigest())") \
+    && wget -q -O /opt/tiktoken_cache/$CACHE_KEY \
+       https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken
+
 # Install only the dependencies using uv
 COPY pyproject.toml .
 RUN uv sync --active --no-install-project
@@ -156,7 +162,8 @@ RUN apt-get update -y && \
     rm -rf /var/lib/apt/lists/*
 
 ENV VIRTUAL_ENV=/opt/aiperf/venv \
-    PATH="/opt/aiperf/venv/bin:${PATH}"
+    PATH="/opt/aiperf/venv/bin:${PATH}" \
+    TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache
 
 ENTRYPOINT ["/bin/bash", "-c"]
 
@@ -184,8 +191,12 @@ ENV HOME=/app
 # Copy the virtual environment and set up
 COPY --from=env-builder --chown=1000:1000 /opt/aiperf/venv /opt/aiperf/venv
 
+# Copy pre-cached tiktoken encoding for zero-network --tokenizer builtin
+COPY --from=env-builder --chown=1000:1000 /opt/tiktoken_cache /opt/tiktoken_cache
+
 ENV VIRTUAL_ENV=/opt/aiperf/venv \
-    PATH="/opt/aiperf/venv/bin:${PATH}"
+    PATH="/opt/aiperf/venv/bin:${PATH}" \
+    TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache
 
 # Set bash as entrypoint
 ENTRYPOINT ["/bin/bash", "-c"]
