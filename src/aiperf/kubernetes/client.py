@@ -16,6 +16,7 @@ from typing import Any
 import kr8s
 from kr8s.asyncio.objects import ConfigMap, Role, RoleBinding
 
+from aiperf.common.noisy_loggers import suppress_noisy_http_loggers
 from aiperf.kubernetes.console import print_success, print_warning
 from aiperf.kubernetes.constants import JobSetLabels, Labels
 from aiperf.kubernetes.enums import PodPhase
@@ -64,6 +65,7 @@ async def get_api(
     """
     import kr8s.asyncio
 
+    suppress_noisy_http_loggers()
     return await kr8s.asyncio.api(**_kr8s_kwargs(kubeconfig, kube_context))
 
 

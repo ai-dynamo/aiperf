@@ -47,6 +47,7 @@ from aiperf.common.enums.enums import (
     VideoFormat,
     VideoJobStatus,
     VideoSynthType,
+    WorkerStartupState,
     WorkerStatus,
 )
 from aiperf.common.enums.metric_enums import (
@@ -148,5 +149,6 @@ __all__ = [
     "VideoFormat",
     "VideoJobStatus",
     "VideoSynthType",
+    "WorkerStartupState",
     "WorkerStatus",
 ]

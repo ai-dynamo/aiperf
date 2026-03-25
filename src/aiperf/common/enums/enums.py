@@ -384,6 +384,7 @@ class MessageType(CaseInsensitiveStrEnum):
     SERVER_METRICS_RECORD = "server_metrics_record"
     SERVER_METRICS_STATUS = "server_metrics_status"
     WORKER_HEALTH = "worker_health"
+    WORKER_STARTUP_STATE = "worker_startup_state"
     WORKER_STATUS_SUMMARY = "worker_status_summary"
 
 
@@ -672,3 +673,13 @@ class WorkerStatus(CaseInsensitiveStrEnum):
     ERROR = "error"
     IDLE = "idle"
     STALE = "stale"
+
+
+class WorkerStartupState(CaseInsensitiveStrEnum):
+    """The current startup lifecycle state of a worker service."""
+
+    STARTING = "starting"
+    WAITING_FOR_DATASET = "waiting_for_dataset"
+    ROUTER_PROBING = "router_probing"
+    READY = "ready"
+    SHUTTING_DOWN = "shutting_down"

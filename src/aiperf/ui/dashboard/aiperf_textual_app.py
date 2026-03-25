@@ -13,7 +13,7 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Footer
 
-from aiperf.common.enums import GPUTelemetryMode, WorkerStatus
+from aiperf.common.enums import GPUTelemetryMode, WorkerStartupState, WorkerStatus
 from aiperf.common.environment import Environment
 from aiperf.common.mixins import CombinedPhaseStats
 from aiperf.common.models import MetricResult, WorkerStats
@@ -286,11 +286,17 @@ class AIPerfTextualApp(App):
             async with self.worker_dashboard.batch():
                 self.worker_dashboard.on_worker_update(worker_id, worker_stats)
 
-    async def on_worker_status_summary(self, worker_status_summary: dict[str, WorkerStatus]) -> None:  # fmt: skip
+    async def on_worker_status_summary(
+        self,
+        worker_status_summary: dict[str, WorkerStatus],
+        worker_startup_states: dict[str, WorkerStartupState] | None = None,
+    ) -> None:
         """Forward worker status summary updates to the Textual App."""
         if self.worker_dashboard:
             async with self.worker_dashboard.batch():
-                self.worker_dashboard.on_worker_status_summary(worker_status_summary)
+                self.worker_dashboard.on_worker_status_summary(
+                    worker_status_summary, worker_startup_states or {}
+                )
 
     async def on_realtime_metrics(self, metrics: list[MetricResult]) -> None:
         """Forward real-time metrics updates to the Textual App."""

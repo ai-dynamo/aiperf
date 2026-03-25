@@ -13,13 +13,15 @@ import pytest
 from pytest import param
 
 from aiperf.common.control_structs import Command
-from aiperf.common.enums import CommandType
+from aiperf.common.enums import CommandType, WorkerStartupState
 from aiperf.common.environment import Environment
 from aiperf.common.messages import DatasetConfiguredNotification
+from aiperf.common.messages.worker_messages import WorkerStartupStateMessage
 from aiperf.common.models import (
     DatasetMetadata,
     MemoryMapClientMetadata,
     ProcessHealth,
+    WorkerStats,
     WorkerTaskStats,
 )
 from aiperf.config import AIPerfConfig, BenchmarkRun
@@ -445,6 +447,25 @@ class TestHealthMonitoring:
         assert stats.task_stats.total == 10
 
     @pytest.mark.asyncio
+    async def test_worker_startup_state_tracked(
+        self, worker_pod_manager: WorkerPodManager
+    ) -> None:
+        """Test worker startup-state messages are tracked correctly."""
+        manager = worker_pod_manager
+
+        await manager._on_worker_startup_state(
+            WorkerStartupStateMessage(
+                service_id="test-pod-manager_worker_0",
+                startup_state=WorkerStartupState.WAITING_FOR_DATASET,
+            )
+        )
+
+        assert (
+            manager.worker_health["test-pod-manager_worker_0"].startup_state
+            == WorkerStartupState.WAITING_FOR_DATASET
+        )
+
+    @pytest.mark.asyncio
     async def test_dead_subprocess_detected(
         self, worker_pod_manager: WorkerPodManager
     ) -> None:
@@ -469,6 +490,35 @@ class TestHealthMonitoring:
 
         manager._subprocess_manager.remove.assert_called_once_with(dead_info)
         manager.warning.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_dead_preready_worker_logs_startup_state(
+        self, worker_pod_manager: WorkerPodManager
+    ) -> None:
+        """Dead workers should log their last preready startup state when known."""
+        manager = worker_pod_manager
+        manager.warning = MagicMock()
+
+        manager.worker_health["test_worker_0"] = WorkerStats(
+            worker_id="test_worker_0",
+            startup_state=WorkerStartupState.WAITING_FOR_DATASET,
+        )
+
+        dead_info = MagicMock()
+        dead_info.process = MagicMock()
+        dead_info.process.exitcode = 1
+        dead_info.service_type = ServiceType.WORKER
+        dead_info.service_id = "test_worker_0"
+
+        manager._subprocess_manager.check_alive = MagicMock(return_value=[dead_info])
+        manager._subprocess_manager.remove = MagicMock()
+        manager._subprocess_manager.get_by_type = MagicMock(return_value=[MagicMock()])
+
+        await manager._monitor_subprocesses()
+
+        warning_message = manager.warning.call_args[0][0]
+        assert "before becoming ready" in warning_message
+        assert "waiting_for_dataset" in warning_message
 
     @pytest.mark.asyncio
     async def test_all_workers_dead_triggers_stop(

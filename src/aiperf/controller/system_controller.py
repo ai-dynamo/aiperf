@@ -10,6 +10,7 @@ import time
 import traceback
 import uuid
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import orjson
@@ -78,6 +79,7 @@ from aiperf.common.messages import (
     ProcessRecordsResultMessage,
     ProcessServerMetricsResultMessage,
     ProcessTelemetryResultMessage,
+    WorkerStatusSummaryMessage,
 )
 from aiperf.common.models import (
     ErrorDetails,
@@ -98,6 +100,17 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType, UIType
 from aiperf.ui.protocols import AIPerfUIProtocol
 from aiperf.zmq.streaming_router_client import ZMQStreamingRouterClient
+
+
+@dataclass(frozen=True, slots=True)
+class K8sServiceTopology:
+    """Expected Kubernetes worker-pod topology derived from runtime config."""
+
+    num_worker_pods: int
+    workers_per_pod: int
+    record_processors_per_pod: int
+    total_workers: int
+    total_record_processors: int
 
 
 class SystemController(SignalHandlerMixin, BaseService):
@@ -129,6 +142,7 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         self._was_cancelled = False
         is_k8s_mode = self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
+        self._k8s_topology: K8sServiceTopology | None = None
 
         self.required_services: dict[ServiceTypeT, int] = {
             ServiceType.TIMING_MANAGER: 1,
@@ -144,11 +158,21 @@ class SystemController(SignalHandlerMixin, BaseService):
         else:
             self.scale_record_processors_with_workers = True
 
-        # In Kubernetes mode, workers are external pods that connect via TCP.
-        # We must wait for at least one worker to register before starting profiling.
-        # In Multi-Process mode, workers are spawned locally and register automatically.
-        if self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES:
-            self.required_services[ServiceType.WORKER] = 1
+        # In Kubernetes mode, workers and record processors are external pods.
+        # The controller must wait for the full worker-pod topology, not a
+        # placeholder "first worker", otherwise profiling can begin before the
+        # rest of the pod fleet has registered and configured.
+        if is_k8s_mode:
+            self._k8s_topology = self._build_k8s_service_topology()
+            self.required_services[ServiceType.WORKER_POD_MANAGER] = (
+                self._k8s_topology.num_worker_pods
+            )
+            self.required_services[ServiceType.WORKER] = (
+                self._k8s_topology.total_workers
+            )
+            self.required_services[ServiceType.RECORD_PROCESSOR] = (
+                self._k8s_topology.total_record_processors
+            )
 
         self.proxy_manager: ProxyManager = ProxyManager(
             run=self.run,
@@ -233,9 +257,49 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._telemetry_endpoints_configured: list[str] = []
         self._telemetry_endpoints_reachable: list[str] = []
         self._server_metrics_endpoints_configured: list[str] = []
+        self._worker_startup_states: dict[str, str] = {}
         self._server_metrics_endpoints_reachable: list[str] = []
         self._pod_failure_watcher_task: asyncio.Task | None = None
         self.debug("System Controller created")
+
+    def _build_k8s_service_topology(self) -> K8sServiceTopology:
+        """Derive the full Kubernetes worker-pod topology from runtime config.
+
+        Kubernetes deployments are pod-based: each worker pod runs a fixed
+        number of worker and record-processor subprocesses. Startup must wait
+        for the full expanded topology rather than the requested logical worker
+        count, because the last pod is not partially filled.
+        """
+        import math
+
+        runtime = self.run.cfg.runtime
+
+        workers_per_pod = (
+            runtime.workers_per_pod or Environment.WORKER.DEFAULT_WORKERS_PER_POD
+        )
+        requested_workers = runtime.workers or workers_per_pod
+        num_worker_pods = max(1, math.ceil(requested_workers / workers_per_pod))
+        total_workers = num_worker_pods * workers_per_pod
+
+        if runtime.record_processors_per_pod is not None:
+            record_processors_per_pod = runtime.record_processors_per_pod
+        elif runtime.record_processors is not None:
+            record_processors_per_pod = max(
+                1, math.ceil(runtime.record_processors / num_worker_pods)
+            )
+        else:
+            record_processors_per_pod = max(
+                1, workers_per_pod // Environment.RECORD.PROCESSOR_SCALE_FACTOR
+            )
+        total_record_processors = num_worker_pods * record_processors_per_pod
+
+        return K8sServiceTopology(
+            num_worker_pods=num_worker_pods,
+            workers_per_pod=workers_per_pod,
+            record_processors_per_pod=record_processors_per_pod,
+            total_workers=total_workers,
+            total_record_processors=total_record_processors,
+        )
 
     def _should_warn_osl_without_ignore_eos(self) -> bool:
         """Check if --osl is used without ignore_eos or min_tokens in extra inputs."""
@@ -352,6 +416,16 @@ class SystemController(SignalHandlerMixin, BaseService):
         )
         if optional_services:
             types_summary += ", " + ", ".join(f"{st}: 1" for st in optional_services)
+        if self._k8s_topology is not None:
+            topo = self._k8s_topology
+            self.info(
+                "Kubernetes startup topology: "
+                f"{topo.num_worker_pods} worker pod(s) x "
+                f"{topo.workers_per_pod} workers + "
+                f"{topo.record_processors_per_pod} record processors per pod "
+                f"({topo.total_workers} workers, "
+                f"{topo.total_record_processors} record processors total)"
+            )
         self.info(f"Spawning {total_services} services ({types_summary})")
         spawn_start = time.perf_counter()
 
@@ -552,11 +626,20 @@ class SystemController(SignalHandlerMixin, BaseService):
                     self._cancel_configure_tasks()
                     pending_ids = ServiceRegistry.expected_ids - self._configured_ids
                     pending_types = self._get_pending_type_counts()
+                    startup_summary = self._summarize_pending_worker_startup_states(
+                        pending_ids
+                    )
+                    startup_detail = (
+                        f", Pending worker startup: {startup_summary}"
+                        if startup_summary
+                        else ""
+                    )
                     raise ServiceRegistrationTimeoutError(
                         f"Timed out waiting for services to configure "
                         f"({len(self._configured_ids)} configured). "
                         f"Pending IDs: {pending_ids}, "
-                        f"Pending types: {pending_types}",
+                        f"Pending types: {pending_types}"
+                        f"{startup_detail}",
                         missing={},
                     ) from None
 
@@ -581,10 +664,19 @@ class SystemController(SignalHandlerMixin, BaseService):
                 if not self._all_expected_configured():
                     pending_ids = ServiceRegistry.expected_ids - self._configured_ids
                     pending_types = self._get_pending_type_counts()
+                    startup_summary = self._summarize_pending_worker_startup_states(
+                        pending_ids
+                    )
+                    startup_detail = (
+                        f", Pending worker startup: {startup_summary}"
+                        if startup_summary
+                        else ""
+                    )
                     raise ServiceRegistrationTimeoutError(
                         f"Configuration wait ended but not all services "
                         f"configured. Pending IDs: {pending_ids}, "
-                        f"Pending types: {pending_types}",
+                        f"Pending types: {pending_types}"
+                        f"{startup_detail}",
                         missing={},
                     ) from None
 
@@ -623,10 +715,33 @@ class SystemController(SignalHandlerMixin, BaseService):
                 f"({elapsed:.1f}s elapsed). "
                 f"Pending IDs: {pending_ids}, Pending types: {pending_types}"
             )
+            startup_summary = self._summarize_pending_worker_startup_states(pending_ids)
+            if startup_summary:
+                msg += f", Pending worker startup: {startup_summary}"
             pod_summary = self.service_manager.get_pod_summary()
             if pod_summary:
                 msg += f", Pod states: {pod_summary}"
             self.info(msg)
+
+    def _summarize_pending_worker_startup_states(
+        self, pending_ids: set[str]
+    ) -> dict[str, int]:
+        """Summarize startup states for workers still pending configuration."""
+        summary: dict[str, int] = {}
+        for worker_id in pending_ids:
+            state = self._worker_startup_states.get(worker_id)
+            if state is None:
+                continue
+            summary[state] = summary.get(state, 0) + 1
+        return summary
+
+    @on_message(MessageType.WORKER_STATUS_SUMMARY)
+    async def _on_worker_status_summary(
+        self, message: WorkerStatusSummaryMessage
+    ) -> None:
+        """Track the latest worker startup states for configure-wait diagnostics."""
+        for worker_id, startup_state in message.worker_startup_states.items():
+            self._worker_startup_states[worker_id] = str(startup_state)
 
     async def _wait_for_endpoint_ready(self) -> None:
         """Wait for inference endpoint to be ready using a real request.
@@ -1224,6 +1339,19 @@ class SystemController(SignalHandlerMixin, BaseService):
                         f"{message.num_workers} workers, "
                         f"{message.num_record_processors} record processors"
                     )
+                    if self._k8s_topology is not None and (
+                        message.num_workers != self._k8s_topology.workers_per_pod
+                        or message.num_record_processors
+                        != self._k8s_topology.record_processors_per_pod
+                    ):
+                        self.warning(
+                            f"Pod '{message.sid}' reported unexpected capacity "
+                            f"({message.num_workers} workers, "
+                            f"{message.num_record_processors} record processors). "
+                            f"Expected {self._k8s_topology.workers_per_pod} workers and "
+                            f"{self._k8s_topology.record_processors_per_pod} "
+                            "record processors per pod."
+                        )
                 if self._auto_configure and not already_configuring:
                     self._configure_scheduler.execute_async(
                         self._configure_single_service(message.sid)
@@ -1531,6 +1659,13 @@ class SystemController(SignalHandlerMixin, BaseService):
             server_metrics_results=self._server_metrics_results,
         )
         await self._exporter_manager.export_data()
+        if self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES:
+            from aiperf.kubernetes.results_sidecar import write_ready_marker
+
+            write_ready_marker(
+                self.run.cfg.artifacts.artifact_directory,
+                was_cancelled=self._was_cancelled,
+            )
         self._results_exported = True
         self.info("Results exported to disk")
 

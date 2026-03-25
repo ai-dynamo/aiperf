@@ -165,6 +165,12 @@ class _PortSettings(BaseSettings):
     API_SERVICE: int = Field(
         default=9090, ge=1, le=65535, description="API service port"
     )
+    RESULTS_SIDECAR: int = Field(
+        default=9091,
+        ge=1,
+        le=65535,
+        description="Results sidecar port for serving exported files after controller failure",
+    )
     API_SERVICE_HEALTH: int = Field(
         default=8085, ge=1, le=65535, description="API service health port"
     )
@@ -265,6 +271,7 @@ class _K8sEnvironment(BaseSettings):
     # ---------------------------------------------------------------------------
     # fmt: off
     CONTROLLER_POD: ResourceSettings = Field(default_factory=lambda: _resource_settings("CONTROLLER_POD_", "3000m", "2176Mi"), description="Controller pod container resources (all control-plane services)")
+    RESULTS_SIDECAR: ResourceSettings = Field(default_factory=lambda: _resource_settings("RESULTS_SIDECAR_", "100m", "128Mi"), description="Results sidecar resources for serving exported files")
     WORKER_POD: ResourceSettings = Field(default_factory=lambda: _resource_settings("WORKER_POD_", "3350m", "6144Mi"), description="Worker pod container resources (workers + record processors + WPM)")
     # fmt: on
     RECORD_PROCESSOR_SCALE_FACTOR: int = Field(

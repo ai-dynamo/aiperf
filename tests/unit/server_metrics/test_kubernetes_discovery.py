@@ -389,6 +389,24 @@ class TestDiscoverKubernetesEndpoints:
 # ---------------------------------------------------------------------------
 class TestGetApi:
     @pytest.mark.asyncio
+    async def test_suppresses_noisy_http_loggers_before_loading_client(self):
+        mock_kr8s_asyncio = MagicMock()
+        mock_kr8s_asyncio.api = AsyncMock(return_value=MagicMock())
+
+        with patch.dict(
+            "sys.modules",
+            {"kr8s": MagicMock(), "kr8s.asyncio": mock_kr8s_asyncio},
+        ):
+            from aiperf.server_metrics.discovery import kubernetes as discovery
+
+            with patch.object(
+                discovery, "suppress_noisy_http_loggers"
+            ) as suppress_mock:
+                await discovery._get_api()
+
+        suppress_mock.assert_called_once_with()
+
+    @pytest.mark.asyncio
     async def test_returns_none_on_exception(self):
         mock_kr8s_asyncio = MagicMock()
         mock_kr8s_asyncio.api = AsyncMock(side_effect=Exception("no cluster"))

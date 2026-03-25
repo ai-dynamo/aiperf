@@ -80,23 +80,30 @@ class ServerMetricsManager(BaseComponentService):
             server_metrics_config.discovery if server_metrics_config else None
         )
 
-        # Collect metrics from all endpoint URLs (for multi-URL load balancing)
-        self._server_metrics_endpoints: list[str] = []
+        # Keep default inference-derived metrics URLs separate from explicit server
+        # metrics URLs so Kubernetes discovery can replace the load-balanced default
+        # targets without discarding user-provided scrape endpoints.
+        self._default_server_metrics_endpoints: list[str] = []
         for url in run.cfg.endpoint.urls:
             normalized_url = normalize_metrics_endpoint_url(url)
-            if normalized_url not in self._server_metrics_endpoints:
-                self._server_metrics_endpoints.append(normalized_url)
-        self.info(
-            f"Server Metrics: Discovered {len(self._server_metrics_endpoints)} endpoints: {self._server_metrics_endpoints}"
-        )
+            if normalized_url not in self._default_server_metrics_endpoints:
+                self._default_server_metrics_endpoints.append(normalized_url)
 
-        # Add user-specified URLs if provided
+        self._explicit_server_metrics_endpoints: list[str] = []
         if server_metrics_config and server_metrics_config.urls:
-            # Add user URLs, avoiding duplicates
             for url in server_metrics_config.urls:
                 normalized_url = normalize_metrics_endpoint_url(url)
-                if normalized_url not in self._server_metrics_endpoints:
-                    self._server_metrics_endpoints.append(normalized_url)
+                if normalized_url not in self._explicit_server_metrics_endpoints:
+                    self._explicit_server_metrics_endpoints.append(normalized_url)
+
+        self._server_metrics_endpoints = self._build_server_metrics_endpoints(
+            include_default_endpoints=True
+        )
+        self.info(
+            "Server Metrics: Configured "
+            f"{len(self._server_metrics_endpoints)} initial endpoint(s): "
+            f"{self._server_metrics_endpoints}"
+        )
 
         # Use server metrics collection interval
         self._collection_interval = Environment.SERVER_METRICS.COLLECTION_INTERVAL
@@ -124,6 +131,10 @@ class ServerMetricsManager(BaseComponentService):
                 endpoints_reachable=[],
             )
             return
+
+        self._server_metrics_endpoints = self._build_server_metrics_endpoints(
+            include_default_endpoints=self._should_include_default_endpoints()
+        )
 
         # Run auto-discovery if enabled
         discovered_urls = await self._run_metrics_discovery()
@@ -481,6 +492,43 @@ class ServerMetricsManager(BaseComponentService):
         except Exception as e:
             self.error(f"Failed to send server metrics status message: {e}")
 
+    def _build_server_metrics_endpoints(
+        self, *, include_default_endpoints: bool
+    ) -> list[str]:
+        """Build the current scrape target list with stable deduplication."""
+        endpoints: list[str] = []
+
+        if include_default_endpoints:
+            for url in self._default_server_metrics_endpoints:
+                if url not in endpoints:
+                    endpoints.append(url)
+
+        for url in self._explicit_server_metrics_endpoints:
+            if url not in endpoints:
+                endpoints.append(url)
+
+        return endpoints
+
+    def _should_include_default_endpoints(self) -> bool:
+        """Whether inference-derived metrics URLs should remain scrape targets.
+
+        Kubernetes discovery should replace the default inference endpoint scrape
+        target because that endpoint often resolves to a load balancer rather than
+        a single pod, which can corrupt cumulative metrics.
+        """
+        if self._discovery is None:
+            return True
+
+        mode = self._discovery.mode
+        if mode == ServerMetricsDiscoveryMode.DISABLED:
+            return True
+        if mode == ServerMetricsDiscoveryMode.KUBERNETES:
+            return False
+        if mode == ServerMetricsDiscoveryMode.AUTO:
+            return not is_running_in_kubernetes()
+
+        return True
+
     async def _run_metrics_discovery(self) -> list[str]:
         """Run metrics endpoint auto-discovery based on configuration.
 
@@ -542,7 +590,10 @@ class ServerMetricsManager(BaseComponentService):
         """
         from urllib.parse import urlparse
 
-        for url in self._server_metrics_endpoints:
+        for url in (
+            self._explicit_server_metrics_endpoints
+            + self._default_server_metrics_endpoints
+        ):
             try:
                 host = urlparse(url).hostname or ""
                 parts = host.split(".")

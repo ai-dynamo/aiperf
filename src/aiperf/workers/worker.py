@@ -13,7 +13,12 @@ if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
 from aiperf.common.constants import BYTES_PER_MIB
 from aiperf.common.control_structs import Command
-from aiperf.common.enums import CommAddress, CommandType, MessageType
+from aiperf.common.enums import (
+    CommAddress,
+    CommandType,
+    MessageType,
+    WorkerStartupState,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.event_loop_monitor import EventLoopMonitor
 from aiperf.common.exceptions import NotInitializedError
@@ -24,6 +29,10 @@ from aiperf.common.hooks import (
     on_start,
     on_stop,
 )
+from aiperf.common.inference_wire import (
+    build_inference_results_wire_message,
+    encode_inference_results_wire_message,
+)
 from aiperf.common.memory_profiler import MemoryProfiler
 from aiperf.common.messages import (
     DatasetConfiguredNotification,
@@ -31,6 +40,7 @@ from aiperf.common.messages import (
     ErrorMessage,
     InferenceResultsMessage,
     WorkerHealthMessage,
+    WorkerStartupStateMessage,
 )
 from aiperf.common.messages.dataset_messages import (
     ConversationRequestMessage,
@@ -218,6 +228,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
         self._pending_dataset_config: DatasetConfiguredNotification | None = None
+        self._worker_ready_event = asyncio.Event()
+        self._startup_state: WorkerStartupState | None = None
 
         # Only send FirstToken messages when prefill concurrency limiting is active.
         # Detecting first token requires parsing each SSE chunk, so skip this overhead
@@ -227,6 +239,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             phase.prefill_concurrency is not None
             for phase in self.run.cfg.phases.values()
         )
+        self._msgspec_wire_size_samples_remaining = 5
 
         # Only used as a fallback when dataset client is not initialized
         # or was not available when the credit was dropped. Must be created here
@@ -245,13 +258,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         In Kubernetes mode, deferred until the dataset is downloaded so the
         worker never receives credits before it can serve them.
         """
+        await self._publish_startup_state(WorkerStartupState.STARTING)
         if self._is_kubernetes_mode():
+            await self._publish_startup_state(WorkerStartupState.WAITING_FOR_DATASET)
             self.debug(
                 "Kubernetes mode: deferring WorkerReady until dataset is downloaded"
             )
             return
+        await self._publish_startup_state(WorkerStartupState.ROUTER_PROBING)
         await self._measure_baseline_rtt()
         await self.return_dealer_client.send(WorkerReady(worker_id=self.service_id))
+        await self._publish_startup_state(WorkerStartupState.READY)
+        self._worker_ready_event.set()
 
     def _is_kubernetes_mode(self) -> bool:
         """Check if running in Kubernetes mode."""
@@ -317,8 +335,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._pending_dataset_config = None
 
         # Measure RTT before announcing readiness
+        await self._publish_startup_state(WorkerStartupState.ROUTER_PROBING)
         await self._measure_baseline_rtt()
         await self.return_dealer_client.send(WorkerReady(worker_id=self.service_id))
+        await self._publish_startup_state(WorkerStartupState.READY)
+        self._worker_ready_event.set()
 
     async def _initialize_dataset_client(
         self,
@@ -349,6 +370,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     async def _send_worker_shutdown_message(self) -> None:
         """Send WorkerShutdown to announce shutdown."""
         try:
+            await self._publish_startup_state(WorkerStartupState.SHUTTING_DOWN)
             await self.return_dealer_client.send(
                 WorkerShutdown(worker_id=self.service_id)
             )
@@ -376,6 +398,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             service_id=self.service_id,
             health=health,
             task_stats=self.task_stats,
+        )
+
+    async def _publish_startup_state(self, state: WorkerStartupState) -> None:
+        """Publish a worker startup-state transition if it changed."""
+        if self._startup_state == state:
+            return
+        self._startup_state = state
+        await self.publish(
+            WorkerStartupStateMessage(
+                service_id=self.service_id,
+                startup_state=state,
+            )
         )
 
     async def _on_credit_message(self, message: CreditChannelMessage) -> None:
@@ -804,6 +838,29 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             else None
         )
 
+    def _build_parallel_inference_wire_message(self, record: RequestRecord):
+        """Build the alternate msgspec wire payload without changing the live path."""
+        include_raw_export_fields = self.run.cfg.artifacts.raw
+        raw_payload = None
+        if include_raw_export_fields and record.request_info is not None:
+            raw_payload = self.inference_client.endpoint.format_payload(
+                record.request_info
+            )
+        return build_inference_results_wire_message(
+            service_id=self.service_id,
+            record=record,
+            raw_payload=raw_payload,
+            include_request_headers=include_raw_export_fields,
+            include_status=include_raw_export_fields,
+            include_trace_data=self.run.cfg.artifacts.trace,
+        )
+
+    def _serialize_parallel_inference_wire(self, record: RequestRecord) -> bytes:
+        """Serialize the alternate msgspec wire payload for size comparison."""
+        return encode_inference_results_wire_message(
+            self._build_parallel_inference_wire_message(record)
+        )
+
     async def _send_inference_result_message(self, record: RequestRecord) -> None:
         """Send RequestRecord to RecordProcessor for metric calculation.
 
@@ -827,6 +884,26 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             record=record,
         )
         data = await asyncio.to_thread(msg.to_json_bytes)
+        if self.is_debug_enabled and self._msgspec_wire_size_samples_remaining > 0:
+            try:
+                wire_data = await asyncio.to_thread(
+                    self._serialize_parallel_inference_wire, record
+                )
+                self._msgspec_wire_size_samples_remaining -= 1
+                reduction = len(data) - len(wire_data)
+                reduction_pct = (
+                    (reduction / len(data) * 100.0) if len(data) > 0 else 0.0
+                )
+                self.debug(
+                    "Worker->RP payload size sample: "
+                    f"current_json={len(data)}B "
+                    f"parallel_msgspec_msgpack={len(wire_data)}B "
+                    f"delta={reduction:+d}B ({reduction_pct:+.1f}%)"
+                )
+            except Exception as e:
+                self.debug(
+                    f"Failed to measure parallel msgspec wire payload size: {e!r}"
+                )
         self.execute_async(self.inference_results_push_client.push_raw(data))
 
     @on_command(CommandType.PROFILE_CONFIGURE)
@@ -835,6 +912,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.debug("Waiting for dataset to be configured before starting profiling")
         await asyncio.wait_for(
             self._dataset_configured_event.wait(),
+            timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
+        )
+        self.debug("Waiting for WorkerReady to be acknowledged before profiling")
+        await asyncio.wait_for(
+            self._worker_ready_event.wait(),
             timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
         )
         if self.is_debug_enabled:

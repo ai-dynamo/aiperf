@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 from pytest import param
 
-from aiperf.common.enums import WorkerStatus
+from aiperf.common.enums import WorkerStartupState, WorkerStatus
 from aiperf.common.mixins.worker_tracker_mixin import WorkerTracker
 from aiperf.common.models import ProcessHealth, WorkerTaskStats
 
@@ -107,6 +107,16 @@ class TestWorkerTrackerUpdateStatuses:
         """Test that empty status dict is a no-op."""
         tracker.update_worker_statuses({})
         assert tracker.workers == {}
+
+    def test_updates_startup_states(self, tracker: WorkerTracker) -> None:
+        """Test that startup states are tracked independently from worker status."""
+        tracker.update_worker_startup_states(
+            {"w-1": WorkerStartupState.WAITING_FOR_DATASET}
+        )
+        assert (
+            tracker.get_worker_stats("w-1").startup_state
+            == WorkerStartupState.WAITING_FOR_DATASET
+        )
 
 
 class TestWorkerTrackerGetWorkerStats:

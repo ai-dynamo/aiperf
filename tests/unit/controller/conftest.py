@@ -52,7 +52,7 @@ def system_controller(
         ),
         patch("aiperf.controller.system_controller.ProxyManager") as mock_proxy,
         patch(
-            "aiperf.zmq.router_reply_client.ZMQRouterReplyClient",
+            "aiperf.controller.system_controller.ZMQStreamingRouterClient",
             return_value=AsyncMock(),
         ),
         patch(

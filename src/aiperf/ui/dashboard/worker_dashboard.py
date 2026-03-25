@@ -9,7 +9,7 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import NoMatches, WrongType
 from textual.widgets import Label
 
-from aiperf.common.enums import WorkerStatus
+from aiperf.common.enums import WorkerStartupState, WorkerStatus
 from aiperf.common.models import WorkerStats
 from aiperf.ui.dashboard.custom_widgets import MaximizableWidget
 from aiperf.ui.dashboard.worker_status_table import WorkerStatusTable
@@ -77,10 +77,22 @@ class WorkerDashboard(Container, MaximizableWidget):
             self.table_widget.update_single_worker(worker_stats)
 
     def on_worker_status_summary(
-        self, worker_status_summary: dict[str, WorkerStatus]
+        self,
+        worker_status_summary: dict[str, WorkerStatus],
+        worker_startup_states: dict[str, WorkerStartupState] | None = None,
     ) -> None:
         """Handle worker status summary updates."""
         summary = Counter(worker_status_summary.values())
+        startup_states = worker_startup_states or {}
+
+        for worker_id, status in worker_status_summary.items():
+            stats = self.worker_stats.get(worker_id, WorkerStats(worker_id=worker_id))
+            stats.status = status
+            if worker_id in startup_states:
+                stats.startup_state = startup_states[worker_id]
+            self.worker_stats[worker_id] = stats
+            if self.table_widget:
+                self.table_widget.update_single_worker(stats)
 
         # For each status type, update the label with the count of workers in that status
         for status in WorkerStatus:

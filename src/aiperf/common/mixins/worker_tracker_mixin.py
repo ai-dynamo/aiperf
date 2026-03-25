@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from aiperf.common.enums import MessageType, WorkerStatus
+from aiperf.common.enums import MessageType, WorkerStartupState, WorkerStatus
 from aiperf.common.hooks import AIPerfHook, on_message, provides_hooks
 from aiperf.common.messages import WorkerHealthMessage, WorkerStatusSummaryMessage
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
@@ -37,6 +37,15 @@ class WorkerTracker:
             if worker_id not in self._workers_stats:
                 self._workers_stats[worker_id] = WorkerStats(worker_id=worker_id)
             self._workers_stats[worker_id].status = status
+
+    def update_worker_startup_states(
+        self, worker_startup_states: dict[str, WorkerStartupState]
+    ) -> None:
+        """Update worker startup states from a status summary."""
+        for worker_id, startup_state in worker_startup_states.items():
+            if worker_id not in self._workers_stats:
+                self._workers_stats[worker_id] = WorkerStats(worker_id=worker_id)
+            self._workers_stats[worker_id].startup_state = startup_state
 
     def get_worker_stats(self, worker_id: str) -> WorkerStats | None:
         """Get stats for a specific worker."""
@@ -72,7 +81,9 @@ class WorkerTrackerMixin(MessageBusClientMixin):
     async def _on_worker_status_summary(self, message: WorkerStatusSummaryMessage):
         """Update the worker stats from a worker status summary message."""
         self._worker_tracker.update_worker_statuses(message.worker_statuses)
+        self._worker_tracker.update_worker_startup_states(message.worker_startup_states)
         await self.run_hooks(
             AIPerfHook.ON_WORKER_STATUS_SUMMARY,
             worker_status_summary=message.worker_statuses,
+            worker_startup_states=message.worker_startup_states,
         )

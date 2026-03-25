@@ -295,7 +295,7 @@ class TestJobSetSpec:
     ) -> None:
         """Test controller pod has expected containers.
 
-        Control-plane uses single container that spawns services as subprocesses.
+        Control-plane uses a main container plus a results sidecar.
         """
         manifest = basic_jobset_spec.to_k8s_manifest()
         controller_job = next(
@@ -305,9 +305,9 @@ class TestJobSetSpec:
             "containers"
         ]
         container_names = [c["name"] for c in containers]
-        # Single control-plane container runs all services as subprocesses
         assert "control-plane" in container_names
-        assert len(containers) == 1
+        assert "results-sidecar" in container_names
+        assert len(containers) == 2
 
     def test_to_k8s_manifest_worker_containers(
         self, basic_jobset_spec: JobSetSpec
@@ -438,6 +438,8 @@ class TestJobSetSpecContainerDetails:
             containers = job["template"]["spec"]["template"]["spec"]["containers"]
             for container in containers:
                 assert "env" in container, f"{container['name']} missing env"
+                if container["name"] == "results-sidecar":
+                    continue
                 env_names = [e["name"] for e in container["env"]]
                 assert "AIPERF_JOB_ID" in env_names
                 assert "AIPERF_NAMESPACE" in env_names
@@ -474,6 +476,40 @@ class TestJobSetSpecContainerDetails:
         port_names = [p["name"] for p in control_plane["ports"]]
         assert "api" in port_names
         assert "health" in port_names
+
+    def test_results_sidecar_exposes_results_port(
+        self, jobset_manifest: dict[str, Any]
+    ) -> None:
+        """Test results sidecar exposes its recovery file-serving port."""
+        controller_job = next(
+            j
+            for j in jobset_manifest["spec"]["replicatedJobs"]
+            if j["name"] == "controller"
+        )
+        containers = controller_job["template"]["spec"]["template"]["spec"][
+            "containers"
+        ]
+        sidecar = next(c for c in containers if c["name"] == "results-sidecar")
+        assert sidecar["ports"] == [{"containerPort": 9091, "name": "results"}]
+
+    def test_results_sidecar_mounts_results_read_only(
+        self, jobset_manifest: dict[str, Any]
+    ) -> None:
+        """Test results sidecar only reads the shared results volume."""
+        controller_job = next(
+            j
+            for j in jobset_manifest["spec"]["replicatedJobs"]
+            if j["name"] == "controller"
+        )
+        containers = controller_job["template"]["spec"]["template"]["spec"][
+            "containers"
+        ]
+        sidecar = next(c for c in containers if c["name"] == "results-sidecar")
+        results_mount = next(
+            mount for mount in sidecar["volumeMounts"] if mount["name"] == "results"
+        )
+        assert results_mount["mountPath"] == "/results"
+        assert results_mount["readOnly"] is True
 
 
 class TestJobSetSpecImagePullPolicy:
@@ -857,6 +893,8 @@ class TestJobSetSpecEnvVars:
         for job in jobset_manifest["spec"]["replicatedJobs"]:
             containers = job["template"]["spec"]["template"]["spec"]["containers"]
             for container in containers:
+                if container["name"] == "results-sidecar":
+                    continue
                 env_names = [e["name"] for e in container["env"]]
                 assert "AIPERF_JOB_ID" in env_names
                 job_id_env = next(
@@ -871,6 +909,8 @@ class TestJobSetSpecEnvVars:
         for job in jobset_manifest["spec"]["replicatedJobs"]:
             containers = job["template"]["spec"]["template"]["spec"]["containers"]
             for container in containers:
+                if container["name"] == "results-sidecar":
+                    continue
                 env_names = [e["name"] for e in container["env"]]
                 assert "AIPERF_NAMESPACE" in env_names
                 ns_env = next(
@@ -885,6 +925,8 @@ class TestJobSetSpecEnvVars:
         for job in jobset_manifest["spec"]["replicatedJobs"]:
             containers = job["template"]["spec"]["template"]["spec"]["containers"]
             for container in containers:
+                if container["name"] == "results-sidecar":
+                    continue
                 env_names = [e["name"] for e in container["env"]]
                 assert "AIPERF_DATASET_MMAP_BASE_PATH" in env_names
 
@@ -1782,5 +1824,7 @@ class TestJobSetSpecAlwaysBenchmarkRun:
         for rj in manifest["spec"]["replicatedJobs"]:
             containers = rj["template"]["spec"]["template"]["spec"]["containers"]
             for container in containers:
+                if container["name"] == "results-sidecar":
+                    continue
                 assert "--benchmark-run" in container["args"]
                 assert "--config-file" not in container["args"]

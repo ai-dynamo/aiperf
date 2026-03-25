@@ -84,9 +84,11 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
     ) -> RawRecordInfo:
         """Build the export record for a single record."""
 
+        payload = getattr(record.request, "raw_payload", None)
+
         # Use existing request_info if available, otherwise create minimal one
         request_info = record.request.request_info
-        if request_info is None:
+        if payload is None and request_info is None:
             # Fallback for records without complete request_info
             # This should rarely happen after proper request_info propagation
             request_info = RequestInfo(
@@ -102,7 +104,8 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
                 conversation_id=metadata.conversation_id or "",
             )
 
-        payload = self._endpoint.format_payload(request_info)
+        if payload is None:
+            payload = self._endpoint.format_payload(request_info)
         return RawRecordInfo.model_construct(
             metadata=metadata,
             start_perf_ns=record.request.start_perf_ns,

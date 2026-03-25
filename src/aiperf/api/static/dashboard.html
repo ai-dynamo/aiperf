@@ -658,7 +658,7 @@ SPDX-License-Identifier: Apache-2.0
         });
 
         const createDefaultWorker = () => ({
-            status: 'idle', inFlight: 0, completed: 0, failed: 0, cpu: null, memory: null,
+            status: 'idle', startupState: null, inFlight: 0, completed: 0, failed: 0, cpu: null, memory: null,
         });
 
         const state = {
@@ -886,7 +886,10 @@ SPDX-License-Identifier: Apache-2.0
 
             el.workersBody.innerHTML = ids.map(id => {
                 const w = workers[id];
-                const statusLabel = (w.status || 'idle').replace('_', ' ');
+                const startupLabel = w.startupState && w.startupState !== 'ready'
+                    ? ` (${w.startupState.replaceAll('_', ' ')})`
+                    : '';
+                const statusLabel = `${(w.status || 'idle').replace('_', ' ')}${startupLabel}`;
                 const cpu = w.cpu != null ? `${w.cpu.toFixed(1)}%` : 'N/A';
                 return `<tr>` +
                     `<td><span class="worker-id">${escapeHtml(shortWorkerId(id))}</span></td>` +
@@ -1127,9 +1130,14 @@ SPDX-License-Identifier: Apache-2.0
 
                 case 'worker_status_summary': {
                     const statuses = msg.worker_statuses || {};
+                    const startupStates = msg.worker_startup_states || {};
                     for (const sid in statuses) {
                         if (!workers[sid]) workers[sid] = createDefaultWorker();
                         workers[sid].status = statuses[sid];
+                    }
+                    for (const sid in startupStates) {
+                        if (!workers[sid]) workers[sid] = createDefaultWorker();
+                        workers[sid].startupState = startupStates[sid];
                     }
                     renderWorkers();
                     break;

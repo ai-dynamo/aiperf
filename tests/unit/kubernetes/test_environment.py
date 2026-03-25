@@ -185,6 +185,7 @@ class TestK8sEnvironmentPorts:
         assert ports.DATASET_MANAGER_HEALTH == 8083
         assert ports.RECORDS_MANAGER_HEALTH == 8084
         assert ports.API_SERVICE == 9090
+        assert ports.RESULTS_SIDECAR == 9091
         assert ports.API_SERVICE_HEALTH == 8085
         assert ports.WORKER_HEALTH == 8080
         assert ports.RECORD_PROCESSOR_HEALTH == 8081
@@ -205,6 +206,7 @@ class TestK8sEnvironmentPorts:
             ports.DATASET_MANAGER_HEALTH,
             ports.RECORDS_MANAGER_HEALTH,
             ports.API_SERVICE,
+            ports.RESULTS_SIDECAR,
             ports.API_SERVICE_HEALTH,
             ports.GPU_TELEMETRY_MANAGER_HEALTH,
             ports.SERVER_METRICS_MANAGER_HEALTH,
@@ -220,6 +222,7 @@ class TestK8sEnvironmentPorts:
             param("DATASET_MANAGER_HEALTH", id="dataset_manager"),
             param("RECORDS_MANAGER_HEALTH", id="records_manager"),
             param("API_SERVICE", id="api_service"),
+            param("RESULTS_SIDECAR", id="results_sidecar"),
             param("API_SERVICE_HEALTH", id="api_service_health"),
             param("GPU_TELEMETRY_MANAGER_HEALTH", id="gpu_telemetry"),
             param("SERVER_METRICS_MANAGER_HEALTH", id="server_metrics"),

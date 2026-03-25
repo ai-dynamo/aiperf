@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from aiperf.credit.messages import FirstToken
+from aiperf.credit.messages import FirstToken, TimePing, WorkerShutdown
 from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.credit.structs import Credit
 from tests.unit.credit.conftest import stub_credit
@@ -583,6 +583,30 @@ class TestStickyCreditRouterWorkerUnregistration:
 
         # Should not raise
         router._unregister_worker("never-registered")
+
+    async def test_shutdown_before_ready_is_tracked_as_initializing(self, run) -> None:
+        """Workers that die during init should not be logged as impossible unregisters."""
+        router = StickyCreditRouter(run=run, service_id="test-router")
+        router._credit_router_client.send_to = AsyncMock()
+
+        await router._handle_return_router_message(
+            "worker-1",
+            TimePing(sequence=1, sent_at_ns=1),
+        )
+        assert "worker-1" in router._initializing_workers
+
+        with (
+            patch.object(router, "info") as mock_info,
+            patch.object(router, "warning") as mock_warning,
+        ):
+            await router._handle_return_router_message(
+                "worker-1",
+                WorkerShutdown(worker_id="worker-1"),
+            )
+
+        assert "worker-1" not in router._initializing_workers
+        mock_info.assert_called_once()
+        mock_warning.assert_not_called()
 
 
 class TestStickyCreditRouterMinLoadTracking:

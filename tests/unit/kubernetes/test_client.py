@@ -89,16 +89,25 @@ class TestGetApi:
     @pytest.mark.asyncio
     async def test_get_api_default(self) -> None:
         mock_api = MagicMock(spec=kr8s.Api)
-        with patch("kr8s.asyncio.api", new_callable=AsyncMock, return_value=mock_api):
+        with (
+            patch(
+                "aiperf.kubernetes.client.suppress_noisy_http_loggers"
+            ) as suppress_mock,
+            patch("kr8s.asyncio.api", new_callable=AsyncMock, return_value=mock_api),
+        ):
             result = await get_api()
+        suppress_mock.assert_called_once_with()
         assert result is mock_api
 
     @pytest.mark.asyncio
     async def test_get_api_passes_kwargs(self) -> None:
         mock_api = MagicMock(spec=kr8s.Api)
-        with patch(
-            "kr8s.asyncio.api", new_callable=AsyncMock, return_value=mock_api
-        ) as patched:
+        with (
+            patch("aiperf.kubernetes.client.suppress_noisy_http_loggers"),
+            patch(
+                "kr8s.asyncio.api", new_callable=AsyncMock, return_value=mock_api
+            ) as patched,
+        ):
             await get_api(kubeconfig="/cfg", kube_context="ctx")
         patched.assert_awaited_once_with(
             kubeconfig="/cfg", context="ctx", namespace="default"

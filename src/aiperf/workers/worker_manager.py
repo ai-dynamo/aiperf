@@ -15,11 +15,16 @@ if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.control_structs import Command
-from aiperf.common.enums import CommandType, MessageType, WorkerStatus
+from aiperf.common.enums import (
+    CommandType,
+    MessageType,
+    WorkerStatus,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_command, on_message
 from aiperf.common.messages import (
     WorkerHealthMessage,
+    WorkerStartupStateMessage,
 )
 from aiperf.common.messages.worker_messages import WorkerStatusSummaryMessage
 from aiperf.common.models.progress_models import WorkerStats
@@ -60,17 +65,24 @@ class WorkerManager(BaseComponentService):
     @on_message(MessageType.WORKER_HEALTH)
     async def _on_worker_health(self, message: WorkerHealthMessage) -> None:
         worker_id = message.service_id
-        info = self.worker_infos.get(worker_id)
-        if not info:
-            info = WorkerStatusInfo(
-                worker_id=worker_id,
-                last_update_ns=time.time_ns(),
-                status=WorkerStatus.HEALTHY,
-                health=message.health,
-                task_stats=message.task_stats,
-            )
-            self.worker_infos[worker_id] = info
+        info = self._get_or_create_worker_info(worker_id)
         self._update_worker_status(info, message)
+
+    @on_message(MessageType.WORKER_STARTUP_STATE)
+    async def _on_worker_startup_state(
+        self, message: WorkerStartupStateMessage
+    ) -> None:
+        info = self._get_or_create_worker_info(message.service_id)
+        info.startup_state = message.startup_state
+        info.startup_state_updated_ns = message.request_ns
+        await self._publish_worker_summary()
+
+    def _get_or_create_worker_info(self, worker_id: str) -> WorkerStatusInfo:
+        info = self.worker_infos.get(worker_id)
+        if info is None:
+            info = WorkerStatusInfo(worker_id=worker_id)
+            self.worker_infos[worker_id] = info
+        return info
 
     def _update_worker_status(
         self, info: WorkerStatusInfo, message: WorkerHealthMessage
@@ -127,7 +139,13 @@ class WorkerManager(BaseComponentService):
         self.debug("Checking worker status")
 
         for _, info in self.worker_infos.items():
-            if (time.time_ns() - (info.last_update_ns or 0)) / NANOS_PER_SECOND > Environment.WORKER.STALE_TIME:  # fmt: skip
+            last_activity_ns = max(
+                info.last_update_ns or 0,
+                info.startup_state_updated_ns or 0,
+            )
+            if last_activity_ns == 0:
+                continue
+            if (time.time_ns() - last_activity_ns) / NANOS_PER_SECOND > Environment.WORKER.STALE_TIME:  # fmt: skip
                 info.status = WorkerStatus.STALE
 
     @background_task(
@@ -135,10 +153,19 @@ class WorkerManager(BaseComponentService):
     )
     async def _worker_summary_loop(self) -> None:
         """Generate a summary of the worker status."""
+        await self._publish_worker_summary()
+
+    async def _publish_worker_summary(self) -> None:
+        """Publish the current worker status and startup-state summary."""
         summary = WorkerStatusSummaryMessage(
             service_id=self.service_id,
             worker_statuses={
                 worker_id: info.status for worker_id, info in self.worker_infos.items()
+            },
+            worker_startup_states={
+                worker_id: info.startup_state
+                for worker_id, info in self.worker_infos.items()
+                if info.startup_state is not None
             },
         )
         await self.publish(summary)

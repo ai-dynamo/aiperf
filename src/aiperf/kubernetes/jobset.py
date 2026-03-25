@@ -515,11 +515,40 @@ class JobSetSpec(AIPerfBaseModel):
         - worker_manager, timing_manager, dataset_manager, records_manager
         - api, gpu_telemetry_manager, server_metrics_manager
 
+        A small results sidecar shares /results and can continue serving
+        exported artifacts if the main controller container terminates after
+        export but before the operator downloads them.
+
         Workers and RecordProcessors are external pods managed by JobSet.
         """
         ports = K8sEnvironment.PORTS
 
         control_plane_resources = self._resolve_pod_resources("CONTROLLER_POD")
+        sidecar_resources = self._resolve_pod_resources("RESULTS_SIDECAR")
+
+        results_sidecar = ContainerSpec(
+            name=Containers.RESULTS_SIDECAR,
+            image=self.image,
+            image_pull_policy=self.image_pull_policy,
+            command=["python", "-m", "aiperf.kubernetes.results_sidecar"],
+            env=[
+                {"name": "AIPERF_RESULTS_DIR", "value": "/results"},
+                {
+                    "name": "AIPERF_RESULTS_SIDECAR_PORT",
+                    "value": str(ports.RESULTS_SIDECAR),
+                },
+            ],
+            resources=sidecar_resources,
+            volume_mounts=[
+                {"name": "results", "mountPath": "/results", "readOnly": True},
+                {"name": "tmp", "mountPath": "/tmp"},
+            ],
+            ports=[{"containerPort": ports.RESULTS_SIDECAR, "name": "results"}],
+            startup_probe=self._create_startup_probe(ports.RESULTS_SIDECAR),
+            liveness_probe=self._create_health_probe(ports.RESULTS_SIDECAR),
+            readiness_probe=self._create_health_probe(ports.RESULTS_SIDECAR),
+            security_context=self._create_security_context(),
+        )
 
         return [
             self._create_container(
@@ -534,6 +563,7 @@ class JobSetSpec(AIPerfBaseModel):
                     {"name": "AIPERF_UI_REALTIME_METRICS_ENABLED", "value": "true"}
                 ],
             ),
+            results_sidecar,
         ]
 
     def _create_worker_containers(self, controller_dns: str) -> list[ContainerSpec]:

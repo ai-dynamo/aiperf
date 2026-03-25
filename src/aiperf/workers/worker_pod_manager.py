@@ -22,7 +22,7 @@ import zstandard
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.control_structs import Registration
-from aiperf.common.enums import MessageType, WorkerStatus
+from aiperf.common.enums import MessageType, WorkerStartupState, WorkerStatus
 from aiperf.common.environment import Environment
 from aiperf.common.error_queue import ErrorCollector
 from aiperf.common.hooks import (
@@ -37,6 +37,7 @@ from aiperf.common.messages import (
     DatasetConfiguredNotification,
     DatasetDownloadedNotification,
     WorkerHealthMessage,
+    WorkerStartupStateMessage,
 )
 from aiperf.common.models import MemoryMapClientMetadata
 from aiperf.common.models.progress_models import WorkerStats
@@ -483,13 +484,30 @@ class WorkerPodManager(BaseComponentService):
         This allows WorkerPodManager to report aggregate health to the control-plane.
         """
         worker_id = message.service_id
+        existing = self.worker_health.get(worker_id)
         self.worker_health[worker_id] = WorkerStats(
             worker_id=worker_id,
             health=message.health,
             task_stats=message.task_stats,
             status=WorkerStatus.HEALTHY,
+            startup_state=existing.startup_state if existing else None,
+            startup_state_updated_ns=(
+                existing.startup_state_updated_ns if existing else None
+            ),
             last_update_ns=message.request_ns,
         )
+
+    @on_message(MessageType.WORKER_STARTUP_STATE)
+    async def _on_worker_startup_state(
+        self, message: WorkerStartupStateMessage
+    ) -> None:
+        worker_id = message.service_id
+        existing = self.worker_health.get(worker_id)
+        if existing is None:
+            existing = WorkerStats(worker_id=worker_id)
+            self.worker_health[worker_id] = existing
+        existing.startup_state = message.startup_state
+        existing.startup_state_updated_ns = message.request_ns
 
     @background_task(interval=Environment.WORKER.HEALTH_CHECK_INTERVAL)
     async def _monitor_subprocesses(self) -> None:
@@ -504,10 +522,25 @@ class WorkerPodManager(BaseComponentService):
         dead_processes = self._subprocess_manager.check_alive()
         for info in dead_processes:
             exit_code = info.process.exitcode if info.process else None
-            self.warning(
+            startup_state = None
+            if info.service_type == ServiceType.WORKER:
+                startup_state = self.worker_health.get(info.service_id, None)
+                startup_state = (
+                    startup_state.startup_state if startup_state is not None else None
+                )
+            message = (
                 f"Subprocess {info.service_type} ({info.service_id}) exited "
                 f"with code {exit_code}"
             )
+            if (
+                info.service_type == ServiceType.WORKER
+                and startup_state is not None
+                and startup_state != WorkerStartupState.READY
+            ):
+                message += (
+                    f" before becoming ready (last startup state: {startup_state})"
+                )
+            self.warning(message)
             # Remove from tracking (tolerant mode - don't restart)
             self._subprocess_manager.remove(info)
 

@@ -17,6 +17,8 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
+from aiperf.common.noisy_loggers import suppress_noisy_http_loggers
+
 if TYPE_CHECKING:
     import kr8s
 
@@ -69,6 +71,7 @@ async def _get_api() -> kr8s.Api | None:
     try:
         import kr8s.asyncio
 
+        suppress_noisy_http_loggers()
         return await kr8s.asyncio.api()
     except Exception as e:
         _logger.warning("Failed to load Kubernetes client: %s", e)

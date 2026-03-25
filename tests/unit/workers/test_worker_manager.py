@@ -6,13 +6,17 @@ Tests for WorkerManager health monitoring and worker scaling calculations.
 
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import WorkerStatus
+from aiperf.common.enums import WorkerStartupState, WorkerStatus
 from aiperf.common.environment import Environment
 from aiperf.common.messages import WorkerHealthMessage
+from aiperf.common.messages.worker_messages import (
+    WorkerStartupStateMessage,
+    WorkerStatusSummaryMessage,
+)
 from aiperf.common.models import ProcessHealth, WorkerTaskStats
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.workers.scaling import calculate_worker_count
@@ -330,3 +334,46 @@ class TestHighCPUWarning:
         assert worker_info.health.memory_usage == DEFAULT_MEMORY * 2
         assert worker_info.task_stats.total == 20
         assert worker_info.task_stats.completed == 15
+
+
+class TestWorkerStartupStates:
+    """Test worker startup-state tracking in WorkerManager."""
+
+    @pytest.mark.asyncio
+    async def test_startup_state_creates_worker_and_publishes_summary(
+        self, worker_manager: WorkerManager
+    ) -> None:
+        """Startup-state messages should create worker info and publish a summary."""
+        worker_manager.publish = AsyncMock()
+        message = WorkerStartupStateMessage(
+            service_id=WORKER_ID,
+            startup_state=WorkerStartupState.WAITING_FOR_DATASET,
+        )
+
+        await worker_manager._on_worker_startup_state(message)
+
+        info = worker_manager.worker_infos[WORKER_ID]
+        assert info.startup_state == WorkerStartupState.WAITING_FOR_DATASET
+
+        summary = worker_manager.publish.await_args.args[0]
+        assert isinstance(summary, WorkerStatusSummaryMessage)
+        assert summary.worker_statuses == {WORKER_ID: WorkerStatus.IDLE}
+        assert summary.worker_startup_states == {
+            WORKER_ID: WorkerStartupState.WAITING_FOR_DATASET
+        }
+
+    @pytest.mark.asyncio
+    async def test_recent_startup_state_does_not_mark_worker_stale(
+        self, worker_manager: WorkerManager
+    ) -> None:
+        """Startup-state activity should count as liveness before the first health tick."""
+        worker_manager.worker_infos[WORKER_ID] = WorkerStatusInfo(
+            worker_id=WORKER_ID,
+            status=WorkerStatus.IDLE,
+            startup_state=WorkerStartupState.WAITING_FOR_DATASET,
+            startup_state_updated_ns=time.time_ns(),
+        )
+
+        await worker_manager._worker_status_loop()
+
+        assert worker_manager.worker_infos[WORKER_ID].status == WorkerStatus.IDLE

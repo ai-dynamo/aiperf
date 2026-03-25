@@ -18,6 +18,7 @@ import kopf
 import kr8s
 from kr8s.asyncio.objects import Pod
 
+from aiperf.kubernetes.constants import Containers, JobSetLabels
 from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.kubernetes.kr8s_resources import AsyncJobSet
 from aiperf.operator import events
@@ -30,6 +31,7 @@ from aiperf.operator.client_cache import (
 )
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.handlers.completion import (
+    fetch_results_with_retry,
     handle_completion,
 )
 from aiperf.operator.models import MetricsSummary, PhaseProgress
@@ -245,6 +247,12 @@ async def monitor_progress(
         # Check for pod restarts (CrashLoopBackOff detection)
         await _check_pod_restarts(api, body, namespace, jobset_name, key)
 
+        if await _maybe_recover_terminated_controller(
+            api, body, namespace, jobset_name, job_id, status, sb, key
+        ):
+            await close_progress_client(key)
+            return
+
         # Fetch progress from controller if running or workers already completed
         effective_phase = sb.get_phase() or current_phase
         if effective_phase == Phase.RUNNING or (
@@ -331,6 +339,122 @@ async def _check_pod_restarts(
                 events.pod_restarts(body, pod.name, restart_count, reason)
     except Exception as e:
         logger.warning(f"Failed to check pod restarts: {e}")
+
+
+def _container_status_by_name(
+    statuses: list[dict[str, Any]], name: str
+) -> dict[str, Any] | None:
+    """Return the first container status matching the given name."""
+    for status in statuses:
+        if status.get("name") == name:
+            return status
+    return None
+
+
+async def _maybe_recover_terminated_controller(
+    api: kr8s.Api,
+    body: dict[str, Any],
+    namespace: str,
+    jobset_name: str,
+    job_id: str,
+    status: dict[str, Any],
+    sb: StatusBuilder,
+    key: str,
+) -> bool:
+    """Recover results from the sidecar if the controller container terminated.
+
+    A regular sidecar keeps the pod alive long enough for salvage, but that also
+    means we cannot rely solely on JobSet terminal conditions. If the main
+    controller container exits unexpectedly, attempt to recover exported files
+    from the sidecar immediately.
+    """
+    if key in _shutdown_sent:
+        return False
+
+    try:
+        pods = [
+            pod
+            async for pod in Pod.list(
+                namespace=namespace,
+                label_selector=(
+                    f"{JobSetLabels.JOBSET_NAME}={jobset_name},"
+                    f"{JobSetLabels.REPLICATED_JOB_NAME}=controller"
+                ),
+                api=api,
+            )
+        ]
+    except Exception as e:
+        logger.warning(f"Failed to inspect controller pod for salvage: {e}")
+        return False
+
+    if not pods:
+        return False
+
+    pod = pods[0]
+    statuses = pod.raw.get("status", {}).get("containerStatuses", [])
+    controller_status = _container_status_by_name(statuses, Containers.CONTROL_PLANE)
+    sidecar_status = _container_status_by_name(statuses, Containers.RESULTS_SIDECAR)
+    if controller_status is None or sidecar_status is None:
+        return False
+
+    terminated = controller_status.get("state", {}).get("terminated")
+    if not terminated:
+        return False
+
+    exit_code = int(terminated.get("exitCode", 0) or 0)
+    reason = terminated.get("reason", "Error")
+    if exit_code == 0:
+        return False
+
+    logger.warning(
+        "Controller container terminated in pod %s (reason=%s, exitCode=%s), "
+        "attempting results recovery from sidecar",
+        pod.name,
+        reason,
+        exit_code,
+    )
+
+    result = await fetch_results_with_retry(
+        controller_dns_name(jobset_name, namespace),
+        namespace,
+        job_id,
+    )
+    if result.downloaded:
+        _shutdown_sent.add(key)
+        await handle_completion(
+            body,
+            namespace,
+            jobset_name,
+            job_id,
+            status,
+            sb,
+            result=result,
+        )
+        return True
+
+    error = f"Controller container terminated before results were recoverable: {reason}"
+    sb.set_phase(Phase.FAILED).set_error(error).set_completion_time()
+    sb.conditions.set_false(
+        ConditionType.RESULTS_AVAILABLE,
+        "ControllerTerminated",
+        "Controller terminated before exporting recoverable result files",
+    )
+    sb.finalize()
+    events.failed(body, job_id, error)
+
+    try:
+        js = await AsyncJobSet.get(jobset_name, namespace=namespace, api=api)
+        await js.delete()
+        logger.info(
+            "Deleted JobSet %s after unrecoverable controller termination", jobset_name
+        )
+    except kr8s.NotFoundError:
+        pass
+    except kr8s.ServerError as e:
+        logger.warning(
+            f"Failed to delete JobSet {jobset_name} after controller termination: {e}"
+        )
+    return True
 
 
 async def _fetch_progress(

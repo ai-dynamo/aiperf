@@ -36,7 +36,7 @@ from aiperf.operator.handlers.monitor import (
 )
 from aiperf.operator.health import check_endpoint_health as _check_endpoint_health
 from aiperf.operator.main import configure
-from aiperf.operator.models import OwnerReference
+from aiperf.operator.models import FetchResult, OwnerReference
 from aiperf.operator.status import Phase
 
 # =============================================================================
@@ -62,7 +62,7 @@ def mock_progress_client():
     client.get_metrics = AsyncMock(return_value={"metrics": {"throughput": 100}})
     client.get_progress = AsyncMock()
     client.get_server_metrics = AsyncMock(return_value={})
-    client.download_all_results = AsyncMock(return_value=["file.json"])
+    client.download_all_results = AsyncMock(return_value=["profile_export_aiperf.json"])
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=None)
     return client
@@ -222,7 +222,7 @@ class TestFetchResultsWithRetry:
             )
 
         assert result.metrics == {"metrics": {"throughput": 100}}
-        assert result.downloaded == ["file.json"]
+        assert result.downloaded == ["profile_export_aiperf.json"]
 
     @pytest.mark.asyncio
     async def test_retries_on_failure(self, temp_results_dir: Path) -> None:
@@ -231,7 +231,9 @@ class TestFetchResultsWithRetry:
         mock_client.get_metrics = AsyncMock(
             side_effect=[Exception("First fail"), {"metrics": {"ok": True}}]
         )
-        mock_client.download_all_results = AsyncMock(return_value=["file.json"])
+        mock_client.download_all_results = AsyncMock(
+            return_value=["profile_export_aiperf.json"]
+        )
 
         with (
             mock_patch(
@@ -291,6 +293,40 @@ class TestFetchResultsWithRetry:
 
         assert result.downloaded == []
         mock_progress_client.download_all_results.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_results_sidecar_when_primary_has_no_files(
+        self, temp_results_dir: Path
+    ) -> None:
+        """Verify sidecar file-serving path is used when the main API cannot serve files."""
+        mock_client = AsyncMock()
+        mock_client.get_metrics = AsyncMock(return_value=None)
+        mock_client.download_all_results = AsyncMock(return_value=[])
+
+        sidecar_client = AsyncMock()
+        sidecar_client.download_all_results = AsyncMock(
+            return_value=["profile_export_aiperf.json"]
+        )
+        sidecar_client.__aenter__ = AsyncMock(return_value=sidecar_client)
+        sidecar_client.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.completion.get_or_create_progress_client",
+                return_value=mock_client,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.completion.ProgressClient",
+                return_value=sidecar_client,
+            ),
+            mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
+        ):
+            result = await _fetch_results_with_retry(
+                "controller-host", "default", "job-123", max_retries=0, retry_delay=0.01
+            )
+
+        assert result.downloaded == ["profile_export_aiperf.json"]
+        sidecar_client.download_all_results.assert_called_once()
 
 
 # =============================================================================
@@ -998,7 +1034,9 @@ class TestHandleCompletion:
 
         mock_client = AsyncMock()
         mock_client.get_metrics = AsyncMock(return_value=mock_metrics)
-        mock_client.download_all_results = AsyncMock(return_value=["results.json"])
+        mock_client.download_all_results = AsyncMock(
+            return_value=["profile_export_aiperf.json"]
+        )
 
         mock_api = AsyncMock()
         mock_js = AsyncMock()
@@ -1693,6 +1731,149 @@ class TestCheckPodRestarts:
             )
 
         assert mock_event.call_count == 2
+
+
+class TestRecoverTerminatedController:
+    """Tests for terminated-controller salvage handling."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_shutdown_sent(self):
+        """Clear completion dedup state between recovery tests."""
+        from aiperf.operator.client_cache import _shutdown_sent
+
+        _shutdown_sent.clear()
+        yield
+        _shutdown_sent.clear()
+
+    @pytest.mark.asyncio
+    async def test_recovers_results_from_sidecar(self) -> None:
+        """Verify a terminated controller triggers completion salvage from sidecar files."""
+        from aiperf.operator.handlers.monitor import (
+            _maybe_recover_terminated_controller,
+        )
+        from aiperf.operator.status import StatusBuilder
+
+        kopf_patch = MagicMock()
+        kopf_patch.status = {}
+        sb = StatusBuilder(kopf_patch, {"workers": {"total": 1}})
+
+        controller_pod = MagicMock()
+        controller_pod.name = "controller-0-0"
+        controller_pod.raw = {
+            "status": {
+                "containerStatuses": [
+                    {
+                        "name": "control-plane",
+                        "state": {
+                            "terminated": {"reason": "OOMKilled", "exitCode": 137}
+                        },
+                    },
+                    {
+                        "name": "results-sidecar",
+                        "state": {"running": {"startedAt": "2026-01-01T00:00:00Z"}},
+                    },
+                ]
+            }
+        }
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.Pod.list",
+                return_value=_async_pod_list(controller_pod),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.fetch_results_with_retry",
+                new_callable=AsyncMock,
+                return_value=FetchResult(
+                    metrics=None, downloaded=["profile_export_aiperf.json"]
+                ),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.handle_completion",
+                new_callable=AsyncMock,
+            ) as mock_handle_completion,
+        ):
+            handled = await _maybe_recover_terminated_controller(
+                AsyncMock(),
+                {},
+                "default",
+                "test-jobset",
+                "job-1",
+                {"workers": {"total": 1}},
+                sb,
+                "default/job-1",
+            )
+
+        assert handled is True
+        mock_handle_completion.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_marks_failed_when_controller_terminated_without_results(
+        self,
+    ) -> None:
+        """Verify unrecoverable controller termination marks the job failed."""
+        from aiperf.operator.handlers.monitor import (
+            _maybe_recover_terminated_controller,
+        )
+        from aiperf.operator.status import StatusBuilder
+
+        kopf_patch = MagicMock()
+        kopf_patch.status = {}
+        sb = StatusBuilder(kopf_patch, {"workers": {"total": 1}})
+
+        controller_pod = MagicMock()
+        controller_pod.name = "controller-0-0"
+        controller_pod.raw = {
+            "status": {
+                "containerStatuses": [
+                    {
+                        "name": "control-plane",
+                        "state": {
+                            "terminated": {"reason": "OOMKilled", "exitCode": 137}
+                        },
+                    },
+                    {
+                        "name": "results-sidecar",
+                        "state": {"running": {"startedAt": "2026-01-01T00:00:00Z"}},
+                    },
+                ]
+            }
+        }
+
+        mock_jobset = AsyncMock()
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.Pod.list",
+                return_value=_async_pod_list(controller_pod),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.fetch_results_with_retry",
+                new_callable=AsyncMock,
+                return_value=FetchResult(metrics=None, downloaded=[]),
+            ),
+            mock_patch("aiperf.operator.events.failed") as mock_failed_event,
+            mock_patch(
+                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
+                new_callable=AsyncMock,
+                return_value=mock_jobset,
+            ),
+        ):
+            handled = await _maybe_recover_terminated_controller(
+                AsyncMock(),
+                {},
+                "default",
+                "test-jobset",
+                "job-1",
+                {"workers": {"total": 1}},
+                sb,
+                "default/job-1",
+            )
+
+        assert handled is True
+        assert kopf_patch.status["phase"] == Phase.FAILED
+        mock_failed_event.assert_called_once()
+        mock_jobset.delete.assert_called_once()
 
 
 # =============================================================================

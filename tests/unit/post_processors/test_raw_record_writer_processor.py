@@ -142,6 +142,38 @@ class TestRawRecordWriterProcessorProcessRecord:
         assert len(record.responses) == 0
 
     @pytest.mark.asyncio
+    async def test_process_record_prefers_prebuilt_raw_payload(
+        self,
+        monkeypatch,
+        user_config_raw: AIPerfConfig,
+        sample_parsed_record: ParsedResponseRecord,
+    ):
+        """If a record already carries a raw payload, the writer should not rebuild it."""
+        sample_parsed_record.request.raw_payload = {
+            "messages": [{"role": "user", "content": "prebuilt payload"}],
+            "model": "test-model",
+        }
+
+        async with raw_record_processor("processor-1", user_config_raw) as processor:
+            monkeypatch.setattr(
+                processor._endpoint,
+                "format_payload",
+                lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                    AssertionError("format_payload should not be called")
+                ),
+            )
+            metadata = create_metric_metadata(
+                session_num=0,
+                conversation_id="conv-raw",
+            )
+
+            await processor.process_record(sample_parsed_record, metadata)
+
+        record_dict = orjson.loads(processor.output_file.read_text().splitlines()[0])
+        record = RawRecordInfo.model_validate(record_dict)
+        assert record.payload == sample_parsed_record.request.raw_payload
+
+    @pytest.mark.asyncio
     async def test_process_multiple_records(
         self,
         user_config_raw: AIPerfConfig,

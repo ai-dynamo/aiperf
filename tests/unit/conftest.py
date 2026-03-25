@@ -53,6 +53,92 @@ DEFAULT_OUTPUT_TOKENS = 2
 _REAL_SLEEP = asyncio.sleep
 
 
+class _AiofilesTestFile:
+    """Minimal async-compatible wrapper around a real local file object for unit tests."""
+
+    def __init__(self, file_obj):
+        self._file = file_obj
+
+    def __getattr__(self, name: str):
+        return getattr(self._file, name)
+
+    async def write(self, data):
+        return self._file.write(data)
+
+    async def read(self, *args):
+        return self._file.read(*args)
+
+    async def readline(self, *args):
+        return self._file.readline(*args)
+
+    async def readlines(self, *args):
+        return self._file.readlines(*args)
+
+    async def flush(self):
+        self._file.flush()
+
+    async def close(self):
+        self._file.close()
+
+    async def seek(self, *args):
+        return self._file.seek(*args)
+
+    async def tell(self):
+        return self._file.tell()
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        line = self._file.readline()
+        if line in ("", b""):
+            raise StopAsyncIteration
+        return line
+
+
+class _AiofilesTestOpen:
+    """Support both ``await aiofiles.open(...)`` and ``async with aiofiles.open(...)``."""
+
+    def __init__(self, *args, **kwargs):
+        self._args = args
+        self._kwargs = kwargs
+        self._wrapped_file: _AiofilesTestFile | None = None
+
+    async def _open(self) -> _AiofilesTestFile:
+        if self._wrapped_file is None:
+            self._wrapped_file = _AiofilesTestFile(open(*self._args, **self._kwargs))
+        return self._wrapped_file
+
+    def __await__(self):
+        return self._open().__await__()
+
+    async def __aenter__(self):
+        return await self._open()
+
+    async def __aexit__(self, exc_type, exc, tb):
+        if self._wrapped_file is not None:
+            await self._wrapped_file.close()
+            self._wrapped_file = None
+
+
+@pytest.fixture(autouse=True)
+def patch_aiofiles_open(monkeypatch):
+    """Use direct local file I/O in unit tests instead of aiofiles threadpool I/O.
+
+    In this environment, aiofiles-backed executor shutdown can hang long enough to
+    make otherwise-fast unit tests appear stuck. Patch only the unit-test harness,
+    not application code.
+    """
+    import aiofiles
+
+    monkeypatch.setattr(
+        aiofiles,
+        "open",
+        lambda *args, **kwargs: _AiofilesTestOpen(*args, **kwargs),
+    )
+    yield
+
+
 @pytest.fixture(autouse=True)
 def no_sleep(monkeypatch, request):
     """Patch asyncio.sleep to do nothing, unless test uses time_traveler fixture.

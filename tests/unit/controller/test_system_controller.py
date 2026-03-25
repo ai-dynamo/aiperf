@@ -6,8 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.control_structs import CommandErr, Registration, RegistrationAck
+from aiperf.common.enums import WorkerStartupState, WorkerStatus
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
+from aiperf.common.messages.worker_messages import WorkerStatusSummaryMessage
 from aiperf.common.models import ErrorDetails, ExitErrorInfo
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.controller.system_controller import SystemController
@@ -367,6 +369,10 @@ class TestKubernetesMode:
             ),
             patch("aiperf.controller.system_controller.ProxyManager") as mock_proxy,
             patch(
+                "aiperf.controller.system_controller.ZMQStreamingRouterClient",
+                return_value=AsyncMock(),
+            ),
+            patch(
                 "aiperf.common.mixins.communication_mixin.plugins.get_class",
                 side_effect=mock_get_class,
             ),
@@ -384,16 +390,22 @@ class TestKubernetesMode:
         config: AIPerfConfig,
         mock_service_manager: AsyncMock,
     ) -> None:
-        """In K8s mode, WORKER and RECORD_PROCESSOR are in required_services.
+        """In K8s mode, the full worker-pod topology is in required_services.
 
-        KubernetesServiceManager handles them as external services via
-        expect_services() rather than spawning subprocesses.
+        The controller must wait for worker pod managers, workers, and record
+        processors derived from pod capacity, not just a placeholder worker.
         """
         config.runtime.service_run_type = ServiceRunType.KUBERNETES
-        config.runtime.record_processors = 2
+        config.runtime.workers = 12
+        config.runtime.workers_per_pod = 5
+        config.runtime.record_processors_per_pod = 2
         controller, _ = self._create_system_controller(config, mock_service_manager)
+        assert controller.required_services[ServiceType.WORKER_POD_MANAGER] == 3
+        assert controller.required_services[ServiceType.WORKER] == 15
+        assert controller.required_services[ServiceType.RECORD_PROCESSOR] == 6
         assert ServiceType.WORKER in controller.required_services
         assert ServiceType.RECORD_PROCESSOR in controller.required_services
+        assert ServiceType.WORKER_POD_MANAGER in controller.required_services
 
     def test_multiprocessing_mode_does_not_include_worker_in_required(
         self,
@@ -489,6 +501,9 @@ class TestKubernetesMode:
         from aiperf.common.service_registry import ServiceRegistry
 
         config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.runtime.workers = 8
+        config.runtime.workers_per_pod = 4
+        config.runtime.record_processors_per_pod = 1
         controller, _ = self._create_system_controller(config, mock_service_manager)
 
         msg = Registration(
@@ -503,6 +518,34 @@ class TestKubernetesMode:
 
         assert isinstance(result, RegistrationAck)
         assert ServiceRegistry.is_registered("wpm_pod0")
+
+    @pytest.mark.asyncio
+    async def test_wpm_registration_warns_on_capacity_mismatch(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """WPM registrations that disagree with configured pod capacity should warn."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.runtime.workers = 8
+        config.runtime.workers_per_pod = 4
+        config.runtime.record_processors_per_pod = 1
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+
+        msg = Registration(
+            sid="wpm_pod0",
+            rid="r1",
+            stype="worker_pod_manager",
+            state="running",
+            num_workers=3,
+            num_record_processors=2,
+        )
+
+        with patch.object(controller, "warning") as mock_warning:
+            result = await controller._handle_control_message("identity_0", msg)
+
+        assert isinstance(result, RegistrationAck)
+        mock_warning.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_registration_without_capacity_does_not_modify_expectations(
@@ -537,6 +580,37 @@ class TestKubernetesMode:
             ServiceRegistry.expected_by_type.get(ServiceType.RECORD_PROCESSOR, 0)
             == rps_before
         )
+
+    @pytest.mark.asyncio
+    async def test_worker_status_summary_tracks_pending_startup_states(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Worker status summaries should surface pending worker startup phases."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+
+        await controller._on_worker_status_summary(
+            WorkerStatusSummaryMessage(
+                service_id="worker-manager",
+                worker_statuses={
+                    "worker_a": WorkerStatus.IDLE,
+                    "worker_b": WorkerStatus.IDLE,
+                },
+                worker_startup_states={
+                    "worker_a": WorkerStartupState.WAITING_FOR_DATASET,
+                    "worker_b": WorkerStartupState.ROUTER_PROBING,
+                },
+            )
+        )
+
+        assert controller._summarize_pending_worker_startup_states(
+            {"worker_a", "worker_b", "worker_c"}
+        ) == {
+            "waiting_for_dataset": 1,
+            "router_probing": 1,
+        }
 
 
 class TestSSLVerificationWarning:

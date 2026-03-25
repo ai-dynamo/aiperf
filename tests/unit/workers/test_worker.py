@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 from pytest import param
 
+from aiperf.common.enums import WorkerStartupState
 from aiperf.common.models import (
     Conversation,
     ParsedResponse,
@@ -30,17 +31,17 @@ _STUB_PROCESS_HEALTH = ProcessHealth(
 
 
 @pytest.fixture
-async def mock_worker(
+def mock_worker(
     run: BenchmarkRun,
     fake_tokenizer: FakeTokenizer,
     skip_service_registration,
     mock_psutil_process,
 ):
-    """Create a fully initialized and started MockWorker (no SystemController needed).
+    """Create a constructed MockWorker without starting the lifecycle.
 
-    Patches psutil.Process so ProcessHealthMixin.__init__ never reads /proc,
-    and stubs get_process_health / get_pss_memory so the @background_task
-    health check never blocks on real syscalls.
+    These tests exercise internal worker methods directly and do not need the
+    full lifecycle. Avoid starting the worker here so fixture teardown does not
+    depend on the fake in-process comms harness.
     """
     worker = Worker(
         run=run,
@@ -49,10 +50,7 @@ async def mock_worker(
     worker._measure_baseline_rtt = AsyncMock()
     worker.get_process_health = Mock(return_value=_STUB_PROCESS_HEALTH)
     worker.get_pss_memory = Mock(return_value=None)
-    await worker.initialize()
-    await worker.start()
-    yield worker
-    await worker.stop()
+    return worker
 
 
 @pytest.mark.asyncio
@@ -342,7 +340,7 @@ class TestKubernetesMode:
         )
 
     @pytest.fixture
-    async def k8s_worker(
+    def k8s_worker(
         self,
         config: AIPerfConfig,
         fake_tokenizer: FakeTokenizer,
@@ -358,13 +356,10 @@ class TestKubernetesMode:
         worker._measure_baseline_rtt = AsyncMock()
         worker.get_process_health = Mock(return_value=_STUB_PROCESS_HEALTH)
         worker.get_pss_memory = Mock(return_value=None)
-        await worker.initialize()
-        await worker.start()
-        yield worker
-        await worker.stop()
+        return worker
 
     @pytest.fixture
-    async def local_worker(
+    def local_worker(
         self,
         config: AIPerfConfig,
         fake_tokenizer: FakeTokenizer,
@@ -380,10 +375,7 @@ class TestKubernetesMode:
         worker._measure_baseline_rtt = AsyncMock()
         worker.get_process_health = Mock(return_value=_STUB_PROCESS_HEALTH)
         worker.get_pss_memory = Mock(return_value=None)
-        await worker.initialize()
-        await worker.start()
-        yield worker
-        await worker.stop()
+        return worker
 
     @pytest.mark.parametrize(
         "run_type,expected",
@@ -445,3 +437,90 @@ class TestKubernetesMode:
         local_worker._initialize_dataset_client.assert_awaited_once_with(
             mock_msg.client_metadata, mock_msg.metadata
         )
+
+    @pytest.mark.asyncio
+    async def test_profile_configure_waits_for_worker_ready(
+        self, config: AIPerfConfig
+    ) -> None:
+        """PROFILE_CONFIGURE should not complete until WorkerReady has been sent."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        worker = Worker(
+            run=self._make_run(config),
+            service_id="k8s-worker",
+        )
+        worker.event_loop_monitor.start = Mock()
+        worker._memory_profiler.start = Mock()
+        worker._dataset_configured_event.set()
+        worker._worker_ready_event.clear()
+
+        configure_task = asyncio.create_task(
+            worker._on_profile_configure_command(MagicMock())
+        )
+        await asyncio.sleep(0)
+
+        assert not configure_task.done()
+
+        worker._worker_ready_event.set()
+        await configure_task
+
+    @pytest.mark.asyncio
+    async def test_local_worker_marks_ready_on_start(
+        self, config: AIPerfConfig
+    ) -> None:
+        """Local workers should be considered ready immediately after startup."""
+        config.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
+        worker = Worker(
+            run=self._make_run(config),
+            service_id="local-worker",
+        )
+        worker.publish = AsyncMock()
+        worker._measure_baseline_rtt = AsyncMock()
+        worker.return_dealer_client.send = AsyncMock()
+
+        await worker._send_worker_ready_message()
+
+        assert worker._worker_ready_event.is_set()
+        assert [
+            call.args[0].startup_state for call in worker.publish.await_args_list
+        ] == [
+            WorkerStartupState.STARTING,
+            WorkerStartupState.ROUTER_PROBING,
+            WorkerStartupState.READY,
+        ]
+
+    @pytest.mark.asyncio
+    async def test_k8s_worker_marks_ready_after_downloaded_notification(
+        self, config: AIPerfConfig
+    ) -> None:
+        """Kubernetes workers should set ready only after dataset download completes."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        worker = Worker(
+            run=self._make_run(config),
+            service_id="k8s-worker",
+        )
+        worker.publish = AsyncMock()
+        pending_config = MagicMock()
+        pending_config.metadata = MagicMock()
+        worker._pending_dataset_config = pending_config
+        worker._worker_ready_event.clear()
+        worker._initialize_dataset_client = AsyncMock()
+        worker._measure_baseline_rtt = AsyncMock()
+        worker.return_dealer_client.send = AsyncMock()
+
+        await worker._send_worker_ready_message()
+
+        downloaded = MagicMock()
+        downloaded.success = True
+        downloaded.client_metadata = MagicMock()
+
+        await worker._on_dataset_downloaded(downloaded)
+
+        assert worker._worker_ready_event.is_set()
+        assert [
+            call.args[0].startup_state for call in worker.publish.await_args_list
+        ] == [
+            WorkerStartupState.STARTING,
+            WorkerStartupState.WAITING_FOR_DATASET,
+            WorkerStartupState.ROUTER_PROBING,
+            WorkerStartupState.READY,
+        ]

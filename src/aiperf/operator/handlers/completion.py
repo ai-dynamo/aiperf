@@ -12,6 +12,7 @@ from typing import Any
 import kr8s
 
 from aiperf.kubernetes.client import get_api
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.kubernetes.kr8s_resources import AsyncJobSet
 from aiperf.operator import events
@@ -20,6 +21,7 @@ from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.job_index import index_job_completed
 from aiperf.operator.k8s_helpers import retry_with_backoff
 from aiperf.operator.models import FetchResult, MetricsSummary
+from aiperf.operator.progress_client import ProgressClient
 from aiperf.operator.status import ConditionType, Phase, StatusBuilder, parse_timestamp
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,7 @@ async def handle_completion(
     job_id: str,
     status: dict[str, Any],
     sb: StatusBuilder,
+    result: FetchResult | None = None,
 ) -> None:
     """Handle job completion: fetch results and update status."""
     # Backfill conditions for fast-completing jobs that skipped RUNNING phase
@@ -63,7 +66,8 @@ async def handle_completion(
 
     # Fetch results with retry
     host = controller_dns_name(jobset_name, namespace)
-    result = await fetch_results_with_retry(host, namespace, job_id)
+    if result is None:
+        result = await fetch_results_with_retry(host, namespace, job_id)
 
     has_metrics = bool(result.metrics and result.metrics.get("metrics"))
     has_files = bool(result.downloaded)
@@ -211,6 +215,16 @@ async def fetch_results_with_retry(
     # succeed but none of these are present, export is still in progress
     # and we should retry to capture the full set.
     _KEY_FILES = {"profile_export_aiperf.json", "profile_export_aiperf.csv"}
+    sidecar_port = K8sEnvironment.PORTS.RESULTS_SIDECAR
+
+    def _merge_downloaded(
+        current: list[str] | None, new: list[str] | None
+    ) -> list[str] | None:
+        if not new:
+            return current
+        if not current:
+            return list(new)
+        return sorted(set(current) | set(new))
 
     async def _fetch_once() -> FetchResult:
         if state["metrics"] is None:
@@ -219,7 +233,18 @@ async def fetch_results_with_retry(
         if OperatorEnvironment.RESULTS.DIR.exists():
             downloaded = await client.download_all_results(controller_host, dest_dir)
             if downloaded:
-                state["downloaded"] = downloaded
+                state["downloaded"] = _merge_downloaded(state["downloaded"], downloaded)
+
+            has_key_file = bool(_KEY_FILES & set(state["downloaded"] or []))
+            if not has_key_file and sidecar_port != K8sEnvironment.PORTS.API_SERVICE:
+                async with ProgressClient(port=sidecar_port) as sidecar_client:
+                    sidecar_downloaded = await sidecar_client.download_all_results(
+                        controller_host, dest_dir
+                    )
+                if sidecar_downloaded:
+                    state["downloaded"] = _merge_downloaded(
+                        state["downloaded"], sidecar_downloaded
+                    )
 
         if state["metrics"] is not None and state["downloaded"] is not None:
             has_key_file = bool(_KEY_FILES & set(state["downloaded"]))

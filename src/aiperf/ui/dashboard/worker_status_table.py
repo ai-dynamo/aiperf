@@ -7,7 +7,7 @@ from textual.widget import Widget
 from textual.widgets.data_table import ColumnKey, RowDoesNotExist, RowKey
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.enums import WorkerStatus
+from aiperf.common.enums import WorkerStartupState, WorkerStatus
 from aiperf.common.models import WorkerStats
 from aiperf.ui.dashboard.custom_widgets import NonFocusableDataTable
 from aiperf.ui.utils import format_bytes
@@ -109,10 +109,18 @@ class WorkerStatusTable(Widget):
 
     def _format_worker_row(self, worker_stats: WorkerStats) -> list[Text]:
         """Format worker data into table row cells."""
+        status_text = worker_stats.status.replace("_", " ").title()
+        if (
+            worker_stats.startup_state is not None
+            and worker_stats.startup_state != WorkerStartupState.READY
+        ):
+            startup_text = worker_stats.startup_state.replace("_", " ").title()
+            status_text = f"{status_text} ({startup_text})"
+
         row_data = [
             Text(worker_stats.worker_id, style="bold cyan", justify="right"),
             Text(
-                worker_stats.status.replace("_", " ").title(),
+                status_text,
                 style=WORKER_STATUS_STYLES[worker_stats.status],
                 justify="right",
             ),

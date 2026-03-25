@@ -265,6 +265,7 @@ class StickyCreditRouter(CommunicationMixin):
         # Rebuilt on worker add/remove (rare) to keep routing fast (common).
         self._workers_cache: list[WorkerLoad] = []
         self._workers: dict[str, WorkerLoad] = {}
+        self._initializing_workers: set[str] = set()
 
         # Map load level -> set of worker_ids at that load (O(1) add/remove)
         self._workers_by_load: dict[int, set[str]] = defaultdict(set)
@@ -437,6 +438,7 @@ class StickyCreditRouter(CommunicationMixin):
             case InFlightReport():
                 await self._handle_reconciliation_report(worker_id, message)
             case TimePing():
+                self._initializing_workers.add(worker_id)
                 # Reply on the credit channel so both channels stay unidirectional.
                 # RTT measurement spans both sockets, which is fine for clock offset.
                 await self._credit_router_client.send_to(
@@ -446,7 +448,13 @@ class StickyCreditRouter(CommunicationMixin):
             case WorkerReady():
                 self._register_worker(worker_id)
             case WorkerShutdown():
-                self._unregister_worker(worker_id)
+                if worker_id in self._workers:
+                    self._unregister_worker(worker_id)
+                elif worker_id in self._initializing_workers:
+                    self._initializing_workers.discard(worker_id)
+                    self.info(f"Worker {worker_id} shut down before becoming ready")
+                else:
+                    self._unregister_worker(worker_id)
             case _:
                 self.warning(f"Unknown message type: {type(message).__name__}")
 
@@ -457,6 +465,7 @@ class StickyCreditRouter(CommunicationMixin):
         - virtual_sent_credits to average (prevents thundering herd on credits)
         - last_sent_at_ns to current time (prevents winning all timestamp tie-breaks)
         """
+        self._initializing_workers.discard(worker_id)
         if worker_id not in self._workers:
             # Initialize to averages to prevent thundering herd
             avg_virtual = 0

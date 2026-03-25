@@ -933,6 +933,40 @@ class TestMetricsDiscovery:
         assert result == ["http://auto:8080/metrics"]
 
     @pytest.mark.asyncio
+    async def test_auto_mode_in_cluster_derives_namespace_from_default_endpoint(self):
+        run = _make_run(
+            AIPerfConfig(
+                **{
+                    **_BASE,
+                    "endpoint": {
+                        "urls": [
+                            "http://gateway.inference.svc.cluster.local/v1/chat/completions"
+                        ]
+                    },
+                }
+            )
+        )
+        manager = ServerMetricsManager(run=run)
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                return_value=["http://pod-1:8080/metrics"],
+            ) as mock_discover,
+        ):
+            result = await manager._run_metrics_discovery()
+
+        assert result == ["http://pod-1:8080/metrics"]
+        mock_discover.assert_called_once_with(
+            namespace="inference",
+            label_selector=None,
+        )
+
+    @pytest.mark.asyncio
     async def test_auto_mode_not_in_cluster(self):
         run = _make_run(AIPerfConfig(**_BASE))
         manager = ServerMetricsManager(run=run)
@@ -999,8 +1033,45 @@ class TestMetricsDiscovery:
                 Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
-        assert len(manager._server_metrics_endpoints) == initial_count + 1
-        assert "http://discovered:8080/metrics" in manager._server_metrics_endpoints
+        assert initial_count == 1
+        assert manager._server_metrics_endpoints == ["http://discovered:8080/metrics"]
+        assert (
+            "http://localhost:8000/v1/chat/completions/metrics"
+            not in manager._server_metrics_endpoints
+        )
+
+    @pytest.mark.asyncio
+    async def test_configure_auto_in_cluster_replaces_default_endpoint(self):
+        run = _make_run(AIPerfConfig(**_BASE))
+        manager = ServerMetricsManager(run=run)
+
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                return_value=["http://pod-1:8080/metrics"],
+            ),
+            patch(
+                "aiperf.server_metrics.manager.ServerMetricsDataCollector"
+            ) as mock_collector_class,
+        ):
+            mock_collector = AsyncMock()
+            mock_collector.is_url_reachable = AsyncMock(return_value=True)
+            mock_collector_class.return_value = mock_collector
+
+            await manager._profile_configure_command(
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
+            )
+
+        assert manager._server_metrics_endpoints == ["http://pod-1:8080/metrics"]
+        assert (
+            "http://localhost:8000/v1/chat/completions/metrics"
+            not in manager._server_metrics_endpoints
+        )
 
     @pytest.mark.asyncio
     async def test_configure_deduplicates_discovered_endpoints(self):
@@ -1033,10 +1104,80 @@ class TestMetricsDiscovery:
             mock_collector.is_url_reachable = AsyncMock(return_value=True)
             mock_collector_class.return_value = mock_collector
 
-            count_before = len(manager._server_metrics_endpoints)
             await manager._profile_configure_command(
                 Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
-        # Should not add duplicate
-        assert len(manager._server_metrics_endpoints) == count_before
+        assert manager._server_metrics_endpoints == [
+            "http://already-there:8080/metrics"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_configure_kubernetes_discovery_keeps_explicit_urls(self):
+        run = _make_run(
+            AIPerfConfig(
+                **_BASE,
+                server_metrics={
+                    "urls": ["http://custom-endpoint:9400/metrics"],
+                    "discovery": {"mode": "kubernetes"},
+                },
+            )
+        )
+        manager = ServerMetricsManager(run=run)
+
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                return_value=["http://pod-1:8080/metrics"],
+            ),
+            patch(
+                "aiperf.server_metrics.manager.ServerMetricsDataCollector"
+            ) as mock_collector_class,
+        ):
+            mock_collector = AsyncMock()
+            mock_collector.is_url_reachable = AsyncMock(return_value=True)
+            mock_collector_class.return_value = mock_collector
+
+            await manager._profile_configure_command(
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
+            )
+
+        assert manager._server_metrics_endpoints == [
+            "http://custom-endpoint:9400/metrics",
+            "http://pod-1:8080/metrics",
+        ]
+        assert (
+            "http://localhost:8000/v1/chat/completions/metrics"
+            not in manager._server_metrics_endpoints
+        )
+
+    @pytest.mark.asyncio
+    async def test_configure_auto_not_in_cluster_keeps_default_endpoint(self):
+        run = _make_run(AIPerfConfig(**_BASE))
+        manager = ServerMetricsManager(run=run)
+
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=False,
+            ),
+            patch(
+                "aiperf.server_metrics.manager.ServerMetricsDataCollector"
+            ) as mock_collector_class,
+        ):
+            mock_collector = AsyncMock()
+            mock_collector.is_url_reachable = AsyncMock(return_value=True)
+            mock_collector_class.return_value = mock_collector
+
+            await manager._profile_configure_command(
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
+            )
+
+        assert manager._server_metrics_endpoints == [
+            "http://localhost:8000/v1/chat/completions/metrics"
+        ]

@@ -65,6 +65,7 @@ class Containers:
     """Container names used in pod specs and CLI commands."""
 
     CONTROL_PLANE: str = "control-plane"
+    RESULTS_SIDECAR: str = "results-sidecar"
     WORKER_POD_MANAGER: str = "worker-pod-manager"
 
 

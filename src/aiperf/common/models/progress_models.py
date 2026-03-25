@@ -4,7 +4,7 @@
 
 from pydantic import Field
 
-from aiperf.common.enums import WorkerStatus
+from aiperf.common.enums import WorkerStartupState, WorkerStatus
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.credit_models import ProcessingStats
 from aiperf.common.models.health_models import ProcessHealth, ProcessHealthAggregates
@@ -53,6 +53,14 @@ class WorkerStats(AIPerfBaseModel):
     status: WorkerStatus = Field(
         default=WorkerStatus.IDLE,
         description="The status of the worker",
+    )
+    startup_state: WorkerStartupState | None = Field(
+        default=None,
+        description="Startup lifecycle state reported by the worker.",
+    )
+    startup_state_updated_ns: int | None = Field(
+        default=None,
+        description="The last time the startup state changed in nanoseconds.",
     )
     last_update_ns: int | None = Field(
         default=None,

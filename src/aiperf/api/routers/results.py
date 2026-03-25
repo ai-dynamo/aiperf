@@ -27,6 +27,7 @@ from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.models.record_models import ProcessRecordsResult
 from aiperf.config.defaults import OutputDefaults
+from aiperf.kubernetes.results_sidecar import READY_MARKER_NAME
 
 ResultsDep = Annotated["ResultsRouter", component_dependency("results")]
 
@@ -128,7 +129,7 @@ async def list_results(component: ResultsDep) -> ResultsListResponse:
             (
                 ResultFileInfo(name=e.name, size=e.stat().st_size)
                 for e in results_dir.iterdir()
-                if e.is_file()
+                if e.is_file() and e.name != READY_MARKER_NAME
             ),
             key=lambda f: f.name,
         )
@@ -147,6 +148,10 @@ async def get_result_file(
 
     if not file_path.is_relative_to(artifact_dir.resolve()):
         raise HTTPException(status_code=400, detail="Invalid filename")
+    if file_path.name == READY_MARKER_NAME:
+        raise HTTPException(
+            status_code=404, detail=f"Result file not found: {filename}"
+        )
 
     if not await aio_os.path.isfile(file_path):
         raise HTTPException(

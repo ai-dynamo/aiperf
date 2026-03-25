@@ -3,7 +3,8 @@
 
 from pydantic import Field
 
-from aiperf.common.enums import MessageType, WorkerStatus
+from aiperf.common.enums import MessageType, WorkerStartupState, WorkerStatus
+from aiperf.common.messages.base_messages import RequiresRequestNSMixin
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import ProcessHealth, WorkerTaskStats
 from aiperf.common.types import MessageTypeT
@@ -38,4 +39,19 @@ class WorkerStatusSummaryMessage(BaseServiceMessage):
     worker_statuses: dict[str, WorkerStatus] = Field(
         ...,
         description="A mapping of worker IDs to their status",
+    )
+    worker_startup_states: dict[str, WorkerStartupState] = Field(
+        default_factory=dict,
+        description="A mapping of worker IDs to their startup lifecycle state",
+    )
+
+
+class WorkerStartupStateMessage(BaseServiceMessage, RequiresRequestNSMixin):
+    """Message for a worker startup lifecycle transition."""
+
+    message_type: MessageTypeT = MessageType.WORKER_STARTUP_STATE
+
+    startup_state: WorkerStartupState = Field(
+        ...,
+        description="The current startup lifecycle state of the worker.",
     )
