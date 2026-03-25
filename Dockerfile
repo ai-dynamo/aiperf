@@ -154,7 +154,7 @@ ENTRYPOINT ["/bin/bash", "-c"]
 ############################################
 ############# Runtime Image ################
 ############################################
-FROM nvcr.io/nvidia/distroless/python:3.13-v4.0.1-dev AS runtime
+FROM nvcr.io/nvidia/distroless/python:3.13-v4.0.3-dev AS runtime
 
 # Include license and attribution files
 COPY LICENSE ATTRIBUTIONS*.md /legal/
