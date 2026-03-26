@@ -665,13 +665,16 @@ class JobSetSpec(AIPerfBaseModel):
             env.extend(extra_env)
 
         # Configure probes - startup probe allows slow initialization,
-        # then liveness/readiness take over for ongoing health monitoring
-        startup_probe = self._create_startup_probe(health_port)
-        liveness_probe = self._create_health_probe(health_port)
+        # then liveness/readiness take over for ongoing health monitoring.
+        # The API service exposes /healthz and /readyz on its FastAPI port, not on
+        # the separate service health port used by the other containers.
+        probe_port = api_port if service_type == "api" and api_port else health_port
+        startup_probe = self._create_startup_probe(probe_port)
+        liveness_probe = self._create_health_probe(probe_port)
         readiness_probe = (
             None
             if skip_readiness_probe
-            else self._create_health_probe(health_port, path="/readyz")
+            else self._create_health_probe(probe_port, path="/readyz")
         )
 
         return ContainerSpec(

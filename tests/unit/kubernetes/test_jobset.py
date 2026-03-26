@@ -547,6 +547,24 @@ class TestJobSetSpecContainerDetails:
         assert "api" in port_names
         assert "health" in port_names
 
+    def test_api_container_probes_use_api_port(
+        self, jobset_manifest: dict[str, Any]
+    ) -> None:
+        """Test API container probes hit the FastAPI port, not the disabled health port."""
+        controller_job = next(
+            j
+            for j in jobset_manifest["spec"]["replicatedJobs"]
+            if j["name"] == "controller"
+        )
+        containers = controller_job["template"]["spec"]["template"]["spec"][
+            "containers"
+        ]
+        api_container = next(c for c in containers if c["name"] == "api")
+
+        assert api_container["startupProbe"]["httpGet"]["port"] == 9090
+        assert api_container["livenessProbe"]["httpGet"]["port"] == 9090
+        assert api_container["readinessProbe"]["httpGet"]["port"] == 9090
+
     def test_results_sidecar_exposes_results_port(
         self, jobset_manifest: dict[str, Any]
     ) -> None:

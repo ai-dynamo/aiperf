@@ -2,7 +2,7 @@
 apiVersion: aiperf.nvidia.com/v1alpha1
 kind: AIPerfJob
 metadata:
-  name: mock-250k-streaming-8
+  name: mock-350k-streaming-fix-1
   namespace: acasagrande-aiperf-bench
 spec:
   benchmark:
@@ -25,8 +25,8 @@ spec:
     phases:
       profiling:
         type: concurrency
-        requests: 750000
-        concurrency: 250000
+        requests: 1050000
+        concurrency: 350000
 
     tokenizer:
       name: builtin
@@ -46,7 +46,7 @@ spec:
       records:
         - jsonl
 
-  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260326-062149
+  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260326-003827-73cf5dfd6-api-probe-fix
   connectionsPerWorker: 1000
   resourceMode: burstable
   ttlSecondsAfterFinished: 600
