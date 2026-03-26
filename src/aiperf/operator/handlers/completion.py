@@ -71,7 +71,8 @@ async def handle_completion(
         result = await fetch_results_with_retry(host, namespace, job_id)
 
     has_metrics = bool(result.metrics and result.metrics.get("metrics"))
-    has_files = bool(result.downloaded)
+    key_result_files = {"profile_export_aiperf.json", "profile_export_aiperf.csv"}
+    has_files = bool(key_result_files & set(result.downloaded or []))
 
     logger.info(
         f"Results for {job_id}: has_metrics={has_metrics}, has_files={has_files}, "
@@ -113,20 +114,19 @@ async def handle_completion(
                 f"result files are sufficient"
             )
         sb.conditions.set_true(ConditionType.RESULTS_AVAILABLE, reason, msg)
-    elif has_metrics:
-        sb.conditions.set_true(
-            ConditionType.RESULTS_AVAILABLE,
-            "MetricsOnly",
-            "Metrics stored but result file download failed",
-        )
-        logger.warning(f"No result files downloaded for {jobset_name}")
     else:
         sb.conditions.set_false(
             ConditionType.RESULTS_AVAILABLE,
             "ResultsFetchFailed",
-            "Failed to fetch both metrics and result files from controller",
+            "Failed to fetch complete result files from controller",
         )
-        events.results_failed(body, "Could not fetch metrics or result files")
+        if has_metrics:
+            logger.warning(
+                f"Metrics were fetched for {jobset_name}, but complete result files were not available"
+            )
+        else:
+            logger.warning(f"No result files downloaded for {jobset_name}")
+        events.results_failed(body, "Could not fetch complete result files")
 
     sb.finalize()
     events.completed(body, job_id, duration_sec)
@@ -143,10 +143,10 @@ async def handle_completion(
     except Exception as e:
         logger.warning(f"Failed to update job index for {job_id}: {e}")
 
-    # Delete the JobSet to free cluster resources after results are stored.
-    # Only delete if we successfully fetched results — keep pods alive for
-    # retry on the next monitor tick if fetch failed.
-    if has_metrics or has_files:
+    # Delete the JobSet to free cluster resources after complete result files are stored.
+    # Keep pods alive for retry on the next monitor tick if fetch failed or only
+    # partial/non-authoritative artifacts were available.
+    if has_files:
         try:
             api = await get_api()
             js = await AsyncJobSet.get(jobset_name, namespace=namespace, api=api)

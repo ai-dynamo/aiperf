@@ -2,7 +2,7 @@
 apiVersion: aiperf.nvidia.com/v1alpha1
 kind: AIPerfJob
 metadata:
-  name: mock-350k-streaming-fix-1
+  name: mock-450k-streaming-fix-1
   namespace: acasagrande-aiperf-bench
 spec:
   benchmark:
@@ -21,12 +21,13 @@ spec:
         prompts:
           isl:
             mean: 550
+          osl: 2500
 
     phases:
       profiling:
         type: concurrency
-        requests: 1050000
-        concurrency: 350000
+        requests: 1350000
+        concurrency: 450000
 
     tokenizer:
       name: builtin
@@ -34,7 +35,7 @@ spec:
     runtime:
       ui: none
       workers_per_pod: 5
-      record_processors_per_pod: 1
+      record_processors_per_pod: 2
 
     gpu_telemetry:
       enabled: false

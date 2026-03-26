@@ -1108,6 +1108,67 @@ class TestHandleCompletion:
         assert "completionTime" in kopf_patch.status
 
     @pytest.mark.asyncio
+    async def test_inputs_json_only_does_not_count_as_results_stored(
+        self, temp_results_dir: Path
+    ) -> None:
+        """Verify inputs.json alone does not mark the job as ResultsStored."""
+        from aiperf.operator.handlers.completion import (
+            handle_completion as _handle_completion,
+        )
+        from aiperf.operator.status import ConditionType, StatusBuilder
+
+        kopf_patch = MagicMock()
+        kopf_patch.status = {}
+        sb = StatusBuilder(kopf_patch, {"workers": {"total": 2}})
+
+        mock_api = AsyncMock()
+        mock_js = AsyncMock()
+
+        with (
+            mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
+            mock_patch("aiperf.operator.events.completed"),
+            mock_patch("aiperf.operator.events.results_stored") as mock_results_stored,
+            mock_patch("aiperf.operator.events.results_failed") as mock_results_failed,
+            mock_patch(
+                "aiperf.operator.handlers.completion.index_job_completed",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.completion.get_api",
+                new_callable=AsyncMock,
+                return_value=mock_api,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.completion.AsyncJobSet.get",
+                new_callable=AsyncMock,
+                return_value=mock_js,
+            ),
+        ):
+            await _handle_completion(
+                body={},
+                namespace="default",
+                jobset_name="test-jobset",
+                job_id="job-123",
+                status={"workers": {"total": 2}},
+                sb=sb,
+                result=FetchResult(
+                    metrics={"metrics": [{"tag": "request_throughput", "avg": 100.0}]},
+                    downloaded=["inputs.json"],
+                ),
+            )
+
+        results_available = next(
+            c
+            for c in kopf_patch.status["conditions"]
+            if c["type"] == ConditionType.RESULTS_AVAILABLE
+        )
+        assert results_available["status"] == "False"
+        assert results_available["reason"] == "ResultsFetchFailed"
+        mock_results_stored.assert_not_called()
+        mock_results_failed.assert_called_once()
+        mock_js.delete.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_handles_missing_metrics(self, temp_results_dir: Path) -> None:
         """Verify handles case when metrics fetch fails."""
         from aiperf.operator.handlers.completion import (
