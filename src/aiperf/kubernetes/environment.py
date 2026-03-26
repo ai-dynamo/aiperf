@@ -56,19 +56,28 @@ CONTROLLER_RESOURCE_KEYS = (
 class ResourceSettings(BaseSettings):
     """Container resource settings (CPU/memory).
 
-    Guaranteed QoS: a single CPU/MEMORY value sets both request and limit,
-    ensuring pods always get Guaranteed QoS class.
+    Used by resource_mode to produce Kubernetes resource specs:
+    - guaranteed: requests == limits (Guaranteed QoS)
+    - burstable: requests only, no limits (Burstable QoS)
+    - none: omits the resources block entirely
     """
 
-    CPU: str = Field(description="CPU request and limit (Guaranteed QoS)")
-    MEMORY: str = Field(description="Memory request and limit (Guaranteed QoS)")
+    CPU: str = Field(description="CPU request (and limit in guaranteed mode)")
+    MEMORY: str = Field(description="Memory request (and limit in guaranteed mode)")
 
-    def to_k8s_resources(self) -> dict[str, dict[str, str]]:
-        """Convert to Kubernetes resource spec (requests == limits)."""
-        return {
+    def to_k8s_resources(self, *, burstable: bool = False) -> dict[str, dict[str, str]]:
+        """Convert to Kubernetes resource spec.
+
+        Args:
+            burstable: If True, emit requests only (no limits). Containers can
+                burst beyond the request without being OOM-killed by cgroup.
+        """
+        resources: dict[str, dict[str, str]] = {
             "requests": {"cpu": self.CPU, "memory": self.MEMORY},
-            "limits": {"cpu": self.CPU, "memory": self.MEMORY},
         }
+        if not burstable:
+            resources["limits"] = {"cpu": self.CPU, "memory": self.MEMORY}
+        return resources
 
 
 def _resource_settings(
@@ -304,7 +313,7 @@ class _K8sEnvironment(BaseSettings):
     TIMING_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("TIMING_MANAGER_", "1000m", "2Gi"), description="TimingManager container resources")
     DATASET_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("DATASET_MANAGER_", "1000m", "2Gi"), description="DatasetManager container resources")
     RECORDS_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("RECORDS_MANAGER_", "1000m", "2Gi"), description="RecordsManager container resources")
-    API: ResourceSettings = Field(default_factory=lambda: _resource_settings("API_", "500m", "1Gi"), description="API container resources")
+    API: ResourceSettings = Field(default_factory=lambda: _resource_settings("API_", "1000m", "8Gi"), description="API container resources")
     GPU_TELEMETRY_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("GPU_TELEMETRY_MANAGER_", "250m", "512Mi"), description="GPU telemetry container resources")
     SERVER_METRICS_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("SERVER_METRICS_MANAGER_", "250m", "512Mi"), description="Server metrics container resources")
     RESULTS_SIDECAR: ResourceSettings = Field(default_factory=lambda: _resource_settings("RESULTS_SIDECAR_", "250m", "512Mi"), description="Results sidecar resources for serving exported files")

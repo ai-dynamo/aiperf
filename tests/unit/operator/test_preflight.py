@@ -1440,19 +1440,18 @@ class TestCheckNodeResourcesEdgeCases:
             CONTROLLER_RESOURCE_KEYS,
             K8sEnvironment,
         )
+        from aiperf.kubernetes.utils import parse_cpu, parse_memory_mib
 
         ctrl_cpu = sum(
-            float(getattr(K8sEnvironment, key).CPU.replace("m", "")) / 1000
-            if getattr(K8sEnvironment, key).CPU.endswith("m")
-            else float(getattr(K8sEnvironment, key).CPU)
+            parse_cpu(getattr(K8sEnvironment, key).CPU)
             for key in CONTROLLER_RESOURCE_KEYS
         )
         ctrl_mem_mib = sum(
-            float(getattr(K8sEnvironment, key).MEMORY.replace("Mi", ""))
+            parse_memory_mib(getattr(K8sEnvironment, key).MEMORY)
             for key in CONTROLLER_RESOURCE_KEYS
         )
-        worker_cpu = float(K8sEnvironment.WORKER_POD.CPU.replace("m", "")) / 1000
-        worker_mem_mib = float(K8sEnvironment.WORKER_POD.MEMORY.replace("Mi", ""))
+        worker_cpu = parse_cpu(K8sEnvironment.WORKER_POD.CPU)
+        worker_mem_mib = parse_memory_mib(K8sEnvironment.WORKER_POD.MEMORY)
 
         num_pods = 2
         total_cpu = ctrl_cpu + (worker_cpu * num_pods)

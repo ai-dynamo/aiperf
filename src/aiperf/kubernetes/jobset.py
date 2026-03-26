@@ -281,10 +281,12 @@ class JobSetSpec(AIPerfBaseModel):
         description="Image pull policy for all containers (Always, Never, IfNotPresent). "
         "Set to 'Never' for local development with minikube.",
     )
-    resource_mode: Literal["guaranteed", "none"] = Field(
+    resource_mode: Literal["guaranteed", "burstable", "none"] = Field(
         default="guaranteed",
         description="CPU/memory resource mode for controller and worker pods. "
-        "'guaranteed' emits requests==limits. 'none' omits the resources block.",
+        "'guaranteed' emits requests==limits. "
+        "'burstable' emits requests only (no limits). "
+        "'none' omits the resources block.",
     )
     worker_replicas: int = Field(default=1, description="Number of worker pods")
     workers_per_pod: int | None = Field(
@@ -376,12 +378,16 @@ class JobSetSpec(AIPerfBaseModel):
         """Resolve controller/worker pod resources for this JobSet.
 
         The default mode preserves the existing Guaranteed QoS behavior.
+        The ``burstable`` mode sets requests only (no limits) so containers
+        can burst beyond the reservation without being OOM-killed by cgroup.
         The ``none`` mode is an explicit escape hatch that omits CPU/memory
         requests and limits from the generated container specs.
         """
         if self.resource_mode == "none":
             return None
-        return getattr(K8sEnvironment, settings_key).to_k8s_resources()
+        return getattr(K8sEnvironment, settings_key).to_k8s_resources(
+            burstable=self.resource_mode == "burstable"
+        )
 
     def _resolve_workers_per_pod(self) -> int:
         """Resolve workers per pod for manifest generation."""
@@ -467,20 +473,21 @@ class JobSetSpec(AIPerfBaseModel):
         cpu_shares = self._split_weighted_total(total_mcpu, cpu_weights)
         memory_shares = self._split_weighted_total(total_mib, memory_weights)
 
+        burstable = self.resource_mode == "burstable"
         resources: list[dict[str, dict[str, str]]] = []
         for mcpu, mib in zip(cpu_shares, memory_shares, strict=True):
-            resources.append(
-                {
-                    "requests": {
-                        "cpu": self._format_mcpu(mcpu),
-                        "memory": self._format_mib(mib),
-                    },
-                    "limits": {
-                        "cpu": self._format_mcpu(mcpu),
-                        "memory": self._format_mib(mib),
-                    },
+            entry: dict[str, dict[str, str]] = {
+                "requests": {
+                    "cpu": self._format_mcpu(mcpu),
+                    "memory": self._format_mib(mib),
+                },
+            }
+            if not burstable:
+                entry["limits"] = {
+                    "cpu": self._format_mcpu(mcpu),
+                    "memory": self._format_mib(mib),
                 }
-            )
+            resources.append(entry)
         return resources
 
     def _allocate_worker_health_ports(

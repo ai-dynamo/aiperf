@@ -84,10 +84,12 @@ spec:
                   and normalized by the operator before validation.
               resourceMode:
                 type: string
-                description: CPU/memory resource mode for controller and worker pods. 'guaranteed' applies the standard requests==limits
-                  block. 'none' omits CPU/memory requests and limits as an escape hatch.
+                description: CPU/memory resource mode for controller and worker pods. 'guaranteed' applies requests==limits
+                  (Guaranteed QoS). 'burstable' sets requests only, no limits (Burstable QoS). 'none' omits CPU/memory requests
+                  and limits as an escape hatch.
                 enum:
                 - guaranteed
+                - burstable
                 - none
                 default: guaranteed
               # -- Deployment fields (camelCase, K8s convention) ---------------

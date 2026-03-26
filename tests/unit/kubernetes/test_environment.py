@@ -23,16 +23,16 @@ class TestResourceSettingsToK8sResources:
     @pytest.mark.parametrize(
         "setting_attr,cpu,memory",
         [
-            param("SYSTEM_CONTROLLER", "250m", "256Mi", id="system_controller"),
-            param("WORKER_MANAGER", "250m", "256Mi", id="worker_manager"),
-            param("TIMING_MANAGER", "1000m", "512Mi", id="timing_manager"),
-            param("DATASET_MANAGER", "500m", "512Mi", id="dataset_manager"),
-            param("RECORDS_MANAGER", "500m", "512Mi", id="records_manager"),
-            param("API", "250m", "256Mi", id="api"),
-            param("GPU_TELEMETRY_MANAGER", "125m", "128Mi", id="gpu_telemetry"),
-            param("SERVER_METRICS_MANAGER", "125m", "128Mi", id="server_metrics"),
-            param("RESULTS_SIDECAR", "100m", "128Mi", id="results_sidecar"),
-            param("WORKER_POD", "3350m", "6144Mi", id="worker_pod"),
+            param("SYSTEM_CONTROLLER", "500m", "1Gi", id="system_controller"),
+            param("WORKER_MANAGER", "500m", "1Gi", id="worker_manager"),
+            param("TIMING_MANAGER", "1000m", "2Gi", id="timing_manager"),
+            param("DATASET_MANAGER", "1000m", "2Gi", id="dataset_manager"),
+            param("RECORDS_MANAGER", "1000m", "2Gi", id="records_manager"),
+            param("API", "1000m", "8Gi", id="api"),
+            param("GPU_TELEMETRY_MANAGER", "250m", "512Mi", id="gpu_telemetry"),
+            param("SERVER_METRICS_MANAGER", "250m", "512Mi", id="server_metrics"),
+            param("RESULTS_SIDECAR", "250m", "512Mi", id="results_sidecar"),
+            param("WORKER_POD", "4000m", "12Gi", id="worker_pod"),
         ],
     )  # fmt: skip
     def test_to_k8s_resources_returns_correct_structure(
@@ -50,6 +50,19 @@ class TestResourceSettingsToK8sResources:
             "limits": {"cpu": cpu, "memory": memory},
         }
 
+    def test_to_k8s_resources_burstable_omits_limits(self) -> None:
+        setting = _resource_settings("TEST_BURST_", "500m", "1Gi")
+        resources = setting.to_k8s_resources(burstable=True)
+
+        assert resources == {"requests": {"cpu": "500m", "memory": "1Gi"}}
+        assert "limits" not in resources
+
+    def test_to_k8s_resources_guaranteed_includes_limits(self) -> None:
+        setting = _resource_settings("TEST_GUAR_", "500m", "1Gi")
+        resources = setting.to_k8s_resources(burstable=False)
+
+        assert resources["requests"] == resources["limits"]
+
 
 class TestK8sEnvironmentControllerContainers:
     """Tests for controller-side per-container resource settings."""
@@ -57,14 +70,14 @@ class TestK8sEnvironmentControllerContainers:
     @pytest.mark.parametrize(
         "setting_attr,cpu,memory",
         [
-            param("SYSTEM_CONTROLLER", "250m", "256Mi", id="system_controller"),
-            param("WORKER_MANAGER", "250m", "256Mi", id="worker_manager"),
-            param("TIMING_MANAGER", "1000m", "512Mi", id="timing_manager"),
-            param("DATASET_MANAGER", "500m", "512Mi", id="dataset_manager"),
-            param("RECORDS_MANAGER", "500m", "512Mi", id="records_manager"),
-            param("API", "250m", "256Mi", id="api"),
-            param("GPU_TELEMETRY_MANAGER", "125m", "128Mi", id="gpu_telemetry"),
-            param("SERVER_METRICS_MANAGER", "125m", "128Mi", id="server_metrics"),
+            param("SYSTEM_CONTROLLER", "500m", "1Gi", id="system_controller"),
+            param("WORKER_MANAGER", "500m", "1Gi", id="worker_manager"),
+            param("TIMING_MANAGER", "1000m", "2Gi", id="timing_manager"),
+            param("DATASET_MANAGER", "1000m", "2Gi", id="dataset_manager"),
+            param("RECORDS_MANAGER", "1000m", "2Gi", id="records_manager"),
+            param("API", "1000m", "8Gi", id="api"),
+            param("GPU_TELEMETRY_MANAGER", "250m", "512Mi", id="gpu_telemetry"),
+            param("SERVER_METRICS_MANAGER", "250m", "512Mi", id="server_metrics"),
         ],
     )  # fmt: skip
     def test_controller_container_default_values(
@@ -85,8 +98,8 @@ class TestK8sEnvironmentWorkerPod:
 
     def test_worker_pod_default_values(self) -> None:
         pod = K8sEnvironment.WORKER_POD
-        assert pod.CPU == "3350m"
-        assert pod.MEMORY == "6144Mi"
+        assert pod.CPU == "4000m"
+        assert pod.MEMORY == "12Gi"
 
     def test_worker_pod_guaranteed_qos(self) -> None:
         resources = K8sEnvironment.WORKER_POD.to_k8s_resources()
@@ -94,10 +107,10 @@ class TestK8sEnvironmentWorkerPod:
 
     def test_worker_pod_to_k8s_resources(self) -> None:
         resources = K8sEnvironment.WORKER_POD.to_k8s_resources()
-        assert resources["requests"]["cpu"] == "3350m"
-        assert resources["limits"]["cpu"] == "3350m"
-        assert resources["requests"]["memory"] == "6144Mi"
-        assert resources["limits"]["memory"] == "6144Mi"
+        assert resources["requests"]["cpu"] == "4000m"
+        assert resources["limits"]["cpu"] == "4000m"
+        assert resources["requests"]["memory"] == "12Gi"
+        assert resources["limits"]["memory"] == "12Gi"
 
     def test_k8s_record_processor_scale_factor_default(self) -> None:
         assert K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR == 1

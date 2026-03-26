@@ -93,10 +93,11 @@ class DeploymentConfig(BaseConfig):
         default=None,
         description="Image pull policy (Always, Never, IfNotPresent)",
     )
-    resource_mode: Literal["guaranteed", "none"] = Field(
+    resource_mode: Literal["guaranteed", "burstable", "none"] = Field(
         default="guaranteed",
         description="CPU/memory resource mode for controller and worker pods. "
-        "'guaranteed' applies the standard requests==limits block. "
+        "'guaranteed' applies requests==limits (Guaranteed QoS). "
+        "'burstable' sets requests only, no limits (Burstable QoS). "
         "'none' omits CPU/memory requests and limits as an escape hatch.",
     )
     connections_per_worker: int = Field(

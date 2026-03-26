@@ -1,0 +1,91 @@
+# 250k concurrency streaming benchmark against mock server
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfJob
+metadata:
+  name: mock-250k-streaming-8
+  namespace: acasagrande-aiperf-bench
+spec:
+  benchmark:
+    models:
+      items:
+        - name: mock
+
+    endpoint:
+      urls:
+        - http://aiperf-mock-server.acasagrande-aiperf-bench.svc.cluster.local:8000/v1/chat/completions
+      streaming: true
+
+    datasets:
+      main:
+        type: synthetic
+        prompts:
+          isl:
+            mean: 550
+
+    phases:
+      profiling:
+        type: concurrency
+        requests: 750000
+        concurrency: 250000
+
+    tokenizer:
+      name: builtin
+
+    runtime:
+      ui: none
+      workers_per_pod: 5
+      record_processors_per_pod: 1
+
+    gpu_telemetry:
+      enabled: false
+
+    server_metrics:
+      enabled: false
+
+    artifacts:
+      records:
+        - jsonl
+
+  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260326-062149
+  connectionsPerWorker: 1000
+  resourceMode: burstable
+  ttlSecondsAfterFinished: 600
+
+  podTemplate:
+    imagePullSecrets:
+      - nvcr-imagepullsecret
+    nodeSelector:
+      kubernetes.io/arch: arm64
+      nodeGroup: customer-gpu
+    tolerations:
+      - key: dedicated
+        operator: Equal
+        value: user-workload
+        effect: NoSchedule
+      - key: dedicated
+        operator: Equal
+        value: user-workload
+        effect: NoExecute
+      - key: nvidia.com/gpu
+        operator: Equal
+        value: present
+        effect: NoSchedule
+      - key: team
+        operator: Equal
+        value: nemo-ci
+        effect: NoSchedule
+      - key: kubernetes.io/arch
+        operator: Equal
+        value: arm64
+        effect: NoSchedule
+    env:
+      - name: HF_HOME
+        value: /app/.cache/huggingface
+      - name: HF_HUB_DISABLE_SSL_VERIFICATION
+        value: "1"
+      - name: AIPERF_K8S_SYSTEM_CONTROLLER_MEMORY
+        value: 8Gi
+      - name: AIPERF_K8S_API_MEMORY
+        value: 32Gi
+      - name: AIPERF_K8S_API_CPU
+        value: "1000m"

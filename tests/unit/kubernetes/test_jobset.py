@@ -445,6 +445,27 @@ class TestJobSetSpecContainerDetails:
                     f"{container['name']} unexpectedly had resources"
                 )
 
+    def test_resource_mode_burstable_has_requests_only(self) -> None:
+        """Test that resourceMode=burstable emits requests without limits."""
+        manifest = JobSetSpec(
+            name="aiperf-test",
+            namespace="default",
+            job_id="test-123",
+            image="aiperf:latest",
+            resource_mode="burstable",
+        ).to_k8s_manifest()
+
+        for job in manifest["spec"]["replicatedJobs"]:
+            containers = job["template"]["spec"]["template"]["spec"]["containers"]
+            for container in containers:
+                if container["name"] == "results-sidecar":
+                    continue
+                assert "resources" in container, (
+                    f"{container['name']} missing resources"
+                )
+                assert "requests" in container["resources"]
+                assert "limits" not in container["resources"]
+
     def test_containers_have_env_vars(self, jobset_manifest: dict[str, Any]) -> None:
         """Test that containers have environment variables."""
         for job in jobset_manifest["spec"]["replicatedJobs"]:
