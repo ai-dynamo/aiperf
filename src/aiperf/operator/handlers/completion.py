@@ -53,7 +53,7 @@ async def handle_completion(
             "Job completed before running state was observed",
         )
 
-    sb.set_phase(Phase.COMPLETED).set_completion_time()
+    sb.set_completion_time()
 
     # Calculate duration
     start_time = status.get("startTime")
@@ -113,8 +113,10 @@ async def handle_completion(
                 f"Metrics fetch skipped/failed for {jobset_name} - "
                 f"result files are sufficient"
             )
+        sb.set_phase(Phase.COMPLETED)
         sb.conditions.set_true(ConditionType.RESULTS_AVAILABLE, reason, msg)
     else:
+        sb.set_phase(Phase.FAILED)
         sb.conditions.set_false(
             ConditionType.RESULTS_AVAILABLE,
             "ResultsFetchFailed",
@@ -129,14 +131,15 @@ async def handle_completion(
         events.results_failed(body, "Could not fetch complete result files")
 
     sb.finalize()
-    events.completed(body, job_id, duration_sec)
+    if has_files:
+        events.completed(body, job_id, duration_sec)
 
     # Update job index with completion data
     try:
         await index_job_completed(
             namespace=namespace,
             job_id=job_id,
-            phase="Completed",
+            phase="Completed" if has_files else "Failed",
             metrics=result.metrics,
             downloaded_files=result.downloaded,
         )

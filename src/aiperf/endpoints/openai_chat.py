@@ -17,9 +17,11 @@ from aiperf.common.types import JsonObject
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 _DEFAULT_ROLE: str = "user"
+_FAST_PARSE_FALLBACK = object()
 
 
 class ChatEndpoint(BaseEndpoint):
+    _FAST_PARSE_FALLBACK = _FAST_PARSE_FALLBACK
     """OpenAI Chat Completions endpoint.
 
     Supports multi-modal inputs (text, images, audio, video) and both
@@ -201,6 +203,10 @@ class ChatEndpoint(BaseEndpoint):
         if not json_obj:
             return None
 
+        fast_parsed = self._fast_parse_response(json_obj, response.perf_ns)
+        if fast_parsed is not self._FAST_PARSE_FALLBACK:
+            return fast_parsed
+
         data = self.extract_chat_response_data(json_obj)
         usage = json_obj.get("usage") or None
 
@@ -208,6 +214,53 @@ class ChatEndpoint(BaseEndpoint):
             return ParsedResponse(perf_ns=response.perf_ns, data=data, usage=usage)
 
         return None
+
+    def _fast_parse_response(
+        self,
+        json_obj: JsonObject,
+        perf_ns: int,
+    ) -> ParsedResponse | None | object:
+        """Fast-path the common OpenAI chat shapes and fall back for anything unusual."""
+        try:
+            object_type = json_obj.get("object")
+            if object_type == "chat.completion":
+                data_key = "message"
+            elif object_type == "chat.completion.chunk":
+                data_key = "delta"
+            else:
+                return self._FAST_PARSE_FALLBACK
+
+            choices = json_obj.get("choices")
+            if not choices:
+                return None
+            first_choice = choices[0]
+            if not isinstance(first_choice, dict):
+                return self._FAST_PARSE_FALLBACK
+
+            data = first_choice.get(data_key)
+            if not isinstance(data, dict):
+                return None
+
+            content = data.get("content")
+            reasoning = data.get("reasoning_content") or data.get("reasoning")
+            usage = json_obj.get("usage") or None
+
+            if not content and not reasoning and not usage:
+                return None
+
+            if reasoning:
+                response_data = ReasoningResponseData(
+                    content=content,
+                    reasoning=reasoning,
+                )
+            else:
+                response_data = self.make_text_response_data(content)
+
+            if response_data or usage:
+                return ParsedResponse(perf_ns=perf_ns, data=response_data, usage=usage)
+            return None
+        except (IndexError, KeyError, TypeError):
+            return self._FAST_PARSE_FALLBACK
 
     def extract_chat_response_data(
         self, json_obj: JsonObject

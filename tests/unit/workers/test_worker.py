@@ -1,14 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from pytest import param
 
 from aiperf.common.enums import WorkerStartupState
+from aiperf.common.messages import DatasetConfiguredNotification
 from aiperf.common.models import (
     Conversation,
+    DatasetMetadata,
+    MemoryMapClientMetadata,
     ParsedResponse,
     ProcessHealth,
     ReasoningResponseData,
@@ -18,7 +22,7 @@ from aiperf.common.models import (
 )
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.credit.structs import Credit, CreditContext
-from aiperf.plugin.enums import ServiceRunType
+from aiperf.plugin.enums import DatasetSamplingStrategy, ServiceRunType
 from aiperf.workers.worker import Worker
 from tests.harness.fake_communication import FakeCommunication as FakeCommunication
 from tests.harness.fake_service_manager import FakeServiceManager as FakeServiceManager
@@ -418,6 +422,35 @@ class TestKubernetesMode:
         k8s_worker._initialize_dataset_client.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_dataset_configured_ignores_stale_benchmark_notification(
+        self, k8s_worker: Worker
+    ) -> None:
+        """K8s workers should ignore dataset notifications from a different benchmark ID."""
+        stale_msg = DatasetConfiguredNotification(
+            service_id="dataset_manager",
+            metadata=DatasetMetadata(
+                conversations=[],
+                total_turn_count=0,
+                sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+            ),
+            client_metadata=MemoryMapClientMetadata(
+                data_file_path=Path(
+                    "/aiperf/datasets/aiperf_mmap_other-benchmark-id/dataset.dat.zst"
+                ),
+                index_file_path=Path(
+                    "/aiperf/datasets/aiperf_mmap_other-benchmark-id/index.dat.zst"
+                ),
+                compressed=True,
+            ),
+        )
+        k8s_worker._initialize_dataset_client = AsyncMock()
+
+        await k8s_worker._on_dataset_configured(stale_msg)
+
+        assert k8s_worker._pending_dataset_config is None
+        k8s_worker._initialize_dataset_client.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_dataset_configured_immediate_in_local_mode(
         self, local_worker: Worker
     ) -> None:
@@ -487,6 +520,38 @@ class TestKubernetesMode:
             WorkerStartupState.ROUTER_PROBING,
             WorkerStartupState.READY,
         ]
+
+    @pytest.mark.asyncio
+    async def test_dataset_downloaded_is_idempotent_after_worker_ready(
+        self, config: AIPerfConfig
+    ) -> None:
+        """Repeated dataset-downloaded notifications should not re-run readiness flow."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        worker = Worker(
+            run=self._make_run(config),
+            service_id="k8s-worker",
+        )
+        worker.publish = AsyncMock()
+        pending_config = MagicMock()
+        pending_config.metadata = MagicMock()
+        worker._pending_dataset_config = pending_config
+        worker._initialize_dataset_client = AsyncMock()
+        worker._measure_baseline_rtt = AsyncMock()
+        worker.return_dealer_client.send = AsyncMock()
+
+        downloaded = MagicMock()
+        downloaded.success = True
+        downloaded.client_metadata = MagicMock()
+        downloaded.client_metadata.data_file_path = Path(
+            f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat"
+        )
+
+        await worker._on_dataset_downloaded(downloaded)
+        await worker._on_dataset_downloaded(downloaded)
+
+        worker._initialize_dataset_client.assert_awaited_once()
+        worker._measure_baseline_rtt.assert_awaited_once()
+        worker.return_dealer_client.send.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_k8s_worker_marks_ready_after_downloaded_notification(

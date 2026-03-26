@@ -124,6 +124,7 @@ ignore = ["E501"]
 [tool.ruff.lint.per-file-ignores]
 # sys.path manipulation before imports is required for direct script execution
 "dev/kube.py" = ["E402"]
+"dev/benchmarks/record_processing_benchmark.py" = ["E402"]
 
 [tool.pytest.ini_options]
 # Basic pytest configuration

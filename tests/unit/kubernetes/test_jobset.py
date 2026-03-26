@@ -281,6 +281,21 @@ class TestJobSetSpec:
         manifest = basic_jobset_spec.to_k8s_manifest()
         assert "ttlSecondsAfterFinished" in manifest["spec"]
 
+    def test_worker_job_inherits_nonzero_ttl_for_debugging(self) -> None:
+        """Worker jobs should keep pods around long enough for post-failure inspection."""
+        spec = JobSetSpec(
+            name="aiperf-test",
+            namespace="default",
+            job_id="test-123",
+            image="aiperf:latest",
+            ttl_seconds=600,
+        )
+        manifest = spec.to_k8s_manifest()
+        worker_job = next(
+            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "workers"
+        )
+        assert worker_job["template"]["spec"]["ttlSecondsAfterFinished"] == 600
+
     def test_to_k8s_manifest_custom_ttl(self) -> None:
         """Test JobSet with custom TTL."""
         spec = JobSetSpec(
@@ -401,20 +416,32 @@ class TestJobSetSpecContainerDetails:
     def test_containers_have_health_probes(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Test that containers have liveness and readiness probes.
-
-        Note: control-plane skips readiness probe as it manages its own lifecycle.
-        """
+        """Controller-side containers keep health probes; worker-side containers skip readiness/liveness."""
         for job in jobset_manifest["spec"]["replicatedJobs"]:
             containers = job["template"]["spec"]["template"]["spec"]["containers"]
             for container in containers:
-                assert "livenessProbe" in container, (
-                    f"{container['name']} missing livenessProbe"
-                )
-                # control-plane skips readiness probe (manages its own lifecycle)
-                if container["name"] != "control-plane":
+                if (
+                    job["name"] == "controller"
+                    and container["name"] not in {"records-manager"}
+                ) or container["name"] == "results-sidecar":
+                    assert "livenessProbe" in container, (
+                        f"{container['name']} missing livenessProbe"
+                    )
+                else:
+                    assert "livenessProbe" not in container, (
+                        f"{container['name']} unexpectedly has livenessProbe"
+                    )
+
+                if job["name"] == "controller" and container["name"] not in {
+                    "control-plane",
+                    "records-manager",
+                }:
                     assert "readinessProbe" in container, (
                         f"{container['name']} missing readinessProbe"
+                    )
+                else:
+                    assert "readinessProbe" not in container, (
+                        f"{container['name']} unexpectedly has readinessProbe"
                     )
 
     def test_containers_have_resources(self, jobset_manifest: dict[str, Any]) -> None:
@@ -564,6 +591,92 @@ class TestJobSetSpecContainerDetails:
         assert api_container["startupProbe"]["httpGet"]["port"] == 9090
         assert api_container["livenessProbe"]["httpGet"]["port"] == 9090
         assert api_container["readinessProbe"]["httpGet"]["port"] == 9090
+
+    def test_controller_records_manager_skips_all_probes(
+        self, jobset_manifest: dict[str, Any]
+    ) -> None:
+        """Records manager should not be restarted by probes during long post-send draining."""
+        controller_job = next(
+            j
+            for j in jobset_manifest["spec"]["replicatedJobs"]
+            if j["name"] == "controller"
+        )
+        records_manager = next(
+            c
+            for c in controller_job["template"]["spec"]["template"]["spec"][
+                "containers"
+            ]
+            if c["name"] == "records-manager"
+        )
+        assert "readinessProbe" not in records_manager
+        assert "startupProbe" not in records_manager
+        assert "livenessProbe" not in records_manager
+
+    def test_worker_containers_skip_readiness_probes(
+        self, jobset_manifest: dict[str, Any]
+    ) -> None:
+        """Worker-side containers should not gate pod readiness during slow streaming startup."""
+        worker_job = next(
+            j
+            for j in jobset_manifest["spec"]["replicatedJobs"]
+            if j["name"] == "workers"
+        )
+        containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
+        worker_side = {
+            c["name"]
+            for c in containers
+            if c["name"].startswith("worker-")
+            or c["name"].startswith("record-processor-")
+            or c["name"] == "worker-pod-manager"
+        }
+        assert worker_side
+        for container in containers:
+            if container["name"] in worker_side:
+                assert "readinessProbe" not in container
+
+    def test_worker_containers_skip_startup_probes(
+        self, jobset_manifest: dict[str, Any]
+    ) -> None:
+        """Worker-side containers should not be killed by startup probes during slow pod bring-up."""
+        worker_job = next(
+            j
+            for j in jobset_manifest["spec"]["replicatedJobs"]
+            if j["name"] == "workers"
+        )
+        containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
+        worker_side = {
+            c["name"]
+            for c in containers
+            if c["name"].startswith("worker-")
+            or c["name"].startswith("record-processor-")
+            or c["name"] == "worker-pod-manager"
+        }
+        assert worker_side
+        for container in containers:
+            if container["name"] in worker_side:
+                assert "startupProbe" not in container
+
+    def test_worker_containers_skip_liveness_probes(
+        self, jobset_manifest: dict[str, Any]
+    ) -> None:
+        """Worker-side containers should not be killed by liveness probes during long bring-up."""
+        worker_job = next(
+            j
+            for j in jobset_manifest["spec"]["replicatedJobs"]
+            if j["name"] == "workers"
+        )
+        containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
+        worker_side = {
+            c["name"]
+            for c in containers
+            if c["name"].startswith("worker-")
+            or c["name"].startswith("record-processor-")
+            or c["name"] == "worker-pod-manager"
+        }
+        assert worker_side
+        for container in containers:
+            if container["name"] in worker_side:
+                assert "livenessProbe" not in container
 
     def test_results_sidecar_exposes_results_port(
         self, jobset_manifest: dict[str, Any]
@@ -864,48 +977,95 @@ class TestJobSetSpecStartupProbes:
         )
         return spec.to_k8s_manifest()
 
-    def test_containers_have_startup_probes(
+    def test_controller_containers_have_startup_probes(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Test all containers have startup probes."""
+        """Controller-side containers should have startup probes."""
         for job in jobset_manifest["spec"]["replicatedJobs"]:
             containers = job["template"]["spec"]["template"]["spec"]["containers"]
+            if job["name"] == "workers":
+                containers = [
+                    c
+                    for c in containers
+                    if not (
+                        c["name"].startswith("worker-")
+                        or c["name"].startswith("record-processor-")
+                        or c["name"] == "worker-pod-manager"
+                    )
+                ]
+            if job["name"] == "controller":
+                containers = [c for c in containers if c["name"] != "records-manager"]
             for container in containers:
                 assert "startupProbe" in container, (
                     f"{container['name']} missing startupProbe"
                 )
 
-    def test_startup_probe_has_zero_initial_delay(
+    def test_controller_startup_probe_has_zero_initial_delay(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Test startup probes have zero initial delay for fast first check."""
+        """Controller-side startup probes should check immediately."""
         for job in jobset_manifest["spec"]["replicatedJobs"]:
             containers = job["template"]["spec"]["template"]["spec"]["containers"]
+            if job["name"] == "workers":
+                containers = [
+                    c
+                    for c in containers
+                    if not (
+                        c["name"].startswith("worker-")
+                        or c["name"].startswith("record-processor-")
+                        or c["name"] == "worker-pod-manager"
+                    )
+                ]
+            if job["name"] == "controller":
+                containers = [c for c in containers if c["name"] != "records-manager"]
             for container in containers:
                 probe = container["startupProbe"]
                 assert probe["initialDelaySeconds"] == 0
 
-    def test_startup_probe_allows_long_initialization(
+    def test_controller_startup_probe_allows_long_initialization(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Test startup probes allow containers time to initialize."""
+        """Controller-side startup probes should allow long initialization."""
         for job in jobset_manifest["spec"]["replicatedJobs"]:
             containers = job["template"]["spec"]["template"]["spec"]["containers"]
+            if job["name"] == "workers":
+                containers = [
+                    c
+                    for c in containers
+                    if not (
+                        c["name"].startswith("worker-")
+                        or c["name"].startswith("record-processor-")
+                        or c["name"] == "worker-pod-manager"
+                    )
+                ]
+            if job["name"] == "controller":
+                containers = [c for c in containers if c["name"] != "records-manager"]
             for container in containers:
                 probe = container["startupProbe"]
-                # failureThreshold * periodSeconds >= 120s (reasonable startup time)
                 max_startup_time = probe["failureThreshold"] * probe["periodSeconds"]
                 assert max_startup_time >= 120, (
                     f"{container['name']} has too short max startup time: "
                     f"{max_startup_time}s"
                 )
 
-    def test_startup_probe_uses_health_endpoint(
+    def test_controller_startup_probe_uses_health_endpoint(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Test startup probes use the /healthz endpoint."""
+        """Controller-side startup probes should use /healthz."""
         for job in jobset_manifest["spec"]["replicatedJobs"]:
             containers = job["template"]["spec"]["template"]["spec"]["containers"]
+            if job["name"] == "workers":
+                containers = [
+                    c
+                    for c in containers
+                    if not (
+                        c["name"].startswith("worker-")
+                        or c["name"].startswith("record-processor-")
+                        or c["name"] == "worker-pod-manager"
+                    )
+                ]
+            if job["name"] == "controller":
+                containers = [c for c in containers if c["name"] != "records-manager"]
             for container in containers:
                 probe = container["startupProbe"]
                 assert probe["httpGet"]["path"] == "/healthz"
@@ -1653,6 +1813,19 @@ class TestJobSetSpecCreateContainer:
         assert container.readiness_probe is None
         assert container.liveness_probe is not None
         assert container.startup_probe is not None
+
+    def test_create_container_skip_startup_probe(self, jobset_spec: JobSetSpec) -> None:
+        """Test _create_container with skip_startup_probe=True."""
+        resources = {"requests": {"cpu": "100m"}, "limits": {"cpu": "500m"}}
+        container = jobset_spec._create_container(
+            name="no-startup",
+            service_type="worker",
+            health_port=8081,
+            resources=resources,
+            skip_startup_probe=True,
+        )
+        assert container.startup_probe is None
+        assert container.liveness_probe is not None
 
     def test_create_container_has_security_context(
         self, jobset_spec: JobSetSpec

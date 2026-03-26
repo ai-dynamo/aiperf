@@ -622,6 +622,8 @@ class JobSetSpec(AIPerfBaseModel):
         extra_env: list[dict[str, Any]] | None = None,
         include_pod_index: bool = True,
         skip_readiness_probe: bool = False,
+        skip_startup_probe: bool = False,
+        skip_liveness_probe: bool = False,
     ) -> ContainerSpec:
         """Create a container spec with standard AIPerf configuration.
 
@@ -636,6 +638,8 @@ class JobSetSpec(AIPerfBaseModel):
             extra_env: Additional environment variables for this container.
             include_pod_index: Whether to expose AIPERF_POD_INDEX into the container.
             skip_readiness_probe: If True, don't add a readiness probe.
+            skip_startup_probe: If True, don't add a startup probe.
+            skip_liveness_probe: If True, don't add a liveness probe.
         """
         jobset_config = K8sEnvironment.JOBSET
         run_file = f"{jobset_config.CONFIG_MOUNT_PATH}/run_config.json"
@@ -669,8 +673,12 @@ class JobSetSpec(AIPerfBaseModel):
         # The API service exposes /healthz and /readyz on its FastAPI port, not on
         # the separate service health port used by the other containers.
         probe_port = api_port if service_type == "api" and api_port else health_port
-        startup_probe = self._create_startup_probe(probe_port)
-        liveness_probe = self._create_health_probe(probe_port)
+        startup_probe = (
+            None if skip_startup_probe else self._create_startup_probe(probe_port)
+        )
+        liveness_probe = (
+            None if skip_liveness_probe else self._create_health_probe(probe_port)
+        )
         readiness_probe = (
             None
             if skip_readiness_probe
@@ -776,6 +784,9 @@ class JobSetSpec(AIPerfBaseModel):
                 resources=self._resolve_pod_resources("RECORDS_MANAGER"),
                 service_id="records_manager",
                 include_pod_index=False,
+                skip_readiness_probe=True,
+                skip_startup_probe=True,
+                skip_liveness_probe=True,
             ),
             self._create_container(
                 name=Containers.API,
@@ -839,6 +850,9 @@ class JobSetSpec(AIPerfBaseModel):
                 health_port=manager_port,
                 resources=resources[0],
                 controller_host=controller_dns,
+                skip_readiness_probe=True,
+                skip_startup_probe=True,
+                skip_liveness_probe=True,
             )
         ]
 
@@ -851,6 +865,9 @@ class JobSetSpec(AIPerfBaseModel):
                     health_port=health_port,
                     resources=resources[1 + ordinal],
                     controller_host=controller_dns,
+                    skip_readiness_probe=True,
+                    skip_startup_probe=True,
+                    skip_liveness_probe=True,
                 )
             )
 
@@ -864,6 +881,9 @@ class JobSetSpec(AIPerfBaseModel):
                     health_port=health_port,
                     resources=resources[record_processor_offset + ordinal],
                     controller_host=controller_dns,
+                    skip_readiness_probe=True,
+                    skip_startup_probe=True,
+                    skip_liveness_probe=True,
                 )
             )
 
@@ -903,9 +923,8 @@ class JobSetSpec(AIPerfBaseModel):
             },
         )
 
-        # Worker replicated job — ttl=0 deletes worker Jobs+pods immediately
-        # after they succeed, freeing cluster resources while the controller
-        # pod continues serving results to the operator.
+        # Worker replicated job — keep worker Jobs/pods around long enough for
+        # post-failure debugging instead of deleting them immediately.
         worker_job = ReplicatedJobSpec(
             name="workers",
             replicas=self.worker_replicas,
@@ -913,7 +932,7 @@ class JobSetSpec(AIPerfBaseModel):
             volumes=volumes,
             restart_policy=RestartPolicy.ON_FAILURE,
             backoff_limit=jobset_config.WORKER_BACKOFF_LIMIT,
-            job_ttl_seconds=0,
+            job_ttl_seconds=self.ttl_seconds,
             pod_template=self.pod_template,
             job_id=self.job_id,
         )

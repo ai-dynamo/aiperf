@@ -52,6 +52,7 @@ from aiperf.common.models import (
     DatasetClientMetadata,
     DatasetMetadata,
     ErrorDetails,
+    MemoryMapClientMetadata,
     ProcessHealth,
     ReasoningResponseData,
     RequestInfo,
@@ -294,6 +295,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         downloads the dataset and sends DatasetDownloadedNotification with
         local file paths.
         """
+        if not self._matches_current_benchmark(msg.client_metadata):
+            self.warning(
+                "Ignoring dataset configuration for a different benchmark: "
+                f"{msg.client_metadata.data_file_path}"
+            )
+            return
+
         # In Kubernetes mode, wait for WorkerPodManager to download the dataset first.
         # WorkerPodManager will send DatasetDownloadedNotification with local paths.
         if self._is_kubernetes_mode():
@@ -314,6 +322,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         In Kubernetes mode, WorkerPodManager downloads the dataset files once per pod.
         This notification contains client_metadata with local file paths.
         """
+        if not self._matches_current_benchmark(msg.client_metadata):
+            self.warning(
+                "Ignoring downloaded dataset for a different benchmark: "
+                f"{msg.client_metadata.data_file_path}"
+            )
+            return
+
         if self._pending_dataset_config is None:
             self.debug("Received download notification but no pending config, ignoring")
             return
@@ -340,6 +355,16 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         await self.return_dealer_client.send(WorkerReady(worker_id=self.service_id))
         await self._publish_startup_state(WorkerStartupState.READY)
         self._worker_ready_event.set()
+
+    def _matches_current_benchmark(
+        self, client_metadata: DatasetClientMetadata
+    ) -> bool:
+        """Check whether dataset client metadata belongs to the current benchmark dataset."""
+        if not isinstance(client_metadata, MemoryMapClientMetadata):
+            return True
+        return self.run.cfg.artifacts.benchmark_id in str(
+            client_metadata.data_file_path
+        )
 
     async def _initialize_dataset_client(
         self,
