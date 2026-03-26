@@ -2,7 +2,7 @@
 apiVersion: aiperf.nvidia.com/v1alpha1
 kind: AIPerfJob
 metadata:
-  name: mock-450k-streaming-fix-1
+  name: mock-450k-streaming-fix-4
   namespace: acasagrande-aiperf-bench
 spec:
   benchmark:
@@ -47,7 +47,7 @@ spec:
       records:
         - jsonl
 
-  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260326-003827-73cf5dfd6-api-probe-fix
+  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260326-records-manager-probe-fix-1
   connectionsPerWorker: 1000
   resourceMode: burstable
   ttlSecondsAfterFinished: 600

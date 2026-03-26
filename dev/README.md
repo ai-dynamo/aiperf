@@ -172,6 +172,28 @@ All 9 AIPerf services run as subprocesses in one container (MULTIPROCESSING mode
 | `./dev/kube.py cleanup`           | Remove benchmark namespaces (keep cluster). |
 | `./dev/kube.py logs`              | View AIPerf benchmark pod logs. |
 
+### Publish an arm64 image to NVCR
+
+Use the local publish script when you need a pushed arm64 AIPerf image and want the repo's benchmark YAMLs updated to the new tag:
+
+```bash
+uv run python scripts/publish_aiperf_arm64.py
+```
+
+The script:
+- builds `linux/arm64` with `docker buildx`
+- pushes to `nvcr.io/nvidian/dynamo-dev/aiperf`
+- generates a `k8s-arm64-YYYYMMDD-HHMMSS-<sha>` tag by default
+- updates the pinned image refs in `deploy/helm/aiperf-operator/values.yaml` and the `dev/deploy/mock-*.yaml` manifests
+
+Useful options:
+
+```bash
+uv run python scripts/publish_aiperf_arm64.py --dry-run
+uv run python scripts/publish_aiperf_arm64.py --tag k8s-arm64-20260326-050715-1d7f82a87
+uv run python scripts/publish_aiperf_arm64.py --file dev/deploy/mock-250k-streaming.yaml
+```
+
 ---
 
 ## Options and variables

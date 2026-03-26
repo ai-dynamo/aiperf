@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -150,6 +151,55 @@ class TestDatasetManager:
     Note: Dataset sampling tests have been moved to test_dataset_samplers.py
     since sampling is now handled by timing strategies, not DatasetManager.
     """
+
+    @pytest.mark.asyncio
+    async def test_profile_configure_is_reentrant_safe(
+        self,
+        initialized_dataset_manager: DatasetManager,
+    ) -> None:
+        """Concurrent PROFILE_CONFIGURE commands should coalesce into one configuration pass."""
+        started = asyncio.Event()
+        release = asyncio.Event()
+        calls: list[str] = []
+
+        async def fake_configure_tokenizer() -> None:
+            calls.append("tokenizer")
+            started.set()
+            await release.wait()
+
+        async def fake_configure_dataset() -> None:
+            calls.append("dataset")
+
+        async def fake_generate_inputs() -> None:
+            calls.append("inputs")
+
+        async def fake_finalize() -> None:
+            calls.append("finalize")
+            initialized_dataset_manager.dataset_configured.set()
+
+        initialized_dataset_manager._configure_tokenizer = fake_configure_tokenizer
+        initialized_dataset_manager._configure_dataset = fake_configure_dataset
+        initialized_dataset_manager._generate_inputs_json_file = fake_generate_inputs
+        initialized_dataset_manager._configure_dataset_client_and_free_memory = (
+            fake_finalize
+        )
+        initialized_dataset_manager.publish = AsyncMock()
+
+        first = asyncio.create_task(
+            initialized_dataset_manager._profile_configure_command(
+                Command(cid="first", cmd=CommandType.PROFILE_CONFIGURE)
+            )
+        )
+        await started.wait()
+        second = asyncio.create_task(
+            initialized_dataset_manager._profile_configure_command(
+                Command(cid="second", cmd=CommandType.PROFILE_CONFIGURE)
+            )
+        )
+        release.set()
+        await asyncio.gather(first, second)
+
+        assert calls == ["tokenizer", "dataset", "inputs", "finalize"]
 
     @pytest.mark.asyncio
     async def test_dataset_configured_notification_for_multi_turn_conversations(

@@ -105,6 +105,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._rebroadcast_task: asyncio.Task | None = None
         self._default_context_mode: ConversationContextMode | None = None
+        self._profile_configure_task: asyncio.Task[None] | None = None
 
     @on_command(CommandType.PROFILE_START)
     async def _on_profile_start(self, message: Command) -> None:
@@ -116,7 +117,20 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(self, message: Command) -> None:
         """Configure the dataset."""
+        if self._profile_configure_task is not None:
+            await self._profile_configure_task
+            return
 
+        self._profile_configure_task = asyncio.create_task(
+            self._run_profile_configure()
+        )
+        try:
+            await self._profile_configure_task
+        finally:
+            self._profile_configure_task = None
+
+    async def _run_profile_configure(self) -> None:
+        """Run dataset configuration once, coalescing concurrent configure commands."""
         endpoint_meta: EndpointMetadata = plugins.get_endpoint_metadata(
             self.run.cfg.endpoint.type
         )

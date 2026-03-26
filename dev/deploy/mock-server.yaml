@@ -54,7 +54,7 @@ spec:
             - name: MOCK_SERVER_HOST
               value: "0.0.0.0"
             - name: MOCK_SERVER_FAST
-              value: "true"
+              value: "false"
             - name: MOCK_SERVER_TOKENIZER
               value: "gpt2"
             - name: MOCK_SERVER_WORKERS

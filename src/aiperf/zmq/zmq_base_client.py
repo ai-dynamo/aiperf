@@ -184,6 +184,10 @@ class BaseZMQClient(AIPerfLifecycleMixin):
         async with self._socket_recreate_lock:
             old_socket = self.socket
             if old_socket:
+                if self.bind:
+                    old_socket.unbind(self.address)
+                    if self.additional_bind_address:
+                        old_socket.unbind(self.additional_bind_address)
                 old_socket.close(linger=0)
 
             self.socket = self.context.socket(self.socket_type)

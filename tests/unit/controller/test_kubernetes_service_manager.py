@@ -642,6 +642,56 @@ class TestMonitorWorkerPods:
             assert info.state == LifecycleState.FAILED
 
     @pytest.mark.asyncio
+    async def test_replacement_running_pod_prevents_stale_failed_pod_from_failing_services(
+        self, manager: KubernetesServiceManager, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A stale failed pod should be ignored when the same pod index has a running replacement."""
+        monkeypatch.setenv("AIPERF_NAMESPACE", "test-ns")
+        monkeypatch.setenv("AIPERF_JOB_ID", "test-job")
+
+        ServiceRegistry.expect_services({ServiceType.WORKER: 1})
+        ServiceRegistry.register(
+            "worker_0_0",
+            ServiceType.WORKER,
+            first_seen_ns=time.time_ns(),
+            state=LifecycleState.RUNNING,
+            pod_index="0",
+        )
+
+        failed_pod = MagicMock()
+        failed_pod.raw = {
+            "metadata": {
+                "name": "aiperf-test-worker-0-0-old",
+                "labels": {"jobset.sigs.k8s.io/job-index": "0"},
+            },
+            "status": {"phase": "Failed"},
+        }
+
+        running_pod = MagicMock()
+        running_pod.raw = {
+            "metadata": {
+                "name": "aiperf-test-worker-0-0-new",
+                "labels": {"jobset.sigs.k8s.io/job-index": "0"},
+            },
+            "status": {"phase": "Running"},
+        }
+
+        mock_client = AsyncMock()
+        mock_client.job_selector.return_value = "app=aiperf"
+        mock_client.get_pods.return_value = [failed_pod, running_pod]
+
+        with patch(
+            "aiperf.kubernetes.client.AIPerfKubeClient.create",
+            new_callable=AsyncMock,
+            return_value=mock_client,
+        ):
+            await manager._monitor_worker_pods()
+
+        info = ServiceRegistry.get_service("worker_0_0")
+        assert info is not None
+        assert info.state == LifecycleState.RUNNING
+
+    @pytest.mark.asyncio
     async def test_running_pod_does_not_affect_services(
         self, manager: KubernetesServiceManager, monkeypatch: pytest.MonkeyPatch
     ) -> None:

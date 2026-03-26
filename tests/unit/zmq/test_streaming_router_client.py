@@ -5,7 +5,7 @@ Tests for streaming_router_client.py - ZMQStreamingRouterClient class.
 """
 
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import msgspec.msgpack
 import pytest
@@ -411,6 +411,43 @@ class TestZMQStreamingRouterClientReceiver:
             )
 
             client._recreate_socket.assert_not_awaited()
+
+
+class TestZMQStreamingRouterClientRecovery:
+    """Test ROUTER recovery behavior."""
+
+    @pytest.mark.asyncio
+    async def test_recreate_socket_unbinds_old_addresses_before_rebind(
+        self, mock_zmq_context
+    ) -> None:
+        """Bound ROUTER recovery should unbind old addresses before rebinding."""
+        old_socket = AsyncMock(spec=zmq.asyncio.Socket)
+        old_socket.bind = Mock()
+        old_socket.unbind = Mock()
+        old_socket.close = Mock()
+        old_socket.setsockopt = Mock()
+
+        new_socket = AsyncMock(spec=zmq.asyncio.Socket)
+        new_socket.bind = Mock()
+        new_socket.setsockopt = Mock()
+
+        mock_zmq_context.socket.side_effect = [new_socket]
+
+        client = ZMQStreamingRouterClient(
+            address="tcp://0.0.0.0:5667",
+            bind=True,
+            additional_bind_address="ipc:///tmp/test-router.ipc",
+        )
+        client.socket = old_socket
+        client.context = mock_zmq_context
+
+        await client._recreate_socket()
+
+        old_socket.unbind.assert_any_call("tcp://0.0.0.0:5667")
+        old_socket.unbind.assert_any_call("ipc:///tmp/test-router.ipc")
+        old_socket.close.assert_called_once_with(linger=0)
+        new_socket.bind.assert_any_call("tcp://0.0.0.0:5667")
+        new_socket.bind.assert_any_call("ipc:///tmp/test-router.ipc")
 
 
 class TestZMQStreamingRouterClientLifecycle:

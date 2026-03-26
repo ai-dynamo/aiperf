@@ -409,6 +409,7 @@ class KubernetesServiceManager(MultiProcessServiceManager):
             pods = await client.get_pods(namespace, client.job_selector(job_id))
             now_ns = time.time_ns()
 
+            pods_by_index: dict[str, tuple[str, PodPhase, list[dict], dict]] = {}
             for pod in pods:
                 raw = pod.raw
                 metadata = raw.get("metadata", {})
@@ -423,8 +424,24 @@ class KubernetesServiceManager(MultiProcessServiceManager):
 
                 status = raw.get("status", {})
                 phase = PodPhase(status.get("phase", PodPhase.UNKNOWN))
+                existing = pods_by_index.get(pod_index)
+                if existing is None or (
+                    existing[1] in (PodPhase.FAILED, PodPhase.UNKNOWN)
+                    and phase not in (PodPhase.FAILED, PodPhase.UNKNOWN)
+                ):
+                    pods_by_index[pod_index] = (
+                        pod_name,
+                        phase,
+                        status.get("containerStatuses", []),
+                        status,
+                    )
 
-                container_statuses = status.get("containerStatuses", [])
+            for pod_index, (
+                pod_name,
+                phase,
+                container_statuses,
+                status,
+            ) in pods_by_index.items():
                 restart_count = sum(
                     cs.get("restartCount", 0) for cs in container_statuses
                 )
@@ -436,6 +453,7 @@ class KubernetesServiceManager(MultiProcessServiceManager):
                     pod_info = PodInfo(pod_index=pod_index, pod_name=pod_name)
                     self._pods[pod_index] = pod_info
 
+                pod_info.pod_name = pod_name
                 pod_info.phase = phase
                 pod_info.restart_count = restart_count
                 pod_info.container_issues = issues
