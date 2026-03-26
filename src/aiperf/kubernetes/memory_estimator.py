@@ -16,7 +16,7 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from aiperf.kubernetes.environment import K8sEnvironment
+from aiperf.kubernetes.environment import CONTROLLER_RESOURCE_KEYS, K8sEnvironment
 from aiperf.kubernetes.utils import parse_memory_mib
 
 if TYPE_CHECKING:
@@ -55,6 +55,7 @@ _SERVICE_BASE_MIB: dict[str, int] = {
     "api_service": 20,
     "gpu_telemetry_manager": 15,
     "server_metrics_manager": 15,
+    "results_sidecar": 10,
     "worker": 12,  # aiohttp client + ZMQ sockets
     "record_processor": 10,  # record parsing + ZMQ sockets
     "worker_pod_manager": 10,
@@ -807,11 +808,12 @@ def _estimate_fixed_service(
 
 def _get_controller_limit_mib() -> float:
     """Get controller pod memory limit from K8sEnvironment."""
-    return float(
-        parse_memory_mib(
-            K8sEnvironment.CONTROLLER_POD.to_k8s_resources()["limits"]["memory"]
+    total = 0
+    for key in CONTROLLER_RESOURCE_KEYS:
+        total += parse_memory_mib(
+            getattr(K8sEnvironment, key).to_k8s_resources()["limits"]["memory"]
         )
-    )
+    return float(total)
 
 
 def _get_worker_pod_limit_mib(workers_per_pod: int, rp_per_pod: int) -> float:
@@ -870,6 +872,7 @@ class MemoryEstimator:
                 p.est_histogram_metrics,
                 p.est_histogram_buckets,
             ),
+            _estimate_fixed_service("results_sidecar", "Results Sidecar"),
         ]
         # ZMQ proxies
         components.append(

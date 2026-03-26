@@ -13,11 +13,13 @@ from typing import Any, Literal
 from pydantic import ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+from aiperf.common.environment import Environment
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.config.deployment import PodTemplateConfig, SchedulingConfig
 from aiperf.kubernetes.constants import Containers, KueueLabels, Labels
 from aiperf.kubernetes.enums import ImagePullPolicy, RestartPolicy
 from aiperf.kubernetes.environment import K8sEnvironment
+from aiperf.kubernetes.utils import parse_cpu, parse_memory_mib
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,6 +292,11 @@ class JobSetSpec(AIPerfBaseModel):
         description="Actual workers per pod (used for resource calculation). "
         "Defaults to Environment.WORKER.DEFAULT_WORKERS_PER_POD if not set.",
     )
+    record_processors_per_pod: int | None = Field(
+        default=None,
+        description="Actual record processors per worker pod. "
+        "Defaults to a Kubernetes scale factor derived from workers_per_pod.",
+    )
     ttl_seconds: int | None = Field(
         default=None, description="TTL after finished (uses K8sEnvironment default)"
     )
@@ -302,6 +309,14 @@ class JobSetSpec(AIPerfBaseModel):
     # Scheduling
     scheduling: SchedulingConfig = Field(
         default_factory=SchedulingConfig, description="Kueue scheduling configuration"
+    )
+    gpu_telemetry_enabled: bool = Field(
+        default=True,
+        description="Whether to include the GPU telemetry manager container.",
+    )
+    server_metrics_enabled: bool = Field(
+        default=True,
+        description="Whether to include the server metrics manager container.",
     )
 
     # Optional metadata for discovery
@@ -321,7 +336,7 @@ class JobSetSpec(AIPerfBaseModel):
         - Drop all capabilities
         - Read-only root filesystem (writable emptyDir volumes for data/ipc/results)
         """
-        return {
+        ctx: dict[str, Any] = {
             "runAsNonRoot": True,
             "runAsUser": 1000,
             "runAsGroup": 1000,
@@ -330,6 +345,18 @@ class JobSetSpec(AIPerfBaseModel):
             "capabilities": {"drop": ["ALL"]},
             "seccompProfile": {"type": "RuntimeDefault"},
         }
+        overrides = self.pod_template.container_security_context
+        if overrides:
+            caps = overrides.get("capabilities")
+            if isinstance(caps, dict):
+                base_caps = dict(ctx.get("capabilities", {}))
+                base_caps.update(caps)
+                ctx["capabilities"] = base_caps
+            for key, value in overrides.items():
+                if key == "capabilities":
+                    continue
+                ctx[key] = value
+        return ctx
 
     def _create_health_probe(self, port: int, path: str = "/healthz") -> dict[str, Any]:
         """Create a health probe configuration from K8sEnvironment settings."""
@@ -356,6 +383,137 @@ class JobSetSpec(AIPerfBaseModel):
             return None
         return getattr(K8sEnvironment, settings_key).to_k8s_resources()
 
+    def _resolve_workers_per_pod(self) -> int:
+        """Resolve workers per pod for manifest generation."""
+        return self.workers_per_pod or Environment.WORKER.DEFAULT_WORKERS_PER_POD
+
+    def _resolve_record_processors_per_pod(self) -> int:
+        """Resolve record processors per pod for manifest generation."""
+        if self.record_processors_per_pod is not None:
+            return self.record_processors_per_pod
+        return max(
+            1,
+            self._resolve_workers_per_pod()
+            // K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR,
+        )
+
+    @staticmethod
+    def _split_weighted_total(total: int, weights: list[int]) -> list[int]:
+        """Split an integer total across weighted buckets.
+
+        Uses a largest-remainder allocation so the sum is preserved exactly.
+        """
+        if not weights:
+            return []
+        if total <= 0:
+            return [0] * len(weights)
+
+        total_weight = sum(weights)
+        raw_shares = [total * weight / total_weight for weight in weights]
+        shares = [int(share) for share in raw_shares]
+        remainder = total - sum(shares)
+
+        ranked = sorted(
+            range(len(weights)),
+            key=lambda idx: raw_shares[idx] - shares[idx],
+            reverse=True,
+        )
+        for idx in ranked[:remainder]:
+            shares[idx] += 1
+
+        return shares
+
+    @staticmethod
+    def _format_mcpu(mcpu: int) -> str:
+        """Format millicores as a Kubernetes quantity."""
+        if mcpu % 1000 == 0:
+            return str(mcpu // 1000)
+        return f"{mcpu}m"
+
+    @staticmethod
+    def _format_mib(mib: int) -> str:
+        """Format MiB as a Kubernetes memory quantity."""
+        return f"{mib}Mi"
+
+    def _split_worker_pod_resources(
+        self,
+        worker_count: int,
+        record_processor_count: int,
+    ) -> list[dict[str, dict[str, str]] | None]:
+        """Split the configured worker-pod budget across pod infrastructure and services.
+
+        The external API remains pod-oriented (`WORKER_POD` is the total budget).
+        Internally we divide that budget across the worker-pod-manager, workers,
+        and record processors so the sum of container requests/limits matches the
+        historical per-pod request.
+        """
+        worker_pod_resources = self._resolve_pod_resources("WORKER_POD")
+        if worker_pod_resources is None:
+            return [None] * (1 + worker_count + record_processor_count)
+
+        total_mcpu = int(
+            round(parse_cpu(worker_pod_resources["requests"]["cpu"]) * 1000)
+        )
+        total_mib = parse_memory_mib(worker_pod_resources["requests"]["memory"])
+
+        # These weights reflect the measured relative cost noted in the K8s
+        # environment comments: workers are lighter than record processors,
+        # while the worker-pod-manager remains a small but non-zero share.
+        cpu_weights = [100] + ([131] * worker_count) + ([389] * record_processor_count)
+        memory_weights = (
+            [128] + ([80] * worker_count) + ([256] * record_processor_count)
+        )
+
+        cpu_shares = self._split_weighted_total(total_mcpu, cpu_weights)
+        memory_shares = self._split_weighted_total(total_mib, memory_weights)
+
+        resources: list[dict[str, dict[str, str]]] = []
+        for mcpu, mib in zip(cpu_shares, memory_shares, strict=True):
+            resources.append(
+                {
+                    "requests": {
+                        "cpu": self._format_mcpu(mcpu),
+                        "memory": self._format_mib(mib),
+                    },
+                    "limits": {
+                        "cpu": self._format_mcpu(mcpu),
+                        "memory": self._format_mib(mib),
+                    },
+                }
+            )
+        return resources
+
+    def _allocate_worker_health_ports(
+        self,
+        worker_count: int,
+        record_processor_count: int,
+    ) -> tuple[int, list[int], list[int]]:
+        """Allocate unique health ports for every container in a worker pod.
+
+        Containers in a pod share a network namespace, so each service container
+        needs its own port even though probes are scoped per container.
+        """
+        ports = K8sEnvironment.PORTS
+        manager_port = ports.WORKER_HEALTH
+        worker_ports = list(range(manager_port + 1, manager_port + 1 + worker_count))
+        record_processor_start = max(
+            ports.RECORD_PROCESSOR_HEALTH,
+            manager_port + 1 + worker_count,
+        )
+        record_processor_ports = list(
+            range(
+                record_processor_start,
+                record_processor_start + record_processor_count,
+            )
+        )
+
+        allocated = [manager_port, *worker_ports, *record_processor_ports]
+        if allocated and max(allocated) > 65535:
+            raise ValueError(
+                "Not enough port space to allocate unique worker-container health ports"
+            )
+        return manager_port, worker_ports, record_processor_ports
+
     def _create_startup_probe(
         self, port: int, path: str = "/healthz"
     ) -> dict[str, Any]:
@@ -375,11 +533,16 @@ class JobSetSpec(AIPerfBaseModel):
         }
 
     def _create_env_vars(
-        self, controller_host: str | None = None
+        self,
+        controller_host: str | None = None,
+        include_pod_index: bool = True,
     ) -> list[dict[str, Any]]:
         """Create environment variables for a container."""
         jobset_config = K8sEnvironment.JOBSET
         datasets_path = jobset_config.DATASETS_PATH
+        has_hf_home = any(
+            (item or {}).get("name") == "HF_HOME" for item in self.pod_template.env
+        )
         env: list[dict[str, Any]] = [
             # Shared dataset path: dataset-manager writes mmap files here,
             # API service serves them to workers via HTTP
@@ -393,20 +556,27 @@ class JobSetSpec(AIPerfBaseModel):
             # K8s pods need longer registration timeout: controller pod startup
             # is slower due to ZMQ proxy setup, health server, and cross-pod networking
             {"name": "AIPERF_SERVICE_REGISTRATION_TIMEOUT", "value": "120"},
-            # HF cache must be writable (readOnlyRootFilesystem)
-            {"name": "HF_HOME", "value": "/tmp/hf_home"},
-            # Expose the JobSet job-index as a unique pod identifier.
-            # JOB_COMPLETION_INDEX is always 0 because each replicated job has
-            # completions=1; the JobSet job-index label is the true replica index.
-            {
-                "name": "AIPERF_POD_INDEX",
-                "valueFrom": {
-                    "fieldRef": {
-                        "fieldPath": "metadata.labels['jobset.sigs.k8s.io/job-index']",
-                    }
-                },
-            },
         ]
+
+        # HF cache must be writable (readOnlyRootFilesystem)
+        if not has_hf_home:
+            env.append({"name": "HF_HOME", "value": "/tmp/hf_home"})
+
+        if include_pod_index:
+            # Expose the JobSet job-index as a unique pod identifier for
+            # worker-pod services. JOB_COMPLETION_INDEX is always 0 because
+            # each replicated job has completions=1; the JobSet job-index
+            # label is the true replica index.
+            env.append(
+                {
+                    "name": "AIPERF_POD_INDEX",
+                    "valueFrom": {
+                        "fieldRef": {
+                            "fieldPath": "metadata.labels['jobset.sigs.k8s.io/job-index']",
+                        }
+                    },
+                }
+            )
 
         if controller_host:
             env.append(
@@ -441,19 +611,23 @@ class JobSetSpec(AIPerfBaseModel):
         resources: dict[str, dict[str, str]] | None,
         api_port: int | None = None,
         controller_host: str | None = None,
+        service_id: str | None = None,
         extra_env: list[dict[str, Any]] | None = None,
+        include_pod_index: bool = True,
         skip_readiness_probe: bool = False,
     ) -> ContainerSpec:
         """Create a container spec with standard AIPerf configuration.
 
         Args:
             name: Container name.
-            service_type: AIPerf service type(s), comma-separated.
+            service_type: AIPerf service type for this container.
             health_port: Health check port.
             resources: Optional Kubernetes resource requests/limits.
             api_port: Optional API port for services that expose APIs.
             controller_host: Controller DNS for worker containers.
+            service_id: Optional explicit AIPerf service_id for this container.
             extra_env: Additional environment variables for this container.
+            include_pod_index: Whether to expose AIPERF_POD_INDEX into the container.
             skip_readiness_probe: If True, don't add a readiness probe.
         """
         jobset_config = K8sEnvironment.JOBSET
@@ -467,6 +641,8 @@ class JobSetSpec(AIPerfBaseModel):
             "--benchmark-run",
             run_file,
         ]
+        if service_id:
+            args.extend(["--service-id", service_id])
         if api_port:
             args.extend(["--api-port", str(api_port)])
 
@@ -474,7 +650,10 @@ class JobSetSpec(AIPerfBaseModel):
         if api_port:
             ports.append({"containerPort": api_port, "name": "api"})
 
-        env = self._create_env_vars(controller_host=controller_host)
+        env = self._create_env_vars(
+            controller_host=controller_host,
+            include_pod_index=include_pod_index,
+        )
         if extra_env:
             env.extend(extra_env)
 
@@ -505,25 +684,17 @@ class JobSetSpec(AIPerfBaseModel):
         )
 
     def _create_controller_containers(self) -> list[ContainerSpec]:
-        """Create a single container for the control-plane pod.
-
-        The control-plane runs as a single container where SystemController
-        spawns all other control-plane services as subprocesses. This enables
-        the control-plane to load, run, and fail as a single unit.
-
-        Services spawned as subprocesses:
-        - worker_manager, timing_manager, dataset_manager, records_manager
-        - api, gpu_telemetry_manager, server_metrics_manager
+        """Create one container per control-plane service in the controller pod.
 
         A small results sidecar shares /results and can continue serving
         exported artifacts if the main controller container terminates after
         export but before the operator downloads them.
 
-        Workers and RecordProcessors are external pods managed by JobSet.
+        Workers and RecordProcessors are external worker-pod services managed
+        by JobSet.
         """
         ports = K8sEnvironment.PORTS
 
-        control_plane_resources = self._resolve_pod_resources("CONTROLLER_POD")
         sidecar_resources = self._resolve_pod_resources("RESULTS_SIDECAR")
 
         results_sidecar = ContainerSpec(
@@ -550,42 +721,143 @@ class JobSetSpec(AIPerfBaseModel):
             security_context=self._create_security_context(),
         )
 
-        return [
+        containers = [
             self._create_container(
                 name=Containers.CONTROL_PLANE,
                 service_type="system_controller",
                 health_port=ports.SYSTEM_CONTROLLER_HEALTH,
-                resources=control_plane_resources,
-                api_port=ports.API_SERVICE,  # API is spawned as subprocess but needs port exposed
+                resources=self._resolve_pod_resources("SYSTEM_CONTROLLER"),
+                service_id="system_controller",
+                include_pod_index=False,
                 skip_readiness_probe=True,  # System controller manages its own lifecycle
                 # Enable realtime metrics since we don't use DASHBOARD UI
                 extra_env=[
                     {"name": "AIPERF_UI_REALTIME_METRICS_ENABLED", "value": "true"}
                 ],
             ),
-            results_sidecar,
+            self._create_container(
+                name=Containers.DATASET_MANAGER,
+                service_type="dataset_manager",
+                health_port=ports.DATASET_MANAGER_HEALTH,
+                resources=self._resolve_pod_resources("DATASET_MANAGER"),
+                service_id="dataset_manager",
+                include_pod_index=False,
+            ),
+            self._create_container(
+                name=Containers.TIMING_MANAGER,
+                service_type="timing_manager",
+                health_port=ports.TIMING_MANAGER_HEALTH,
+                resources=self._resolve_pod_resources("TIMING_MANAGER"),
+                service_id="timing_manager",
+                include_pod_index=False,
+            ),
+            self._create_container(
+                name=Containers.WORKER_MANAGER,
+                service_type="worker_manager",
+                health_port=ports.WORKER_MANAGER_HEALTH,
+                resources=self._resolve_pod_resources("WORKER_MANAGER"),
+                service_id="worker_manager",
+                include_pod_index=False,
+            ),
+            self._create_container(
+                name=Containers.RECORDS_MANAGER,
+                service_type="records_manager",
+                health_port=ports.RECORDS_MANAGER_HEALTH,
+                resources=self._resolve_pod_resources("RECORDS_MANAGER"),
+                service_id="records_manager",
+                include_pod_index=False,
+            ),
+            self._create_container(
+                name=Containers.API,
+                service_type="api",
+                health_port=ports.API_SERVICE_HEALTH,
+                resources=self._resolve_pod_resources("API"),
+                api_port=ports.API_SERVICE,
+                service_id="api",
+                include_pod_index=False,
+            ),
         ]
 
+        if self.gpu_telemetry_enabled:
+            containers.append(
+                self._create_container(
+                    name=Containers.GPU_TELEMETRY_MANAGER,
+                    service_type="gpu_telemetry_manager",
+                    health_port=ports.GPU_TELEMETRY_MANAGER_HEALTH,
+                    resources=self._resolve_pod_resources("GPU_TELEMETRY_MANAGER"),
+                    service_id="gpu_telemetry_manager",
+                    include_pod_index=False,
+                )
+            )
+
+        if self.server_metrics_enabled:
+            containers.append(
+                self._create_container(
+                    name=Containers.SERVER_METRICS_MANAGER,
+                    service_type="server_metrics_manager",
+                    health_port=ports.SERVER_METRICS_MANAGER_HEALTH,
+                    resources=self._resolve_pod_resources("SERVER_METRICS_MANAGER"),
+                    service_id="server_metrics_manager",
+                    include_pod_index=False,
+                )
+            )
+
+        containers.append(results_sidecar)
+        return containers
+
     def _create_worker_containers(self, controller_dns: str) -> list[ContainerSpec]:
-        """Create a single container for worker pods using WorkerPodManager.
+        """Create worker-pod containers with one container per runtime service.
 
-        The WorkerPodManager runs as the main process and spawns multiple workers
-        and record processors as subprocesses. This reduces network overhead by
-        downloading the dataset once per pod and sharing it via mmap.
+        The worker pod keeps a lightweight worker-pod-manager for shared pod
+        infrastructure (dataset download once per pod, local raw-inference
+        proxy, raw-record upload coordination), while each worker and record
+        processor runs in its own container instead of a subprocess.
         """
-        ports = K8sEnvironment.PORTS
+        worker_count = self._resolve_workers_per_pod()
+        record_processor_count = self._resolve_record_processors_per_pod()
+        manager_port, worker_ports, record_processor_ports = (
+            self._allocate_worker_health_ports(worker_count, record_processor_count)
+        )
+        resources = self._split_worker_pod_resources(
+            worker_count, record_processor_count
+        )
 
-        worker_pod_resources = self._resolve_pod_resources("WORKER_POD")
-
-        return [
+        containers: list[ContainerSpec] = [
             self._create_container(
                 name=Containers.WORKER_POD_MANAGER,
                 service_type="worker_pod_manager",
-                health_port=ports.WORKER_HEALTH,
-                resources=worker_pod_resources,
+                health_port=manager_port,
+                resources=resources[0],
                 controller_host=controller_dns,
-            ),
+            )
         ]
+
+        for ordinal, health_port in enumerate(worker_ports):
+            containers.append(
+                self._create_container(
+                    name=f"worker-{ordinal}",
+                    service_type="worker",
+                    service_id=f"worker_$(AIPERF_POD_INDEX)_{ordinal}",
+                    health_port=health_port,
+                    resources=resources[1 + ordinal],
+                    controller_host=controller_dns,
+                )
+            )
+
+        record_processor_offset = 1 + worker_count
+        for ordinal, health_port in enumerate(record_processor_ports):
+            containers.append(
+                self._create_container(
+                    name=f"record-processor-{ordinal}",
+                    service_type="record_processor",
+                    service_id=(f"record_processor_$(AIPERF_POD_INDEX)_{ordinal}"),
+                    health_port=health_port,
+                    resources=resources[record_processor_offset + ordinal],
+                    controller_host=controller_dns,
+                )
+            )
+
+        return containers
 
     def to_k8s_manifest(self) -> dict[str, Any]:
         """Generate the complete JobSet Kubernetes manifest."""

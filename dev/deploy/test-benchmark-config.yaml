@@ -3,12 +3,16 @@
 # Test benchmark configuration for K8s no-operator deployment against mock server
 
 models:
-  - Qwen/Qwen3-0.6B
+  - mock-model
 
 endpoint:
   urls:
     - http://aiperf-mock-server.default.svc.cluster.local:8000/v1/chat/completions
   type: chat
+  use_server_token_count: true
+
+tokenizer:
+  name: builtin
 
 datasets:
   main:

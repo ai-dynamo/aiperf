@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for WorkerPodManager service.
 
-WorkerPodManager runs in worker pods and spawns workers and record processors
-as subprocesses, enabling efficient resource sharing within a pod.
+WorkerPodManager runs in worker pods and coordinates shared pod infrastructure
+while worker and record-processor services run as sibling containers.
 """
 
 from pathlib import Path
@@ -21,12 +21,11 @@ from aiperf.common.models import (
     DatasetMetadata,
     MemoryMapClientMetadata,
     ProcessHealth,
-    WorkerStats,
     WorkerTaskStats,
 )
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.controller.proxy_manager import ProxyManager
-from aiperf.plugin.enums import DatasetSamplingStrategy, ServiceType
+from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.workers.worker_pod_manager import WorkerPodManager
 
 # =============================================================================
@@ -202,12 +201,6 @@ class TestWorkerPodManagerInit:
 
         assert manager.record_processors_per_pod == expected_rps
 
-    def test_subprocess_manager_created(
-        self, worker_pod_manager: WorkerPodManager
-    ) -> None:
-        """Test SubprocessManager is created during init."""
-        assert worker_pod_manager._subprocess_manager is not None
-
     def test_initial_state(self, worker_pod_manager: WorkerPodManager) -> None:
         """Test initial state is correct."""
         assert worker_pod_manager._dataset_downloaded is False
@@ -228,94 +221,24 @@ class TestWorkerPodManagerInit:
 
 
 # =============================================================================
-# Subprocess Spawning Tests
+# Startup Tests
 # =============================================================================
 
 
-class TestSubprocessSpawning:
-    """Tests for spawning worker and record processor subprocesses."""
+class TestStartup:
+    """Tests for WorkerPodManager startup behavior."""
 
     @pytest.mark.asyncio
-    async def test_spawn_correct_number_of_workers(
+    async def test_start_prefetches_tokenizers(
         self, worker_pod_manager_custom: WorkerPodManager
     ) -> None:
-        """Test spawning creates correct number of worker subprocesses."""
+        """Start warms shared tokenizer cache for sibling containers."""
         manager = worker_pod_manager_custom
-        manager._subprocess_manager.spawn_service = AsyncMock()
+        manager._prefetch_tokenizers = AsyncMock()
 
-        await manager._spawn_subprocesses()
+        await manager._start_worker_pod_manager()
 
-        # Count worker spawn calls
-        worker_calls = [
-            c
-            for c in manager._subprocess_manager.spawn_service.call_args_list
-            if c.kwargs.get("service_type") == ServiceType.WORKER
-        ]
-        assert len(worker_calls) == 8
-
-    @pytest.mark.asyncio
-    async def test_spawn_correct_number_of_record_processors(
-        self, worker_pod_manager_custom: WorkerPodManager
-    ) -> None:
-        """Test spawning creates correct number of record processor subprocesses."""
-        manager = worker_pod_manager_custom
-        manager._subprocess_manager.spawn_service = AsyncMock()
-
-        await manager._spawn_subprocesses()
-
-        # Count RP spawn calls
-        rp_calls = [
-            c
-            for c in manager._subprocess_manager.spawn_service.call_args_list
-            if c.kwargs.get("service_type") == ServiceType.RECORD_PROCESSOR
-        ]
-        assert len(rp_calls) == 2
-
-    @pytest.mark.asyncio
-    async def test_service_ids_share_pod_id(
-        self, worker_pod_manager_custom: WorkerPodManager
-    ) -> None:
-        """Test all spawned service IDs share the same pod_id segment."""
-        manager = worker_pod_manager_custom
-        manager._subprocess_manager.spawn_service = AsyncMock()
-
-        await manager._spawn_subprocesses()
-
-        # IDs are "{type}_{pod_id}_{index}" where type may contain underscores
-        # (e.g. "record_processor_abc123_0", "worker_abc123_0")
-        # The pod_id is the second-to-last segment when splitting on "_"
-        calls = manager._subprocess_manager.spawn_service.call_args_list
-        pod_ids = set()
-        for call in calls:
-            service_id = call.kwargs.get("service_id")
-            parts = service_id.rsplit("_", 2)
-            assert len(parts) >= 3 or parts[-1].isdigit()
-            pod_ids.add(parts[-2])
-        assert len(pod_ids) == 1, (
-            f"Expected single pod_id across all services, got {pod_ids}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_record_processors_spawned_before_workers(
-        self, worker_pod_manager_custom: WorkerPodManager
-    ) -> None:
-        """Test record processors are spawned before workers."""
-        manager = worker_pod_manager_custom
-        spawn_order = []
-
-        async def track_spawn(**kwargs):
-            spawn_order.append(kwargs.get("service_type"))
-
-        manager._subprocess_manager.spawn_service = AsyncMock(side_effect=track_spawn)
-
-        await manager._spawn_subprocesses()
-
-        # First 2 should be record processors, then 8 workers
-        rp_count = manager.record_processors_per_pod
-        for i in range(rp_count):
-            assert spawn_order[i] == ServiceType.RECORD_PROCESSOR
-        for i in range(rp_count, len(spawn_order)):
-            assert spawn_order[i] == ServiceType.WORKER
+        manager._prefetch_tokenizers.assert_called_once()
 
 
 # =============================================================================
@@ -413,7 +336,7 @@ class TestDatasetHandling:
 
 
 class TestHealthMonitoring:
-    """Tests for subprocess health monitoring."""
+    """Tests for worker health tracking across sibling containers."""
 
     @pytest.mark.asyncio
     async def test_worker_health_tracked(
@@ -465,88 +388,6 @@ class TestHealthMonitoring:
             == WorkerStartupState.WAITING_FOR_DATASET
         )
 
-    @pytest.mark.asyncio
-    async def test_dead_subprocess_detected(
-        self, worker_pod_manager: WorkerPodManager
-    ) -> None:
-        """Test dead subprocesses are detected and removed."""
-        manager = worker_pod_manager
-        manager.warning = MagicMock()
-
-        # Create a mock SubprocessInfo-like object
-        dead_info = MagicMock()
-        dead_info.process = MagicMock()
-        dead_info.process.exitcode = 1
-        dead_info.service_type = ServiceType.WORKER
-        dead_info.service_id = "test_worker_0"
-
-        manager._subprocess_manager.check_alive = MagicMock(return_value=[dead_info])
-        manager._subprocess_manager.remove = MagicMock()
-        manager._subprocess_manager.get_by_type = MagicMock(
-            return_value=[MagicMock()]  # At least one worker remaining
-        )
-
-        await manager._monitor_subprocesses()
-
-        manager._subprocess_manager.remove.assert_called_once_with(dead_info)
-        manager.warning.assert_called()
-
-    @pytest.mark.asyncio
-    async def test_dead_preready_worker_logs_startup_state(
-        self, worker_pod_manager: WorkerPodManager
-    ) -> None:
-        """Dead workers should log their last preready startup state when known."""
-        manager = worker_pod_manager
-        manager.warning = MagicMock()
-
-        manager.worker_health["test_worker_0"] = WorkerStats(
-            worker_id="test_worker_0",
-            startup_state=WorkerStartupState.WAITING_FOR_DATASET,
-        )
-
-        dead_info = MagicMock()
-        dead_info.process = MagicMock()
-        dead_info.process.exitcode = 1
-        dead_info.service_type = ServiceType.WORKER
-        dead_info.service_id = "test_worker_0"
-
-        manager._subprocess_manager.check_alive = MagicMock(return_value=[dead_info])
-        manager._subprocess_manager.remove = MagicMock()
-        manager._subprocess_manager.get_by_type = MagicMock(return_value=[MagicMock()])
-
-        await manager._monitor_subprocesses()
-
-        warning_message = manager.warning.call_args[0][0]
-        assert "before becoming ready" in warning_message
-        assert "waiting_for_dataset" in warning_message
-
-    @pytest.mark.asyncio
-    async def test_all_workers_dead_triggers_stop(
-        self, worker_pod_manager: WorkerPodManager
-    ) -> None:
-        """Test pod stops when all workers are dead."""
-        manager = worker_pod_manager
-        manager.error = MagicMock()
-        manager.stop = AsyncMock()
-
-        # Create a mock SubprocessInfo-like object
-        dead_info = MagicMock()
-        dead_info.process = MagicMock()
-        dead_info.process.exitcode = 1
-        dead_info.service_type = ServiceType.WORKER
-        dead_info.service_id = "test_worker_0"
-
-        manager._subprocess_manager.check_alive = MagicMock(return_value=[dead_info])
-        manager._subprocess_manager.remove = MagicMock()
-        manager._subprocess_manager.get_by_type = MagicMock(
-            return_value=[]
-        )  # No workers
-
-        await manager._monitor_subprocesses()
-
-        manager.error.assert_called()
-        manager.stop.assert_called_once()
-
 
 # =============================================================================
 # Shutdown Tests
@@ -569,51 +410,70 @@ class TestShutdown:
         manager.stop.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_stop_cleans_up_subprocesses(
+    async def test_stop_waits_for_raw_record_files(
         self, worker_pod_manager: WorkerPodManager
     ) -> None:
-        """Test stop cleans up all subprocesses."""
+        """Test stop waits for sibling record processors to flush files."""
         manager = worker_pod_manager
-        manager._subprocess_manager.stop_all = AsyncMock()
-        manager._subprocess_manager.clear = MagicMock()
+        manager._wait_for_raw_record_files = AsyncMock()
+        manager._proxy_manager.stop = AsyncMock()
+        manager._upload_raw_records = AsyncMock()
 
         await manager._stop_worker_pod_manager()
 
-        manager._subprocess_manager.stop_all.assert_called_once()
-        manager._subprocess_manager.clear.assert_called_once()
+        manager._wait_for_raw_record_files.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_stop_stops_proxy_manager(
         self, worker_pod_manager: WorkerPodManager
     ) -> None:
-        """Test stop calls proxy_manager.stop() after subprocesses are cleaned up."""
+        """Test stop calls proxy_manager.stop()."""
         manager = worker_pod_manager
-        manager._subprocess_manager.stop_all = AsyncMock()
-        manager._subprocess_manager.clear = MagicMock()
+        manager._wait_for_raw_record_files = AsyncMock()
         manager._proxy_manager.stop = AsyncMock()
+        manager._upload_raw_records = AsyncMock()
 
         await manager._stop_worker_pod_manager()
 
         manager._proxy_manager.stop.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_stop_order_subprocesses_before_proxy(
+    async def test_stop_order_wait_before_proxy_before_upload(
         self, worker_pod_manager: WorkerPodManager
     ) -> None:
-        """Test subprocesses are stopped before the proxy manager."""
+        """Test shutdown waits, then stops proxy, then uploads."""
         manager = worker_pod_manager
         call_order = []
-        manager._subprocess_manager.stop_all = AsyncMock(
-            side_effect=lambda: call_order.append("subprocesses")
+        manager._wait_for_raw_record_files = AsyncMock(
+            side_effect=lambda: call_order.append("wait")
         )
-        manager._subprocess_manager.clear = MagicMock()
         manager._proxy_manager.stop = AsyncMock(
             side_effect=lambda: call_order.append("proxy")
+        )
+        manager._upload_raw_records = AsyncMock(
+            side_effect=lambda: call_order.append("upload")
         )
 
         await manager._stop_worker_pod_manager()
 
-        assert call_order == ["subprocesses", "proxy"]
+        assert call_order == ["wait", "proxy", "upload"]
+
+    @pytest.mark.asyncio
+    async def test_wait_for_raw_record_files_returns_when_files_stabilize(
+        self, worker_pod_manager_custom: WorkerPodManager, tmp_path: Path
+    ) -> None:
+        """Raw-record wait completes once the expected files exist and stop growing."""
+        manager = worker_pod_manager_custom
+        manager.run.cfg.output.raw = True
+        manager.run.cfg.output.dir = tmp_path
+
+        raw_dir = tmp_path / "raw_records"
+        raw_dir.mkdir()
+        for idx in range(manager.record_processors_per_pod):
+            (raw_dir / f"raw_records_{idx}.jsonl").write_text('{"ok": true}\n')
+
+        with patch("asyncio.sleep", new=AsyncMock()):
+            await manager._wait_for_raw_record_files()
 
 
 # =============================================================================
@@ -659,12 +519,11 @@ class TestWorkerPodManagerIntegration:
         assert manager.record_processors_per_pod == 1
         assert manager._dataset_downloaded is False
 
-        # Mock subprocess spawning, tokenizer prefetch, and download
-        manager._subprocess_manager.spawn_service = AsyncMock()
-        manager._subprocess_manager.stop_all = AsyncMock()
-        manager._subprocess_manager.clear = MagicMock()
+        # Mock tokenizer prefetch, raw record coordination, proxy stop, and download
         manager._proxy_manager.stop = AsyncMock()
         manager._prefetch_tokenizers = AsyncMock()
+        manager._wait_for_raw_record_files = AsyncMock()
+        manager._upload_raw_records = AsyncMock()
 
         # Create mock paths that support stat()
         mock_data_path = MagicMock(spec=Path)
@@ -676,12 +535,9 @@ class TestWorkerPodManagerIntegration:
         )
         manager.publish = AsyncMock()
 
-        # Simulate startup (prefetches tokenizers, then spawns subprocesses)
+        # Simulate startup (prefetches shared tokenizer cache)
         await manager._start_worker_pod_manager()
         manager._prefetch_tokenizers.assert_called_once()
-        assert (
-            manager._subprocess_manager.spawn_service.call_count == 3
-        )  # 2 workers + 1 RP
 
         # Simulate dataset configured (triggers download and notification)
         await manager._on_dataset_configured(dataset_notification)
@@ -692,36 +548,5 @@ class TestWorkerPodManagerIntegration:
         # Simulate shutdown
         await manager._stop_worker_pod_manager()
 
-        manager._subprocess_manager.clear.assert_called_once()
+        manager._wait_for_raw_record_files.assert_called_once()
         manager._proxy_manager.stop.assert_called_once()
-
-    @pytest.mark.parametrize(
-        ("workers", "rps", "expected_total"),
-        [
-            param(1, 1, 2, id="minimal"),
-            param(4, 1, 5, id="four_workers"),
-            param(8, 2, 10, id="eight_workers"),
-            param(16, 4, 20, id="sixteen_workers"),
-        ],
-    )  # fmt: skip
-    @pytest.mark.asyncio
-    async def test_spawn_total_subprocesses(
-        self, workers: int, rps: int, expected_total: int
-    ) -> None:
-        """Test total subprocess count matches workers + record processors."""
-        test_run = _make_run(workers_per_pod=workers, record_processors_per_pod=rps)
-
-        with (
-            patch.object(WorkerPodManager, "debug"),
-            patch.object(WorkerPodManager, "info"),
-        ):
-            manager = WorkerPodManager(
-                run=test_run,
-                service_id="spawn-test",
-            )
-
-        manager._subprocess_manager.spawn_service = AsyncMock()
-
-        await manager._spawn_subprocesses()
-
-        assert manager._subprocess_manager.spawn_service.call_count == expected_total

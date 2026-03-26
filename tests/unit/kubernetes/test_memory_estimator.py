@@ -652,7 +652,7 @@ class TestConfigurationDefaults:
     def test_controller_pod_guaranteed_qos(self) -> None:
         from aiperf.kubernetes.environment import K8sEnvironment
 
-        pod = K8sEnvironment.CONTROLLER_POD
+        pod = K8sEnvironment.SYSTEM_CONTROLLER
         resources = pod.to_k8s_resources()
         assert resources["requests"] == resources["limits"]
 

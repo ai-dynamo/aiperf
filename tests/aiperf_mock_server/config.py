@@ -2,12 +2,37 @@
 # SPDX-License-Identifier: Apache-2.0
 """Mock server configuration."""
 
+import importlib
 import json
 import logging
 import os
 from typing import Annotated, Any, Literal
 
-from cyclopts import Parameter
+import cyclopts
+
+
+def _load_cyclopts_parameter() -> type:
+    param = getattr(cyclopts, "Parameter", None)
+    if param is not None:
+        return param
+    for module_name in (
+        "parameter",
+        "params",
+        "param",
+        "_parameter",
+        "_params",
+    ):
+        try:
+            module = importlib.import_module(f"cyclopts.{module_name}")
+        except Exception:
+            continue
+        param = getattr(module, "Parameter", None)
+        if param is not None:
+            return param
+    raise ImportError("cyclopts.Parameter is not available in this cyclopts version")
+
+
+Parameter = _load_cyclopts_parameter()
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Self

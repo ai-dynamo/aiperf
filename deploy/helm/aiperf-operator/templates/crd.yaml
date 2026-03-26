@@ -166,6 +166,10 @@ spec:
                   serviceAccountName:
                     type: string
                     description: Service account name for pods
+                  containerSecurityContext:
+                    type: object
+                    description: Container securityContext overrides (merged into each container spec)
+                    additionalProperties: true
               scheduling:
                 type: object
                 description: Kueue scheduling configuration

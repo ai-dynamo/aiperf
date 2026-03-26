@@ -127,8 +127,8 @@ service:
     class: aiperf.workers.worker_pod_manager:WorkerPodManager
     description: |
       Kubernetes worker pod manager service. Runs as the main process in worker pods,
-      downloads the dataset once, and spawns multiple workers and record processors as
-      subprocesses. Reduces network overhead by sharing dataset across workers in the pod.
+      downloads the dataset once, runs the pod-local raw-inference proxy, and
+      coordinates sibling worker and record-processor containers that share the pod.
     metadata:
       required: false
       auto_start: false
@@ -187,8 +187,8 @@ service_manager:
   kubernetes:
     class: aiperf.controller.kubernetes_service_manager:KubernetesServiceManager
     description: |
-      Kubernetes service manager for distributed deployments. Spawns control-plane
-      services as subprocesses within a single container, while workers and record
+      Kubernetes service manager for distributed deployments. Runs control-plane
+      services in separate controller-pod containers while workers and record
       processors are external Kubernetes pods managed by JobSet.
 
   multiprocessing:

@@ -182,10 +182,11 @@ class TestBenchmarkDeployment:
         small_benchmark_config: BenchmarkConfig,
         kubectl: KubectlClient,
     ) -> None:
-        """Verify deployment creates worker pod with single worker-pod-manager container.
+        """Verify deployment creates worker pod with per-service containers.
 
-        The worker-pod-manager container runs WorkerPodManager which downloads the dataset
-        once and spawns workers and record processors as subprocesses.
+        The worker pod keeps a worker-pod-manager container for shared pod
+        infrastructure, while workers and record processors run in their own
+        sibling containers.
         """
         result = await benchmark_deployer.deploy(
             config=small_benchmark_config,
@@ -211,19 +212,29 @@ class TestBenchmarkDeployment:
         assert len(worker_pods) >= 1
 
         worker = worker_pods[0]
-        # New architecture: single worker-pod-manager container spawns workers/RPs as subprocesses
-        expected_containers = {"worker-pod-manager"}
         actual_containers = set(worker.containers.keys())
+        worker_containers = {
+            name for name in actual_containers if name.startswith("worker-")
+        }
+        record_processor_containers = {
+            name for name in actual_containers if name.startswith("record-processor-")
+        }
 
         print(f"  Pod name: {worker.name}")
         print(f"  Pod phase: {worker.phase}")
         print(f"  Containers: {sorted(actual_containers)}")
-        print(f"  Expected: {sorted(expected_containers)}")
-        print("  ✓ Single worker-pod-manager container verified!")
+        print(
+            "  Expected: worker-pod-manager + worker-* + record-processor-* containers"
+        )
+        print("  ✓ Multi-container worker pod verified!")
         print(f"{'=' * 60}\n")
 
-        assert expected_containers == actual_containers, (
-            f"Expected single worker-pod-manager container, got: {actual_containers}"
+        assert "worker-pod-manager" in actual_containers
+        assert worker_containers, (
+            f"Expected at least one worker-* container, got: {actual_containers}"
+        )
+        assert record_processor_containers, (
+            f"Expected at least one record-processor-* container, got: {actual_containers}"
         )
 
         # Cleanup

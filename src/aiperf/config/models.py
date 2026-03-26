@@ -600,7 +600,7 @@ class RuntimeConfig(BaseConfig):
             default=None,
             ge=1,
             le=100,
-            description="Number of worker subprocesses per Kubernetes worker pod.",
+            description="Number of worker service containers per Kubernetes worker pod.",
         ),
     ]
 
@@ -610,7 +610,7 @@ class RuntimeConfig(BaseConfig):
             default=None,
             ge=1,
             le=100,
-            description="Number of record processor subprocesses per Kubernetes worker pod.",
+            description="Number of record processor service containers per Kubernetes worker pod.",
         ),
     ]
 

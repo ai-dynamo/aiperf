@@ -13,6 +13,7 @@ from pytest import param
 
 from aiperf.config.deployment import PodTemplateConfig
 from aiperf.kubernetes.enums import ImagePullPolicy
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import (
     JOBSET_API,
     JOBSET_FALLBACK_VERSION,
@@ -212,6 +213,8 @@ class TestJobSetSpec:
             job_id="test-123",
             image="aiperf:latest",
             worker_replicas=2,
+            workers_per_pod=2,
+            record_processors_per_pod=1,
         )
 
     def test_create_basic_jobset(self, basic_jobset_spec: JobSetSpec) -> None:
@@ -295,7 +298,7 @@ class TestJobSetSpec:
     ) -> None:
         """Test controller pod has expected containers.
 
-        Control-plane uses a main container plus a results sidecar.
+        Each control-plane service runs in its own container plus a results sidecar.
         """
         manifest = basic_jobset_spec.to_k8s_manifest()
         controller_job = next(
@@ -305,17 +308,25 @@ class TestJobSetSpec:
             "containers"
         ]
         container_names = [c["name"] for c in containers]
-        assert "control-plane" in container_names
-        assert "results-sidecar" in container_names
-        assert len(containers) == 2
+        assert set(container_names) == {
+            "control-plane",
+            "dataset-manager",
+            "timing-manager",
+            "worker-manager",
+            "records-manager",
+            "api",
+            "gpu-telemetry-manager",
+            "server-metrics-manager",
+            "results-sidecar",
+        }
 
     def test_to_k8s_manifest_worker_containers(
         self, basic_jobset_spec: JobSetSpec
     ) -> None:
         """Test worker pod has expected containers.
 
-        Worker pods use single WorkerPodManager that spawns workers and
-        record processors as subprocesses.
+        Worker pods keep a worker-pod-manager for shared infrastructure, while
+        workers and record processors each run in their own container.
         """
         manifest = basic_jobset_spec.to_k8s_manifest()
         worker_job = next(
@@ -323,9 +334,11 @@ class TestJobSetSpec:
         )
         containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
         container_names = [c["name"] for c in containers]
-        # Single worker-pod-manager container spawns workers and record-processors
         assert "worker-pod-manager" in container_names
-        assert len(containers) == 1
+        assert "worker-0" in container_names
+        assert "worker-1" in container_names
+        assert "record-processor-0" in container_names
+        assert len(containers) == 4
 
     def test_to_k8s_manifest_containers_have_image(
         self, basic_jobset_spec: JobSetSpec
@@ -460,10 +473,46 @@ class TestJobSetSpecContainerDetails:
                 f"{container['name']} missing controller host"
             )
 
-    def test_control_plane_container_has_api_port(
+    def test_worker_service_containers_have_unique_service_ids(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Test control-plane container exposes API port (spawns API as subprocess)."""
+        """Test worker and record-processor containers get deterministic service IDs."""
+        worker_job = next(
+            j
+            for j in jobset_manifest["spec"]["replicatedJobs"]
+            if j["name"] == "workers"
+        )
+        containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
+
+        worker_0 = next(c for c in containers if c["name"] == "worker-0")
+        record_processor_0 = next(
+            c for c in containers if c["name"] == "record-processor-0"
+        )
+
+        assert "--service-id" in worker_0["args"]
+        assert "worker_$(AIPERF_POD_INDEX)_0" in worker_0["args"]
+        assert "--service-id" in record_processor_0["args"]
+        assert "record_processor_$(AIPERF_POD_INDEX)_0" in record_processor_0["args"]
+
+    def test_worker_container_health_ports_are_unique_within_pod(
+        self, jobset_manifest: dict[str, Any]
+    ) -> None:
+        """Test worker pod containers get distinct health ports."""
+        worker_job = next(
+            j
+            for j in jobset_manifest["spec"]["replicatedJobs"]
+            if j["name"] == "workers"
+        )
+        containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
+        ports = [
+            container["ports"][0]["containerPort"]
+            for container in containers
+            if container["ports"]
+        ]
+        assert len(ports) == len(set(ports))
+
+    def test_api_container_has_api_port(self, jobset_manifest: dict[str, Any]) -> None:
+        """Test API container exposes both health and API ports."""
         controller_job = next(
             j
             for j in jobset_manifest["spec"]["replicatedJobs"]
@@ -472,8 +521,8 @@ class TestJobSetSpecContainerDetails:
         containers = controller_job["template"]["spec"]["template"]["spec"][
             "containers"
         ]
-        control_plane = next(c for c in containers if c["name"] == "control-plane")
-        port_names = [p["name"] for p in control_plane["ports"]]
+        api_container = next(c for c in containers if c["name"] == "api")
+        port_names = [p["name"] for p in api_container["ports"]]
         assert "api" in port_names
         assert "health" in port_names
 
@@ -872,6 +921,26 @@ class TestJobSetSpecResourceAggregation:
         """Test memory value parsing."""
         result = parse_memory_mib(memory_value)
         assert result == expected
+
+    def test_split_worker_resources_preserve_total_budget(
+        self, jobset_spec: JobSetSpec
+    ) -> None:
+        """Split worker-container resources should sum back to WORKER_POD totals."""
+        split = jobset_spec._split_worker_pod_resources(
+            worker_count=2,
+            record_processor_count=1,
+        )
+        cpu_total = sum(parse_cpu(item["requests"]["cpu"]) for item in split if item)
+        memory_total = sum(
+            parse_memory_mib(item["requests"]["memory"]) for item in split if item
+        )
+
+        expected = K8sEnvironment.WORKER_POD.to_k8s_resources()
+        expected_cpu = parse_cpu(expected["requests"]["cpu"])
+        expected_memory = parse_memory_mib(expected["requests"]["memory"])
+
+        assert cpu_total == expected_cpu
+        assert memory_total == expected_memory
 
 
 class TestJobSetSpecEnvVars:

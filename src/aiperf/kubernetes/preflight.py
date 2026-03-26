@@ -15,7 +15,10 @@ from enum import Enum
 from typing import Any
 
 from aiperf.kubernetes.console import logger
-from aiperf.kubernetes.environment import K8sEnvironment
+from aiperf.kubernetes.environment import (
+    CONTROLLER_RESOURCE_KEYS,
+    K8sEnvironment,
+)
 from aiperf.kubernetes.jobset import JOBSET_API, get_jobset_install_hint
 from aiperf.kubernetes.preflight_utils import (
     check_rbac_access as _shared_check_rbac_access,
@@ -60,6 +63,17 @@ _REQUIRED_RBAC_PERMISSIONS: list[tuple[str, str, str]] = [
     ("get", "jobsets", JOBSET_API.group),
     ("delete", "jobsets", JOBSET_API.group),
 ]
+
+
+def _controller_resource_requirements() -> tuple[float, float]:
+    """Return total controller-pod CPU cores and memory GiB."""
+    cpu = 0.0
+    memory = 0.0
+    for key in CONTROLLER_RESOURCE_KEYS:
+        settings = getattr(K8sEnvironment, key)
+        cpu += parse_cpu(settings.CPU)
+        memory += parse_memory_gib(settings.MEMORY)
+    return cpu, memory
 
 
 @dataclass
@@ -583,8 +597,7 @@ class PreflightChecker:
                     message="No resource quotas configured",
                 )
 
-            ctrl_cpu = parse_cpu(K8sEnvironment.CONTROLLER_POD.CPU)
-            ctrl_mem = parse_memory_gib(K8sEnvironment.CONTROLLER_POD.MEMORY)
+            ctrl_cpu, ctrl_mem = _controller_resource_requirements()
             worker_cpu = parse_cpu(K8sEnvironment.WORKER_POD.CPU)
             worker_mem = parse_memory_gib(K8sEnvironment.WORKER_POD.MEMORY)
             required_cpu = ctrl_cpu + (worker_cpu * self.workers)
@@ -689,8 +702,7 @@ class PreflightChecker:
                     total_cpu += parse_cpu(allocatable.get("cpu", "0"))
                     total_memory += parse_memory_gib(allocatable.get("memory", "0"))
 
-            ctrl_cpu = parse_cpu(K8sEnvironment.CONTROLLER_POD.CPU)
-            ctrl_mem = parse_memory_gib(K8sEnvironment.CONTROLLER_POD.MEMORY)
+            ctrl_cpu, ctrl_mem = _controller_resource_requirements()
             worker_cpu = parse_cpu(K8sEnvironment.WORKER_POD.CPU)
             worker_mem = parse_memory_gib(K8sEnvironment.WORKER_POD.MEMORY)
 

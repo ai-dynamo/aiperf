@@ -167,10 +167,10 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
             ServiceRegistry.fail_service(info.service_id, info.service_type)
 
     async def wait_for_api_subprocess(self) -> None:
-        """Block until the API subprocess terminates (Kubernetes mode only).
+        """Block until the API service runtime terminates (Kubernetes mode only).
 
-        Default implementation is a no-op. Override in Kubernetes subprocess
-        service manager to block until API finishes serving results.
+        Default implementation is a no-op. Override in Kubernetes service
+        managers that keep a local API runtime alive after benchmarking.
         """
         pass
 

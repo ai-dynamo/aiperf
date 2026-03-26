@@ -4151,7 +4151,7 @@
             }
           ],
           "default": null,
-          "description": "Number of worker subprocesses per Kubernetes worker pod.",
+          "description": "Number of worker service containers per Kubernetes worker pod.",
           "title": "Workersperpod",
           "x-jinja2-supported": true
         },
@@ -4177,7 +4177,7 @@
             }
           ],
           "default": null,
-          "description": "Number of record processor subprocesses per Kubernetes worker pod.",
+          "description": "Number of record processor service containers per Kubernetes worker pod.",
           "title": "Recordprocessorsperpod",
           "x-jinja2-supported": true
         },

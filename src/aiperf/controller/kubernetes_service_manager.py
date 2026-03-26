@@ -3,12 +3,12 @@
 """Kubernetes service manager for AIPerf.
 
 This module provides a hybrid ServiceManager implementation that:
-- Spawns control-plane services as subprocesses (like MultiProcessServiceManager)
+- Treats control-plane services as sibling Kubernetes containers
 - Treats workers and record processors as external Kubernetes pods
 - Monitors pod health with container-level detail (OOMKilled, CrashLoopBackOff, etc.)
 
-This enables running the control-plane as a single container that spawns
-singleton services internally, while workers are deployed as separate pods.
+This enables Kubernetes mode to run one container per control-plane service
+while workers remain separate worker pods managed by JobSet.
 """
 
 from __future__ import annotations
@@ -32,13 +32,22 @@ from aiperf.plugin.enums import ServiceType
 if TYPE_CHECKING:
     from aiperf.kubernetes.client import AIPerfKubeClient
 
-# Services that are external Kubernetes pods (not spawned by service manager)
+# Services that are externally managed in Kubernetes mode (not spawned by the
+# service manager as local subprocesses).
 # In Kubernetes mode:
-# - WORKER and RECORD_PROCESSOR are spawned by WorkerPodManager (not by this manager)
-# - WORKER_POD_MANAGER is the main process in worker pods (managed by JobSet)
+# - Control-plane services run in sibling containers in the controller pod
+# - WORKER and RECORD_PROCESSOR run in sibling worker-pod containers
+# - WORKER_POD_MANAGER is the shared pod-infrastructure container
 EXTERNAL_K8S_SERVICES = frozenset(
     {
+        ServiceType.API,
+        ServiceType.DATASET_MANAGER,
+        ServiceType.GPU_TELEMETRY_MANAGER,
+        ServiceType.RECORDS_MANAGER,
+        ServiceType.SERVER_METRICS_MANAGER,
+        ServiceType.TIMING_MANAGER,
         ServiceType.WORKER,
+        ServiceType.WORKER_MANAGER,
         ServiceType.RECORD_PROCESSOR,
         ServiceType.WORKER_POD_MANAGER,
     }
@@ -82,17 +91,17 @@ class PodInfo:
 class KubernetesServiceManager(MultiProcessServiceManager):
     """Service manager for Kubernetes distributed deployments.
 
-    Spawns control-plane services (dataset_manager, timing_manager, etc.) as
-    subprocesses within a single container, while workers and record processors
-    are external pods that connect via TCP.
+    Treats control-plane services as sibling containers in the controller pod,
+    while workers, record processors, and worker-pod-manager services are
+    external Kubernetes containers/pods.
 
     Maintains a pod registry that tracks per-pod health, container states, and
     restart counts. The SystemController can query pod state for diagnostics
     and error reporting.
 
     Key differences from MultiProcessServiceManager:
-    - run_service: No-op for WORKER and RECORD_PROCESSOR (external pods)
-    - stop_service: No-op for WORKER and RECORD_PROCESSOR (managed by JobSet)
+    - run_service: No-op for externally managed K8s containers/pods
+    - stop_service: No-op for externally managed K8s containers/pods
     - wait_for_*: Waits for external services to register via message bus
     - Pod health monitoring with container-level failure detection
     """
@@ -115,15 +124,15 @@ class KubernetesServiceManager(MultiProcessServiceManager):
     async def run_service(
         self, service_type: ServiceTypeT, num_replicas: int = 1
     ) -> None:
-        """Run a service, either as subprocess or external pod.
+        """Register expectations for an externally managed Kubernetes service.
 
-        For control-plane services, spawns them as subprocesses.
-        For workers/record processors, sets up count-based expectations
-        in the ServiceRegistry so wait_for_all knows what to wait for.
+        Kubernetes manifests launch control-plane services as sibling containers
+        and workers/record processors via worker pods, so the service manager
+        only records how many instances must register.
         """
         if self._is_external_service(service_type):
             self.debug(
-                f"Expecting {num_replicas} external {service_type} pod(s) to register"
+                f"Expecting {num_replicas} external {service_type} instance(s) to register"
             )
             ServiceRegistry.expect_services({service_type: num_replicas})
             return
@@ -133,29 +142,32 @@ class KubernetesServiceManager(MultiProcessServiceManager):
     async def stop_service(
         self, service_type: ServiceTypeT, service_id: str | None = None
     ) -> list[BaseException | None]:
-        """Stop a service, either subprocess or external pod.
+        """Stop a service, either local subprocess or external Kubernetes runtime.
 
-        For control-plane services, terminates the subprocess.
-        For workers/record processors, this is a no-op since they are
-        managed by JobSet.
+        Externally managed Kubernetes services receive shutdown over the control
+        channel and exit on their own, so there is no subprocess to stop here.
         """
         if self._is_external_service(service_type):
             self.debug(
-                f"stop_service called for {service_type} (no-op - external Kubernetes pod)"
+                f"stop_service called for {service_type} "
+                "(no-op - externally managed in Kubernetes)"
             )
             return []
 
         return await super().stop_service(service_type, service_id)
 
     async def shutdown_all_services(self) -> list[BaseException | None]:
-        """Stop all control-plane services except API.
+        """Stop any locally managed subprocesses except API.
 
-        In Kubernetes mode, the API service should continue running after
-        the benchmark completes to serve results. All other control-plane
-        services are stopped normally.
+        Normal Kubernetes-mode deployments launch sibling controller containers
+        directly from the pod spec, so this usually has nothing to do. The
+        fallback subprocess cleanup remains for defensive compatibility.
         """
         self._shutdown_complete = True
-        self.debug("Stopping all service processes (excluding API for results serving)")
+        self.debug(
+            "Stopping any locally managed service processes "
+            "(excluding API for results serving)"
+        )
 
         to_stop = [
             info
@@ -177,11 +189,11 @@ class KubernetesServiceManager(MultiProcessServiceManager):
         return results
 
     async def wait_for_api_subprocess(self) -> None:
-        """Block until the API subprocess terminates.
+        """Block until the API subprocess terminates, if one exists.
 
-        In Kubernetes mode, after the benchmark completes, the API subprocess
-        continues serving results. This method blocks until the API process
-        exits, keeping the main container alive.
+        When the API runs as its own container there is no local subprocess and
+        this returns immediately. The fallback wait remains for compatibility
+        with older single-container layouts.
         """
         api_infos = self._subprocess_manager.get_by_type(ServiceType.API)
         if not api_infos or not api_infos[0].process:
@@ -271,6 +283,9 @@ class KubernetesServiceManager(MultiProcessServiceManager):
                 raw = pod.raw
                 metadata = raw.get("metadata", {})
                 labels = metadata.get("labels", {})
+                replicated_job = labels.get(JobSetLabels.REPLICATED_JOB_NAME)
+                if replicated_job and replicated_job != "workers":
+                    continue
                 pod_index = labels.get(JobSetLabels.POD_INDEX)
                 if pod_index is None:
                     continue
@@ -399,6 +414,9 @@ class KubernetesServiceManager(MultiProcessServiceManager):
                 metadata = raw.get("metadata", {})
                 pod_name = metadata.get("name", "unknown")
                 labels = metadata.get("labels", {})
+                replicated_job = labels.get(JobSetLabels.REPLICATED_JOB_NAME)
+                if replicated_job and replicated_job != "workers":
+                    continue
                 pod_index = labels.get(JobSetLabels.POD_INDEX)
                 if pod_index is None:
                     continue

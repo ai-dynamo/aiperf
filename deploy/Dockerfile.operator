@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Lightweight operator image for development/testing
-FROM python:3.13-slim-bookworm
+FROM python:3.13-slim-trixie
 
 # Install build dependencies for numpy and other packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -12,6 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
+
+# Create and activate a dedicated venv for the operator
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+RUN uv venv /app/.venv --python 3.13 --clear
 
 # Layer 1: Install dependencies only (cached unless pyproject.toml/uv.lock change)
 COPY pyproject.toml uv.lock ./
@@ -34,4 +39,4 @@ ENV PYTHONUNBUFFERED=1
 USER 1000
 
 # Run kopf operator
-ENTRYPOINT ["kopf", "run", "-m", "aiperf.operator.main", "--verbose", "--all-namespaces"]
+ENTRYPOINT ["/app/.venv/bin/kopf", "run", "-m", "aiperf.operator.main", "--verbose", "--all-namespaces"]

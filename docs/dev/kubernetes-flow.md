@@ -409,10 +409,10 @@ Resource limits configured via `src/aiperf/kubernetes/environment.py`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AIPERF_K8S_CONTROLLER_POD_CPU` | 3000m | Controller pod CPU (request and limit) |
-| `AIPERF_K8S_CONTROLLER_POD_MEMORY` | 2176Mi | Controller pod memory (request and limit) |
+| `AIPERF_K8S_SYSTEM_CONTROLLER_CPU` | 250m | System controller container CPU (request and limit) |
+| `AIPERF_K8S_DATASET_MANAGER_MEMORY` | 512Mi | Dataset manager container memory (request and limit) |
 | `AIPERF_K8S_WORKER_POD_CPU` | 3350m | Worker pod CPU (request and limit) |
-| `AIPERF_K8S_WORKER_POD_MEMORY` | 3200Mi | Worker pod memory (request and limit) |
+| `AIPERF_K8S_WORKER_POD_MEMORY` | 6144Mi | Worker pod memory (request and limit) |
 | `AIPERF_K8S_PORT_API_SERVICE` | 9090 | API service port |
 | `AIPERF_K8S_JOBSET_TTL_SECONDS_AFTER_FINISHED` | 300 | TTL after completion |
 

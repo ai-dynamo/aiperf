@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for KubernetesServiceManager.
 
-Tests the hybrid service manager that spawns control-plane services as
-subprocesses while treating workers/record processors as external K8s pods.
+Tests the Kubernetes service manager that treats controller services and
+worker services as externally managed Kubernetes runtimes.
 """
 
 import asyncio
@@ -42,7 +42,14 @@ class TestIsExternalService:
     @pytest.mark.parametrize(
         "service_type",
         [
+            param(ServiceType.API, id="api"),
+            param(ServiceType.DATASET_MANAGER, id="dataset_manager"),
+            param(ServiceType.GPU_TELEMETRY_MANAGER, id="gpu_telemetry_manager"),
+            param(ServiceType.RECORDS_MANAGER, id="records_manager"),
+            param(ServiceType.SERVER_METRICS_MANAGER, id="server_metrics_manager"),
+            param(ServiceType.TIMING_MANAGER, id="timing_manager"),
             param(ServiceType.WORKER, id="worker"),
+            param(ServiceType.WORKER_MANAGER, id="worker_manager"),
             param(ServiceType.RECORD_PROCESSOR, id="record_processor"),
             param(ServiceType.WORKER_POD_MANAGER, id="worker_pod_manager"),
         ],
@@ -56,26 +63,19 @@ class TestIsExternalService:
     @pytest.mark.parametrize(
         "service_type",
         [
-            param(ServiceType.API, id="api"),
-            param(ServiceType.DATASET_MANAGER, id="dataset_manager"),
-            param(ServiceType.GPU_TELEMETRY_MANAGER, id="gpu_telemetry_manager"),
-            param(ServiceType.RECORDS_MANAGER, id="records_manager"),
-            param(ServiceType.SERVER_METRICS_MANAGER, id="server_metrics_manager"),
             param(ServiceType.SYSTEM_CONTROLLER, id="system_controller"),
-            param(ServiceType.TIMING_MANAGER, id="timing_manager"),
-            param(ServiceType.WORKER_MANAGER, id="worker_manager"),
         ],
     )  # fmt: skip
     def test_internal_services(
         self, manager: KubernetesServiceManager, service_type: ServiceType
     ) -> None:
-        """Control-plane services should return False."""
+        """Services not launched by the manager should return False."""
         assert manager._is_external_service(service_type) is False
 
     def test_external_set_is_frozen(self) -> None:
         """EXTERNAL_K8S_SERVICES should be an immutable frozenset."""
         assert isinstance(EXTERNAL_K8S_SERVICES, frozenset)
-        assert len(EXTERNAL_K8S_SERVICES) == 3
+        assert len(EXTERNAL_K8S_SERVICES) == 10
 
 
 class TestRunService:
@@ -123,18 +123,19 @@ class TestRunService:
     async def test_run_internal_service_delegates_to_parent(
         self, manager: KubernetesServiceManager
     ) -> None:
-        """Running a control-plane service should delegate to MultiProcessServiceManager."""
+        """Non-external services should still delegate to MultiProcessServiceManager."""
         with patch(
             "aiperf.controller.multiprocess_service_manager.MultiProcessServiceManager.run_service",
             new_callable=AsyncMock,
         ) as mock_parent:
-            await manager.run_service(ServiceType.DATASET_MANAGER, num_replicas=1)
-            mock_parent.assert_awaited_once_with(ServiceType.DATASET_MANAGER, 1)
+            await manager.run_service(ServiceType.SYSTEM_CONTROLLER, num_replicas=1)
+            mock_parent.assert_awaited_once_with(ServiceType.SYSTEM_CONTROLLER, 1)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "service_type",
         [
+            param(ServiceType.DATASET_MANAGER, id="dataset_manager"),
             param(ServiceType.WORKER, id="worker"),
             param(ServiceType.RECORD_PROCESSOR, id="record_processor"),
             param(ServiceType.WORKER_POD_MANAGER, id="worker_pod_manager"),
@@ -188,14 +189,14 @@ class TestStopService:
     async def test_stop_internal_service_delegates_to_parent(
         self, manager: KubernetesServiceManager
     ) -> None:
-        """Stopping a control-plane service should delegate to parent."""
+        """Stopping a non-external service should delegate to parent."""
         with patch(
             "aiperf.controller.multiprocess_service_manager.MultiProcessServiceManager.stop_service",
             new_callable=AsyncMock,
             return_value=[None],
         ) as mock_parent:
-            result = await manager.stop_service(ServiceType.DATASET_MANAGER)
-            mock_parent.assert_awaited_once_with(ServiceType.DATASET_MANAGER, None)
+            result = await manager.stop_service(ServiceType.SYSTEM_CONTROLLER)
+            mock_parent.assert_awaited_once_with(ServiceType.SYSTEM_CONTROLLER, None)
             assert result == [None]
 
     @pytest.mark.asyncio
@@ -208,8 +209,12 @@ class TestStopService:
             new_callable=AsyncMock,
             return_value=[None],
         ) as mock_parent:
-            await manager.stop_service(ServiceType.TIMING_MANAGER, service_id="tm_001")
-            mock_parent.assert_awaited_once_with(ServiceType.TIMING_MANAGER, "tm_001")
+            await manager.stop_service(
+                ServiceType.SYSTEM_CONTROLLER, service_id="controller_001"
+            )
+            mock_parent.assert_awaited_once_with(
+                ServiceType.SYSTEM_CONTROLLER, "controller_001"
+            )
 
 
 class TestShutdownAllServices:

@@ -1436,10 +1436,21 @@ class TestCheckNodeResourcesEdgeCases:
     @pytest.mark.asyncio
     async def test_boundary_exactly_enough_resources(self) -> None:
         """When resources exactly match what is needed, it should pass."""
-        from aiperf.kubernetes.environment import K8sEnvironment
+        from aiperf.kubernetes.environment import (
+            CONTROLLER_RESOURCE_KEYS,
+            K8sEnvironment,
+        )
 
-        ctrl_cpu = float(K8sEnvironment.CONTROLLER_POD.CPU.replace("m", "")) / 1000
-        ctrl_mem_mib = float(K8sEnvironment.CONTROLLER_POD.MEMORY.replace("Mi", ""))
+        ctrl_cpu = sum(
+            float(getattr(K8sEnvironment, key).CPU.replace("m", "")) / 1000
+            if getattr(K8sEnvironment, key).CPU.endswith("m")
+            else float(getattr(K8sEnvironment, key).CPU)
+            for key in CONTROLLER_RESOURCE_KEYS
+        )
+        ctrl_mem_mib = sum(
+            float(getattr(K8sEnvironment, key).MEMORY.replace("Mi", ""))
+            for key in CONTROLLER_RESOURCE_KEYS
+        )
         worker_cpu = float(K8sEnvironment.WORKER_POD.CPU.replace("m", "")) / 1000
         worker_mem_mib = float(K8sEnvironment.WORKER_POD.MEMORY.replace("Mi", ""))
 

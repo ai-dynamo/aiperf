@@ -65,6 +65,13 @@ class Containers:
     """Container names used in pod specs and CLI commands."""
 
     CONTROL_PLANE: str = "control-plane"
+    DATASET_MANAGER: str = "dataset-manager"
+    TIMING_MANAGER: str = "timing-manager"
+    WORKER_MANAGER: str = "worker-manager"
+    RECORDS_MANAGER: str = "records-manager"
+    API: str = "api"
+    GPU_TELEMETRY_MANAGER: str = "gpu-telemetry-manager"
+    SERVER_METRICS_MANAGER: str = "server-metrics-manager"
     RESULTS_SIDECAR: str = "results-sidecar"
     WORKER_POD_MANAGER: str = "worker-pod-manager"
 

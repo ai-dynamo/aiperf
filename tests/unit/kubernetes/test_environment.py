@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from pytest import param
 
 from aiperf.kubernetes.environment import (
+    CONTROLLER_RESOURCE_KEYS,
     K8sEnvironment,
     _HealthProbeSettings,
     _JobSetSettings,
@@ -22,7 +23,15 @@ class TestResourceSettingsToK8sResources:
     @pytest.mark.parametrize(
         "setting_attr,cpu,memory",
         [
-            param("CONTROLLER_POD", "3000m", "2176Mi", id="controller_pod"),
+            param("SYSTEM_CONTROLLER", "250m", "256Mi", id="system_controller"),
+            param("WORKER_MANAGER", "250m", "256Mi", id="worker_manager"),
+            param("TIMING_MANAGER", "1000m", "512Mi", id="timing_manager"),
+            param("DATASET_MANAGER", "500m", "512Mi", id="dataset_manager"),
+            param("RECORDS_MANAGER", "500m", "512Mi", id="records_manager"),
+            param("API", "250m", "256Mi", id="api"),
+            param("GPU_TELEMETRY_MANAGER", "125m", "128Mi", id="gpu_telemetry"),
+            param("SERVER_METRICS_MANAGER", "125m", "128Mi", id="server_metrics"),
+            param("RESULTS_SIDECAR", "100m", "128Mi", id="results_sidecar"),
             param("WORKER_POD", "3350m", "6144Mi", id="worker_pod"),
         ],
     )  # fmt: skip
@@ -42,24 +51,33 @@ class TestResourceSettingsToK8sResources:
         }
 
 
-class TestK8sEnvironmentControllerPod:
-    """Tests for K8sEnvironment.CONTROLLER_POD settings."""
+class TestK8sEnvironmentControllerContainers:
+    """Tests for controller-side per-container resource settings."""
 
-    def test_controller_pod_default_values(self) -> None:
-        pod = K8sEnvironment.CONTROLLER_POD
-        assert pod.CPU == "3000m"
-        assert pod.MEMORY == "2176Mi"
+    @pytest.mark.parametrize(
+        "setting_attr,cpu,memory",
+        [
+            param("SYSTEM_CONTROLLER", "250m", "256Mi", id="system_controller"),
+            param("WORKER_MANAGER", "250m", "256Mi", id="worker_manager"),
+            param("TIMING_MANAGER", "1000m", "512Mi", id="timing_manager"),
+            param("DATASET_MANAGER", "500m", "512Mi", id="dataset_manager"),
+            param("RECORDS_MANAGER", "500m", "512Mi", id="records_manager"),
+            param("API", "250m", "256Mi", id="api"),
+            param("GPU_TELEMETRY_MANAGER", "125m", "128Mi", id="gpu_telemetry"),
+            param("SERVER_METRICS_MANAGER", "125m", "128Mi", id="server_metrics"),
+        ],
+    )  # fmt: skip
+    def test_controller_container_default_values(
+        self, setting_attr: str, cpu: str, memory: str
+    ) -> None:
+        setting = getattr(K8sEnvironment, setting_attr)
+        assert cpu == setting.CPU
+        assert memory == setting.MEMORY
 
-    def test_controller_pod_guaranteed_qos(self) -> None:
-        resources = K8sEnvironment.CONTROLLER_POD.to_k8s_resources()
+    @pytest.mark.parametrize("setting_attr", CONTROLLER_RESOURCE_KEYS)
+    def test_controller_container_guaranteed_qos(self, setting_attr: str) -> None:
+        resources = getattr(K8sEnvironment, setting_attr).to_k8s_resources()
         assert resources["requests"] == resources["limits"]
-
-    def test_controller_pod_to_k8s_resources(self) -> None:
-        resources = K8sEnvironment.CONTROLLER_POD.to_k8s_resources()
-        assert resources["requests"]["cpu"] == "3000m"
-        assert resources["limits"]["cpu"] == "3000m"
-        assert resources["requests"]["memory"] == "2176Mi"
-        assert resources["limits"]["memory"] == "2176Mi"
 
 
 class TestK8sEnvironmentWorkerPod:
@@ -88,19 +106,21 @@ class TestK8sEnvironmentWorkerPod:
 class TestPodResourceEnvOverrides:
     """Tests for pod-level resource env var overrides."""
 
-    def test_controller_pod_cpu_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("AIPERF_K8S_CONTROLLER_POD_CPU", "4000m")
-        settings = _resource_settings("CONTROLLER_POD_", "3000m", "2176Mi")
-        assert settings.CPU == "4000m"
-        assert settings.MEMORY == "2176Mi"
-
-    def test_controller_pod_memory_override(
+    def test_system_controller_cpu_override(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("AIPERF_K8S_CONTROLLER_POD_MEMORY", "4096Mi")
-        settings = _resource_settings("CONTROLLER_POD_", "3000m", "2176Mi")
-        assert settings.MEMORY == "4096Mi"
-        assert settings.CPU == "3000m"
+        monkeypatch.setenv("AIPERF_K8S_SYSTEM_CONTROLLER_CPU", "400m")
+        settings = _resource_settings("SYSTEM_CONTROLLER_", "250m", "256Mi")
+        assert settings.CPU == "400m"
+        assert settings.MEMORY == "256Mi"
+
+    def test_dataset_manager_memory_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AIPERF_K8S_DATASET_MANAGER_MEMORY", "768Mi")
+        settings = _resource_settings("DATASET_MANAGER_", "500m", "512Mi")
+        assert settings.MEMORY == "768Mi"
+        assert settings.CPU == "500m"
 
     def test_worker_pod_cpu_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("AIPERF_K8S_WORKER_POD_CPU", "5000m")
@@ -125,29 +145,29 @@ class TestPodResourceEnvOverrides:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Overriding CPU/MEMORY sets both request and limit (Guaranteed QoS)."""
-        monkeypatch.setenv("AIPERF_K8S_CONTROLLER_POD_CPU", "4000m")
-        monkeypatch.setenv("AIPERF_K8S_CONTROLLER_POD_MEMORY", "4096Mi")
-        settings = _resource_settings("CONTROLLER_POD_", "3000m", "2176Mi")
+        monkeypatch.setenv("AIPERF_K8S_SYSTEM_CONTROLLER_CPU", "400m")
+        monkeypatch.setenv("AIPERF_K8S_SYSTEM_CONTROLLER_MEMORY", "384Mi")
+        settings = _resource_settings("SYSTEM_CONTROLLER_", "250m", "256Mi")
         resources = settings.to_k8s_resources()
-        assert resources["requests"]["cpu"] == "4000m"
-        assert resources["limits"]["cpu"] == "4000m"
-        assert resources["requests"]["memory"] == "4096Mi"
-        assert resources["limits"]["memory"] == "4096Mi"
+        assert resources["requests"]["cpu"] == "400m"
+        assert resources["limits"]["cpu"] == "400m"
+        assert resources["requests"]["memory"] == "384Mi"
+        assert resources["limits"]["memory"] == "384Mi"
 
-    def test_no_per_service_settings_exposed(self) -> None:
-        """Per-service settings like CONTROLLER, WORKER, TIMING_MANAGER should not exist."""
+    def test_per_service_settings_exposed(self) -> None:
+        """Controller services should expose per-container resource settings."""
         for name in [
-            "CONTROLLER",
-            "WORKER",
+            "SYSTEM_CONTROLLER",
+            "WORKER_MANAGER",
             "TIMING_MANAGER",
             "DATASET_MANAGER",
             "RECORDS_MANAGER",
-            "RECORD_PROCESSOR",
+            "API",
             "GPU_TELEMETRY_MANAGER",
             "SERVER_METRICS_MANAGER",
         ]:
-            assert not hasattr(K8sEnvironment, name), (
-                f"K8sEnvironment.{name} should not exist — use CONTROLLER_POD/WORKER_POD instead"
+            assert hasattr(K8sEnvironment, name), (
+                f"K8sEnvironment.{name} should exist for per-container controller resources"
             )
 
 
@@ -276,7 +296,15 @@ class TestK8sEnvironmentAllSettings:
     @pytest.mark.parametrize(
         "setting_name",
         [
-            param("CONTROLLER_POD", id="controller_pod"),
+            param("SYSTEM_CONTROLLER", id="system_controller"),
+            param("WORKER_MANAGER", id="worker_manager"),
+            param("TIMING_MANAGER", id="timing_manager"),
+            param("DATASET_MANAGER", id="dataset_manager"),
+            param("RECORDS_MANAGER", id="records_manager"),
+            param("API", id="api"),
+            param("GPU_TELEMETRY_MANAGER", id="gpu_telemetry"),
+            param("SERVER_METRICS_MANAGER", id="server_metrics"),
+            param("RESULTS_SIDECAR", id="results_sidecar"),
             param("WORKER_POD", id="worker_pod"),
             param("HEALTH", id="health"),
             param("PORTS", id="ports"),
@@ -293,7 +321,15 @@ class TestK8sEnvironmentAllSettings:
     @pytest.mark.parametrize(
         "resource_setting",
         [
-            param(K8sEnvironment.CONTROLLER_POD, id="controller_pod"),
+            param(K8sEnvironment.SYSTEM_CONTROLLER, id="system_controller"),
+            param(K8sEnvironment.WORKER_MANAGER, id="worker_manager"),
+            param(K8sEnvironment.TIMING_MANAGER, id="timing_manager"),
+            param(K8sEnvironment.DATASET_MANAGER, id="dataset_manager"),
+            param(K8sEnvironment.RECORDS_MANAGER, id="records_manager"),
+            param(K8sEnvironment.API, id="api"),
+            param(K8sEnvironment.GPU_TELEMETRY_MANAGER, id="gpu_telemetry"),
+            param(K8sEnvironment.SERVER_METRICS_MANAGER, id="server_metrics"),
+            param(K8sEnvironment.RESULTS_SIDECAR, id="results_sidecar"),
             param(K8sEnvironment.WORKER_POD, id="worker_pod"),
         ],
     )  # fmt: skip
@@ -312,13 +348,15 @@ class TestK8sEnvironmentAllSettings:
 class TestEnvironmentVariableOverrides:
     """Tests for environment variable configuration overrides."""
 
-    def test_controller_pod_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test controller pod settings can be overridden via env vars."""
-        monkeypatch.setenv("AIPERF_K8S_CONTROLLER_POD_CPU", "4000m")
+    def test_system_controller_env_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test controller-container settings can be overridden via env vars."""
+        monkeypatch.setenv("AIPERF_K8S_SYSTEM_CONTROLLER_CPU", "400m")
 
-        settings = _resource_settings("CONTROLLER_POD_", "3000m", "2176Mi")
-        assert settings.CPU == "4000m"
-        assert settings.MEMORY == "2176Mi"
+        settings = _resource_settings("SYSTEM_CONTROLLER_", "250m", "256Mi")
+        assert settings.CPU == "400m"
+        assert settings.MEMORY == "256Mi"
 
     def test_worker_pod_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test worker pod settings can be overridden via env vars."""

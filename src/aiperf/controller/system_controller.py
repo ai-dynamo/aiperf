@@ -266,7 +266,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         """Derive the full Kubernetes worker-pod topology from runtime config.
 
         Kubernetes deployments are pod-based: each worker pod runs a fixed
-        number of worker and record-processor subprocesses. Startup must wait
+        number of worker and record-processor service containers. Startup must wait
         for the full expanded topology rather than the requested logical worker
         count, because the last pod is not partially filled.
         """
@@ -426,7 +426,7 @@ class SystemController(SignalHandlerMixin, BaseService):
                 f"({topo.total_workers} workers, "
                 f"{topo.total_record_processors} record processors total)"
             )
-        self.info(f"Spawning {total_services} services ({types_summary})")
+        self.info(f"Preparing {total_services} services ({types_summary})")
         spawn_start = time.perf_counter()
 
         # Spawn dataset manager first so it can begin its heavy
@@ -460,7 +460,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
 
         spawn_elapsed = time.perf_counter() - spawn_start
-        self.info(f"All {total_services} services spawned in {spawn_elapsed:.2f}s")
+        self.info(f"All {total_services} services prepared in {spawn_elapsed:.2f}s")
 
         # Enable pod monitoring early so failed pods are detected during
         # registration/configuration rather than waiting for timeout.

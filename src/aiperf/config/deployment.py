@@ -71,6 +71,10 @@ class PodTemplateConfig(BaseConfig):
         default=None,
         description="Service account name for pods",
     )
+    container_security_context: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Container securityContext overrides (merged into each container spec)",
+    )
 
 
 class DeploymentConfig(BaseConfig):

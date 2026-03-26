@@ -57,7 +57,7 @@ class ServiceManagerProtocol(AIPerfLifecycleProtocol, Protocol):
     ) -> None: ...
 
     async def wait_for_api_subprocess(self) -> None:
-        """Block until the API subprocess terminates (Kubernetes mode only)."""
+        """Block until the API service runtime terminates (Kubernetes mode only)."""
         ...
 
     def activate_pod_monitoring(self) -> None:

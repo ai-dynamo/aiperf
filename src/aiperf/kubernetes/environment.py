@@ -7,7 +7,8 @@ All settings can be configured via environment variables with the AIPERF_K8S_ pr
 Resource settings per container type use AIPERF_K8S_{SERVICE}_{FIELD} naming.
 
 Examples:
-    AIPERF_K8S_CONTROLLER_POD_CPU=4000m
+    AIPERF_K8S_SYSTEM_CONTROLLER_CPU=250m
+    AIPERF_K8S_DATASET_MANAGER_MEMORY=512Mi
     AIPERF_K8S_WORKER_POD_MEMORY=4Gi
     AIPERF_K8S_HEALTH_INITIAL_DELAY_SECONDS=10
 """
@@ -16,8 +17,35 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = [
+    "CONTROLLER_OPTIONAL_RESOURCE_KEYS",
+    "CONTROLLER_REQUIRED_RESOURCE_KEYS",
+    "CONTROLLER_RESOURCE_KEYS",
     "K8sEnvironment",
 ]
+
+
+CONTROLLER_REQUIRED_RESOURCE_KEYS = (
+    "SYSTEM_CONTROLLER",
+    "WORKER_MANAGER",
+    "TIMING_MANAGER",
+    "DATASET_MANAGER",
+    "RECORDS_MANAGER",
+    "API",
+)
+"""Controller containers that are always present in Kubernetes mode."""
+
+CONTROLLER_OPTIONAL_RESOURCE_KEYS = (
+    "GPU_TELEMETRY_MANAGER",
+    "SERVER_METRICS_MANAGER",
+)
+"""Controller containers that depend on benchmark config flags."""
+
+CONTROLLER_RESOURCE_KEYS = (
+    *CONTROLLER_REQUIRED_RESOURCE_KEYS,
+    *CONTROLLER_OPTIONAL_RESOURCE_KEYS,
+    "RESULTS_SIDECAR",
+)
+"""All controller-pod container resource settings, including the results sidecar."""
 
 
 # ---------------------------------------------------------------------------
@@ -254,12 +282,13 @@ class _K8sEnvironment(BaseSettings):
     # Guaranteed QoS: requests == limits (no throttling, dedicated resources).
     # Calibrated via scripts/measure_cpu_usage.py and scripts/calibrate_memory_estimates.py.
     #
-    # Controller pod: single container running all control-plane services as subprocesses.
-    #   Measured total: ~1.0 core CPU, ~0.6 GiB memory at typical workload.
-    #   Default 3 cores / 2 GiB covers: timing_manager peak (1 core), dataset generation
-    #   spike, records_manager scaling with request count, ZMQ proxies.
+    # Controller pod: one container per control-plane service.
+    #   The defaults below keep the full controller pod around the historical
+    #   3 CPU / ~2.5 GiB sizing envelope while avoiding per-container
+    #   over-allocation when services no longer share a single container.
     #
-    # Worker pod: single container running N workers + M record_processors + WPM.
+    # Worker pod: one worker-pod-manager plus one container per worker and
+    # record processor, all sharing the historical WORKER_POD total budget.
     #   Measured per-worker: 131m CPU / 50-80 MiB at realistic server latency.
     #   Measured per-RP: 389m CPU / 200+ MiB (tokenizer-dependent).
     #   Default 3.3 cores / 6 GiB covers typical 10-worker pods with record-processing
@@ -270,9 +299,16 @@ class _K8sEnvironment(BaseSettings):
     # Calibrated via scripts/measure_cpu_usage.py and scripts/calibrate_memory_estimates.py.
     # ---------------------------------------------------------------------------
     # fmt: off
-    CONTROLLER_POD: ResourceSettings = Field(default_factory=lambda: _resource_settings("CONTROLLER_POD_", "3000m", "2176Mi"), description="Controller pod container resources (all control-plane services)")
-    RESULTS_SIDECAR: ResourceSettings = Field(default_factory=lambda: _resource_settings("RESULTS_SIDECAR_", "100m", "128Mi"), description="Results sidecar resources for serving exported files")
-    WORKER_POD: ResourceSettings = Field(default_factory=lambda: _resource_settings("WORKER_POD_", "3350m", "6144Mi"), description="Worker pod container resources (workers + record processors + WPM)")
+    SYSTEM_CONTROLLER: ResourceSettings = Field(default_factory=lambda: _resource_settings("SYSTEM_CONTROLLER_", "500m", "1Gi"), description="SystemController container resources")
+    WORKER_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("WORKER_MANAGER_", "500m", "1Gi"), description="WorkerManager container resources")
+    TIMING_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("TIMING_MANAGER_", "1000m", "2Gi"), description="TimingManager container resources")
+    DATASET_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("DATASET_MANAGER_", "1000m", "2Gi"), description="DatasetManager container resources")
+    RECORDS_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("RECORDS_MANAGER_", "1000m", "2Gi"), description="RecordsManager container resources")
+    API: ResourceSettings = Field(default_factory=lambda: _resource_settings("API_", "500m", "1Gi"), description="API container resources")
+    GPU_TELEMETRY_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("GPU_TELEMETRY_MANAGER_", "250m", "512Mi"), description="GPU telemetry container resources")
+    SERVER_METRICS_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("SERVER_METRICS_MANAGER_", "250m", "512Mi"), description="Server metrics container resources")
+    RESULTS_SIDECAR: ResourceSettings = Field(default_factory=lambda: _resource_settings("RESULTS_SIDECAR_", "250m", "512Mi"), description="Results sidecar resources for serving exported files")
+    WORKER_POD: ResourceSettings = Field(default_factory=lambda: _resource_settings("WORKER_POD_", "4000m", "12Gi"), description="Worker pod container resources (workers + record processors + WPM)")
     # fmt: on
     RECORD_PROCESSOR_SCALE_FACTOR: int = Field(
         default=1,

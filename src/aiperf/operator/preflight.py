@@ -70,6 +70,23 @@ _OPERATOR_RBAC_PERMISSIONS: list[tuple[str, str, str]] = [
     ("get", "jobsets/status", JOBSET_API.group),
 ]
 
+
+def _controller_resource_requirements() -> tuple[float, float]:
+    """Return total controller-pod CPU cores and memory GiB."""
+    from aiperf.kubernetes.environment import (
+        CONTROLLER_RESOURCE_KEYS,
+        K8sEnvironment,
+    )
+
+    cpu = 0.0
+    memory = 0.0
+    for key in CONTROLLER_RESOURCE_KEYS:
+        settings = getattr(K8sEnvironment, key)
+        cpu += parse_cpu(settings.CPU)
+        memory += parse_memory_gib(settings.MEMORY)
+    return cpu, memory
+
+
 # Known public registries that don't need pull secrets
 _PUBLIC_REGISTRIES = frozenset(
     {
@@ -441,8 +458,7 @@ class OperatorPreflightChecker:
             total_cpu += parse_cpu(alloc.get("cpu", "0"))
             total_memory += parse_memory_gib(alloc.get("memory", "0"))
 
-        ctrl_cpu = parse_cpu(K8sEnvironment.CONTROLLER_POD.CPU)
-        ctrl_mem = parse_memory_gib(K8sEnvironment.CONTROLLER_POD.MEMORY)
+        ctrl_cpu, ctrl_mem = _controller_resource_requirements()
         worker_cpu = parse_cpu(K8sEnvironment.WORKER_POD.CPU)
         worker_mem = parse_memory_gib(K8sEnvironment.WORKER_POD.MEMORY)
         required_cpu = ctrl_cpu + (worker_cpu * self.num_pods)
@@ -535,8 +551,7 @@ class OperatorPreflightChecker:
                 message=f"Could not check per-node schedulability: {e}",
             )
 
-        ctrl_cpu = parse_cpu(K8sEnvironment.CONTROLLER_POD.CPU)
-        ctrl_mem = parse_memory_gib(K8sEnvironment.CONTROLLER_POD.MEMORY)
+        ctrl_cpu, ctrl_mem = _controller_resource_requirements()
         worker_cpu = parse_cpu(K8sEnvironment.WORKER_POD.CPU)
         worker_mem = parse_memory_gib(K8sEnvironment.WORKER_POD.MEMORY)
         max_pod_cpu = max(ctrl_cpu, worker_cpu)
@@ -603,8 +618,7 @@ class OperatorPreflightChecker:
                 message="No resource quotas configured",
             )
 
-        ctrl_cpu = parse_cpu(K8sEnvironment.CONTROLLER_POD.CPU)
-        ctrl_mem = parse_memory_gib(K8sEnvironment.CONTROLLER_POD.MEMORY)
+        ctrl_cpu, ctrl_mem = _controller_resource_requirements()
         worker_cpu = parse_cpu(K8sEnvironment.WORKER_POD.CPU)
         worker_mem = parse_memory_gib(K8sEnvironment.WORKER_POD.MEMORY)
         required_cpu = ctrl_cpu + (worker_cpu * self.num_pods)

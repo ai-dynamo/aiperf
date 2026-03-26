@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """WorkerPodManager service for Kubernetes worker pods.
 
-This module provides a service that manages multiple workers and record processors
-within a single Kubernetes pod. It downloads the dataset once and spawns workers
-as subprocesses, reducing network overhead and simplifying pod management.
+This module provides the shared worker-pod infrastructure service. It downloads
+the dataset once per pod, runs the local raw-inference proxy, coordinates raw
+record uploads, and reports pod capacity to the controller while workers and
+record processors run as sibling containers in the same pod.
 """
 
 from __future__ import annotations
@@ -12,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
-import uuid
 import zlib
 from pathlib import Path
 
@@ -22,17 +22,14 @@ import zstandard
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.control_structs import Registration
-from aiperf.common.enums import MessageType, WorkerStartupState, WorkerStatus
+from aiperf.common.enums import MessageType, WorkerStatus
 from aiperf.common.environment import Environment
-from aiperf.common.error_queue import ErrorCollector
 from aiperf.common.hooks import (
-    background_task,
     on_init,
     on_message,
     on_start,
     on_stop,
 )
-from aiperf.common.logging import get_global_log_queue
 from aiperf.common.messages import (
     DatasetConfiguredNotification,
     DatasetDownloadedNotification,
@@ -41,44 +38,38 @@ from aiperf.common.messages import (
 )
 from aiperf.common.models import MemoryMapClientMetadata
 from aiperf.common.models.progress_models import WorkerStats
-from aiperf.common.subprocess_manager import SubprocessManager
 from aiperf.config import BenchmarkRun
+from aiperf.config.defaults import OutputDefaults
 from aiperf.controller.proxy_manager import ProxyManager
-from aiperf.plugin.enums import ServiceType
 from aiperf.transports.aiohttp_client import create_tcp_connector
 
 
 class WorkerPodManager(BaseComponentService):
-    """Manages multiple workers and record processors within a single Kubernetes pod.
+    """Coordinates shared worker-pod infrastructure for sibling service containers.
 
     This service is the main process in a worker pod container. It:
     1. Downloads the dataset once from the control-plane (via HTTP API)
-    2. Spawns N workers as subprocesses
-    3. Spawns M record processors as subprocesses (default: N/4)
-    4. Monitors subprocess health and reports to control-plane
-    5. Tolerates subprocess crashes (continues with remaining workers)
+    2. Runs the pod-local raw-inference proxy over the shared IPC volume
+    3. Reports worker/record-processor capacity to the control-plane
+    4. Republishes dataset download notifications for late-starting workers
+    5. Uploads raw record files after sibling record-processor containers flush them
 
     Architecture:
-        Worker Pod (single container)
+        Worker Pod (multi-container)
         ┌─────────────────────────────────────────────────────────────┐
         │ WorkerPodManager (main process)                             │
         │   - Downloads dataset once from control-plane               │
-        │   - Spawns N workers + M record processors as subprocesses  │
+        │   - Serves as the pod-local raw-inference proxy host        │
         │                                                             │
-        │   ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐          │
-        │   │Worker 0 │ │Worker 1 │ │Worker 2 │ │Worker 3 │          │
-        │   └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘          │
-        │        └─────┬─────┴─────┬─────┴─────┬─────┘               │
-        │              │    IPC    │           │                      │
-        │         ┌────▼───────────▼───────────▼────┐                │
-        │         │       RecordProcessor 0          │── ZMQ TCP ──► │
-        │         └─────────────────────────────────┘                │
+        │  Worker containers: worker-0, worker-1, ...                 │
+        │  RecordProcessor containers: record-processor-0, ...        │
+        │                                                             │
+        │  Shared volumes: /aiperf/ipc, /aiperf/datasets, /results    │
         └─────────────────────────────────────────────────────────────┘
 
     Configuration:
-        - workers_per_pod: Number of worker subprocesses (configurable)
-        - record_processors_per_pod: Number of record processor subprocesses
-          (default: max(1, workers_per_pod / 4))
+        - workers_per_pod: Number of worker service containers per pod
+        - record_processors_per_pod: Number of record processor containers per pod
     """
 
     def __init__(
@@ -97,17 +88,6 @@ class WorkerPodManager(BaseComponentService):
 
         cfg = self.run.cfg
 
-        # Initialize subprocess error collector and manager for spawning workers/RPs
-        self._error_collector = ErrorCollector(
-            logger=self, exit_errors=self._exit_errors
-        )
-        self._subprocess_manager = SubprocessManager(
-            run=run,
-            log_queue=get_global_log_queue(),
-            error_queue=self._error_collector.error_queue,
-            logger=self,
-        )
-
         # Configuration for workers per pod
         self.workers_per_pod = (
             cfg.runtime.workers_per_pod or Environment.WORKER.DEFAULT_WORKERS_PER_POD
@@ -123,7 +103,7 @@ class WorkerPodManager(BaseComponentService):
                 1, self.workers_per_pod // Environment.RECORD.PROCESSOR_SCALE_FACTOR
             )
 
-        # Track worker health from subprocesses
+        # Track worker health across sibling worker containers.
         self.worker_health: dict[str, WorkerStats] = {}
 
         # Dataset download state
@@ -138,8 +118,8 @@ class WorkerPodManager(BaseComponentService):
         )
 
         self.info(
-            f"WorkerPodManager configured: {self.workers_per_pod} workers, "
-            f"{self.record_processors_per_pod} record processors"
+            f"WorkerPodManager configured for {self.workers_per_pod} worker container(s) "
+            f"and {self.record_processors_per_pod} record processor container(s)"
         )
 
     def _make_registration(self) -> Registration:
@@ -175,20 +155,17 @@ class WorkerPodManager(BaseComponentService):
     async def _start_worker_pod_manager(self) -> None:
         """Start the WorkerPodManager.
 
-        Warms the HF tokenizer cache, then spawns worker and record processor
-        subprocesses so they can register with WorkerManager. Workers will wait
-        for the dataset to be ready before processing requests.
+        Warms the shared HF tokenizer cache for sibling containers. Worker and
+        record-processor containers start independently and register with the
+        controller on their own.
         """
         self.info("WorkerPodManager starting...")
 
-        # Warm the tokenizer cache on this pod before spawning subprocesses.
+        # Warm the tokenizer cache on this pod before record processors need it.
         # Each K8s pod is a separate machine — the controller's cache warming
         # only covers the controller pod, so worker pods must cache independently.
         await self._prefetch_tokenizers()
-
-        self.info("Spawning subprocesses...")
-        await self._spawn_subprocesses()
-        self.debug("Subprocesses spawned, waiting for dataset configuration...")
+        self.debug("Tokenizer cache ready, waiting for dataset configuration...")
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(
@@ -415,17 +392,17 @@ class WorkerPodManager(BaseComponentService):
                     await f.write(remaining)
 
     async def _prefetch_tokenizers(self) -> None:
-        """Warm the HF tokenizer cache so subprocesses load from disk only.
+        """Warm the shared HF tokenizer cache so sibling containers load from disk.
 
         Runs ``validate_tokenizer_early`` in a thread to avoid blocking the
         event loop. The resolved names are stored on the resolved config so
-        subprocesses inherit them. After this, ``_enable_hf_offline_mode``
-        (already called by bootstrap) ensures subprocesses never hit the network.
+        downstream services can reuse the warmed cache from the shared ``/tmp``
+        volume instead of stampeding the network.
 
         Skipped when ``use_server_token_count`` is True because worker pods
         only need the tokenizer for counting response tokens. The controller
         pod still caches it for synthetic dataset generation. Downloading the
-        tokenizer here would delay subprocess spawn and risk ZMQ connection
+        tokenizer here would delay service startup and risk ZMQ connection
         timeouts with the controller.
         """
         if self.run.cfg.endpoint.use_server_token_count:
@@ -444,38 +421,6 @@ class WorkerPodManager(BaseComponentService):
             self.info(f"Tokenizer cache warmed: {len(resolved)} model(s)")
         else:
             self.debug("Tokenizer prefetch skipped (not required)")
-
-    async def _spawn_subprocesses(self) -> None:
-        """Spawn worker and record processor subprocesses."""
-        self.info(
-            f"Spawning {self.workers_per_pod} workers and "
-            f"{self.record_processors_per_pod} record processors"
-        )
-
-        pod_id = self._pod_index or uuid.uuid4().hex[:8]
-
-        # Spawn record processors first so they're ready when workers start
-        for i in range(self.record_processors_per_pod):
-            service_id = f"record_processor_{pod_id}_{i}"
-            await self._subprocess_manager.spawn_service(
-                service_type=ServiceType.RECORD_PROCESSOR,
-                service_id=service_id,
-                replicable=True,
-            )
-
-        # Spawn workers
-        for i in range(self.workers_per_pod):
-            service_id = f"worker_{pod_id}_{i}"
-            await self._subprocess_manager.spawn_service(
-                service_type=ServiceType.WORKER,
-                service_id=service_id,
-                replicable=True,
-            )
-
-        self.info(
-            f"Spawned {len(self._subprocess_manager.subprocesses)} subprocesses "
-            f"({self.workers_per_pod} workers, {self.record_processors_per_pod} RPs)"
-        )
 
     @on_message(MessageType.WORKER_HEALTH)
     async def _on_worker_health(self, message: WorkerHealthMessage) -> None:
@@ -509,75 +454,68 @@ class WorkerPodManager(BaseComponentService):
         existing.startup_state = message.startup_state
         existing.startup_state_updated_ns = message.request_ns
 
-    @background_task(interval=Environment.WORKER.HEALTH_CHECK_INTERVAL)
-    async def _monitor_subprocesses(self) -> None:
-        """Monitor subprocess health and handle crashes.
-
-        Crashed subprocesses are logged but not restarted (tolerant mode).
-        The pod continues operating with remaining workers.
-        """
-        if self._stopping:
-            return
-
-        dead_processes = self._subprocess_manager.check_alive()
-        for info in dead_processes:
-            exit_code = info.process.exitcode if info.process else None
-            startup_state = None
-            if info.service_type == ServiceType.WORKER:
-                startup_state = self.worker_health.get(info.service_id, None)
-                startup_state = (
-                    startup_state.startup_state if startup_state is not None else None
-                )
-            message = (
-                f"Subprocess {info.service_type} ({info.service_id}) exited "
-                f"with code {exit_code}"
-            )
-            if (
-                info.service_type == ServiceType.WORKER
-                and startup_state is not None
-                and startup_state != WorkerStartupState.READY
-            ):
-                message += (
-                    f" before becoming ready (last startup state: {startup_state})"
-                )
-            self.warning(message)
-            # Remove from tracking (tolerant mode - don't restart)
-            self._subprocess_manager.remove(info)
-
-            # Check if all workers are gone
-            remaining_workers = self._subprocess_manager.get_by_type(ServiceType.WORKER)
-            if not remaining_workers:
-                self.error("All workers have exited, pod cannot continue")
-                await self.stop()
-                return
-
     @on_stop
     async def _stop_worker_pod_manager(self) -> None:
-        """Stop all subprocesses gracefully, then upload raw records to controller."""
+        """Stop pod-local infrastructure, then upload raw records to controller."""
         self._stopping = True
-        subprocess_count = len(self._subprocess_manager.subprocesses)
-        self.info(f"Stopping {subprocess_count} subprocesses...")
-
-        await self._subprocess_manager.stop_all()
-
-        self._subprocess_manager.clear()
-
-        self._error_collector.drain_into()
-
-        self.info("All subprocesses stopped")
-
+        await self._wait_for_raw_record_files()
         await self._proxy_manager.stop()
         await self._upload_raw_records()
+
+    async def _wait_for_raw_record_files(self) -> None:
+        """Wait for sibling record-processor containers to flush raw files locally.
+
+        In the multi-container worker pod, record processors now own their
+        lifecycle. Before uploading shared raw-record files to the controller,
+        wait for the expected files to appear and stop changing size.
+        """
+        from aiperf.common.enums import ExportLevel
+
+        cfg = self.run.cfg
+        if cfg.output.export_level != ExportLevel.RAW:
+            return
+
+        raw_records_dir = (
+            cfg.output.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
+        )
+        expected_files = max(1, self.record_processors_per_pod)
+        deadline = (
+            asyncio.get_running_loop().time()
+            + Environment.SERVICE.RAW_RECORD_UPLOAD_TIMEOUT
+        )
+        last_snapshot: tuple[tuple[str, int], ...] | None = None
+        stable_reads = 0
+
+        while asyncio.get_running_loop().time() < deadline:
+            files = (
+                sorted(raw_records_dir.glob("raw_records_*.jsonl"))
+                if raw_records_dir.exists()
+                else []
+            )
+            snapshot = tuple((path.name, path.stat().st_size) for path in files)
+            if len(files) >= expected_files and snapshot == last_snapshot:
+                stable_reads += 1
+                if stable_reads >= 2:
+                    return
+            else:
+                stable_reads = 0
+            last_snapshot = snapshot
+            await asyncio.sleep(0.5)
+
+        actual_files = len(last_snapshot or ())
+        self.warning(
+            "Timed out waiting for raw record files to stabilize before upload: "
+            f"expected at least {expected_files}, found {actual_files}"
+        )
 
     async def _upload_raw_records(self) -> None:
         """Upload raw record files to the controller API for aggregation.
 
-        After subprocesses stop, RecordProcessors have flushed their raw record
-        JSONL files to the local artifact directory. This uploads them to the
-        controller's API so the RawRecordAggregator can find and aggregate them.
+        After sibling record-processor containers flush their raw record JSONL
+        files to the shared results volume, upload them to the controller API so
+        the RawRecordAggregator can find and aggregate them.
         """
         from aiperf.common.enums import ExportLevel
-        from aiperf.config.defaults import OutputDefaults
 
         cfg = self.run.cfg
         if cfg.output.export_level != ExportLevel.RAW:
