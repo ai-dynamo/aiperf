@@ -170,7 +170,7 @@ Service lifecycle and inter-service communication configuration. Controls timeou
 | `AIPERF_SERVICE_PROCESS_MONITOR_INTERVAL` | `0.5` | ≥ 0.1, ≤ 30.0 | Interval in seconds between process liveness checks in MultiProcessServiceManager |
 | `AIPERF_SERVICE_SHUTDOWN_PROPAGATION_DELAY` | `0.5` | ≥ 0.0, ≤ 10.0 | Delay in seconds after broadcasting shutdown command to allow message propagation before stopping services |
 | `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile configure command |
-| `AIPERF_SERVICE_PROFILE_START_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile start command |
+| `AIPERF_SERVICE_PROFILE_START_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for waiting for workers to become ready and for profile start commands |
 | `AIPERF_SERVICE_PROFILE_CANCEL_TIMEOUT` | `10.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile cancel command |
 | `AIPERF_SERVICE_RAW_RECORD_UPLOAD_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 600.0 | Timeout in seconds to wait for worker pods to upload raw record files to the controller API after benchmark completion. |
 | `AIPERF_SERVICE_REGISTRATION_INTERVAL` | `0.1` | ≥ 0.001, ≤ 100000.0 | Interval in seconds between registration attempts for component services |

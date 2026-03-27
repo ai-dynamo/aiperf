@@ -718,8 +718,8 @@ class _ServiceSettings(BaseSettings):
     PROFILE_START_TIMEOUT: float = Field(
         ge=1.0,
         le=100000.0,
-        default=60.0,
-        description="Timeout in seconds for profile start command",
+        default=300.0,
+        description="Timeout in seconds for waiting for workers to become ready and for profile start commands",
     )
     PROFILE_CANCEL_TIMEOUT: float = Field(
         ge=1.0,

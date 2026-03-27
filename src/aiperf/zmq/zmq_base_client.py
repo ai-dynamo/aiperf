@@ -58,6 +58,7 @@ class BaseZMQClient(AIPerfLifecycleMixin):
         )
         self.scheduler: LoopScheduler | None = None
         self._socket_recreate_lock = asyncio.Lock()
+        self._identity: bytes | None = None
         self.additional_bind_address: str | None = (
             additional_bind_address if bind else None
         )
@@ -100,13 +101,10 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             )
 
             if zmq.IDENTITY in self.socket_ops:
-                # IMPORTANT! Set IDENTITY socket option immediately after socket creation, BEFORE bind/connect
-                # otherwise it will not be properly set when the socket is bound/connected
-                self.socket.setsockopt(zmq.IDENTITY, self.socket_ops[zmq.IDENTITY])
-                self.debug(
-                    lambda: f"Set IDENTITY socket option: {self.socket_ops[zmq.IDENTITY]}"
-                )
-                del self.socket_ops[zmq.IDENTITY]
+                # IDENTITY must be set BEFORE bind/connect
+                self._identity = self.socket_ops.pop(zmq.IDENTITY)
+                self.socket.setsockopt(zmq.IDENTITY, self._identity)
+                self.debug(lambda: f"Set IDENTITY socket option: {self._identity}")
 
             if self.bind:
                 self.socket.bind(self.address)
@@ -171,9 +169,12 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             )
 
     def _cleanup_ipc_file(self) -> None:
-        """Remove the IPC socket file if this client bound to one."""
-        if self.bind and self.address.startswith("ipc://"):
-            Path(self.address.removeprefix("ipc://")).unlink(missing_ok=True)
+        """Remove IPC socket files if this client bound to any."""
+        if not self.bind:
+            return
+        for addr in (self.address, self.additional_bind_address):
+            if addr and addr.startswith("ipc://"):
+                Path(addr.removeprefix("ipc://")).unlink(missing_ok=True)
 
     async def _recreate_socket(self) -> None:
         """Close and recreate the socket with the same configuration.
@@ -185,12 +186,21 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             old_socket = self.socket
             if old_socket:
                 if self.bind:
-                    old_socket.unbind(self.address)
-                    if self.additional_bind_address:
-                        old_socket.unbind(self.additional_bind_address)
+                    for addr in (self.address, self.additional_bind_address):
+                        if addr:
+                            try:
+                                old_socket.unbind(addr)
+                            except Exception:
+                                self.debug(
+                                    f"Unbind failed for {addr}, continuing teardown"
+                                )
                 old_socket.close(linger=0)
 
+            self.socket = None
             self.socket = self.context.socket(self.socket_type)
+
+            if self._identity is not None:
+                self.socket.setsockopt(zmq.IDENTITY, self._identity)
 
             if self.bind:
                 self.socket.bind(self.address)

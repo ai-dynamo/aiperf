@@ -46,7 +46,7 @@ spec:
       records:
         - jsonl
 
-  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260326-records-manager-probe-fix-1
+  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260327-222649-7c5201324
   connectionsPerWorker: 1000
   resourceMode: none
   ttlSecondsAfterFinished: 600

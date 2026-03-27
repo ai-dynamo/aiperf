@@ -55,13 +55,13 @@ class ZMQStreamingRouterClient(BaseZMQClient):
     - Supports concurrent message processing
     """
 
-    _RECOVERABLE_SEND_ERRNOS = frozenset(
-        {
-            zmq.EHOSTUNREACH,
-            zmq.ENOTCONN,
-            zmq.EFSM,
-        }
-    )
+    # Peer-gone errors: the target DEALER disconnected but the ROUTER socket
+    # is still valid for all other peers.  No recreation needed.
+    _PEER_GONE_ERRNOS = frozenset({zmq.EHOSTUNREACH, zmq.ENOTCONN})
+
+    # Socket-broken errors: a partial multipart send left the socket FSM in a
+    # bad state; the only recovery is to recreate the socket.
+    _SOCKET_BROKEN_ERRNOS = frozenset({zmq.EFSM})
 
     def __init__(
         self,
@@ -213,21 +213,31 @@ class ZMQStreamingRouterClient(BaseZMQClient):
                 await self._recover_from_send_failure(identity, e)
 
     async def _recover_from_send_failure(self, identity: str, error: Exception) -> None:
-        """Recreate a ROUTER socket after a recoverable send failure.
+        """Handle a ROUTER send failure.
 
-        ROUTER sockets with ROUTER_MANDATORY enabled can raise transport errors
-        when a peer disappears between receive and reply. Recover by recreating
-        the socket so later sends do not inherit a broken multipart state.
+        Peer-gone errors (EHOSTUNREACH, ENOTCONN) are expected when a DEALER
+        disconnects between receive and reply -- the socket is still valid for
+        other peers, so we just log and continue.
+
+        Socket-broken errors (EFSM) mean a partial multipart send corrupted
+        the socket state machine; the only fix is to recreate the socket.
         """
         if self.stop_requested or not isinstance(error, zmq.ZMQError):
             return
 
-        if error.errno not in self._RECOVERABLE_SEND_ERRNOS:
+        if error.errno in self._PEER_GONE_ERRNOS:
+            self.warning(
+                f"Peer {identity} unreachable (errno={error.errno}), "
+                "dropping response; ROUTER socket remains valid"
+            )
+            return
+
+        if error.errno not in self._SOCKET_BROKEN_ERRNOS:
             return
 
         self.warning(
-            "Recovering streaming ROUTER socket after send failure to "
-            f"{identity}: errno={error.errno}"
+            "Recreating streaming ROUTER socket after broken state from send "
+            f"failure to {identity}: errno={error.errno}"
         )
         try:
             await self._recreate_socket()

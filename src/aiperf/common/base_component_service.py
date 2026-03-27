@@ -119,7 +119,7 @@ class BaseComponentService(BaseService):
         )
 
     async def _run_connection_probes(self) -> None:
-        """Phase 1 (DEALER/ROUTER registration) then Phase 2 (PUB/SUB self-echo).
+        """DEALER/ROUTER registration then PUB/SUB self-echo.
 
         Registration doubles as the connection probe: a successful round-trip
         proves the controller is reachable. Registration is idempotent.

@@ -74,6 +74,10 @@ class ZMQRouterReplyClient(BaseZMQClient):
     @on_stop
     async def _clear_request_handlers(self) -> None:
         self._request_handlers.clear()
+        for future in self._response_futures.values():
+            if not future.done():
+                future.cancel()
+        self._response_futures.clear()
 
     def register_request_handler(
         self,
@@ -223,7 +227,7 @@ class ZMQRouterReplyClient(BaseZMQClient):
                 ):
                     await yield_to_event_loop()
 
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, zmq.ContextTerminated):
                 self.debug("Router reply client receiver task cancelled")
                 break
             except Exception as e:

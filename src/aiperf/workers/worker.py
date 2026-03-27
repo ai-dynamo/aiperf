@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 import uuid
 from typing import TYPE_CHECKING
@@ -215,6 +216,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
 
         self.memory_usage_before_profiling: float | None = None
+        self._pod_index = os.environ.get("AIPERF_POD_INDEX")
 
         self.session_manager: UserSessionManager = UserSessionManager()
 
@@ -329,12 +331,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """Handle dataset download completion from WorkerPodManager.
 
         In Kubernetes mode, WorkerPodManager downloads the dataset files once per pod.
-        This notification contains client_metadata with local file paths.
+        This notification contains pod-local file paths and must come from the
+        same pod as the worker consuming it.
         """
-        if not self._matches_current_benchmark(msg.client_metadata):
+        if not self._matches_current_download(msg):
             self.warning(
-                "Ignoring downloaded dataset for a different benchmark: "
-                f"{msg.client_metadata.data_file_path}"
+                "Ignoring downloaded dataset for a different pod or benchmark: "
+                f"service={msg.service_id}, pod_index={msg.pod_index}, "
+                f"path={msg.client_metadata.data_file_path}"
             )
             return
 
@@ -361,10 +365,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         if not msg.success:
             self.error(f"Dataset download failed: {msg.error_message}")
-            # Still try to initialize - might work if files exist from previous attempt
             self.warning(
-                "Attempting to initialize dataset client despite download failure"
+                "Waiting for a successful DatasetDownloadedNotification before "
+                "initializing the dataset client"
             )
+            self._pending_download_notification = msg
+            return
 
         # Use client_metadata from download notification (has local paths from WorkerPodManager)
         dataset_metadata = self._pending_dataset_config.metadata
@@ -388,6 +394,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         return self.run.cfg.artifacts.benchmark_id in str(
             client_metadata.data_file_path
         )
+
+    def _matches_current_download(self, msg: DatasetDownloadedNotification) -> bool:
+        """Check whether a downloaded dataset notification belongs to this worker's pod."""
+        if not self._matches_current_benchmark(msg.client_metadata):
+            return False
+        if not self._is_kubernetes_mode():
+            return True
+        return msg.pod_index is not None and msg.pod_index == self._pod_index
 
     async def _initialize_dataset_client(
         self,

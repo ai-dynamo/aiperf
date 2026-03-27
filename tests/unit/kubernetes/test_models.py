@@ -127,10 +127,32 @@ class TestJobSetInfoParseStatus:
         info = JobSetInfo.from_raw(raw)
         assert info.status == JobSetStatus.COMPLETED
 
-    def test_failed_true_returns_failed(self) -> None:
+    def test_failed_true_without_controller_failure_returns_running(self) -> None:
         raw = _make_raw_jobset(conditions=[{"type": "Failed", "status": "True"}])
         info = JobSetInfo.from_raw(raw)
+        assert info.status == JobSetStatus.RUNNING
+
+    def test_failed_true_with_controller_failure_returns_failed(self) -> None:
+        raw = _make_raw_jobset(
+            conditions=[{"type": "Failed", "status": "True"}],
+        )
+        raw["status"]["replicatedJobsStatus"] = [
+            {"name": "workers", "failed": 3, "ready": 247},
+            {"name": "controller", "failed": 1, "ready": 0},
+        ]
+        info = JobSetInfo.from_raw(raw)
         assert info.status == JobSetStatus.FAILED
+
+    def test_failed_true_with_worker_only_failure_returns_running(self) -> None:
+        raw = _make_raw_jobset(
+            conditions=[{"type": "Failed", "status": "True"}],
+        )
+        raw["status"]["replicatedJobsStatus"] = [
+            {"name": "workers", "failed": 3, "ready": 247},
+            {"name": "controller", "failed": 0, "ready": 1},
+        ]
+        info = JobSetInfo.from_raw(raw)
+        assert info.status == JobSetStatus.RUNNING
 
     def test_completed_false_returns_running(self) -> None:
         raw = _make_raw_jobset(conditions=[{"type": "Completed", "status": "False"}])

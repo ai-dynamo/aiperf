@@ -6,11 +6,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.control_structs import CommandErr, Registration, RegistrationAck
-from aiperf.common.enums import WorkerStartupState, WorkerStatus
+from aiperf.common.enums import LifecycleState, WorkerStartupState, WorkerStatus
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import LifecycleOperationError
+from aiperf.common.exceptions import (
+    LifecycleOperationError,
+    ServiceRegistrationTimeoutError,
+)
 from aiperf.common.messages.worker_messages import WorkerStatusSummaryMessage
 from aiperf.common.models import ErrorDetails, ExitErrorInfo
+from aiperf.common.service_registry import ServiceRegistry
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.controller.system_controller import SystemController
 from aiperf.plugin.enums import ServiceRunType, ServiceType
@@ -464,6 +468,150 @@ class TestKubernetesMode:
         )
         keep_api_running = is_k8s_mode and controller.run.cfg.runtime.api_port
         assert not keep_api_running
+
+    @pytest.mark.asyncio
+    async def test_kubernetes_start_services_does_not_re_run_required_services(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Kubernetes startup should let the service manager handle required services once."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.runtime.api_port = None
+        config.gpu_telemetry.enabled = False
+        config.server_metrics.enabled = False
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        controller._wait_for_all_configured = AsyncMock(return_value=None)
+        controller._wait_for_all_workers_ready = AsyncMock(return_value=None)
+        controller._start_profiling_all_services = AsyncMock(return_value=None)
+        controller._wait_for_endpoint_ready = AsyncMock(return_value=None)
+
+        await controller._start_services()
+
+        mock_service_manager.start.assert_awaited_once()
+        mock_service_manager.run_service.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_local_start_services_starts_manager_before_spawning_workers(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Local startup should start the service manager before spawning workers."""
+        config.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
+        config.runtime.api_port = None
+        config.gpu_telemetry.enabled = False
+        config.server_metrics.enabled = False
+        call_order: list[str] = []
+
+        async def start_side_effect() -> None:
+            call_order.append("start")
+
+        async def run_service_side_effect(service_type: ServiceType, *_args) -> None:
+            call_order.append(str(service_type))
+
+        mock_service_manager.start.side_effect = start_side_effect
+        mock_service_manager.run_service.side_effect = run_service_side_effect
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        controller._wait_for_all_configured = AsyncMock(return_value=None)
+        controller._wait_for_all_workers_ready = AsyncMock(return_value=None)
+        controller._start_profiling_all_services = AsyncMock(return_value=None)
+        controller._wait_for_endpoint_ready = AsyncMock(return_value=None)
+
+        await controller._start_services()
+
+        assert call_order[0] == "start"
+        assert str(ServiceType.WORKER) in call_order[1:]
+
+    @pytest.mark.asyncio
+    async def test_kubernetes_start_services_waits_for_all_workers_ready(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Kubernetes startup should wait for app-level worker READY before profiling."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.runtime.api_port = None
+        config.gpu_telemetry.enabled = False
+        config.server_metrics.enabled = False
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        controller._wait_for_all_configured = AsyncMock(return_value=None)
+        controller._wait_for_all_workers_ready = AsyncMock(return_value=None)
+        controller._start_profiling_all_services = AsyncMock(return_value=None)
+        controller._wait_for_endpoint_ready = AsyncMock(return_value=None)
+
+        await controller._start_services()
+
+        controller._wait_for_all_workers_ready.assert_awaited_once_with(
+            timeout=Environment.SERVICE.PROFILE_START_TIMEOUT,
+        )
+        controller._start_profiling_all_services.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_configure_single_worker_marks_worker_ready(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Successful worker configure should mark the worker READY for the barrier."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.runtime.workers = 1
+        config.runtime.workers_per_pod = 1
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        ServiceRegistry.expect_service("worker_a", ServiceType.WORKER)
+        ServiceRegistry.register(
+            service_id="worker_a",
+            service_type=ServiceType.WORKER,
+            first_seen_ns=1,
+            state=LifecycleState.RUNNING,
+        )
+        controller._send_control_command = AsyncMock(return_value=None)
+
+        await controller._configure_single_service("worker_a")
+
+        assert controller._worker_startup_states["worker_a"] == str(
+            WorkerStartupState.READY
+        )
+        assert controller._all_expected_workers_ready() is True
+
+    @pytest.mark.asyncio
+    async def test_wait_for_all_workers_ready_succeeds_when_expected_workers_ready(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Worker READY barrier should pass once all expected workers report READY."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.runtime.workers = 2
+        config.runtime.workers_per_pod = 2
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        controller._worker_startup_states = {
+            "worker_a": str(WorkerStartupState.READY),
+            "worker_b": str(WorkerStartupState.READY),
+        }
+
+        await controller._wait_for_all_workers_ready(timeout=1.0)
+
+    @pytest.mark.asyncio
+    async def test_wait_for_all_workers_ready_times_out_when_workers_not_ready(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Worker READY barrier should time out when expected workers never reach READY."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.runtime.workers = 2
+        config.runtime.workers_per_pod = 2
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        controller._worker_startup_states = {
+            "worker_a": str(WorkerStartupState.WAITING_FOR_DATASET),
+            "worker_b": str(WorkerStartupState.ROUTER_PROBING),
+        }
+
+        with pytest.raises(
+            ServiceRegistrationTimeoutError, match="workers to become READY"
+        ):
+            await controller._wait_for_all_workers_ready(timeout=0.01)
 
     def test_kubernetes_mode_disables_raw_inference_proxy(
         self,

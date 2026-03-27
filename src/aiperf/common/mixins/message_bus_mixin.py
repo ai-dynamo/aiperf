@@ -163,9 +163,15 @@ class MessageBusClientMixin(CommunicationMixin, ABC):
 
     async def _reconnect_message_bus(self) -> None:
         """Recreate PUB/SUB sockets and resubscribe to recover from broken connections."""
-        await self.pub_client._recreate_socket()
-        await self.sub_client._recreate_socket()
-        await self.sub_client._resubscribe_all()
+        try:
+            await self.pub_client._recreate_socket()
+            await self.sub_client._recreate_socket()
+            await self.sub_client._resubscribe_all()
+        except Exception as e:
+            self.warning(
+                f"Failed to reconnect message bus for {self.id}, "
+                f"will retry on next probe cycle: {e!r}"
+            )
 
     async def _process_connection_probe_message(
         self, message: ConnectionProbeMessage

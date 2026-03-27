@@ -16,7 +16,10 @@ from pytest import param
 from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommandType, WorkerStartupState
 from aiperf.common.environment import Environment
-from aiperf.common.messages import DatasetConfiguredNotification
+from aiperf.common.messages import (
+    DatasetConfiguredNotification,
+    DatasetDownloadedNotification,
+)
 from aiperf.common.messages.worker_messages import WorkerStartupStateMessage
 from aiperf.common.models import (
     DatasetMetadata,
@@ -104,6 +107,7 @@ def worker_pod_manager(run: BenchmarkRun) -> WorkerPodManager:
             run=run,
             service_id="test-pod-manager",
         )
+        manager._pod_index = "0"
         return manager
 
 
@@ -120,6 +124,7 @@ def worker_pod_manager_custom(run_with_workers: BenchmarkRun) -> WorkerPodManage
             run=run_with_workers,
             service_id="test-pod-manager",
         )
+        manager._pod_index = "0"
         return manager
 
 
@@ -230,15 +235,29 @@ class TestStartup:
     """Tests for WorkerPodManager startup behavior."""
 
     @pytest.mark.asyncio
-    async def test_start_prefetches_tokenizers(
+    async def test_start_prefetches_tokenizers_in_background(
         self, worker_pod_manager_custom: WorkerPodManager
     ) -> None:
-        """Start warms shared tokenizer cache for sibling containers."""
+        """Startup should kick off tokenizer prefetch without blocking registration."""
         manager = worker_pod_manager_custom
-        manager._prefetch_tokenizers = AsyncMock()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_prefetch() -> None:
+            started.set()
+            await release.wait()
+
+        manager._prefetch_tokenizers = AsyncMock(side_effect=slow_prefetch)
 
         await manager._start_worker_pod_manager()
+        await asyncio.sleep(0)
 
+        assert started.is_set()
+        assert manager._tokenizer_prefetch_task is not None
+        assert not manager._tokenizer_prefetch_task.done()
+
+        release.set()
+        await manager._tokenizer_prefetch_task
         manager._prefetch_tokenizers.assert_called_once()
 
 
@@ -298,6 +317,47 @@ class TestDatasetHandling:
         assert manager._dataset_downloaded is True
 
     @pytest.mark.asyncio
+    async def test_success_notification_includes_pod_index(
+        self,
+        worker_pod_manager: WorkerPodManager,
+        dataset_notification: DatasetConfiguredNotification,
+    ) -> None:
+        """Successful dataset download notifications should be scoped to the current pod."""
+        manager = worker_pod_manager
+        mock_data_path = self._create_mock_path(1024)
+        mock_index_path = self._create_mock_path(256)
+        manager._download_dataset = AsyncMock(
+            return_value=(mock_data_path, mock_index_path)
+        )
+        manager.publish = AsyncMock()
+
+        await manager._on_dataset_configured(dataset_notification)
+
+        published = manager.publish.await_args.args[0]
+        assert isinstance(published, DatasetDownloadedNotification)
+        assert published.pod_index == "0"
+        assert published.success is True
+
+    @pytest.mark.asyncio
+    async def test_failure_notification_includes_pod_index(
+        self,
+        worker_pod_manager: WorkerPodManager,
+        dataset_notification: DatasetConfiguredNotification,
+    ) -> None:
+        """Failed dataset download notifications should be scoped to the current pod."""
+        manager = worker_pod_manager
+        manager._download_dataset = AsyncMock(side_effect=RuntimeError("boom"))
+        manager.publish = AsyncMock()
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await manager._on_dataset_configured(dataset_notification)
+
+        published = manager.publish.await_args.args[0]
+        assert isinstance(published, DatasetDownloadedNotification)
+        assert published.pod_index == "0"
+        assert published.success is False
+
+    @pytest.mark.asyncio
     async def test_duplicate_dataset_notification_ignored(
         self,
         worker_pod_manager: WorkerPodManager,
@@ -314,10 +374,11 @@ class TestDatasetHandling:
 
         # First notification
         await manager._on_dataset_configured(dataset_notification)
-        # Second notification (should be ignored)
+        # Second notification (should trigger a rebroadcast, not a re-download)
         await manager._on_dataset_configured(dataset_notification)
 
         assert manager._download_dataset.call_count == 1
+        assert manager.publish.await_args.args[0].pod_index == "0"
 
     @pytest.mark.asyncio
     async def test_concurrent_dataset_notifications_do_not_overlap_downloads(
@@ -353,6 +414,80 @@ class TestDatasetHandling:
 
         assert manager._download_dataset.await_count == 1
         assert manager.publish.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_download_dataset_starts_data_and_index_downloads_concurrently(
+        self, worker_pod_manager: WorkerPodManager, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Dataset data and index downloads should start concurrently."""
+        manager = worker_pod_manager
+        manager.run.cfg.runtime.dataset_api_base_url = "http://controller/api/dataset"
+        monkeypatch.setattr(Environment.DATASET, "MMAP_BASE_PATH", tmp_path)
+
+        started: list[str] = []
+        release = asyncio.Event()
+
+        async def download_file(_session, _url: str, dest_path: Path) -> None:
+            started.append(dest_path.name)
+            if len(started) == 2:
+                release.set()
+            await release.wait()
+            dest_path.write_bytes(
+                b"x" * (1024 if dest_path.name == "dataset.dat" else 256)
+            )
+
+        manager._download_file = AsyncMock(side_effect=download_file)
+
+        with patch("aiohttp.ClientSession") as mock_session_cls:
+            mock_session = AsyncMock()
+            mock_session.__aenter__.return_value = mock_session
+            mock_session.__aexit__.return_value = False
+            mock_session_cls.return_value = mock_session
+
+            data_path, index_path = await manager._download_dataset()
+
+        assert started == ["dataset.dat", "index.dat"]
+        assert data_path.name == "dataset.dat"
+        assert index_path.name == "index.dat"
+        assert data_path.stat().st_size == 1024
+        assert index_path.stat().st_size == 256
+        assert manager._download_file.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_download_dataset_retries_when_one_parallel_download_fails(
+        self, worker_pod_manager: WorkerPodManager, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A failure in either parallel download should retry the whole dataset fetch."""
+        manager = worker_pod_manager
+        manager.run.cfg.runtime.dataset_api_base_url = "http://controller/api/dataset"
+        monkeypatch.setattr(Environment.DATASET, "MMAP_BASE_PATH", tmp_path)
+        index_failures = {"count": 0}
+
+        async def download_file(_session, url: str, dest_path: Path) -> None:
+            if url.endswith("/index") and index_failures["count"] == 0:
+                index_failures["count"] += 1
+                raise RuntimeError("index failed")
+            dest_path.write_bytes(b"x" * (1024 if url.endswith("/data") else 256))
+
+        manager._download_file = AsyncMock(side_effect=download_file)
+
+        with (
+            patch("aiohttp.ClientSession") as mock_session_cls,
+            patch("asyncio.sleep", new=AsyncMock()) as mock_sleep,
+        ):
+            mock_session = AsyncMock()
+            mock_session.__aenter__.return_value = mock_session
+            mock_session.__aexit__.return_value = False
+            mock_session_cls.side_effect = [mock_session, mock_session]
+
+            data_path, index_path = await manager._download_dataset()
+
+        assert mock_sleep.await_count == 1
+        assert manager._download_file.await_count == 4
+        assert data_path.name == "dataset.dat"
+        assert index_path.name == "index.dat"
+        assert data_path.stat().st_size == 1024
+        assert index_path.stat().st_size == 256
 
     @pytest.mark.asyncio
     async def test_missing_dataset_api_url_raises_error(
@@ -571,8 +706,10 @@ class TestWorkerPodManagerIntegration:
         )
         manager.publish = AsyncMock()
 
-        # Simulate startup (prefetches shared tokenizer cache)
+        # Simulate startup (prefetches shared tokenizer cache in the background)
         await manager._start_worker_pod_manager()
+        assert manager._tokenizer_prefetch_task is not None
+        await manager._tokenizer_prefetch_task
         manager._prefetch_tokenizers.assert_called_once()
 
         # Simulate dataset configured (triggers download and notification)

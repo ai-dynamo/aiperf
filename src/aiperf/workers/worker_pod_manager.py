@@ -111,6 +111,7 @@ class WorkerPodManager(BaseComponentService):
         self._dataset_download_event = asyncio.Event()
         self._dataset_client_metadata: MemoryMapClientMetadata | None = None
         self._dataset_download_task: asyncio.Task[None] | None = None
+        self._tokenizer_prefetch_task: asyncio.Task[None] | None = None
         self._stopping = False
 
         self._proxy_manager = ProxyManager(
@@ -156,17 +157,24 @@ class WorkerPodManager(BaseComponentService):
     async def _start_worker_pod_manager(self) -> None:
         """Start the WorkerPodManager.
 
-        Warms the shared HF tokenizer cache for sibling containers. Worker and
-        record-processor containers start independently and register with the
-        controller on their own.
+        Worker and record-processor containers start independently and register
+        with the controller on their own. Tokenizer prefetch is kicked off in
+        the background so it does not delay pod-manager registration.
         """
         self.info("WorkerPodManager starting...")
 
-        # Warm the tokenizer cache on this pod before record processors need it.
+        # Warm the tokenizer cache opportunistically without blocking startup.
         # Each K8s pod is a separate machine — the controller's cache warming
         # only covers the controller pod, so worker pods must cache independently.
-        await self._prefetch_tokenizers()
-        self.debug("Tokenizer cache ready, waiting for dataset configuration...")
+        if (
+            self._tokenizer_prefetch_task is None
+            or self._tokenizer_prefetch_task.done()
+        ):
+            self._tokenizer_prefetch_task = self.execute_async(
+                self._prefetch_tokenizers()
+            )
+        self.debug("Tokenizer prefetch started in background")
+        self.debug("Waiting for dataset configuration...")
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(
@@ -183,8 +191,7 @@ class WorkerPodManager(BaseComponentService):
             )
             if self._dataset_client_metadata is not None:
                 await self.publish(
-                    DatasetDownloadedNotification(
-                        service_id=self.service_id,
+                    self._build_dataset_downloaded_notification(
                         client_metadata=self._dataset_client_metadata,
                         success=True,
                     )
@@ -206,6 +213,22 @@ class WorkerPodManager(BaseComponentService):
             await self._dataset_download_task
         finally:
             self._dataset_download_task = None
+
+    def _build_dataset_downloaded_notification(
+        self,
+        *,
+        client_metadata: MemoryMapClientMetadata,
+        success: bool,
+        error_message: str | None = None,
+    ) -> DatasetDownloadedNotification:
+        """Build a pod-scoped dataset download notification for sibling workers."""
+        return DatasetDownloadedNotification(
+            service_id=self.service_id,
+            client_metadata=client_metadata,
+            pod_index=self._pod_index,
+            success=success,
+            error_message=error_message,
+        )
 
     async def _download_and_publish_dataset(
         self, message: DatasetConfiguredNotification
@@ -232,8 +255,7 @@ class WorkerPodManager(BaseComponentService):
                 total_size_bytes=data_size,
             )
             await self.publish(
-                DatasetDownloadedNotification(
-                    service_id=self.service_id,
+                self._build_dataset_downloaded_notification(
                     client_metadata=client_metadata,
                     success=True,
                 )
@@ -260,8 +282,7 @@ class WorkerPodManager(BaseComponentService):
                 total_size_bytes=0,
             )
             await self.publish(
-                DatasetDownloadedNotification(
-                    service_id=self.service_id,
+                self._build_dataset_downloaded_notification(
                     client_metadata=client_metadata,
                     success=False,
                     error_message=str(e),
@@ -316,8 +337,10 @@ class WorkerPodManager(BaseComponentService):
             try:
                 connector = create_tcp_connector()
                 async with aiohttp.ClientSession(connector=connector) as session:
-                    await self._download_file(session, f"{base_url}/data", data_path)
-                    await self._download_file(session, f"{base_url}/index", index_path)
+                    await asyncio.gather(
+                        self._download_file(session, f"{base_url}/data", data_path),
+                        self._download_file(session, f"{base_url}/index", index_path),
+                    )
 
                 self.info(
                     f"Dataset download complete: data={data_path.stat().st_size} bytes, "

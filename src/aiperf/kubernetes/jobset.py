@@ -550,6 +550,7 @@ class JobSetSpec(AIPerfBaseModel):
         has_hf_home = any(
             (item or {}).get("name") == "HF_HOME" for item in self.pod_template.env
         )
+        registration_timeout = max(Environment.SERVICE.REGISTRATION_TIMEOUT, 120.0)
         env: list[dict[str, Any]] = [
             # Shared dataset path: dataset-manager writes mmap files here,
             # API service serves them to workers via HTTP
@@ -560,9 +561,13 @@ class JobSetSpec(AIPerfBaseModel):
             # Health server must bind to 0.0.0.0 so K8s probes can reach it via the pod IP
             {"name": "AIPERF_SERVICE_HEALTH_ENABLED", "value": "true"},
             {"name": "AIPERF_SERVICE_HEALTH_HOST", "value": "0.0.0.0"},
-            # K8s pods need longer registration timeout: controller pod startup
-            # is slower due to ZMQ proxy setup, health server, and cross-pod networking
-            {"name": "AIPERF_SERVICE_REGISTRATION_TIMEOUT", "value": "120"},
+            # Keep registration timeout configurable instead of hard-coding a
+            # separate K8s-only value, so startup tuning and failure detection
+            # stay aligned with the active environment configuration.
+            {
+                "name": "AIPERF_SERVICE_REGISTRATION_TIMEOUT",
+                "value": str(registration_timeout),
+            },
         ]
 
         # HF cache must be writable (readOnlyRootFilesystem)

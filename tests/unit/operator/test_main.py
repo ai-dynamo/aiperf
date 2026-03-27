@@ -1041,8 +1041,8 @@ class TestMonitorProgressAdvanced:
         mock_fetch_progress.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_handles_jobset_failed(self) -> None:
-        """Verify handles JobSet failure condition."""
+    async def test_controller_jobset_failure_remains_fatal(self) -> None:
+        """Verify controller JobSet failure still fails the benchmark."""
         from aiperf.operator.main import monitor_progress
 
         kopf_patch = MagicMock()
@@ -1051,7 +1051,15 @@ class TestMonitorProgressAdvanced:
         mock_jobset.raw = {
             "status": {
                 "conditions": [
-                    {"type": "Failed", "status": "True", "message": "Pod crashed"}
+                    {
+                        "type": "Failed",
+                        "status": "True",
+                        "message": "controller crashed",
+                    }
+                ],
+                "replicatedJobsStatus": [
+                    {"name": "workers", "failed": 2, "ready": 248, "active": 0},
+                    {"name": "controller", "failed": 1, "ready": 0, "active": 0},
                 ],
             }
         }
@@ -1067,7 +1075,7 @@ class TestMonitorProgressAdvanced:
                 new_callable=AsyncMock,
                 return_value=mock_jobset,
             ),
-            mock_patch("aiperf.operator.events.failed"),
+            mock_patch("aiperf.operator.events.failed") as mock_failed,
         ):
             await monitor_progress(
                 body={},
@@ -1083,7 +1091,79 @@ class TestMonitorProgressAdvanced:
             )
 
         assert kopf_patch.status["phase"] == Phase.FAILED
-        assert "Pod crashed" in kopf_patch.status["error"]
+        assert "controller crashed" in kopf_patch.status["error"]
+        mock_failed.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_worker_only_jobset_failure_is_non_fatal(self) -> None:
+        """Verify worker-only JobSet failures do not fail the benchmark."""
+        from aiperf.operator.main import monitor_progress
+
+        kopf_patch = MagicMock()
+        kopf_patch.status = {}
+        mock_jobset = MagicMock()
+        mock_jobset.raw = {
+            "status": {
+                "conditions": [
+                    {
+                        "type": "Failed",
+                        "status": "True",
+                        "message": "jobset failed due to worker failures",
+                    }
+                ],
+                "replicatedJobsStatus": [
+                    {"name": "workers", "failed": 2, "ready": 248, "active": 0},
+                    {"name": "controller", "failed": 0, "ready": 1, "active": 0},
+                ],
+            }
+        }
+
+        mock_client = AsyncMock()
+        mock_client.get_progress = AsyncMock(return_value=None)
+        mock_client.get_metrics = AsyncMock(return_value={})
+        mock_client.get_server_metrics = AsyncMock(return_value={})
+        mock_client.get_worker_startup_states = AsyncMock(return_value=None)
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.get_api",
+                new_callable=AsyncMock,
+                return_value=AsyncMock(),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
+                new_callable=AsyncMock,
+                return_value=mock_jobset,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.get_or_create_progress_client",
+                new_callable=AsyncMock,
+                return_value=mock_client,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor._fetch_progress",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            mock_patch("aiperf.operator.events.failed") as mock_failed,
+        ):
+            await monitor_progress(
+                body={},
+                status={
+                    "phase": Phase.RUNNING,
+                    "jobSetName": "test-jobset",
+                    "jobId": "job-123",
+                    "workers": {"total": 250, "ready": 250},
+                },
+                spec={},
+                name="test-job",
+                namespace="default",
+                patch=kopf_patch,
+            )
+
+        assert kopf_patch.status.get("phase") != Phase.FAILED
+        assert kopf_patch.status["workers"]["total"] == 250
+        mock_failed.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_handles_generic_api_exception(self) -> None:
@@ -1119,6 +1199,55 @@ class TestMonitorProgressAdvanced:
                 namespace="default",
                 patch=kopf_patch,
             )
+
+    @pytest.mark.asyncio
+    async def test_completed_jobset_with_failed_workers_still_completes(self) -> None:
+        """Verify controller completion still triggers completion handling with failed workers."""
+        from aiperf.operator.main import monitor_progress
+
+        kopf_patch = MagicMock()
+        kopf_patch.status = {}
+        mock_jobset = MagicMock()
+        mock_jobset.raw = {
+            "status": {
+                "conditions": [{"type": "Completed", "status": "True"}],
+                "replicatedJobsStatus": [
+                    {"name": "workers", "failed": 5, "ready": 0, "succeeded": 245},
+                    {"name": "controller", "failed": 0, "ready": 0, "succeeded": 1},
+                ],
+            }
+        }
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.get_api",
+                new_callable=AsyncMock,
+                return_value=AsyncMock(),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
+                new_callable=AsyncMock,
+                return_value=mock_jobset,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.handle_completion",
+                new_callable=AsyncMock,
+            ) as mock_completion,
+        ):
+            await monitor_progress(
+                body={},
+                status={
+                    "phase": Phase.RUNNING,
+                    "jobSetName": "test-jobset",
+                    "jobId": "job-123",
+                },
+                spec={},
+                name="test-job",
+                namespace="default",
+                patch=kopf_patch,
+            )
+
+        mock_completion.assert_awaited_once()
 
 
 class TestHandleCompletion:

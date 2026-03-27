@@ -11,6 +11,7 @@ import orjson
 import pytest
 from pytest import param
 
+from aiperf.common.environment import Environment
 from aiperf.config.deployment import PodTemplateConfig
 from aiperf.kubernetes.enums import ImagePullPolicy
 from aiperf.kubernetes.environment import K8sEnvironment
@@ -1652,10 +1653,14 @@ class TestJobSetSpecPrivateMethods:
         """Test _create_env_vars without controller_host."""
         env = jobset_spec._create_env_vars()
         env_names = [e["name"] for e in env]
+        env_dict = {e["name"]: e.get("value") for e in env}
         assert "AIPERF_DATASET_MMAP_BASE_PATH" in env_names
         assert "AIPERF_JOB_ID" in env_names
         assert "AIPERF_NAMESPACE" in env_names
         assert "AIPERF_K8S_ZMQ_CONTROLLER_HOST" not in env_names
+        assert env_dict["AIPERF_SERVICE_REGISTRATION_TIMEOUT"] == str(
+            max(Environment.SERVICE.REGISTRATION_TIMEOUT, 120.0)
+        )
 
     def test_create_env_vars_with_controller_host(
         self, jobset_spec: JobSetSpec
@@ -1664,6 +1669,9 @@ class TestJobSetSpecPrivateMethods:
         env = jobset_spec._create_env_vars(controller_host="controller.default.svc")
         env_dict = {e["name"]: e.get("value") for e in env}
         assert env_dict["AIPERF_K8S_ZMQ_CONTROLLER_HOST"] == "controller.default.svc"
+        assert env_dict["AIPERF_SERVICE_REGISTRATION_TIMEOUT"] == str(
+            max(Environment.SERVICE.REGISTRATION_TIMEOUT, 120.0)
+        )
 
     def test_create_env_vars_with_pod_customization(self) -> None:
         """Test _create_env_vars includes pod customization env vars."""

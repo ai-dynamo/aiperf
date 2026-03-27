@@ -98,12 +98,17 @@ class JobSetInfo:
     @staticmethod
     def _parse_status(raw: dict[str, Any]) -> str:
         """Extract status string from a raw JobSet dict."""
-        conditions = raw.get("status", {}).get("conditions", [])
+        status = raw.get("status", {})
+        conditions = status.get("conditions", [])
         condition_status = {c.get("type"): c.get("status") for c in conditions}
         if condition_status.get("Completed") == "True":
             return JobSetStatus.COMPLETED
         if condition_status.get("Failed") == "True":
-            return JobSetStatus.FAILED
+            replicated = {
+                rj.get("name"): rj for rj in status.get("replicatedJobsStatus", [])
+            }
+            if replicated.get("controller", {}).get("failed", 0) > 0:
+                return JobSetStatus.FAILED
         return JobSetStatus.RUNNING
 
 

@@ -81,6 +81,21 @@ async def _get_app_ready_worker_count(
     return sum(1 for state in states.values() if state == WorkerStartupState.READY)
 
 
+def _classify_jobset_failure(jobset_status: dict[str, Any]) -> tuple[bool, str | None]:
+    """Classify whether a JobSet failure should fail the benchmark."""
+    replicated = {
+        rj.get("name"): rj for rj in jobset_status.get("replicatedJobsStatus", [])
+    }
+    controller_failed = replicated.get("controller", {}).get("failed", 0) > 0
+    workers_failed = replicated.get("workers", {}).get("failed", 0) > 0
+
+    if controller_failed:
+        return True, "controller"
+    if workers_failed:
+        return False, "workers"
+    return True, None
+
+
 async def monitor_progress(
     body: dict[str, Any],
     status: dict[str, Any],
@@ -204,12 +219,23 @@ async def monitor_progress(
                 await close_progress_client(key)
                 return
             if condition.get("type") == "Failed":
-                sb.set_phase(Phase.FAILED)
-                sb.set_error(condition.get("message", "JobSet failed"))
-                sb.finalize()
-                events.failed(body, job_id, condition.get("message", "JobSet failed"))
-                await close_progress_client(key)
-                return
+                is_fatal, failed_scope = _classify_jobset_failure(jobset_status)
+                if is_fatal:
+                    sb.set_phase(Phase.FAILED)
+                    sb.set_error(condition.get("message", "JobSet failed"))
+                    sb.finalize()
+                    events.failed(
+                        body, job_id, condition.get("message", "JobSet failed")
+                    )
+                    await close_progress_client(key)
+                    return
+
+                logger.warning(
+                    "Ignoring non-fatal JobSet failure for %s: failed_scope=%s message=%s",
+                    job_id,
+                    failed_scope,
+                    condition.get("message", "JobSet failed"),
+                )
 
         # Update worker count and phase
         total_workers = status.get("workers", {}).get("total", 0)

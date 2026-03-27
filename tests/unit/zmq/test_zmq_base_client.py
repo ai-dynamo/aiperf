@@ -390,3 +390,41 @@ class TestBaseZMQClientIdentity:
         await client.initialize()
 
         assert self.get_identity_calls(mock_zmq_socket) == [identity]
+
+    @pytest.mark.asyncio
+    async def test_identity_preserved_across_recreate_socket(
+        self, mock_zmq_context
+    ) -> None:
+        """IDENTITY must be restored before bind/connect when recreating."""
+        identity = b"worker-42"
+        old_socket = Mock(spec=zmq.asyncio.Socket)
+        new_socket = Mock(spec=zmq.asyncio.Socket)
+        mock_zmq_context.socket.side_effect = [new_socket]
+
+        client = BaseZMQClient(
+            socket_type=zmq.SocketType.DEALER,
+            address="tcp://127.0.0.1:5555",
+            bind=False,
+            socket_ops={zmq.IDENTITY: identity},
+        )
+        # Simulate post-_initialize_socket state: IDENTITY popped, saved to _identity
+        client.socket_ops.pop(zmq.IDENTITY)
+        client._identity = identity
+        client.socket = old_socket
+        client.context = mock_zmq_context
+
+        await client._recreate_socket()
+
+        identity_calls = self.get_identity_calls(new_socket)
+        assert identity_calls == [identity]
+
+        all_calls = new_socket.method_calls
+        identity_idx = next(
+            i
+            for i, call in enumerate(all_calls)
+            if call[0] == "setsockopt" and call[1][0] == zmq.IDENTITY
+        )
+        connect_idx = next(
+            i for i, call in enumerate(all_calls) if call[0] == "connect"
+        )
+        assert identity_idx < connect_idx, "IDENTITY must be set before connect"

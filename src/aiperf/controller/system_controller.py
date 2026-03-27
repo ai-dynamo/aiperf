@@ -48,6 +48,7 @@ from aiperf.common.enums import (
     CommandType,
     LifecycleState,
     MessageType,
+    WorkerStartupState,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.error_queue import (
@@ -258,6 +259,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._telemetry_endpoints_reachable: list[str] = []
         self._server_metrics_endpoints_configured: list[str] = []
         self._worker_startup_states: dict[str, str] = {}
+        self._all_workers_ready_event: asyncio.Event = asyncio.Event()
         self._server_metrics_endpoints_reachable: list[str] = []
         self._pod_failure_watcher_task: asyncio.Task | None = None
         self.debug("System Controller created")
@@ -429,16 +431,14 @@ class SystemController(SignalHandlerMixin, BaseService):
         self.info(f"Preparing {total_services} services ({types_summary})")
         spawn_start = time.perf_counter()
 
-        # Spawn dataset manager first so it can begin its heavy
-        # configuration (tokenizer loading, dataset prep) while
-        # the remaining services are still starting up.
-        await self.service_manager.run_service(ServiceType.DATASET_MANAGER)
-
         async with self.try_operation_or_stop("Start Service Manager"):
             await self.service_manager.start()
 
+        startup_tasks = []
+
         # In non-Kubernetes mode, spawn workers and record processors locally.
-        # In Kubernetes mode, these are external pods that register themselves.
+        # In Kubernetes mode, required worker-pod services are already started by
+        # the service manager as part of required_services.
         is_k8s_mode = self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
         if not is_k8s_mode:
             from aiperf.workers.scaling import (
@@ -447,17 +447,22 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
 
             num_workers = calculate_worker_count(self.run.cfg)
-            await self.service_manager.run_service(ServiceType.WORKER, num_workers)
+            startup_tasks.append(
+                self.service_manager.run_service(ServiceType.WORKER, num_workers)
+            )
             if self.scale_record_processors_with_workers:
                 num_rp = calculate_record_processor_count(num_workers)
-                await self.service_manager.run_service(
-                    ServiceType.RECORD_PROCESSOR, num_rp
+                startup_tasks.append(
+                    self.service_manager.run_service(
+                        ServiceType.RECORD_PROCESSOR, num_rp
+                    )
                 )
 
-        if optional_services:
-            await asyncio.gather(
-                *[self.service_manager.run_service(st) for st in optional_services]
-            )
+        startup_tasks.extend(
+            self.service_manager.run_service(st) for st in optional_services
+        )
+        if startup_tasks:
+            await asyncio.gather(*startup_tasks)
 
         spawn_elapsed = time.perf_counter() - spawn_start
         self.info(f"All {total_services} services prepared in {spawn_elapsed:.2f}s")
@@ -479,6 +484,11 @@ class SystemController(SignalHandlerMixin, BaseService):
         # registered its services but since crashed (e.g. OOMKilled).
         async with self.try_operation_or_stop("Pod Health Check"):
             await self.service_manager.check_pods_healthy()
+
+        async with self.try_operation_or_stop("Wait For Workers Ready"):
+            await self._wait_for_all_workers_ready(
+                timeout=Environment.SERVICE.PROFILE_START_TIMEOUT,
+            )
 
         # Wait for inference endpoint readiness (real request, not just /health).
         await self._wait_for_endpoint_ready()
@@ -537,6 +547,11 @@ class SystemController(SignalHandlerMixin, BaseService):
                 return
 
         self._configured_ids.add(service_id)
+        service_info = ServiceRegistry.services.get(service_id)
+        if service_info is not None and service_info.service_type == ServiceType.WORKER:
+            self._worker_startup_states[service_id] = str(WorkerStartupState.READY)
+            if self._all_expected_workers_ready():
+                self._all_workers_ready_event.set()
         total = len(self._configuring_ids)
         self.info(f"Configured '{service_id}' ({len(self._configured_ids)}/{total})")
         if self._all_expected_configured():
@@ -735,6 +750,66 @@ class SystemController(SignalHandlerMixin, BaseService):
             summary[state] = summary.get(state, 0) + 1
         return summary
 
+    def _all_expected_workers_ready(self) -> bool:
+        """Check whether all expected workers are in app-level READY state."""
+        expected_workers = self.required_services.get(ServiceType.WORKER, 0)
+        if expected_workers <= 0:
+            return True
+
+        ready_workers = [
+            worker_id
+            for worker_id, state in self._worker_startup_states.items()
+            if state == str(WorkerStartupState.READY)
+        ]
+        return len(ready_workers) >= expected_workers
+
+    async def _wait_for_all_workers_ready(self, timeout: float) -> None:
+        """Wait for all expected workers to reach app-level READY state."""
+        expected_workers = self.required_services.get(ServiceType.WORKER, 0)
+        if expected_workers <= 0:
+            return
+        if self.run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES:
+            return
+        if self._all_expected_workers_ready():
+            self.info(f"All {expected_workers} workers are app-level READY")
+            return
+
+        begin = time.perf_counter()
+        self._all_workers_ready_event.clear()
+        while True:
+            remaining = timeout - (time.perf_counter() - begin)
+            if remaining <= 0:
+                ready_count = sum(
+                    1
+                    for state in self._worker_startup_states.values()
+                    if state == str(WorkerStartupState.READY)
+                )
+                startup_summary = self._summarize_pending_worker_startup_states(
+                    {
+                        worker_id
+                        for worker_id, info in ServiceRegistry.services.items()
+                        if info.service_type == ServiceType.WORKER
+                        and self._worker_startup_states.get(worker_id)
+                        != str(WorkerStartupState.READY)
+                    }
+                )
+                raise ServiceRegistrationTimeoutError(
+                    f"Timed out waiting for workers to become READY "
+                    f"({ready_count}/{expected_workers}). "
+                    f"Pending worker startup: {startup_summary}",
+                    missing={},
+                ) from None
+
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(
+                    self._all_workers_ready_event.wait(),
+                    timeout=min(remaining, 5.0),
+                )
+            self._all_workers_ready_event.clear()
+            if self._all_expected_workers_ready():
+                self.info(f"All {expected_workers} workers are app-level READY")
+                return
+
     @on_message(MessageType.WORKER_STATUS_SUMMARY)
     async def _on_worker_status_summary(
         self, message: WorkerStatusSummaryMessage
@@ -742,6 +817,8 @@ class SystemController(SignalHandlerMixin, BaseService):
         """Track the latest worker startup states for configure-wait diagnostics."""
         for worker_id, startup_state in message.worker_startup_states.items():
             self._worker_startup_states[worker_id] = str(startup_state)
+        if self._all_expected_workers_ready():
+            self._all_workers_ready_event.set()
 
     async def _wait_for_endpoint_ready(self) -> None:
         """Wait for inference endpoint to be ready using a real request.

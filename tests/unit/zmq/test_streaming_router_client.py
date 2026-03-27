@@ -377,14 +377,37 @@ class TestZMQStreamingRouterClientReceiver:
             assert isinstance(recv_message, WorkerReady)
 
     @pytest.mark.asyncio
-    async def test_dispatch_message_recreates_socket_on_host_unreachable(
-        self, streaming_router_test_helper, sample_credit
+    @pytest.mark.parametrize(
+        "errno",
+        [zmq.EHOSTUNREACH, zmq.ENOTCONN],
+        ids=["host_unreachable", "not_connected"],
+    )  # fmt: skip
+    async def test_dispatch_message_does_not_recreate_socket_on_peer_gone(
+        self, streaming_router_test_helper, sample_credit, errno
     ):
-        """Test recoverable ROUTER send errors trigger socket recreation."""
+        """Peer-gone errors don't break socket state; no recreation needed."""
         async with streaming_router_test_helper.create_client() as client:
             client._receiver_handler = AsyncMock(return_value=sample_credit)
             client._recreate_socket = AsyncMock()
-            client.socket.send_multipart.side_effect = zmq.ZMQError(zmq.EHOSTUNREACH)
+            client.socket.send_multipart.side_effect = zmq.ZMQError(errno)
+
+            await client._dispatch_message(
+                "record_processor_24_17",
+                (b"record_processor_24_17",),
+                WorkerReady(worker_id="worker-1"),
+            )
+
+            client._recreate_socket.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_dispatch_message_recreates_socket_on_efsm(
+        self, streaming_router_test_helper, sample_credit
+    ):
+        """EFSM means broken socket state machine; recreation is required."""
+        async with streaming_router_test_helper.create_client() as client:
+            client._receiver_handler = AsyncMock(return_value=sample_credit)
+            client._recreate_socket = AsyncMock()
+            client.socket.send_multipart.side_effect = zmq.ZMQError(zmq.EFSM)
 
             await client._dispatch_message(
                 "record_processor_24_17",
@@ -448,6 +471,36 @@ class TestZMQStreamingRouterClientRecovery:
         old_socket.close.assert_called_once_with(linger=0)
         new_socket.bind.assert_any_call("tcp://0.0.0.0:5667")
         new_socket.bind.assert_any_call("ipc:///tmp/test-router.ipc")
+
+    @pytest.mark.asyncio
+    async def test_recreate_socket_closes_even_when_unbind_fails(
+        self, mock_zmq_context
+    ) -> None:
+        """Socket must be closed even if unbind raises, so the port is released."""
+        old_socket = AsyncMock(spec=zmq.asyncio.Socket)
+        old_socket.bind = Mock()
+        old_socket.unbind = Mock(side_effect=zmq.ZMQError(zmq.ENOTSOCK))
+        old_socket.close = Mock()
+        old_socket.setsockopt = Mock()
+
+        new_socket = AsyncMock(spec=zmq.asyncio.Socket)
+        new_socket.bind = Mock()
+        new_socket.setsockopt = Mock()
+
+        mock_zmq_context.socket.side_effect = [new_socket]
+
+        client = ZMQStreamingRouterClient(
+            address="tcp://0.0.0.0:5667",
+            bind=True,
+            additional_bind_address="ipc:///tmp/test-router.ipc",
+        )
+        client.socket = old_socket
+        client.context = mock_zmq_context
+
+        await client._recreate_socket()
+
+        old_socket.close.assert_called_once_with(linger=0)
+        new_socket.bind.assert_any_call("tcp://0.0.0.0:5667")
 
 
 class TestZMQStreamingRouterClientLifecycle:

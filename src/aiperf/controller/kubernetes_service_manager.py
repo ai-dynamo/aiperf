@@ -346,7 +346,10 @@ class KubernetesServiceManager(MultiProcessServiceManager):
         if threshold == 0:
             return
 
-        total_pods = len(self._pods)
+        expected_total_pods = self.required_services.get(
+            ServiceType.WORKER_POD_MANAGER, 0
+        )
+        total_pods = expected_total_pods or len(self._pods)
         if total_pods == 0:
             return
 

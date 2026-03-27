@@ -25,6 +25,7 @@ from aiperf.config import BenchmarkRun
 from aiperf.controller.kubernetes_service_manager import (
     EXTERNAL_K8S_SERVICES,
     KubernetesServiceManager,
+    PodInfo,
 )
 from aiperf.plugin.enums import ServiceType
 
@@ -463,6 +464,46 @@ class TestWaitForAllServicesRegistration:
         asyncio.create_task(register_remaining())
 
         await manager.wait_for_all_services_registration(timeout_seconds=2.0)
+
+
+class TestPodFailureThreshold:
+    """Test pod-failure abort threshold uses expected worker pod count."""
+
+    def test_does_not_abort_when_all_tracked_pods_fail_but_expected_total_is_higher(
+        self, run: BenchmarkRun
+    ) -> None:
+        manager = KubernetesServiceManager(
+            required_services={ServiceType.WORKER_POD_MANAGER: 10},
+            run=run,
+        )
+        manager._pods = {
+            "0": PodInfo(pod_index="0", pod_name="pod-0", failed=True),
+            "1": PodInfo(pod_index="1", pod_name="pod-1", failed=True),
+        }
+
+        manager._check_pod_failure_threshold()
+
+        assert not manager.pod_failure_abort_event.is_set()
+
+    def test_aborts_when_failed_pods_reach_expected_threshold(
+        self, run: BenchmarkRun
+    ) -> None:
+        manager = KubernetesServiceManager(
+            required_services={ServiceType.WORKER_POD_MANAGER: 2},
+            run=run,
+        )
+        manager._pods = {
+            "0": PodInfo(pod_index="0", pod_name="pod-0", failed=True),
+            "1": PodInfo(pod_index="1", pod_name="pod-1", failed=True),
+        }
+
+        manager._check_pod_failure_threshold()
+
+        assert manager.pod_failure_abort_event.is_set()
+        assert (
+            manager.pod_failure_abort_reason
+            == "2/2 worker pods failed (100% >= 100% threshold)"
+        )
 
 
 class TestKubernetesServiceManagerInit:

@@ -96,9 +96,10 @@ class DatasetDownloadedNotification(BaseServiceMessage):
     """Notification sent by WorkerPodManager after dataset download completes.
 
     In Kubernetes mode, WorkerPodManager downloads the dataset files once per pod.
-    This notification signals to Worker subprocesses that the dataset files are
-    ready for mmap access. Contains the same client_metadata format as
-    DatasetConfiguredNotification for consistency.
+    This notification is pod-scoped: workers should only trust notifications from
+    the same pod_index because each pod writes to its own local mmap files.
+    Contains the same client_metadata format as DatasetConfiguredNotification for
+    consistency.
     """
 
     message_type: MessageTypeT = MessageType.DATASET_DOWNLOADED_NOTIFICATION
@@ -106,6 +107,10 @@ class DatasetDownloadedNotification(BaseServiceMessage):
     client_metadata: MemoryMapClientMetadata = Field(
         ...,
         description="Client metadata with file paths for workers to access downloaded dataset.",
+    )
+    pod_index: str | None = Field(
+        default=None,
+        description="Kubernetes pod index that owns the downloaded dataset files.",
     )
 
     success: bool = Field(

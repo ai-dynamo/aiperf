@@ -3,6 +3,7 @@
 
 """Tests for the DEALER/ROUTER registration probe in BaseComponentService."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -46,6 +47,7 @@ def svc():
     mock.debug = MagicMock()
     mock.info = MagicMock()
     mock.warning = MagicMock()
+    mock.run = SimpleNamespace(cfg=SimpleNamespace(runtime=SimpleNamespace()))
     mock.control_client = MagicMock()
     mock.control_client.send = AsyncMock()
     _bind_methods(mock)

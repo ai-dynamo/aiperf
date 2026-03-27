@@ -247,7 +247,7 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
             while not self.stop_requested:
                 recv_msg = await capture_socket.recv_multipart()
                 self.debug(lambda msg=recv_msg: f"Proxy Monitor Received: {msg}")
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, zmq.ContextTerminated):
             self.debug("Proxy Monitor Task Cancelled")
             return
         except Exception as e:

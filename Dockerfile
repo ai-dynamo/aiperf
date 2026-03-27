@@ -151,7 +151,8 @@ RUN uv pip uninstall setuptools
 
 # Pre-cache the gpt2 tokenizer so K8s pods don't need network access at startup.
 # This avoids 20-40s download delays that can kill ZMQ connections between pods.
-RUN python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('gpt2')"
+RUN python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('gpt2')" \
+    || python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('gpt2')"
 
 ############################################
 ############### Test Image #################
