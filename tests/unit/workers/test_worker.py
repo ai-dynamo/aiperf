@@ -8,7 +8,10 @@ import pytest
 from pytest import param
 
 from aiperf.common.enums import WorkerStartupState
-from aiperf.common.messages import DatasetConfiguredNotification
+from aiperf.common.messages import (
+    DatasetConfiguredNotification,
+    DatasetDownloadedNotification,
+)
 from aiperf.common.models import (
     Conversation,
     DatasetMetadata,
@@ -554,6 +557,67 @@ class TestKubernetesMode:
         worker.return_dealer_client.send.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_rebroadcasted_config_and_download_do_not_rerun_ready_flow(
+        self, config: AIPerfConfig
+    ) -> None:
+        """Repeated config/download rebroadcasts after ready should be ignored."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        worker = Worker(
+            run=self._make_run(config),
+            service_id="k8s-worker",
+        )
+        worker.publish = AsyncMock()
+        worker._initialize_dataset_client = AsyncMock()
+        worker._measure_baseline_rtt = AsyncMock()
+        worker.return_dealer_client.send = AsyncMock()
+
+        dataset_metadata = DatasetMetadata(
+            conversations=[],
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+        configured = DatasetConfiguredNotification(
+            service_id="dataset_manager",
+            metadata=dataset_metadata,
+            client_metadata=MemoryMapClientMetadata(
+                data_file_path=Path(
+                    f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat"
+                ),
+                index_file_path=Path(
+                    f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat"
+                ),
+                conversation_count=0,
+                total_size_bytes=0,
+            ),
+        )
+        downloaded = DatasetDownloadedNotification(
+            service_id="worker-pod-manager",
+            client_metadata=MemoryMapClientMetadata(
+                data_file_path=Path(
+                    f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat"
+                ),
+                index_file_path=Path(
+                    f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat"
+                ),
+                conversation_count=0,
+                total_size_bytes=0,
+            ),
+            success=True,
+        )
+
+        await worker._send_worker_ready_message()
+        await worker._on_dataset_configured(configured)
+        await worker._on_dataset_downloaded(downloaded)
+        await worker._on_dataset_configured(configured)
+        await worker._on_dataset_downloaded(downloaded)
+
+        worker._initialize_dataset_client.assert_awaited_once_with(
+            downloaded.client_metadata,
+            dataset_metadata,
+        )
+        worker._measure_baseline_rtt.assert_awaited_once()
+        worker.return_dealer_client.send.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_k8s_worker_marks_ready_after_downloaded_notification(
         self, config: AIPerfConfig
     ) -> None:
@@ -589,3 +653,64 @@ class TestKubernetesMode:
             WorkerStartupState.ROUTER_PROBING,
             WorkerStartupState.READY,
         ]
+
+    @pytest.mark.asyncio
+    async def test_k8s_worker_handles_download_before_config_notification(
+        self, config: AIPerfConfig
+    ) -> None:
+        """Kubernetes workers should become ready even if download notification arrives first."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        worker = Worker(
+            run=self._make_run(config),
+            service_id="k8s-worker",
+        )
+        worker.publish = AsyncMock()
+        worker._worker_ready_event.clear()
+        worker._initialize_dataset_client = AsyncMock()
+        worker._measure_baseline_rtt = AsyncMock()
+        worker.return_dealer_client.send = AsyncMock()
+
+        dataset_metadata = DatasetMetadata(
+            conversations=[],
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+        configured = DatasetConfiguredNotification(
+            service_id="dataset_manager",
+            metadata=dataset_metadata,
+            client_metadata=MemoryMapClientMetadata(
+                data_file_path=Path(
+                    f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat"
+                ),
+                index_file_path=Path(
+                    f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat"
+                ),
+                conversation_count=0,
+                total_size_bytes=0,
+            ),
+        )
+        downloaded = DatasetDownloadedNotification(
+            service_id="worker-pod-manager",
+            client_metadata=MemoryMapClientMetadata(
+                data_file_path=Path(
+                    f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat"
+                ),
+                index_file_path=Path(
+                    f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat"
+                ),
+                conversation_count=0,
+                total_size_bytes=0,
+            ),
+            success=True,
+        )
+
+        await worker._send_worker_ready_message()
+        await worker._on_dataset_downloaded(downloaded)
+        await worker._on_dataset_configured(configured)
+
+        worker._initialize_dataset_client.assert_awaited_once_with(
+            downloaded.client_metadata,
+            dataset_metadata,
+        )
+        worker._measure_baseline_rtt.assert_awaited_once()
+        worker.return_dealer_client.send.assert_awaited_once()
+        assert worker._worker_ready_event.is_set()

@@ -2,7 +2,7 @@
 apiVersion: aiperf.nvidia.com/v1alpha1
 kind: AIPerfJob
 metadata:
-  name: mock-100-streaming-dbg
+  name: mock-250-pods-dbg
   namespace: acasagrande-aiperf-bench
 spec:
   benchmark:
@@ -25,15 +25,16 @@ spec:
     phases:
       profiling:
         type: concurrency
-        requests: 500
-        concurrency: 100
+        requests: 25000
+        concurrency: 250
 
     tokenizer:
       name: builtin
 
     runtime:
       ui: none
-      workers_per_pod: 5
+      workers: 250
+      workers_per_pod: 1
       record_processors_per_pod: 1
 
     gpu_telemetry:
@@ -46,7 +47,7 @@ spec:
       records:
         - jsonl
 
-  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260326-records-manager-probe-fix-1
+  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260327-041527-23f866110
   connectionsPerWorker: 100
   resourceMode: none
   ttlSecondsAfterFinished: 3600

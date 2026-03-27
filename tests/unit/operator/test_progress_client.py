@@ -12,7 +12,7 @@ import pytest
 import zstandard as zstd
 from pytest import param
 
-from aiperf.common.enums import CreditPhase  # noqa: F401 - type alias (str)
+from aiperf.common.enums import WorkerStartupState
 from aiperf.operator.progress_client import (
     RETRYABLE_STATUS_CODES,
     JobProgress,
@@ -257,6 +257,46 @@ class TestProgressClientGetProgress:
             url = call_args[0][0]
             assert "http://my-controller.ns.svc:9090" in url
             assert "/api/progress" in url
+
+
+class TestProgressClientGetWorkerStartupStates:
+    """Tests for ProgressClient.get_worker_startup_states method."""
+
+    @pytest.mark.asyncio
+    async def test_get_worker_startup_states_success(self) -> None:
+        """Test worker startup states are parsed from /api/workers."""
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_response = AsyncMock()
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json = AsyncMock(
+                return_value={
+                    "workers": {
+                        "worker-1": {"worker_id": "worker-1", "startup_state": "ready"},
+                        "worker-2": {
+                            "worker_id": "worker-2",
+                            "startup_state": "waiting_for_dataset",
+                        },
+                    }
+                }
+            )
+
+            mock_session = AsyncMock()
+            mock_session.get = MagicMock(
+                return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response))
+            )
+            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session_class.return_value = mock_session
+
+            client = ProgressClient(port=9090)
+            async with client:
+                states = await client.get_worker_startup_states("controller.default")
+
+            assert states == {
+                "worker-1": WorkerStartupState.READY,
+                "worker-2": WorkerStartupState.WAITING_FOR_DATASET,
+            }
+            url = mock_session.get.call_args[0][0]
+            assert url == "http://controller.default:9090/api/workers"
 
 
 class TestProgressClientParseResponse:

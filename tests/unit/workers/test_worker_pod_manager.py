@@ -6,6 +6,7 @@ WorkerPodManager runs in worker pods and coordinates shared pod infrastructure
 while worker and record-processor services run as sibling containers.
 """
 
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -317,6 +318,41 @@ class TestDatasetHandling:
         await manager._on_dataset_configured(dataset_notification)
 
         assert manager._download_dataset.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_concurrent_dataset_notifications_do_not_overlap_downloads(
+        self,
+        worker_pod_manager: WorkerPodManager,
+        dataset_notification: DatasetConfiguredNotification,
+    ) -> None:
+        """Concurrent rebroadcasts should share one in-flight dataset download."""
+        manager = worker_pod_manager
+        started = asyncio.Event()
+        release = asyncio.Event()
+        mock_data_path = self._create_mock_path(1024)
+        mock_index_path = self._create_mock_path(256)
+
+        async def slow_download() -> tuple[MagicMock, MagicMock]:
+            started.set()
+            await release.wait()
+            return mock_data_path, mock_index_path
+
+        manager._download_dataset = AsyncMock(side_effect=slow_download)
+        manager.publish = AsyncMock()
+
+        task1 = asyncio.create_task(
+            manager._on_dataset_configured(dataset_notification)
+        )
+        await started.wait()
+        task2 = asyncio.create_task(
+            manager._on_dataset_configured(dataset_notification)
+        )
+        await asyncio.sleep(0)
+        release.set()
+        await asyncio.gather(task1, task2)
+
+        assert manager._download_dataset.await_count == 1
+        assert manager.publish.await_count == 1
 
     @pytest.mark.asyncio
     async def test_missing_dataset_api_url_raises_error(

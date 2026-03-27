@@ -110,6 +110,7 @@ class WorkerPodManager(BaseComponentService):
         self._dataset_downloaded = False
         self._dataset_download_event = asyncio.Event()
         self._dataset_client_metadata: MemoryMapClientMetadata | None = None
+        self._dataset_download_task: asyncio.Task[None] | None = None
         self._stopping = False
 
         self._proxy_manager = ProxyManager(
@@ -190,8 +191,26 @@ class WorkerPodManager(BaseComponentService):
                 )
             return
 
-        self.info("Received dataset configuration, downloading dataset...")
+        if self._dataset_download_task is not None:
+            self.debug(
+                "Dataset download already in progress, waiting for existing task"
+            )
+            await self._dataset_download_task
+            return
 
+        self.info("Received dataset configuration, downloading dataset...")
+        self._dataset_download_task = self.execute_async(
+            self._download_and_publish_dataset(message)
+        )
+        try:
+            await self._dataset_download_task
+        finally:
+            self._dataset_download_task = None
+
+    async def _download_and_publish_dataset(
+        self, message: DatasetConfiguredNotification
+    ) -> None:
+        """Download the dataset once and publish the local client metadata."""
         cfg = self.run.cfg
         try:
             data_path, index_path = await self._download_dataset()

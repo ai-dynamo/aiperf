@@ -17,9 +17,9 @@ import aiohttp
 import zstandard as zstd
 from pydantic import Field
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CreditPhase, WorkerStartupState
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
-from aiperf.common.models import AIPerfBaseModel
+from aiperf.common.models import AIPerfBaseModel, WorkerStats
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.operator.k8s_helpers import retry_with_backoff
 from aiperf.transports.aiohttp_client import create_tcp_connector
@@ -110,6 +110,7 @@ class ProgressClient:
     __slots__ = ("_port", "_session", "_max_retries", "_initial_backoff")
 
     PROGRESS_ENDPOINT = "/api/progress"
+    WORKERS_ENDPOINT = "/api/workers"
     TIMEOUT_SECONDS = 10.0  # Increased for slow networks
 
     def __init__(
@@ -244,6 +245,41 @@ class ProgressClient:
             phases=phases,
             error=data.get("error"),
         )
+
+    async def get_worker_startup_states(
+        self, controller_host: str
+    ) -> dict[str, WorkerStartupState] | None:
+        """Fetch current worker startup states from the controller pod.
+
+        Args:
+            controller_host: The DNS name or IP of the controller pod.
+
+        Returns:
+            Mapping of worker_id -> startup state, or None when the endpoint is
+            temporarily unreachable.
+        """
+        url = f"http://{controller_host}:{self._port}{self.WORKERS_ENDPOINT}"
+
+        try:
+            data = await self._request_with_retry(url)
+            if data is None:
+                return None
+
+            states: dict[str, WorkerStartupState] = {}
+            for worker_id, worker_data in data.get("workers", {}).items():
+                try:
+                    worker = WorkerStats(**worker_data)
+                except (TypeError, ValueError) as e:
+                    logger.warning(
+                        f"Skipping malformed worker payload for {worker_id}: {e}"
+                    )
+                    continue
+                if worker.startup_state is not None:
+                    states[worker_id] = worker.startup_state
+            return states
+        except aiohttp.ClientError as e:
+            logger.warning(f"Failed to fetch worker startup states from {url}: {e}")
+            return None
 
     async def check_health(self, controller_host: str) -> bool:
         """Check if the controller pod is healthy.

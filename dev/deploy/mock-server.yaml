@@ -59,6 +59,18 @@ spec:
               value: "gpt2"
             - name: MOCK_SERVER_WORKERS
               value: "8"
+            - name: TTFT_MIN
+              value: "5000"
+            - name: TTFT_MAX
+              value: "5000"
+            - name: ITL_MIN
+              value: "50"
+            - name: ITL_MAX
+              value: "50"
+            - name: MIN_TOKENS
+              value: "5000"
+            - name: MAX_TOKENS
+              value: "5000"
           resources:
             requests:
               cpu: "2000m"

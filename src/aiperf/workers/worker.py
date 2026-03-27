@@ -230,6 +230,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
         self._pending_dataset_config: DatasetConfiguredNotification | None = None
+        self._pending_download_notification: DatasetDownloadedNotification | None = None
         self._worker_ready_event = asyncio.Event()
         self._startup_state: WorkerStartupState | None = None
 
@@ -302,10 +303,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
             return
 
+        if self._dataset_configured_event.is_set() or self._worker_ready_event.is_set():
+            self.debug("Dataset already initialized, ignoring rebroadcast")
+            return
+
         # In Kubernetes mode, wait for WorkerPodManager to download the dataset first.
         # WorkerPodManager will send DatasetDownloadedNotification with local paths.
         if self._is_kubernetes_mode():
             self._pending_dataset_config = msg
+            pending_download = self._pending_download_notification
+            if pending_download is not None:
+                await self._complete_k8s_dataset_handshake(pending_download)
+                return
             self.debug(
                 "Kubernetes mode: waiting for DatasetDownloadedNotification "
                 "before initializing dataset client"
@@ -329,8 +338,25 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
             return
 
+        if self._dataset_configured_event.is_set() or self._worker_ready_event.is_set():
+            self.debug("Dataset already initialized, ignoring download rebroadcast")
+            return
+
         if self._pending_dataset_config is None:
-            self.debug("Received download notification but no pending config, ignoring")
+            self.debug(
+                "Received download notification before config; storing for later"
+            )
+            self._pending_download_notification = msg
+            return
+
+        await self._complete_k8s_dataset_handshake(msg)
+
+    async def _complete_k8s_dataset_handshake(
+        self, msg: DatasetDownloadedNotification
+    ) -> None:
+        """Finish K8s dataset initialization once config and download are both present."""
+        if self._pending_dataset_config is None:
+            self._pending_download_notification = msg
             return
 
         if not msg.success:
@@ -341,13 +367,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
 
         # Use client_metadata from download notification (has local paths from WorkerPodManager)
-        dataset_metadata = (
-            self._pending_dataset_config.metadata
-            if self._pending_dataset_config
-            else None
-        )
+        dataset_metadata = self._pending_dataset_config.metadata
         await self._initialize_dataset_client(msg.client_metadata, dataset_metadata)
         self._pending_dataset_config = None
+        self._pending_download_notification = None
 
         # Measure RTT before announcing readiness
         await self._publish_startup_state(WorkerStartupState.ROUTER_PROBING)

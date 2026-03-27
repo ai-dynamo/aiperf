@@ -17,16 +17,22 @@ import argparse
 import asyncio
 import copy
 import gc
+import multiprocessing
+import socket
 import statistics
 import sys
 import time
+import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import msgspec
 import orjson
+import zmq
+import zmq.asyncio
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
@@ -52,16 +58,24 @@ from aiperf.common.models import (
     Turn,
     Usage,
 )
+from aiperf.common.models.dataset_models import Conversation
 from aiperf.common.models.record_models import (
     MetricRecordMetadata,
     MetricValue,
     RawRecordInfo,
 )
 from aiperf.config import BenchmarkConfig
+from aiperf.credit.sticky_router import StickyCreditRouter
+from aiperf.credit.structs import Credit, CreditContext
+from aiperf.dataset.memory_map_utils import (
+    MemoryMapDatasetBackingStore,
+    MemoryMapDatasetClientStore,
+)
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from aiperf.records.inference_result_parser import InferenceResultParser
 from aiperf.records.record_processor_service import RecordProcessor
+from aiperf.workers.session_manager import UserSessionManager
 
 _MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
     "models": ["test-model"],
@@ -141,6 +155,18 @@ class FakeEndpointMetadata:
     supports_images = False
     supports_videos = False
     produces_videos = False
+
+
+class FakeStreamingRouterClient:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, object]] = []
+        self.receiver = None
+
+    async def send_to(self, worker_id: str, message: object) -> None:
+        self.sent.append((worker_id, message))
+
+    def register_receiver(self, receiver: Any) -> None:
+        self.receiver = receiver
 
 
 def _noop(*args: Any, **kwargs: Any) -> None:
@@ -411,6 +437,48 @@ def _build_chat_endpoint(*, use_server_token_count: bool) -> ChatEndpoint:
     for method in ("trace", "trace_or_debug", "debug", "info", "warning", "error"):
         setattr(endpoint, method, _noop)
     return endpoint
+
+
+def _build_sticky_credit_router() -> StickyCreditRouter:
+    fake_credit_client = FakeStreamingRouterClient()
+    fake_return_client = FakeStreamingRouterClient()
+
+    class FakeComms:
+        def __init__(self) -> None:
+            self._clients = [fake_credit_client, fake_return_client]
+
+        def create_streaming_router_client(
+            self, **kwargs: Any
+        ) -> FakeStreamingRouterClient:
+            return self._clients.pop(0)
+
+    def communication_init(self: Any, run: Any, **kwargs: Any) -> None:
+        self.run = run
+        self.comms = FakeComms()
+        self.service_id = kwargs.get("service_id", "sticky-router-bench")
+        self.is_enabled_for = lambda level: False
+        for method in (
+            "trace_or_debug",
+            "trace",
+            "debug",
+            "info",
+            "warning",
+            "error",
+            "exception",
+        ):
+            setattr(self, method, _noop)
+
+    config = _make_config(use_server_token_count=True)
+    config.endpoint.streaming = True
+    run = _make_run(config)
+    run.resolved.comm_config = SimpleNamespace(controller_host=None)
+
+    with patch(
+        "aiperf.common.mixins.CommunicationMixin.__init__",
+        communication_init,
+    ):
+        router = StickyCreditRouter(run=run, service_id="sticky-router-bench")
+    return router
 
 
 def _build_metric_results_processor(
@@ -1312,6 +1380,428 @@ async def benchmark_full_path(args: argparse.Namespace) -> list[BenchmarkSample]
     ]
 
 
+async def benchmark_zmq_dispatch(args: argparse.Namespace) -> list[BenchmarkSample]:
+    config = _make_config(use_server_token_count=True)
+    payloads = [
+        encode_inference_results_wire_message(
+            build_inference_results_wire_message(
+                service_id="worker-bench",
+                record=_make_request_record(
+                    config,
+                    request_index,
+                    prompt_words=args.prompt_words,
+                    raw_response_count=args.responses,
+                ),
+                raw_payload={"model": "test-model"},
+                include_status=True,
+            )
+        )
+        for request_index in range(args.records)
+    ]
+
+    context = zmq.asyncio.Context.instance()
+    endpoint = f"inproc://record-processing-zmq-{uuid.uuid4().hex}"
+    sender = context.socket(zmq.PUSH)
+    receiver = context.socket(zmq.PULL)
+    receiver.bind(endpoint)
+    sender.connect(endpoint)
+
+    async def operation(_: int) -> None:
+        for payload in payloads:
+            await sender.send(payload)
+        for _ in payloads:
+            await receiver.recv()
+
+    try:
+        await operation(0)
+        return [
+            await _time_async_operation(
+                name="raw_zmq_dispatch",
+                items=args.records,
+                repeats=args.repeats,
+                warmup_runs=args.warmup_runs,
+                details={
+                    "responses_per_record": args.responses,
+                    "payload_bytes": len(payloads[0]) if payloads else 0,
+                    "transport": "inproc push/pull",
+                },
+                operation=operation,
+            )
+        ]
+    finally:
+        sender.close(linger=0)
+        receiver.close(linger=0)
+
+
+def _pick_free_tcp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        return int(sock.getsockname()[1])
+
+
+async def _tcp_echo_handler(
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+) -> None:
+    try:
+        data = await reader.readexactly(4)
+        writer.write(data)
+        await writer.drain()
+    finally:
+        writer.close()
+        await writer.wait_closed()
+
+
+async def benchmark_tcp_connect(args: argparse.Namespace) -> list[BenchmarkSample]:
+    port = _pick_free_tcp_port()
+    server = await asyncio.start_server(_tcp_echo_handler, "127.0.0.1", port)
+
+    async def operation(_: int) -> None:
+        for _ in range(args.records):
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(b"ping")
+            await writer.drain()
+            await reader.readexactly(4)
+            writer.close()
+            await writer.wait_closed()
+
+    try:
+        await operation(0)
+        return [
+            await _time_async_operation(
+                name="tcp_connect_roundtrip",
+                items=args.records,
+                repeats=args.repeats,
+                warmup_runs=args.warmup_runs,
+                details={"transport": "plain tcp connect/send/recv/close"},
+                operation=operation,
+            )
+        ]
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+def _router_server_process(
+    endpoint: str,
+    items_per_run: int,
+    total_runs: int,
+    ready_queue: multiprocessing.Queue,
+    done_queue: multiprocessing.Queue,
+) -> None:
+    context = zmq.Context()
+    socket_obj = context.socket(zmq.ROUTER)
+    socket_obj.bind(endpoint)
+    ready_queue.put("ready")
+    try:
+        for _ in range(total_runs):
+            for _ in range(items_per_run):
+                socket_obj.recv_multipart()
+            done_queue.put("done")
+    finally:
+        socket_obj.close(linger=0)
+        context.term()
+
+
+async def benchmark_tcp_dealer_router(
+    args: argparse.Namespace,
+) -> list[BenchmarkSample]:
+    encoder = msgspec.msgpack.Encoder()
+    payloads = [
+        encoder.encode(
+            Credit(
+                id=request_index,
+                phase="profiling",
+                conversation_id=f"conversation-{request_index}",
+                x_correlation_id=f"corr-{request_index}",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=1_700_000_000_000_000_000 + request_index,
+            )
+        )
+        for request_index in range(args.records)
+    ]
+
+    port = _pick_free_tcp_port()
+    endpoint = f"tcp://127.0.0.1:{port}"
+    total_runs = args.warmup_runs + args.repeats + 1
+    ready_queue: multiprocessing.Queue = multiprocessing.Queue()
+    done_queue: multiprocessing.Queue = multiprocessing.Queue()
+    process = multiprocessing.Process(
+        target=_router_server_process,
+        args=(endpoint, args.records, total_runs, ready_queue, done_queue),
+        daemon=True,
+    )
+    process.start()
+    ready_queue.get(timeout=10)
+
+    context = zmq.asyncio.Context.instance()
+    dealer = context.socket(zmq.DEALER)
+    dealer.setsockopt(zmq.IDENTITY, b"bench-dealer")
+    dealer.connect(endpoint)
+
+    async def operation(_: int) -> None:
+        for payload in payloads:
+            await dealer.send(payload)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, done_queue.get, True, 30)
+
+    try:
+        await operation(0)
+        return [
+            await _time_async_operation(
+                name="tcp_dealer_router_dispatch",
+                items=args.records,
+                repeats=args.repeats,
+                warmup_runs=args.warmup_runs,
+                details={
+                    "payload_bytes": len(payloads[0]) if payloads else 0,
+                    "transport": "tcp dealer/router cross-process",
+                },
+                operation=operation,
+            )
+        ]
+    finally:
+        dealer.close(linger=0)
+        process.join(timeout=5)
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=5)
+
+
+async def benchmark_sticky_credit_router(
+    args: argparse.Namespace,
+) -> list[BenchmarkSample]:
+    router = _build_sticky_credit_router()
+    worker_count = max(1, args.processors)
+    for worker_index in range(worker_count):
+        router._register_worker(f"worker-{worker_index}")
+
+    credits: list[Credit] = []
+    session_count = max(1, args.records // 4)
+    credit_id = 0
+    for session_index in range(session_count):
+        x_correlation_id = f"session-{session_index}"
+        for turn_index in range(4):
+            credits.append(
+                Credit(
+                    id=credit_id,
+                    phase="profiling",
+                    conversation_id=f"conversation-{session_index}",
+                    x_correlation_id=x_correlation_id,
+                    turn_index=turn_index,
+                    num_turns=4,
+                    issued_at_ns=1_700_000_000_000_000_000 + credit_id,
+                    session_num=session_index,
+                )
+            )
+            credit_id += 1
+            if len(credits) >= args.records:
+                break
+        if len(credits) >= args.records:
+            break
+
+    async def operation(_: int) -> None:
+        router._sticky_sessions.clear()
+        router._unavailable_sessions.clear()
+        router._workers_by_load.clear()
+        router._min_load = 0
+        router._workers_cache = list(router._workers.values())
+        now_ns = time.perf_counter_ns()
+        for worker_load in router._workers.values():
+            worker_load.in_flight_credits = 0
+            worker_load.active_sessions = 0
+            worker_load.active_session_ids.clear()
+            worker_load.active_credit_ids.clear()
+            worker_load.active_credits.clear()
+            worker_load.last_sent_at_ns = now_ns
+            router._workers_by_load[0].add(worker_load.worker_id)
+        router._credit_router_client.sent.clear()
+        for credit in credits:
+            await router.send_credit(credit)
+
+    await operation(0)
+    return [
+        await _time_async_operation(
+            name="sticky_credit_router_dispatch",
+            items=len(credits),
+            repeats=args.repeats,
+            warmup_runs=args.warmup_runs,
+            details={
+                "worker_count": worker_count,
+                "session_count": session_count,
+                "turns_per_session": 4,
+                "payload_type": "real Credit struct",
+            },
+            operation=operation,
+        )
+    ]
+
+
+async def benchmark_worker_start_path(
+    args: argparse.Namespace,
+) -> list[BenchmarkSample]:
+    config = _make_config(use_server_token_count=True)
+    endpoint = _build_chat_endpoint(use_server_token_count=True)
+    session_manager = UserSessionManager()
+    session_manager.set_default_context_mode(None)
+
+    conversation = Conversation(
+        session_id="bench-session",
+        turns=[_make_turn(args.prompt_words, 0) for _ in range(4)],
+        system_message="system prompt for startup benchmark",
+        user_context_message="user context for startup benchmark",
+    )
+
+    credits = [
+        Credit(
+            id=request_index,
+            phase="profiling",
+            conversation_id=conversation.session_id,
+            x_correlation_id=f"session-{request_index // 4}",
+            turn_index=request_index % 4,
+            num_turns=4,
+            issued_at_ns=1_700_000_000_000_000_000 + request_index,
+            session_num=request_index // 4,
+        )
+        for request_index in range(args.records)
+    ]
+
+    class Clock:
+        @staticmethod
+        def now_ns() -> int:
+            return 1_700_000_000_000_000_000
+
+    worker_like = SimpleNamespace(
+        run=SimpleNamespace(cfg=config),
+        _create_request_info=None,
+    )
+
+    def create_request_info(
+        *,
+        x_request_id: str,
+        session: Any,
+        credit_context: CreditContext,
+        system_message: str | None = None,
+        user_context_message: str | None = None,
+    ):
+        from aiperf.common.models import RequestInfo
+
+        credit = credit_context.credit
+        return RequestInfo(
+            config=config,
+            credit_num=credit.id,
+            session_num=credit.session_num,
+            credit_phase=credit.phase,
+            cancel_after_ns=credit.cancel_after_ns,
+            x_request_id=x_request_id,
+            x_correlation_id=session.x_correlation_id,
+            conversation_id=session.conversation.session_id,
+            turn_index=session.turn_index,
+            turns=session.turn_list,
+            drop_perf_ns=credit_context.drop_perf_ns,
+            credit_issued_ns=credit.issued_at_ns,
+            credit_received_ns=credit_context.credit_received_ns,
+            system_message=system_message,
+            user_context_message=user_context_message,
+            is_final_turn=credit.is_final_turn,
+            url_index=session.url_index,
+        )
+
+    worker_like._create_request_info = create_request_info
+
+    def operation(_: int) -> None:
+        session_manager._cache.clear()
+        for credit in credits:
+            x_request_id = f"request-{credit.id}"
+            session = session_manager.get(credit.x_correlation_id)
+            if session is None:
+                session = session_manager.create_and_store(
+                    credit.x_correlation_id,
+                    conversation,
+                    credit.num_turns,
+                    url_index=credit.url_index,
+                )
+            session.advance_turn(credit.turn_index)
+            credit_context = CreditContext(
+                credit=credit,
+                drop_perf_ns=1_000_000_000 + credit.id,
+                credit_received_ns=Clock.now_ns(),
+            )
+            request_info = worker_like._create_request_info(
+                x_request_id=x_request_id,
+                session=session,
+                credit_context=credit_context,
+                system_message=conversation.system_message,
+                user_context_message=conversation.user_context_message,
+            )
+            payload = endpoint.format_payload(request_info)
+            orjson.dumps(payload)
+            if credit.is_final_turn:
+                session_manager.evict(credit.x_correlation_id)
+
+    operation(0)
+    return [
+        _time_sync_operation(
+            name="worker_credit_to_payload_ready",
+            items=args.records,
+            repeats=args.repeats,
+            warmup_runs=args.warmup_runs,
+            details={
+                "turns_per_session": 4,
+                "worker_stage": "session lookup/create + request info + payload format + json serialize",
+            },
+            operation=operation,
+        )
+    ]
+
+
+async def benchmark_mmap_dataset(args: argparse.Namespace) -> list[BenchmarkSample]:
+    backing_store = MemoryMapDatasetBackingStore(
+        benchmark_id=f"bench-{uuid.uuid4().hex}"
+    )
+    await backing_store.initialize()
+    conversations = {}
+    for request_index in range(args.records):
+        conversation = Conversation(
+            session_id=f"conversation-{request_index}",
+            turns=[_make_turn(args.prompt_words, request_index) for _ in range(4)],
+            system_message="system prompt for mmap benchmark",
+            user_context_message="user context for mmap benchmark",
+        )
+        conversations[conversation.session_id] = conversation
+    await backing_store.add_conversations(conversations)
+    await backing_store.finalize()
+
+    client_store = MemoryMapDatasetClientStore(backing_store.get_client_metadata())
+    await client_store.initialize()
+    conversation_ids = list(conversations.keys())
+
+    async def operation(_: int) -> None:
+        for conversation_id in conversation_ids:
+            await client_store.get_conversation(conversation_id)
+
+    try:
+        await operation(0)
+        return [
+            await _time_async_operation(
+                name="mmap_get_conversation",
+                items=len(conversation_ids),
+                repeats=args.repeats,
+                warmup_runs=args.warmup_runs,
+                details={
+                    "turns_per_conversation": 4,
+                    "prompt_words": args.prompt_words,
+                },
+                operation=operation,
+            )
+        ]
+    finally:
+        await client_store.stop()
+        await backing_store.stop()
+
+
 def benchmark_export_path(args: argparse.Namespace) -> list[BenchmarkSample]:
     metric_record = _make_metric_record_info(args.export_metrics)
     raw_record = _make_raw_record_info(args.responses)
@@ -1381,6 +1871,18 @@ async def _run_async_scenarios(args: argparse.Namespace) -> list[BenchmarkSample
         results.extend(await benchmark_parser_path(args))
     if args.scenario in {"all", "rp"}:
         results.extend(await benchmark_record_processor_path(args))
+    if args.scenario in {"all", "zmq"}:
+        results.extend(await benchmark_zmq_dispatch(args))
+    if args.scenario in {"all", "tcp-connect"}:
+        results.extend(await benchmark_tcp_connect(args))
+    if args.scenario in {"all", "tcp-zmq"}:
+        results.extend(await benchmark_tcp_dealer_router(args))
+    if args.scenario in {"all", "sticky-credit"}:
+        results.extend(await benchmark_sticky_credit_router(args))
+    if args.scenario in {"all", "worker-start"}:
+        results.extend(await benchmark_worker_start_path(args))
+    if args.scenario in {"all", "mmap"}:
+        results.extend(await benchmark_mmap_dataset(args))
     return results
 
 
@@ -1395,6 +1897,12 @@ def parse_args() -> argparse.Namespace:
             "full-path",
             "parser",
             "rp",
+            "zmq",
+            "tcp-connect",
+            "tcp-zmq",
+            "sticky-credit",
+            "worker-start",
+            "mmap",
             "export",
         ],
         default="all",

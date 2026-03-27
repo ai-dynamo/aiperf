@@ -18,6 +18,7 @@ import kopf
 import kr8s
 from kr8s.asyncio.objects import Pod
 
+from aiperf.common.enums import WorkerStartupState
 from aiperf.kubernetes.constants import Containers, JobSetLabels
 from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.kubernetes.kr8s_resources import AsyncJobSet
@@ -67,6 +68,17 @@ def _get_elapsed_seconds(status: dict[str, Any]) -> float | None:
 def _get_job_timeout(spec: dict[str, Any]) -> float:
     """Get job timeout from spec or global default. 0 means no timeout."""
     return float(spec.get("timeoutSeconds", OperatorEnvironment.JOB_TIMEOUT_SECONDS))
+
+
+async def _get_app_ready_worker_count(
+    client: Any,
+    controller_host: str,
+) -> int | None:
+    """Get the count of workers that reported app-level READY startup state."""
+    states = await client.get_worker_startup_states(controller_host)
+    if states is None:
+        return None
+    return sum(1 for state in states.values() if state == WorkerStartupState.READY)
 
 
 async def monitor_progress(
@@ -225,25 +237,37 @@ async def monitor_progress(
         ):
             sb.set_phase(Phase.INITIALIZING)
 
+        controller_host = controller_dns_name(jobset_name, namespace)
+        client = None
+        app_workers_ready: int | None = None
+
         effective_phase = sb.get_phase() or current_phase
         if (
             effective_phase == Phase.INITIALIZING
             and total_workers > 0
             and (workers_ready == total_workers or workers_succeeded == total_workers)
         ):
-            sb.set_phase(Phase.RUNNING)
-            sb.conditions.set_true(
-                ConditionType.WORKERS_READY,
-                "AllWorkersReady",
-                f"All {total_workers} workers are ready",
+            client = await get_or_create_progress_client(key)
+            app_workers_ready = await _get_app_ready_worker_count(
+                client, controller_host
             )
-            sb.conditions.set_true(
-                ConditionType.BENCHMARK_RUNNING,
-                "BenchmarkStarted",
-                "Benchmark is running",
-            )
-            events.workers_ready(body, workers_ready, total_workers)
-            events.started(body, job_id)
+            if app_workers_ready is not None:
+                sb.set_workers(app_workers_ready, total_workers)
+
+            if app_workers_ready == total_workers:
+                sb.set_phase(Phase.RUNNING)
+                sb.conditions.set_true(
+                    ConditionType.WORKERS_READY,
+                    "AllWorkersReady",
+                    f"All {total_workers} workers are ready",
+                )
+                sb.conditions.set_true(
+                    ConditionType.BENCHMARK_RUNNING,
+                    "BenchmarkStarted",
+                    "Benchmark is running",
+                )
+                events.workers_ready(body, app_workers_ready, total_workers)
+                events.started(body, job_id)
 
         # Check for pod restarts (CrashLoopBackOff detection)
         await _check_pod_restarts(api, body, namespace, jobset_name, key)
@@ -259,7 +283,8 @@ async def monitor_progress(
         if effective_phase == Phase.RUNNING or (
             workers_succeeded > 0 and workers_succeeded >= total_workers
         ):
-            client = await get_or_create_progress_client(key)
+            if client is None:
+                client = await get_or_create_progress_client(key)
             benchmark_complete = await _fetch_progress(
                 namespace, jobset_name, patch, sb, client, key
             )
