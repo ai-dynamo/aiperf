@@ -500,7 +500,6 @@ class StickyCreditRouter(CommunicationMixin):
             case WorkerConnected():
                 self._connected_workers.add(worker_id)
             case WorkerDispatchable():
-                self._connected_workers.add(worker_id)
                 if detached := self._detached_workers.get(worker_id):
                     self._register_worker(worker_id)
                     await self._reclaim_detached_worker_credits(
@@ -511,7 +510,6 @@ class StickyCreditRouter(CommunicationMixin):
                 else:
                     self._register_worker(worker_id)
             case WorkerUndispatchable():
-                self._connected_workers.add(worker_id)
                 if worker_id in self._workers:
                     self._unregister_worker(worker_id)
             case WorkerShutdown():

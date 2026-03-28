@@ -60,6 +60,35 @@ class TestStickyCreditRouterWorkerRoutingState:
         worker_id = router._credit_router_client.send_to.call_args[0][0]
         assert worker_id == "worker-dispatchable"
 
+    async def test_dispatchable_worker_does_not_mark_worker_connected(
+        self, run
+    ) -> None:
+        router = StickyCreditRouter(run=run, service_id="test-router")
+
+        await router._handle_return_router_message(
+            "worker-dispatchable-only",
+            WorkerDispatchable(worker_id="worker-dispatchable-only"),
+        )
+
+        assert "worker-dispatchable-only" in router._workers
+        assert "worker-dispatchable-only" not in router._connected_workers
+
+    async def test_undispatchable_worker_only_removes_worker_from_routing_pool(
+        self, run
+    ) -> None:
+        router = StickyCreditRouter(run=run, service_id="test-router")
+
+        await router._handle_return_router_message(
+            "worker-undispatchable-only",
+            WorkerUndispatchable(
+                worker_id="worker-undispatchable-only",
+                reason="draining",
+            ),
+        )
+
+        assert "worker-undispatchable-only" not in router._workers
+        assert "worker-undispatchable-only" not in router._connected_workers
+
     async def test_undispatchable_worker_leaves_routing_pool_but_stays_connected(
         self, run
     ) -> None:
