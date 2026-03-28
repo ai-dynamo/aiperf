@@ -104,6 +104,15 @@ The group is registered in `cli.py` exactly like a flat command:
 app.command("aiperf.cli_commands.kube:app", name="kube")
 ```
 
+## Kubernetes readiness pattern
+
+For churn-safe Kubernetes components, prefer queryable current state over rebroadcast-only startup notifications:
+
+- `WorkerPodManager` is the only controller-facing authority for a worker pod
+- workers may connect to the credit router early, but must not become dispatchable until pod-local startup convergence completes
+- pod-local ROUTER/DEALER request-reply is the preferred pattern for late joiners querying current dataset state
+- controller startup gating should use aggregate pod snapshots rather than per-worker registration counts
+
 ## Service Pattern
 
 Services run in separate processes via `bootstrap.py`:
