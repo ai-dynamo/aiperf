@@ -603,7 +603,7 @@ class TestJobSetSpecContainerDetails:
         assert len(ports) == len(set(ports))
 
     def test_api_container_has_api_port(self, jobset_manifest: dict[str, Any]) -> None:
-        """Test API container exposes both health and API ports."""
+        """Test API container exposes only the API port (no separate health port)."""
         controller_job = next(
             j
             for j in jobset_manifest["spec"]["replicatedJobs"]
@@ -615,7 +615,7 @@ class TestJobSetSpecContainerDetails:
         api_container = next(c for c in containers if c["name"] == "api")
         port_names = [p["name"] for p in api_container["ports"]]
         assert "api" in port_names
-        assert "health" in port_names
+        assert "health" not in port_names
 
     def test_api_container_probes_use_api_port(
         self, jobset_manifest: dict[str, Any]
@@ -1804,19 +1804,20 @@ class TestJobSetSpecCreateContainer:
         assert "8080" in container.args
 
     def test_create_container_with_api_port(self, jobset_spec: JobSetSpec) -> None:
-        """Test _create_container with API port."""
+        """Test _create_container with API port and no health port."""
         resources = {"requests": {"cpu": "100m"}, "limits": {"cpu": "500m"}}
         container = jobset_spec._create_container(
             name="api-container",
             service_type="api",
-            health_port=8080,
+            health_port=None,
             resources=resources,
             api_port=9090,
         )
         assert "--api-port" in container.args
         assert "9090" in container.args
+        assert "--health-port" not in container.args
         port_names = [p["name"] for p in container.ports]
-        assert "health" in port_names
+        assert "health" not in port_names
         assert "api" in port_names
 
     def test_create_container_with_controller_host(

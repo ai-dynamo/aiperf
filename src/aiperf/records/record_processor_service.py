@@ -11,7 +11,13 @@ from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.channel_codecs import RAW_INFERENCE_CODEC, RECORDS_CODEC
 from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommAddress, CommandType, ExportLevel, MessageType
-from aiperf.common.hooks import on_command, on_pull_message, on_start, on_stop
+from aiperf.common.hooks import (
+    background_task,
+    on_command,
+    on_pull_message,
+    on_start,
+    on_stop,
+)
 from aiperf.common.pod_lifecycle_structs import (
     PodManagerToPeerMessage,
     PodPeerCommand,
@@ -30,6 +36,9 @@ from aiperf.common.inference_wire import (
 )
 from aiperf.common.metric_records_wire import (
     MetricRecordMetadata,
+    MetricRecordsData,
+    build_metric_records_batch_wire_message,
+    build_metric_records_data,
     build_metric_records_wire_message,
 )
 from aiperf.common.mixins import PullClientMixin
@@ -77,6 +86,8 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             CommAddress.RECORDS,
             codec=RECORDS_CODEC,
         )
+        self._pending_metric_records: list[MetricRecordsData] = []
+        self._ingest_batch_size = Environment.RECORD.INGEST_BATCH_SIZE
         self.tokenizers: dict[str, Tokenizer] = {}
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
         self.inference_result_parser = InferenceResultParser(run=self.run)
@@ -153,6 +164,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
     @on_stop
     async def _notify_worker_pod_manager_shutdown(self) -> None:
         """Notify WorkerPodManager that local record flushing is complete."""
+        await self._flush_pending_metric_records()
         if self.pod_lifecycle_dealer_client is None:
             return
         await self.pod_lifecycle_dealer_client.send(
@@ -161,6 +173,13 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 service_type=str(self.service_type),
             )
         )
+
+    @background_task(
+        interval=Environment.RECORD.INGEST_BATCH_FLUSH_INTERVAL, immediate=False
+    )
+    async def _flush_pending_metric_records_task(self) -> None:
+        """Flush buffered metric records on a timer."""
+        await self._flush_pending_metric_records()
 
     async def _configure_for_profiling(self) -> None:
         """Configure parser state needed before profiling begins."""
@@ -266,6 +285,53 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             metrics.update(result)
         return metrics
 
+    async def _flush_pending_metric_records(self) -> None:
+        """Flush buffered metric records to the records channel."""
+        if not self._pending_metric_records:
+            return
+        pending_records = self._pending_metric_records
+        self._pending_metric_records = []
+
+        if len(pending_records) == 1:
+            record = pending_records[0]
+            await self.records_push_client.push(
+                build_metric_records_wire_message(
+                    service_id=self.service_id,
+                    metadata=record.metadata,
+                    metrics=record.metrics,
+                    trace_data=record.trace_data,
+                    error=record.error,
+                )
+            )
+            return
+
+        await self.records_push_client.push(
+            build_metric_records_batch_wire_message(
+                service_id=self.service_id,
+                records=pending_records,
+            )
+        )
+
+    async def _enqueue_metric_record(
+        self,
+        *,
+        metadata: MetricRecordMetadata,
+        metrics: MetricRecordDict,
+        trace_data: BaseTraceData | None,
+        error: ErrorDetails | None,
+    ) -> None:
+        """Buffer a metric record and flush when the batch fills."""
+        self._pending_metric_records.append(
+            build_metric_records_data(
+                metadata=metadata,
+                metrics=metrics,
+                trace_data=trace_data,
+                error=error,
+            )
+        )
+        if len(self._pending_metric_records) >= self._ingest_batch_size:
+            await self._flush_pending_metric_records()
+
     @on_pull_message(MessageType.INFERENCE_RESULTS)
     async def _on_inference_results(self, message: InferenceResultsWireMessage) -> None:
         """Handle an inference results message."""
@@ -294,14 +360,11 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         trace_data, error = self._free_record_data(record, parsed_record)
         metrics = self._merge_metric_results(raw_results)
 
-        await self.records_push_client.push(
-            build_metric_records_wire_message(
-                service_id=self.service_id,
-                metadata=metadata,
-                metrics=metrics,
-                trace_data=trace_data,
-                error=error,
-            )
+        await self._enqueue_metric_record(
+            metadata=metadata,
+            metrics=metrics,
+            trace_data=trace_data,
+            error=error,
         )
 
     def _free_record_data(

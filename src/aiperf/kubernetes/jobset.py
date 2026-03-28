@@ -654,7 +654,7 @@ class JobSetSpec(AIPerfBaseModel):
         self,
         name: str,
         service_type: str,
-        health_port: int,
+        health_port: int | None,
         resources: dict[str, dict[str, str]] | None,
         api_port: int | None = None,
         controller_host: str | None = None,
@@ -670,7 +670,8 @@ class JobSetSpec(AIPerfBaseModel):
         Args:
             name: Container name.
             service_type: AIPerf service type for this container.
-            health_port: Health check port.
+            health_port: Health check port, or None for services that serve
+                probes on their own HTTP server (e.g. the API service).
             resources: Optional Kubernetes resource requests/limits.
             api_port: Optional API port for services that expose APIs.
             controller_host: Controller DNS for worker containers.
@@ -687,17 +688,19 @@ class JobSetSpec(AIPerfBaseModel):
             "service",
             "--type",
             service_type,
-            "--health-port",
-            str(health_port),
             "--benchmark-run",
             run_file,
         ]
+        if health_port is not None:
+            args.extend(["--health-port", str(health_port)])
         if service_id:
             args.extend(["--service-id", service_id])
         if api_port:
             args.extend(["--api-port", str(api_port)])
 
-        ports: list[dict[str, Any]] = [{"containerPort": health_port, "name": "health"}]
+        ports: list[dict[str, Any]] = []
+        if health_port is not None:
+            ports.append({"containerPort": health_port, "name": "health"})
         if api_port:
             ports.append({"containerPort": api_port, "name": "api"})
 
@@ -708,11 +711,7 @@ class JobSetSpec(AIPerfBaseModel):
         if extra_env:
             env.extend(extra_env)
 
-        # Configure probes - startup probe allows slow initialization,
-        # then liveness/readiness take over for ongoing health monitoring.
-        # The API service exposes /healthz and /readyz on its FastAPI port, not on
-        # the separate service health port used by the other containers.
-        probe_port = api_port if service_type == "api" and api_port else health_port
+        probe_port = api_port or health_port
         startup_probe = (
             None if skip_startup_probe else self._create_startup_probe(probe_port)
         )
@@ -823,7 +822,7 @@ class JobSetSpec(AIPerfBaseModel):
             self._create_container(
                 name=Containers.API,
                 service_type="api",
-                health_port=ports.API_SERVICE_HEALTH,
+                health_port=None,
                 resources=self._resolve_pod_resources("API"),
                 api_port=ports.API_SERVICE,
                 service_id="api",

@@ -50,6 +50,7 @@ from aiperf.common.messages import (
     TelemetryRecordsMessage,
 )
 from aiperf.common.metric_records_wire import (
+    MetricRecordsBatchWireMessage,
     MetricRecordsData,
     MetricRecordsWireMessage,
     wire_message_to_record_data,
@@ -203,17 +204,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             except Exception as e:
                 self.error(f"Failed to create results processor {entry.name}: {e}")
 
-    @on_pull_message(MessageType.METRIC_RECORDS)
-    async def _on_metric_records(self, message: MetricRecordsWireMessage) -> None:
-        """Handle a metric records message."""
-        if self.is_trace_enabled:
-            self.trace(f"Received metric records: {message}")
-
-        record_data = wire_message_to_record_data(message)
-
+    async def _process_metric_record_data(self, record_data: MetricRecordsData) -> None:
+        """Process one metric record payload."""
         self._records_tracker.update_from_record_data(record_data)
 
-        # Only send non-excluded phase records to results processors
         if not self._records_tracker.is_phase_excluded(
             record_data.metadata.benchmark_phase
         ):
@@ -229,6 +223,21 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             await self._handle_all_records_received(
                 record_data.metadata.benchmark_phase
             )
+
+    @on_pull_message(MessageType.METRIC_RECORDS)
+    async def _on_metric_records(
+        self, message: MetricRecordsWireMessage | MetricRecordsBatchWireMessage
+    ) -> None:
+        """Handle a metric records message."""
+        if self.is_trace_enabled:
+            self.trace(f"Received metric records: {message}")
+
+        if isinstance(message, MetricRecordsBatchWireMessage):
+            for record_data in message.records:
+                await self._process_metric_record_data(record_data)
+            return
+
+        await self._process_metric_record_data(wire_message_to_record_data(message))
 
     @on_pull_message(MessageType.TELEMETRY_RECORDS)
     async def _on_telemetry_records(self, message: TelemetryRecordsMessage) -> None:

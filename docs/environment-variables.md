@@ -132,6 +132,8 @@ Record processing and export configuration. Controls batch sizes, processor scal
 | `AIPERF_RECORD_EXPORT_BATCH_SIZE` | `100` | ≥ 1, ≤ 1000000 | Batch size for record export results processor |
 | `AIPERF_RECORD_EXPORT_FLUSH_INTERVAL` | `2.0` | ≥ 0.1, ≤ 300.0 | Maximum seconds record JSONL data may remain buffered before being flushed to disk |
 | `AIPERF_RECORD_RAW_EXPORT_BATCH_SIZE` | `10` | ≥ 1, ≤ 1000000 | Batch size for raw record writer processor |
+| `AIPERF_RECORD_INGEST_BATCH_SIZE` | `64` | ≥ 1, ≤ 1000000 | Batch size for record-processor to records-manager ingestion |
+| `AIPERF_RECORD_INGEST_BATCH_FLUSH_INTERVAL` | `0.01` | ≥ 0.001, ≤ 300.0 | Maximum seconds metric records may remain buffered before ingestion flush |
 | `AIPERF_RECORD_PROCESSOR_SCALE_FACTOR` | `4` | ≥ 1, ≤ 100 | Scale factor for number of record processors to spawn based on worker count. Formula: 1 record processor for every X workers. Default: 1 record processor for every 4 workers. |
 | `AIPERF_RECORD_PROGRESS_REPORT_INTERVAL` | `2.0` | ≥ 0.1, ≤ 600.0 | Interval in seconds between records progress report messages |
 | `AIPERF_RECORD_PROCESS_RECORDS_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for processing record results |

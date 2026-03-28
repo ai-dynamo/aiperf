@@ -1,12 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
 from aiperf.common.messages import TelemetryRecordsMessage
-from aiperf.common.metric_records_wire import MetricRecordMetadata, MetricRecordsData
+from aiperf.common.metric_records_wire import (
+    MetricRecordMetadata,
+    MetricRecordsBatchWireMessage,
+    MetricRecordsData,
+)
 from aiperf.common.models import (
     ErrorDetails,
     MetricResult,
@@ -17,6 +22,7 @@ from aiperf.common.models import (
     TelemetryRecord,
 )
 from aiperf.common.types import MetricTagT
+from aiperf.records.records_manager import RecordsManager
 
 
 # Helper functions
@@ -183,6 +189,34 @@ class TestRecordsManagerTelemetry:
         # Verify hierarchy structure
         assert "http://localhost:9400/metrics" in hierarchy.dcgm_endpoints
         assert "GPU-123" in hierarchy.dcgm_endpoints["http://localhost:9400/metrics"]
+
+
+class TestRecordsManagerBatchWire:
+    @pytest.mark.asyncio
+    async def test_on_metric_records_handles_batch_wire_message(self) -> None:
+        record_data = create_metric_record_data(100, 200, {"request_latency": 1.0})
+        batch_message = MetricRecordsBatchWireMessage(
+            service_id="record-processor-1",
+            records=[record_data, record_data],
+        )
+        manager = SimpleNamespace(
+            is_trace_enabled=False,
+            trace=MagicMock(),
+            _records_tracker=MagicMock(),
+            _send_results_to_results_processors=AsyncMock(),
+            _error_tracker=MagicMock(),
+            _handle_all_records_received=AsyncMock(),
+            _process_metric_record_data=AsyncMock(),
+        )
+        manager._records_tracker.is_phase_excluded.return_value = False
+        manager._records_tracker.check_and_set_all_records_received_for_phase.side_effect = [
+            False,
+            False,
+        ]
+
+        await RecordsManager._on_metric_records(manager, batch_message)
+
+        assert manager._process_metric_record_data.await_count == 2
 
 
 class TestRecordsManagerTimeslice:

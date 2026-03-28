@@ -20,6 +20,7 @@ import copy
 import gc
 import math
 import multiprocessing
+import os
 import socket
 import statistics
 import sys
@@ -48,8 +49,10 @@ from aiperf.common.inference_wire import (
 )
 from aiperf.common.metric_records_wire import (
     MetricRecordMetadata,
+    MetricRecordsBatchWireMessage,
     MetricRecordsData,
     MetricRecordsWireMessage,
+    build_metric_records_batch_wire_message,
     build_metric_records_data,
     build_metric_records_wire_message,
 )
@@ -108,8 +111,12 @@ class BenchmarkSample:
     warmup_runs: int
     items: int
     mean_seconds: float
+    median_seconds: float
+    p5_seconds: float
+    p95_seconds: float
     best_seconds: float
     stdev_seconds: float
+    cv_percent: float
     items_per_second: float
     microseconds_per_item: float
     details: dict[str, Any]
@@ -196,7 +203,10 @@ class BenchmarkRecordsManager:
     ) -> None:
         await RecordsManager._send_results_to_results_processors(self, record_data)
 
-    async def _on_metric_records(self, message: MetricRecordsWireMessage) -> None:
+    async def _process_metric_record_data(self, record_data: MetricRecordsData) -> None:
+        await RecordsManager._process_metric_record_data(self, record_data)
+
+    async def _on_metric_records(self, message: Any) -> None:
         await RecordsManager._on_metric_records(self, message)
 
 
@@ -516,6 +526,21 @@ def _make_rm_metric_data_batch(
     ]
 
 
+def _make_rm_metric_batches(
+    *,
+    service_id: str,
+    record_data_batch: list[MetricRecordsData],
+    batch_size: int,
+) -> list[MetricRecordsBatchWireMessage]:
+    return [
+        build_metric_records_batch_wire_message(
+            service_id=service_id,
+            records=record_data_batch[index : index + batch_size],
+        )
+        for index in range(0, len(record_data_batch), batch_size)
+    ]
+
+
 def _chunked(items: list[Any], parts: int) -> list[list[Any]]:
     if parts <= 1:
         return [items]
@@ -676,6 +701,55 @@ def _build_parser(
     return parser, tokenizer
 
 
+def _percentile(sorted_samples: list[float], percentile: float) -> float:
+    if not sorted_samples:
+        return 0.0
+    if len(sorted_samples) == 1:
+        return sorted_samples[0]
+    rank = (len(sorted_samples) - 1) * percentile
+    low = math.floor(rank)
+    high = math.ceil(rank)
+    if low == high:
+        return sorted_samples[low]
+    weight = rank - low
+    return sorted_samples[low] * (1 - weight) + sorted_samples[high] * weight
+
+
+def _summarize_samples(
+    *,
+    name: str,
+    items: int,
+    repeats: int,
+    warmup_runs: int,
+    details: dict[str, Any],
+    samples: list[float],
+) -> BenchmarkSample:
+    mean_seconds = statistics.mean(samples)
+    median_seconds = statistics.median(samples)
+    sorted_samples = sorted(samples)
+    p5_seconds = _percentile(sorted_samples, 0.05)
+    p95_seconds = _percentile(sorted_samples, 0.95)
+    best_seconds = min(samples)
+    stdev_seconds = statistics.stdev(samples) if len(samples) > 1 else 0.0
+    cv_percent = (stdev_seconds / mean_seconds * 100) if mean_seconds else 0.0
+    return BenchmarkSample(
+        name=name,
+        repeats=repeats,
+        warmup_runs=warmup_runs,
+        items=items,
+        mean_seconds=mean_seconds,
+        median_seconds=median_seconds,
+        p5_seconds=p5_seconds,
+        p95_seconds=p95_seconds,
+        best_seconds=best_seconds,
+        stdev_seconds=stdev_seconds,
+        cv_percent=cv_percent,
+        items_per_second=items / mean_seconds if mean_seconds else 0.0,
+        microseconds_per_item=(mean_seconds / items) * 1_000_000 if items else 0.0,
+        details=details,
+    )
+
+
 async def _time_async_operation(
     name: str,
     items: int,
@@ -697,20 +771,13 @@ async def _time_async_operation(
     finally:
         if gc_was_enabled:
             gc.enable()
-    mean_seconds = statistics.mean(samples)
-    best_seconds = min(samples)
-    stdev_seconds = statistics.stdev(samples) if len(samples) > 1 else 0.0
-    return BenchmarkSample(
+    return _summarize_samples(
         name=name,
+        items=items,
         repeats=repeats,
         warmup_runs=warmup_runs,
-        items=items,
-        mean_seconds=mean_seconds,
-        best_seconds=best_seconds,
-        stdev_seconds=stdev_seconds,
-        items_per_second=items / mean_seconds if mean_seconds else 0.0,
-        microseconds_per_item=(mean_seconds / items) * 1_000_000 if items else 0.0,
         details=details,
+        samples=samples,
     )
 
 
@@ -735,20 +802,13 @@ def _time_sync_operation(
     finally:
         if gc_was_enabled:
             gc.enable()
-    mean_seconds = statistics.mean(samples)
-    best_seconds = min(samples)
-    stdev_seconds = statistics.stdev(samples) if len(samples) > 1 else 0.0
-    return BenchmarkSample(
+    return _summarize_samples(
         name=name,
+        items=items,
         repeats=repeats,
         warmup_runs=warmup_runs,
-        items=items,
-        mean_seconds=mean_seconds,
-        best_seconds=best_seconds,
-        stdev_seconds=stdev_seconds,
-        items_per_second=items / mean_seconds if mean_seconds else 0.0,
-        microseconds_per_item=(mean_seconds / items) * 1_000_000 if items else 0.0,
         details=details,
+        samples=samples,
     )
 
 
@@ -1479,6 +1539,41 @@ async def _benchmark_rm_on_metric_records_total(
     )
 
 
+async def _benchmark_rm_on_metric_records_batched_total(
+    args: argparse.Namespace,
+    record_data_batch: list[MetricRecordsData],
+) -> BenchmarkSample:
+    batch_size = 64
+    batch_messages = _make_rm_metric_batches(
+        service_id="record-processor-bench",
+        record_data_batch=record_data_batch,
+        batch_size=batch_size,
+    )
+    batches = _chunked(batch_messages, args.producer_tasks)
+
+    async def worker(batch: list[Any]) -> None:
+        benchmark_rm = BenchmarkRecordsManager([BenchmarkMetricProcessor()])
+        for message in batch:
+            await benchmark_rm._on_metric_records(message)
+
+    async def operation(_: int) -> None:
+        await _run_concurrent_batches(batches, worker)
+
+    return await _time_async_operation(
+        name="rm_ingest::on_metric_records_batched_total",
+        items=len(record_data_batch),
+        repeats=args.repeats,
+        warmup_runs=args.warmup_runs,
+        details={
+            "batch_size": batch_size,
+            "producer_tasks": args.producer_tasks,
+            "streaming_shape": True,
+            "target_output_tokens": 800,
+        },
+        operation=operation,
+    )
+
+
 async def _benchmark_rm_full_with_exports(
     args: argparse.Namespace,
     messages: list[MetricRecordsWireMessage],
@@ -1518,6 +1613,7 @@ async def benchmark_records_manager_ingestion(
         await _benchmark_rm_tracker_only(args, record_data_batch),
         await _benchmark_rm_metric_processor_only(args, record_data_batch),
         await _benchmark_rm_on_metric_records_total(args, messages),
+        await _benchmark_rm_on_metric_records_batched_total(args, record_data_batch),
     ]
     if args.rm_include_exports:
         results.append(await _benchmark_rm_full_with_exports(args, messages))
@@ -2184,16 +2280,18 @@ def benchmark_export_path(args: argparse.Namespace) -> list[BenchmarkSample]:
 
 def _print_results(results: list[BenchmarkSample]) -> None:
     print(
-        f"{'benchmark':<36} {'items/s':>12} {'us/item':>12} {'mean ms':>12} {'best ms':>12}"
+        f"{'benchmark':<36} {'items/s':>12} {'us/item':>12} {'mean ms':>12} {'med ms':>12} {'p95 ms':>12} {'cv %':>8}"
     )
-    print("-" * 92)
+    print("-" * 110)
     for result in results:
         print(
             f"{result.name:<36}"
             f" {result.items_per_second:>12.0f}"
             f" {result.microseconds_per_item:>12.1f}"
             f" {result.mean_seconds * 1000:>12.2f}"
-            f" {result.best_seconds * 1000:>12.2f}"
+            f" {result.median_seconds * 1000:>12.2f}"
+            f" {result.p95_seconds * 1000:>12.2f}"
+            f" {result.cv_percent:>8.2f}"
         )
         print(f"  details: {result.details}")
 
@@ -2294,14 +2392,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--repeats",
         type=int,
-        default=5,
+        default=10,
         help="Measured timing repeats per scenario.",
     )
     parser.add_argument(
         "--warmup-runs",
         type=int,
-        default=1,
+        default=3,
         help="Warmup runs per scenario before timing.",
+    )
+    parser.add_argument(
+        "--cpu-affinity",
+        type=str,
+        default=None,
+        help="Optional CPU affinity, e.g. '0-7' or '0,2,4-6'. Linux only.",
     )
     parser.add_argument(
         "--json", action="store_true", help="Emit JSON instead of a table."
@@ -2309,8 +2413,29 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _parse_cpu_affinity(spec: str) -> set[int]:
+    cpus: set[int] = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start_s, end_s = part.split("-", maxsplit=1)
+            cpus.update(range(int(start_s), int(end_s) + 1))
+        else:
+            cpus.add(int(part))
+    return cpus
+
+
+def _apply_cpu_affinity(spec: str | None) -> None:
+    if not spec or not hasattr(os, "sched_setaffinity"):
+        return
+    os.sched_setaffinity(0, _parse_cpu_affinity(spec))
+
+
 def main() -> None:
     args = parse_args()
+    _apply_cpu_affinity(args.cpu_affinity)
     results = asyncio.run(_run_async_scenarios(args))
     if args.scenario in {"all", "export"}:
         results.extend(benchmark_export_path(args))

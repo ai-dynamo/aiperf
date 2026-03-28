@@ -485,6 +485,18 @@ class _RecordSettings(BaseSettings):
         default=10,
         description="Batch size for raw record writer processor",
     )
+    INGEST_BATCH_SIZE: int = Field(
+        ge=1,
+        le=1000000,
+        default=64,
+        description="Batch size for record-processor to records-manager ingestion",
+    )
+    INGEST_BATCH_FLUSH_INTERVAL: float = Field(
+        ge=0.001,
+        le=300.0,
+        default=0.01,
+        description="Maximum seconds metric records may remain buffered before ingestion flush",
+    )
     PROCESSOR_SCALE_FACTOR: int = Field(
         ge=1,
         le=100,

@@ -6,7 +6,10 @@ from __future__ import annotations
 
 from aiperf.common.inference_wire import InferenceResultsWireMessage
 from aiperf.common.message_codecs import MsgspecStructCodec
-from aiperf.common.metric_records_wire import MetricRecordsWireMessage
+from aiperf.common.metric_records_wire import (
+    MetricRecordsBatchWireMessage,
+    MetricRecordsWireMessage,
+)
 
 RAW_INFERENCE_CODEC = MsgspecStructCodec(
     decode_type=InferenceResultsWireMessage,
@@ -14,6 +17,6 @@ RAW_INFERENCE_CODEC = MsgspecStructCodec(
 )
 
 RECORDS_CODEC = MsgspecStructCodec(
-    decode_type=MetricRecordsWireMessage,
+    decode_type=MetricRecordsWireMessage | MetricRecordsBatchWireMessage,
     cache_key="records-msgpack",
 )

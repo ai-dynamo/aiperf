@@ -103,6 +103,19 @@ class MetricRecordsWireMessage(
     error: WireErrorDetails | None = None
 
 
+class MetricRecordsBatchWireMessage(
+    Struct,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+    tag_field="t",
+    tag="mrb",
+):
+    message_type: MessageType = MessageType.METRIC_RECORDS
+    service_id: str
+    records: list[MetricRecordsData]
+
+
 def _error_to_wire(error: ErrorDetails | None) -> WireErrorDetails | None:
     if error is None:
         return None
@@ -191,6 +204,14 @@ def build_metric_records_wire_message(
         else None,
         error=_error_to_wire(error),
     )
+
+
+def build_metric_records_batch_wire_message(
+    *,
+    service_id: str,
+    records: list[MetricRecordsData],
+) -> MetricRecordsBatchWireMessage:
+    return MetricRecordsBatchWireMessage(service_id=service_id, records=records)
 
 
 def wire_message_to_record_data(message: MetricRecordsWireMessage) -> MetricRecordsData:

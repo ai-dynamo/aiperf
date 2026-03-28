@@ -8,7 +8,8 @@ import pytest
 from aiperf.common.inference_wire import build_inference_results_wire_message
 from aiperf.common.metric_records_wire import (
     MetricRecordMetadata,
-    MetricRecordsWireMessage,
+    MetricRecordsBatchWireMessage,
+    MetricRecordsData,
 )
 from aiperf.common.utils import compute_time_ns
 from aiperf.records.record_processor_service import RecordProcessor
@@ -203,6 +204,7 @@ class TestRecordProcessorWireMessages:
         processor._merge_metric_results = MagicMock(
             return_value={"request_latency": 12.5}
         )
+        processor._enqueue_metric_record = AsyncMock()
         processor._free_record_data = MagicMock(return_value=(None, None))
         metadata = MetricRecordMetadata(
             request_num=1,
@@ -234,10 +236,53 @@ class TestRecordProcessorWireMessages:
         metadata_args = processor._create_metric_record_metadata.call_args[0]
         assert metadata_args[1] == "worker-7"
 
-        pushed_message = processor.records_push_client.push.call_args.args[0]
-        assert isinstance(pushed_message, MetricRecordsWireMessage)
-        assert pushed_message.metadata.worker_id == metadata.worker_id
-        assert (
-            pushed_message.metadata.record_processor_id == metadata.record_processor_id
+        processor._enqueue_metric_record.assert_awaited_once_with(
+            metadata=metadata,
+            metrics={"request_latency": 12.5},
+            trace_data=None,
+            error=None,
         )
-        assert pushed_message.metrics == {"request_latency": 12.5}
+
+    @pytest.mark.asyncio
+    async def test_flush_pending_metric_records_batches_multiple_records(self) -> None:
+        processor = MagicMock(spec=RecordProcessor)
+        processor.service_id = "record-processor-1"
+        processor.records_push_client = MagicMock()
+        processor.records_push_client.push = AsyncMock()
+        processor._pending_metric_records = [
+            MetricRecordsData(
+                metadata=MetricRecordMetadata(
+                    request_num=1,
+                    session_num=1,
+                    conversation_id="conversation-1",
+                    turn_index=0,
+                    request_start_ns=100,
+                    request_end_ns=200,
+                    worker_id="worker-1",
+                    record_processor_id="record-processor-1",
+                    benchmark_phase="profiling",
+                ),
+                metrics={"request_latency": 12.5},
+            ),
+            MetricRecordsData(
+                metadata=MetricRecordMetadata(
+                    request_num=2,
+                    session_num=2,
+                    conversation_id="conversation-2",
+                    turn_index=0,
+                    request_start_ns=200,
+                    request_end_ns=300,
+                    worker_id="worker-2",
+                    record_processor_id="record-processor-1",
+                    benchmark_phase="profiling",
+                ),
+                metrics={"request_latency": 9.5},
+            ),
+        ]
+
+        await RecordProcessor._flush_pending_metric_records(processor)
+
+        pushed_message = processor.records_push_client.push.call_args.args[0]
+        assert isinstance(pushed_message, MetricRecordsBatchWireMessage)
+        assert len(pushed_message.records) == 2
+        assert processor._pending_metric_records == []
