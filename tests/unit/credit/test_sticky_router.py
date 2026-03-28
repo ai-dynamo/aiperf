@@ -33,7 +33,10 @@ class TestStickyCreditRouterWorkerRoutingState:
 
         credit = make_credit(id=1, corr_id="connected-only", num_turns=1)
 
-        with pytest.raises(RuntimeError, match="No workers available"):
+        with pytest.raises(
+            RuntimeError,
+            match="No dispatchable workers available for routing",
+        ):
             await router.send_credit(credit)
 
     async def test_dispatchable_worker_enters_routing_pool(self, run) -> None:
@@ -87,8 +90,36 @@ class TestStickyCreditRouterWorkerRoutingState:
 
         credit = make_credit(id=1, corr_id="undispatchable", num_turns=1)
 
-        with pytest.raises(RuntimeError, match="No workers available"):
+        with pytest.raises(
+            RuntimeError,
+            match="No dispatchable workers available for routing",
+        ):
             await router.send_credit(credit)
+
+    async def test_shutdown_worker_leaves_connected_and_routing_pools(
+        self, run
+    ) -> None:
+        router = StickyCreditRouter(run=run, service_id="test-router")
+
+        await router._handle_return_router_message(
+            "worker-shutdown",
+            WorkerConnected(worker_id="worker-shutdown"),
+        )
+        await router._handle_return_router_message(
+            "worker-shutdown",
+            WorkerDispatchable(worker_id="worker-shutdown"),
+        )
+
+        assert "worker-shutdown" in router._workers
+        assert "worker-shutdown" in router._connected_workers
+
+        await router._handle_return_router_message(
+            "worker-shutdown",
+            WorkerShutdown(worker_id="worker-shutdown"),
+        )
+
+        assert "worker-shutdown" not in router._workers
+        assert "worker-shutdown" not in router._connected_workers
 
 
 class TestStickyCreditRouterFairLoadBalancing:
@@ -143,7 +174,10 @@ class TestStickyCreditRouterFairLoadBalancing:
         router = StickyCreditRouter(run=run, service_id="test-router")
         credit = make_credit()
 
-        with pytest.raises(RuntimeError, match="No workers available"):
+        with pytest.raises(
+            RuntimeError,
+            match="No dispatchable workers available for routing",
+        ):
             await router.send_credit(credit)
 
 
