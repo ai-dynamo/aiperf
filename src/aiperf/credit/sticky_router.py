@@ -276,8 +276,10 @@ class StickyCreditRouter(CommunicationMixin):
         self._credits_complete: bool = False
 
         # Snapshot list for iteration - avoids dict.values() overhead in hot path.
-        # Rebuilt on worker add/remove (rare) to keep routing fast (common).
+        # Rebuilt on dispatchable worker add/remove (rare) to keep routing fast (common).
         self._workers_cache: list[WorkerLoad] = []
+        # Dispatchable workers only. Connected-but-undispatchable workers are tracked
+        # separately in _connected_workers and excluded from routing structures.
         self._workers: dict[str, WorkerLoad] = {}
         self._connected_workers: set[str] = set()
         self._initializing_workers: set[str] = set()
@@ -343,7 +345,7 @@ class StickyCreditRouter(CommunicationMixin):
             return
 
         if not self._workers:
-            raise RuntimeError("No workers available for routing")
+            raise RuntimeError("No dispatchable workers available for routing")
 
         # Use existing sticky session if worker still valid
         if sticky_worker_id and sticky_worker_id in self._workers:
