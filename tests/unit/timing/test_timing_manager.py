@@ -119,6 +119,8 @@ class TestTimingManagerDatasetConfiguration:
                         conversation_count=3,
                         total_size_bytes=1024,
                     ),
+                    benchmark_generation="test-bench",
+                    dataset_generation="test-bench:dataset",
                 )
             )
             await task
@@ -158,6 +160,8 @@ class TestTimingManagerDatasetConfiguration:
                     conversation_count=3,
                     total_size_bytes=1024,
                 ),
+                benchmark_generation="test-bench",
+                dataset_generation="test-bench:dataset",
             )
         )
         assert mgr._dataset_metadata == mock_metadata

@@ -340,6 +340,8 @@ class TestDatasetMixin:
             service_id="dataset_manager",
             metadata=ds_metadata,
             client_metadata=metadata,
+            benchmark_generation="test-bench",
+            dataset_generation="test-bench:dataset",
         )
 
         await dataset_router._on_dataset_configured(message)

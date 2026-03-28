@@ -42,7 +42,12 @@ class TestJobSetInfoStatus:
                 "Completed",
             ),
             (
-                {"conditions": [{"type": "Failed", "status": "True"}]},
+                {
+                    "conditions": [{"type": "Failed", "status": "True"}],
+                    "replicatedJobsStatus": [
+                        {"name": "controller", "failed": 1, "ready": 0, "succeeded": 0}
+                    ],
+                },
                 "Failed",
             ),
             ({"conditions": [], "ready": 1}, "Running"),

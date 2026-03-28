@@ -24,7 +24,11 @@ from aiperf.metrics.list_metric_aggregation import (
     ListMetricAggregator,
     build_list_metric_aggregator,
 )
-from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
+from aiperf.metrics.metric_dicts import (
+    MetricArray,
+    MetricResultsDict,
+    MetricSeriesProtocol,
+)
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
@@ -218,7 +222,7 @@ class MetricResultsProcessor(BaseMetricsProcessor):
 
         metric_class = self._instances_map[tag]
 
-        if isinstance(values, MetricArray | ListMetricAggregator):
+        if isinstance(values, MetricSeriesProtocol):
             return values.to_result(tag, metric_class.header, str(metric_class.unit))
 
         if isinstance(values, int | float):

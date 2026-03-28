@@ -34,6 +34,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task
 from aiperf.common.mixins import CommunicationMixin
 from aiperf.common.protocols import StreamingRouterClientProtocol
+from aiperf.common.utils import yield_to_event_loop
 from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
@@ -391,7 +392,9 @@ class StickyCreditRouter(CommunicationMixin):
                 to_cancel[worker_load.worker_id] = worker_load.active_credit_ids.copy()
 
         total_cancelled_credits = 0
-        for worker_id, credit_ids in to_cancel.items():
+        for sent_count, (worker_id, credit_ids) in enumerate(
+            to_cancel.items(), start=1
+        ):
             if self.is_debug_enabled:
                 self.debug(
                     f"Sending CancelCredits to worker {worker_id} for {len(credit_ids)} credits"
@@ -402,6 +405,8 @@ class StickyCreditRouter(CommunicationMixin):
                 CancelCredits(credit_ids=credit_ids),
             )
             total_cancelled_credits += len(credit_ids)
+            if sent_count % 50 == 0:
+                await yield_to_event_loop()
 
         if total_cancelled_credits > 0:
             self.info(
@@ -705,6 +710,7 @@ class StickyCreditRouter(CommunicationMixin):
             await self._reclaim_expired_detached_workers()
             return
 
+        sent_count = 0
         for worker_load in self._workers_cache:
             worker_id = worker_load.worker_id
             if worker_load.in_flight_credits == 0 and worker_load.active_sessions == 0:
@@ -740,6 +746,12 @@ class StickyCreditRouter(CommunicationMixin):
                 worker_id,
                 InFlightReconciliation(credit_ids=credit_ids),
             )
+            sent_count += 1
+            # ZMQ NOBLOCK sends complete synchronously when HWM is unlimited,
+            # so the await above never actually yields. Yield periodically to
+            # prevent starving the event loop during large worker counts.
+            if sent_count % 50 == 0:
+                await yield_to_event_loop()
 
         await self._reclaim_expired_detached_workers()
 

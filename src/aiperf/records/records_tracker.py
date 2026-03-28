@@ -183,6 +183,10 @@ class RecordsTracker:
                 all_worker_stats[worker_id].error_records += worker_stats.error_records
         return dict(all_worker_stats)
 
+    def is_phase_excluded(self, phase: CreditPhase) -> bool:
+        """Check whether a phase is excluded from final results."""
+        return self._get_phase_tracker(phase)._exclude_from_results
+
     def create_stats_for_phase(self, phase: CreditPhase) -> PhaseRecordsStats:
         """Create a new immutable RecordsPhaseStats object for the phase (for use in messages)."""
         phase_tracker = self._get_phase_tracker(phase)

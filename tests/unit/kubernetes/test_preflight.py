@@ -643,7 +643,7 @@ class TestCheckResourceQuotas:
             {
                 "metadata": {"name": "compute", "namespace": "test-ns"},
                 "status": {
-                    "hard": {"cpu": "10", "memory": "32Gi"},
+                    "hard": {"cpu": "100", "memory": "256Gi"},
                     "used": {"cpu": "2", "memory": "8Gi"},
                 },
             }

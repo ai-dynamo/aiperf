@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, runtime_checkable
 
 import numpy as np
 
@@ -124,7 +124,7 @@ class MetricResultsDict(BaseMetricDict[MetricDictValueTypeT]):
     of all metrics that have been computed for an entire run.
 
     This will include:
-    - All `BaseRecordMetric`s as a MetricArray or ListMetricAggregator of their values.
+    - All `BaseRecordMetric`s as run-level metric series implementing `MetricSeriesProtocol`.
     - The most recent value of each `BaseAggregateMetric`.
     - The value of any `BaseDerivedMetric` that has already been computed.
     """
@@ -134,11 +134,26 @@ class MetricResultsDict(BaseMetricDict[MetricDictValueTypeT]):
     ) -> float:
         """Get the value of a metric, but converted to a different unit, or raise NoMetricValue if it is not available."""
         if metric.type == MetricType.RECORD:
-            # Record metrics are a MetricArray of values, so we can't convert them directly.
+            # Record metrics are a run-level metric series, so we can't convert them directly.
             raise ValueError(
                 f"Cannot convert a record metric to a different unit: {metric.tag}"
             )
         return super().get_converted_or_raise(metric, other_unit)
+
+
+@runtime_checkable
+class MetricSeriesProtocol(Protocol[MetricValueTypeVarT]):
+    """Shared interface for run-level record metric series consumers."""
+
+    @property
+    def sum(self) -> MetricValueTypeVarT:
+        """Return the accumulated sum of all observed values."""
+
+    def __len__(self) -> int:
+        """Return the number of observed values."""
+
+    def to_result(self, tag: MetricTagT, header: str, unit: str) -> MetricResult:
+        """Summarize the accumulated values as a MetricResult."""
 
 
 class MetricArray(Generic[MetricValueTypeVarT]):

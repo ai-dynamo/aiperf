@@ -214,10 +214,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._records_tracker.update_from_record_data(record_data)
 
         # Only send non-excluded phase records to results processors
-        phase_stats = self._records_tracker.create_stats_for_phase(
+        if not self._records_tracker.is_phase_excluded(
             record_data.metadata.benchmark_phase
-        )
-        if not phase_stats.exclude_from_results:
+        ):
             await self._send_results_to_results_processors(record_data)
         if record_data.error:
             self._error_tracker.increment_error_count_for_phase(

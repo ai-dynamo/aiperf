@@ -252,7 +252,6 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             clock_offset_ns=record.clock_offset_ns,
         )
 
-    @on_pull_message(MessageType.INFERENCE_RESULTS)
     def _merge_metric_results(
         self, raw_results: list[MetricRecordDict | BaseException]
     ) -> MetricRecordDict:
@@ -267,6 +266,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             metrics.update(result)
         return metrics
 
+    @on_pull_message(MessageType.INFERENCE_RESULTS)
     async def _on_inference_results(self, message: InferenceResultsWireMessage) -> None:
         """Handle an inference results message."""
         worker_id, record = wire_message_to_request_record(

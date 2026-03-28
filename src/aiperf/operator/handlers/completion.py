@@ -374,6 +374,7 @@ def _parse_metrics_from_files(
                 dest_dir / "profile_export_aiperf.json",
             ]
         )
+        candidate_paths.sort(key=lambda p: (0 if p.suffix == ".zst" else 1))
 
         seen: set[Path] = set()
         for path in candidate_paths:

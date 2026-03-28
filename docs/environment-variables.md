@@ -208,6 +208,7 @@ User interface and dashboard configuration. Controls refresh rates, update thres
 | `AIPERF_UI_REALTIME_METRICS_INTERVAL` | `5.0` | ≥ 1.0, ≤ 1000.0 | Interval in seconds between real-time metrics messages |
 | `AIPERF_UI_REALTIME_METRICS_ENABLED` | `False` | — | Enable real-time metrics collection and reporting despite UI type |
 | `AIPERF_UI_SPINNER_REFRESH_RATE` | `0.1` | ≥ 0.1, ≤ 100.0 | Progress spinner refresh rate in seconds (default: 10 FPS) |
+| `AIPERF_UI_STATUS_LOG_INTERVAL` | `30.0` | ≥ 1.0, ≤ 3600.0 | Interval in seconds between periodic status log messages when using --ui none |
 
 ## WORKER
 

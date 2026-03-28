@@ -137,6 +137,9 @@ def build_failed_jobset(base: dict[str, Any] | None = None) -> dict[str, Any]:
     jobset["status"]["conditions"] = [
         {"type": "Failed", "status": "True", "reason": "BackoffLimitExceeded"}
     ]
+    jobset["status"]["replicatedJobsStatus"] = [
+        {"name": "controller", "failed": 1, "ready": 0, "succeeded": 0}
+    ]
     return jobset
 
 

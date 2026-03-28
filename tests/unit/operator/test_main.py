@@ -1410,7 +1410,7 @@ class TestHandleCompletion:
 
     @pytest.mark.asyncio
     async def test_handles_missing_metrics(self, temp_results_dir: Path) -> None:
-        """Verify handles case when metrics fetch fails."""
+        """Verify handles case when metrics fetch fails but files are available."""
         from aiperf.operator.handlers.completion import (
             handle_completion as _handle_completion,
         )
@@ -1423,10 +1423,18 @@ class TestHandleCompletion:
         with (
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
             mock_patch("aiperf.operator.events.completed"),
+            mock_patch("aiperf.operator.events.results_stored"),
             mock_patch("aiperf.operator.events.results_failed"),
             mock_patch(
                 "aiperf.operator.handlers.completion.index_job_completed",
                 new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.completion.AsyncJobSet",
+                **{"get": AsyncMock()},
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.completion.get_api", new_callable=AsyncMock
             ),
         ):
             await _handle_completion(
@@ -1436,7 +1444,10 @@ class TestHandleCompletion:
                 job_id="job-123",
                 status={"workers": {"total": 2}},
                 sb=sb,
-                result=FetchResult(metrics=None, downloaded=[]),
+                result=FetchResult(
+                    metrics=None,
+                    downloaded=["profile_export_aiperf.json"],
+                ),
             )
 
         assert kopf_patch.status["phase"] == Phase.COMPLETED
@@ -1459,10 +1470,18 @@ class TestHandleCompletion:
         with (
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
             mock_patch("aiperf.operator.events.completed") as mock_completed,
+            mock_patch("aiperf.operator.events.results_stored"),
             mock_patch("aiperf.operator.events.results_failed"),
             mock_patch(
                 "aiperf.operator.handlers.completion.index_job_completed",
                 new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.completion.AsyncJobSet",
+                **{"get": AsyncMock()},
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.completion.get_api", new_callable=AsyncMock
             ),
         ):
             await _handle_completion(
@@ -1472,10 +1491,12 @@ class TestHandleCompletion:
                 job_id="job-123",
                 status={"workers": {"total": 1}, "startTime": start_time},
                 sb=sb,
-                result=FetchResult(metrics={"metrics": {}}, downloaded=[]),
+                result=FetchResult(
+                    metrics={"metrics": {}},
+                    downloaded=["profile_export_aiperf.json"],
+                ),
             )
 
-        # Duration should have been calculated and passed to event_completed
         mock_completed.assert_called_once()
 
 

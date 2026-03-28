@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import math
 
-from tdigest import TDigest
+try:
+    from tdigest import TDigest
+except ImportError:  # pragma: no cover - exercised via import-guard tests
+    TDigest = None
 
 from aiperf.common.enums import ListMetricAggregationMode
 from aiperf.common.models.record_models import MetricResult
@@ -29,6 +32,15 @@ class ListMetricAggregator:
         self._sum_squares = 0.0
         self._min: float | None = None
         self._max: float | None = None
+
+    @property
+    def sum(self) -> float:
+        """Return the accumulated sum of all observed values."""
+        return self._sum
+
+    def __len__(self) -> int:
+        """Return the number of observed values."""
+        return self._count
 
     def append(self, value: float | int) -> None:
         """Append a single metric value."""
@@ -128,6 +140,10 @@ class TDigestListMetricAggregator(ListMetricAggregator):
 
     def __init__(self) -> None:
         super().__init__()
+        if TDigest is None:
+            raise ImportError(
+                "tdigest is required for metrics.listMetricAggregation=tdigest"
+            )
         self._digest = TDigest()
 
     def _append(self, value: float) -> None:

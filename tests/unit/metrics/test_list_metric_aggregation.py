@@ -4,22 +4,67 @@
 import pytest
 
 from aiperf.common.enums import ListMetricAggregationMode
+from aiperf.metrics import list_metric_aggregation as list_metric_aggregation_module
+from aiperf.metrics.derived_sum_metric import DerivedSumMetric
 from aiperf.metrics.list_metric_aggregation import (
     ExactListMetricAggregator,
     TDigestListMetricAggregator,
     build_list_metric_aggregator,
 )
-from aiperf.metrics.metric_dicts import MetricArray
+from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
+from aiperf.metrics.types.inter_chunk_latency_metric import InterChunkLatencyMetric
+
+try:
+    import tdigest  # noqa: F401
+except ImportError:
+    tdigest = None
+
+HAS_TDIGEST = tdigest is not None
+
+
+class TotalInterChunkLatencyMetric(DerivedSumMetric[float, InterChunkLatencyMetric]):
+    tag = "test_total_inter_chunk_latency_from_aggregator"
+
 
 SAMPLE_VALUES = [1.0, 2.0, 3.0, 10.0, 20.0, 21.0, 22.0, 50.0, 100.0]
 ACCURACY_SAMPLE_VALUES = [float(value) for value in range(1, 101)]
+
+
+def test_tdigest_dependency_guard_still_allows_exact_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exact mode should still work when tdigest is unavailable."""
+    monkeypatch.setattr(list_metric_aggregation_module, "TDigest", None)
+
+    aggregator = build_list_metric_aggregator(ListMetricAggregationMode.EXACT)
+
+    assert isinstance(aggregator, ExactListMetricAggregator)
+
+
+def test_tdigest_mode_raises_clear_error_when_dependency_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tdigest mode should fail with a clear import guard when dependency is missing."""
+    monkeypatch.setattr(list_metric_aggregation_module, "TDigest", None)
+
+    with pytest.raises(ImportError, match="tdigest"):
+        build_list_metric_aggregator(ListMetricAggregationMode.TDIGEST)
 
 
 @pytest.mark.parametrize(
     ("mode", "aggregator_type"),
     [
         pytest.param(ListMetricAggregationMode.EXACT, ExactListMetricAggregator),
-        pytest.param(ListMetricAggregationMode.TDIGEST, TDigestListMetricAggregator),
+        *(
+            [
+                pytest.param(
+                    ListMetricAggregationMode.TDIGEST,
+                    TDigestListMetricAggregator,
+                )
+            ]
+            if HAS_TDIGEST
+            else []
+        ),
     ],
 )
 def test_build_list_metric_aggregator_preserves_metric_result_shape(
@@ -53,6 +98,7 @@ def test_build_list_metric_aggregator_preserves_metric_result_shape(
     assert result.p99 is not None
 
 
+@pytest.mark.skipif(not HAS_TDIGEST, reason="tdigest dependency is not installed")
 def test_tdigest_percentiles_stay_close_to_exact_on_fixed_sample_set() -> None:
     """T-digest summaries should stay close to the exact percentile results."""
     exact = build_list_metric_aggregator(ListMetricAggregationMode.EXACT)
@@ -85,7 +131,11 @@ def test_tdigest_percentiles_stay_close_to_exact_on_fixed_sample_set() -> None:
     "aggregator",
     [
         pytest.param(ExactListMetricAggregator(), id="exact"),
-        pytest.param(TDigestListMetricAggregator(), id="tdigest"),
+        *(
+            [pytest.param(TDigestListMetricAggregator(), id="tdigest")]
+            if HAS_TDIGEST
+            else []
+        ),
     ],
 )
 def test_list_metric_aggregator_combines_append_and_extend_ingest_paths(
@@ -133,7 +183,35 @@ def test_exact_list_metric_aggregator_extend_uses_metric_array_bulk_ingest(
     "aggregator",
     [
         pytest.param(ExactListMetricAggregator(), id="exact"),
-        pytest.param(TDigestListMetricAggregator(), id="tdigest"),
+        *(
+            [pytest.param(TDigestListMetricAggregator(), id="tdigest")]
+            if HAS_TDIGEST
+            else []
+        ),
+    ],
+)
+def test_derived_sum_metric_accepts_any_metric_series_aggregator(
+    aggregator: ExactListMetricAggregator | TDigestListMetricAggregator,
+) -> None:
+    """Derived sum metrics should work with any run-level metric series aggregator."""
+    aggregator.extend([1.0, 2.0, 3.0])
+    metric_results = MetricResultsDict()
+    metric_results[InterChunkLatencyMetric.tag] = aggregator
+
+    result = TotalInterChunkLatencyMetric().derive_value(metric_results)
+
+    assert result == pytest.approx(6.0)
+
+
+@pytest.mark.parametrize(
+    "aggregator",
+    [
+        pytest.param(ExactListMetricAggregator(), id="exact"),
+        *(
+            [pytest.param(TDigestListMetricAggregator(), id="tdigest")]
+            if HAS_TDIGEST
+            else []
+        ),
     ],
 )
 def test_list_metric_aggregator_to_result_raises_consistent_error_when_empty(

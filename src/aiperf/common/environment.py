@@ -864,6 +864,12 @@ class _UISettings(BaseSettings):
         default=0.1,
         description="Progress spinner refresh rate in seconds (default: 10 FPS)",
     )
+    STATUS_LOG_INTERVAL: float = Field(
+        ge=1.0,
+        le=3600.0,
+        default=30.0,
+        description="Interval in seconds between periodic status log messages when using --ui none",
+    )
 
 
 class _WorkerSettings(BaseSettings):

@@ -11,6 +11,7 @@ from aiperf.common.exceptions import NoMetricValue, PostProcessorDisabled
 from aiperf.common.models import MetricResult
 from aiperf.config import AIPerfConfig
 from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
+from aiperf.metrics.types.inter_chunk_latency_metric import InterChunkLatencyMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
@@ -127,6 +128,47 @@ class TestTimesliceMetricResultsProcessor:
         # Verify results are accumulated in same timeslice
         assert 0 in processor._timeslice_results
         assert list(processor._timeslice_results[0]["test_record"].data) == [10.0, 20.0]
+
+    @pytest.mark.asyncio
+    async def test_summarize_list_metric_per_timeslice(
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
+    ) -> None:
+        """Test list-valued metrics summarize independently per timeslice."""
+        mock_metric_registry.get_class.return_value = InterChunkLatencyMetric
+
+        mock_user_config.artifacts.slice_duration = 1.0
+        processor = TimesliceMetricResultsProcessor(_make_run(mock_user_config))
+        processor._tags_to_types = {InterChunkLatencyMetric.tag: MetricType.RECORD}
+        processor._instances_map = {
+            InterChunkLatencyMetric.tag: InterChunkLatencyMetric()
+        }
+
+        message1 = create_metric_records_message(
+            x_request_id="test-1",
+            request_start_ns=int(0.5 * NANOS_PER_SECOND),
+            results=[{InterChunkLatencyMetric.tag: [10_000_000.0, 20_000_000.0]}],
+        )
+        await processor.process_result(message1.to_data())
+
+        message2 = create_metric_records_message(
+            x_request_id="test-2",
+            request_start_ns=int(1.5 * NANOS_PER_SECOND),
+            results=[{InterChunkLatencyMetric.tag: [30_000_000.0, 40_000_000.0]}],
+        )
+        await processor.process_result(message2.to_data())
+
+        results = await processor.summarize()
+
+        assert results[0][0].tag == InterChunkLatencyMetric.tag
+        assert results[0][0].unit == "ms"
+        assert results[0][0].count == 2
+        assert results[0][0].sum == pytest.approx(30.0)
+        assert results[0][0].avg == pytest.approx(15.0)
+        assert results[1][0].tag == InterChunkLatencyMetric.tag
+        assert results[1][0].unit == "ms"
+        assert results[1][0].count == 2
+        assert results[1][0].sum == pytest.approx(70.0)
+        assert results[1][0].avg == pytest.approx(35.0)
 
     @pytest.mark.asyncio
     async def test_process_result_aggregate_metric_per_timeslice(

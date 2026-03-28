@@ -9,18 +9,35 @@ from aiperf.common.enums import ListMetricAggregationMode, MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
 from aiperf.config import AIPerfConfig
+from aiperf.metrics.derived_sum_metric import DerivedSumMetric
 from aiperf.metrics.list_metric_aggregation import (
     ExactListMetricAggregator,
     ListMetricAggregator,
     TDigestListMetricAggregator,
 )
-from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
+from aiperf.metrics.metric_dicts import (
+    MetricArray,
+    MetricResultsDict,
+    MetricSeriesProtocol,
+)
 from aiperf.metrics.types.credit_drop_latency_metric import CreditDropLatencyMetric
+from aiperf.metrics.types.inter_chunk_latency_metric import InterChunkLatencyMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
 from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from tests.unit.post_processors.conftest import _make_run, create_metric_records_message
+
+try:
+    import tdigest as _tdigest  # noqa: F401
+except ImportError:
+    _tdigest = None
+
+HAS_TDIGEST = _tdigest is not None
+
+
+class TotalInterChunkLatencyMetric(DerivedSumMetric[float, InterChunkLatencyMetric]):
+    tag = "test_total_inter_chunk_latency"
 
 
 class TestMetricResultsProcessor:
@@ -112,6 +129,7 @@ class TestMetricResultsProcessor:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.skipif(not HAS_TDIGEST, reason="tdigest dependency is not installed")
     async def test_process_result_record_metric_list_values_use_tdigest_aggregator(
         self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
@@ -146,6 +164,167 @@ class TestMetricResultsProcessor:
         assert result.avg == pytest.approx(20.0)
         assert result.sum == pytest.approx(60.0)
         assert result.p50 == pytest.approx(20.0, abs=1.0)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "mode",
+        [
+            pytest.param(ListMetricAggregationMode.EXACT, id="exact"),
+            pytest.param(
+                ListMetricAggregationMode.TDIGEST,
+                id="tdigest",
+                marks=pytest.mark.skipif(
+                    not HAS_TDIGEST, reason="tdigest dependency is not installed"
+                ),
+            ),
+        ],
+    )
+    async def test_process_result_record_metric_list_values_support_derived_sum_metrics(
+        self,
+        mock_metric_registry: Mock,
+        mock_user_config: AIPerfConfig,
+        mode: ListMetricAggregationMode,
+    ) -> None:
+        """Test derived sum metrics consume the shared run-level metric series contract."""
+        config = mock_user_config.model_copy(deep=True)
+        config.metrics.list_metric_aggregation = mode
+        processor = MetricResultsProcessor(_make_run(config))
+        processor._tags_to_types = {InterChunkLatencyMetric.tag: MetricType.RECORD}
+        processor._instances_map = {
+            InterChunkLatencyMetric.tag: InterChunkLatencyMetric()
+        }
+
+        message = create_metric_records_message(
+            x_request_id="test-1",
+            results=[{InterChunkLatencyMetric.tag: [10.0, 20.0, 30.0]}],
+        )
+        await processor.process_result(message.to_data())
+
+        metric_results = await processor.full_metrics()
+
+        assert isinstance(
+            metric_results[InterChunkLatencyMetric.tag], MetricSeriesProtocol
+        )
+        metric_results[TotalInterChunkLatencyMetric.tag] = (
+            TotalInterChunkLatencyMetric().derive_value(metric_results)
+        )
+
+        assert metric_results[TotalInterChunkLatencyMetric.tag] == pytest.approx(60.0)
+
+    @pytest.mark.asyncio
+    async def test_summarize_list_metric_in_exact_mode(
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
+    ) -> None:
+        """Test summarize emits list-valued metric summaries in exact mode."""
+        mock_metric_registry.get_class.return_value = InterChunkLatencyMetric
+
+        processor = MetricResultsProcessor(_make_run(mock_user_config))
+        processor._tags_to_types = {InterChunkLatencyMetric.tag: MetricType.RECORD}
+        processor._instances_map = {
+            InterChunkLatencyMetric.tag: InterChunkLatencyMetric()
+        }
+
+        message = create_metric_records_message(
+            x_request_id="test-1",
+            results=[
+                {
+                    InterChunkLatencyMetric.tag: [
+                        10_000_000.0,
+                        20_000_000.0,
+                        30_000_000.0,
+                    ]
+                }
+            ],
+        )
+        await processor.process_result(message.to_data())
+
+        results = await processor.summarize()
+
+        assert len(results) == 1
+        assert results[0].tag == InterChunkLatencyMetric.tag
+        assert results[0].unit == "ms"
+        assert results[0].count == 3
+        assert results[0].sum == pytest.approx(60.0)
+        assert results[0].avg == pytest.approx(20.0)
+        assert results[0].min == pytest.approx(10.0)
+        assert results[0].max == pytest.approx(30.0)
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(not HAS_TDIGEST, reason="tdigest dependency is not installed")
+    async def test_summarize_list_metric_in_tdigest_mode(
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
+    ) -> None:
+        """Test summarize emits list-valued metric summaries in tdigest mode."""
+        mock_metric_registry.get_class.return_value = InterChunkLatencyMetric
+
+        config = mock_user_config.model_copy(deep=True)
+        config.metrics.list_metric_aggregation = ListMetricAggregationMode.TDIGEST
+        processor = MetricResultsProcessor(_make_run(config))
+        processor._tags_to_types = {InterChunkLatencyMetric.tag: MetricType.RECORD}
+        processor._instances_map = {
+            InterChunkLatencyMetric.tag: InterChunkLatencyMetric()
+        }
+
+        message = create_metric_records_message(
+            x_request_id="test-1",
+            results=[
+                {
+                    InterChunkLatencyMetric.tag: [
+                        10_000_000.0,
+                        20_000_000.0,
+                        30_000_000.0,
+                        40_000_000.0,
+                    ]
+                }
+            ],
+        )
+        await processor.process_result(message.to_data())
+
+        results = await processor.summarize()
+
+        assert len(results) == 1
+        assert results[0].tag == InterChunkLatencyMetric.tag
+        assert results[0].unit == "ms"
+        assert results[0].count == 4
+        assert results[0].sum == pytest.approx(100.0)
+        assert results[0].avg == pytest.approx(25.0)
+        assert results[0].p50 == pytest.approx(25.0, abs=1.0)
+
+    @pytest.mark.asyncio
+    async def test_summarize_list_metric_accumulates_across_multiple_messages(
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
+    ) -> None:
+        """Test list-valued metrics accumulate across multiple process_result calls."""
+        mock_metric_registry.get_class.return_value = InterChunkLatencyMetric
+
+        processor = MetricResultsProcessor(_make_run(mock_user_config))
+        processor._tags_to_types = {InterChunkLatencyMetric.tag: MetricType.RECORD}
+        processor._instances_map = {
+            InterChunkLatencyMetric.tag: InterChunkLatencyMetric()
+        }
+
+        message1 = create_metric_records_message(
+            x_request_id="test-1",
+            results=[{InterChunkLatencyMetric.tag: [10_000_000.0, 20_000_000.0]}],
+        )
+        await processor.process_result(message1.to_data())
+
+        message2 = create_metric_records_message(
+            x_request_id="test-2",
+            request_start_ns=1_000_000_001,
+            results=[{InterChunkLatencyMetric.tag: [30_000_000.0, 40_000_000.0]}],
+        )
+        await processor.process_result(message2.to_data())
+
+        results = await processor.summarize()
+
+        assert len(results) == 1
+        assert results[0].tag == InterChunkLatencyMetric.tag
+        assert results[0].count == 4
+        assert results[0].sum == pytest.approx(100.0)
+        assert results[0].avg == pytest.approx(25.0)
+        assert results[0].min == pytest.approx(10.0)
+        assert results[0].max == pytest.approx(40.0)
 
     @pytest.mark.asyncio
     async def test_process_result_aggregate_metric(
