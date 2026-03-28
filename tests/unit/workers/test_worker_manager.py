@@ -10,7 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import WorkerStartupState, WorkerStatus
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CommandType, WorkerStartupState, WorkerStatus
 from aiperf.common.environment import Environment
 from aiperf.common.messages import WorkerHealthMessage
 from aiperf.common.messages.worker_messages import (
@@ -358,6 +359,28 @@ class TestWorkerStartupStates:
         summary = worker_manager.publish.await_args.args[0]
         assert isinstance(summary, WorkerStatusSummaryMessage)
         assert summary.worker_statuses == {WORKER_ID: WorkerStatus.IDLE}
+        assert summary.worker_startup_states == {
+            WORKER_ID: WorkerStartupState.WAITING_FOR_DATASET
+        }
+
+    @pytest.mark.asyncio
+    async def test_report_worker_status_summary_command_publishes_summary(
+        self, worker_manager: WorkerManager
+    ) -> None:
+        """Controller refresh requests should trigger an immediate summary publish."""
+        worker_manager.publish = AsyncMock()
+        worker_manager.worker_infos[WORKER_ID] = WorkerStatusInfo(
+            worker_id=WORKER_ID,
+            status=WorkerStatus.IDLE,
+            startup_state=WorkerStartupState.WAITING_FOR_DATASET,
+        )
+
+        await worker_manager._on_report_worker_status_summary(
+            Command(cmd=CommandType.REPORT_WORKER_STATUS_SUMMARY, cid="cid")
+        )
+
+        summary = worker_manager.publish.await_args.args[0]
+        assert isinstance(summary, WorkerStatusSummaryMessage)
         assert summary.worker_startup_states == {
             WORKER_ID: WorkerStartupState.WAITING_FOR_DATASET
         }

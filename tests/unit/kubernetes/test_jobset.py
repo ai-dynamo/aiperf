@@ -328,7 +328,6 @@ class TestJobSetSpec:
             "control-plane",
             "dataset-manager",
             "timing-manager",
-            "worker-manager",
             "records-manager",
             "api",
             "gpu-telemetry-manager",

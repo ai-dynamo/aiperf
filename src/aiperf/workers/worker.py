@@ -6,6 +6,7 @@ import asyncio
 import os
 import time
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
@@ -38,7 +39,6 @@ from aiperf.common.inference_wire import (
 from aiperf.common.memory_profiler import MemoryProfiler
 from aiperf.common.messages import (
     DatasetConfiguredNotification,
-    DatasetDownloadedNotification,
     ErrorMessage,
     WorkerHealthMessage,
     WorkerStartupStateMessage,
@@ -62,6 +62,14 @@ from aiperf.common.models import (
     Text,
     Turn,
     WorkerTaskStats,
+)
+from aiperf.common.pod_lifecycle_structs import (
+    PodDatasetReady,
+    PodManagerToPeerMessage,
+    PodPeerHello,
+    PodPeerShutdown,
+    PodWorkerHealth,
+    PodWorkerStartupState,
 )
 from aiperf.common.protocols import (
     PushClientProtocol,
@@ -215,6 +223,20 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
         )
 
+        self.pod_lifecycle_dealer_client: StreamingDealerClientProtocol | None = None
+        if self._is_kubernetes_mode():
+            self.pod_lifecycle_dealer_client = (
+                self.comms.create_streaming_dealer_client(
+                    address=CommAddress.POD_LIFECYCLE,
+                    identity=self.service_id,
+                    bind=False,
+                    decode_type=PodManagerToPeerMessage,
+                )
+            )
+            self.pod_lifecycle_dealer_client.register_receiver(
+                self._on_pod_lifecycle_message
+            )
+
         self.memory_usage_before_profiling: float | None = None
         self._pod_index = os.environ.get("AIPERF_POD_INDEX")
 
@@ -228,11 +250,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Dataset client for direct data access (eliminates DatasetManager bottleneck)
         # Initialized when DatasetConfiguredNotification is received via factory.
         # In Kubernetes mode (network client type), initialization is deferred until
-        # WorkerPodManager downloads the dataset and sends DatasetDownloadedNotification.
+        # WorkerPodManager downloads the dataset and sends PodDatasetReady.
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
         self._pending_dataset_config: DatasetConfiguredNotification | None = None
-        self._pending_download_notification: DatasetDownloadedNotification | None = None
+        self._pending_dataset_ready: PodDatasetReady | None = None
         self._worker_ready_event = asyncio.Event()
         self._startup_state: WorkerStartupState | None = None
 
@@ -264,6 +286,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """
         await self._publish_startup_state(WorkerStartupState.STARTING)
         if self._is_kubernetes_mode():
+            if self.pod_lifecycle_dealer_client is not None:
+                await self.pod_lifecycle_dealer_client.send(
+                    PodPeerHello(
+                        service_id=self.service_id,
+                        service_type=str(self.service_type),
+                        pod_index=self._pod_index,
+                    )
+                )
             await self._publish_startup_state(WorkerStartupState.WAITING_FOR_DATASET)
             self.debug(
                 "Kubernetes mode: deferring WorkerReady until dataset is downloaded"
@@ -285,6 +315,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             send_ping=self.return_dealer_client.send,
         )
 
+    async def _on_pod_lifecycle_message(self, message: PodManagerToPeerMessage) -> None:
+        """Handle pod-local lifecycle messages from WorkerPodManager."""
+        if isinstance(message, PodDatasetReady):
+            await self._on_dataset_ready(message)
+
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(self, msg: DatasetConfiguredNotification) -> None:
         """Initialize dataset client when configuration is received.
@@ -295,8 +330,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         storage backends (S3, Redis, etc.) to work without modifying Worker code.
 
         In Kubernetes mode, initialization is deferred until WorkerPodManager
-        downloads the dataset and sends DatasetDownloadedNotification with
-        local file paths.
+        downloads the dataset and sends PodDatasetReady with local file paths.
         """
         if not self._matches_current_benchmark(msg.client_metadata):
             self.warning(
@@ -310,35 +344,30 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             return
 
         # In Kubernetes mode, wait for WorkerPodManager to download the dataset first.
-        # WorkerPodManager will send DatasetDownloadedNotification with local paths.
+        # WorkerPodManager will send PodDatasetReady with local paths.
         if self._is_kubernetes_mode():
             self._pending_dataset_config = msg
-            pending_download = self._pending_download_notification
-            if pending_download is not None:
-                await self._complete_k8s_dataset_handshake(pending_download)
+            pending_ready = self._pending_dataset_ready
+            if pending_ready is not None:
+                await self._complete_k8s_dataset_handshake(pending_ready)
                 return
             self.debug(
-                "Kubernetes mode: waiting for DatasetDownloadedNotification "
-                "before initializing dataset client"
+                "Kubernetes mode: waiting for PodDatasetReady before initializing dataset client"
             )
             return
 
         # Local mode: initialize immediately with provided client_metadata
         await self._initialize_dataset_client(msg.client_metadata, msg.metadata)
 
-    @on_message(MessageType.DATASET_DOWNLOADED_NOTIFICATION)
-    async def _on_dataset_downloaded(self, msg: DatasetDownloadedNotification) -> None:
-        """Handle dataset download completion from WorkerPodManager.
-
-        In Kubernetes mode, WorkerPodManager downloads the dataset files once per pod.
-        This notification contains pod-local file paths and must come from the
-        same pod as the worker consuming it.
-        """
+    async def _on_dataset_ready(self, msg: PodDatasetReady) -> None:
+        """Handle pod-local dataset readiness from WorkerPodManager."""
         if not self._matches_current_download(msg):
-            self.warning(
-                "Ignoring downloaded dataset for a different pod or benchmark: "
-                f"service={msg.service_id}, pod_index={msg.pod_index}, "
-                f"path={msg.client_metadata.data_file_path}"
+            self.debug(
+                lambda: (
+                    "Ignoring downloaded dataset for a different pod or benchmark: "
+                    f"service={msg.service_id}, pod_index={msg.pod_index}, "
+                    f"path={msg.data_file_path}"
+                )
             )
             return
 
@@ -347,38 +376,39 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             return
 
         if self._pending_dataset_config is None:
-            self.debug(
-                "Received download notification before config; storing for later"
-            )
-            self._pending_download_notification = msg
+            self.debug("Received dataset-ready before config; storing for later")
+            self._pending_dataset_ready = msg
             return
 
         await self._complete_k8s_dataset_handshake(msg)
 
-    async def _complete_k8s_dataset_handshake(
-        self, msg: DatasetDownloadedNotification
-    ) -> None:
-        """Finish K8s dataset initialization once config and download are both present."""
+    async def _complete_k8s_dataset_handshake(self, msg: PodDatasetReady) -> None:
+        """Finish K8s dataset initialization once config and pod-local dataset-ready are both present."""
         if self._pending_dataset_config is None:
-            self._pending_download_notification = msg
+            self._pending_dataset_ready = msg
             return
 
         if not msg.success:
             self.error(f"Dataset download failed: {msg.error_message}")
             self.warning(
-                "Waiting for a successful DatasetDownloadedNotification before "
-                "initializing the dataset client"
+                "Waiting for a successful PodDatasetReady before initializing the dataset client"
             )
-            self._pending_download_notification = msg
+            self._pending_dataset_ready = msg
             return
 
-        # Use client_metadata from download notification (has local paths from WorkerPodManager)
         dataset_metadata = self._pending_dataset_config.metadata
-        await self._initialize_dataset_client(msg.client_metadata, dataset_metadata)
+        await self._initialize_dataset_client(
+            MemoryMapClientMetadata(
+                data_file_path=Path(msg.data_file_path),
+                index_file_path=Path(msg.index_file_path),
+                conversation_count=msg.conversation_count,
+                total_size_bytes=msg.total_size_bytes,
+            ),
+            dataset_metadata,
+        )
         self._pending_dataset_config = None
-        self._pending_download_notification = None
+        self._pending_dataset_ready = None
 
-        # Measure RTT before announcing readiness
         await self._publish_startup_state(WorkerStartupState.ROUTER_PROBING)
         await self._measure_baseline_rtt()
         await self.return_dealer_client.send(WorkerReady(worker_id=self.service_id))
@@ -395,9 +425,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             client_metadata.data_file_path
         )
 
-    def _matches_current_download(self, msg: DatasetDownloadedNotification) -> bool:
-        """Check whether a downloaded dataset notification belongs to this worker's pod."""
-        if not self._matches_current_benchmark(msg.client_metadata):
+    def _matches_current_download(self, msg: PodDatasetReady) -> bool:
+        """Check whether a pod-local dataset-ready notification belongs to this worker's pod."""
+        benchmark_id = self.run.cfg.artifacts.benchmark_id
+        if benchmark_id not in msg.data_file_path:
             return False
         if not self._is_kubernetes_mode():
             return True
@@ -433,6 +464,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """Send WorkerShutdown to announce shutdown."""
         try:
             await self._publish_startup_state(WorkerStartupState.SHUTTING_DOWN)
+            if self.pod_lifecycle_dealer_client is not None:
+                await self.pod_lifecycle_dealer_client.send(
+                    PodPeerShutdown(
+                        service_id=self.service_id,
+                        service_type=str(self.service_type),
+                    )
+                )
             await self.return_dealer_client.send(
                 WorkerShutdown(worker_id=self.service_id)
             )
@@ -453,6 +491,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     async def _health_check_task(self) -> None:
         """Task to report the health of the worker to the worker manager."""
         health = await asyncio.to_thread(self.get_process_health)
+        if self._is_kubernetes_mode() and self.pod_lifecycle_dealer_client is not None:
+            await self.pod_lifecycle_dealer_client.send(
+                self.create_pod_worker_health(health)
+            )
+            return
         await self.publish(self.create_health_message(health))
 
     def create_health_message(self, health: ProcessHealth) -> WorkerHealthMessage:
@@ -462,11 +505,48 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             task_stats=self.task_stats,
         )
 
+    def create_pod_worker_health(self, health: ProcessHealth) -> PodWorkerHealth:
+        """Build the pod-local msgspec health snapshot."""
+        io_counters = (
+            tuple(health.io_counters) if health.io_counters is not None else None
+        )
+        cpu_times = tuple(health.cpu_times) if health.cpu_times is not None else None
+        num_ctx_switches = (
+            tuple(health.num_ctx_switches)
+            if health.num_ctx_switches is not None
+            else None
+        )
+        return PodWorkerHealth(
+            service_id=self.service_id,
+            pid=health.pid,
+            create_time=health.create_time,
+            uptime=health.uptime,
+            cpu_usage=health.cpu_usage,
+            memory_usage=health.memory_usage,
+            pss_memory=health.pss_memory,
+            io_counters=io_counters,
+            cpu_times=cpu_times,
+            num_ctx_switches=num_ctx_switches,
+            num_threads=health.num_threads,
+            task_total=self.task_stats.total,
+            task_failed=self.task_stats.failed,
+            task_completed=self.task_stats.completed,
+        )
+
     async def _publish_startup_state(self, state: WorkerStartupState) -> None:
         """Publish a worker startup-state transition if it changed."""
         if self._startup_state == state:
             return
         self._startup_state = state
+        if self._is_kubernetes_mode() and self.pod_lifecycle_dealer_client is not None:
+            await self.pod_lifecycle_dealer_client.send(
+                PodWorkerStartupState(
+                    service_id=self.service_id,
+                    startup_state=str(state),
+                    request_ns=time.time_ns(),
+                )
+            )
+            return
         await self.publish(
             WorkerStartupStateMessage(
                 service_id=self.service_id,

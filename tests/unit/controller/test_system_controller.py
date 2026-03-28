@@ -6,7 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.control_structs import CommandErr, Registration, RegistrationAck
-from aiperf.common.enums import LifecycleState, WorkerStartupState, WorkerStatus
+from aiperf.common.enums import (
+    CommandType,
+    LifecycleState,
+    WorkerStartupState,
+    WorkerStatus,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import (
     LifecycleOperationError,
@@ -410,6 +415,7 @@ class TestKubernetesMode:
         assert ServiceType.WORKER in controller.required_services
         assert ServiceType.RECORD_PROCESSOR in controller.required_services
         assert ServiceType.WORKER_POD_MANAGER in controller.required_services
+        assert ServiceType.WORKER_MANAGER not in controller.required_services
 
     def test_multiprocessing_mode_does_not_include_worker_in_required(
         self,
@@ -548,12 +554,12 @@ class TestKubernetesMode:
         controller._start_profiling_all_services.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_configure_single_worker_marks_worker_ready(
+    async def test_configure_single_worker_does_not_mark_k8s_worker_ready(
         self,
         config: AIPerfConfig,
         mock_service_manager: AsyncMock,
     ) -> None:
-        """Successful worker configure should mark the worker READY for the barrier."""
+        """K8s workers should only become READY from pod-manager summaries, not configure ack."""
         config.runtime.service_run_type = ServiceRunType.KUBERNETES
         config.runtime.workers = 1
         config.runtime.workers_per_pod = 1
@@ -569,10 +575,8 @@ class TestKubernetesMode:
 
         await controller._configure_single_service("worker_a")
 
-        assert controller._worker_startup_states["worker_a"] == str(
-            WorkerStartupState.READY
-        )
-        assert controller._all_expected_workers_ready() is True
+        assert "worker_a" not in controller._worker_startup_states
+        assert controller._all_expected_workers_ready() is False
 
     @pytest.mark.asyncio
     async def test_wait_for_all_workers_ready_succeeds_when_expected_workers_ready(
@@ -593,6 +597,45 @@ class TestKubernetesMode:
         await controller._wait_for_all_workers_ready(timeout=1.0)
 
     @pytest.mark.asyncio
+    async def test_wait_for_all_workers_ready_requests_worker_pod_manager_refresh(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Ready wait should actively request worker summary refreshes from WorkerPodManagers."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.runtime.workers = 2
+        config.runtime.workers_per_pod = 2
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        controller._worker_startup_states = {
+            "worker_a": str(WorkerStartupState.WAITING_FOR_DATASET),
+            "worker_b": str(WorkerStartupState.ROUTER_PROBING),
+        }
+        ServiceRegistry.expect_service("wpm_0", ServiceType.WORKER_POD_MANAGER)
+        ServiceRegistry.register(
+            service_id="wpm_0",
+            service_type=ServiceType.WORKER_POD_MANAGER,
+            first_seen_ns=1,
+            state=LifecycleState.RUNNING,
+        )
+
+        async def send_control_command(service_id: str, cmd: str, timeout: float):
+            assert service_id == "wpm_0"
+            assert cmd == CommandType.REPORT_WORKER_STATUS_SUMMARY
+            controller._worker_startup_states = {
+                "worker_a": str(WorkerStartupState.READY),
+                "worker_b": str(WorkerStartupState.READY),
+            }
+            controller._all_workers_ready_event.set()
+            return None
+
+        controller._send_control_command = AsyncMock(side_effect=send_control_command)
+
+        await controller._wait_for_all_workers_ready(timeout=1.0)
+
+        controller._send_control_command.assert_awaited()
+
+    @pytest.mark.asyncio
     async def test_wait_for_all_workers_ready_times_out_when_workers_not_ready(
         self,
         config: AIPerfConfig,
@@ -607,6 +650,7 @@ class TestKubernetesMode:
             "worker_a": str(WorkerStartupState.WAITING_FOR_DATASET),
             "worker_b": str(WorkerStartupState.ROUTER_PROBING),
         }
+        controller._send_control_command = AsyncMock(return_value=None)
 
         with pytest.raises(
             ServiceRegistrationTimeoutError, match="workers to become READY"

@@ -76,8 +76,12 @@ class ZMQPubClient(BaseZMQClient):
             topic = f"{message.message_type}{TOPIC_END}"
             message_json_bytes = message.to_json_bytes()
 
-            # Log important notifications at INFO level for debugging
-            if "notification" in message.message_type.lower():
+            message_type = message.message_type.lower()
+            if message_type.startswith("dataset_"):
+                self.debug(
+                    lambda: f"PUB client {self.client_id} publishing {message.message_type} to topic: {topic}"
+                )
+            elif "notification" in message_type:
                 self.info(
                     f"PUB client {self.client_id} publishing {message.message_type} to topic: {topic}"
                 )

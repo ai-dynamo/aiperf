@@ -8,10 +8,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.enums import WorkerStartupState
-from aiperf.common.messages import (
-    DatasetConfiguredNotification,
-    DatasetDownloadedNotification,
-)
+from aiperf.common.messages import DatasetConfiguredNotification
 from aiperf.common.models import (
     Conversation,
     DatasetMetadata,
@@ -22,6 +19,13 @@ from aiperf.common.models import (
     RequestRecord,
     SSEMessage,
     TextResponseData,
+)
+from aiperf.common.pod_lifecycle_structs import (
+    PodDatasetReady,
+    PodPeerHello,
+    PodPeerShutdown,
+    PodWorkerHealth,
+    PodWorkerStartupState,
 )
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.credit.structs import Credit, CreditContext
@@ -526,6 +530,35 @@ class TestKubernetesMode:
         ]
 
     @pytest.mark.asyncio
+    async def test_k8s_health_checks_use_pod_lifecycle_channel(
+        self, k8s_worker: Worker
+    ) -> None:
+        """Kubernetes workers should send health snapshots directly to WorkerPodManager."""
+        k8s_worker.publish = AsyncMock()
+        k8s_worker.pod_lifecycle_dealer_client.send = AsyncMock()
+
+        await k8s_worker._health_check_task()
+
+        k8s_worker.publish.assert_not_awaited()
+        sent = k8s_worker.pod_lifecycle_dealer_client.send.await_args.args[0]
+        assert isinstance(sent, PodWorkerHealth)
+        assert sent.service_id == "k8s-worker"
+        assert sent.task_total == k8s_worker.task_stats.total
+
+    @pytest.mark.asyncio
+    async def test_k8s_shutdown_notifies_pod_manager(self, k8s_worker: Worker) -> None:
+        """Kubernetes workers should notify WorkerPodManager before credit-router shutdown."""
+        k8s_worker.pod_lifecycle_dealer_client.send = AsyncMock()
+        k8s_worker.return_dealer_client.send = AsyncMock()
+
+        await k8s_worker._send_worker_shutdown_message()
+
+        lifecycle_sent = k8s_worker.pod_lifecycle_dealer_client.send.await_args_list
+        assert isinstance(lifecycle_sent[-1].args[0], PodPeerShutdown)
+        assert lifecycle_sent[-1].args[0].service_id == "k8s-worker"
+        k8s_worker.return_dealer_client.send.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_dataset_downloaded_is_idempotent_after_worker_ready(
         self, config: AIPerfConfig
     ) -> None:
@@ -537,6 +570,7 @@ class TestKubernetesMode:
         )
         worker._pod_index = "0"
         worker.publish = AsyncMock()
+        worker.pod_lifecycle_dealer_client.send = AsyncMock()
         pending_config = MagicMock()
         pending_config.metadata = MagicMock()
         worker._pending_dataset_config = pending_config
@@ -544,18 +578,28 @@ class TestKubernetesMode:
         worker._measure_baseline_rtt = AsyncMock()
         worker.return_dealer_client.send = AsyncMock()
 
-        downloaded = MagicMock()
-        downloaded.success = True
-        downloaded.pod_index = "0"
-        downloaded.client_metadata = MagicMock()
-        downloaded.client_metadata.data_file_path = Path(
-            f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat"
+        downloaded = PodDatasetReady(
+            service_id="worker-pod-manager",
+            data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat",
+            index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat",
+            conversation_count=0,
+            total_size_bytes=0,
+            pod_index="0",
+            success=True,
         )
 
-        await worker._on_dataset_downloaded(downloaded)
-        await worker._on_dataset_downloaded(downloaded)
+        await worker._on_dataset_ready(downloaded)
+        await worker._on_dataset_ready(downloaded)
 
-        worker._initialize_dataset_client.assert_awaited_once()
+        worker._initialize_dataset_client.assert_awaited_once_with(
+            MemoryMapClientMetadata(
+                data_file_path=Path(downloaded.data_file_path),
+                index_file_path=Path(downloaded.index_file_path),
+                conversation_count=downloaded.conversation_count,
+                total_size_bytes=downloaded.total_size_bytes,
+            ),
+            pending_config.metadata,
+        )
         worker._measure_baseline_rtt.assert_awaited_once()
         worker.return_dealer_client.send.assert_awaited_once()
 
@@ -593,30 +637,29 @@ class TestKubernetesMode:
                 total_size_bytes=0,
             ),
         )
-        downloaded = DatasetDownloadedNotification(
+        downloaded = PodDatasetReady(
             service_id="worker-pod-manager",
-            client_metadata=MemoryMapClientMetadata(
-                data_file_path=Path(
-                    f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat"
-                ),
-                index_file_path=Path(
-                    f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat"
-                ),
-                conversation_count=0,
-                total_size_bytes=0,
-            ),
+            data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat",
+            index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat",
+            conversation_count=0,
+            total_size_bytes=0,
             pod_index="0",
             success=True,
         )
 
         await worker._send_worker_ready_message()
         await worker._on_dataset_configured(configured)
-        await worker._on_dataset_downloaded(downloaded)
+        await worker._on_dataset_ready(downloaded)
         await worker._on_dataset_configured(configured)
-        await worker._on_dataset_downloaded(downloaded)
+        await worker._on_dataset_ready(downloaded)
 
         worker._initialize_dataset_client.assert_awaited_once_with(
-            downloaded.client_metadata,
+            MemoryMapClientMetadata(
+                data_file_path=Path(downloaded.data_file_path),
+                index_file_path=Path(downloaded.index_file_path),
+                conversation_count=downloaded.conversation_count,
+                total_size_bytes=downloaded.total_size_bytes,
+            ),
             dataset_metadata,
         )
         worker._measure_baseline_rtt.assert_awaited_once()
@@ -634,6 +677,7 @@ class TestKubernetesMode:
         )
         worker._pod_index = "0"
         worker.publish = AsyncMock()
+        worker.pod_lifecycle_dealer_client.send = AsyncMock()
         pending_config = MagicMock()
         pending_config.metadata = MagicMock()
         worker._pending_dataset_config = pending_config
@@ -644,24 +688,40 @@ class TestKubernetesMode:
 
         await worker._send_worker_ready_message()
 
-        downloaded = MagicMock()
-        downloaded.success = True
-        downloaded.pod_index = "0"
-        downloaded.client_metadata = MagicMock()
-        downloaded.client_metadata.data_file_path = Path(
-            f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat"
+        downloaded = PodDatasetReady(
+            service_id="worker-pod-manager",
+            data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat",
+            index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat",
+            conversation_count=0,
+            total_size_bytes=0,
+            pod_index="0",
+            success=True,
         )
 
-        await worker._on_dataset_downloaded(downloaded)
+        await worker._on_dataset_ready(downloaded)
 
         assert worker._worker_ready_event.is_set()
+        assert worker.publish.await_count == 0
         assert [
-            call.args[0].startup_state for call in worker.publish.await_args_list
+            type(call.args[0])
+            for call in worker.pod_lifecycle_dealer_client.send.await_args_list
         ] == [
-            WorkerStartupState.STARTING,
-            WorkerStartupState.WAITING_FOR_DATASET,
-            WorkerStartupState.ROUTER_PROBING,
-            WorkerStartupState.READY,
+            PodWorkerStartupState,
+            PodPeerHello,
+            PodWorkerStartupState,
+            PodWorkerStartupState,
+            PodWorkerStartupState,
+        ]
+        startup_updates = [
+            call.args[0]
+            for call in worker.pod_lifecycle_dealer_client.send.await_args_list
+            if isinstance(call.args[0], PodWorkerStartupState)
+        ]
+        assert [update.startup_state for update in startup_updates] == [
+            str(WorkerStartupState.STARTING),
+            str(WorkerStartupState.WAITING_FOR_DATASET),
+            str(WorkerStartupState.ROUTER_PROBING),
+            str(WorkerStartupState.READY),
         ]
 
     @pytest.mark.asyncio
@@ -699,28 +759,27 @@ class TestKubernetesMode:
                 total_size_bytes=0,
             ),
         )
-        downloaded = DatasetDownloadedNotification(
+        downloaded = PodDatasetReady(
             service_id="worker-pod-manager",
-            client_metadata=MemoryMapClientMetadata(
-                data_file_path=Path(
-                    f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat"
-                ),
-                index_file_path=Path(
-                    f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat"
-                ),
-                conversation_count=0,
-                total_size_bytes=0,
-            ),
+            data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat",
+            index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat",
+            conversation_count=0,
+            total_size_bytes=0,
             pod_index="0",
             success=True,
         )
 
         await worker._send_worker_ready_message()
-        await worker._on_dataset_downloaded(downloaded)
+        await worker._on_dataset_ready(downloaded)
         await worker._on_dataset_configured(configured)
 
         worker._initialize_dataset_client.assert_awaited_once_with(
-            downloaded.client_metadata,
+            MemoryMapClientMetadata(
+                data_file_path=Path(downloaded.data_file_path),
+                index_file_path=Path(downloaded.index_file_path),
+                conversation_count=downloaded.conversation_count,
+                total_size_bytes=downloaded.total_size_bytes,
+            ),
             dataset_metadata,
         )
         worker._measure_baseline_rtt.assert_awaited_once()
@@ -762,25 +821,19 @@ class TestKubernetesMode:
                 total_size_bytes=0,
             ),
         )
-        wrong_pod_download = DatasetDownloadedNotification(
+        wrong_pod_download = PodDatasetReady(
             service_id="worker-pod-manager",
-            client_metadata=MemoryMapClientMetadata(
-                data_file_path=Path(
-                    f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat"
-                ),
-                index_file_path=Path(
-                    f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat"
-                ),
-                conversation_count=0,
-                total_size_bytes=0,
-            ),
+            data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat",
+            index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat",
+            conversation_count=0,
+            total_size_bytes=0,
             pod_index="16",
             success=True,
         )
 
         await worker._send_worker_ready_message()
         await worker._on_dataset_configured(configured)
-        await worker._on_dataset_downloaded(wrong_pod_download)
+        await worker._on_dataset_ready(wrong_pod_download)
 
         worker._initialize_dataset_client.assert_not_awaited()
         worker._measure_baseline_rtt.assert_not_awaited()
@@ -822,39 +875,45 @@ class TestKubernetesMode:
                 total_size_bytes=0,
             ),
         )
-        failed_download = DatasetDownloadedNotification(
+        failed_download = PodDatasetReady(
             service_id="worker-pod-manager",
-            client_metadata=MemoryMapClientMetadata(
-                data_file_path=Path(
-                    f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat"
-                ),
-                index_file_path=Path(
-                    f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat"
-                ),
-                conversation_count=0,
-                total_size_bytes=0,
-            ),
+            data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat",
+            index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat",
+            conversation_count=0,
+            total_size_bytes=0,
             pod_index="0",
             success=False,
             error_message="dataset file missing",
         )
-        successful_download = failed_download.model_copy(
-            update={"success": True, "error_message": None}
+        successful_download = PodDatasetReady(
+            service_id="worker-pod-manager",
+            data_file_path=failed_download.data_file_path,
+            index_file_path=failed_download.index_file_path,
+            conversation_count=failed_download.conversation_count,
+            total_size_bytes=failed_download.total_size_bytes,
+            pod_index=failed_download.pod_index,
+            success=True,
+            error_message=None,
         )
 
         await worker._send_worker_ready_message()
         await worker._on_dataset_configured(configured)
-        await worker._on_dataset_downloaded(failed_download)
+        await worker._on_dataset_ready(failed_download)
 
         worker._initialize_dataset_client.assert_not_awaited()
         worker._measure_baseline_rtt.assert_not_awaited()
         worker.return_dealer_client.send.assert_not_awaited()
         assert not worker._worker_ready_event.is_set()
 
-        await worker._on_dataset_downloaded(successful_download)
+        await worker._on_dataset_ready(successful_download)
 
         worker._initialize_dataset_client.assert_awaited_once_with(
-            successful_download.client_metadata,
+            MemoryMapClientMetadata(
+                data_file_path=Path(successful_download.data_file_path),
+                index_file_path=Path(successful_download.index_file_path),
+                conversation_count=successful_download.conversation_count,
+                total_size_bytes=successful_download.total_size_bytes,
+            ),
             dataset_metadata,
         )
         worker._measure_baseline_rtt.assert_awaited_once()

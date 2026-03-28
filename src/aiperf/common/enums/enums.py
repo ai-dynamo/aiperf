@@ -80,6 +80,9 @@ class CommAddress(CaseInsensitiveStrEnum):
     CONTROL = "control"
     """Address for direct DEALER/ROUTER control channel communication with the controller."""
 
+    POD_LIFECYCLE = "pod_lifecycle"
+    """Address for pod-local DEALER/ROUTER lifecycle coordination in Kubernetes worker pods."""
+
 
 class CommandType(CaseInsensitiveStrEnum):
     PROCESS_RECORDS = "process_records"
@@ -88,6 +91,7 @@ class CommandType(CaseInsensitiveStrEnum):
     PROFILE_CONFIGURE = "profile_configure"
     PROFILE_START = "profile_start"
     REALTIME_METRICS = "realtime_metrics"
+    REPORT_WORKER_STATUS_SUMMARY = "report_worker_status_summary"
     SHUTDOWN = "shutdown"
     SHUTDOWN_WORKERS = "shutdown_workers"
     SPAWN_WORKERS = "spawn_workers"

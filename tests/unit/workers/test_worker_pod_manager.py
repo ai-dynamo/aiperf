@@ -14,22 +14,31 @@ import pytest
 from pytest import param
 
 from aiperf.common.control_structs import Command
-from aiperf.common.enums import CommandType, WorkerStartupState
+from aiperf.common.enums import CommandType, WorkerStartupState, WorkerStatus
 from aiperf.common.environment import Environment
 from aiperf.common.messages import (
     DatasetConfiguredNotification,
-    DatasetDownloadedNotification,
+    WorkerHealthMessage,
 )
-from aiperf.common.messages.worker_messages import WorkerStartupStateMessage
+from aiperf.common.messages.worker_messages import (
+    WorkerStartupStateMessage,
+    WorkerStatusSummaryMessage,
+)
 from aiperf.common.models import (
     DatasetMetadata,
     MemoryMapClientMetadata,
     ProcessHealth,
     WorkerTaskStats,
 )
+from aiperf.common.pod_lifecycle_structs import (
+    PodPeerHello,
+    PodPeerShutdown,
+    PodWorkerHealth,
+    PodWorkerStartupState,
+)
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.controller.proxy_manager import ProxyManager
-from aiperf.plugin.enums import DatasetSamplingStrategy
+from aiperf.plugin.enums import DatasetSamplingStrategy, ServiceType
 from aiperf.workers.worker_pod_manager import WorkerPodManager
 
 # =============================================================================
@@ -330,13 +339,13 @@ class TestDatasetHandling:
             return_value=(mock_data_path, mock_index_path)
         )
         manager.publish = AsyncMock()
+        manager._notify_registered_workers_of_dataset = AsyncMock()
 
         await manager._on_dataset_configured(dataset_notification)
 
-        published = manager.publish.await_args.args[0]
-        assert isinstance(published, DatasetDownloadedNotification)
-        assert published.pod_index == "0"
-        assert published.success is True
+        manager._notify_registered_workers_of_dataset.assert_awaited_once()
+        kwargs = manager._notify_registered_workers_of_dataset.await_args.kwargs
+        assert kwargs["success"] is True
 
     @pytest.mark.asyncio
     async def test_failure_notification_includes_pod_index(
@@ -348,14 +357,14 @@ class TestDatasetHandling:
         manager = worker_pod_manager
         manager._download_dataset = AsyncMock(side_effect=RuntimeError("boom"))
         manager.publish = AsyncMock()
+        manager._notify_registered_workers_of_dataset = AsyncMock()
 
         with pytest.raises(RuntimeError, match="boom"):
             await manager._on_dataset_configured(dataset_notification)
 
-        published = manager.publish.await_args.args[0]
-        assert isinstance(published, DatasetDownloadedNotification)
-        assert published.pod_index == "0"
-        assert published.success is False
+        manager._notify_registered_workers_of_dataset.assert_awaited_once()
+        kwargs = manager._notify_registered_workers_of_dataset.await_args.kwargs
+        assert kwargs["success"] is False
 
     @pytest.mark.asyncio
     async def test_duplicate_dataset_notification_ignored(
@@ -371,14 +380,15 @@ class TestDatasetHandling:
             return_value=(mock_data_path, mock_index_path)
         )
         manager.publish = AsyncMock()
+        manager._notify_registered_workers_of_dataset = AsyncMock()
 
         # First notification
         await manager._on_dataset_configured(dataset_notification)
-        # Second notification (should trigger a rebroadcast, not a re-download)
+        # Second notification (should trigger a re-send, not a re-download)
         await manager._on_dataset_configured(dataset_notification)
 
         assert manager._download_dataset.call_count == 1
-        assert manager.publish.await_args.args[0].pod_index == "0"
+        assert manager._notify_registered_workers_of_dataset.await_count == 2
 
     @pytest.mark.asyncio
     async def test_concurrent_dataset_notifications_do_not_overlap_downloads(
@@ -400,6 +410,7 @@ class TestDatasetHandling:
 
         manager._download_dataset = AsyncMock(side_effect=slow_download)
         manager.publish = AsyncMock()
+        manager._notify_registered_workers_of_dataset = AsyncMock()
 
         task1 = asyncio.create_task(
             manager._on_dataset_configured(dataset_notification)
@@ -413,7 +424,7 @@ class TestDatasetHandling:
         await asyncio.gather(task1, task2)
 
         assert manager._download_dataset.await_count == 1
-        assert manager.publish.await_count == 1
+        assert manager._notify_registered_workers_of_dataset.await_count == 1
 
     @pytest.mark.asyncio
     async def test_download_dataset_starts_data_and_index_downloads_concurrently(
@@ -510,6 +521,24 @@ class TestHealthMonitoring:
     """Tests for worker health tracking across sibling containers."""
 
     @pytest.mark.asyncio
+    async def test_worker_registration_over_pod_lifecycle_channel(
+        self, worker_pod_manager: WorkerPodManager
+    ) -> None:
+        """WorkerPodManager should track sibling registrations on the direct ROUTER channel."""
+        ack = await worker_pod_manager._on_pod_lifecycle_message(
+            "worker-identity",
+            PodPeerHello(
+                service_id="worker_0",
+                service_type=str(ServiceType.WORKER),
+                pod_index="0",
+            ),
+        )
+
+        assert ack is not None
+        assert worker_pod_manager._pod_peer_identities["worker_0"] == "worker-identity"
+        assert worker_pod_manager._pod_peer_types["worker_0"] == str(ServiceType.WORKER)
+
+    @pytest.mark.asyncio
     async def test_worker_health_tracked(
         self, worker_pod_manager: WorkerPodManager
     ) -> None:
@@ -546,6 +575,7 @@ class TestHealthMonitoring:
     ) -> None:
         """Test worker startup-state messages are tracked correctly."""
         manager = worker_pod_manager
+        manager.publish = AsyncMock()
 
         await manager._on_worker_startup_state(
             WorkerStartupStateMessage(
@@ -558,6 +588,94 @@ class TestHealthMonitoring:
             manager.worker_health["test-pod-manager_worker_0"].startup_state
             == WorkerStartupState.WAITING_FOR_DATASET
         )
+        summary = manager.publish.await_args.args[0]
+        assert isinstance(summary, WorkerStatusSummaryMessage)
+        assert summary.worker_startup_states == {
+            "test-pod-manager_worker_0": WorkerStartupState.WAITING_FOR_DATASET
+        }
+
+    @pytest.mark.asyncio
+    async def test_direct_worker_health_struct_updates_status(
+        self, worker_pod_manager: WorkerPodManager
+    ) -> None:
+        """Pod-local worker health structs should feed the existing aggregation logic."""
+        await worker_pod_manager._on_pod_lifecycle_message(
+            "worker-identity",
+            PodWorkerHealth(
+                service_id="worker_0",
+                create_time=1000.0,
+                uptime=100.0,
+                cpu_usage=10.0,
+                memory_usage=1024 * 1024 * 100,
+                task_total=10,
+                task_failed=0,
+                task_completed=5,
+            ),
+        )
+
+        assert (
+            worker_pod_manager.worker_health["worker_0"].status == WorkerStatus.HEALTHY
+        )
+
+    @pytest.mark.asyncio
+    async def test_direct_worker_startup_state_struct_updates_summary(
+        self, worker_pod_manager: WorkerPodManager
+    ) -> None:
+        """Pod-local startup-state structs should update the tracked worker summary."""
+        worker_pod_manager.publish = AsyncMock()
+
+        await worker_pod_manager._on_pod_lifecycle_message(
+            "worker-identity",
+            PodWorkerStartupState(
+                service_id="worker_0",
+                startup_state=str(WorkerStartupState.WAITING_FOR_DATASET),
+                request_ns=123,
+            ),
+        )
+
+        summary = worker_pod_manager.publish.await_args.args[0]
+        assert isinstance(summary, WorkerStatusSummaryMessage)
+        assert summary.worker_startup_states == {
+            "worker_0": WorkerStartupState.WAITING_FOR_DATASET
+        }
+
+    @pytest.mark.asyncio
+    async def test_report_worker_status_summary_command_publishes_summary(
+        self, worker_pod_manager: WorkerPodManager
+    ) -> None:
+        """Controller refresh requests should trigger an immediate worker summary publish."""
+        manager = worker_pod_manager
+        manager.publish = AsyncMock()
+        await manager._on_worker_health(
+            WorkerHealthMessage(
+                service_id="worker_0",
+                health=ProcessHealth(
+                    create_time=1000.0,
+                    uptime=100.0,
+                    cpu_usage=10.0,
+                    memory_usage=1024 * 1024 * 100,
+                ),
+                task_stats=WorkerTaskStats(total=10, completed=0, failed=0),
+            )
+        )
+        await manager._on_worker_startup_state(
+            WorkerStartupStateMessage(
+                service_id="worker_0",
+                startup_state=WorkerStartupState.WAITING_FOR_DATASET,
+            )
+        )
+        manager.publish.reset_mock()
+
+        await manager._on_report_worker_status_summary(
+            Command(cmd=CommandType.REPORT_WORKER_STATUS_SUMMARY, cid="cid")
+        )
+
+        summary = manager.publish.await_args.args[0]
+        assert isinstance(summary, WorkerStatusSummaryMessage)
+        assert summary.worker_statuses == {"worker_0": WorkerStatus.HEALTHY}
+        assert summary.worker_startup_states == {
+            "worker_0": WorkerStartupState.WAITING_FOR_DATASET
+        }
 
 
 # =============================================================================
@@ -581,17 +699,34 @@ class TestShutdown:
         manager.stop.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_record_processor_shutdowns_are_tracked_over_local_channel(
+        self, worker_pod_manager: WorkerPodManager
+    ) -> None:
+        """WorkerPodManager should track local record-processor shutdown notifications."""
+        await worker_pod_manager._on_pod_lifecycle_message(
+            "rp-identity",
+            PodPeerShutdown(
+                service_id="record_processor_0",
+                service_type=str(ServiceType.RECORD_PROCESSOR),
+            ),
+        )
+
+        assert "record_processor_0" in worker_pod_manager._record_processors_shutdown
+
+    @pytest.mark.asyncio
     async def test_stop_waits_for_raw_record_files(
         self, worker_pod_manager: WorkerPodManager
     ) -> None:
         """Test stop waits for sibling record processors to flush files."""
         manager = worker_pod_manager
+        manager._wait_for_record_processor_shutdowns = AsyncMock()
         manager._wait_for_raw_record_files = AsyncMock()
         manager._proxy_manager.stop = AsyncMock()
         manager._upload_raw_records = AsyncMock()
 
         await manager._stop_worker_pod_manager()
 
+        manager._wait_for_record_processor_shutdowns.assert_called_once()
         manager._wait_for_raw_record_files.assert_called_once()
 
     @pytest.mark.asyncio
@@ -600,6 +735,7 @@ class TestShutdown:
     ) -> None:
         """Test stop calls proxy_manager.stop()."""
         manager = worker_pod_manager
+        manager._wait_for_record_processor_shutdowns = AsyncMock()
         manager._wait_for_raw_record_files = AsyncMock()
         manager._proxy_manager.stop = AsyncMock()
         manager._upload_raw_records = AsyncMock()
@@ -615,6 +751,9 @@ class TestShutdown:
         """Test shutdown waits, then stops proxy, then uploads."""
         manager = worker_pod_manager
         call_order = []
+        manager._wait_for_record_processor_shutdowns = AsyncMock(
+            side_effect=lambda: call_order.append("record_processors")
+        )
         manager._wait_for_raw_record_files = AsyncMock(
             side_effect=lambda: call_order.append("wait")
         )
@@ -627,7 +766,7 @@ class TestShutdown:
 
         await manager._stop_worker_pod_manager()
 
-        assert call_order == ["wait", "proxy", "upload"]
+        assert call_order == ["record_processors", "wait", "proxy", "upload"]
 
     @pytest.mark.asyncio
     async def test_wait_for_raw_record_files_returns_when_files_stabilize(
@@ -693,6 +832,7 @@ class TestWorkerPodManagerIntegration:
         # Mock tokenizer prefetch, raw record coordination, proxy stop, and download
         manager._proxy_manager.stop = AsyncMock()
         manager._prefetch_tokenizers = AsyncMock()
+        manager._wait_for_record_processor_shutdowns = AsyncMock()
         manager._wait_for_raw_record_files = AsyncMock()
         manager._upload_raw_records = AsyncMock()
 
@@ -705,6 +845,7 @@ class TestWorkerPodManagerIntegration:
             return_value=(mock_data_path, mock_index_path)
         )
         manager.publish = AsyncMock()
+        manager._notify_registered_workers_of_dataset = AsyncMock()
 
         # Simulate startup (prefetches shared tokenizer cache in the background)
         await manager._start_worker_pod_manager()
@@ -712,11 +853,11 @@ class TestWorkerPodManagerIntegration:
         await manager._tokenizer_prefetch_task
         manager._prefetch_tokenizers.assert_called_once()
 
-        # Simulate dataset configured (triggers download and notification)
+        # Simulate dataset configured (triggers download and direct worker notification)
         await manager._on_dataset_configured(dataset_notification)
         assert manager._dataset_downloaded is True
         manager._download_dataset.assert_called_once()
-        manager.publish.assert_called_once()  # DatasetDownloadedNotification
+        manager._notify_registered_workers_of_dataset.assert_called_once()
 
         # Simulate shutdown
         await manager._stop_worker_pod_manager()

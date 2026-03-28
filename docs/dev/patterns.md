@@ -164,6 +164,8 @@ async def _handle(self, msg: MyMsg) -> None:
 
 Auto-subscription happens during `@on_init` phase.
 
+For hot-path pod-local lifecycle traffic (for example `WorkerPodManager` talking to sibling workers/record processors in Kubernetes mode), prefer tagged `msgspec.Struct` unions over event-bus messages and send them over the streaming DEALER/ROUTER clients. Keep credit-router traffic on the existing credit channel.
+
 ## Plugin System Pattern
 
 YAML-based registry with lazy-loading:

@@ -147,9 +147,10 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         self.required_services: dict[ServiceTypeT, int] = {
             ServiceType.TIMING_MANAGER: 1,
-            ServiceType.WORKER_MANAGER: 1,
             ServiceType.RECORDS_MANAGER: 1,
         }
+        if not is_k8s_mode:
+            self.required_services[ServiceType.WORKER_MANAGER] = 1
 
         if self.run.cfg.record_processor_service_count is not None:
             self.required_services[ServiceType.RECORD_PROCESSOR] = (
@@ -480,19 +481,27 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._auto_configure = False
         self.service_manager.activate_heartbeat_monitoring()
 
+        self.info("Post-configure startup flow: checking pod health")
         # Verify pod health before starting profiling. A pod could have
         # registered its services but since crashed (e.g. OOMKilled).
         async with self.try_operation_or_stop("Pod Health Check"):
             await self.service_manager.check_pods_healthy()
 
+        self.info(
+            "Post-configure startup flow: waiting for worker app-level READY state "
+            f"({self.required_services.get(ServiceType.WORKER, 0)} workers, "
+            f"timeout={Environment.SERVICE.PROFILE_START_TIMEOUT}s)"
+        )
         async with self.try_operation_or_stop("Wait For Workers Ready"):
             await self._wait_for_all_workers_ready(
                 timeout=Environment.SERVICE.PROFILE_START_TIMEOUT,
             )
 
+        self.info("Post-configure startup flow: checking inference endpoint readiness")
         # Wait for inference endpoint readiness (real request, not just /health).
         await self._wait_for_endpoint_ready()
 
+        self.info("Post-configure startup flow: sending PROFILE_START to all services")
         await self._start_profiling_all_services()
         self.info("AIPerf System is PROFILING")
 
@@ -548,7 +557,11 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         self._configured_ids.add(service_id)
         service_info = ServiceRegistry.services.get(service_id)
-        if service_info is not None and service_info.service_type == ServiceType.WORKER:
+        if (
+            service_info is not None
+            and service_info.service_type == ServiceType.WORKER
+            and self.run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES
+        ):
             self._worker_startup_states[service_id] = str(WorkerStartupState.READY)
             if self._all_expected_workers_ready():
                 self._all_workers_ready_event.set()
@@ -778,27 +791,47 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._all_workers_ready_event.clear()
         while True:
             remaining = timeout - (time.perf_counter() - begin)
+            ready_count = sum(
+                1
+                for state in self._worker_startup_states.values()
+                if state == str(WorkerStartupState.READY)
+            )
+            startup_summary = self._summarize_pending_worker_startup_states(
+                {
+                    worker_id
+                    for worker_id, info in ServiceRegistry.services.items()
+                    if info.service_type == ServiceType.WORKER
+                    and self._worker_startup_states.get(worker_id)
+                    != str(WorkerStartupState.READY)
+                }
+            )
             if remaining <= 0:
-                ready_count = sum(
-                    1
-                    for state in self._worker_startup_states.values()
-                    if state == str(WorkerStartupState.READY)
-                )
-                startup_summary = self._summarize_pending_worker_startup_states(
-                    {
-                        worker_id
-                        for worker_id, info in ServiceRegistry.services.items()
-                        if info.service_type == ServiceType.WORKER
-                        and self._worker_startup_states.get(worker_id)
-                        != str(WorkerStartupState.READY)
-                    }
-                )
                 raise ServiceRegistrationTimeoutError(
                     f"Timed out waiting for workers to become READY "
                     f"({ready_count}/{expected_workers}). "
                     f"Pending worker startup: {startup_summary}",
                     missing={},
                 ) from None
+
+            self.info(
+                f"Waiting for worker READY state: {ready_count}/{expected_workers} "
+                f"({time.perf_counter() - begin:.1f}s elapsed). "
+                f"Pending worker startup: {startup_summary}"
+            )
+
+            worker_manager_ids = [
+                service.service_id
+                for service in ServiceRegistry.get_services(
+                    ServiceType.WORKER_POD_MANAGER
+                )
+            ]
+            for service_id in worker_manager_ids:
+                with contextlib.suppress(Exception):
+                    await self._send_control_command(
+                        service_id,
+                        CommandType.REPORT_WORKER_STATUS_SUMMARY,
+                        timeout=min(remaining, 5.0),
+                    )
 
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(
@@ -910,8 +943,11 @@ class SystemController(SignalHandlerMixin, BaseService):
         target_types = [
             ServiceType.GPU_TELEMETRY_MANAGER,
             ServiceType.SERVER_METRICS_MANAGER,
-            ServiceType.WORKER_MANAGER,
         ]
+        if self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES:
+            target_types.append(ServiceType.WORKER_POD_MANAGER)
+        else:
+            target_types.append(ServiceType.WORKER_MANAGER)
         target_ids = []
         for stype in target_types:
             target_ids.extend(s.service_id for s in ServiceRegistry.get_services(stype))

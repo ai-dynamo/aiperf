@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import traceback
 from typing import TYPE_CHECKING
 
@@ -10,12 +11,17 @@ from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.channel_codecs import RAW_INFERENCE_CODEC, RECORDS_CODEC
 from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommAddress, CommandType, ExportLevel, MessageType
+from aiperf.common.hooks import on_command, on_pull_message, on_start, on_stop
+from aiperf.common.pod_lifecycle_structs import (
+    PodManagerToPeerMessage,
+    PodPeerHello,
+    PodPeerShutdown,
+)
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.common.hooks import on_command, on_pull_message
 from aiperf.common.inference_wire import (
     InferenceResultsWireMessage,
     wire_message_to_request_record,
@@ -31,12 +37,15 @@ from aiperf.common.models import (
 )
 from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.models.trace_models import BaseTraceData
-from aiperf.common.protocols import PushClientProtocol
+from aiperf.common.protocols import (
+    PushClientProtocol,
+    StreamingDealerClientProtocol,
+)
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import compute_time_ns
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType
+from aiperf.plugin.enums import PluginType, ServiceRunType
 from aiperf.post_processors.protocols import RecordProcessorProtocol
 from aiperf.records.inference_result_parser import InferenceResultParser
 
@@ -69,6 +78,17 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         self.tokenizers: dict[str, Tokenizer] = {}
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
         self.inference_result_parser = InferenceResultParser(run=self.run)
+        self._pod_index = os.environ.get("AIPERF_POD_INDEX")
+        self.pod_lifecycle_dealer_client: StreamingDealerClientProtocol | None = None
+        if self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES:
+            self.pod_lifecycle_dealer_client = (
+                self.comms.create_streaming_dealer_client(
+                    address=CommAddress.POD_LIFECYCLE,
+                    identity=self.service_id,
+                    bind=False,
+                    decode_type=PodManagerToPeerMessage,
+                )
+            )
 
         self.records_processors: list[RecordProcessorProtocol] = []
         for entry in plugins.iter_entries(PluginType.RECORD_PROCESSOR):
@@ -92,6 +112,31 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             except Exception as e:
                 self.exception(f"Error creating record processor: {e!r}")
                 raise
+
+    @on_start
+    async def _register_with_worker_pod_manager(self) -> None:
+        """Register this record processor with the pod-local lifecycle router."""
+        if self.pod_lifecycle_dealer_client is None:
+            return
+        await self.pod_lifecycle_dealer_client.send(
+            PodPeerHello(
+                service_id=self.service_id,
+                service_type=str(self.service_type),
+                pod_index=self._pod_index,
+            )
+        )
+
+    @on_stop
+    async def _notify_worker_pod_manager_shutdown(self) -> None:
+        """Notify WorkerPodManager that local record flushing is complete."""
+        if self.pod_lifecycle_dealer_client is None:
+            return
+        await self.pod_lifecycle_dealer_client.send(
+            PodPeerShutdown(
+                service_id=self.service_id,
+                service_type=str(self.service_type),
+            )
+        )
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(self, message: Command) -> None:

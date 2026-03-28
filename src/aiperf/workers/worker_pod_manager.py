@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
+import time
 import zlib
 from pathlib import Path
 
@@ -21,10 +22,19 @@ import aiohttp
 import zstandard
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.control_structs import Registration
-from aiperf.common.enums import MessageType, WorkerStatus
+from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.control_structs import Command, Registration
+from aiperf.common.enums import (
+    CommAddress,
+    CommandType,
+    MessageType,
+    WorkerStartupState,
+    WorkerStatus,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import (
+    background_task,
+    on_command,
     on_init,
     on_message,
     on_start,
@@ -32,16 +42,31 @@ from aiperf.common.hooks import (
 )
 from aiperf.common.messages import (
     DatasetConfiguredNotification,
-    DatasetDownloadedNotification,
     WorkerHealthMessage,
     WorkerStartupStateMessage,
 )
-from aiperf.common.models import MemoryMapClientMetadata
-from aiperf.common.models.progress_models import WorkerStats
+from aiperf.common.messages.worker_messages import WorkerStatusSummaryMessage
+from aiperf.common.models import (
+    MemoryMapClientMetadata,
+    ProcessHealth,
+    WorkerTaskStats,
+)
+from aiperf.common.pod_lifecycle_structs import (
+    PeerToPodManagerMessage,
+    PodDatasetReady,
+    PodPeerAck,
+    PodPeerHello,
+    PodPeerShutdown,
+    PodWorkerHealth,
+    PodWorkerStartupState,
+)
+from aiperf.common.protocols import StreamingRouterClientProtocol
 from aiperf.config import BenchmarkRun
 from aiperf.config.defaults import OutputDefaults
 from aiperf.controller.proxy_manager import ProxyManager
+from aiperf.plugin.enums import ServiceType
 from aiperf.transports.aiohttp_client import create_tcp_connector
+from aiperf.workers.worker_manager import WorkerStatusInfo
 
 
 class WorkerPodManager(BaseComponentService):
@@ -103,8 +128,20 @@ class WorkerPodManager(BaseComponentService):
                 1, self.workers_per_pod // Environment.RECORD.PROCESSOR_SCALE_FACTOR
             )
 
-        # Track worker health across sibling worker containers.
-        self.worker_health: dict[str, WorkerStats] = {}
+        # Track worker health/startup state across sibling worker containers.
+        self.worker_health: dict[str, WorkerStatusInfo] = {}
+        self._pod_peer_identities: dict[str, str] = {}
+        self._pod_peer_types: dict[str, str] = {}
+        self._record_processors_shutdown: set[str] = set()
+
+        self.pod_lifecycle_router: StreamingRouterClientProtocol = (
+            self.comms.create_streaming_router_client(
+                address=CommAddress.POD_LIFECYCLE,
+                bind=True,
+                decode_type=PeerToPodManagerMessage,
+            )
+        )
+        self.pod_lifecycle_router.register_receiver(self._on_pod_lifecycle_message)
 
         # Dataset download state
         self._dataset_downloaded = False
@@ -183,18 +220,16 @@ class WorkerPodManager(BaseComponentService):
         """Handle dataset configuration notification.
 
         Downloads the dataset from control-plane so workers can access it via mmap.
-        After download, publishes DatasetDownloadedNotification with file paths.
+        After download, notifies sibling workers directly over the pod lifecycle channel.
         """
         if self._dataset_downloaded:
             self.debug(
-                "Dataset already downloaded, re-publishing notification for late subscribers"
+                "Dataset already downloaded, re-sending pod lifecycle dataset-ready for late subscribers"
             )
             if self._dataset_client_metadata is not None:
-                await self.publish(
-                    self._build_dataset_downloaded_notification(
-                        client_metadata=self._dataset_client_metadata,
-                        success=True,
-                    )
+                await self._notify_registered_workers_of_dataset(
+                    client_metadata=self._dataset_client_metadata,
+                    success=True,
                 )
             return
 
@@ -214,20 +249,117 @@ class WorkerPodManager(BaseComponentService):
         finally:
             self._dataset_download_task = None
 
-    def _build_dataset_downloaded_notification(
+    async def _on_pod_lifecycle_message(
+        self, identity: str, message: PeerToPodManagerMessage
+    ) -> PodPeerAck | None:
+        """Handle pod-local lifecycle updates from sibling workers/processors."""
+        match message:
+            case PodPeerHello():
+                self._pod_peer_identities[message.service_id] = identity
+                self._pod_peer_types[message.service_id] = message.service_type
+                if message.service_type == str(ServiceType.RECORD_PROCESSOR):
+                    self._record_processors_shutdown.discard(message.service_id)
+                if (
+                    message.service_type == str(ServiceType.WORKER)
+                    and self._dataset_client_metadata is not None
+                ):
+                    await self.pod_lifecycle_router.send_to(
+                        identity,
+                        self._build_pod_dataset_ready(
+                            client_metadata=self._dataset_client_metadata,
+                            success=self._dataset_downloaded,
+                        ),
+                    )
+                return PodPeerAck(service_id=self.service_id)
+            case PodPeerShutdown():
+                self._pod_peer_types[message.service_id] = message.service_type
+                if message.service_type == str(ServiceType.RECORD_PROCESSOR):
+                    self._record_processors_shutdown.add(message.service_id)
+                return None
+            case PodWorkerHealth():
+                info = self._get_or_create_worker_info(message.service_id)
+                self._update_worker_status(
+                    info,
+                    self._worker_health_message_from_struct(message),
+                )
+                return None
+            case PodWorkerStartupState():
+                info = self._get_or_create_worker_info(message.service_id)
+                info.startup_state = WorkerStartupState(message.startup_state)
+                info.startup_state_updated_ns = message.request_ns
+                await self._publish_worker_summary()
+                return None
+
+    def _build_pod_dataset_ready(
         self,
         *,
         client_metadata: MemoryMapClientMetadata,
         success: bool,
         error_message: str | None = None,
-    ) -> DatasetDownloadedNotification:
-        """Build a pod-scoped dataset download notification for sibling workers."""
-        return DatasetDownloadedNotification(
+    ) -> PodDatasetReady:
+        """Build the pod-local dataset-ready notification."""
+        return PodDatasetReady(
             service_id=self.service_id,
-            client_metadata=client_metadata,
+            data_file_path=str(client_metadata.data_file_path),
+            index_file_path=str(client_metadata.index_file_path),
+            conversation_count=client_metadata.conversation_count,
+            total_size_bytes=client_metadata.total_size_bytes,
             pod_index=self._pod_index,
             success=success,
             error_message=error_message,
+        )
+
+    async def _notify_registered_workers_of_dataset(
+        self,
+        *,
+        client_metadata: MemoryMapClientMetadata,
+        success: bool,
+        error_message: str | None = None,
+    ) -> None:
+        """Push dataset availability directly to registered sibling workers."""
+        worker_identities = [
+            self._pod_peer_identities[service_id]
+            for service_id, service_type in self._pod_peer_types.items()
+            if service_type == str(ServiceType.WORKER)
+            and service_id in self._pod_peer_identities
+        ]
+        if not worker_identities:
+            return
+        message = self._build_pod_dataset_ready(
+            client_metadata=client_metadata,
+            success=success,
+            error_message=error_message,
+        )
+        await asyncio.gather(
+            *(
+                self.pod_lifecycle_router.send_to(identity, message)
+                for identity in worker_identities
+            )
+        )
+
+    def _worker_health_message_from_struct(
+        self, message: PodWorkerHealth
+    ) -> WorkerHealthMessage:
+        """Convert pod-local worker health struct into the existing model."""
+        return WorkerHealthMessage(
+            service_id=message.service_id,
+            health=ProcessHealth(
+                pid=message.pid,
+                create_time=message.create_time,
+                uptime=message.uptime,
+                cpu_usage=message.cpu_usage,
+                memory_usage=message.memory_usage,
+                pss_memory=message.pss_memory,
+                io_counters=message.io_counters,
+                cpu_times=message.cpu_times,
+                num_ctx_switches=message.num_ctx_switches,
+                num_threads=message.num_threads,
+            ),
+            task_stats=WorkerTaskStats(
+                total=message.task_total,
+                failed=message.task_failed,
+                completed=message.task_completed,
+            ),
         )
 
     async def _download_and_publish_dataset(
@@ -254,15 +386,13 @@ class WorkerPodManager(BaseComponentService):
                 conversation_count=conversation_count,
                 total_size_bytes=data_size,
             )
-            await self.publish(
-                self._build_dataset_downloaded_notification(
-                    client_metadata=client_metadata,
-                    success=True,
-                )
+            await self._notify_registered_workers_of_dataset(
+                client_metadata=client_metadata,
+                success=True,
             )
 
-            # Mark downloaded only after successful publish so a retry
-            # can re-attempt if publish fails
+            # Mark downloaded only after successful direct notification so a retry
+            # can re-attempt if delivery fails
             self._dataset_client_metadata = client_metadata
             self._dataset_downloaded = True
             self._dataset_download_event.set()
@@ -281,12 +411,10 @@ class WorkerPodManager(BaseComponentService):
                 conversation_count=0,
                 total_size_bytes=0,
             )
-            await self.publish(
-                self._build_dataset_downloaded_notification(
-                    client_metadata=client_metadata,
-                    success=False,
-                    error_message=str(e),
-                )
+            await self._notify_registered_workers_of_dataset(
+                client_metadata=client_metadata,
+                success=False,
+                error_message=str(e),
             )
             raise
 
@@ -464,45 +592,134 @@ class WorkerPodManager(BaseComponentService):
         else:
             self.debug("Tokenizer prefetch skipped (not required)")
 
+    def _get_or_create_worker_info(self, worker_id: str) -> WorkerStatusInfo:
+        info = self.worker_health.get(worker_id)
+        if info is None:
+            info = WorkerStatusInfo(worker_id=worker_id)
+            self.worker_health[worker_id] = info
+        return info
+
+    def _update_worker_status(
+        self, info: WorkerStatusInfo, message: WorkerHealthMessage
+    ) -> None:
+        """Check the status of a worker."""
+        info.last_update_ns = time.time_ns()
+        if message.task_stats.failed > info.task_stats.failed:
+            info.last_error_ns = time.time_ns()
+            info.status = WorkerStatus.ERROR
+        elif (time.time_ns() - (info.last_error_ns or 0)) / NANOS_PER_SECOND < Environment.WORKER.ERROR_RECOVERY_TIME:  # fmt: skip
+            info.status = WorkerStatus.ERROR
+        elif message.health.cpu_usage > Environment.WORKER.HIGH_LOAD_CPU_USAGE:
+            info.last_high_load_ns = time.time_ns()
+            self.warning(
+                f"CPU usage for {message.service_id} is {round(message.health.cpu_usage)}%. AIPerf results may be inaccurate."
+            )
+            info.status = WorkerStatus.HIGH_LOAD
+        elif (time.time_ns() - (info.last_high_load_ns or 0)) / NANOS_PER_SECOND < Environment.WORKER.HIGH_LOAD_RECOVERY_TIME:  # fmt: skip
+            info.status = WorkerStatus.HIGH_LOAD
+        elif message.task_stats.total == 0 or message.task_stats.in_progress == 0:
+            info.status = WorkerStatus.IDLE
+        else:
+            info.status = WorkerStatus.HEALTHY
+
+        info.health = message.health
+        info.task_stats = message.task_stats
+
+        agg = info.health_aggregates
+        agg.memory_usage.update(message.health.memory_usage)
+        agg.cpu_usage.update(message.health.cpu_usage)
+        agg.num_threads.update(message.health.num_threads)
+        if message.health.num_ctx_switches:
+            agg.voluntary_ctx_switches.update(message.health.num_ctx_switches[0])
+            agg.involuntary_ctx_switches.update(message.health.num_ctx_switches[1])
+        if message.health.io_counters:
+            agg.io_read_bytes.update(message.health.io_counters[4])
+            agg.io_write_bytes.update(message.health.io_counters[5])
+        if message.health.cpu_times:
+            agg.cpu_time_user.update(message.health.cpu_times[0])
+            agg.cpu_time_system.update(message.health.cpu_times[1])
+            agg.cpu_time_iowait.update(message.health.cpu_times[2])
+
+    @background_task(immediate=False, interval=Environment.WORKER.CHECK_INTERVAL)
+    async def _worker_status_loop(self) -> None:
+        """Check the status of all workers."""
+        for info in self.worker_health.values():
+            last_activity_ns = max(
+                info.last_update_ns or 0,
+                info.startup_state_updated_ns or 0,
+            )
+            if last_activity_ns == 0:
+                continue
+            if (time.time_ns() - last_activity_ns) / NANOS_PER_SECOND > Environment.WORKER.STALE_TIME:  # fmt: skip
+                info.status = WorkerStatus.STALE
+
+    @background_task(
+        immediate=False, interval=Environment.WORKER.STATUS_SUMMARY_INTERVAL
+    )
+    async def _worker_summary_loop(self) -> None:
+        """Generate a summary of the worker status."""
+        await self._publish_worker_summary()
+
+    async def _publish_worker_summary(self) -> None:
+        """Publish the current worker status and startup-state summary."""
+        summary = WorkerStatusSummaryMessage(
+            service_id=self.service_id,
+            worker_statuses={
+                worker_id: info.status for worker_id, info in self.worker_health.items()
+            },
+            worker_startup_states={
+                worker_id: info.startup_state
+                for worker_id, info in self.worker_health.items()
+                if info.startup_state is not None
+            },
+        )
+        await self.publish(summary)
+
+    @on_command(CommandType.REPORT_WORKER_STATUS_SUMMARY)
+    async def _on_report_worker_status_summary(self, message: Command) -> None:
+        """Publish an immediate worker status summary on controller request."""
+        await self._publish_worker_summary()
+
     @on_message(MessageType.WORKER_HEALTH)
     async def _on_worker_health(self, message: WorkerHealthMessage) -> None:
-        """Track worker health from subprocesses.
-
-        This allows WorkerPodManager to report aggregate health to the control-plane.
-        """
-        worker_id = message.service_id
-        existing = self.worker_health.get(worker_id)
-        self.worker_health[worker_id] = WorkerStats(
-            worker_id=worker_id,
-            health=message.health,
-            task_stats=message.task_stats,
-            status=WorkerStatus.HEALTHY,
-            startup_state=existing.startup_state if existing else None,
-            startup_state_updated_ns=(
-                existing.startup_state_updated_ns if existing else None
-            ),
-            last_update_ns=message.request_ns,
-        )
+        """Track worker health from sibling workers and derive a summary status."""
+        info = self._get_or_create_worker_info(message.service_id)
+        self._update_worker_status(info, message)
 
     @on_message(MessageType.WORKER_STARTUP_STATE)
     async def _on_worker_startup_state(
         self, message: WorkerStartupStateMessage
     ) -> None:
-        worker_id = message.service_id
-        existing = self.worker_health.get(worker_id)
-        if existing is None:
-            existing = WorkerStats(worker_id=worker_id)
-            self.worker_health[worker_id] = existing
-        existing.startup_state = message.startup_state
-        existing.startup_state_updated_ns = message.request_ns
+        info = self._get_or_create_worker_info(message.service_id)
+        info.startup_state = message.startup_state
+        info.startup_state_updated_ns = message.request_ns
+        await self._publish_worker_summary()
 
     @on_stop
     async def _stop_worker_pod_manager(self) -> None:
         """Stop pod-local infrastructure, then upload raw records to controller."""
         self._stopping = True
+        await self._wait_for_record_processor_shutdowns()
         await self._wait_for_raw_record_files()
         await self._proxy_manager.stop()
         await self._upload_raw_records()
+
+    async def _wait_for_record_processor_shutdowns(self) -> None:
+        """Wait for sibling record processors to announce a clean local shutdown."""
+        if self.record_processors_per_pod <= 0:
+            return
+        deadline = (
+            asyncio.get_running_loop().time()
+            + Environment.SERVICE.RAW_RECORD_UPLOAD_TIMEOUT
+        )
+        while asyncio.get_running_loop().time() < deadline:
+            if len(self._record_processors_shutdown) >= self.record_processors_per_pod:
+                return
+            await asyncio.sleep(0.2)
+        self.warning(
+            "Timed out waiting for record processors to report local shutdown: "
+            f"expected {self.record_processors_per_pod}, got {len(self._record_processors_shutdown)}"
+        )
 
     async def _wait_for_raw_record_files(self) -> None:
         """Wait for sibling record-processor containers to flush raw files locally.

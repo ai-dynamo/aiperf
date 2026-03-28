@@ -205,6 +205,7 @@ AIPerf uses **ZMQ proxies** for message routing between services and workers:
 - Services publish strongly-typed messages to specific topics (Pub/Sub pattern)
 - Services subscribe to relevant message types
 - Router/Dealer patterns for credit distribution to workers
+- In Kubernetes worker pods, `WorkerPodManager` owns a pod-local ROUTER/DEALER lifecycle channel for worker and record-processor registration, health/startup updates, dataset readiness, and drain coordination
 - Request/Reply patterns for synchronous operations
 
 ### State Management
@@ -227,7 +228,7 @@ AIPerf is built on three core principles:
 AIPerf supports distributed execution with two deployment models:
 
 - **Multiprocess Mode**: Each service runs as a separate process on a single node (default for single-node deployments)
-- **Kubernetes Mode**: Services and workers run as separate pods in a Kubernetes cluster (for multi-node deployments) *(not yet implemented)*
+- **Kubernetes Mode**: Control-plane services run in the controller pod while each worker pod hosts a `WorkerPodManager` plus sibling worker and record-processor containers; pod-local lifecycle traffic stays on a dedicated ROUTER/DEALER channel while credits continue to use the global credit router
 
 ## External Dependencies
 

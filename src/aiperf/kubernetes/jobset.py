@@ -775,14 +775,6 @@ class JobSetSpec(AIPerfBaseModel):
                 include_pod_index=False,
             ),
             self._create_container(
-                name=Containers.WORKER_MANAGER,
-                service_type="worker_manager",
-                health_port=ports.WORKER_MANAGER_HEALTH,
-                resources=self._resolve_pod_resources("WORKER_MANAGER"),
-                service_id="worker_manager",
-                include_pod_index=False,
-            ),
-            self._create_container(
                 name=Containers.RECORDS_MANAGER,
                 service_type="records_manager",
                 health_port=ports.RECORDS_MANAGER_HEALTH,

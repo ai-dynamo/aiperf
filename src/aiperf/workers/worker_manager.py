@@ -170,6 +170,11 @@ class WorkerManager(BaseComponentService):
         )
         await self.publish(summary)
 
+    @on_command(CommandType.REPORT_WORKER_STATUS_SUMMARY)
+    async def _on_report_worker_status_summary(self, message: Command) -> None:
+        """Publish an immediate worker status summary on controller request."""
+        await self._publish_worker_summary()
+
     @on_command(CommandType.PROFILE_COMPLETE)
     async def _on_profile_complete(self, message: Command) -> None:
         """Handle profile complete by printing worker stats."""
