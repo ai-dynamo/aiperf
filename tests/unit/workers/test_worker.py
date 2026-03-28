@@ -552,6 +552,7 @@ class TestKubernetesMode:
         assert not any(
             isinstance(message, WorkerDispatchable) for message in sent_messages
         )
+        assert k8s_worker._dataset_state_retry_task is not None
         assert not k8s_worker._worker_ready_event.is_set()
 
     @pytest.mark.asyncio
@@ -582,6 +583,37 @@ class TestKubernetesMode:
             k8s_worker.return_dealer_client.send.await_args_list[-1].args[0],
             WorkerDispatchable,
         )
+        assert k8s_worker._worker_ready_event.is_set()
+
+    @pytest.mark.asyncio
+    async def test_k8s_worker_retries_dataset_state_until_ready(
+        self, k8s_worker: Worker
+    ) -> None:
+        """K8s workers should keep polling pod-local dataset state until they become ready."""
+        snapshots = [
+            None,
+            PodDatasetStateSnapshot(
+                rid="rid-1",
+                service_id="pod-manager",
+                benchmark_generation="gen-1",
+                dataset_generation="data-1",
+                data_file_path="/aiperf/datasets/dataset.dat",
+                index_file_path="/aiperf/datasets/index.dat",
+                conversation_count=4,
+                total_size_bytes=1024,
+                ready=True,
+            ),
+        ]
+        k8s_worker.return_dealer_client.send = AsyncMock()
+        k8s_worker._query_pod_dataset_state = AsyncMock(side_effect=snapshots)
+        k8s_worker._initialize_dataset_client = AsyncMock()
+
+        await asyncio.wait_for(
+            k8s_worker._retry_k8s_dataset_state_until_ready(), timeout=2.5
+        )
+
+        assert k8s_worker._query_pod_dataset_state.await_count >= 2
+        k8s_worker._initialize_dataset_client.assert_awaited_once()
         assert k8s_worker._worker_ready_event.is_set()
 
     @pytest.mark.asyncio

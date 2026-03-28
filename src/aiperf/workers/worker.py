@@ -260,6 +260,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._dataset_configured_event = asyncio.Event()
         self._pending_dataset_config: DatasetConfiguredNotification | None = None
         self._latest_pod_dataset_state: PodDatasetStateSnapshot | None = None
+        self._dataset_state_retry_task: asyncio.Task[None] | None = None
         self._worker_ready_event = asyncio.Event()
         self._startup_state: WorkerStartupState | None = None
 
@@ -297,6 +298,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     )
                 )
             await self._publish_startup_state(WorkerStartupState.WAITING_FOR_DATASET)
+            self._ensure_k8s_dataset_state_retry()
             await self._complete_k8s_startup_flow()
             self.debug(
                 "Kubernetes mode: deferring WorkerDispatchable until pod-local dataset state is ready"
@@ -400,6 +402,26 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._latest_pod_dataset_state = response
         return response
 
+    def _ensure_k8s_dataset_state_retry(self) -> None:
+        """Start a retry loop for pod-local dataset state if one is not already running."""
+        if not self._is_kubernetes_mode() or self._worker_ready_event.is_set():
+            return
+        if (
+            self._dataset_state_retry_task is None
+            or self._dataset_state_retry_task.done()
+        ):
+            self._dataset_state_retry_task = self.execute_async(
+                self._retry_k8s_dataset_state_until_ready()
+            )
+
+    async def _retry_k8s_dataset_state_until_ready(self) -> None:
+        """Poll pod-local dataset state until this worker becomes dispatchable."""
+        while not self.stop_requested and not self._worker_ready_event.is_set():
+            await self._complete_k8s_startup_flow()
+            if self._worker_ready_event.is_set():
+                return
+            await asyncio.sleep(1.0)
+
     async def _complete_k8s_startup_flow(
         self,
         snapshot: PodDatasetStateSnapshot | None = None,
@@ -409,8 +431,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             return
 
         if self._dataset_configured_event.is_set():
-            if self._worker_ready_event.is_set():
-                return
             await self.return_dealer_client.send(
                 WorkerDispatchable(worker_id=self.service_id)
             )
@@ -420,6 +440,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         current_snapshot = snapshot or await self._query_pod_dataset_state()
         if current_snapshot is None or not current_snapshot.ready:
+            self._ensure_k8s_dataset_state_retry()
             return
 
         await self._initialize_dataset_client(
@@ -490,6 +511,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """Send WorkerShutdown to announce shutdown."""
         try:
             await self._publish_startup_state(WorkerStartupState.SHUTTING_DOWN)
+            retry_task = self._dataset_state_retry_task
+            if retry_task is not None and not retry_task.done():
+                retry_task.cancel()
             if self._is_kubernetes_mode():
                 await self.return_dealer_client.send(
                     WorkerUndispatchable(worker_id=self.service_id, reason="shutdown")
