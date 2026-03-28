@@ -36,3 +36,4 @@ src/aiperf/plugin/enums.pyi
 .cursor/*
 !.cursor/rules/
 .superpowers/
+.worktrees/
