@@ -197,6 +197,20 @@ class ConditionManager:
         return manager
 
 
+WORKER_AGGREGATE_STATUS_KEY_ALIASES = {
+    "routerConnected": "router_connected",
+    "readyRecordProcessors": "ready_record_processors",
+    "declaredRecordProcessors": "declared_record_processors",
+    "readyPods": "ready_pods",
+    "totalPods": "total_pods",
+    "degradedPods": "degraded_pods",
+}
+WORKER_AGGREGATE_STATUS_CRD_KEYS = {
+    internal: external
+    for external, internal in WORKER_AGGREGATE_STATUS_KEY_ALIASES.items()
+}
+
+
 class StatusBuilder:
     """Builder for constructing AIPerfJob status updates.
 
@@ -238,10 +252,21 @@ class StatusBuilder:
         self._patch.status["completionTime"] = format_timestamp()
         return self
 
+    def set_worker_aggregate_status(self, workers: dict[str, int]) -> StatusBuilder:
+        """Set the richer worker status snapshot using CR-facing camelCase keys."""
+        normalized = {
+            WORKER_AGGREGATE_STATUS_KEY_ALIASES.get(key, key): value
+            for key, value in workers.items()
+        }
+        self._patch.status["workers"] = {
+            WORKER_AGGREGATE_STATUS_CRD_KEYS.get(key, key): value
+            for key, value in normalized.items()
+        }
+        return self
+
     def set_workers(self, ready: int, total: int) -> StatusBuilder:
         """Set worker counts."""
-        self._patch.status["workers"] = {"ready": ready, "total": total}
-        return self
+        return self.set_worker_aggregate_status({"ready": ready, "total": total})
 
     def set_results(self, results: dict[str, Any]) -> StatusBuilder:
         """Set the full results dict."""

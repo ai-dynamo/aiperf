@@ -698,6 +698,39 @@ class TestStatusBuilder:
         assert mock_patch.status["workers"] == {"ready": 3, "total": 5}
         assert result is builder
 
+    def test_set_worker_aggregate_status_writes_camel_case_worker_keys(self) -> None:
+        """Test set_worker_aggregate_status writes CR-facing camelCase worker keys."""
+        mock_patch = MagicMock()
+        mock_patch.status = {}
+        builder = StatusBuilder(mock_patch)
+
+        result = builder.set_worker_aggregate_status(
+            {
+                "ready": 4,
+                "total": 8,
+                "dispatchable": 3,
+                "router_connected": 6,
+                "ready_record_processors": 2,
+                "declared_record_processors": 4,
+                "ready_pods": 2,
+                "total_pods": 4,
+                "degraded_pods": 1,
+            }
+        )
+
+        assert mock_patch.status["workers"] == {
+            "ready": 4,
+            "total": 8,
+            "dispatchable": 3,
+            "routerConnected": 6,
+            "readyRecordProcessors": 2,
+            "declaredRecordProcessors": 4,
+            "readyPods": 2,
+            "totalPods": 4,
+            "degradedPods": 1,
+        }
+        assert result is builder
+
     def test_set_results(self) -> None:
         """Test set_results updates results dict."""
         mock_patch = MagicMock()

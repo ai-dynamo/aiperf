@@ -330,14 +330,43 @@ def _status_schema() -> dict[str, Any]:
             },
             "workers": {
                 "type": "object",
+                "description": "Controller-authored aggregate worker status.",
                 "properties": {
                     "ready": {
                         "type": "integer",
-                        "description": "Number of ready workers",
+                        "description": "Dispatch-ready worker count.",
                     },
                     "total": {
                         "type": "integer",
-                        "description": "Total number of workers",
+                        "description": "Declared worker count.",
+                    },
+                    "dispatchable": {
+                        "type": "integer",
+                        "description": "Workers eligible to receive credits.",
+                    },
+                    "routerConnected": {
+                        "type": "integer",
+                        "description": "Workers connected to the router.",
+                    },
+                    "readyRecordProcessors": {
+                        "type": "integer",
+                        "description": "Ready record processors.",
+                    },
+                    "declaredRecordProcessors": {
+                        "type": "integer",
+                        "description": "Declared record processors.",
+                    },
+                    "readyPods": {
+                        "type": "integer",
+                        "description": "Usable worker pods.",
+                    },
+                    "totalPods": {
+                        "type": "integer",
+                        "description": "Observed worker pods.",
+                    },
+                    "degradedPods": {
+                        "type": "integer",
+                        "description": "Usable but degraded worker pods.",
                     },
                 },
             },

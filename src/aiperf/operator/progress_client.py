@@ -15,7 +15,7 @@ from typing import Any
 import aiofiles
 import aiohttp
 import zstandard as zstd
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from aiperf.common.enums import CreditPhase, WorkerStartupState
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
@@ -34,6 +34,35 @@ BACKOFF_MULTIPLIER = 2.0
 RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 
 
+class AggregateWorkerStatus(AIPerfBaseModel):
+    """Controller-authored aggregate worker status."""
+
+    ready: int = Field(default=0, description="Dispatch-ready worker count.")
+    total: int = Field(default=0, description="Declared worker count.")
+    dispatchable: int = Field(
+        default=0,
+        description="Workers eligible to receive credits.",
+    )
+    router_connected: int = Field(
+        default=0,
+        description="Workers connected to the router.",
+    )
+    ready_record_processors: int = Field(
+        default=0,
+        description="Ready record processors.",
+    )
+    declared_record_processors: int = Field(
+        default=0,
+        description="Declared record processors.",
+    )
+    ready_pods: int = Field(default=0, description="Usable worker pods.")
+    total_pods: int = Field(default=0, description="Observed worker pods.")
+    degraded_pods: int = Field(
+        default=0,
+        description="Usable but degraded worker pods.",
+    )
+
+
 class JobProgress(AIPerfBaseModel):
     """Aggregated progress across all benchmark phases.
 
@@ -43,6 +72,7 @@ class JobProgress(AIPerfBaseModel):
 
     Attributes:
         phases: Progress stats for each phase (warmup, profiling).
+        workers: Controller-authored aggregate worker status.
         error: Error message if the job failed.
         connection_error: Connection error message if API request failed.
     """
@@ -50,6 +80,10 @@ class JobProgress(AIPerfBaseModel):
     phases: dict[CreditPhase, CombinedPhaseStats] = Field(
         default_factory=dict,
         description="Progress stats for each benchmark phase",
+    )
+    workers: AggregateWorkerStatus = Field(
+        default_factory=AggregateWorkerStatus,
+        description="Controller-authored aggregate worker status.",
     )
     error: str | None = Field(
         default=None,
@@ -241,8 +275,16 @@ class ProgressClient:
                 logger.warning(f"Skipping malformed phase '{phase_name}': {e}")
                 continue
 
+        workers_data = data.get("workers", {})
+        try:
+            workers = AggregateWorkerStatus(**workers_data)
+        except ValidationError as e:
+            logger.warning(f"Falling back to default aggregate worker status: {e}")
+            workers = AggregateWorkerStatus()
+
         return JobProgress(
             phases=phases,
+            workers=workers,
             error=data.get("error"),
         )
 

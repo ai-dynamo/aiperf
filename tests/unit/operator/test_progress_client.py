@@ -322,6 +322,58 @@ class TestProgressClientParseResponse:
         assert "warmup" in progress.phases
         assert progress.phases["profiling"].requests_completed == 250
 
+    def test_parse_with_worker_aggregate_status(
+        self, progress_api_response_running: dict[str, Any]
+    ) -> None:
+        """Test parsing response with aggregate worker status."""
+        client = ProgressClient()
+        progress = client._parse_progress_response(
+            {
+                **progress_api_response_running,
+                "workers": {
+                    "ready": 4,
+                    "total": 8,
+                    "dispatchable": 3,
+                    "router_connected": 6,
+                    "ready_record_processors": 2,
+                    "declared_record_processors": 4,
+                    "ready_pods": 2,
+                    "total_pods": 4,
+                    "degraded_pods": 1,
+                },
+            }
+        )
+
+        assert progress.workers.dispatchable == 3
+        assert progress.workers.total_pods == 4
+
+    def test_parse_malformed_workers_payload_falls_back_to_default(
+        self, progress_api_response_running: dict[str, Any]
+    ) -> None:
+        """Test malformed worker payloads degrade to the default aggregate status."""
+        client = ProgressClient()
+        progress = client._parse_progress_response(
+            {
+                **progress_api_response_running,
+                "workers": {
+                    "ready": "not-an-int",
+                    "dispatchable": object(),
+                },
+            }
+        )
+
+        assert progress.workers.model_dump() == {
+            "ready": 0,
+            "total": 0,
+            "dispatchable": 0,
+            "router_connected": 0,
+            "ready_record_processors": 0,
+            "declared_record_processors": 0,
+            "ready_pods": 0,
+            "total_pods": 0,
+            "degraded_pods": 0,
+        }
+
     def test_parse_current_phase_computed_from_start_ns(
         self, progress_api_response_running: dict[str, Any]
     ) -> None:

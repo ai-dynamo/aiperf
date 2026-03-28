@@ -230,7 +230,7 @@ AIPerf is built on three core principles:
 AIPerf supports distributed execution with two deployment models:
 
 - **Multiprocess Mode**: Each service runs as a separate process on a single node (default for single-node deployments)
-- **Kubernetes Mode**: Control-plane services run in the controller pod while each worker pod hosts a `WorkerPodManager` plus sibling worker and record-processor containers; pod-local lifecycle traffic stays on a dedicated ROUTER/DEALER channel while credits continue to use the global credit router
+- **Kubernetes Mode**: Control-plane services run in the controller pod while each worker pod hosts a `WorkerPodManager` plus sibling worker and record-processor containers; pod-local lifecycle traffic stays on a dedicated ROUTER/DEALER channel while credits continue to use the global credit router. In this mode, the operator mirrors controller truth for benchmark lifecycle and aggregate worker status, so `AIPerfJob.status.phase` and `AIPerfJob.status.workers` reflect the controller's authoritative view once progress is available.
 
 ## External Dependencies
 

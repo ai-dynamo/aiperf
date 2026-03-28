@@ -15,6 +15,7 @@ from typing import Annotated
 
 from fastapi import APIRouter
 from pydantic import Field
+from starlette.requests import HTTPConnection
 
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
 from aiperf.common.enums import CreditPhase
@@ -24,6 +25,7 @@ from aiperf.common.mixins.progress_tracker_mixin import (
     ProgressTrackerMixin,
 )
 from aiperf.common.models import AIPerfBaseModel
+from aiperf.controller.system_controller import AggregateWorkerStatus
 
 ProgressDep = Annotated["ProgressRouter", component_dependency("progress")]
 
@@ -90,6 +92,10 @@ class ProgressResponse(AIPerfBaseModel):
     phases: dict[CreditPhase, CombinedPhaseStats] = Field(
         default_factory=dict, description="Per-phase progress stats"
     )
+    workers: AggregateWorkerStatus = Field(
+        default_factory=AggregateWorkerStatus,
+        description="Controller-authored aggregate worker-pod status.",
+    )
 
 
 class ProgressRouter(ProgressTrackerMixin, BaseRouter):
@@ -149,7 +155,23 @@ async def _patch_jobset_annotations(
     await jobset.patch({"metadata": {"annotations": annotations}})
 
 
+def _get_controller_workers(conn: HTTPConnection) -> AggregateWorkerStatus:
+    """Read aggregate worker status from controller-owned state when available."""
+    controller = getattr(conn.app.state, "controller", None)
+    if controller is None:
+        service = getattr(conn.app.state, "service", None)
+        controller = getattr(service, "controller", None)
+    if controller is None:
+        return AggregateWorkerStatus()
+    return controller.get_aggregate_worker_status()
+
+
 @progress_router.get("/api/progress", response_model=ProgressResponse, tags=["API"])
-async def get_progress(component: ProgressDep) -> ProgressResponse:
+async def get_progress(
+    conn: HTTPConnection, component: ProgressDep
+) -> ProgressResponse:
     """Get benchmark progress with full phase stats."""
-    return ProgressResponse(phases=component._progress_tracker._phases)
+    return ProgressResponse(
+        phases=component._progress_tracker._phases,
+        workers=_get_controller_workers(conn),
+    )

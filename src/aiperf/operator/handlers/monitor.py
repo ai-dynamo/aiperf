@@ -18,7 +18,6 @@ import kopf
 import kr8s
 from kr8s.asyncio.objects import Pod
 
-from aiperf.common.enums import WorkerStartupState
 from aiperf.kubernetes.constants import Containers, JobSetLabels
 from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.kubernetes.kr8s_resources import AsyncJobSet
@@ -70,17 +69,6 @@ def _get_job_timeout(spec: dict[str, Any]) -> float:
     return float(spec.get("timeoutSeconds", OperatorEnvironment.JOB_TIMEOUT_SECONDS))
 
 
-async def _get_app_ready_worker_count(
-    client: Any,
-    controller_host: str,
-) -> int | None:
-    """Get the count of workers that reported app-level READY startup state."""
-    states = await client.get_worker_startup_states(controller_host)
-    if states is None:
-        return None
-    return sum(1 for state in states.values() if state == WorkerStartupState.READY)
-
-
 def _classify_jobset_failure(jobset_status: dict[str, Any]) -> tuple[bool, str | None]:
     """Classify whether a JobSet failure should fail the benchmark."""
     replicated = {
@@ -94,6 +82,31 @@ def _classify_jobset_failure(jobset_status: dict[str, Any]) -> tuple[bool, str |
     if workers_failed:
         return False, "workers"
     return True, None
+
+
+def _apply_controller_progress_status(
+    patch: kopf.Patch,
+    sb: StatusBuilder,
+    progress: Any,
+    current_phase: str,
+) -> None:
+    """Apply controller-authored progress to CR status."""
+    sb.set_worker_aggregate_status(progress.workers.model_dump())
+
+    if not progress.current_phase:
+        return
+
+    patch.status["currentPhase"] = progress.current_phase
+
+    if progress.current_phase == "profiling":
+        sb.set_phase(Phase.RUNNING)
+        sb.conditions.set_true(
+            ConditionType.BENCHMARK_RUNNING,
+            "BenchmarkStarted",
+            "Benchmark is running",
+        )
+    elif current_phase in (Phase.PENDING, Phase.QUEUED, Phase.INITIALIZING):
+        sb.set_phase(Phase.INITIALIZING)
 
 
 async def monitor_progress(
@@ -263,37 +276,9 @@ async def monitor_progress(
         ):
             sb.set_phase(Phase.INITIALIZING)
 
-        controller_host = controller_dns_name(jobset_name, namespace)
         client = None
-        app_workers_ready: int | None = None
 
         effective_phase = sb.get_phase() or current_phase
-        if (
-            effective_phase == Phase.INITIALIZING
-            and total_workers > 0
-            and (workers_ready == total_workers or workers_succeeded == total_workers)
-        ):
-            client = await get_or_create_progress_client(key)
-            app_workers_ready = await _get_app_ready_worker_count(
-                client, controller_host
-            )
-            if app_workers_ready is not None:
-                sb.set_workers(app_workers_ready, total_workers)
-
-            if app_workers_ready == total_workers:
-                sb.set_phase(Phase.RUNNING)
-                sb.conditions.set_true(
-                    ConditionType.WORKERS_READY,
-                    "AllWorkersReady",
-                    f"All {total_workers} workers are ready",
-                )
-                sb.conditions.set_true(
-                    ConditionType.BENCHMARK_RUNNING,
-                    "BenchmarkStarted",
-                    "Benchmark is running",
-                )
-                events.workers_ready(body, app_workers_ready, total_workers)
-                events.started(body, job_id)
 
         # Check for pod restarts (CrashLoopBackOff detection)
         await _check_pod_restarts(api, body, namespace, jobset_name, key)
@@ -304,15 +289,21 @@ async def monitor_progress(
             await close_progress_client(key)
             return
 
-        # Fetch progress from controller if running or workers already completed
+        # Fetch controller progress once bootstrap reaches initializing.
         effective_phase = sb.get_phase() or current_phase
-        if effective_phase == Phase.RUNNING or (
+        if effective_phase in (Phase.INITIALIZING, Phase.RUNNING) or (
             workers_succeeded > 0 and workers_succeeded >= total_workers
         ):
             if client is None:
                 client = await get_or_create_progress_client(key)
             benchmark_complete = await _fetch_progress(
-                namespace, jobset_name, patch, sb, client, key
+                namespace,
+                jobset_name,
+                patch,
+                sb,
+                client,
+                key,
+                effective_phase,
             )
 
             # If benchmark is done, fetch results then shutdown controller
@@ -558,6 +549,7 @@ async def _fetch_progress(
     sb: StatusBuilder,
     client: Any,
     key: str,
+    current_phase: str = Phase.RUNNING,
 ) -> bool:
     """Fetch progress and live metrics from controller pod.
 
@@ -583,8 +575,7 @@ async def _fetch_progress(
         if phases_data:
             patch.status["phases"] = phases_data
 
-        if progress.current_phase:
-            patch.status["currentPhase"] = progress.current_phase
+        _apply_controller_progress_status(patch, sb, progress, current_phase)
 
         if progress.error:
             patch.status["error"] = progress.error
