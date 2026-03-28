@@ -11,6 +11,7 @@ from aiperf.credit.messages import (
     WorkerConnected,
     WorkerDispatchable,
     WorkerShutdown,
+    WorkerUndispatchable,
 )
 from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.credit.structs import Credit
@@ -55,6 +56,39 @@ class TestStickyCreditRouterWorkerRoutingState:
         router._credit_router_client.send_to.assert_called_once()
         worker_id = router._credit_router_client.send_to.call_args[0][0]
         assert worker_id == "worker-dispatchable"
+
+    async def test_undispatchable_worker_leaves_routing_pool_but_stays_connected(
+        self, run
+    ) -> None:
+        router = StickyCreditRouter(run=run, service_id="test-router")
+        router._credit_router_client.send_to = AsyncMock()
+
+        await router._handle_return_router_message(
+            "worker-undispatchable",
+            WorkerConnected(worker_id="worker-undispatchable"),
+        )
+        await router._handle_return_router_message(
+            "worker-undispatchable",
+            WorkerDispatchable(worker_id="worker-undispatchable"),
+        )
+        assert "worker-undispatchable" in router._workers
+        assert "worker-undispatchable" in router._connected_workers
+
+        await router._handle_return_router_message(
+            "worker-undispatchable",
+            WorkerUndispatchable(
+                worker_id="worker-undispatchable",
+                reason="draining",
+            ),
+        )
+
+        assert "worker-undispatchable" not in router._workers
+        assert "worker-undispatchable" in router._connected_workers
+
+        credit = make_credit(id=1, corr_id="undispatchable", num_turns=1)
+
+        with pytest.raises(RuntimeError, match="No workers available"):
+            await router.send_credit(credit)
 
 
 class TestStickyCreditRouterFairLoadBalancing:
@@ -785,6 +819,16 @@ class TestStickyCreditRouterWorkerUnregistration:
             "worker-1",
             WorkerShutdown(worker_id="worker-1"),
         )
+        await router._handle_return_router_message(
+            "worker-1",
+            WorkerConnected(worker_id="worker-1"),
+        )
+
+        assert "worker-1" not in router._workers
+        assert "worker-1" in router._connected_workers
+        assert "worker-1" in router._detached_workers
+        on_return.assert_not_awaited()
+
         await router._handle_return_router_message(
             "worker-1",
             WorkerDispatchable(worker_id="worker-1"),
