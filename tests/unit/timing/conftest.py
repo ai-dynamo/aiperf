@@ -50,11 +50,22 @@ async def _async_true(*args, **kwargs) -> bool:
 
 @dataclass
 class MockCreditRouter:
+    """Test double for StickyCreditRouter that captures sent credits."""
+
     sent_credits: list[Credit] = field(default_factory=list)
+    """Credits that have been sent through this router."""
+
     auto_return: bool = False
+    """When True, automatically returns credits after sending."""
+
     _return_cb: Callable[[str, CreditReturn], Awaitable[None]] | None = None
+    """Callback invoked when a credit is returned."""
+
     _first_token_cb: Callable[[FirstToken], Awaitable[None]] | None = None
+    """Callback invoked on first token arrival."""
+
     _pending: list[asyncio.Task] = field(default_factory=list)
+    """Pending auto-return tasks."""
 
     async def send_credit(self, credit: Credit) -> None:
         self.sent_credits.append(credit)
@@ -102,8 +113,13 @@ class MockCreditRouter:
 
 @dataclass
 class OrchestratorHarness:
+    """Test harness wrapping a PhaseOrchestrator and its mock router."""
+
     orchestrator: PhaseOrchestrator
+    """The phase orchestrator under test."""
+
     router: MockCreditRouter
+    """Mock credit router capturing sent credits."""
 
     @property
     def sent_credits(self) -> list[Credit]:

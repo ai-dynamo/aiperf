@@ -171,13 +171,28 @@ class ClusterConfig:
     """Configuration for a local Kubernetes cluster."""
 
     name: str = "aiperf-pytest"
+    """Cluster name used for identification and context."""
+
     runtime: ClusterRuntime = ClusterRuntime.KIND
+    """Kubernetes cluster runtime backend."""
+
     kubeconfig: Path | None = None
+    """Path to kubeconfig file, or None for default."""
+
     wait_timeout: int = 120
+    """Seconds to wait for cluster readiness."""
+
     node_image: str | None = None
+    """Custom node image for the cluster, or None for default."""
+
     gpus: bool = False
+    """Whether to enable GPU passthrough."""
+
     cache_images: list[str] = field(default_factory=list)
+    """Images to cache in the cluster for offline use."""
+
     device_plugin_version: str = DEVICE_PLUGIN_VERSION
+    """NVIDIA device plugin DaemonSet version."""
 
 
 # ============================================================================
@@ -739,8 +754,13 @@ class LocalCluster:
     """
 
     config: ClusterConfig = field(default_factory=ClusterConfig)
+    """Cluster configuration settings."""
+
     _backend: ClusterBackend = field(init=False, repr=False)
+    """Runtime-specific backend implementation."""
+
     _created: bool = field(default=False, init=False)
+    """Whether this instance created the cluster."""
 
     def __post_init__(self) -> None:
         self._backend = _create_backend(self.config)

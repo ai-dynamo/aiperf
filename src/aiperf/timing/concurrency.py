@@ -24,16 +24,16 @@ class ConcurrencyStats:
 
     Tracks acquire/release/wait operations for observability and testing.
     Safe in single-threaded asyncio (operations between awaits are atomic).
-
-    Attributes:
-        acquire_count: The number of times a slot was successfully acquired.
-        release_count: The number of times a slot was released.
-        wait_count: The number of times an acquire had to wait for a slot.
     """
 
     acquire_count: int = 0
+    """Number of times a slot was successfully acquired."""
+
     release_count: int = 0
+    """Number of times a slot was released."""
+
     wait_count: int = 0
+    """Number of times an acquire had to wait for a slot."""
 
 
 class DynamicConcurrencyLimit:

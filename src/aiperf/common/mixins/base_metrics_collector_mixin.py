@@ -40,16 +40,6 @@ class HttpTraceTiming:
     - Server metric timestamps (when server generated the metrics)
     - Request latencies (how long requests took)
 
-    Args:
-        start_ns: Wall clock timestamp when request headers sent (time.time_ns)
-        start_perf_ns: Monotonic timestamp when request headers sent (time.perf_counter_ns)
-        first_byte_perf_ns: Monotonic timestamp when first response byte received (TTFB)
-        end_perf_ns: Monotonic timestamp when response fully received
-
-    Properties:
-        first_byte_ns: Wall clock timestamp of first byte (start_ns + TTFB offset)
-        latency_ns: Total request latency in nanoseconds (end - start)
-
     Example:
         >>> # Captured automatically by aiohttp TraceConfig
         >>> timing = HttpTraceTiming(
@@ -65,9 +55,16 @@ class HttpTraceTiming:
     """
 
     start_ns: int | None = None
+    """Wall clock timestamp when request headers were sent (time.time_ns)."""
+
     start_perf_ns: int | None = None
+    """Monotonic timestamp when request headers were sent (time.perf_counter_ns)."""
+
     first_byte_perf_ns: int | None = None
+    """Monotonic timestamp when first response byte was received (TTFB)."""
+
     end_perf_ns: int | None = None
+    """Monotonic timestamp when response was fully received."""
 
     @property
     def first_byte_ns(self) -> int | None:
@@ -114,18 +111,16 @@ class FetchResult:
     Encapsulates both the fetched content and timing information in a single
     immutable object. The is_duplicate flag enables efficient handling of
     unchanged metrics (common when scraping faster than server update rate).
-
-    Args:
-        text: Raw metrics text from HTTP endpoint (Prometheus exposition format)
-        trace_timing: Precise timing data captured via aiohttp TraceConfig hooks
-        is_duplicate: True if response content hash matches previous fetch,
-                     indicating metrics haven't changed. Callers can skip parsing
-                     when True to save CPU on repetitive data.
     """
 
     text: str | None
+    """Raw metrics text from the HTTP endpoint (Prometheus exposition format)."""
+
     trace_timing: HttpTraceTiming
+    """Precise timing data captured via aiohttp TraceConfig hooks."""
+
     is_duplicate: bool = False
+    """True if response content hash matches previous fetch, indicating unchanged metrics."""
 
 
 # Type variables for records returned by collectors

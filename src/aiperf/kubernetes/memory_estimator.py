@@ -58,7 +58,7 @@ _SERVICE_BASE_MIB: dict[str, int] = {
     "results_sidecar": 10,
     "worker": 12,  # aiohttp client + ZMQ sockets
     "record_processor": 10,  # record parsing + ZMQ sockets
-    "worker_pod_manager": 10,
+    "worker_group_manager": 10,
 }
 
 # ZMQ proxy memory: 3 proxies (event_bus, dataset_manager, raw_inference)
@@ -142,12 +142,25 @@ class ComponentEstimate:
     """Memory estimate for one logical component."""
 
     name: str
+    """Display name of the component."""
+
     base_mib: float
+    """Fixed baseline memory in MiB (subprocess + service overhead)."""
+
     variable_mib: float
+    """Workload-dependent memory in MiB (scales with requests, tokens, etc.)."""
+
     peak_mib: float
+    """Worst-case memory including transient spikes."""
+
     formula: str
+    """Human-readable formula explaining how the estimate was computed."""
+
     dominant_factor: str
+    """Primary driver of memory usage for this component."""
+
     warning: str | None = None
+    """Optional warning when estimated usage is unusually high."""
 
     @property
     def steady_state_mib(self) -> float:
@@ -159,9 +172,16 @@ class PodEstimate:
     """Aggregated memory estimate for a pod."""
 
     pod_type: str
+    """Pod role: 'controller', 'worker', or 'operator'."""
+
     components: list[ComponentEstimate]
+    """Per-component estimates that sum to the pod total."""
+
     current_limit_mib: float
+    """Configured K8s memory limit for this pod type."""
+
     replicas: int = 1
+    """Number of pod replicas of this type in the cluster."""
 
     @property
     def total_steady_state_mib(self) -> float:
@@ -199,11 +219,22 @@ class ClusterMemoryEstimate:
     """Full cluster memory estimate."""
 
     params: MemoryEstimationParams
+    """Input parameters used to produce this estimate."""
+
     controller: PodEstimate
+    """Memory estimate for the controller pod."""
+
     worker_pod: PodEstimate
+    """Memory estimate for a single worker pod."""
+
     operator: PodEstimate
+    """Memory estimate for the operator pod."""
+
     warnings: list[str] = field(default_factory=list)
+    """Generated warnings about memory risk."""
+
     recommendations: list[str] = field(default_factory=list)
+    """Actionable recommendations for resource tuning."""
 
     @property
     def total_cluster_mib(self) -> float:
@@ -218,46 +249,80 @@ class ClusterMemoryEstimate:
 class MemoryEstimationParams:
     """All parameters that influence memory usage, derived from config."""
 
-    # Topology
     total_workers: int
+    """Total number of worker processes across all pods."""
+
     workers_per_pod: int
+    """Number of worker processes in each worker pod."""
+
     num_worker_pods: int
+    """Number of worker pod replicas."""
+
     record_processors_per_pod: int
+    """Number of record processor processes per worker pod."""
 
-    # Load profile
     max_concurrency: int
+    """Peak in-flight request concurrency across all workers."""
+
     total_requests: int
+    """Estimated total requests for the entire benchmark."""
+
     total_benchmark_duration_s: float
+    """Estimated total benchmark duration in seconds."""
 
-    # Dataset
     dataset_count: int
+    """Number of conversations in the dataset."""
+
     avg_isl_tokens: int
+    """Average input sequence length in tokens."""
+
     avg_osl_tokens: int
+    """Average output sequence length in tokens."""
+
     max_turns: int
+    """Maximum conversation turns (1 for single-turn)."""
 
-    # Endpoint
     streaming: bool
+    """Whether the endpoint uses SSE streaming responses."""
+
     num_endpoints: int
+    """Number of target inference endpoint URLs."""
+
     connections_per_worker: int
+    """HTTP connection pool size per worker."""
 
-    # Telemetry
     num_gpus: int
+    """Estimated total GPUs across DCGM endpoints."""
+
     gpu_sample_interval_s: float
+    """GPU telemetry sampling interval in seconds."""
+
     num_gpu_metrics: int
+    """Number of DCGM metrics collected per GPU."""
 
-    # Server metrics
     num_server_metrics_endpoints: int
+    """Number of Prometheus server metrics endpoints."""
+
     server_metrics_scrape_interval_s: float
+    """Prometheus scrape interval in seconds."""
+
     est_unique_metric_series: int
+    """Estimated unique metric series per Prometheus endpoint."""
+
     est_histogram_metrics: int
+    """Estimated histogram-type metrics per endpoint."""
+
     est_histogram_buckets: int
+    """Number of histogram buckets per histogram metric."""
 
-    # Record processing
     num_models: int
-    num_standard_metrics: int
+    """Number of distinct model names requiring tokenizer loading."""
 
-    # Optional features
+    num_standard_metrics: int
+    """Number of standard metrics computed per record."""
+
     export_http_trace: bool
+    """Whether HTTP trace export is enabled."""
 
     @classmethod
     def from_config(
@@ -928,7 +993,7 @@ class MemoryEstimator:
         else:
             rp_queue_depth = conc_per_rp
 
-        wpm = _estimate_fixed_service("worker_pod_manager", "WorkerPodManager")
+        wpm = _estimate_fixed_service("worker_group_manager", "WorkerGroupManager")
         worker = _estimate_worker(
             conc_per_worker,
             p.avg_osl_tokens,

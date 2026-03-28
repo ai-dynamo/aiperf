@@ -19,9 +19,16 @@ class ImageConfig:
     """Configuration for a Docker image."""
 
     name: str
+    """Image name without tag."""
+
     tag: str = "latest"
-    dockerfile: str | None = None  # None means default Dockerfile
-    build_context: Path | None = None  # None means project root
+    """Image tag."""
+
+    dockerfile: str | None = None
+    """Dockerfile path relative to project root, or None for default."""
+
+    build_context: Path | None = None
+    """Build context directory, or None for project root."""
 
     @property
     def full_name(self) -> str:
@@ -34,8 +41,13 @@ class ImageManager:
     """Manages Docker images for testing."""
 
     project_root: Path
+    """Path to the project root directory."""
+
     images: dict[str, ImageConfig] = field(default_factory=dict)
+    """Image configurations keyed by logical name."""
+
     _built: set[str] = field(default_factory=set, init=False)
+    """Set of image keys that have been built."""
 
     def __post_init__(self) -> None:
         """Initialize default images."""

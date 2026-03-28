@@ -41,11 +41,22 @@ class PhaseCallbackContext:
     """
 
     progress: PhaseProgressTracker
+    """Tracks credit send/return counts for this phase."""
+
     lifecycle: PhaseLifecycle
+    """Phase lifecycle state (running, complete, etc.)."""
+
     stop_checker: StopConditionChecker
+    """Evaluates whether the phase should stop sending credits."""
+
     strategy: TimingStrategyProtocol
+    """Timing strategy that dispatches subsequent turns."""
+
     concurrency_manager: ConcurrencyManager
+    """Manages session and prefill concurrency slots."""
+
     conversation_source: ConversationSource
+    """Source for sampling conversations and resolving metadata."""
 
 
 @dataclass(slots=True)
@@ -53,8 +64,13 @@ class ReturnDisposition:
     """Callback outcome for a returned credit."""
 
     should_continue: bool
+    """Whether the strategy should dispatch the next turn."""
+
     session_ended: bool
+    """Whether this credit return ends the conversation session."""
+
     session_cancelled: bool | None = None
+    """Whether the session was cancelled (None if not applicable)."""
 
 
 # =============================================================================

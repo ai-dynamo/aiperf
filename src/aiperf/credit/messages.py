@@ -74,6 +74,7 @@ class WorkerConnected(Struct, frozen=True, kw_only=True, tag_field="t", tag="wc"
     """
 
     worker_id: str
+    """Unique worker service identifier."""
 
 
 class WorkerDispatchable(Struct, frozen=True, kw_only=True, tag_field="t", tag="wd"):
@@ -84,6 +85,7 @@ class WorkerDispatchable(Struct, frozen=True, kw_only=True, tag_field="t", tag="
     """
 
     worker_id: str
+    """Unique worker service identifier."""
 
 
 class WorkerUndispatchable(
@@ -96,7 +98,10 @@ class WorkerUndispatchable(
     """
 
     worker_id: str
+    """Unique worker service identifier."""
+
     reason: str | None = None
+    """Human-readable reason for becoming undispatchable."""
 
 
 class WorkerShutdown(Struct, frozen=True, kw_only=True, tag_field="t", tag="ws"):
@@ -107,6 +112,7 @@ class WorkerShutdown(Struct, frozen=True, kw_only=True, tag_field="t", tag="ws")
     """
 
     worker_id: str
+    """Unique worker service identifier."""
 
 
 class CreditReturn(
@@ -116,24 +122,22 @@ class CreditReturn(
 
     Sent by worker to router after completing (or failing/cancelling) a request.
     Router uses this to update load tracking and notify timing manager.
-
-    Attributes:
-        credit: The credit being returned.
-        cancelled: True if the credit was cancelled before completion.
-        first_token_sent: True if FirstToken was sent before this return.
-            Used by orchestrator to release prefill slot if not already released.
-        error: Error message if the request failed (None on success).
-        worker_detached: True if the router received this return after the worker
-            had already announced shutdown and been removed from routing. Timing
-            uses this to decide whether a later turn can be reconstructed on a
-            different worker.
     """
 
     credit: Credit
+    """The credit being returned."""
+
     cancelled: bool = False
+    """True if the credit was cancelled before completion."""
+
     first_token_sent: bool = False
+    """True if FirstToken was sent before this return; used to release prefill slot."""
+
     error: str | None = None
+    """Error message if the request failed (None on success)."""
+
     worker_detached: bool = False
+    """True if the router received this return after the worker had already shut down."""
 
 
 class FirstToken(Struct, frozen=True, kw_only=True, tag_field="t", tag="ft"):
@@ -141,16 +145,16 @@ class FirstToken(Struct, frozen=True, kw_only=True, tag_field="t", tag="ft"):
 
     Sent by worker to router when first valid token is received from inference server.
     Router forwards to timing manager to release prefill concurrency slot.
-
-    Attributes:
-        credit_id: ID of the credit this TTFT is for.
-        phase: Credit phase for routing to correct phase tracker.
-        ttft_ns: Time to first token in nanoseconds (duration from request start).
     """
 
     credit_id: int
+    """ID of the credit this TTFT is for."""
+
     phase: CreditPhase
+    """Credit phase for routing to correct phase tracker."""
+
     ttft_ns: int
+    """Time to first token in nanoseconds (duration from request start)."""
 
 
 # =============================================================================
@@ -163,26 +167,23 @@ class TimePing(Struct, frozen=True, kw_only=True, tag_field="t", tag="tp"):
 
     Sent during startup before WorkerDispatchable. Router echoes back as TimePong
     so the worker can measure round-trip time on the credit channel.
-
-    Attributes:
-        sequence: Probe sequence number.
-        sent_at_ns: Worker perf_counter timestamp when ping was sent (time.perf_counter_ns).
     """
 
     sequence: int
+    """Probe sequence number."""
+
     sent_at_ns: int
+    """Worker perf_counter timestamp when ping was sent (time.perf_counter_ns)."""
 
 
 class TimePong(Struct, frozen=True, kw_only=True, tag_field="t", tag="tpo"):
-    """Router echoes back a TimePing as TimePong.
-
-    Attributes:
-        sequence: Probe sequence number (echoed from TimePing).
-        sent_at_ns: Original worker send timestamp (echoed from TimePing).
-    """
+    """Router echoes back a TimePing as TimePong."""
 
     sequence: int
+    """Probe sequence number (echoed from TimePing)."""
+
     sent_at_ns: int
+    """Original worker send timestamp (echoed from TimePing)."""
 
 
 # =============================================================================
@@ -194,12 +195,10 @@ class CancelCredits(Struct, frozen=True, kw_only=True, tag_field="t", tag="cc"):
     """Router requests worker to cancel in-flight credits.
 
     Worker should cancel any pending requests for the specified credit IDs.
-
-    Attributes:
-        credit_ids: Set of credit IDs to cancel.
     """
 
     credit_ids: set[int]
+    """Set of credit IDs to cancel."""
 
 
 # =============================================================================
@@ -216,24 +215,20 @@ class InFlightReconciliation(
     its own state and responds with an InFlightReport on the return channel.
     Credits missing from the worker's report for two consecutive cycles
     are treated as orphaned.
-
-    Attributes:
-        credit_ids: Credit IDs the router believes are in-flight for this worker.
     """
 
     credit_ids: frozenset[int]
+    """Credit IDs the router believes are in-flight for this worker."""
 
 
 class InFlightReport(Struct, frozen=True, kw_only=True, tag_field="t", tag="ifp"):
     """Worker reports which credits it actually has in-flight.
 
     Sent on the return channel in response to InFlightReconciliation.
-
-    Attributes:
-        credit_ids: Credit IDs the worker is currently processing.
     """
 
     credit_ids: frozenset[int]
+    """Credit IDs the worker is currently processing."""
 
 
 # =============================================================================

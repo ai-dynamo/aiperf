@@ -18,31 +18,37 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class ConfidenceMetric:
-    """Statistics for a single metric across runs.
-
-    Attributes:
-        mean: Sample mean
-        std: Sample standard deviation (ddof=1)
-        min: Minimum value
-        max: Maximum value
-        cv: Coefficient of variation (std/mean)
-        se: Standard error (std/sqrt(n))
-        ci_low: Lower bound of confidence interval
-        ci_high: Upper bound of confidence interval
-        t_critical: t-distribution critical value used for CI
-        unit: Unit of measurement (e.g., "ms", "requests/sec")
-    """
+    """Statistics for a single metric across runs."""
 
     mean: float
+    """Sample mean."""
+
     std: float
+    """Sample standard deviation (ddof=1)."""
+
     min: float
+    """Minimum value across runs."""
+
     max: float
+    """Maximum value across runs."""
+
     cv: float
+    """Coefficient of variation (std/mean)."""
+
     se: float
+    """Standard error (std/sqrt(n))."""
+
     ci_low: float
+    """Lower bound of the confidence interval."""
+
     ci_high: float
+    """Upper bound of the confidence interval."""
+
     t_critical: float
+    """t-distribution critical value used for CI calculation."""
+
     unit: str
+    """Unit of measurement (e.g., "ms", "requests/sec")."""
 
     def to_json_result(self) -> "JsonMetricResult":
         """Convert to JsonMetricResult for export.

@@ -45,33 +45,53 @@ async def timed_operation(operation: str):
 class BenchmarkConfig:
     """Configuration for a benchmark run."""
 
-    # Endpoint configuration
     endpoint_url: str = "http://aiperf-mock-server.default.svc.cluster.local:8000/v1"
+    """Inference server endpoint URL."""
+
     endpoint_type: str = "chat"
+    """Endpoint type (chat, completions, embeddings)."""
+
     model_name: str = "mock-model"
+    """Model name to benchmark."""
 
-    # Load generation configuration
     concurrency: int = 5
+    """Number of concurrent requests."""
+
     request_count: int = 50
+    """Total number of requests to send."""
+
     warmup_request_count: int = 5
+    """Number of warmup requests before measurement."""
+
     concurrency_ramp_duration: float | None = None
+    """Duration in seconds to ramp up concurrency, or None for instant."""
 
-    # Tokenizer configuration
     tokenizer_name: str = "gpt2"
+    """Tokenizer name for token counting."""
 
-    # Dataset configuration
     input_sequence_min: int = 50
+    """Minimum input sequence length in tokens."""
+
     input_sequence_max: int = 100
+    """Maximum input sequence length in tokens."""
+
     output_tokens_min: int = 10
+    """Minimum output token count."""
+
     output_tokens_max: int = 50
+    """Maximum output token count."""
 
-    # Kubernetes configuration
     image: str = "aiperf:local"
-    workers: int = 1
+    """Container image for benchmark pods."""
 
-    # Kueue / gang-scheduling
+    workers: int = 1
+    """Number of worker pods."""
+
     queue_name: str | None = None
+    """Kueue LocalQueue name for gang-scheduling, or None."""
+
     priority_class: str | None = None
+    """Kubernetes PriorityClass name, or None."""
 
     def to_temp_file(self) -> Path:
         """Write a placeholder config file (not used by generate, kept for API compat).
@@ -89,18 +109,43 @@ class BenchmarkMetrics:
     """Extracted benchmark metrics."""
 
     request_throughput: float | None = None
+    """Requests per second."""
+
     output_token_throughput: float | None = None
+    """Output tokens per second."""
+
     request_count: int | None = None
+    """Total completed requests."""
+
     request_latency_avg: float | None = None
+    """Average request latency in milliseconds."""
+
     request_latency_min: float | None = None
+    """Minimum request latency in milliseconds."""
+
     request_latency_max: float | None = None
+    """Maximum request latency in milliseconds."""
+
     request_latency_p50: float | None = None
+    """Median request latency in milliseconds."""
+
     request_latency_p90: float | None = None
+    """90th percentile request latency in milliseconds."""
+
     request_latency_p99: float | None = None
+    """99th percentile request latency in milliseconds."""
+
     input_sequence_length: float | None = None
+    """Average input sequence length in tokens."""
+
     output_sequence_length_avg: float | None = None
+    """Average output sequence length in tokens."""
+
     error_count: int = 0
+    """Number of failed requests."""
+
     raw_logs: str = ""
+    """Raw controller log output for fallback parsing."""
 
     @classmethod
     def from_api_results(cls, api_results: dict[str, Any]) -> BenchmarkMetrics:
@@ -234,16 +279,37 @@ class BenchmarkResult:
     """Result of a benchmark run."""
 
     namespace: str
+    """Kubernetes namespace for this benchmark."""
+
     jobset_name: str
+    """Name of the JobSet resource."""
+
     job_id: str
+    """Unique benchmark job identifier."""
+
     config: BenchmarkConfig
+    """Configuration used for this benchmark."""
+
     status: JobSetStatus | None = None
+    """Final JobSet status, or None if not collected."""
+
     metrics: BenchmarkMetrics | None = None
+    """Parsed benchmark metrics, or None if unavailable."""
+
     api_results: dict[str, Any] | None = None
+    """Raw API results from the controller, or None."""
+
     pods: list[PodStatus] = field(default_factory=list)
+    """Pod statuses at collection time."""
+
     duration_seconds: float = 0.0
+    """Total wall-clock duration in seconds."""
+
     success: bool = False
+    """Whether the benchmark completed successfully."""
+
     error_message: str | None = None
+    """Error message if the benchmark failed."""
 
     @property
     def controller_pod(self) -> PodStatus | None:

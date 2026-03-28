@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""WorkerPodManager service for Kubernetes worker pods.
+"""WorkerGroupManager service for Kubernetes worker pods.
 
 This module provides the shared worker-pod infrastructure service. It downloads
 the dataset once per pod, runs the local raw-inference proxy, coordinates raw
@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
-import time
 import uuid
 import zlib
 from pathlib import Path
@@ -23,14 +22,12 @@ import aiohttp
 import zstandard
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.control_structs import Command, Registration
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
     MessageType,
     WorkerStartupState,
-    WorkerStatus,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import (
@@ -46,54 +43,58 @@ from aiperf.common.messages import (
     WorkerHealthMessage,
     WorkerStartupStateMessage,
 )
-from aiperf.common.messages.worker_messages import (
-    WorkerPodStateMessage,
-    WorkerStatusSummaryMessage,
-)
+from aiperf.common.messages.worker_messages import WorkerPodStateMessage
 from aiperf.common.models import (
     MemoryMapClientMetadata,
     ProcessHealth,
     WorkerTaskStats,
 )
 from aiperf.common.pod_lifecycle_structs import (
-    PeerToPodManagerMessage,
-    PodDatasetReady,
-    PodDatasetStateQuery,
-    PodDatasetStateSnapshot,
-    PodPeerAck,
-    PodPeerCommand,
-    PodPeerCommandAck,
-    PodPeerHello,
-    PodPeerShutdown,
-    PodWorkerHealth,
-    PodWorkerStartupState,
+    GroupDatasetReady,
+    GroupDatasetStateQuery,
+    GroupDatasetStateSnapshot,
+    GroupPeerAck,
+    GroupPeerCommand,
+    GroupPeerCommandAck,
+    GroupPeerHello,
+    GroupPeerShutdown,
+    GroupWorkerHealth,
+    GroupWorkerStartupState,
+    PeerToGroupManagerMessage,
 )
 from aiperf.common.protocols import StreamingRouterClientProtocol
+from aiperf.common.subprocess_manager import SubprocessInfo, SubprocessManager
 from aiperf.config import BenchmarkRun
 from aiperf.config.defaults import OutputDefaults
 from aiperf.controller.proxy_manager import ProxyManager
 from aiperf.plugin.enums import ServiceType
 from aiperf.transports.aiohttp_client import create_tcp_connector
-from aiperf.workers.worker_manager import WorkerStatusInfo
+from aiperf.workers.group_runtime import GroupRuntimeAdapter, GroupRuntimeRegistration
+from aiperf.workers.worker_group_state import (
+    WorkerStatusInfo,
+    build_worker_status_summary,
+    mark_stale_workers,
+    update_worker_status,
+)
 
 
-class WorkerPodManager(BaseComponentService):
+class WorkerGroupManagerBase(BaseComponentService):
     """Coordinates shared worker-pod infrastructure for sibling service containers.
 
     This service is the main process in a worker pod container. It:
     1. Downloads the dataset once from the control-plane (via HTTP API)
-    2. Runs the pod-local raw-inference proxy over the shared IPC volume
+    2. Runs the group-local raw-inference proxy over the shared IPC volume
     3. Owns the pod's only controller-facing lifecycle connection
-    4. Configures and shuts down pod-local workers and record processors
+    4. Configures and shuts down group-local workers and record processors
     5. Republishes dataset download notifications for late-starting workers
     6. Uploads raw record files after sibling record-processor containers flush them
 
     Architecture:
         Worker Pod (multi-container)
         ┌─────────────────────────────────────────────────────────────┐
-        │ WorkerPodManager (main process)                             │
+        │ WorkerGroupManager (main process)                             │
         │   - Downloads dataset once from control-plane               │
-        │   - Serves as the pod-local raw-inference proxy host        │
+        │   - Serves as the group-local raw-inference proxy host        │
         │                                                             │
         │  Worker containers: worker-0, worker-1, ...                 │
         │  RecordProcessor containers: record-processor-0, ...        │
@@ -106,13 +107,25 @@ class WorkerPodManager(BaseComponentService):
         - record_processors_per_pod: Number of record processor containers per pod
     """
 
+    @property
+    def service_type(self) -> str:
+        """Expose the Kubernetes worker group-manager service identity."""
+        return str(ServiceType.WORKER_GROUP_MANAGER)
+
     def __init__(
         self,
         run: BenchmarkRun,
         service_id: str | None = None,
+        runtime_adapter: GroupRuntimeAdapter | None = None,
         **kwargs,
     ) -> None:
         self._pod_index = os.environ.get("AIPERF_POD_INDEX")
+        self._runtime_adapter = runtime_adapter
+        self._runtime_registration: GroupRuntimeRegistration | None = (
+            runtime_adapter.build_registration()
+            if runtime_adapter is not None
+            else None
+        )
 
         super().__init__(
             run=run,
@@ -122,20 +135,27 @@ class WorkerPodManager(BaseComponentService):
 
         cfg = self.run.cfg
 
-        # Configuration for workers per pod
-        self.workers_per_pod = (
-            cfg.runtime.workers_per_pod or Environment.WORKER.DEFAULT_WORKERS_PER_POD
-        )
-
-        # Configuration for record processors per pod
-        # Default: 1 RP for every 4 workers, minimum 1.
-        # The Kubernetes path should set record_processors_per_pod explicitly.
-        if cfg.runtime.record_processors_per_pod is not None:
-            self.record_processors_per_pod = cfg.runtime.record_processors_per_pod
-        else:
-            self.record_processors_per_pod = max(
-                1, self.workers_per_pod // Environment.RECORD.PROCESSOR_SCALE_FACTOR
+        if self._runtime_registration is not None:
+            self.workers_per_pod = self._runtime_registration.declared_workers
+            self.record_processors_per_pod = (
+                self._runtime_registration.declared_record_processors
             )
+        else:
+            # Configuration for workers per pod
+            self.workers_per_pod = (
+                cfg.runtime.workers_per_pod
+                or Environment.WORKER.DEFAULT_WORKERS_PER_POD
+            )
+
+            # Configuration for record processors per pod
+            # Default: 1 RP for every 4 workers, minimum 1.
+            # The Kubernetes path should set record_processors_per_pod explicitly.
+            if cfg.runtime.record_processors_per_pod is not None:
+                self.record_processors_per_pod = cfg.runtime.record_processors_per_pod
+            else:
+                self.record_processors_per_pod = max(
+                    1, self.workers_per_pod // Environment.RECORD.PROCESSOR_SCALE_FACTOR
+                )
 
         # Track worker health/startup state across sibling worker containers.
         self.worker_health: dict[str, WorkerStatusInfo] = {}
@@ -146,9 +166,9 @@ class WorkerPodManager(BaseComponentService):
 
         self.pod_lifecycle_router: StreamingRouterClientProtocol = (
             self.comms.create_streaming_router_client(
-                address=CommAddress.POD_LIFECYCLE,
+                address=CommAddress.GROUP_LIFECYCLE,
                 bind=True,
-                decode_type=PeerToPodManagerMessage,
+                decode_type=PeerToGroupManagerMessage,
             )
         )
         self.pod_lifecycle_router.register_receiver(self._on_pod_lifecycle_message)
@@ -168,9 +188,20 @@ class WorkerPodManager(BaseComponentService):
             run=self.run,
             enable_raw_inference=True,
         )
+        self._local_subprocess_manager: SubprocessManager | None = None
+        if self._runtime_registration is not None:
+            self._local_subprocess_manager = SubprocessManager(
+                run=self.run,
+                logger=self,
+            )
+            self._local_subprocess_manager._local_worker_group_manager = SubprocessInfo(
+                service_type=ServiceType.WORKER_GROUP_MANAGER,
+                service_id=self.service_id,
+                launch_adapter=self._runtime_adapter,
+            )
 
         self.info(
-            f"WorkerPodManager configured for {self.workers_per_pod} worker container(s) "
+            f"WorkerGroupManager configured for {self.workers_per_pod} worker container(s) "
             f"and {self.record_processors_per_pod} record processor container(s)"
         )
 
@@ -183,6 +214,7 @@ class WorkerPodManager(BaseComponentService):
         """
         import uuid
 
+        registration = self._runtime_registration
         return Registration(
             sid=self.service_id,
             rid=uuid.uuid4().hex,
@@ -190,8 +222,16 @@ class WorkerPodManager(BaseComponentService):
             state=str(self.state),
             pod_name=os.environ.get("HOSTNAME"),
             pod_index=self._pod_index,
-            num_workers=self.workers_per_pod,
-            num_record_processors=self.record_processors_per_pod,
+            num_workers=(
+                registration.declared_workers
+                if registration is not None
+                else self.workers_per_pod
+            ),
+            num_record_processors=(
+                registration.declared_record_processors
+                if registration is not None
+                else self.record_processors_per_pod
+            ),
         )
 
     @on_init
@@ -204,14 +244,14 @@ class WorkerPodManager(BaseComponentService):
         await self._proxy_manager.initialize_and_start()
 
     @on_start
-    async def _start_worker_pod_manager(self) -> None:
-        """Start the WorkerPodManager.
+    async def _start_worker_group_manager(self) -> None:
+        """Start the WorkerGroupManager.
 
         Worker and record-processor containers start independently and register
-        with the pod-local lifecycle router. Tokenizer prefetch is kicked off in
+        with the group-local lifecycle router. Tokenizer prefetch is kicked off in
         the background so it does not delay pod-manager registration.
         """
-        self.info("WorkerPodManager starting...")
+        self.info("WorkerGroupManager starting...")
 
         # Warm the tokenizer cache opportunistically without blocking startup.
         # Each K8s pod is a separate machine — the controller's cache warming
@@ -223,6 +263,8 @@ class WorkerPodManager(BaseComponentService):
             self._tokenizer_prefetch_task = self.execute_async(
                 self._prefetch_tokenizers()
             )
+        if self._local_subprocess_manager is not None:
+            await self._start_local_peers()
         self.debug("Tokenizer prefetch started in background")
         self.debug("Waiting for dataset configuration...")
 
@@ -238,10 +280,11 @@ class WorkerPodManager(BaseComponentService):
         self._dataset_metadata = message.metadata
         self._benchmark_generation = message.benchmark_generation
         self._dataset_generation = message.dataset_generation
+        await self._publish_worker_summary()
 
         if self._dataset_downloaded:
             self.debug(
-                "Dataset already downloaded; late workers should query pod-local current state"
+                "Dataset already downloaded; late workers should query group-local current state"
             )
             return
 
@@ -250,6 +293,18 @@ class WorkerPodManager(BaseComponentService):
                 "Dataset download already in progress, waiting for existing task"
             )
             await self._dataset_download_task
+            return
+
+        if self._runtime_registration is not None:
+            self.info("Received dataset configuration, attaching local dataset state")
+            self._dataset_client_metadata = message.client_metadata
+            self._dataset_downloaded = True
+            self._dataset_download_event.set()
+            await self._notify_registered_workers_of_dataset(
+                client_metadata=message.client_metadata,
+                success=True,
+            )
+            await self._publish_worker_summary()
             return
 
         self.info("Received dataset configuration, downloading dataset...")
@@ -262,55 +317,55 @@ class WorkerPodManager(BaseComponentService):
             self._dataset_download_task = None
 
     async def _on_pod_lifecycle_message(
-        self, identity: str, message: PeerToPodManagerMessage
-    ) -> PodPeerAck | None:
-        """Handle pod-local lifecycle updates from sibling workers/processors."""
+        self, identity: str, message: PeerToGroupManagerMessage
+    ) -> GroupPeerAck | None:
+        """Handle group-local lifecycle updates from sibling workers/processors."""
         match message:
-            case PodPeerHello():
+            case GroupPeerHello():
                 self._pod_peer_identities[message.service_id] = identity
                 self._pod_peer_types[message.service_id] = message.service_type
                 if message.service_type == str(ServiceType.RECORD_PROCESSOR):
                     self._record_processors_shutdown.discard(message.service_id)
-                return PodPeerAck(service_id=self.service_id)
-            case PodPeerShutdown():
+                return GroupPeerAck(service_id=self.service_id)
+            case GroupPeerShutdown():
                 self._pod_peer_types[message.service_id] = message.service_type
                 if message.service_type == str(ServiceType.RECORD_PROCESSOR):
                     self._record_processors_shutdown.add(message.service_id)
                 return None
-            case PodWorkerHealth():
+            case GroupWorkerHealth():
                 info = self._get_or_create_worker_info(message.service_id)
                 self._update_worker_status(
                     info,
                     self._worker_health_message_from_struct(message),
                 )
                 return None
-            case PodWorkerStartupState():
+            case GroupWorkerStartupState():
                 info = self._get_or_create_worker_info(message.service_id)
                 info.startup_state = WorkerStartupState(message.startup_state)
                 info.startup_state_updated_ns = message.request_ns
                 await self._publish_worker_summary()
                 return None
-            case PodDatasetStateQuery():
+            case GroupDatasetStateQuery():
                 return self._build_pod_dataset_snapshot(message.rid)
-            case PodPeerCommandAck():
+            case GroupPeerCommandAck():
                 return message
 
     def _expected_peer_counts(self) -> dict[str, int]:
-        """Return the required pod-local peer counts by service type."""
+        """Return the required group-local peer counts by service type."""
         return {
             str(ServiceType.WORKER): self.workers_per_pod,
             str(ServiceType.RECORD_PROCESSOR): self.record_processors_per_pod,
         }
 
     def _registered_peer_counts(self) -> dict[str, int]:
-        """Return the currently registered pod-local peer counts by service type."""
+        """Return the currently registered group-local peer counts by service type."""
         counts: dict[str, int] = {}
         for service_type in self._pod_peer_types.values():
             counts[service_type] = counts.get(service_type, 0) + 1
         return counts
 
     async def _wait_for_expected_peers(self) -> None:
-        """Wait for the full pod-local worker and record-processor set to register."""
+        """Wait for the full group-local worker and record-processor set to register."""
         deadline = (
             asyncio.get_running_loop().time()
             + Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT
@@ -326,34 +381,59 @@ class WorkerPodManager(BaseComponentService):
             await asyncio.sleep(0.2)
         counts = self._registered_peer_counts()
         raise TimeoutError(
-            "Timed out waiting for pod-local peers to register: "
+            "Timed out waiting for group-local peers to register: "
             f"expected={expected}, registered={counts}"
         )
 
     async def _send_pod_command(self, service_id: str, command: CommandType) -> None:
-        """Send a pod-local lifecycle command and wait for its ack."""
+        """Send a group-local lifecycle command and wait for its ack."""
         identity = self._pod_peer_identities[service_id]
         response = await self.pod_lifecycle_router.request_to(
             identity,
-            PodPeerCommand(
+            GroupPeerCommand(
                 cid=uuid.uuid4().hex,
                 service_id=self.service_id,
                 command=str(command),
             ),
             timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
         )
-        if not isinstance(response, PodPeerCommandAck):
+        if not isinstance(response, GroupPeerCommandAck):
             raise TypeError(
-                f"Unexpected pod-local response from {service_id}: {type(response).__name__}"
+                f"Unexpected group-local response from {service_id}: {type(response).__name__}"
             )
 
     async def _wait_for_local_startup_convergence(self) -> None:
-        """Wait for the pod-local worker and record-processor set to converge."""
+        """Wait for the group-local worker and record-processor set to converge."""
         await self._wait_for_expected_peers()
         await self._dataset_download_event.wait()
 
+    async def _configure_local_peers(self) -> None:
+        """Fan out PROFILE_CONFIGURE to group-local workers and record processors."""
+        peer_ids = list(self._pod_peer_identities)
+        if not peer_ids:
+            return
+        await asyncio.gather(
+            *(
+                self._send_pod_command(service_id, CommandType.PROFILE_CONFIGURE)
+                for service_id in peer_ids
+            )
+        )
+
+    async def _start_local_peers(self) -> None:
+        """Spawn local worker and record-processor subprocesses under this group."""
+        if self._local_subprocess_manager is None:
+            return
+        await self._local_subprocess_manager.spawn_services(
+            ServiceType.WORKER,
+            self.workers_per_pod,
+        )
+        await self._local_subprocess_manager.spawn_services(
+            ServiceType.RECORD_PROCESSOR,
+            self.record_processors_per_pod,
+        )
+
     async def _shutdown_local_peers(self) -> None:
-        """Ask pod-local workers and record processors to shut down."""
+        """Ask group-local workers and record processors to shut down."""
         peer_ids = list(self._pod_peer_identities)
         if not peer_ids:
             return
@@ -367,7 +447,7 @@ class WorkerPodManager(BaseComponentService):
         for service_id, result in zip(peer_ids, results, strict=False):
             if isinstance(result, Exception):
                 self.warning(
-                    f"Failed to shut down pod-local peer {service_id}: {result!r}"
+                    f"Failed to shut down group-local peer {service_id}: {result!r}"
                 )
 
     def _build_pod_dataset_ready(
@@ -376,9 +456,9 @@ class WorkerPodManager(BaseComponentService):
         client_metadata: MemoryMapClientMetadata,
         success: bool,
         error_message: str | None = None,
-    ) -> PodDatasetReady:
-        """Build the pod-local dataset-ready notification."""
-        return PodDatasetReady(
+    ) -> GroupDatasetReady:
+        """Build the group-local dataset-ready notification."""
+        return GroupDatasetReady(
             service_id=self.service_id,
             data_file_path=str(client_metadata.data_file_path),
             index_file_path=str(client_metadata.index_file_path),
@@ -389,10 +469,10 @@ class WorkerPodManager(BaseComponentService):
             error_message=error_message,
         )
 
-    def _build_pod_dataset_snapshot(self, rid: str) -> PodDatasetStateSnapshot:
+    def _build_pod_dataset_snapshot(self, rid: str) -> GroupDatasetStateSnapshot:
         """Build a queryable current-state dataset snapshot for sibling workers."""
         metadata = self._dataset_client_metadata
-        return PodDatasetStateSnapshot(
+        return GroupDatasetStateSnapshot(
             rid=rid,
             service_id=self.service_id,
             benchmark_generation=self._benchmark_generation,
@@ -445,9 +525,9 @@ class WorkerPodManager(BaseComponentService):
         )
 
     def _worker_health_message_from_struct(
-        self, message: PodWorkerHealth
+        self, message: GroupWorkerHealth
     ) -> WorkerHealthMessage:
-        """Convert pod-local worker health struct into the existing model."""
+        """Convert group-local worker health struct into the existing model."""
         return WorkerHealthMessage(
             service_id=message.service_id,
             health=ProcessHealth(
@@ -503,6 +583,7 @@ class WorkerPodManager(BaseComponentService):
             self._dataset_client_metadata = client_metadata
             self._dataset_downloaded = True
             self._dataset_download_event.set()
+            await self._publish_worker_summary()
 
         except Exception as e:
             self.exception(f"Failed to download dataset: {e!r}")
@@ -523,6 +604,7 @@ class WorkerPodManager(BaseComponentService):
                 success=False,
                 error_message=str(e),
             )
+            await self._publish_worker_summary()
             raise
 
     async def _download_dataset(self) -> tuple[Path, Path]:
@@ -546,7 +628,7 @@ class WorkerPodManager(BaseComponentService):
         if not cfg.runtime.dataset_api_base_url:
             raise RuntimeError(
                 "No dataset_api_base_url configured. "
-                "WorkerPodManager requires this to download the dataset."
+                "WorkerGroupManager requires this to download the dataset."
             )
 
         base_url = cfg.runtime.dataset_api_base_url.rstrip("/")
@@ -710,63 +792,21 @@ class WorkerPodManager(BaseComponentService):
         self, info: WorkerStatusInfo, message: WorkerHealthMessage
     ) -> None:
         """Check the status of a worker."""
-        info.last_update_ns = time.time_ns()
-        if message.task_stats.failed > info.task_stats.failed:
-            info.last_error_ns = time.time_ns()
-            info.status = WorkerStatus.ERROR
-        elif (time.time_ns() - (info.last_error_ns or 0)) / NANOS_PER_SECOND < Environment.WORKER.ERROR_RECOVERY_TIME:  # fmt: skip
-            info.status = WorkerStatus.ERROR
-        elif message.health.cpu_usage > Environment.WORKER.HIGH_LOAD_CPU_USAGE:
-            info.last_high_load_ns = time.time_ns()
-            self.warning(
-                f"CPU usage for {message.service_id} is {round(message.health.cpu_usage)}%. AIPerf results may be inaccurate."
-            )
-            info.status = WorkerStatus.HIGH_LOAD
-        elif (time.time_ns() - (info.last_high_load_ns or 0)) / NANOS_PER_SECOND < Environment.WORKER.HIGH_LOAD_RECOVERY_TIME:  # fmt: skip
-            info.status = WorkerStatus.HIGH_LOAD
-        elif message.task_stats.total == 0 or message.task_stats.in_progress == 0:
-            info.status = WorkerStatus.IDLE
-        else:
-            info.status = WorkerStatus.HEALTHY
-
-        info.health = message.health
-        info.task_stats = message.task_stats
-
-        agg = info.health_aggregates
-        agg.memory_usage.update(message.health.memory_usage)
-        agg.cpu_usage.update(message.health.cpu_usage)
-        agg.num_threads.update(message.health.num_threads)
-        if message.health.num_ctx_switches:
-            agg.voluntary_ctx_switches.update(message.health.num_ctx_switches[0])
-            agg.involuntary_ctx_switches.update(message.health.num_ctx_switches[1])
-        if message.health.io_counters:
-            agg.io_read_bytes.update(message.health.io_counters[4])
-            agg.io_write_bytes.update(message.health.io_counters[5])
-        if message.health.cpu_times:
-            agg.cpu_time_user.update(message.health.cpu_times[0])
-            agg.cpu_time_system.update(message.health.cpu_times[1])
-            agg.cpu_time_iowait.update(message.health.cpu_times[2])
+        update_worker_status(info, message, warning=self.warning)
 
     @background_task(immediate=False, interval=Environment.WORKER.CHECK_INTERVAL)
     async def _worker_status_loop(self) -> None:
         """Check the status of all workers."""
-        for info in self.worker_health.values():
-            last_activity_ns = max(
-                info.last_update_ns or 0,
-                info.startup_state_updated_ns or 0,
-            )
-            if last_activity_ns == 0:
-                continue
-            if (time.time_ns() - last_activity_ns) / NANOS_PER_SECOND > Environment.WORKER.STALE_TIME:  # fmt: skip
-                info.status = WorkerStatus.STALE
+        mark_stale_workers(self.worker_health)
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _on_profile_configure(self, message: Command) -> None:
-        """Wait for pod-local startup convergence before profiling."""
+        """Wait for group-local startup convergence before profiling."""
         if self._configure_started:
             return
         self._configure_started = True
         await self._wait_for_local_startup_convergence()
+        await self._configure_local_peers()
         await self._publish_worker_summary()
 
     @background_task(
@@ -778,18 +818,11 @@ class WorkerPodManager(BaseComponentService):
 
     async def _publish_worker_summary(self) -> None:
         """Publish worker-centric and pod-centric state snapshots."""
-        startup_states = {
-            worker_id: info.startup_state
-            for worker_id, info in self.worker_health.items()
-            if info.startup_state is not None
-        }
-        summary = WorkerStatusSummaryMessage(
+        summary = build_worker_status_summary(
             service_id=self.service_id,
-            worker_statuses={
-                worker_id: info.status for worker_id, info in self.worker_health.items()
-            },
-            worker_startup_states=startup_states,
+            worker_infos=self.worker_health,
         )
+        startup_states = summary.worker_startup_states
         ready_workers = sum(
             1 for state in startup_states.values() if state == WorkerStartupState.READY
         )
@@ -855,11 +888,13 @@ class WorkerPodManager(BaseComponentService):
         await self._publish_worker_summary()
 
     @on_stop
-    async def _stop_worker_pod_manager(self) -> None:
-        """Stop pod-local infrastructure, then upload raw records to controller."""
+    async def _stop_worker_group_manager(self) -> None:
+        """Stop group-local infrastructure, then upload raw records to controller."""
         self._stopping = True
         await self._shutdown_local_peers()
         await self._wait_for_record_processor_shutdowns()
+        if self._local_subprocess_manager is not None:
+            await self._local_subprocess_manager.stop_all()
         await self._wait_for_raw_record_files()
         await self._proxy_manager.stop()
         await self._upload_raw_records()

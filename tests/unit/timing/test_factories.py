@@ -17,7 +17,10 @@ from tests.unit.timing.conftest import make_phase_config
 
 @dataclass
 class MockConvSource:
+    """Mock conversation source that pops from a list."""
+
     convs: list[Any] = field(default_factory=list)
+    """Queued conversations to return."""
 
     def next_conversation(self):
         return None if not self.convs else self.convs.pop(0)
@@ -25,8 +28,13 @@ class MockConvSource:
 
 @dataclass
 class MockStopChk:
+    """Mock stop checker controlling send/start permissions."""
+
     can_send: bool = True
+    """Whether sending any turn is allowed."""
+
     can_start: bool = True
+    """Whether starting a new session is allowed."""
 
     def can_send_any_turn(self) -> bool:
         return self.can_send
@@ -37,7 +45,10 @@ class MockStopChk:
 
 @dataclass
 class MockCredIssuer:
+    """Mock credit issuer that records issued credits."""
+
     issued: list = field(default_factory=list)
+    """List of keyword arguments passed to issue_credit calls."""
 
     async def issue_credit(self, **kw) -> None:
         self.issued.append(kw)
@@ -45,9 +56,16 @@ class MockCredIssuer:
 
 @dataclass
 class MockLifecycle:
+    """Mock phase lifecycle tracker."""
+
     is_complete: bool = False
+    """Whether the phase has completed."""
+
     is_sending_complete: bool = False
+    """Whether all credits have been sent."""
+
     started_at_perf_ns: int = 0
+    """Performance counter timestamp when the phase started."""
 
     def start(self) -> None:
         pass
@@ -64,7 +82,10 @@ class MockLifecycle:
 
 @dataclass
 class MockSched:
+    """Mock scheduler that records scheduled tasks."""
+
     tasks: list = field(default_factory=list)
+    """List of (delay, coroutine) tuples for scheduled tasks."""
 
     def schedule_later(self, delay: float, coro) -> None:
         self.tasks.append((delay, coro))

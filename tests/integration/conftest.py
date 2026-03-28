@@ -40,20 +40,28 @@ _logger = AIPerfLogger(__name__)
 class IntegrationTestDefaults:
     """Default test parameters."""
 
-    # Default model to use for integration tests.
-    # Note that the openai/gpt-oss-120b model crashes on macOS for some reason.
-    # Defining the default model differently so we can have more variety in the tests.
+    # openai/gpt-oss-120b crashes on macOS, use Qwen there instead
     if platform.system() == "Darwin":
         model = "Qwen/Qwen3-0.6B"
         tokenizer = "Qwen/Qwen3-0.6B"
     else:
         model = "openai/gpt-oss-120b"
         tokenizer = "openai/gpt-oss-120b"
+
     workers_max: int = 1
+    """Maximum number of worker processes."""
+
     concurrency: int = 2
+    """Number of concurrent requests."""
+
     request_count: int = 10
+    """Total number of requests to send."""
+
     timeout: float = 200.0
+    """Test timeout in seconds."""
+
     ui: str = "simple"
+    """UI mode for test runs."""
 
 
 def _needs_tokenizer(args: list[str]) -> bool:

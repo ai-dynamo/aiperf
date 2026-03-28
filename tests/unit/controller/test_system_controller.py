@@ -397,34 +397,34 @@ class TestKubernetesMode:
             controller.stop = AsyncMock()
             return controller, mock_proxy
 
-    def test_kubernetes_mode_tracks_only_worker_pod_managers_in_required_services(
+    def test_kubernetes_mode_requires_group_managers_not_direct_children(
         self,
         config: AIPerfConfig,
         mock_service_manager: AsyncMock,
     ) -> None:
-        """In K8s mode, only WorkerPodManagers are controller-facing required services."""
+        """Group-managed K8s topology should require pod managers, not direct child services."""
         config.runtime.service_run_type = ServiceRunType.KUBERNETES
         config.runtime.workers = 12
         config.runtime.workers_per_pod = 5
         config.runtime.record_processors_per_pod = 2
         controller, _ = self._create_system_controller(config, mock_service_manager)
-        assert controller.required_services[ServiceType.WORKER_POD_MANAGER] == 3
+        assert controller.required_services[ServiceType.WORKER_GROUP_MANAGER] == 3
         assert ServiceType.WORKER not in controller.required_services
+        assert ServiceType.RECORD_PROCESSOR not in controller.required_services
         assert ServiceType.WORKER_MANAGER not in controller.required_services
 
-    def test_multiprocessing_mode_does_not_include_worker_in_required(
+    def test_multiprocessing_mode_requires_worker_group_manager_not_direct_children(
         self,
         config: AIPerfConfig,
         mock_service_manager: AsyncMock,
     ) -> None:
-        """In local mode, WORKER is not in required_services.
-
-        Workers are spawned by MultiprocessServiceManager, not tracked
-        as required services that the controller waits for.
-        """
+        """Local mode should require a worker-group manager instead of direct worker children."""
         config.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
         controller, _ = self._create_system_controller(config, mock_service_manager)
+        assert controller.required_services[ServiceType.WORKER_GROUP_MANAGER] == 1
         assert ServiceType.WORKER not in controller.required_services
+        assert ServiceType.RECORD_PROCESSOR not in controller.required_services
+        assert ServiceType.WORKER_MANAGER not in controller.required_services
 
     def test_keep_api_running_true_in_kubernetes_with_api_port(
         self,
@@ -493,36 +493,25 @@ class TestKubernetesMode:
         mock_service_manager.run_service.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_local_start_services_starts_manager_before_spawning_workers(
+    async def test_local_start_services_does_not_re_run_group_children_directly(
         self,
         config: AIPerfConfig,
         mock_service_manager: AsyncMock,
     ) -> None:
-        """Local startup should start the service manager before spawning workers."""
+        """Local startup should let the service manager own the WorkerGroupManager topology."""
         config.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
         config.runtime.api_port = None
         config.gpu_telemetry.enabled = False
         config.server_metrics.enabled = False
-        call_order: list[str] = []
-
-        async def start_side_effect() -> None:
-            call_order.append("start")
-
-        async def run_service_side_effect(service_type: ServiceType, *_args) -> None:
-            call_order.append(str(service_type))
-
-        mock_service_manager.start.side_effect = start_side_effect
-        mock_service_manager.run_service.side_effect = run_service_side_effect
         controller, _ = self._create_system_controller(config, mock_service_manager)
         controller._wait_for_all_configured = AsyncMock(return_value=None)
-        controller._wait_for_all_workers_ready = AsyncMock(return_value=None)
         controller._start_profiling_all_services = AsyncMock(return_value=None)
         controller._wait_for_endpoint_ready = AsyncMock(return_value=None)
 
         await controller._start_services()
 
-        assert call_order[0] == "start"
-        assert str(ServiceType.WORKER) in call_order[1:]
+        mock_service_manager.start.assert_awaited_once()
+        mock_service_manager.run_service.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_kubernetes_start_services_waits_for_sufficient_worker_pods(
@@ -590,10 +579,10 @@ class TestKubernetesMode:
         """Pod readiness wait should actively request pod snapshot refreshes."""
         config.runtime.service_run_type = ServiceRunType.KUBERNETES
         controller, _ = self._create_system_controller(config, mock_service_manager)
-        ServiceRegistry.expect_service("wpm_0", ServiceType.WORKER_POD_MANAGER)
+        ServiceRegistry.expect_service("wpm_0", ServiceType.WORKER_GROUP_MANAGER)
         ServiceRegistry.register(
             service_id="wpm_0",
-            service_type=ServiceType.WORKER_POD_MANAGER,
+            service_type=ServiceType.WORKER_GROUP_MANAGER,
             first_seen_ns=1,
             state=LifecycleState.RUNNING,
         )
@@ -656,18 +645,18 @@ class TestKubernetesMode:
         assert call_kwargs["enable_dataset_manager"] is True
         assert call_kwargs["enable_raw_inference"] is False
 
-    def test_multiprocessing_mode_enables_all_proxies(
+    def test_multiprocessing_mode_disables_controller_raw_inference_proxy(
         self,
         config: AIPerfConfig,
         mock_service_manager: AsyncMock,
     ) -> None:
-        """In local mode, all proxies including raw inference are enabled."""
+        """In local group-managed mode, WorkerGroupManager owns the raw inference proxy."""
         config.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
         _, mock_proxy_cls = self._create_system_controller(config, mock_service_manager)
         call_kwargs = mock_proxy_cls.call_args[1]
         assert call_kwargs["enable_event_bus"] is True
         assert call_kwargs["enable_dataset_manager"] is True
-        assert call_kwargs["enable_raw_inference"] is True
+        assert call_kwargs["enable_raw_inference"] is False
 
     @pytest.mark.asyncio
     async def test_wpm_registration_logs_capacity(
@@ -687,7 +676,7 @@ class TestKubernetesMode:
         msg = Registration(
             sid="wpm_pod0",
             rid="r1",
-            stype="worker_pod_manager",
+            stype="worker_group_manager",
             state="running",
             num_workers=4,
             num_record_processors=1,
@@ -713,7 +702,7 @@ class TestKubernetesMode:
         msg = Registration(
             sid="wpm_pod0",
             rid="r1",
-            stype="worker_pod_manager",
+            stype="worker_group_manager",
             state="running",
             num_workers=3,
             num_record_processors=2,
@@ -724,6 +713,45 @@ class TestKubernetesMode:
 
         assert isinstance(result, RegistrationAck)
         mock_warning.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_group_registration_stores_capacity_without_expanding_expectations(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Group registrations should track declared capacity without expecting child services."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.runtime.workers = 8
+        config.runtime.workers_per_pod = 4
+        config.runtime.record_processors_per_pod = 1
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+
+        workers_before = ServiceRegistry.expected_by_type.get(ServiceType.WORKER, 0)
+        rps_before = ServiceRegistry.expected_by_type.get(
+            ServiceType.RECORD_PROCESSOR, 0
+        )
+
+        msg = Registration(
+            sid="wpm_pod0",
+            rid="r1",
+            stype="worker_group_manager",
+            state="running",
+            num_workers=4,
+            num_record_processors=1,
+        )
+        result = await controller._handle_control_message("identity_0", msg)
+
+        assert isinstance(result, RegistrationAck)
+        assert controller._declared_group_capacities["wpm_pod0"] == (4, 1)
+        assert (
+            ServiceRegistry.expected_by_type.get(ServiceType.WORKER, 0)
+            == workers_before
+        )
+        assert (
+            ServiceRegistry.expected_by_type.get(ServiceType.RECORD_PROCESSOR, 0)
+            == rps_before
+        )
 
     @pytest.mark.asyncio
     async def test_registration_without_capacity_does_not_modify_expectations(

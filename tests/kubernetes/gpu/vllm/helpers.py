@@ -23,21 +23,52 @@ class VLLMConfig:
     """Configuration for a vLLM server deployment."""
 
     image: str = "vllm/vllm-openai:latest"
+    """vLLM container image."""
+
     model_name: str = "facebook/opt-125m"
+    """Model name to serve."""
+
     gpu_count: int = 1
+    """Number of GPUs to allocate."""
+
     namespace: str = "vllm-server"
+    """Kubernetes namespace for the deployment."""
+
     port: int = 8000
+    """HTTP server port."""
+
     max_model_len: int = 512
+    """Maximum model context length."""
+
     dtype: str = "auto"
+    """Data type for model weights (auto, float16, bfloat16)."""
+
     tensor_parallel_size: int = 1
+    """Number of GPUs for tensor parallelism."""
+
     tolerations: list[dict[str, str]] = field(default_factory=list)
+    """Kubernetes pod tolerations for GPU nodes."""
+
     node_selector: dict[str, str] = field(default_factory=dict)
+    """Kubernetes node selector for GPU nodes."""
+
     hf_token_secret: str | None = None
+    """Kubernetes secret name containing HuggingFace token."""
+
     image_pull_secrets: list[str] = field(default_factory=list)
+    """Image pull secret names for private registries."""
+
     enforce_eager: bool = False
+    """Disable CUDA graph optimization for debugging."""
+
     gpu_memory_utilization: float | None = None
+    """GPU memory utilization target (0.0-1.0), or None for default."""
+
     extra_args: list[str] = field(default_factory=list)
+    """Additional command-line arguments for the vLLM server."""
+
     runtime_class_name: str | None = None
+    """Kubernetes RuntimeClass for GPU pods."""
 
 
 class VLLMDeployer:

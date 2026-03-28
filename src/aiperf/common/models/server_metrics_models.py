@@ -23,12 +23,6 @@ class TimeRangeFilter:
     Supports partial ranges (None on either end) for flexibility. Automatically
     validates that start < end to catch configuration errors early.
 
-    Args:
-        start_ns: Start of valid time range in nanoseconds (inclusive).
-                 None means include from beginning of data collection.
-        end_ns: End of valid time range in nanoseconds (inclusive).
-               None means include to end of data collection.
-
     Raises:
         ValueError: If both bounds specified and start_ns >= end_ns
 
@@ -45,7 +39,10 @@ class TimeRangeFilter:
     """
 
     start_ns: int | None = None
+    """Start of valid time range in nanoseconds (inclusive). None means unbounded."""
+
     end_ns: int | None = None
+    """End of valid time range in nanoseconds (inclusive). None means unbounded."""
 
     def __post_init__(self) -> None:
         """Validate that start_ns < end_ns if both are specified.

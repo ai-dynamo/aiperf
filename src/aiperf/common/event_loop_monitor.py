@@ -40,10 +40,19 @@ class _StackTraceEntry:
     """A deduplicated stack trace with occurrence metadata."""
 
     stack: str
+    """The formatted stack trace string."""
+
     count: int = 0
+    """Number of times this exact stack trace was captured."""
+
     first_seen: float = 0.0
+    """Monotonic timestamp when this stack trace was first observed."""
+
     last_seen: float = 0.0
+    """Monotonic timestamp when this stack trace was last observed."""
+
     activities: set[str] = field(default_factory=set)
+    """Set of activity labels active when this stack trace was captured."""
 
 
 class StackTraceCollector:

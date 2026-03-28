@@ -205,9 +205,9 @@ AIPerf uses **ZMQ proxies** for message routing between services and workers:
 - Services publish strongly-typed messages to specific topics (Pub/Sub pattern)
 - Services subscribe to relevant message types
 - Router/Dealer patterns for credit distribution to workers
-- In Kubernetes worker pods, `WorkerPodManager` owns a pod-local ROUTER/DEALER lifecycle channel for worker and record-processor registration, health/startup updates, queryable dataset state, and drain coordination
-- In Kubernetes mode, only `WorkerPodManager` connects to `SystemController`; workers and record processors remain pod-local participants
-- Workers connect to the global credit router before dataset availability, but only become dispatchable after `WorkerPodManager` reports pod-local dataset readiness
+- `WorkerGroupManager` owns the group-local ROUTER/DEALER lifecycle channel for worker and record-processor registration, health/startup updates, queryable dataset state, and drain coordination
+- In group-managed mode, only `WorkerGroupManager` connects to `SystemController`; workers and record processors remain group-local participants
+- Workers connect to the global credit router before dataset availability, but only become dispatchable after `WorkerGroupManager` reports group-local dataset readiness
 - Request/Reply patterns for synchronous operations
 
 ### State Management
@@ -229,8 +229,8 @@ AIPerf is built on three core principles:
 
 AIPerf supports distributed execution with two deployment models:
 
-- **Multiprocess Mode**: Each service runs as a separate process on a single node (default for single-node deployments)
-- **Kubernetes Mode**: Control-plane services run in the controller pod while each worker pod hosts a `WorkerPodManager` plus sibling worker and record-processor containers; pod-local lifecycle traffic stays on a dedicated ROUTER/DEALER channel while credits continue to use the global credit router. In this mode, the operator mirrors controller truth for benchmark lifecycle and aggregate worker status, so `AIPerfJob.status.phase` and `AIPerfJob.status.workers` reflect the controller's authoritative view once progress is available.
+- **Multiprocess Mode**: Each service runs as a separate process on a single node (default for single-node deployments). `WorkerGroupManager` is still the readiness and declared-capacity authority for each local worker group, even when the group lives on one host instead of one pod.
+- **Kubernetes Mode**: Control-plane services run in the controller pod while each worker pod hosts a `WorkerGroupManager` plus sibling worker and record-processor containers. The same `WorkerGroupManager` group-local lifecycle contract used for local mode stays on a dedicated ROUTER/DEALER channel while credits continue to use the global credit router, so readiness and capacity semantics match across run modes. In this mode, the operator mirrors controller truth for benchmark lifecycle and aggregate worker status, so `AIPerfJob.status.phase` and `AIPerfJob.status.workers` reflect the controller's authoritative view once progress is available.
 
 ## External Dependencies
 

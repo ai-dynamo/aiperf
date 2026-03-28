@@ -114,30 +114,79 @@ class DynamoConfig:
     """Configuration for a Dynamo deployment."""
 
     model_name: str = "Qwen/Qwen3-0.6B"
+    """Model name to serve."""
+
     image: str | None = None
+    """Container image, or None for backend-specific default."""
+
     namespace: str = "dynamo-server"
+    """Kubernetes namespace for the deployment."""
+
     backend: DynamoBackend = DynamoBackend.VLLM
+    """Inference backend engine."""
+
     mode: DynamoMode = DynamoMode.AGGREGATED
+    """Deployment topology (aggregated or disaggregated)."""
+
     gpu_count: int = 1
+    """Number of GPUs per worker pod."""
+
     decode_replicas: int = 1
+    """Number of decode worker replicas."""
+
     prefill_replicas: int = 1
+    """Number of prefill worker replicas."""
+
     frontend_replicas: int = 1
+    """Number of frontend router replicas."""
+
     max_model_len: int | None = None
+    """Maximum model context length, or None for default."""
+
     enforce_eager: bool = False
+    """Disable CUDA graph optimization for debugging."""
+
     router_mode: str | None = None
+    """Dynamo router mode, or None for default."""
+
     hf_token_secret: str | None = None
+    """Kubernetes secret name containing HuggingFace token."""
+
     tolerations: list[dict[str, str]] = field(default_factory=list)
+    """Kubernetes pod tolerations for GPU nodes."""
+
     node_selector: dict[str, str] = field(default_factory=dict)
+    """Kubernetes node selector for GPU nodes."""
+
     image_pull_secrets: list[str] = field(default_factory=list)
+    """Image pull secret names for private registries."""
+
     extra_worker_args: list[str] = field(default_factory=list)
+    """Additional command-line arguments for worker containers."""
+
     extra_envs: list[dict[str, str]] = field(default_factory=list)
+    """Additional environment variables for the deployment."""
+
     pvc_name: str | None = None
+    """PVC name for model storage, or None."""
+
     model_mount_path: str = "/models"
+    """Mount path for the model PVC inside containers."""
+
     tensor_parallel_size: int | None = None
+    """Number of GPUs for tensor parallelism, or None for default."""
+
     gpu_memory_utilization: float | None = None
+    """GPU memory utilization target (0.0-1.0), or None for default."""
+
     runtime_class_name: str | None = None
+    """Kubernetes RuntimeClass for GPU pods."""
+
     kvbm_cpu_cache_gb: int | None = None
+    """KVBM CPU cache size in GB for prefill workers."""
+
     connectors: list[str] = field(default_factory=list)
+    """KV cache transfer connectors for prefill workers (e.g. kvbm, nixl)."""
 
     @property
     def effective_image(self) -> str:

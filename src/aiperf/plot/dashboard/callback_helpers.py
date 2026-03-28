@@ -89,11 +89,22 @@ class SingleRunFieldConfig:
     """Configuration for single-run modal field visibility and options."""
 
     x_axis_visible: bool
+    """Whether the X-axis selector is visible."""
+
     stat_visible: bool
+    """Whether the statistic selector is visible."""
+
     y2_visible: bool
+    """Whether the secondary Y-axis selector is visible."""
+
     y2_label_visible: bool
+    """Whether the secondary Y-axis label field is visible."""
+
     x_axis_options: list[dict]
+    """Dropdown options for the X-axis selector."""
+
     x_axis_default: str | None
+    """Default X-axis value, or None for auto-select."""
 
 
 def get_single_run_field_config(

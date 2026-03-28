@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Self
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from aiperf.config._base import BaseConfig
+from aiperf.plugin.enums import ServiceRunType
 
 if TYPE_CHECKING:
     from aiperf.common.enums import AIPerfLogLevel, GPUTelemetryMode
@@ -751,6 +752,54 @@ class BenchmarkConfig(BaseConfig):
             Number of record processors or None for auto-detect.
         """
         return self.runtime.record_processors
+
+    @property
+    def worker_group_service_count(self) -> int:
+        """Get the number of WorkerGroupManager services required by this run."""
+        if self.runtime.service_run_type == ServiceRunType.KUBERNETES:
+            import math
+
+            from aiperf.common.environment import Environment
+
+            workers_per_group = (
+                self.runtime.workers_per_pod
+                or Environment.WORKER.DEFAULT_WORKERS_PER_POD
+            )
+            requested_workers = self.runtime.workers or workers_per_group
+            return max(1, math.ceil(requested_workers / workers_per_group))
+        return 1
+
+    @property
+    def worker_group_declared_worker_capacity(self) -> int:
+        """Get the worker capacity declared by the active group-manager adapter."""
+        if self.runtime.service_run_type == ServiceRunType.KUBERNETES:
+            from aiperf.common.environment import Environment
+
+            return (
+                self.runtime.workers_per_pod
+                or Environment.WORKER.DEFAULT_WORKERS_PER_POD
+            )
+        from aiperf.workers.scaling import calculate_worker_count
+
+        return calculate_worker_count(self)
+
+    @property
+    def worker_group_declared_record_processor_capacity(self) -> int:
+        """Get the record-processor capacity declared by the active group adapter."""
+        if self.runtime.service_run_type == ServiceRunType.KUBERNETES:
+            from aiperf.common.environment import Environment
+
+            if self.runtime.record_processors_per_pod is not None:
+                return self.runtime.record_processors_per_pod
+            worker_capacity = self.worker_group_declared_worker_capacity
+            return max(1, worker_capacity // Environment.RECORD.PROCESSOR_SCALE_FACTOR)
+        if self.runtime.record_processors is not None:
+            return self.runtime.record_processors
+        from aiperf.workers.scaling import calculate_record_processor_count
+
+        return calculate_record_processor_count(
+            self.worker_group_declared_worker_capacity
+        )
 
     @property
     def log_level(self) -> AIPerfLogLevel:

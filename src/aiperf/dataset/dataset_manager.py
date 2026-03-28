@@ -90,7 +90,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         # In Kubernetes mode, use compress_only to stream directly to compressed files.
         # This avoids creating large uncompressed files on the control plane.
-        # WorkerPodManagers will download compressed files and decompress locally.
+        # WorkerGroupManagers will download compressed files and decompress locally.
         self._compress_only = (
             run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
         )
@@ -365,13 +365,13 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self.info(f"Backing store finalized: {mmap_metadata}")
 
         # In Kubernetes mode, workers wait for DatasetDownloadedNotification from
-        # WorkerPodManager which provides local file paths. We still send mmap_metadata
+        # WorkerGroupManager which provides local file paths. We still send mmap_metadata
         # which has the control plane paths (ignored by workers in Kubernetes mode).
         client_metadata: DatasetClientMetadata = mmap_metadata
         if self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES:
             self.info(
                 "Kubernetes mode: workers will wait for DatasetDownloadedNotification "
-                "from WorkerPodManager before accessing dataset"
+                "from WorkerGroupManager before accessing dataset"
             )
 
         from aiperf.config.resolved import (

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 from pytest import param
 
-from aiperf.common.enums import WorkerStartupState
+from aiperf.common.enums import MessageType, WorkerStartupState
 from aiperf.common.messages import DatasetConfiguredNotification
 from aiperf.common.models import (
     Conversation,
@@ -21,10 +21,11 @@ from aiperf.common.models import (
     TextResponseData,
 )
 from aiperf.common.pod_lifecycle_structs import (
-    PodDatasetReady,
-    PodDatasetStateSnapshot,
-    PodPeerShutdown,
-    PodWorkerHealth,
+    GroupDatasetReady,
+    GroupDatasetStateSnapshot,
+    GroupPeerShutdown,
+    GroupWorkerHealth,
+    GroupWorkerStartupState,
 )
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.credit.messages import (
@@ -415,29 +416,40 @@ class TestKubernetesMode:
         assert worker._is_kubernetes_mode() is expected
 
     @pytest.mark.asyncio
-    async def test_dataset_configured_deferred_in_kubernetes_mode(
+    async def test_k8s_worker_does_not_subscribe_to_dataset_configured_notification(
         self, k8s_worker: Worker
     ) -> None:
-        """In K8s mode, dataset config should be stored as pending, not processed immediately."""
+        """Group-managed workers should not subscribe to global dataset broadcasts."""
+        k8s_worker.sub_client.subscribe_all = AsyncMock()
+        k8s_worker.sub_client.subscribe = AsyncMock()
+
+        await k8s_worker._setup_on_message_hooks()
+
+        subscriptions = k8s_worker.sub_client.subscribe_all.await_args.args[0]
+        assert MessageType.DATASET_CONFIGURED_NOTIFICATION not in subscriptions
+
+    @pytest.mark.asyncio
+    async def test_dataset_configured_is_ignored_in_kubernetes_mode(
+        self, k8s_worker: Worker
+    ) -> None:
+        """Direct dataset broadcasts should not drive group-managed worker startup."""
         mock_msg = MagicMock()
         mock_msg.client_metadata = MagicMock()
         mock_msg.metadata = MagicMock()
-
-        # Patch _initialize_dataset_client to verify it's NOT called
         k8s_worker._initialize_dataset_client = AsyncMock()
+        k8s_worker._complete_k8s_startup_flow = AsyncMock()
 
         await k8s_worker._on_dataset_configured(mock_msg)
 
-        # Should have stored as pending
-        assert k8s_worker._pending_dataset_config is mock_msg
-        # Should NOT have initialized client
         k8s_worker._initialize_dataset_client.assert_not_awaited()
+        k8s_worker._complete_k8s_startup_flow.assert_not_awaited()
+        assert not k8s_worker._dataset_configured_event.is_set()
 
     @pytest.mark.asyncio
     async def test_dataset_configured_ignores_stale_benchmark_notification(
         self, k8s_worker: Worker
     ) -> None:
-        """K8s workers should ignore dataset notifications from a different benchmark ID."""
+        """K8s workers should ignore stale dataset broadcasts without affecting startup."""
         stale_msg = DatasetConfiguredNotification(
             service_id="dataset_manager",
             metadata=DatasetMetadata(
@@ -460,29 +472,23 @@ class TestKubernetesMode:
 
         await k8s_worker._on_dataset_configured(stale_msg)
 
-        assert k8s_worker._pending_dataset_config is None
         k8s_worker._initialize_dataset_client.assert_not_awaited()
+        assert not k8s_worker._dataset_configured_event.is_set()
 
     @pytest.mark.asyncio
-    async def test_dataset_configured_immediate_in_local_mode(
+    async def test_dataset_configured_ignored_in_group_managed_local_mode(
         self, local_worker: Worker
     ) -> None:
-        """In local mode, dataset config should initialize the client immediately."""
+        """Group-managed local workers ignore the global dataset broadcast."""
         mock_msg = MagicMock()
         mock_msg.client_metadata = MagicMock()
         mock_msg.metadata = MagicMock()
 
-        # Patch _initialize_dataset_client to verify it IS called
         local_worker._initialize_dataset_client = AsyncMock()
 
         await local_worker._on_dataset_configured(mock_msg)
 
-        # Should NOT have stored as pending
-        assert local_worker._pending_dataset_config is None
-        # Should have initialized client immediately
-        local_worker._initialize_dataset_client.assert_awaited_once_with(
-            mock_msg.client_metadata, mock_msg.metadata
-        )
+        local_worker._initialize_dataset_client.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_profile_configure_waits_for_worker_ready(
@@ -535,6 +541,28 @@ class TestKubernetesMode:
         ]
 
     @pytest.mark.asyncio
+    async def test_local_worker_uses_global_message_bus_probe_on_startup(
+        self, local_worker: Worker
+    ) -> None:
+        """Local workers should still run the global PUB/SUB probe during startup."""
+        local_worker._run_connection_probes = AsyncMock()
+
+        await local_worker._wait_for_successful_probe()
+
+        local_worker._run_connection_probes.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_k8s_worker_skips_global_message_bus_probe_during_startup(
+        self, k8s_worker: Worker
+    ) -> None:
+        """Group-managed workers should not block startup on the global PUB/SUB probe."""
+        k8s_worker._run_connection_probes = AsyncMock()
+
+        await k8s_worker._wait_for_successful_probe()
+
+        k8s_worker._run_connection_probes.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_k8s_worker_marks_connected_before_dataset_ready(
         self, k8s_worker: Worker
     ) -> None:
@@ -556,13 +584,61 @@ class TestKubernetesMode:
         assert not k8s_worker._worker_ready_event.is_set()
 
     @pytest.mark.asyncio
+    async def test_k8s_worker_initializes_from_group_local_dataset_ready(
+        self, config: AIPerfConfig
+    ) -> None:
+        """Group-managed workers should initialize directly from pod-local dataset readiness."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        worker = Worker(
+            run=self._make_run(config),
+            service_id="k8s-worker",
+        )
+        worker._pod_index = "0"
+        worker.return_dealer_client.send = AsyncMock()
+        worker._query_pod_dataset_state = AsyncMock(return_value=None)
+        worker._initialize_dataset_client = AsyncMock()
+
+        await worker._on_dataset_ready(
+            GroupDatasetReady(
+                service_id="worker-pod-manager",
+                data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat",
+                index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat",
+                conversation_count=4,
+                total_size_bytes=1024,
+                pod_index="0",
+                success=True,
+            )
+        )
+
+        worker._initialize_dataset_client.assert_awaited_once()
+        worker._query_pod_dataset_state.assert_not_awaited()
+        assert isinstance(
+            worker.return_dealer_client.send.await_args_list[-1].args[0],
+            WorkerDispatchable,
+        )
+        assert worker._worker_ready_event.is_set()
+
+    @pytest.mark.asyncio
+    async def test_local_worker_subscribes_to_dataset_configured_notification(
+        self, local_worker: Worker
+    ) -> None:
+        """Non-group-managed workers should keep the dataset broadcast subscription."""
+        local_worker.sub_client.subscribe_all = AsyncMock()
+        local_worker.sub_client.subscribe = AsyncMock()
+
+        await local_worker._setup_on_message_hooks()
+
+        subscriptions = local_worker.sub_client.subscribe_all.await_args.args[0]
+        assert MessageType.DATASET_CONFIGURED_NOTIFICATION in subscriptions
+
+    @pytest.mark.asyncio
     async def test_k8s_worker_becomes_dispatchable_after_query_ready(
         self, k8s_worker: Worker
     ) -> None:
         """K8s workers should become dispatchable from pod-local current state."""
         k8s_worker.return_dealer_client.send = AsyncMock()
         k8s_worker._query_pod_dataset_state = AsyncMock(
-            return_value=PodDatasetStateSnapshot(
+            return_value=GroupDatasetStateSnapshot(
                 rid="rid-1",
                 service_id="pod-manager",
                 benchmark_generation="gen-1",
@@ -592,7 +668,7 @@ class TestKubernetesMode:
         """K8s workers should keep polling pod-local dataset state until they become ready."""
         snapshots = [
             None,
-            PodDatasetStateSnapshot(
+            GroupDatasetStateSnapshot(
                 rid="rid-1",
                 service_id="pod-manager",
                 benchmark_generation="gen-1",
@@ -620,7 +696,7 @@ class TestKubernetesMode:
     async def test_k8s_health_checks_use_pod_lifecycle_channel(
         self, k8s_worker: Worker
     ) -> None:
-        """Kubernetes workers should send health snapshots directly to WorkerPodManager."""
+        """Kubernetes workers should send health snapshots directly to WorkerGroupManager."""
         k8s_worker.publish = AsyncMock()
         k8s_worker.pod_lifecycle_dealer_client.send = AsyncMock()
 
@@ -628,7 +704,7 @@ class TestKubernetesMode:
 
         k8s_worker.publish.assert_not_awaited()
         sent = k8s_worker.pod_lifecycle_dealer_client.send.await_args.args[0]
-        assert isinstance(sent, PodWorkerHealth)
+        assert isinstance(sent, GroupWorkerHealth)
         assert sent.service_id == "k8s-worker"
         assert sent.task_total == k8s_worker.task_stats.total
 
@@ -641,13 +717,81 @@ class TestKubernetesMode:
         await k8s_worker._send_worker_shutdown_message()
 
         lifecycle_sent = k8s_worker.pod_lifecycle_dealer_client.send.await_args_list
-        assert isinstance(lifecycle_sent[-1].args[0], PodPeerShutdown)
+        assert isinstance(lifecycle_sent[-1].args[0], GroupPeerShutdown)
         assert lifecycle_sent[-1].args[0].service_id == "k8s-worker"
         sent_messages = [
             call.args[0]
             for call in k8s_worker.return_dealer_client.send.await_args_list
         ]
         assert isinstance(sent_messages[0], WorkerUndispatchable)
+
+    @pytest.mark.asyncio
+    async def test_k8s_worker_emits_ready_transition_once_when_snapshot_and_ready_race(
+        self, config: AIPerfConfig
+    ) -> None:
+        """Concurrent pod-local ready signals should emit a single dispatchable/READY transition."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        worker = Worker(
+            run=self._make_run(config),
+            service_id="k8s-worker",
+        )
+        worker._pod_index = "0"
+        worker.return_dealer_client.send = AsyncMock()
+        worker.pod_lifecycle_dealer_client.send = AsyncMock()
+
+        init_started = asyncio.Event()
+        release_init = asyncio.Event()
+
+        async def slow_initialize(*args, **kwargs) -> None:
+            init_started.set()
+            await release_init.wait()
+            worker._dataset_configured_event.set()
+
+        worker._initialize_dataset_client = AsyncMock(side_effect=slow_initialize)
+
+        snapshot = GroupDatasetStateSnapshot(
+            rid="rid-1",
+            service_id="worker-pod-manager",
+            benchmark_generation="gen-1",
+            dataset_generation="data-1",
+            data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat",
+            index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat",
+            ready=True,
+        )
+        dataset_ready = GroupDatasetReady(
+            service_id="worker-pod-manager",
+            data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat",
+            index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat",
+            conversation_count=4,
+            total_size_bytes=1024,
+            pod_index="0",
+            success=True,
+        )
+
+        snapshot_task = asyncio.create_task(worker._complete_k8s_startup_flow(snapshot))
+        await init_started.wait()
+        dataset_ready_task = asyncio.create_task(
+            worker._on_dataset_ready(dataset_ready)
+        )
+        await asyncio.sleep(0)
+        release_init.set()
+        await asyncio.gather(snapshot_task, dataset_ready_task)
+
+        worker._initialize_dataset_client.assert_awaited_once()
+        dispatchable_messages = [
+            call.args[0]
+            for call in worker.return_dealer_client.send.await_args_list
+            if isinstance(call.args[0], WorkerDispatchable)
+        ]
+        ready_state_messages = [
+            call.args[0]
+            for call in worker.pod_lifecycle_dealer_client.send.await_args_list
+            if isinstance(call.args[0], GroupWorkerStartupState)
+            and call.args[0].startup_state == str(WorkerStartupState.READY)
+        ]
+        assert len(dispatchable_messages) == 1
+        assert len(ready_state_messages) == 1
+        assert worker._worker_ready_event.is_set()
 
     @pytest.mark.asyncio
     async def test_dataset_ready_is_idempotent_after_worker_ready(
@@ -663,7 +807,7 @@ class TestKubernetesMode:
         worker._initialize_dataset_client = AsyncMock()
         worker.return_dealer_client.send = AsyncMock()
 
-        snapshot = PodDatasetStateSnapshot(
+        snapshot = GroupDatasetStateSnapshot(
             rid="rid-1",
             service_id="worker-pod-manager",
             benchmark_generation="gen-1",
@@ -730,7 +874,7 @@ class TestKubernetesMode:
         worker._initialize_dataset_client = AsyncMock()
         worker._query_pod_dataset_state = AsyncMock(return_value=None)
 
-        wrong_pod_download = PodDatasetReady(
+        wrong_pod_download = GroupDatasetReady(
             service_id="worker-pod-manager",
             data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat",
             index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat",
@@ -760,7 +904,7 @@ class TestKubernetesMode:
         worker._initialize_dataset_client = AsyncMock()
 
         await worker._complete_k8s_startup_flow(
-            PodDatasetStateSnapshot(
+            GroupDatasetStateSnapshot(
                 rid="rid-1",
                 service_id="worker-pod-manager",
                 benchmark_generation="gen-1",

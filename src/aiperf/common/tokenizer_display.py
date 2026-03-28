@@ -18,10 +18,19 @@ if TYPE_CHECKING:
 
 @dataclass(slots=True)
 class TokenizerErrorInsight:
+    """Diagnostic insight for a tokenizer loading error."""
+
     title: str
+    """Short human-readable title for the error category."""
+
     causes: list[str]
+    """Possible root causes of the error."""
+
     investigation: list[str]
+    """Steps the user can take to investigate the issue."""
+
     fixes: list[str]
+    """Suggested fixes or workarounds."""
 
 
 # Exception type -> insight mapping
@@ -213,9 +222,16 @@ def extract_tokenizer_name_from_error(error_message: str) -> str | None:
 
 @dataclass(slots=True)
 class TokenizerDisplayEntry:
+    """Display entry for a validated tokenizer result."""
+
     original_name: str
+    """The tokenizer name as provided by the user."""
+
     resolved_name: str
+    """The fully-qualified tokenizer name after resolution."""
+
     was_resolved: bool
+    """Whether the name was resolved from a short name to a full identifier."""
 
 
 def log_tokenizer_validation_results(

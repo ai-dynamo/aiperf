@@ -73,21 +73,40 @@ class WorkerLoad:
     """
 
     worker_id: str
+    """Unique identifier for this worker."""
+
     total_sent_credits: int = 0
-    virtual_sent_credits: int = (
-        0  # For fairness comparison (initialized to avg on join)
-    )
+    """Actual count of credits sent to this worker."""
+
+    virtual_sent_credits: int = 0
+    """Fairness-adjusted credit count, initialized to average on late join."""
+
     total_completed_credits: int = 0
+    """Number of credits that completed successfully."""
+
     total_cancelled_credits: int = 0
+    """Number of credits that were cancelled."""
+
     total_errors_reported: int = 0
+    """Number of credits that reported errors."""
+
     in_flight_credits: int = 0
+    """Credits currently being processed by this worker."""
+
     active_credit_ids: set[int] = field(default_factory=set)
+    """Set of credit IDs currently in flight."""
+
     active_credits: dict[int, Credit] = field(default_factory=dict)
-    active_sessions: int = 0  # Sticky sessions assigned to this worker
+    """Map of credit ID to Credit for in-flight credits."""
+
+    active_sessions: int = 0
+    """Number of sticky multi-turn sessions assigned to this worker."""
+
     active_session_ids: set[str] = field(default_factory=set)
-    last_sent_at_ns: int = (
-        0  # For tie-breaking (guaranteed unique in single-threaded asyncio)
-    )
+    """Set of x_correlation_ids for active sticky sessions."""
+
+    last_sent_at_ns: int = 0
+    """Monotonic timestamp of last credit send, used for LRU tie-breaking."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -95,7 +114,10 @@ class UnavailableSession:
     """A session whose sticky worker became unavailable before the next turn."""
 
     worker_id: str
+    """ID of the worker that became unavailable."""
+
     reason: str
+    """Human-readable reason the worker became unavailable."""
 
 
 # ==============================================================================

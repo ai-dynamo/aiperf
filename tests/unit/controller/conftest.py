@@ -11,6 +11,7 @@ import pytest
 from aiperf.common.models import ErrorDetails
 from aiperf.config import BenchmarkRun
 from aiperf.controller.system_controller import SystemController
+from aiperf.plugin.enums import ServiceRunType
 
 
 class MockTestException(Exception):
@@ -69,6 +70,15 @@ def system_controller(
         # Mock the stop method to avoid actual shutdown
         controller.stop = AsyncMock()
         return controller
+
+
+@pytest.fixture
+def local_group_run(run: BenchmarkRun) -> BenchmarkRun:
+    """BenchmarkRun configured to expose local worker-group adapter capacity."""
+    run.cfg.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
+    run.cfg.runtime.workers = 4
+    run.cfg.runtime.record_processors = 2
+    return run
 
 
 @pytest.fixture

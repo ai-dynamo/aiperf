@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 # In Kubernetes mode:
 # - Control-plane services run in sibling containers in the controller pod
 # - WORKER and RECORD_PROCESSOR run in sibling worker-pod containers
-# - WORKER_POD_MANAGER is the shared pod-infrastructure container
+# - WORKER_GROUP_MANAGER is the shared pod-infrastructure container
 EXTERNAL_K8S_SERVICES = frozenset(
     {
         ServiceType.API,
@@ -49,7 +49,7 @@ EXTERNAL_K8S_SERVICES = frozenset(
         ServiceType.WORKER,
         ServiceType.WORKER_MANAGER,
         ServiceType.RECORD_PROCESSOR,
-        ServiceType.WORKER_POD_MANAGER,
+        ServiceType.WORKER_GROUP_MANAGER,
     }
 )
 
@@ -92,7 +92,7 @@ class KubernetesServiceManager(MultiProcessServiceManager):
     """Service manager for Kubernetes distributed deployments.
 
     Treats control-plane services as sibling containers in the controller pod,
-    while workers, record processors, and worker-pod-manager services are
+    while workers, record processors, and worker-group-manager services are
     external Kubernetes containers/pods.
 
     Maintains a pod registry that tracks per-pod health, container states, and
@@ -347,7 +347,7 @@ class KubernetesServiceManager(MultiProcessServiceManager):
             return
 
         expected_total_pods = self.required_services.get(
-            ServiceType.WORKER_POD_MANAGER, 0
+            ServiceType.WORKER_GROUP_MANAGER, 0
         )
         total_pods = expected_total_pods or len(self._pods)
         if total_pods == 0:

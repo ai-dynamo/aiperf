@@ -37,9 +37,16 @@ class _CheckResult:
     """Result of a single preflight check."""
 
     name: str
+    """Human-readable check name."""
+
     passed: bool
+    """Whether the check passed."""
+
     message: str
+    """Detail message describing the result."""
+
     elapsed: float
+    """Time taken for this check in seconds."""
 
 
 @dataclass
@@ -59,13 +66,28 @@ class PreflightChecker:
     """
 
     title: str
+    """Title displayed in the preflight banner."""
+
     skip_message: str = ""
+    """Message shown when checks fail, suggesting how to skip."""
+
     _results: list[_CheckResult] = field(default_factory=list, init=False)
+    """Accumulated check results."""
+
     _console: _PlainConsole = field(default_factory=_make_console, init=False)
+    """Console for formatted output."""
+
     _mode_text: str = field(default="", init=False)
+    """Mode description line shown below the title."""
+
     _start_time: float = field(default=0.0, init=False)
+    """Timestamp when preflight sequence started."""
+
     _current_step: int = field(default=0, init=False)
+    """Current step counter."""
+
     _total_steps: int = field(default=0, init=False)
+    """Total expected number of checks."""
 
     def set_mode(self, mode: str, **details: str) -> None:
         """Set the mode line shown below the title.
@@ -163,9 +185,16 @@ class _CheckContext:
     """Context object for a single preflight check."""
 
     checker: PreflightChecker
+    """Parent checker that owns this context."""
+
     name: str
+    """Check name displayed in output."""
+
     step: int
+    """Step number within the preflight sequence."""
+
     _start: float = field(default_factory=time.perf_counter, init=False)
+    """Timestamp when this check started."""
 
     def pass_(self, message: str) -> None:
         """Mark this check as passed.

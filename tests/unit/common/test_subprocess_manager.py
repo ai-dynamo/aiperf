@@ -19,7 +19,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.subprocess_manager import SubprocessInfo, SubprocessManager
-from aiperf.plugin.enums import ServiceType
+from aiperf.plugin.enums import ServiceRunType, ServiceType
 
 # Import helper from conftest
 from tests.unit.common.conftest import make_subprocess_info
@@ -80,7 +80,11 @@ class TestSubprocessInfo:
             param(ServiceType.RECORD_PROCESSOR, "rp_abc123", id="record_processor"),
             param(ServiceType.TIMING_MANAGER, "timing_manager", id="timing_manager"),
             param(ServiceType.DATASET_MANAGER, "dataset_manager", id="dataset_manager"),
-            param(ServiceType.WORKER_POD_MANAGER, "pod_xyz_wpm", id="worker_pod_manager"),
+            param(
+                ServiceType.WORKER_GROUP_MANAGER,
+                "pod_xyz_wgm",
+                id="worker_group_manager",
+            ),
             param(ServiceType.WORKER_MANAGER, "wm_001", id="worker_manager"),
             param(ServiceType.RECORDS_MANAGER, "rm_001", id="records_manager"),
         ],
@@ -162,15 +166,16 @@ class TestSubprocessManagerSpawn:
 
         with mock_mp_process(mock_process) as MockProcess:
             info = await subprocess_manager.spawn_service(
-                service_type=ServiceType.WORKER,
-                service_id="worker_test_001",
+                service_type=ServiceType.DATASET_MANAGER,
+                service_id="dataset_manager",
             )
 
             MockProcess.assert_called_once()
             mock_process.start.assert_called_once()
-            assert info.service_type == ServiceType.WORKER
-            assert info.service_id == "worker_test_001"
+            assert info.service_type == ServiceType.DATASET_MANAGER
+            assert info.service_id == "dataset_manager"
             assert info in subprocess_manager.subprocesses
+            assert info.parent_service_id is None
 
     @pytest.mark.asyncio
     async def test_spawn_service_generates_unique_id_for_replicable(
@@ -217,17 +222,17 @@ class TestSubprocessManagerSpawn:
 
         with mock_mp_process(mock_process) as MockProcess:
             await subprocess_manager.spawn_service(
-                service_type=ServiceType.WORKER,
-                service_id="worker_explicit_id",
+                service_type=ServiceType.DATASET_MANAGER,
+                service_id="dataset_manager",
             )
 
             call_kwargs = MockProcess.call_args.kwargs
-            assert call_kwargs["name"] == "worker_process"
+            assert call_kwargs["name"] == "dataset_manager_process"
             assert call_kwargs["daemon"] is True
 
             bootstrap_kwargs = call_kwargs["kwargs"]
-            assert bootstrap_kwargs["service_type"] == ServiceType.WORKER
-            assert bootstrap_kwargs["service_id"] == "worker_explicit_id"
+            assert bootstrap_kwargs["service_type"] == ServiceType.DATASET_MANAGER
+            assert bootstrap_kwargs["service_id"] == "dataset_manager"
             assert bootstrap_kwargs["run"] == subprocess_manager.run
 
     @pytest.mark.asyncio
@@ -253,8 +258,17 @@ class TestSubprocessManagerSpawn:
             )
 
             assert len(infos) == num_replicas
-            assert MockProcess.call_count == num_replicas
-            assert len(subprocess_manager.subprocesses) == num_replicas
+            assert MockProcess.call_count == num_replicas + 1
+            child_processes = [
+                info
+                for info in subprocess_manager.subprocesses
+                if info.process is not None
+            ]
+            assert len(child_processes) == num_replicas + 1
+            assert (
+                subprocess_manager.subprocesses[0].service_id
+                == "worker_group_manager_local"
+            )
 
             # All IDs must be unique
             service_ids = [info.service_id for info in infos]
@@ -279,6 +293,103 @@ class TestSubprocessManagerSpawn:
             call_arg = mock_logger.debug.call_args[0][0]
             assert "55555" in call_arg
             assert "logged_worker" in call_arg
+
+    @pytest.mark.asyncio
+    async def test_local_mode_starts_worker_group_manager_before_children(
+        self, subprocess_manager: SubprocessManager, mock_process_factory
+    ) -> None:
+        """Local worker launches start a real group-manager boundary before children."""
+        subprocess_manager.run.cfg.runtime.service_run_type = (
+            ServiceRunType.MULTIPROCESSING
+        )
+        subprocess_manager.run.cfg.runtime.workers = 4
+        subprocess_manager.run.cfg.runtime.record_processors = 2
+        group_process = mock_process_factory(pid=60001)
+        worker_process = mock_process_factory(pid=60002)
+        mock_ctx = MagicMock()
+        mock_ctx.Process.side_effect = [group_process, worker_process]
+
+        with patch(
+            "aiperf.common.subprocess_manager.get_mp_context", return_value=mock_ctx
+        ):
+            worker_info = await subprocess_manager.spawn_service(
+                service_type=ServiceType.WORKER,
+                service_id="worker_0",
+            )
+
+        boundary_info = subprocess_manager.subprocesses[0]
+        assert boundary_info.service_type == ServiceType.WORKER_GROUP_MANAGER
+        assert boundary_info.service_id == "worker_group_manager_local"
+        assert boundary_info.process == group_process
+        assert worker_info.process == worker_process
+        assert worker_info.parent_service_id == boundary_info.service_id
+        assert subprocess_manager.subprocesses[1] == worker_info
+
+    @pytest.mark.asyncio
+    async def test_local_mode_worker_and_record_processor_capacity_comes_from_adapter(
+        self, subprocess_manager: SubprocessManager
+    ) -> None:
+        """Local group-manager adapter exposes both worker and record-processor capacity."""
+        subprocess_manager.run.cfg.runtime.service_run_type = (
+            ServiceRunType.MULTIPROCESSING
+        )
+        subprocess_manager.run.cfg.runtime.workers = 5
+        subprocess_manager.run.cfg.runtime.record_processors = 3
+        mock_process = MagicMock(spec=Process)
+        mock_process.pid = 60002
+
+        with mock_mp_process(mock_process):
+            await subprocess_manager.spawn_service(
+                service_type=ServiceType.WORKER,
+                service_id="worker_0",
+            )
+            await subprocess_manager.spawn_service(
+                service_type=ServiceType.RECORD_PROCESSOR,
+                service_id="record_processor_0",
+            )
+
+        boundary_info = subprocess_manager.subprocesses[0]
+        assert boundary_info.launch_adapter is not None
+        assert boundary_info.launch_adapter.declared_worker_capacity == 5
+        assert boundary_info.launch_adapter.declared_record_processor_capacity == 3
+        assert [
+            info.service_type
+            for info in subprocess_manager.subprocesses
+            if info.service_type == ServiceType.WORKER_GROUP_MANAGER
+        ] == [ServiceType.WORKER_GROUP_MANAGER]
+
+    @pytest.mark.asyncio
+    async def test_local_mode_launch_adapter_is_passed_to_worker_group_manager_runtime(
+        self, subprocess_manager: SubprocessManager, mock_process_factory
+    ) -> None:
+        """Local runtime launches should pass the adapter contract into WorkerGroupManager."""
+        subprocess_manager.run.cfg.runtime.service_run_type = (
+            ServiceRunType.MULTIPROCESSING
+        )
+        subprocess_manager.run.cfg.runtime.workers = 5
+        subprocess_manager.run.cfg.runtime.record_processors = 3
+        group_process = mock_process_factory(pid=60003)
+        worker_process = mock_process_factory(pid=60004)
+        mock_ctx = MagicMock()
+        mock_ctx.Process.side_effect = [group_process, worker_process]
+
+        with patch(
+            "aiperf.common.subprocess_manager.get_mp_context", return_value=mock_ctx
+        ):
+            worker_info = await subprocess_manager.spawn_service(
+                service_type=ServiceType.WORKER,
+                service_id="worker_0",
+            )
+
+        assert worker_info.launch_adapter is not None
+        group_launch_kwargs = mock_ctx.Process.call_args_list[0].kwargs["kwargs"]
+        runtime_adapter = group_launch_kwargs["runtime_adapter"]
+        registration = runtime_adapter.build_registration()
+
+        assert runtime_adapter == subprocess_manager.local_worker_group_runtime_adapter
+        assert registration.group_id == "worker_group_manager_local"
+        assert registration.declared_workers == 5
+        assert registration.declared_record_processors == 3
 
 
 # =============================================================================

@@ -86,7 +86,10 @@ class MetricValue:
     """The value of a metric converted to display units for export."""
 
     value: MetricValueTypeT
+    """The numeric metric value in display units."""
+
     unit: str
+    """The display unit label (e.g. 'ms', 'tokens/s')."""
 
 
 class ProfileResults(AIPerfBaseModel):
@@ -942,9 +945,16 @@ class MetricRecordInfo(msgspec.Struct, frozen=True, kw_only=True, omit_defaults=
     """The full info of a metric record including the metadata, metrics, and error for export."""
 
     metadata: MetricRecordMetadata
+    """Record metadata (timestamps, credit info, phase)."""
+
     metrics: dict[str, MetricValue]
+    """Computed metric values keyed by metric tag."""
+
     trace_data: TraceDataExport | None = None
+    """Optional trace data captured via a trace config."""
+
     error: ErrorDetails | None = None
+    """Error details if the underlying request failed."""
 
     def to_json_bytes(self) -> bytes:
         return _METRIC_RECORD_INFO_ENCODER.encode(self)
@@ -954,13 +964,28 @@ class RawRecordInfo(msgspec.Struct, frozen=True, kw_only=True, omit_defaults=Tru
     """The full info of a raw record including the request record for export."""
 
     metadata: MetricRecordMetadata
+    """Record metadata (timestamps, credit info, phase)."""
+
     start_perf_ns: int
+    """Request start timestamp in nanoseconds (perf_counter_ns)."""
+
     payload: dict[str, Any]
+    """The serialized request payload sent to the inference server."""
+
     request_headers: dict[str, str] | None = None
+    """HTTP request headers, if captured."""
+
     status: int | None = None
+    """HTTP response status code."""
+
     response_headers: dict[str, str] | None = None
+    """HTTP response headers, if captured."""
+
     responses: list[Any]
+    """Raw response objects from the inference server."""
+
     error: ErrorDetails | None = None
+    """Error details if the request failed."""
 
     def to_json_bytes(self) -> bytes:
         return _RAW_RECORD_INFO_ENCODER.encode(self)

@@ -101,8 +101,13 @@ class LLMLatencyInfo:
     """Latency measurements for LLM requests."""
 
     e2e_latency: float
+    """Total end-to-end request latency in seconds."""
+
     prefill_duration: float
+    """Time spent in the prefill (TTFT) phase in seconds."""
+
     decode_duration: float
+    """Time spent in the decode (token generation) phase in seconds."""
 
 
 def record_request_start(endpoint: str, model: str) -> None:

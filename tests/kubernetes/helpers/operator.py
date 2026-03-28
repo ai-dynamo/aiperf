@@ -30,32 +30,44 @@ logger = AIPerfLogger(__name__)
 class AIPerfJobConfig:
     """Configuration for an AIPerfJob CR."""
 
-    # Required fields
     endpoint_url: str = "http://aiperf-mock-server.default.svc.cluster.local:8000/v1"
+    """Inference server endpoint URL."""
+
     model_name: str = "mock-model"
+    """Model name to benchmark."""
 
-    # Optional endpoint config
     endpoint_type: str = "chat"
+    """Endpoint type (chat, completions, embeddings)."""
 
-    # Load generation
     concurrency: int = 5
+    """Number of concurrent requests."""
+
     request_count: int | None = 50
+    """Total requests to send, or None for duration-based."""
+
     warmup_request_count: int = 5
-    benchmark_duration: float | None = None  # Run for this many seconds
+    """Number of warmup requests before measurement."""
 
-    # Tokenizer
+    benchmark_duration: float | None = None
+    """Duration in seconds for time-based benchmarks, or None for count-based."""
+
     tokenizer_name: str = "gpt2"
+    """Tokenizer name for token counting."""
 
-    # Container
     image: str = "aiperf:local"
+    """Container image for benchmark pods."""
+
     image_pull_policy: str = "Never"
+    """Image pull policy for benchmark pods."""
 
-    # Operator-specific
     connections_per_worker: int | None = None
+    """Override for connections per worker, or None for default."""
 
-    # Kueue / gang-scheduling
     queue_name: str | None = None
+    """Kueue LocalQueue name for gang-scheduling, or None."""
+
     priority_class: str | None = None
+    """Kubernetes PriorityClass name, or None."""
 
     def to_flat_spec(self) -> dict[str, Any]:
         """Generate flat CRD spec (config v3 format, no userConfig wrapper)."""
@@ -137,19 +149,46 @@ class AIPerfJobStatus:
     """Status of an AIPerfJob CR."""
 
     name: str
+    """AIPerfJob CR name."""
+
     namespace: str
+    """Namespace the CR belongs to."""
+
     phase: str | None = None
+    """Top-level job phase (Pending, Running, Completed, Failed, Cancelled)."""
+
     current_phase: str | None = None
+    """Current benchmark phase (warmup, profiling)."""
+
     job_id: str | None = None
+    """Unique job identifier assigned by the operator."""
+
     jobset_name: str | None = None
+    """Name of the associated JobSet resource."""
+
     error: str | None = None
+    """Error message if the job failed."""
+
     workers: dict[str, int] | None = None
+    """Worker counts with ready and total keys."""
+
     conditions: list[dict[str, Any]] = field(default_factory=list)
+    """Kubernetes-style status conditions."""
+
     phases: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Per-phase status information."""
+
     results: dict[str, Any] | None = None
+    """Benchmark results stored in the CR status."""
+
     results_path: str | None = None
+    """Path where results are stored on the PVC."""
+
     live_metrics: dict[str, Any] | None = None
+    """Live metrics snapshot from the running benchmark."""
+
     raw_status: dict[str, Any] = field(default_factory=dict)
+    """Full raw status dict from the CR."""
 
     @property
     def is_pending(self) -> bool:
@@ -236,15 +275,34 @@ class OperatorJobResult:
     """Result of an operator-managed benchmark job."""
 
     namespace: str
+    """Kubernetes namespace for this job."""
+
     job_name: str
+    """AIPerfJob CR name."""
+
     config: AIPerfJobConfig
+    """Configuration used for this job."""
+
     status: AIPerfJobStatus | None = None
+    """Final AIPerfJob CR status, or None if not collected."""
+
     jobset_status: JobSetStatus | None = None
+    """Final JobSet status, or None if not collected."""
+
     pods: list[PodStatus] = field(default_factory=list)
+    """Pod statuses at collection time."""
+
     duration_seconds: float = 0.0
+    """Total wall-clock duration in seconds."""
+
     success: bool = False
+    """Whether the job completed successfully."""
+
     error_message: str | None = None
+    """Error message if the job failed."""
+
     events: list[str] = field(default_factory=list)
+    """Kubernetes events related to this job."""
 
     @property
     def controller_pod(self) -> PodStatus | None:

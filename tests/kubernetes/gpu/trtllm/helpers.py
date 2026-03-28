@@ -33,18 +33,43 @@ class TRTLLMConfig:
     """Configuration for a TRT-LLM server deployment."""
 
     image: str = _DEFAULT_IMAGE
+    """TRT-LLM container image."""
+
     model_name: str = "Qwen/Qwen3-0.6B"
+    """Model name to serve."""
+
     gpu_count: int = 1
+    """Number of GPUs to allocate."""
+
     namespace: str = "trtllm-server"
+    """Kubernetes namespace for the deployment."""
+
     port: int = _DEFAULT_PORT
+    """HTTP server port."""
+
     max_model_len: int = 4096
+    """Maximum model context length."""
+
     tensor_parallel_size: int = 1
+    """Number of GPUs for tensor parallelism."""
+
     tolerations: list[dict[str, str]] = field(default_factory=list)
+    """Kubernetes pod tolerations for GPU nodes."""
+
     node_selector: dict[str, str] = field(default_factory=dict)
+    """Kubernetes node selector for GPU nodes."""
+
     hf_token_secret: str | None = None
+    """Kubernetes secret name containing HuggingFace token."""
+
     image_pull_secrets: list[str] = field(default_factory=list)
+    """Image pull secret names for private registries."""
+
     extra_args: list[str] = field(default_factory=list)
+    """Additional command-line arguments for the TRT-LLM server."""
+
     runtime_class_name: str | None = None
+    """Kubernetes RuntimeClass for GPU pods."""
 
 
 class TRTLLMDeployer:

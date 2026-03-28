@@ -123,10 +123,10 @@ service:
       required: true
       auto_start: true
 
-  worker_pod_manager:
-    class: aiperf.workers.worker_pod_manager:WorkerPodManager
+  worker_group_manager:
+    class: aiperf.workers.worker_group_manager:WorkerGroupManager
     description: |
-      Kubernetes worker pod manager service. Runs as the main process in worker pods,
+      Kubernetes WorkerGroupManager service. Runs as the main process in worker pods,
       downloads the dataset once, runs the pod-local raw-inference proxy, and
       coordinates sibling worker and record-processor containers that share the pod.
     metadata:
@@ -554,7 +554,7 @@ dataset_client_store:
     class: aiperf.dataset.memory_map_utils:MemoryMapDatasetClientStore
     description: |
       Memory-mapped file client store for zero-copy reads. Reads from memory-mapped
-      files with O(1) lookup performance. In Kubernetes mode, WorkerPodManager
+      files with O(1) lookup performance. In Kubernetes mode, WorkerGroupManager
       downloads the dataset once per pod and workers use local mmap access.
 
 # =============================================================================

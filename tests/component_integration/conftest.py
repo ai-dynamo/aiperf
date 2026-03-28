@@ -18,7 +18,7 @@ import platform
 import signal
 import sys
 from collections.abc import Generator
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout, suppress
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
@@ -52,19 +52,13 @@ class TeeStream:
         self.buffer = StringIO()
 
     def write(self, data: str) -> int:
-        try:
+        with suppress(ValueError):
             self.original.write(data)
-        except ValueError:
-            # Late finalizer logs can fire after pytest closes the captured stream.
-            # Keep buffering so the test harness still captures the output cleanly.
-            pass
         return self.buffer.write(data)
 
     def flush(self) -> None:
-        try:
+        with suppress(ValueError):
             self.original.flush()
-        except ValueError:
-            pass
 
     def getvalue(self) -> str:
         return self.buffer.getvalue()
@@ -74,20 +68,28 @@ class TeeStream:
 class ComponentIntegrationTestDefaults:
     """Default test parameters."""
 
-    # Default model to use for integration tests.
-    # Note that the openai/gpt-oss-120b model crashes on macOS for some reason.
-    # Defining the default model differently so we can have more variety in the tests.
+    # openai/gpt-oss-120b crashes on macOS, use Qwen there instead
     if platform.system() == "Darwin":
         model = "Qwen/Qwen3-0.6B"
         tokenizer = "Qwen/Qwen3-0.6B"
     else:
         model = "openai/gpt-oss-120b"
         tokenizer = "openai/gpt-oss-120b"
+
     workers_max: int = 1
+    """Maximum number of worker processes."""
+
     concurrency: int = 2
+    """Number of concurrent requests."""
+
     request_count: int = 10
+    """Total number of requests to send."""
+
     timeout: float = 200.0
+    """Test timeout in seconds."""
+
     ui: str = "simple"
+    """UI mode for test runs."""
 
 
 @pytest.fixture(autouse=True, scope="package")
@@ -411,9 +413,8 @@ def temp_output_dir(tmp_path: Path) -> Path:
 class AIPerfRunnerResultWithSharedBus(AIPerfRunnerResult):
     """AIPerf component integration result with message inspection helpers."""
 
-    # Note: stdout and stderr are inherited from parent with default values
-    # shared_bus must have a default value to maintain field ordering
     shared_bus: FakeCommunicationBus | None = None
+    """Shared fake communication bus for message inspection."""
 
     @property
     def sent_payloads(self) -> list[CapturedPayload]:

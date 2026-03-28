@@ -27,8 +27,13 @@ class JobSetAPIConfig:
     """JobSet API configuration constants."""
 
     group: str = "jobset.x-k8s.io"
+    """Kubernetes API group for JobSet resources."""
+
     version: str = "v1alpha2"
+    """API version of the JobSet CRD."""
+
     plural: str = "jobsets"
+    """Plural resource name for API discovery."""
 
     @property
     def api_version(self) -> str:
@@ -860,7 +865,7 @@ class JobSetSpec(AIPerfBaseModel):
     def _create_worker_containers(self, controller_dns: str) -> list[ContainerSpec]:
         """Create worker-pod containers with one container per runtime service.
 
-        The worker pod keeps a lightweight worker-pod-manager for shared pod
+        The worker pod keeps a lightweight worker-group-manager for shared pod
         infrastructure (dataset download once per pod, local raw-inference
         proxy, raw-record upload coordination), while each worker and record
         processor runs in its own container instead of a subprocess.
@@ -876,8 +881,8 @@ class JobSetSpec(AIPerfBaseModel):
 
         containers: list[ContainerSpec] = [
             self._create_container(
-                name=Containers.WORKER_POD_MANAGER,
-                service_type="worker_pod_manager",
+                name="worker-group-manager",
+                service_type="worker_group_manager",
                 health_port=manager_port,
                 resources=resources[0],
                 controller_host=controller_dns,

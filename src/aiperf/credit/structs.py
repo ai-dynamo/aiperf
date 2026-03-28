@@ -22,38 +22,40 @@ class Credit(
     """Credit representing the right to make a single request to an inference server.
 
     Sent directly from router to worker (no wrapper message).
-
-    Attributes:
-        id: Sequential number of the credit in the credit phase (0-based request index).
-        session_num: Sequential number of the session/conversation (0-based). All turns
-                     within the same conversation share the same session_num.
-        phase: Type of credit phase (e.g., "warmup", "profile").
-        conversation_id: Template ID from the dataset.
-        x_correlation_id: Conversation instance ID for sticky routing (X-Correlation-ID header).
-        turn_index: Index of the turn in the conversation (0-based).
-        num_turns: Total number of turns in the conversation.
-        issued_at_ns: Wall clock timestamp when issued (time.time_ns).
-        cancel_after_ns: Delay in nanoseconds after which the request should be cancelled for simulated client disconnections (optional).
-                         Note: this is NOT the same as the credit being cancelled!
-        url_index: Index of the URL to use when multiple --url values are configured (optional).
-                   None means use the default (first) URL.
-        allow_worker_migration: True when the session can safely continue on a
-                                different worker after worker loss because the
-                                dataset already contains the needed assistant
-                                responses.
     """
 
     id: int
+    """Sequential number of the credit in the credit phase (0-based request index)."""
+
     phase: CreditPhase
+    """Type of credit phase (e.g. warmup, profile)."""
+
     conversation_id: str
+    """Template ID from the dataset."""
+
     x_correlation_id: str
+    """Conversation instance ID for sticky routing (X-Correlation-ID header)."""
+
     turn_index: int
+    """Index of the turn in the conversation (0-based)."""
+
     num_turns: int
+    """Total number of turns in the conversation."""
+
     issued_at_ns: int
+    """Wall clock timestamp when issued (time.time_ns)."""
+
     cancel_after_ns: int | None = None
+    """Delay in nanoseconds after which the request should be cancelled for simulated client disconnections."""
+
     url_index: int | None = None
+    """Index of the URL to use when multiple --url values are configured."""
+
     allow_worker_migration: bool = False
+    """Whether the session can safely continue on a different worker after worker loss."""
+
     session_num: int | None = None
+    """Sequential number of the session/conversation (0-based), shared across all turns."""
 
     @property
     def is_final_turn(self) -> bool:
@@ -63,24 +65,28 @@ class Credit(
 class CreditContext(
     Struct, omit_defaults=True, kw_only=True, tag_field="t", tag="cctx"
 ):
-    """Context for a credit. This is used by the worker to track details of a credit.
-
-    Attributes:
-        credit: The credit being processed.
-        drop_perf_ns: The performance timestamp when the credit was dropped.
-        cancelled: True if the credit was cancelled before completion.
-        returned: True if the credit was returned after completion.
-        first_token_sent: True if the first token was sent before this return.
-        error: The error message if the request failed (None on success).
-    """
+    """Context for a credit, used by the worker to track processing details."""
 
     credit: Credit
+    """The credit being processed."""
+
     drop_perf_ns: int
+    """Performance timestamp when the credit was dropped."""
+
     credit_received_ns: int = 0
+    """Performance timestamp when the credit was received by the worker."""
+
     cancelled: bool = False
+    """True if the credit was cancelled before completion."""
+
     returned: bool = False
+    """True if the credit was returned after completion."""
+
     first_token_sent: bool = False
+    """True if the first token was sent before this return."""
+
     error: str | None = None
+    """Error message if the request failed (None on success)."""
 
 
 # =============================================================================
@@ -89,24 +95,25 @@ class CreditContext(
 
 
 class TurnToSend(Struct, frozen=True):
-    """A turn that needs to be sent.
-
-    Attributes:
-        conversation_id: Template ID from the dataset.
-        x_correlation_id: Conversation instance ID for sticky routing (X-Correlation-ID header).
-        turn_index: The index of the turn in the conversation (0-based).
-        num_turns: The total number of turns in the conversation.
-        url_index: Preserved backend affinity for multi-URL runs.
-        allow_worker_migration: Whether a later worker may continue this session
-                                after the original worker is lost.
-    """
+    """A turn that needs to be sent."""
 
     conversation_id: str
+    """Template ID from the dataset."""
+
     x_correlation_id: str
+    """Conversation instance ID for sticky routing (X-Correlation-ID header)."""
+
     turn_index: int
+    """Index of the turn in the conversation (0-based)."""
+
     num_turns: int
+    """Total number of turns in the conversation."""
+
     url_index: int | None = None
+    """Preserved backend affinity for multi-URL runs."""
+
     allow_worker_migration: bool = False
+    """Whether a later worker may continue this session after the original worker is lost."""
 
     @property
     def is_final_turn(self) -> bool:

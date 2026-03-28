@@ -26,6 +26,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.event_loop_monitor import EventLoopMonitor
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.hooks import (
+    Hook,
     background_task,
     on_command,
     on_message,
@@ -64,16 +65,16 @@ from aiperf.common.models import (
     WorkerTaskStats,
 )
 from aiperf.common.pod_lifecycle_structs import (
-    PodDatasetReady,
-    PodDatasetStateQuery,
-    PodDatasetStateSnapshot,
-    PodManagerToPeerMessage,
-    PodPeerCommand,
-    PodPeerCommandAck,
-    PodPeerHello,
-    PodPeerShutdown,
-    PodWorkerHealth,
-    PodWorkerStartupState,
+    GroupDatasetReady,
+    GroupDatasetStateQuery,
+    GroupDatasetStateSnapshot,
+    GroupManagerToPeerMessage,
+    GroupPeerCommand,
+    GroupPeerCommandAck,
+    GroupPeerHello,
+    GroupPeerShutdown,
+    GroupWorkerHealth,
+    GroupWorkerStartupState,
 )
 from aiperf.common.protocols import (
     PushClientProtocol,
@@ -231,13 +232,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
 
         self.pod_lifecycle_dealer_client: StreamingDealerClientProtocol | None = None
-        if self._is_kubernetes_mode():
+        if self._is_group_managed_mode():
             self.pod_lifecycle_dealer_client = (
                 self.comms.create_streaming_dealer_client(
-                    address=CommAddress.POD_LIFECYCLE,
+                    address=CommAddress.GROUP_LIFECYCLE,
                     identity=self.service_id,
                     bind=False,
-                    decode_type=PodManagerToPeerMessage,
+                    decode_type=GroupManagerToPeerMessage,
                 )
             )
             self.pod_lifecycle_dealer_client.register_receiver(
@@ -257,13 +258,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Dataset client for direct data access (eliminates DatasetManager bottleneck)
         # Initialized when DatasetConfiguredNotification is received via factory.
         # In Kubernetes mode (network client type), initialization is deferred until
-        # WorkerPodManager downloads the dataset and sends PodDatasetReady.
+        # WorkerGroupManager downloads the dataset and sends GroupDatasetReady.
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
-        self._pending_dataset_config: DatasetConfiguredNotification | None = None
-        self._latest_pod_dataset_state: PodDatasetStateSnapshot | None = None
+        self._latest_pod_dataset_state: GroupDatasetStateSnapshot | None = None
         self._dataset_state_retry_task: asyncio.Task[None] | None = None
         self._worker_ready_event = asyncio.Event()
+        self._worker_ready_lock = asyncio.Lock()
         self._startup_state: WorkerStartupState | None = None
 
         # Only send FirstToken messages when prefill concurrency limiting is active.
@@ -290,37 +291,49 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """Announce connectivity, then become dispatchable when startup gates clear."""
         await self._publish_startup_state(WorkerStartupState.STARTING)
         await self.return_dealer_client.send(WorkerConnected(worker_id=self.service_id))
-        if self._is_kubernetes_mode():
+        if self._is_group_managed_mode():
             if self.pod_lifecycle_dealer_client is not None:
                 await self.pod_lifecycle_dealer_client.send(
-                    PodPeerHello(
+                    GroupPeerHello(
                         service_id=self.service_id,
                         service_type=str(self.service_type),
                         pod_index=self._pod_index,
                     )
                 )
             await self._publish_startup_state(WorkerStartupState.WAITING_FOR_DATASET)
-            self._ensure_k8s_dataset_state_retry()
-            await self._complete_k8s_startup_flow()
+            self._ensure_group_dataset_state_retry()
+            await self._complete_group_startup_flow()
             self.debug(
-                "Kubernetes mode: deferring WorkerDispatchable until pod-local dataset state is ready"
+                "Group-managed mode: deferring WorkerDispatchable until group-local dataset state is ready"
             )
             return
         await self._publish_startup_state(WorkerStartupState.ROUTER_PROBING)
         await self._measure_baseline_rtt()
-        await self.return_dealer_client.send(
-            WorkerDispatchable(worker_id=self.service_id)
-        )
-        await self._publish_startup_state(WorkerStartupState.READY)
-        self._worker_ready_event.set()
+        await self._mark_worker_ready()
 
     def _is_kubernetes_mode(self) -> bool:
         """Check if running in Kubernetes mode."""
         return self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
 
+    def _is_group_managed_mode(self) -> bool:
+        """Check if WorkerGroupManager owns this worker's startup lifecycle."""
+        return self.run.cfg.runtime.uses_worker_group_manager
+
     def _uses_controller_control_channel(self) -> bool:
-        """Workers stay pod-local in Kubernetes mode."""
-        return not self._is_kubernetes_mode()
+        """Group-managed workers stay off the controller control channel."""
+        return not self._is_group_managed_mode()
+
+    def _uses_global_message_bus_probe(self) -> bool:
+        """Group-managed workers should not block startup on global PUB/SUB probes."""
+        return not self._is_group_managed_mode()
+
+    def _should_subscribe_to_message_type(
+        self, _hook: Hook, message_type: MessageType
+    ) -> bool:
+        """Group-managed workers should not consume global dataset broadcasts."""
+        if self._is_group_managed_mode():
+            return message_type != MessageType.DATASET_CONFIGURED_NOTIFICATION
+        return True
 
     async def _measure_baseline_rtt(self) -> None:
         """Measure baseline RTT on the credit channel before announcing readiness."""
@@ -328,40 +341,40 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             send_ping=self.return_dealer_client.send,
         )
 
-    async def _on_pod_lifecycle_message(self, message: PodManagerToPeerMessage) -> None:
-        """Handle pod-local lifecycle messages from WorkerPodManager."""
-        if isinstance(message, PodDatasetReady):
+    async def _on_pod_lifecycle_message(
+        self, message: GroupManagerToPeerMessage
+    ) -> None:
+        """Handle group-local lifecycle messages from WorkerGroupManager."""
+        if isinstance(message, GroupDatasetReady):
             await self._on_dataset_ready(message)
-        elif isinstance(message, PodDatasetStateSnapshot):
+        elif isinstance(message, GroupDatasetStateSnapshot):
             self._latest_pod_dataset_state = message
-            await self._complete_k8s_startup_flow(message)
-        elif isinstance(message, PodPeerCommand):
+            await self._complete_group_startup_flow(message)
+        elif isinstance(message, GroupPeerCommand):
             await self._handle_pod_peer_command(message)
 
-    async def _handle_pod_peer_command(self, message: PodPeerCommand) -> None:
-        """Handle pod-local lifecycle commands from WorkerPodManager."""
+    async def _handle_pod_peer_command(self, message: GroupPeerCommand) -> None:
+        """Handle group-local lifecycle commands from WorkerGroupManager."""
         if self.pod_lifecycle_dealer_client is None:
             return
-        if message.command == str(CommandType.SHUTDOWN):
+        if message.command == str(CommandType.PROFILE_CONFIGURE):
+            await self._configure_for_profiling()
+        elif message.command == str(CommandType.SHUTDOWN):
             await self.stop()
         else:
-            self.warning(f"Unknown pod-local command: {message.command}")
+            self.warning(f"Unknown group-local command: {message.command}")
             return
         await self.pod_lifecycle_dealer_client.send(
-            PodPeerCommandAck(cid=message.cid, service_id=self.service_id)
+            GroupPeerCommandAck(cid=message.cid, service_id=self.service_id)
         )
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(self, msg: DatasetConfiguredNotification) -> None:
         """Initialize dataset client when configuration is received.
 
-        Uses factory pattern to dynamically create the appropriate client.
-        The factory auto-extracts client_type from client_metadata, leveraging
-        the discriminated union pattern for type-safe routing. This allows new
-        storage backends (S3, Redis, etc.) to work without modifying Worker code.
-
-        In Kubernetes mode, initialization is deferred until WorkerPodManager
-        downloads the dataset and sends PodDatasetReady with local file paths.
+        Local-mode workers initialize directly from the dataset broadcast.
+        Group-managed workers rely on group-local dataset readiness and should not
+        subscribe to or consume this global broadcast during startup.
         """
         if not self._matches_current_benchmark(msg.client_metadata):
             self.warning(
@@ -374,17 +387,17 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self.debug("Dataset already initialized, ignoring rebroadcast")
             return
 
-        # In Kubernetes mode, WorkerPodManager owns the current pod-local dataset state.
-        if self._is_kubernetes_mode():
-            self._pending_dataset_config = msg
-            await self._complete_k8s_startup_flow()
+        if self._is_group_managed_mode():
+            self.debug(
+                "Ignoring global dataset configuration in group-managed mode; "
+                "waiting for group-local dataset readiness"
+            )
             return
 
-        # Local mode: initialize immediately with provided client_metadata
         await self._initialize_dataset_client(msg.client_metadata, msg.metadata)
 
-    async def _on_dataset_ready(self, msg: PodDatasetReady) -> None:
-        """Handle pod-local dataset readiness from WorkerPodManager."""
+    async def _on_dataset_ready(self, msg: GroupDatasetReady) -> None:
+        """Handle group-local dataset readiness from WorkerGroupManager."""
         if not self._matches_current_download(msg):
             self.debug(
                 lambda: (
@@ -395,14 +408,30 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
             return
 
-        if self._dataset_configured_event.is_set() or self._worker_ready_event.is_set():
-            self.debug("Dataset already initialized, ignoring download rebroadcast")
-            return
+        async with self._worker_ready_lock:
+            if (
+                self._dataset_configured_event.is_set()
+                or self._worker_ready_event.is_set()
+            ):
+                self.debug("Dataset already initialized, ignoring download rebroadcast")
+                return
 
-        await self._complete_k8s_startup_flow()
+            if not msg.success:
+                self._ensure_group_dataset_state_retry()
+                return
 
-    async def _query_pod_dataset_state(self) -> PodDatasetStateSnapshot | None:
-        """Fetch the current pod-local dataset state from WorkerPodManager."""
+            await self._initialize_dataset_client(
+                MemoryMapClientMetadata(
+                    data_file_path=Path(msg.data_file_path),
+                    index_file_path=Path(msg.index_file_path),
+                    conversation_count=msg.conversation_count,
+                    total_size_bytes=msg.total_size_bytes,
+                )
+            )
+            await self._mark_worker_ready_locked()
+
+    async def _query_pod_dataset_state(self) -> GroupDatasetStateSnapshot | None:
+        """Fetch the current group-local dataset state from WorkerGroupManager."""
         if self.pod_lifecycle_dealer_client is None or not hasattr(
             self.pod_lifecycle_dealer_client, "request"
         ):
@@ -410,7 +439,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         try:
             response = await self.pod_lifecycle_dealer_client.request(
-                PodDatasetStateQuery(
+                GroupDatasetStateQuery(
                     rid=uuid.uuid4().hex,
                     service_id=self.service_id,
                 ),
@@ -418,70 +447,84 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
         except asyncio.TimeoutError:
             return None
-        if not isinstance(response, PodDatasetStateSnapshot):
+        if not isinstance(response, GroupDatasetStateSnapshot):
             return None
         self._latest_pod_dataset_state = response
         return response
 
-    def _ensure_k8s_dataset_state_retry(self) -> None:
-        """Start a retry loop for pod-local dataset state if one is not already running."""
-        if not self._is_kubernetes_mode() or self._worker_ready_event.is_set():
+    def _ensure_group_dataset_state_retry(self) -> None:
+        """Start a retry loop for group-local dataset state if one is not already running."""
+        if not self._is_group_managed_mode() or self._worker_ready_event.is_set():
             return
         if (
             self._dataset_state_retry_task is None
             or self._dataset_state_retry_task.done()
         ):
             self._dataset_state_retry_task = self.execute_async(
-                self._retry_k8s_dataset_state_until_ready()
+                self._retry_group_dataset_state_until_ready()
             )
 
-    async def _retry_k8s_dataset_state_until_ready(self) -> None:
-        """Poll pod-local dataset state until this worker becomes dispatchable."""
+    async def _retry_group_dataset_state_until_ready(self) -> None:
+        """Poll group-local dataset state until this worker becomes dispatchable."""
         while not self.stop_requested and not self._worker_ready_event.is_set():
-            await self._complete_k8s_startup_flow()
+            await self._complete_group_startup_flow()
             if self._worker_ready_event.is_set():
                 return
             await asyncio.sleep(1.0)
 
-    async def _complete_k8s_startup_flow(
+    async def _complete_group_startup_flow(
         self,
-        snapshot: PodDatasetStateSnapshot | None = None,
+        snapshot: GroupDatasetStateSnapshot | None = None,
     ) -> None:
-        """Make the worker dispatchable once pod-local dataset state is ready."""
-        if not self._is_kubernetes_mode() or self._worker_ready_event.is_set():
+        """Make the worker dispatchable once group-local dataset state is ready."""
+        if not self._is_group_managed_mode() or self._worker_ready_event.is_set():
             return
 
-        if self._dataset_configured_event.is_set():
-            await self.return_dealer_client.send(
-                WorkerDispatchable(worker_id=self.service_id)
-            )
-            await self._publish_startup_state(WorkerStartupState.READY)
-            self._worker_ready_event.set()
-            return
+        async with self._worker_ready_lock:
+            if self._worker_ready_event.is_set():
+                return
 
-        current_snapshot = snapshot or await self._query_pod_dataset_state()
-        if current_snapshot is None or not current_snapshot.ready:
-            self._ensure_k8s_dataset_state_retry()
-            return
+            if self._dataset_configured_event.is_set():
+                await self._mark_worker_ready_locked()
+                return
 
-        await self._initialize_dataset_client(
-            MemoryMapClientMetadata(
-                data_file_path=Path(current_snapshot.data_file_path),
-                index_file_path=Path(current_snapshot.index_file_path),
-                conversation_count=current_snapshot.conversation_count,
-                total_size_bytes=current_snapshot.total_size_bytes,
-            ),
-        )
-        if current_snapshot.default_context_mode is not None:
-            self.session_manager.set_default_context_mode(
-                current_snapshot.default_context_mode
-            )
-        self._pending_dataset_config = None
+            current_snapshot = snapshot or await self._query_pod_dataset_state()
+            if current_snapshot is None or not current_snapshot.ready:
+                self._ensure_group_dataset_state_retry()
+                return
+
+            if not self._dataset_configured_event.is_set():
+                await self._initialize_dataset_client(
+                    MemoryMapClientMetadata(
+                        data_file_path=Path(current_snapshot.data_file_path),
+                        index_file_path=Path(current_snapshot.index_file_path),
+                        conversation_count=current_snapshot.conversation_count,
+                        total_size_bytes=current_snapshot.total_size_bytes,
+                    ),
+                )
+            if current_snapshot.default_context_mode is not None:
+                self.session_manager.set_default_context_mode(
+                    current_snapshot.default_context_mode
+                )
+            await self._mark_worker_ready_locked()
+
+    async def _mark_worker_ready(self) -> None:
+        """Send the ready transition exactly once."""
+        async with self._worker_ready_lock:
+            await self._mark_worker_ready_locked()
+
+    async def _mark_worker_ready_locked(self) -> None:
+        """Send the ready transition exactly once while holding the ready lock."""
+        if self._worker_ready_event.is_set():
+            return
         await self.return_dealer_client.send(
             WorkerDispatchable(worker_id=self.service_id)
         )
         await self._publish_startup_state(WorkerStartupState.READY)
         self._worker_ready_event.set()
+        retry_task = self._dataset_state_retry_task
+        if retry_task is not None and retry_task is not asyncio.current_task():
+            retry_task.cancel()
 
     def _matches_current_benchmark(
         self, client_metadata: DatasetClientMetadata
@@ -493,8 +536,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             client_metadata.data_file_path
         )
 
-    def _matches_current_download(self, msg: PodDatasetReady) -> bool:
-        """Check whether a pod-local dataset-ready notification belongs to this worker's pod."""
+    def _matches_current_download(self, msg: GroupDatasetReady) -> bool:
+        """Check whether a group-local dataset-ready notification belongs to this worker's pod."""
         benchmark_id = self.run.cfg.artifacts.benchmark_id
         if benchmark_id not in msg.data_file_path:
             return False
@@ -541,7 +584,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 )
             if self.pod_lifecycle_dealer_client is not None:
                 await self.pod_lifecycle_dealer_client.send(
-                    PodPeerShutdown(
+                    GroupPeerShutdown(
                         service_id=self.service_id,
                         service_type=str(self.service_type),
                     )
@@ -566,7 +609,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     async def _health_check_task(self) -> None:
         """Task to report the health of the worker to the worker manager."""
         health = await asyncio.to_thread(self.get_process_health)
-        if self._is_kubernetes_mode() and self.pod_lifecycle_dealer_client is not None:
+        if (
+            self._is_group_managed_mode()
+            and self.pod_lifecycle_dealer_client is not None
+        ):
             await self.pod_lifecycle_dealer_client.send(
                 self.create_pod_worker_health(health)
             )
@@ -580,8 +626,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             task_stats=self.task_stats,
         )
 
-    def create_pod_worker_health(self, health: ProcessHealth) -> PodWorkerHealth:
-        """Build the pod-local msgspec health snapshot."""
+    def create_pod_worker_health(self, health: ProcessHealth) -> GroupWorkerHealth:
+        """Build the group-local msgspec health snapshot."""
         io_counters = (
             tuple(health.io_counters) if health.io_counters is not None else None
         )
@@ -591,7 +637,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             if health.num_ctx_switches is not None
             else None
         )
-        return PodWorkerHealth(
+        return GroupWorkerHealth(
             service_id=self.service_id,
             pid=health.pid,
             create_time=health.create_time,
@@ -613,9 +659,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         if self._startup_state == state:
             return
         self._startup_state = state
-        if self._is_kubernetes_mode() and self.pod_lifecycle_dealer_client is not None:
+        if (
+            self._is_group_managed_mode()
+            and self.pod_lifecycle_dealer_client is not None
+        ):
             await self.pod_lifecycle_dealer_client.send(
-                PodWorkerStartupState(
+                GroupWorkerStartupState(
                     service_id=self.service_id,
                     startup_state=str(state),
                     request_ns=time.time_ns(),

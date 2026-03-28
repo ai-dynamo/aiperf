@@ -94,21 +94,22 @@ class User:
 
     Each user needs independent timing - their next turn is scheduled based on
     THEIR last send time, not a global clock.
-
-    Attributes:
-        user_id: Unique identifier for this user.
-        sampled: The conversation session (prompts/responses) for this user.
-        next_send_time: When this user should send their next request (perf_counter).
-        max_turns: How many turns this user can send. Virtual history users have
-            reduced max_turns (they've "already completed" some before t=0).
-        order: Position in the initial stagger sequence (0 = fires first).
     """
 
     user_id: int
+    """Unique identifier for this user."""
+
     sampled: SampledSession
+    """Conversation session (prompts/responses) for this user."""
+
     next_send_time: float = 0.0
+    """When this user should send their next request (perf_counter seconds)."""
+
     max_turns: int = 0
+    """Number of turns this user can send; reduced for virtual-history users."""
+
     order: int = 0
+    """Position in the initial stagger sequence (0 = fires first)."""
 
     @property
     def x_correlation_id(self) -> str:

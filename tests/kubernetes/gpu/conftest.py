@@ -61,56 +61,122 @@ _SETTINGS_KEY = pytest.StashKey["GPUTestSettings"]()
 class GPUTestSettings:
     """Resolved GPU test configuration (CLI > env > default)."""
 
-    # Cluster
     context: str | None = None
+    """External cluster kubectl context, or None for local cluster."""
+
     kubeconfig: str | None = None
+    """Path to kubeconfig file, or None for default."""
+
     cluster: str = "aiperf-gpu"
+    """Local cluster name."""
+
     runtime: str = "kind"
+    """Cluster runtime backend (kind or minikube)."""
+
     quick: bool = False
+    """Shorthand for reuse + skip build/cleanup/preflight."""
+
     reuse_cluster: bool = False
+    """Reuse an existing cluster instead of creating a new one."""
+
     skip_build: bool = False
+    """Skip building the aiperf Docker image."""
+
     skip_cleanup: bool = False
+    """Keep resources and cluster after tests."""
+
     skip_preflight: bool = False
+    """Skip preflight prerequisite checks."""
+
     stream_logs: bool = False
+    """Stream pod logs in real time during deploys."""
 
-    # vLLM
     vllm_image: str = "vllm/vllm-openai:latest"
+    """vLLM container image."""
+
     model: str = "Qwen/Qwen3-0.6B"
+    """Model name to benchmark."""
+
     count: int = 1
+    """Number of GPUs per inference server instance."""
+
     max_model_len: int = 4096
+    """Maximum model context length."""
+
     mem_util: float = 0.5
+    """GPU memory utilization target (0.0-1.0)."""
+
     vllm_endpoint: str | None = None
+    """Pre-existing vLLM endpoint URL, or None to deploy."""
+
     aiperf_image: str = "aiperf:latest"
+    """AIPerf container image."""
+
     benchmark_timeout: int = 600
+    """Benchmark completion timeout in seconds."""
+
     vllm_deploy_timeout: int = 600
+    """vLLM deployment readiness timeout in seconds."""
 
-    # K8s scheduling
     tolerations: list[dict[str, str]] = field(default_factory=list)
+    """Kubernetes pod tolerations for GPU nodes."""
+
     node_selector: dict[str, str] = field(default_factory=dict)
+    """Kubernetes node selector for GPU nodes."""
+
     hf_token_secret: str | None = None
+    """Kubernetes secret name containing HuggingFace token."""
+
     image_pull_secret: str | None = None
+    """Image pull secret name for private registries."""
+
     runtime_class: str = "nvidia"
+    """Kubernetes RuntimeClass for GPU pods."""
 
-    # TRT-LLM
     trtllm_image: str = "nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc7"
+    """TRT-LLM container image."""
+
     trtllm_endpoint: str | None = None
+    """Pre-existing TRT-LLM endpoint URL, or None to deploy."""
+
     trtllm_deploy_timeout: int = 900
+    """TRT-LLM deployment readiness timeout in seconds."""
 
-    # SGLang
     sglang_image: str = "lmsysorg/sglang:latest"
-    sglang_endpoint: str | None = None
-    sglang_deploy_timeout: int = 600
+    """SGLang container image."""
 
-    # Dynamo
+    sglang_endpoint: str | None = None
+    """Pre-existing SGLang endpoint URL, or None to deploy."""
+
+    sglang_deploy_timeout: int = 600
+    """SGLang deployment readiness timeout in seconds."""
+
     dynamo_image: str | None = None
+    """Dynamo runtime image, or None for backend-specific default."""
+
     dynamo_backend: str = "vllm"
+    """Dynamo inference backend (vllm, trtllm, sglang)."""
+
     dynamo_mode: str = "disagg-1gpu"
+    """Dynamo deployment mode (agg, disagg, disagg-1gpu)."""
+
     dynamo_connectors: str | None = None
+    """Comma-separated connectors for Dynamo prefill workers."""
+
     dynamo_kvbm_cpu_cache_gb: int | None = None
+    """KVBM CPU cache size in GB for prefill workers."""
+
     dynamo_endpoint: str | None = None
+    """Pre-existing Dynamo endpoint URL, or None to deploy."""
+
     dynamo_deploy_timeout: int = 600
+    """Dynamo deployment readiness timeout in seconds."""
+
     dynamo_version: str = DYNAMO_VERSION
+    """Dynamo operator Helm chart version."""
+
     local_keygen: bool = False
+    """Create MPI SSH secret locally instead of via Helm hook."""
 
     @property
     def use_external_cluster(self) -> bool:

@@ -45,14 +45,31 @@ class EstimatedPercentiles:
     """
 
     p1_estimate: float | None = None
+    """Estimated 1st percentile value."""
+
     p5_estimate: float | None = None
+    """Estimated 5th percentile value."""
+
     p10_estimate: float | None = None
+    """Estimated 10th percentile value."""
+
     p25_estimate: float | None = None
+    """Estimated 25th percentile value."""
+
     p50_estimate: float | None = None
+    """Estimated 50th percentile (median) value."""
+
     p75_estimate: float | None = None
+    """Estimated 75th percentile value."""
+
     p90_estimate: float | None = None
+    """Estimated 90th percentile value."""
+
     p95_estimate: float | None = None
+    """Estimated 95th percentile value."""
+
     p99_estimate: float | None = None
+    """Estimated 99th percentile value."""
 
 
 # =============================================================================
@@ -244,23 +261,25 @@ class BucketStatistics:
     - F3 two-point mass when 4σ spread is < 1% of bucket width
     - Blended distribution for tight variance (< 20% spread) near bucket center (< 30% offset)
     - Variance-aware distribution for wider spreads or off-center means
-
-    Args:
-        bucket_le: Bucket upper bound (le value)
-        observation_count: Total observations used to learn this bucket's mean
-        weighted_mean_sum: Sum of (mean * count) for weighted average calculation
-        sample_count: Number of single-bucket intervals observed
-        observed_means: List of individual mean values from each single-bucket interval
     """
 
     bucket_le: str
-    observation_count: int = 0
-    weighted_mean_sum: float = 0.0
-    sample_count: int = 0
-    observed_means: list[float] = field(default_factory=list)
+    """Bucket upper bound (le value)."""
 
-    # Minimum observations required to trust variance estimate
+    observation_count: int = 0
+    """Total observations used to learn this bucket's mean."""
+
+    weighted_mean_sum: float = 0.0
+    """Sum of (mean * count) for weighted average calculation."""
+
+    sample_count: int = 0
+    """Number of single-bucket intervals observed."""
+
+    observed_means: list[float] = field(default_factory=list)
+    """Individual mean values from each single-bucket interval."""
+
     MIN_VARIANCE_OBSERVATIONS: int = 3
+    """Minimum observations required to trust variance estimate."""
 
     @property
     def estimated_mean(self) -> float | None:

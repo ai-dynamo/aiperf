@@ -109,12 +109,25 @@ class OperatorPreflightChecker:
     """
 
     api: kr8s.Api
+    """Kubernetes API client for cluster queries."""
+
     namespace: str
+    """Target namespace for the AIPerfJob deployment."""
+
     deployment: KubernetesDeployment
+    """Fully resolved Kubernetes deployment specification."""
+
     deploy_config: DeploymentConfig
+    """Deployment configuration from the CRD spec."""
+
     config: AIPerfConfig
+    """Benchmark configuration from the CRD spec."""
+
     total_workers: int
+    """Total number of worker processes across all pods."""
+
     num_pods: int
+    """Number of worker pods to deploy."""
 
     def _resource_mode_skip(self, check_name: str) -> CheckResult | None:
         """Skip resource-based checks when pod resources are intentionally omitted."""

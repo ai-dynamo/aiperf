@@ -70,19 +70,46 @@ class K8sTestSettings:
     """Resolved K8s test configuration (CLI > env > default)."""
 
     cluster: str = "aiperf-pytest"
+    """Cluster name for identification and context."""
+
     runtime: str = "kind"
+    """Cluster runtime backend (kind or minikube)."""
+
     quick: bool = False
+    """Shorthand for reuse + skip build/load/cleanup/preflight."""
+
     skip_build: bool = False
+    """Skip building Docker images."""
+
     skip_load: bool = False
+    """Skip loading images into the cluster."""
+
     skip_cleanup: bool = False
+    """Keep cluster and resources after tests."""
+
     reuse_cluster: bool = False
+    """Reuse an existing cluster instead of creating a new one."""
+
     skip_preflight: bool = False
+    """Skip preflight prerequisite checks."""
+
     stream_logs: bool = False
+    """Stream pod logs in real time during deploys."""
+
     aiperf_image: str = "aiperf:local"
+    """AIPerf container image name."""
+
     mock_server_image: str = "aiperf-mock-server:latest"
+    """Mock server container image name."""
+
     jobset_version: str = JOBSET_VERSION
+    """JobSet controller version to install."""
+
     kueue_version: str = KUEUE_VERSION
+    """Kueue controller version to install."""
+
     benchmark_timeout: int = 600
+    """Benchmark completion timeout in seconds."""
 
     @property
     def cluster_runtime(self) -> ClusterRuntime:

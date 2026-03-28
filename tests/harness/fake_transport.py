@@ -80,12 +80,25 @@ class HandlerInput:
     """Common inputs for all request handlers."""
 
     start_perf_ns: int
+    """Performance counter timestamp at request start."""
+
     ctx: RequestCtx
+    """Mock server request context with token and latency info."""
+
     endpoint_path: str
+    """API endpoint path for this request."""
+
     req: BaseModel
+    """Parsed request model."""
+
     stream_fn: StreamFn | None = None
+    """Streaming generator function for SSE responses."""
+
     build_response: BuildResponseFn | None = None
+    """Function to build a non-streaming JSON response."""
+
     first_token_callback: FirstTokenCallback | None = None
+    """Callback invoked when the first token is produced."""
 
 
 HandlerFn: TypeAlias = Callable[[HandlerInput], Awaitable[RequestRecord]]

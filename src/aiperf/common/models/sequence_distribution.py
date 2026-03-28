@@ -73,10 +73,19 @@ class SequenceLengthPair:
     """Immutable representation of an ISL/OSL pair with probability weight and optional stddevs."""
 
     input_seq_len: int
+    """Mean input sequence length (must be positive)."""
+
     output_seq_len: int
+    """Mean output sequence length (must be positive)."""
+
     probability: float
+    """Selection probability as a percentage in [0, 100]."""
+
     input_seq_len_stddev: float = 0.0
+    """Standard deviation for input sequence length sampling (0 = fixed)."""
+
     output_seq_len_stddev: float = 0.0
+    """Standard deviation for output sequence length sampling (0 = fixed)."""
 
     def __post_init__(self) -> None:
         """Validate sequence lengths, standard deviations, and probability on construction."""

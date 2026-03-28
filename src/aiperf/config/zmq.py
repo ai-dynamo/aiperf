@@ -100,8 +100,8 @@ class BaseZMQCommunicationConfig(BaseModel, ABC):
 
     @property
     @abstractmethod
-    def pod_lifecycle_address(self) -> str:
-        """Get the pod-local lifecycle channel address for WorkerPodManager coordination."""
+    def group_lifecycle_address(self) -> str:
+        """Get the group-local lifecycle channel address for WorkerGroupManager coordination."""
 
     def get_address(self, address_type: CommAddress) -> str:
         """Get the actual address based on the address type."""
@@ -129,8 +129,8 @@ class BaseZMQCommunicationConfig(BaseModel, ABC):
                 return self.records_push_pull_address
             case CommAddress.CONTROL:
                 return self.control_address
-            case CommAddress.POD_LIFECYCLE:
-                return self.pod_lifecycle_address
+            case CommAddress.GROUP_LIFECYCLE:
+                return self.group_lifecycle_address
             case _:
                 raise ValueError(f"Invalid address type: {address_type}")
 
@@ -310,8 +310,8 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
         return f"tcp://{self.host}:{self.control_port}"
 
     @property
-    def pod_lifecycle_address(self) -> str:
-        """Get the pod-local lifecycle channel address."""
+    def group_lifecycle_address(self) -> str:
+        """Get the group-local lifecycle channel address."""
         return f"tcp://{self.host}:{self.control_port + 1}"
 
 
@@ -392,11 +392,11 @@ class ZMQIPCConfig(BaseZMQCommunicationConfig):
         return f"ipc://{self.path / 'control.ipc'}"
 
     @property
-    def pod_lifecycle_address(self) -> str:
-        """Get the pod-local lifecycle channel address."""
+    def group_lifecycle_address(self) -> str:
+        """Get the group-local lifecycle channel address."""
         if not self.path:
             raise ValueError("Path is required for IPC transport")
-        return f"ipc://{self.path / 'pod_lifecycle.ipc'}"
+        return f"ipc://{self.path / 'group_lifecycle.ipc'}"
 
 
 class ZMQDualBindProxyConfig(BaseZMQProxyConfig):
@@ -621,13 +621,13 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
         return self._ipc_addr("control")
 
     @property
-    def pod_lifecycle_address(self) -> str:
-        """Get the pod-local lifecycle channel address.
+    def group_lifecycle_address(self) -> str:
+        """Get the group-local lifecycle channel address.
 
-        This channel is always local to a single worker pod, so it stays on IPC
+        This channel stays local to a single worker group, so it remains on IPC
         even when controller-facing traffic uses TCP.
         """
-        return self._ipc_addr("pod_lifecycle")
+        return self._ipc_addr("group_lifecycle")
 
     @property
     def control_tcp_bind_address(self) -> str:

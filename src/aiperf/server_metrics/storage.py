@@ -860,17 +860,16 @@ class ServerMetricEntry:
     - Type-appropriate statistics computation without external type info
     - Description propagation through the processing pipeline
     - Polymorphic storage (ScalarTimeSeries or HistogramTimeSeries based on type)
-
-    Args:
-        metric_type: Prometheus metric type (GAUGE, COUNTER, or HISTOGRAM)
-        description: Human-readable description from Prometheus HELP text
-        data: Type-appropriate time series storage (ScalarTimeSeries for
-              gauge/counter, HistogramTimeSeries for histogram)
     """
 
     metric_type: PrometheusMetricType
+    """Prometheus metric type (GAUGE, COUNTER, or HISTOGRAM)."""
+
     description: str
+    """Human-readable description from Prometheus HELP text."""
+
     data: ScalarTimeSeries | HistogramTimeSeries
+    """Type-appropriate time series storage."""
 
     @classmethod
     def from_metric_family(cls, metric_family: MetricFamily) -> Self:

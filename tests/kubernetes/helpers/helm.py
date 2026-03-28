@@ -30,29 +30,47 @@ logger = AIPerfLogger(__name__)
 class HelmValues:
     """Helm values configuration for aiperf-operator chart."""
 
-    # Image configuration
     image_repository: str = "aiperf"
+    """Container image repository for the operator."""
+
     image_tag: str = "local"
+    """Container image tag for the operator."""
+
     image_pull_policy: str = "Never"
+    """Image pull policy for the operator pod."""
 
-    # Operator configuration
     operator_replicas: int = 1
+    """Number of operator replicas."""
+
     monitor_interval: str = "10.0"
+    """Operator monitor polling interval in seconds."""
+
     monitor_initial_delay: str = "5.0"
+    """Delay before first monitor poll in seconds."""
 
-    # Storage configuration
     storage_enabled: bool = False
+    """Whether to enable persistent storage for results."""
+
     storage_size: str = "1Gi"
+    """PVC size when storage is enabled."""
 
-    # Default benchmark job settings
     default_image: str = "aiperf:local"
-    default_image_pull_policy: str = "Never"
+    """Default benchmark job container image."""
 
-    # Resource requests/limits for the operator pod (kopf controller process)
+    default_image_pull_policy: str = "Never"
+    """Default image pull policy for benchmark jobs."""
+
     resources_requests_cpu: str = "250m"
+    """CPU request for the operator pod."""
+
     resources_requests_memory: str = "256Mi"
+    """Memory request for the operator pod."""
+
     resources_limits_cpu: str = "500m"
+    """CPU limit for the operator pod."""
+
     resources_limits_memory: str = "512Mi"
+    """Memory limit for the operator pod."""
 
     def to_set_args(self) -> list[str]:
         """Convert to helm --set arguments."""
@@ -80,11 +98,22 @@ class HelmRelease:
     """Information about a Helm release."""
 
     name: str
+    """Release name."""
+
     namespace: str
+    """Namespace the release is deployed in."""
+
     chart_path: Path
+    """Path to the Helm chart directory."""
+
     values: HelmValues
+    """Helm values used for this release."""
+
     status: str = "unknown"
+    """Current release status."""
+
     revision: int = 0
+    """Release revision number."""
 
 
 class HelmClient:

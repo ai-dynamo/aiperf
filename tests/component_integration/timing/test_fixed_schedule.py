@@ -54,14 +54,31 @@ class FixedScheduleTestConfig:
     """Configuration for a fixed schedule test scenario."""
 
     num_sessions: int
+    """Number of sessions in the trace."""
+
     turns_per_session: int = 1
-    schedule_duration_ms: int = 400  # Total schedule duration in ms (keep fast!)
-    delay_ms: int = 5  # Delay between turns (for multi-turn)
+    """Number of turns per session."""
+
+    schedule_duration_ms: int = 400
+    """Total schedule duration in milliseconds."""
+
+    delay_ms: int = 5
+    """Delay between turns in milliseconds (for multi-turn)."""
+
     workers_max: int = 3
+    """Maximum number of worker processes."""
+
     concurrency: int | None = None
+    """Maximum total concurrent requests, or None for unlimited."""
+
     prefill_concurrency: int | None = None
+    """Maximum concurrent prefill requests, or None for unlimited."""
+
     osl: int = 50
+    """Output sequence length in tokens."""
+
     timeout: float = 60.0
+    """Test timeout in seconds."""
 
     @property
     def expected_requests(self) -> int:

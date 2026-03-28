@@ -1025,7 +1025,7 @@ Run an individual AIPerf service in a single process
 #### `--type` `<str>` _(Required)_
 
 Service type to run.
-<br/>_Choices: [`api`, `dataset_manager`, `gpu_telemetry_manager`, `record_processor`, `records_manager`, `server_metrics_manager`, `system_controller`, `timing_manager`, `worker`, `worker_manager`, `worker_pod_manager`]_
+<br/>_Choices: [`api`, `dataset_manager`, `gpu_telemetry_manager`, `record_processor`, `records_manager`, `server_metrics_manager`, `system_controller`, `timing_manager`, `worker`, `worker_manager`, `worker_group_manager`]_
 
 #### `--benchmark-run` `<str>`
 

@@ -39,10 +39,19 @@ class MemorySnapshot:
     """A snapshot of memory state at a point in time."""
 
     label: str
+    """Identifier for this snapshot (e.g. 'baseline', 'after_work')."""
+
     current_bytes: int
+    """Current traced memory usage in bytes."""
+
     peak_bytes: int
+    """Peak traced memory usage in bytes since profiling started."""
+
     traced_bytes: int
+    """Total bytes across the top allocator statistics."""
+
     top_stats: list[tracemalloc.Statistic] = field(default_factory=list)
+    """Top memory allocation statistics sorted by size."""
 
     @property
     def current_mib(self) -> float:

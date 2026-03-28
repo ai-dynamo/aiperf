@@ -383,7 +383,7 @@ class TestJobSetSpec:
     ) -> None:
         """Test worker pod has expected containers.
 
-        Worker pods keep a worker-pod-manager for shared infrastructure, while
+        Worker pods keep a worker-group-manager for shared infrastructure, while
         workers and record processors each run in their own container.
         """
         manifest = basic_jobset_spec.to_k8s_manifest()
@@ -392,11 +392,45 @@ class TestJobSetSpec:
         )
         containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
         container_names = [c["name"] for c in containers]
-        assert "worker-pod-manager" in container_names
+        assert "worker-group-manager" in container_names
         assert "worker-0" in container_names
         assert "worker-1" in container_names
         assert "record-processor-0" in container_names
         assert len(containers) == 4
+
+    def test_worker_group_manager_container_uses_new_service_type(self) -> None:
+        """Worker JobSet wiring should use the group-manager service naming."""
+        spec = JobSetSpec(
+            name="aiperf-test",
+            namespace="default",
+            job_id="test-123",
+            image="aiperf:latest",
+            worker_replicas=1,
+            workers_per_pod=1,
+            record_processors_per_pod=1,
+        )
+
+        manifest = spec.to_k8s_manifest()
+        worker_job = next(
+            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "workers"
+        )
+        manager_container = next(
+            container
+            for container in worker_job["template"]["spec"]["template"]["spec"][
+                "containers"
+            ]
+            if container["name"] == "worker-group-manager"
+        )
+
+        assert manager_container["args"] == [
+            "service",
+            "--type",
+            "worker_group_manager",
+            "--benchmark-run",
+            "/config/run_config.json",
+            "--health-port",
+            str(K8sEnvironment.PORTS.WORKER_HEALTH),
+        ]
 
     def test_to_k8s_manifest_containers_have_image(
         self, basic_jobset_spec: JobSetSpec

@@ -54,6 +54,14 @@ class MessageBusClientMixin(CommunicationMixin, ABC):
         subscription_map: MessageCallbackMapT = {}
 
         def _add_to_subscription_map(hook: Hook, message_type: MessageTypeT) -> None:
+            if not self._should_subscribe_to_message_type(hook, message_type):
+                self.debug(
+                    lambda: (
+                        f"Skipping subscription for message type: '{message_type}' "
+                        f"for hook: {hook}"
+                    )
+                )
+                return
             self.debug(
                 lambda: f"Adding subscription for message type: '{message_type}' for hook: {hook}"
             )
@@ -80,8 +88,23 @@ class MessageBusClientMixin(CommunicationMixin, ABC):
         Delegates to _run_connection_probes which subclasses can override
         to prepend additional phases (e.g. DEALER/ROUTER control channel).
         """
+        if not self._uses_global_message_bus_probe():
+            self.debug(
+                lambda: f"Skipping global connection probe for group-managed service {self.id}"
+            )
+            return
         self.debug(lambda: f"Waiting for connection probe message for {self.id}")
         await self._run_connection_probes()
+
+    def _uses_global_message_bus_probe(self) -> bool:
+        """Return whether startup should wait for the global PUB/SUB probe."""
+        return True
+
+    def _should_subscribe_to_message_type(
+        self, hook: Hook, message_type: MessageTypeT
+    ) -> bool:
+        """Return whether startup should subscribe to a message-bus topic."""
+        return True
 
     async def _run_connection_probes(self) -> None:
         """PUB/SUB self-echo probe that mitigates ZMQ's "slow joiner" problem.

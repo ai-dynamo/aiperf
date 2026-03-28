@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for WorkerPodManager service.
+"""Unit tests for WorkerGroupManager service.
 
-WorkerPodManager runs in worker pods and coordinates shared pod infrastructure
+WorkerGroupManager runs in worker pods and coordinates shared pod infrastructure
 while worker and record-processor services run as sibling containers.
 """
 
@@ -36,17 +36,17 @@ from aiperf.common.models import (
     WorkerTaskStats,
 )
 from aiperf.common.pod_lifecycle_structs import (
-    PodDatasetStateQuery,
-    PodDatasetStateSnapshot,
-    PodPeerHello,
-    PodPeerShutdown,
-    PodWorkerHealth,
-    PodWorkerStartupState,
+    GroupDatasetStateQuery,
+    GroupDatasetStateSnapshot,
+    GroupPeerHello,
+    GroupPeerShutdown,
+    GroupWorkerHealth,
+    GroupWorkerStartupState,
 )
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.controller.proxy_manager import ProxyManager
 from aiperf.plugin.enums import DatasetSamplingStrategy, ServiceType
-from aiperf.workers.worker_pod_manager import WorkerPodManager
+from aiperf.workers.worker_group_manager import WorkerGroupManager
 
 # =============================================================================
 # Helpers
@@ -111,15 +111,15 @@ def run_with_workers() -> BenchmarkRun:
 
 
 @pytest.fixture
-def worker_pod_manager(run: BenchmarkRun) -> WorkerPodManager:
-    """Create a WorkerPodManager instance for testing."""
+def worker_group_manager(run: BenchmarkRun) -> WorkerGroupManager:
+    """Create a WorkerGroupManager instance for testing."""
     with (
-        patch.object(WorkerPodManager, "debug"),
-        patch.object(WorkerPodManager, "info"),
-        patch.object(WorkerPodManager, "warning"),
-        patch.object(WorkerPodManager, "error"),
+        patch.object(WorkerGroupManager, "debug"),
+        patch.object(WorkerGroupManager, "info"),
+        patch.object(WorkerGroupManager, "warning"),
+        patch.object(WorkerGroupManager, "error"),
     ):
-        manager = WorkerPodManager(
+        manager = WorkerGroupManager(
             run=run,
             service_id="test-pod-manager",
         )
@@ -128,15 +128,15 @@ def worker_pod_manager(run: BenchmarkRun) -> WorkerPodManager:
 
 
 @pytest.fixture
-def worker_pod_manager_custom(run_with_workers: BenchmarkRun) -> WorkerPodManager:
-    """Create a WorkerPodManager with custom worker configuration."""
+def worker_group_manager_custom(run_with_workers: BenchmarkRun) -> WorkerGroupManager:
+    """Create a WorkerGroupManager with custom worker configuration."""
     with (
-        patch.object(WorkerPodManager, "debug"),
-        patch.object(WorkerPodManager, "info"),
-        patch.object(WorkerPodManager, "warning"),
-        patch.object(WorkerPodManager, "error"),
+        patch.object(WorkerGroupManager, "debug"),
+        patch.object(WorkerGroupManager, "info"),
+        patch.object(WorkerGroupManager, "warning"),
+        patch.object(WorkerGroupManager, "error"),
     ):
-        manager = WorkerPodManager(
+        manager = WorkerGroupManager(
             run=run_with_workers,
             service_id="test-pod-manager",
         )
@@ -175,27 +175,27 @@ def shutdown_command() -> Command:
 # =============================================================================
 
 
-class TestWorkerPodManagerInit:
-    """Tests for WorkerPodManager initialization."""
+class TestWorkerGroupManagerInit:
+    """Tests for WorkerGroupManager initialization."""
 
     def test_default_workers_per_pod(
-        self, worker_pod_manager: WorkerPodManager
+        self, worker_group_manager: WorkerGroupManager
     ) -> None:
         """Test default workers_per_pod uses environment setting."""
         expected = Environment.WORKER.DEFAULT_WORKERS_PER_POD
-        assert worker_pod_manager.workers_per_pod == expected
+        assert worker_group_manager.workers_per_pod == expected
 
     def test_custom_workers_per_pod(
-        self, worker_pod_manager_custom: WorkerPodManager
+        self, worker_group_manager_custom: WorkerGroupManager
     ) -> None:
         """Test custom workers_per_pod from config."""
-        assert worker_pod_manager_custom.workers_per_pod == 8
+        assert worker_group_manager_custom.workers_per_pod == 8
 
     def test_custom_record_processors_per_pod(
-        self, worker_pod_manager_custom: WorkerPodManager
+        self, worker_group_manager_custom: WorkerGroupManager
     ) -> None:
         """Test custom record_processors_per_pod from config."""
-        assert worker_pod_manager_custom.record_processors_per_pod == 2
+        assert worker_group_manager_custom.record_processors_per_pod == 2
 
     @pytest.mark.parametrize(
         ("workers", "expected_rps"),
@@ -215,30 +215,39 @@ class TestWorkerPodManagerInit:
         test_run = _make_run(workers_per_pod=workers)
 
         with (
-            patch.object(WorkerPodManager, "debug"),
-            patch.object(WorkerPodManager, "info"),
+            patch.object(WorkerGroupManager, "debug"),
+            patch.object(WorkerGroupManager, "info"),
         ):
-            manager = WorkerPodManager(
+            manager = WorkerGroupManager(
                 run=test_run,
                 service_id="test",
             )
 
         assert manager.record_processors_per_pod == expected_rps
 
-    def test_initial_state(self, worker_pod_manager: WorkerPodManager) -> None:
+    def test_initial_state(self, worker_group_manager: WorkerGroupManager) -> None:
         """Test initial state is correct."""
-        assert worker_pod_manager._dataset_downloaded is False
-        assert worker_pod_manager.worker_health == {}
+        assert worker_group_manager._dataset_downloaded is False
+        assert worker_group_manager.worker_health == {}
 
-    def test_proxy_manager_created(self, worker_pod_manager: WorkerPodManager) -> None:
+    def test_service_type_uses_worker_group_manager_name(
+        self, worker_group_manager: WorkerGroupManager
+    ) -> None:
+        """Kubernetes wiring should expose the group-manager service type."""
+        assert worker_group_manager.service_type == "worker_group_manager"
+        assert worker_group_manager._make_registration().stype == "worker_group_manager"
+
+    def test_proxy_manager_created(
+        self, worker_group_manager: WorkerGroupManager
+    ) -> None:
         """Test ProxyManager is created during init."""
-        assert isinstance(worker_pod_manager._proxy_manager, ProxyManager)
+        assert isinstance(worker_group_manager._proxy_manager, ProxyManager)
 
     def test_proxy_manager_enables_only_raw_inference(
-        self, worker_pod_manager: WorkerPodManager
+        self, worker_group_manager: WorkerGroupManager
     ) -> None:
         """Test ProxyManager only enables the raw inference proxy."""
-        pm = worker_pod_manager._proxy_manager
+        pm = worker_group_manager._proxy_manager
         assert pm._enable_raw_inference is True
         assert pm._enable_event_bus is False
         assert pm._enable_dataset_manager is False
@@ -250,14 +259,14 @@ class TestWorkerPodManagerInit:
 
 
 class TestStartup:
-    """Tests for WorkerPodManager startup behavior."""
+    """Tests for WorkerGroupManager startup behavior."""
 
     @pytest.mark.asyncio
     async def test_start_prefetches_tokenizers_in_background(
-        self, worker_pod_manager_custom: WorkerPodManager
+        self, worker_group_manager_custom: WorkerGroupManager
     ) -> None:
         """Startup should kick off tokenizer prefetch without blocking registration."""
-        manager = worker_pod_manager_custom
+        manager = worker_group_manager_custom
         started = asyncio.Event()
         release = asyncio.Event()
 
@@ -267,7 +276,7 @@ class TestStartup:
 
         manager._prefetch_tokenizers = AsyncMock(side_effect=slow_prefetch)
 
-        await manager._start_worker_pod_manager()
+        await manager._start_worker_group_manager()
         await asyncio.sleep(0)
 
         assert started.is_set()
@@ -299,11 +308,11 @@ class TestDatasetHandling:
     @pytest.mark.asyncio
     async def test_dataset_notification_triggers_download(
         self,
-        worker_pod_manager: WorkerPodManager,
+        worker_group_manager: WorkerGroupManager,
         dataset_notification: DatasetConfiguredNotification,
     ) -> None:
         """Test dataset configured notification triggers download."""
-        manager = worker_pod_manager
+        manager = worker_group_manager
         mock_data_path = self._create_mock_path(1024)
         mock_index_path = self._create_mock_path(256)
         manager._download_dataset = AsyncMock(
@@ -318,11 +327,11 @@ class TestDatasetHandling:
     @pytest.mark.asyncio
     async def test_dataset_downloaded_flag_set(
         self,
-        worker_pod_manager: WorkerPodManager,
+        worker_group_manager: WorkerGroupManager,
         dataset_notification: DatasetConfiguredNotification,
     ) -> None:
         """Test _dataset_downloaded flag is set after notification."""
-        manager = worker_pod_manager
+        manager = worker_group_manager
         mock_data_path = self._create_mock_path(1024)
         mock_index_path = self._create_mock_path(256)
         manager._download_dataset = AsyncMock(
@@ -337,11 +346,11 @@ class TestDatasetHandling:
     @pytest.mark.asyncio
     async def test_success_notification_includes_pod_index(
         self,
-        worker_pod_manager: WorkerPodManager,
+        worker_group_manager: WorkerGroupManager,
         dataset_notification: DatasetConfiguredNotification,
     ) -> None:
         """Successful dataset download notifications should be scoped to the current pod."""
-        manager = worker_pod_manager
+        manager = worker_group_manager
         mock_data_path = self._create_mock_path(1024)
         mock_index_path = self._create_mock_path(256)
         manager._download_dataset = AsyncMock(
@@ -359,11 +368,11 @@ class TestDatasetHandling:
     @pytest.mark.asyncio
     async def test_failure_notification_includes_pod_index(
         self,
-        worker_pod_manager: WorkerPodManager,
+        worker_group_manager: WorkerGroupManager,
         dataset_notification: DatasetConfiguredNotification,
     ) -> None:
         """Failed dataset download notifications should be scoped to the current pod."""
-        manager = worker_pod_manager
+        manager = worker_group_manager
         manager._download_dataset = AsyncMock(side_effect=RuntimeError("boom"))
         manager.publish = AsyncMock()
         manager._notify_registered_workers_of_dataset = AsyncMock()
@@ -378,11 +387,11 @@ class TestDatasetHandling:
     @pytest.mark.asyncio
     async def test_duplicate_dataset_notification_ignored(
         self,
-        worker_pod_manager: WorkerPodManager,
+        worker_group_manager: WorkerGroupManager,
         dataset_notification: DatasetConfiguredNotification,
     ) -> None:
         """Test duplicate dataset notifications are ignored."""
-        manager = worker_pod_manager
+        manager = worker_group_manager
         mock_data_path = self._create_mock_path(1024)
         mock_index_path = self._create_mock_path(256)
         manager._download_dataset = AsyncMock(
@@ -402,10 +411,10 @@ class TestDatasetHandling:
     @pytest.mark.asyncio
     async def test_dataset_state_query_returns_current_snapshot(
         self,
-        worker_pod_manager: WorkerPodManager,
+        worker_group_manager: WorkerGroupManager,
     ) -> None:
         """Workers should be able to query current dataset truth directly."""
-        manager = worker_pod_manager
+        manager = worker_group_manager
         manager._benchmark_generation = "gen-1"
         manager._dataset_generation = "data-1"
         manager._dataset_downloaded = True
@@ -422,22 +431,57 @@ class TestDatasetHandling:
 
         response = await manager._on_pod_lifecycle_message(
             "identity-1",
-            PodDatasetStateQuery(rid="rid-1", service_id="worker-1"),
+            GroupDatasetStateQuery(rid="rid-1", service_id="worker-1"),
         )
 
-        assert isinstance(response, PodDatasetStateSnapshot)
+        assert isinstance(response, GroupDatasetStateSnapshot)
         assert response.ready is True
         assert response.dataset_generation == "data-1"
         assert response.data_file_path == "/tmp/dataset.dat"
 
     @pytest.mark.asyncio
+    async def test_dataset_notification_publishes_group_snapshot_state(
+        self,
+        worker_group_manager: WorkerGroupManager,
+        dataset_notification: DatasetConfiguredNotification,
+    ) -> None:
+        """Dataset notifications should refresh the published group snapshot state."""
+        manager = worker_group_manager
+        mock_data_path = self._create_mock_path(1024)
+        mock_index_path = self._create_mock_path(256)
+        manager._download_dataset = AsyncMock(
+            return_value=(mock_data_path, mock_index_path)
+        )
+        manager._notify_registered_workers_of_dataset = AsyncMock()
+        manager.publish = AsyncMock()
+
+        await manager._on_dataset_configured(dataset_notification)
+
+        published_messages = [call.args[0] for call in manager.publish.await_args_list]
+        pod_summary = published_messages[-1]
+        assert isinstance(pod_summary, WorkerPodStateMessage)
+        assert pod_summary.service_id == manager.service_id
+        assert pod_summary.benchmark_generation == "gen-1"
+        assert pod_summary.dataset_generation == "data-1"
+        assert pod_summary.pod_index == "0"
+        assert pod_summary.declared_workers == manager.workers_per_pod
+        assert (
+            pod_summary.declared_record_processors == manager.record_processors_per_pod
+        )
+
+        snapshot = manager._build_pod_dataset_snapshot("rid-1")
+        assert snapshot.ready is True
+        assert snapshot.benchmark_generation == "gen-1"
+        assert snapshot.dataset_generation == "data-1"
+
+    @pytest.mark.asyncio
     async def test_concurrent_dataset_notifications_do_not_overlap_downloads(
         self,
-        worker_pod_manager: WorkerPodManager,
+        worker_group_manager: WorkerGroupManager,
         dataset_notification: DatasetConfiguredNotification,
     ) -> None:
         """Concurrent rebroadcasts should share one in-flight dataset download."""
-        manager = worker_pod_manager
+        manager = worker_group_manager
         started = asyncio.Event()
         release = asyncio.Event()
         mock_data_path = self._create_mock_path(1024)
@@ -468,10 +512,10 @@ class TestDatasetHandling:
 
     @pytest.mark.asyncio
     async def test_download_dataset_starts_data_and_index_downloads_concurrently(
-        self, worker_pod_manager: WorkerPodManager, tmp_path: Path, monkeypatch
+        self, worker_group_manager: WorkerGroupManager, tmp_path: Path, monkeypatch
     ) -> None:
         """Dataset data and index downloads should start concurrently."""
-        manager = worker_pod_manager
+        manager = worker_group_manager
         manager.run.cfg.runtime.dataset_api_base_url = "http://controller/api/dataset"
         monkeypatch.setattr(Environment.DATASET, "MMAP_BASE_PATH", tmp_path)
 
@@ -506,10 +550,10 @@ class TestDatasetHandling:
 
     @pytest.mark.asyncio
     async def test_download_dataset_retries_when_one_parallel_download_fails(
-        self, worker_pod_manager: WorkerPodManager, tmp_path: Path, monkeypatch
+        self, worker_group_manager: WorkerGroupManager, tmp_path: Path, monkeypatch
     ) -> None:
         """A failure in either parallel download should retry the whole dataset fetch."""
-        manager = worker_pod_manager
+        manager = worker_group_manager
         manager.run.cfg.runtime.dataset_api_base_url = "http://controller/api/dataset"
         monkeypatch.setattr(Environment.DATASET, "MMAP_BASE_PATH", tmp_path)
         index_failures = {"count": 0}
@@ -542,10 +586,10 @@ class TestDatasetHandling:
 
     @pytest.mark.asyncio
     async def test_missing_dataset_api_url_raises_error(
-        self, worker_pod_manager: WorkerPodManager
+        self, worker_group_manager: WorkerGroupManager
     ) -> None:
         """Test missing dataset_api_base_url raises RuntimeError."""
-        manager = worker_pod_manager
+        manager = worker_group_manager
         manager.run.cfg.runtime.dataset_api_base_url = None
 
         with pytest.raises(RuntimeError, match="dataset_api_base_url"):
@@ -562,12 +606,12 @@ class TestHealthMonitoring:
 
     @pytest.mark.asyncio
     async def test_worker_registration_over_pod_lifecycle_channel(
-        self, worker_pod_manager: WorkerPodManager
+        self, worker_group_manager: WorkerGroupManager
     ) -> None:
-        """WorkerPodManager should track sibling registrations on the direct ROUTER channel."""
-        ack = await worker_pod_manager._on_pod_lifecycle_message(
+        """WorkerGroupManager should track sibling registrations on the direct ROUTER channel."""
+        ack = await worker_group_manager._on_pod_lifecycle_message(
             "worker-identity",
-            PodPeerHello(
+            GroupPeerHello(
                 service_id="worker_0",
                 service_type=str(ServiceType.WORKER),
                 pod_index="0",
@@ -575,18 +619,22 @@ class TestHealthMonitoring:
         )
 
         assert ack is not None
-        assert worker_pod_manager._pod_peer_identities["worker_0"] == "worker-identity"
-        assert worker_pod_manager._pod_peer_types["worker_0"] == str(ServiceType.WORKER)
+        assert (
+            worker_group_manager._pod_peer_identities["worker_0"] == "worker-identity"
+        )
+        assert worker_group_manager._pod_peer_types["worker_0"] == str(
+            ServiceType.WORKER
+        )
 
     @pytest.mark.asyncio
     async def test_worker_health_tracked(
-        self, worker_pod_manager: WorkerPodManager
+        self, worker_group_manager: WorkerGroupManager
     ) -> None:
         """Test worker health messages are tracked correctly."""
         from aiperf.common.enums import WorkerStatus
         from aiperf.common.messages import WorkerHealthMessage
 
-        manager = worker_pod_manager
+        manager = worker_group_manager
 
         health_msg = WorkerHealthMessage(
             service_id="test-pod-manager_worker_0",
@@ -611,10 +659,10 @@ class TestHealthMonitoring:
 
     @pytest.mark.asyncio
     async def test_worker_startup_state_tracked(
-        self, worker_pod_manager: WorkerPodManager
+        self, worker_group_manager: WorkerGroupManager
     ) -> None:
         """Test worker startup-state messages are tracked correctly."""
-        manager = worker_pod_manager
+        manager = worker_group_manager
         manager.publish = AsyncMock()
 
         await manager._on_worker_startup_state(
@@ -636,12 +684,12 @@ class TestHealthMonitoring:
 
     @pytest.mark.asyncio
     async def test_direct_worker_health_struct_updates_status(
-        self, worker_pod_manager: WorkerPodManager
+        self, worker_group_manager: WorkerGroupManager
     ) -> None:
         """Pod-local worker health structs should feed the existing aggregation logic."""
-        await worker_pod_manager._on_pod_lifecycle_message(
+        await worker_group_manager._on_pod_lifecycle_message(
             "worker-identity",
-            PodWorkerHealth(
+            GroupWorkerHealth(
                 service_id="worker_0",
                 create_time=1000.0,
                 uptime=100.0,
@@ -654,19 +702,20 @@ class TestHealthMonitoring:
         )
 
         assert (
-            worker_pod_manager.worker_health["worker_0"].status == WorkerStatus.HEALTHY
+            worker_group_manager.worker_health["worker_0"].status
+            == WorkerStatus.HEALTHY
         )
 
     @pytest.mark.asyncio
     async def test_direct_worker_startup_state_struct_updates_summary(
-        self, worker_pod_manager: WorkerPodManager
+        self, worker_group_manager: WorkerGroupManager
     ) -> None:
         """Pod-local startup-state structs should update the tracked worker summary."""
-        worker_pod_manager.publish = AsyncMock()
+        worker_group_manager.publish = AsyncMock()
 
-        await worker_pod_manager._on_pod_lifecycle_message(
+        await worker_group_manager._on_pod_lifecycle_message(
             "worker-identity",
-            PodWorkerStartupState(
+            GroupWorkerStartupState(
                 service_id="worker_0",
                 startup_state=str(WorkerStartupState.WAITING_FOR_DATASET),
                 request_ns=123,
@@ -674,7 +723,7 @@ class TestHealthMonitoring:
         )
 
         published_messages = [
-            call.args[0] for call in worker_pod_manager.publish.await_args_list
+            call.args[0] for call in worker_group_manager.publish.await_args_list
         ]
         summary = published_messages[0]
         pod_summary = published_messages[-1]
@@ -686,10 +735,10 @@ class TestHealthMonitoring:
 
     @pytest.mark.asyncio
     async def test_report_worker_status_summary_command_publishes_summary(
-        self, worker_pod_manager: WorkerPodManager
+        self, worker_group_manager: WorkerGroupManager
     ) -> None:
         """Controller refresh requests should trigger an immediate worker summary publish."""
-        manager = worker_pod_manager
+        manager = worker_group_manager
         manager.publish = AsyncMock()
         await manager._on_worker_health(
             WorkerHealthMessage(
@@ -732,14 +781,14 @@ class TestHealthMonitoring:
 
 
 class TestShutdown:
-    """Tests for WorkerPodManager shutdown behavior."""
+    """Tests for WorkerGroupManager shutdown behavior."""
 
     @pytest.mark.asyncio
     async def test_shutdown_command_triggers_stop(
-        self, worker_pod_manager: WorkerPodManager, shutdown_command: Command
+        self, worker_group_manager: WorkerGroupManager, shutdown_command: Command
     ) -> None:
         """Test shutdown command triggers stop."""
-        manager = worker_pod_manager
+        manager = worker_group_manager
         manager.stop = AsyncMock()
 
         await manager._on_shutdown_command(shutdown_command)
@@ -748,56 +797,56 @@ class TestShutdown:
 
     @pytest.mark.asyncio
     async def test_record_processor_shutdowns_are_tracked_over_local_channel(
-        self, worker_pod_manager: WorkerPodManager
+        self, worker_group_manager: WorkerGroupManager
     ) -> None:
-        """WorkerPodManager should track local record-processor shutdown notifications."""
-        await worker_pod_manager._on_pod_lifecycle_message(
+        """WorkerGroupManager should track local record-processor shutdown notifications."""
+        await worker_group_manager._on_pod_lifecycle_message(
             "rp-identity",
-            PodPeerShutdown(
+            GroupPeerShutdown(
                 service_id="record_processor_0",
                 service_type=str(ServiceType.RECORD_PROCESSOR),
             ),
         )
 
-        assert "record_processor_0" in worker_pod_manager._record_processors_shutdown
+        assert "record_processor_0" in worker_group_manager._record_processors_shutdown
 
     @pytest.mark.asyncio
     async def test_stop_waits_for_raw_record_files(
-        self, worker_pod_manager: WorkerPodManager
+        self, worker_group_manager: WorkerGroupManager
     ) -> None:
         """Test stop waits for sibling record processors to flush files."""
-        manager = worker_pod_manager
+        manager = worker_group_manager
         manager._wait_for_record_processor_shutdowns = AsyncMock()
         manager._wait_for_raw_record_files = AsyncMock()
         manager._proxy_manager.stop = AsyncMock()
         manager._upload_raw_records = AsyncMock()
 
-        await manager._stop_worker_pod_manager()
+        await manager._stop_worker_group_manager()
 
         manager._wait_for_record_processor_shutdowns.assert_called_once()
         manager._wait_for_raw_record_files.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_stop_stops_proxy_manager(
-        self, worker_pod_manager: WorkerPodManager
+        self, worker_group_manager: WorkerGroupManager
     ) -> None:
         """Test stop calls proxy_manager.stop()."""
-        manager = worker_pod_manager
+        manager = worker_group_manager
         manager._wait_for_record_processor_shutdowns = AsyncMock()
         manager._wait_for_raw_record_files = AsyncMock()
         manager._proxy_manager.stop = AsyncMock()
         manager._upload_raw_records = AsyncMock()
 
-        await manager._stop_worker_pod_manager()
+        await manager._stop_worker_group_manager()
 
         manager._proxy_manager.stop.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_stop_order_wait_before_proxy_before_upload(
-        self, worker_pod_manager: WorkerPodManager
+        self, worker_group_manager: WorkerGroupManager
     ) -> None:
         """Test shutdown waits, then stops proxy, then uploads."""
-        manager = worker_pod_manager
+        manager = worker_group_manager
         call_order = []
         manager._wait_for_record_processor_shutdowns = AsyncMock(
             side_effect=lambda: call_order.append("record_processors")
@@ -812,16 +861,16 @@ class TestShutdown:
             side_effect=lambda: call_order.append("upload")
         )
 
-        await manager._stop_worker_pod_manager()
+        await manager._stop_worker_group_manager()
 
         assert call_order == ["record_processors", "wait", "proxy", "upload"]
 
     @pytest.mark.asyncio
     async def test_wait_for_raw_record_files_returns_when_files_stabilize(
-        self, worker_pod_manager_custom: WorkerPodManager, tmp_path: Path
+        self, worker_group_manager_custom: WorkerGroupManager, tmp_path: Path
     ) -> None:
         """Raw-record wait completes once the expected files exist and stop growing."""
-        manager = worker_pod_manager_custom
+        manager = worker_group_manager_custom
         manager.run.cfg.output.raw = True
         manager.run.cfg.output.dir = tmp_path
 
@@ -839,15 +888,15 @@ class TestShutdown:
 # =============================================================================
 
 
-class TestWorkerPodManagerIntegration:
-    """Integration-style tests for WorkerPodManager lifecycle."""
+class TestWorkerGroupManagerIntegration:
+    """Integration-style tests for WorkerGroupManager lifecycle."""
 
     @pytest.mark.asyncio
     async def test_initialize_proxy_starts_proxy_manager(
-        self, worker_pod_manager: WorkerPodManager
+        self, worker_group_manager: WorkerGroupManager
     ) -> None:
         """Test on_init hook initializes and starts the proxy manager."""
-        manager = worker_pod_manager
+        manager = worker_group_manager
         manager._proxy_manager.initialize_and_start = AsyncMock()
 
         await manager._initialize_proxy()
@@ -859,15 +908,15 @@ class TestWorkerPodManagerIntegration:
         self,
         dataset_notification: DatasetConfiguredNotification,
     ) -> None:
-        """Test full WorkerPodManager lifecycle from init to shutdown."""
+        """Test full WorkerGroupManager lifecycle from init to shutdown."""
         test_run = _make_run(workers_per_pod=2, record_processors_per_pod=1)
 
         with (
-            patch.object(WorkerPodManager, "debug"),
-            patch.object(WorkerPodManager, "info"),
-            patch.object(WorkerPodManager, "warning"),
+            patch.object(WorkerGroupManager, "debug"),
+            patch.object(WorkerGroupManager, "info"),
+            patch.object(WorkerGroupManager, "warning"),
         ):
-            manager = WorkerPodManager(
+            manager = WorkerGroupManager(
                 run=test_run,
                 service_id="lifecycle-test",
             )
@@ -896,7 +945,7 @@ class TestWorkerPodManagerIntegration:
         manager._notify_registered_workers_of_dataset = AsyncMock()
 
         # Simulate startup (prefetches shared tokenizer cache in the background)
-        await manager._start_worker_pod_manager()
+        await manager._start_worker_group_manager()
         assert manager._tokenizer_prefetch_task is not None
         await manager._tokenizer_prefetch_task
         manager._prefetch_tokenizers.assert_called_once()
@@ -908,7 +957,7 @@ class TestWorkerPodManagerIntegration:
         manager._notify_registered_workers_of_dataset.assert_called_once()
 
         # Simulate shutdown
-        await manager._stop_worker_pod_manager()
+        await manager._stop_worker_group_manager()
 
         manager._wait_for_raw_record_files.assert_called_once()
         manager._proxy_manager.stop.assert_called_once()

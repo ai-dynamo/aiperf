@@ -41,11 +41,22 @@ def make_dataset_metadata(conversations: list[tuple[str, int]]) -> DatasetMetada
 
 @dataclass
 class MockStrategy:
+    """Mock timing strategy that records setup/execute calls."""
+
     setup_called: bool = False
+    """Whether setup_phase was invoked."""
+
     execute_called: bool = False
+    """Whether execute_phase was invoked."""
+
     handle_credit_return_calls: list[Credit] = field(default_factory=list)
+    """Credits passed to handle_credit_return."""
+
     execute_delay: float = 0.0
+    """Artificial delay in seconds during execute_phase."""
+
     _execute_event: asyncio.Event = field(default_factory=asyncio.Event)
+    """Event set when execute_phase completes."""
 
     async def setup_phase(self) -> None:
         self.setup_called = True

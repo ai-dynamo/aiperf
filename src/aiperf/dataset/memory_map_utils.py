@@ -11,8 +11,8 @@ Flow (local):
 
 Flow (Kubernetes):
     1. DatasetManager streams conversations to zstd-compressed files (compress_only mode)
-    2. WorkerPodManager downloads compressed files once per pod from control-plane via HTTP API
-    3. WorkerPodManager decompresses files locally
+    2. WorkerGroupManager downloads compressed files once per pod from control-plane via HTTP API
+    3. WorkerGroupManager decompresses files locally
     4. Workers read via mmap through MemoryMapDatasetClientStore
 """
 

@@ -81,11 +81,22 @@ class CheckResult:
     """Result of a single pre-flight check."""
 
     name: str
+    """Human-readable check name."""
+
     status: CheckStatus
+    """Pass/fail/warn/skip/info outcome."""
+
     message: str
+    """Summary message describing the result."""
+
     details: list[str] = field(default_factory=list)
+    """Additional detail lines for verbose output."""
+
     hints: list[str] = field(default_factory=list)
+    """Actionable suggestions to resolve failures."""
+
     duration_ms: float | None = field(default=None)
+    """Wall-clock time the check took, in milliseconds."""
 
 
 @dataclass
@@ -93,6 +104,7 @@ class PreflightResults:
     """Aggregated results of all pre-flight checks."""
 
     checks: list[CheckResult] = field(default_factory=list)
+    """Ordered list of individual check results."""
 
     @property
     def passed(self) -> bool:

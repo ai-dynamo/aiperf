@@ -40,16 +40,30 @@ class PodLogStreamer:
     """
 
     kubectl: KubectlClient
+    """Kubectl client for cluster interaction."""
+
     namespace: str
+    """Namespace to stream logs from."""
+
     prefix: str = ""
+    """Log line prefix for identification."""
+
     tail: int = 20
+    """Number of existing log lines to show on stream start."""
 
     _tasks: list[asyncio.Task] = field(default_factory=list, init=False, repr=False)
+    """Background streaming tasks."""
+
     _processes: list[asyncio.subprocess.Process] = field(
         default_factory=list, init=False, repr=False
     )
+    """Active kubectl log subprocess handles."""
+
     _known_streams: set[str] = field(default_factory=set, init=False, repr=False)
+    """Tracks pod/container combos already being streamed."""
+
     _discovery_task: asyncio.Task | None = field(default=None, init=False, repr=False)
+    """Background task that discovers new pods to stream."""
 
     # ------------------------------------------------------------------
     # Async context manager

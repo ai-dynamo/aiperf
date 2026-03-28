@@ -12,21 +12,22 @@ from aiperf.common import random_generator as rng
 
 @dataclass(slots=True)
 class EmpiricalSamplerStats:
-    """Statistics about the learned empirical distribution.
-
-    Attributes:
-        min: Minimum value in original data.
-        max: Maximum value in original data.
-        mean: Mean of original data.
-        median: Median of original data.
-        num_unique: Number of unique values in distribution.
-    """
+    """Statistics about the learned empirical distribution."""
 
     min: float
+    """Minimum value in original data."""
+
     max: float
+    """Maximum value in original data."""
+
     mean: float
+    """Mean of original data."""
+
     median: float
+    """Median of original data."""
+
     num_unique: int
+    """Number of unique values in distribution."""
 
 
 class EmpiricalSampler:

@@ -101,11 +101,22 @@ class PodStatus:
     """Status of a Kubernetes pod."""
 
     name: str
+    """Pod name."""
+
     namespace: str
+    """Namespace the pod belongs to."""
+
     phase: str
+    """Current pod phase (Running, Pending, Succeeded, Failed)."""
+
     ready: str
+    """Ready container ratio string (e.g. '2/3')."""
+
     restarts: int
+    """Total container restart count."""
+
     containers: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Per-container status keyed by container name."""
 
     @property
     def is_ready(self) -> bool:
@@ -132,10 +143,19 @@ class JobSetStatus:
     """Status of a JobSet."""
 
     name: str
+    """JobSet name."""
+
     namespace: str
+    """Namespace the JobSet belongs to."""
+
     terminal_state: str | None
+    """Terminal state (Completed, Failed) or None if still running."""
+
     completed: bool
+    """Whether the JobSet has completed."""
+
     restarts: int
+    """Number of JobSet restarts."""
 
     @property
     def is_completed(self) -> bool:

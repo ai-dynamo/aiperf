@@ -255,7 +255,7 @@ class TokenizerConfig(BaseConfig):
             default=None,
             exclude=True,
             description="Pre-resolved tokenizer names from alias resolution. "
-            "Set at runtime by the CLI or WorkerPodManager after tokenizer validation. "
+            "Set at runtime by the CLI or WorkerGroupManager after tokenizer validation. "
             "Not serialized to JSON/YAML.",
         ),
     ]
@@ -513,6 +513,19 @@ class RuntimeConfig(BaseConfig):
     """Runtime configuration for benchmark execution."""
 
     model_config = ConfigDict(extra="forbid", validate_default=True)
+
+    @property
+    def uses_worker_group_manager(self) -> bool:
+        """Whether this runtime routes workers through WorkerGroupManager."""
+        return self.service_run_type in {
+            ServiceRunType.MULTIPROCESSING,
+            ServiceRunType.KUBERNETES,
+        }
+
+    @property
+    def uses_local_worker_group_manager(self) -> bool:
+        """Whether local multiprocessing should launch a group-manager boundary."""
+        return self.service_run_type == ServiceRunType.MULTIPROCESSING
 
     ui: Annotated[
         UIType,

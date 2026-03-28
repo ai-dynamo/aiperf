@@ -20,9 +20,16 @@ class ExporterConfig:
     """Configuration for the exporter."""
 
     results: ProfileResults | None
+    """Profiling results from the benchmark run."""
+
     config: BenchmarkConfig
+    """Benchmark configuration used for this run."""
+
     telemetry_results: TelemetryExportData | None
+    """Telemetry data collected during the run."""
+
     server_metrics_results: ServerMetricsResults | None = None
+    """Server-side metrics results, if collected."""
 
 
 @dataclass(slots=True)
@@ -30,4 +37,7 @@ class FileExportInfo:
     """Information about a file export."""
 
     export_type: str
+    """Type of export (e.g., "json", "csv")."""
+
     file_path: Path
+    """Filesystem path where the export was written."""

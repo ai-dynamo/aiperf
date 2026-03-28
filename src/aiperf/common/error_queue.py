@@ -127,7 +127,7 @@ class ErrorCollector:
     """Collects errors reported by child processes via the error queue.
 
     Created by any component that spawns subprocesses (SystemController,
-    WorkerPodManager). Provides the queue to pass to SubprocessManager and
+    WorkerGroupManager). Provides the queue to pass to SubprocessManager and
     a drain_into method to collect errors during shutdown.
 
     Args:

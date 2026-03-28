@@ -101,9 +101,9 @@ class DatasetConfiguredNotification(BaseServiceMessage):
 
 
 class DatasetDownloadedNotification(BaseServiceMessage):
-    """Notification sent by WorkerPodManager after dataset download completes.
+    """Notification sent by WorkerGroupManager after dataset download completes.
 
-    In Kubernetes mode, WorkerPodManager downloads the dataset files once per pod.
+    In Kubernetes mode, WorkerGroupManager downloads the dataset files once per pod.
     This notification is pod-scoped: workers should only trust notifications from
     the same pod_index because each pod writes to its own local mmap files.
     Contains the same client_metadata format as DatasetConfiguredNotification for

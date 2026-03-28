@@ -51,6 +51,8 @@ This document describes the complete flow from user command to benchmark complet
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+`WorkerGroupManager` is the universal readiness and capacity authority for worker groups across local and Kubernetes mode. This document focuses on the Kubernetes deployment, where each worker group maps to one worker pod, but the group-local startup and dataset contract is intentionally the same one used by local worker groups.
+
 ## 1. CLI Entry Point
 
 ```bash
@@ -148,7 +150,7 @@ ConfigMap ──────────────► JobSet
 │  ┌────────────────────────────────────────────────────────────────────────┐ │
 │  │                         Subprocess Tree                                │ │
 │  │                                                                        │ │
-│  │   WorkerPodManager (main process)                                      │ │
+│  │   WorkerGroupManager (main process)                                    │ │
 │  │        │                                                               │ │
 │  │        ├── Worker[0]              Makes LLM API calls                  │ │
 │  │        ├── Worker[1]                                                   │ │
@@ -225,7 +227,7 @@ Workers download the compressed files via HTTP and decompress locally for memory
 The API Service waits for dataset metadata before serving files:
 
 ```
-DatasetManager                      API Service                    WorkerPodManager
+DatasetManager                      API Service                    WorkerGroupManager
      │                                   │                               │
      │  stream_writer.write()            │                               │
      │  (zstd streaming to .zst)         │                               │
@@ -272,7 +274,7 @@ DatasetManager                      API Service                    WorkerPodMana
 |-----------|----------------|
 | **DatasetManager** | Streams to `.zst`, broadcasts `DatasetConfiguredNotification` with `MemoryMapClientMetadata` |
 | **API Service** | Waits for notification via `asyncio.Event`, serves files using paths from metadata |
-| **WorkerPodManager** | Downloads via HTTP, decompresses locally, notifies workers via `DatasetDownloadedNotification` |
+| **WorkerGroupManager** | Downloads via HTTP, decompresses locally, then exposes group-local dataset readiness and current-state snapshots to sibling workers using the same readiness contract local mode uses |
 
 ### Benefits
 
@@ -313,12 +315,13 @@ DatasetManager                      API Service                    WorkerPodMana
 
 ### Detailed Steps
 
-1. **Pods Start** - Services register with SystemController via ZMQ
+1. **Pods Start** - Control-plane services register with `SystemController`, and each worker pod brings up one `WorkerGroupManager` as the controller-facing authority for that group
 2. **DatasetManager** - Generates prompts, serves via HTTP at `/api/dataset`
-3. **TimingManager** - Schedules requests, issues credits to workers
-4. **Workers** - Make LLM API calls, generate raw records
-5. **RecordProcessor** - Computes metrics (latency, TTFT, throughput)
-6. **RecordsManager** - Aggregates results from all workers
+3. **WorkerGroupManager** - Downloads dataset files once per group, publishes group-local current state, and makes sibling workers dispatchable only after group readiness converges
+4. **TimingManager** - Schedules requests, issues credits to workers
+5. **Workers** - Make LLM API calls once their `WorkerGroupManager` reports group-local readiness, then generate raw records
+6. **RecordProcessor** - Computes metrics (latency, TTFT, throughput)
+7. **RecordsManager** - Aggregates results from all workers
 
 ### Service Discovery
 

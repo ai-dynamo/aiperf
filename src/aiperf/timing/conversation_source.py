@@ -30,20 +30,19 @@ class SampledSession:
 
     Returned by ConversationSource.next(). Each session is a unique execution
     of a conversation template.
-
-    Attributes:
-        conversation_id: Template ID from dataset (can be reused across sessions).
-        metadata: Conversation metadata (turns, prompts, etc.) from the template.
-        x_correlation_id: Unique session ID (UUID). Enables sticky routing so all
-            turns in this session route to the same worker.
-        allow_worker_migration: Whether later turns can safely continue on a
-            different worker after worker loss.
     """
 
     conversation_id: str
+    """Template ID from dataset (can be reused across sessions)."""
+
     metadata: ConversationMetadata
+    """Conversation metadata (turns, prompts, etc.) from the template."""
+
     x_correlation_id: str
+    """Unique session ID (UUID) for sticky routing all turns to the same worker."""
+
     allow_worker_migration: bool
+    """Whether later turns can safely continue on a different worker after worker loss."""
 
     def build_first_turn(self, max_turns: int | None = None) -> TurnToSend:
         """Build first turn (turn_index=0) from sampled conversation.

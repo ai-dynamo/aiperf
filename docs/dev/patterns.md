@@ -104,14 +104,15 @@ The group is registered in `cli.py` exactly like a flat command:
 app.command("aiperf.cli_commands.kube:app", name="kube")
 ```
 
-## Kubernetes readiness pattern
+## Group readiness pattern
 
-For churn-safe Kubernetes components, prefer queryable current state over rebroadcast-only startup notifications:
+For churn-safe worker groups in local and Kubernetes mode, prefer queryable current state over rebroadcast-only startup notifications:
 
-- `WorkerPodManager` is the only controller-facing authority for a worker pod
-- workers may connect to the credit router early, but must not become dispatchable until pod-local startup convergence completes
-- pod-local ROUTER/DEALER request-reply is the preferred pattern for late joiners querying current dataset state
-- controller startup gating should use aggregate pod snapshots rather than per-worker registration counts
+- `WorkerGroupManager` is the controller-facing authority for each worker group in both local and Kubernetes mode
+- `WorkerGroupManager` is the universal readiness and declared-capacity unit; workers and record processors are group-local children, not controller-facing services
+- workers may connect to the credit router early, but must not become dispatchable until group-local startup convergence completes
+- group-local ROUTER/DEALER request-reply is the preferred pattern for late joiners querying current dataset state
+- controller startup gating should use aggregate worker-group snapshots rather than per-worker registration counts
 
 ## Service Pattern
 
@@ -175,7 +176,7 @@ Auto-subscription happens during `@on_init` phase.
 
 For hot-path transport paths, prefer tagged `msgspec.Struct` payloads over routed Pydantic messages.
 
-- Use streaming DEALER/ROUTER + tagged `msgspec.Struct` unions for pod-local lifecycle traffic (for example `WorkerPodManager` talking to sibling workers/record processors in Kubernetes mode).
+- Use streaming DEALER/ROUTER + tagged `msgspec.Struct` unions for group-local lifecycle traffic (for example `WorkerGroupManager` talking to sibling workers/record processors in Kubernetes mode, or the same contract in local worker groups).
 - Use dedicated msgspec wire structs plus channel-specific codecs for PUSH/PULL hot paths such as the record-processor -> records-manager metric-record channel.
 - Keep event-bus `Message` subclasses for general Pub/Sub traffic where routed Pydantic models remain sufficient.
 - Keep credit-router traffic on the existing credit channel.

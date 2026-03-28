@@ -23,32 +23,80 @@ def _json_safe(value: Any) -> Any:
 
 
 class WireErrorDetails(Struct, frozen=True, kw_only=True, omit_defaults=True):
+    """Wire-format error details for the metric-record processing path."""
+
     code: int | None = None
+    """HTTP status code or application error code, when available."""
+
     type: str | None = None
+    """Error type classifier string."""
+
     message: str
+    """Human-readable error message."""
+
     cause: str | None = None
+    """Root cause description, when available."""
+
     cause_chain: tuple[str, ...] | None = None
+    """Chain of exception causes for nested errors."""
+
     details: Any | None = None
+    """Arbitrary JSON-safe error detail payload."""
 
 
 class MetricRecordMetadata(Struct, frozen=True, kw_only=True, omit_defaults=True):
+    """Metadata associated with a single metric record for request tracking."""
+
     request_num: int | None = None
+    """Sequential request number (0-based credit index within the phase)."""
+
     session_num: int
+    """Sequential session/conversation number (0-based)."""
+
     x_request_id: str | None = None
+    """Unique request identifier (X-Request-ID header)."""
+
     x_correlation_id: str | None = None
+    """Conversation instance identifier for sticky routing (X-Correlation-ID header)."""
+
     conversation_id: str | None = None
+    """Template conversation ID from the dataset."""
+
     turn_index: int | None = None
+    """Index of the turn in the conversation (0-based)."""
+
     credit_issued_ns: int | None = None
+    """Wall clock timestamp when the credit was issued."""
+
     credit_received_ns: int | None = None
+    """Wall clock timestamp when the credit was received by the worker."""
+
     request_start_ns: int
+    """Performance counter timestamp at request start."""
+
     request_ack_ns: int | None = None
+    """Performance counter timestamp when the server acknowledged the request."""
+
     request_end_ns: int
+    """Performance counter timestamp at request end."""
+
     worker_id: str
+    """Worker service identifier that processed this request."""
+
     record_processor_id: str
+    """Record processor service identifier that computed the metrics."""
+
     benchmark_phase: CreditPhase
+    """Credit phase during which this request was executed."""
+
     was_cancelled: bool = False
+    """Whether this request was cancelled before completion."""
+
     cancellation_time_ns: int | None = None
+    """Performance counter timestamp when cancellation was triggered."""
+
     clock_offset_ns: int | None = None
+    """Estimated clock offset in nanoseconds for cross-process time alignment."""
 
     def model_dump(self) -> dict[str, Any]:
         """Compatibility helper for code that flattens metadata into dicts."""
@@ -74,10 +122,19 @@ class MetricRecordMetadata(Struct, frozen=True, kw_only=True, omit_defaults=True
 
 
 class MetricRecordsData(Struct, frozen=True, kw_only=True, omit_defaults=True):
+    """Computed metric record for a single inference request."""
+
     metadata: MetricRecordMetadata
+    """Request tracking metadata."""
+
     metrics: dict[MetricTagT, Any]
+    """Computed metric values keyed by metric tag."""
+
     trace_data: BaseTraceData | None = None
+    """Plugin-specific trace data, when available."""
+
     error: ErrorDetails | None = None
+    """Error details if the request failed."""
 
     @property
     def valid(self) -> bool:
@@ -95,12 +152,25 @@ class MetricRecordsWireMessage(
     tag_field="t",
     tag="mr",
 ):
+    """Wire envelope for a single metric record on the RP->RecordsManager channel."""
+
     message_type: MessageType = MessageType.METRIC_RECORDS
+    """Message type discriminator."""
+
     service_id: str
+    """Record processor service identifier that produced this record."""
+
     metadata: MetricRecordMetadata
+    """Request tracking metadata."""
+
     metrics: dict[MetricTagT, Any]
+    """Computed metric values keyed by metric tag."""
+
     trace_data: dict[str, Any] | None = None
+    """JSON-safe trace data dict for plugin-specific trace fields."""
+
     error: WireErrorDetails | None = None
+    """Wire-format error details if the request failed."""
 
 
 class MetricRecordsBatchWireMessage(
@@ -111,9 +181,16 @@ class MetricRecordsBatchWireMessage(
     tag_field="t",
     tag="mrb",
 ):
+    """Wire envelope for a batch of metric records on the RP->RecordsManager channel."""
+
     message_type: MessageType = MessageType.METRIC_RECORDS
+    """Message type discriminator."""
+
     service_id: str
+    """Record processor service identifier that produced this batch."""
+
     records: list[MetricRecordsData]
+    """Batch of computed metric records."""
 
 
 def _error_to_wire(error: ErrorDetails | None) -> WireErrorDetails | None:

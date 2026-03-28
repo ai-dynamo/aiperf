@@ -126,7 +126,7 @@ _SERVICE_NAMES = {
     "worker",
     "gpu_telemetry_manager",
     "server_metrics_manager",
-    "worker_pod_manager",
+    "worker_group_manager",
     "api",
 }
 

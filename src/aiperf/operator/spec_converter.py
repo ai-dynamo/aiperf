@@ -50,9 +50,16 @@ class AIPerfJobSpecConverter:
     """
 
     spec: dict[str, Any]
+    """Raw AIPerfJob CRD spec dictionary."""
+
     name: str
+    """Name of the AIPerfJob resource."""
+
     namespace: str
+    """Kubernetes namespace for the job."""
+
     job_id: str | None = field(default=None)
+    """Optional job identifier; defaults to name if not provided."""
 
     def __post_init__(self) -> None:
         """Set job_id to name if not explicitly provided."""

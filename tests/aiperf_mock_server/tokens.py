@@ -30,11 +30,22 @@ class TokenizedText:
     """Tokenized text with metadata."""
 
     text: str
+    """Original input text before tokenization."""
+
     tokens: list[str]
+    """Output tokens generated from the input."""
+
     prompt_token_count: int
+    """Number of tokens in the input prompt."""
+
     reasoning_tokens: int = 0
+    """Number of reasoning tokens generated."""
+
     reasoning_content_tokens: list[str] = field(default_factory=list)
+    """Individual reasoning content tokens."""
+
     finish_reason: str = "stop"
+    """Reason generation stopped (stop or length)."""
 
     @property
     def count(self) -> int:
@@ -76,8 +87,13 @@ class _ReasoningResult:
     """Result of reasoning token generation with budget management."""
 
     token_count: int
+    """Number of reasoning tokens generated."""
+
     content_tokens: list[str]
+    """Individual reasoning content tokens."""
+
     remaining_budget: int | None
+    """Remaining token budget after reasoning allocation."""
 
 
 @dataclass(slots=True)
@@ -85,8 +101,13 @@ class _TokenBudget:
     """Token budget calculation result."""
 
     total: int
+    """Total token budget for generation."""
+
     min_tokens: int
+    """Minimum number of tokens to generate."""
+
     max_tokens: int
+    """Maximum number of tokens to generate."""
 
 
 # ============================================================================

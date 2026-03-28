@@ -102,6 +102,7 @@ class ErrorTrackingState:
     error_counts: dict[ErrorDetails, int] = field(
         default_factory=lambda: defaultdict(int)
     )
+    """Mapping of error details to their occurrence count."""
 
 
 def _write_json_file_atomic(path: Path, content: bytes) -> None:

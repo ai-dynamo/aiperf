@@ -30,16 +30,16 @@ class HistogramData:
     Lightweight dataclass for accumulating histogram bucket, sum, and count
     data during Prometheus metric parsing. Avoids pydantic validation overhead
     during intermediate processing.
-
-    Args:
-        buckets: Mapping of bucket upper bounds (le values) to cumulative counts
-        sum: Cumulative sum of all observed values
-        count: Total count of observations
     """
 
     buckets: dict[str, float] = field(default_factory=dict)
+    """Mapping of bucket upper bounds (le values) to cumulative counts."""
+
     sum: float | None = None
+    """Cumulative sum of all observed values."""
+
     count: float | None = None
+    """Total count of observations."""
 
     @property
     def valid(self) -> bool:

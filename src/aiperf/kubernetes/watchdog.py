@@ -56,11 +56,22 @@ class ContainerInfo:
     """Container status within a pod."""
 
     name: str
+    """Container name from the pod spec."""
+
     ready: bool
-    state: str  # "running", "waiting", "terminated"
+    """Whether the container's readiness probe is passing."""
+
+    state: str
+    """Current state: 'running', 'waiting', or 'terminated'."""
+
     reason: str | None = None
+    """Kubernetes reason string (e.g. 'CrashLoopBackOff', 'OOMKilled')."""
+
     message: str | None = None
+    """Human-readable state message from the container runtime."""
+
     exit_code: int | None = None
+    """Process exit code if the container has terminated."""
 
 
 @dataclass(slots=True)
@@ -68,23 +79,45 @@ class PodInfo:
     """Snapshot of a Kubernetes pod's status."""
 
     name: str
+    """Pod name from Kubernetes metadata."""
+
     namespace: str
+    """Namespace the pod belongs to."""
+
     phase: str
+    """Pod phase: Pending, Running, Succeeded, Failed, or Unknown."""
+
     ready: bool
+    """Whether all containers are ready and the pod is Running."""
+
     restarts: int
+    """Total restart count across all containers."""
+
     container_statuses: list[ContainerInfo]
+    """Per-container status details."""
+
     creation_timestamp: datetime | None = None
+    """When the pod was created in the cluster."""
 
 
 @dataclass(slots=True)
 class EventInfo:
     """Kubernetes event summary."""
 
-    type: str  # "Normal" or "Warning"
+    type: str
+    """Event type: 'Normal' or 'Warning'."""
+
     reason: str
+    """Short machine-readable reason string."""
+
     message: str
+    """Human-readable event message."""
+
     involved_object: str
+    """Name of the Kubernetes object this event relates to."""
+
     last_timestamp: datetime | None = None
+    """Most recent timestamp for this event."""
 
 
 @dataclass(slots=True)
@@ -92,9 +125,16 @@ class NodeResources:
     """Node allocatable resource summary."""
 
     name: str
+    """Kubernetes node name."""
+
     allocatable_cpu: str
+    """Allocatable CPU as a Kubernetes quantity string."""
+
     allocatable_memory: str
+    """Allocatable memory as a Kubernetes quantity string."""
+
     allocatable_gpu: int
+    """Number of allocatable NVIDIA GPUs."""
 
 
 # ---------------------------------------------------------------------------
@@ -113,12 +153,25 @@ class WatchdogProblem:
     """A detected problem in the benchmark deployment."""
 
     severity: ProblemSeverity
+    """Problem severity level (INFO, WARNING, CRITICAL)."""
+
     category: str
+    """Machine-readable problem category for grouping."""
+
     message: str
+    """Human-readable description of the problem."""
+
     timestamp: float = field(default_factory=time.time)
+    """Epoch timestamp when the problem was detected."""
+
     pod_name: str | None = None
+    """Name of the affected pod, if applicable."""
+
     namespace: str | None = None
+    """Namespace where the problem was observed."""
+
     suggestion: str | None = None
+    """Recommended kubectl command or action to investigate."""
 
 
 @dataclass
@@ -126,16 +179,37 @@ class PodTimeline:
     """Tracks a pod's phase transitions and durations."""
 
     name: str
+    """Pod name from Kubernetes metadata."""
+
     role: str = ""
+    """Pod role: 'controller', 'worker', or 'unknown'."""
+
     first_seen: float = field(default_factory=time.time)
+    """Epoch timestamp when the pod was first observed."""
+
     last_phase: str = "Unknown"
+    """Most recently observed pod phase."""
+
     phase_history: list[tuple[float, str]] = field(default_factory=list)
+    """Ordered list of (timestamp, phase) transitions."""
+
     restart_count: int = 0
+    """Current total restart count."""
+
     last_restart_count: int = 0
+    """Previous restart count for detecting new restarts."""
+
     pending_warned: bool = False
+    """Whether a Pending warning has been emitted."""
+
     pending_critical_warned: bool = False
+    """Whether a critical Pending warning has been emitted."""
+
     crashloop_warned: bool = False
+    """Whether a crash-loop warning has been emitted."""
+
     ready: bool = False
+    """Whether the pod is currently ready."""
 
 
 @dataclass
@@ -143,14 +217,31 @@ class WatchdogReport:
     """Structured output from a watchdog run."""
 
     namespace: str
+    """Kubernetes namespace that was monitored."""
+
     duration: float
+    """Total monitoring duration in seconds."""
+
     timeout: float | None
+    """Configured timeout, or None if no timeout was set."""
+
     problems: list[WatchdogProblem]
+    """All problems detected during the monitoring period."""
+
     pod_timelines: dict[str, PodTimeline]
+    """Per-pod phase transition history keyed by pod name."""
+
     completed_pods: set[str]
+    """Pod names that reached a terminal state."""
+
     node_cpu_pct: int | None = None
+    """Cluster-wide CPU allocation percentage, if measured."""
+
     node_mem_pct: int | None = None
+    """Cluster-wide memory allocation percentage, if measured."""
+
     stale_ns_count: int = 0
+    """Number of stale aiperf-* namespaces detected."""
 
     @property
     def has_critical(self) -> bool:
@@ -187,8 +278,13 @@ class PodMetrics:
     """Pod resource usage from metrics-server."""
 
     name: str
+    """Pod name from Kubernetes metadata."""
+
     cpu_millicores: int
+    """Current CPU usage in millicores."""
+
     memory_mib: int
+    """Current memory usage in MiB."""
 
 
 # ---------------------------------------------------------------------------

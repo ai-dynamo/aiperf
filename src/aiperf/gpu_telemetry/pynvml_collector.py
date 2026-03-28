@@ -44,17 +44,16 @@ class ScalingFactors:
 
 @dataclass(slots=True)
 class GpuDeviceState:
-    """Per-GPU state for NVML telemetry collection.
-
-    Args:
-        handle: NVML device handle
-        metadata: GPU metadata
-        gpm_samples: GPM samples (prev, curr) if GPM supported, else None
-    """
+    """Per-GPU state for NVML telemetry collection."""
 
     handle: object
+    """NVML device handle."""
+
     metadata: GpuMetadata
+    """Static GPU metadata (UUID, model name, PCI bus ID)."""
+
     gpm_samples: tuple[object, object] | None = None
+    """GPM sample pair (prev, curr) for delta computation, or None if unsupported."""
 
 
 class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):

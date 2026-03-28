@@ -47,8 +47,13 @@ class ValidationResult:
     """Result of validating a single AIPerfJob YAML file."""
 
     path: Path
+    """Filesystem path to the validated YAML file."""
+
     errors: list[str] = field(default_factory=list)
+    """Validation errors that must be resolved before deployment."""
+
     warnings: list[str] = field(default_factory=list)
+    """Non-fatal validation warnings."""
 
     @property
     def passed(self) -> bool:

@@ -16,7 +16,10 @@ class SampleRecord(msgspec.Struct, frozen=True, kw_only=True):
     """Sample msgspec model for testing."""
 
     id: int
+    """Unique record identifier."""
+
     value: str
+    """Record payload value."""
 
     def to_json_bytes(self) -> bytes:
         return msgspec.json.encode(self)

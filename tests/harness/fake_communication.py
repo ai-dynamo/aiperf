@@ -44,12 +44,25 @@ class CapturedPayload:
     """Captured payload from the communication layer."""
 
     client_type: CommClientType
+    """Type of communication client that sent or received."""
+
     address: str
+    """Communication address the payload was sent to or received from."""
+
     payload: Any
+    """The message payload data."""
+
     timestamp_ns: int
+    """High-resolution timestamp when the payload was captured."""
+
     topic: str | None = None
+    """Pub/sub topic if applicable."""
+
     sender_identity: str | None = None
+    """Identity of the sending client."""
+
     receiver_identity: str | None = None
+    """Identity of the receiving client."""
 
 
 # =============================================================================

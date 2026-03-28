@@ -31,9 +31,16 @@ class AIPerfRunnerResult:
     """AIPerf subprocess result."""
 
     exit_code: int
+    """Process exit code (0 = success)."""
+
     output_dir: Path
+    """Directory containing benchmark output artifacts."""
+
     stdout: str = ""
+    """Captured standard output from the process."""
+
     stderr: str = ""
+    """Captured standard error from the process."""
 
 
 AIPerfRunnerFn: TypeAlias = Callable[[list[str], float], AIPerfRunnerResult]
@@ -44,9 +51,16 @@ class AIPerfMockServer:
     """AIPerfMockServer server info."""
 
     host: str
+    """Hostname the mock server is bound to."""
+
     port: int
+    """Port the mock server is listening on."""
+
     url: str
+    """Base URL for the mock server."""
+
     process: SpawnProcess | ForkProcess
+    """Subprocess running the mock server."""
 
     @property
     def dcgm_urls(self) -> list[str]:
@@ -83,17 +97,40 @@ class VideoDetails:
     """Video file metadata extracted from ffprobe."""
 
     format_name: str
+    """Container format name (e.g. 'mp4', 'webm')."""
+
     duration: float
+    """Video duration in seconds."""
+
     codec_name: str
+    """Video codec name (e.g. 'h264', 'vp9')."""
+
     width: int
+    """Video frame width in pixels."""
+
     height: int
+    """Video frame height in pixels."""
+
     fps: float
+    """Frames per second."""
+
     pix_fmt: str | None = None
+    """Pixel format (e.g. 'yuv420p')."""
+
     is_fragmented: bool = False
+    """Whether the container uses fragmented MP4."""
+
     has_audio: bool = False
+    """Whether the video contains an audio stream."""
+
     audio_codec: str | None = None
+    """Audio codec name if audio is present."""
+
     audio_sample_rate: int | None = None
+    """Audio sample rate in Hz if audio is present."""
+
     audio_channels: int | None = None
+    """Number of audio channels if audio is present."""
 
 
 class AIPerfResults:

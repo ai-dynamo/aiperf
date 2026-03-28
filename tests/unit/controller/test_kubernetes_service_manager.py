@@ -52,7 +52,7 @@ class TestIsExternalService:
             param(ServiceType.WORKER, id="worker"),
             param(ServiceType.WORKER_MANAGER, id="worker_manager"),
             param(ServiceType.RECORD_PROCESSOR, id="record_processor"),
-            param(ServiceType.WORKER_POD_MANAGER, id="worker_pod_manager"),
+            param(ServiceType.WORKER_GROUP_MANAGER, id="worker_group_manager"),
         ],
     )  # fmt: skip
     def test_external_services(
@@ -139,7 +139,7 @@ class TestRunService:
             param(ServiceType.DATASET_MANAGER, id="dataset_manager"),
             param(ServiceType.WORKER, id="worker"),
             param(ServiceType.RECORD_PROCESSOR, id="record_processor"),
-            param(ServiceType.WORKER_POD_MANAGER, id="worker_pod_manager"),
+            param(ServiceType.WORKER_GROUP_MANAGER, id="worker_group_manager"),
         ],
     )  # fmt: skip
     async def test_all_external_types_do_not_spawn(
@@ -473,7 +473,7 @@ class TestPodFailureThreshold:
         self, run: BenchmarkRun
     ) -> None:
         manager = KubernetesServiceManager(
-            required_services={ServiceType.WORKER_POD_MANAGER: 10},
+            required_services={ServiceType.WORKER_GROUP_MANAGER: 10},
             run=run,
         )
         manager._pods = {
@@ -489,7 +489,7 @@ class TestPodFailureThreshold:
         self, run: BenchmarkRun
     ) -> None:
         manager = KubernetesServiceManager(
-            required_services={ServiceType.WORKER_POD_MANAGER: 2},
+            required_services={ServiceType.WORKER_GROUP_MANAGER: 2},
             run=run,
         )
         manager._pods = {

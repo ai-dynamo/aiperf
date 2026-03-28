@@ -313,10 +313,19 @@ class MockGC:
     """Container for mocked GC functions."""
 
     collect: MagicMock
+    """Mock for gc.collect()."""
+
     freeze: MagicMock
+    """Mock for gc.freeze()."""
+
     set_threshold: MagicMock
+    """Mock for gc.set_threshold()."""
+
     disable: MagicMock
+    """Mock for gc.disable()."""
+
     call_order: list[str] = field(default_factory=list)
+    """Ordered list tracking which GC operations were called."""
 
 
 @pytest.fixture

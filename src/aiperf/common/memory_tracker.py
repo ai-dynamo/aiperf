@@ -33,9 +33,16 @@ class MemoryReading:
     """A single memory measurement."""
 
     pss: int | None = None
+    """Proportional Set Size in bytes (shared pages divided among sharers)."""
+
     rss: int | None = None
+    """Resident Set Size in bytes (total physical memory used)."""
+
     uss: int | None = None
+    """Unique Set Size in bytes (memory unique to this process)."""
+
     shared: int | None = None
+    """Shared memory in bytes (pages shared with other processes)."""
 
 
 @dataclass(slots=True)
@@ -43,9 +50,16 @@ class MemorySnapshot:
     """Memory readings for a tracked process across lifecycle phases."""
 
     pid: int
+    """Operating system process ID."""
+
     label: str
+    """Human-readable identifier for the process (e.g. 'worker-0')."""
+
     group: str
+    """Logical group the process belongs to (e.g. 'worker')."""
+
     _readings: dict[MemoryPhase, MemoryReading] = field(default_factory=dict)
+    """Memory readings keyed by lifecycle phase."""
 
     def set_reading(self, phase: MemoryPhase, reading: MemoryReading) -> None:
         """Set a MemoryReading for the given phase."""
@@ -94,6 +108,7 @@ class MemoryTracker:
     """
 
     _snapshots: dict[str, MemorySnapshot] = field(default_factory=dict)
+    """Collected memory snapshots keyed by process label."""
 
     def record(
         self,

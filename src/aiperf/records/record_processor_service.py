@@ -19,11 +19,11 @@ from aiperf.common.hooks import (
     on_stop,
 )
 from aiperf.common.pod_lifecycle_structs import (
-    PodManagerToPeerMessage,
-    PodPeerCommand,
-    PodPeerCommandAck,
-    PodPeerHello,
-    PodPeerShutdown,
+    GroupManagerToPeerMessage,
+    GroupPeerCommand,
+    GroupPeerCommandAck,
+    GroupPeerHello,
+    GroupPeerShutdown,
 )
 
 if TYPE_CHECKING:
@@ -56,7 +56,7 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import compute_time_ns
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType, ServiceRunType
+from aiperf.plugin.enums import PluginType
 from aiperf.post_processors.protocols import RecordProcessorProtocol
 from aiperf.records.inference_result_parser import InferenceResultParser
 
@@ -93,13 +93,13 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         self.inference_result_parser = InferenceResultParser(run=self.run)
         self._pod_index = os.environ.get("AIPERF_POD_INDEX")
         self.pod_lifecycle_dealer_client: StreamingDealerClientProtocol | None = None
-        if self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES:
+        if self.run.cfg.runtime.uses_worker_group_manager:
             self.pod_lifecycle_dealer_client = (
                 self.comms.create_streaming_dealer_client(
-                    address=CommAddress.POD_LIFECYCLE,
+                    address=CommAddress.GROUP_LIFECYCLE,
                     identity=self.service_id,
                     bind=False,
-                    decode_type=PodManagerToPeerMessage,
+                    decode_type=GroupManagerToPeerMessage,
                 )
             )
             self.pod_lifecycle_dealer_client.register_receiver(
@@ -130,31 +130,35 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 raise
 
     def _uses_controller_control_channel(self) -> bool:
-        """Record processors stay pod-local in Kubernetes mode."""
-        return self.run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES
+        """Record processors stay off the controller control channel in group mode."""
+        return not self.run.cfg.runtime.uses_worker_group_manager
 
-    async def _on_pod_lifecycle_message(self, message: PodManagerToPeerMessage) -> None:
-        """Handle pod-local lifecycle messages from WorkerPodManager."""
-        if not isinstance(message, PodPeerCommand):
+    async def _on_pod_lifecycle_message(
+        self, message: GroupManagerToPeerMessage
+    ) -> None:
+        """Handle group-local lifecycle messages from WorkerGroupManager."""
+        if not isinstance(message, GroupPeerCommand):
             return
         if self.pod_lifecycle_dealer_client is None:
             return
-        if message.command == str(CommandType.SHUTDOWN):
+        if message.command == str(CommandType.PROFILE_CONFIGURE):
+            await self._configure_for_profiling()
+        elif message.command == str(CommandType.SHUTDOWN):
             await self.stop()
         else:
-            self.warning(f"Unknown pod-local command: {message.command}")
+            self.warning(f"Unknown group-local command: {message.command}")
             return
         await self.pod_lifecycle_dealer_client.send(
-            PodPeerCommandAck(cid=message.cid, service_id=self.service_id)
+            GroupPeerCommandAck(cid=message.cid, service_id=self.service_id)
         )
 
     @on_start
-    async def _register_with_worker_pod_manager(self) -> None:
-        """Register this record processor with the pod-local lifecycle router."""
+    async def _register_with_worker_group_manager(self) -> None:
+        """Register this record processor with the group-local lifecycle router."""
         if self.pod_lifecycle_dealer_client is None:
             return
         await self.pod_lifecycle_dealer_client.send(
-            PodPeerHello(
+            GroupPeerHello(
                 service_id=self.service_id,
                 service_type=str(self.service_type),
                 pod_index=self._pod_index,
@@ -162,13 +166,13 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         )
 
     @on_stop
-    async def _notify_worker_pod_manager_shutdown(self) -> None:
-        """Notify WorkerPodManager that local record flushing is complete."""
+    async def _notify_worker_group_manager_shutdown(self) -> None:
+        """Notify WorkerGroupManager that local record flushing is complete."""
         await self._flush_pending_metric_records()
         if self.pod_lifecycle_dealer_client is None:
             return
         await self.pod_lifecycle_dealer_client.send(
-            PodPeerShutdown(
+            GroupPeerShutdown(
                 service_id=self.service_id,
                 service_type=str(self.service_type),
             )

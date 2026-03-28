@@ -106,7 +106,10 @@ class _AiofilesTestOpen:
 
     async def _open(self) -> _AiofilesTestFile:
         if self._wrapped_file is None:
-            self._wrapped_file = _AiofilesTestFile(open(*self._args, **self._kwargs))
+            file_path = Path(self._args[0])
+            self._wrapped_file = _AiofilesTestFile(
+                file_path.open(*self._args[1:], **self._kwargs)
+            )
         return self._wrapped_file
 
     def __await__(self):
@@ -271,24 +274,25 @@ def skip_service_registration():
 
 @dataclass
 class MockZmqFixture:
-    """
-    Container for mock ZMQ components with send capture and receive queues.
-
-    Attributes:
-        context: Mock ZMQ context returned by Context.instance().
-        socket: Mock ZMQ socket created by context.socket().
-        sent: List capturing all data passed to socket.send().
-        sent_multipart: List capturing all parts passed to socket.send_multipart().
-        recv_queue: Queue for injecting messages returned by socket.recv().
-        recv_multipart_queue: Queue for injecting messages returned by socket.recv_multipart().
-    """
+    """Container for mock ZMQ components with send capture and receive queues."""
 
     context: MagicMock
+    """Mock ZMQ context returned by Context.instance()."""
+
     socket: AsyncMock
+    """Mock ZMQ socket created by context.socket()."""
+
     sent: list[bytes]
+    """List capturing all data passed to socket.send()."""
+
     sent_multipart: list[list[bytes]]
+    """List capturing all parts passed to socket.send_multipart()."""
+
     recv_queue: asyncio.Queue[bytes]
+    """Queue for injecting messages returned by socket.recv()."""
+
     recv_multipart_queue: asyncio.Queue[list[bytes]]
+    """Queue for injecting messages returned by socket.recv_multipart()."""
 
 
 @pytest.fixture

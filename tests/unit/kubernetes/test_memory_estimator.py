@@ -373,7 +373,7 @@ class TestMemoryEstimator:
         names = {c.name for c in est.worker_pod.components}
         assert "Workers (x10)" in names
         assert "RecordProcessors (x2)" in names
-        assert "WorkerPodManager" in names
+        assert "WorkerGroupManager" in names
 
     def test_worker_pod_replicas(self) -> None:
         params = _make_params(num_worker_pods=5)

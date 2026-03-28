@@ -80,8 +80,8 @@ class CommAddress(CaseInsensitiveStrEnum):
     CONTROL = "control"
     """Address for direct DEALER/ROUTER control channel communication with the controller."""
 
-    POD_LIFECYCLE = "pod_lifecycle"
-    """Address for pod-local DEALER/ROUTER lifecycle coordination in Kubernetes worker pods."""
+    GROUP_LIFECYCLE = "group_lifecycle"
+    """Address for group-local DEALER/ROUTER lifecycle coordination owned by WorkerGroupManager."""
 
 
 class CommandType(CaseInsensitiveStrEnum):

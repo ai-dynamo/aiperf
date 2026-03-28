@@ -147,10 +147,19 @@ class K8sServiceTopology:
     """Expected Kubernetes worker-pod topology derived from runtime config."""
 
     num_worker_pods: int
+    """Number of Kubernetes worker pods to deploy."""
+
     workers_per_pod: int
+    """Number of worker processes per pod."""
+
     record_processors_per_pod: int
+    """Number of record processor processes per pod."""
+
     total_workers: int
+    """Total worker count across all pods."""
+
     total_record_processors: int
+    """Total record processor count across all pods."""
 
 
 def build_aggregate_worker_status(
@@ -211,28 +220,18 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._was_cancelled = False
         is_k8s_mode = self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
         self._k8s_topology: K8sServiceTopology | None = None
+        self._declared_group_capacities: dict[str, tuple[int, int]] = {}
 
         self.required_services: dict[ServiceTypeT, int] = {
             ServiceType.TIMING_MANAGER: 1,
             ServiceType.RECORDS_MANAGER: 1,
+            ServiceType.WORKER_GROUP_MANAGER: self.run.cfg.worker_group_service_count,
         }
-        if not is_k8s_mode:
-            self.required_services[ServiceType.WORKER_MANAGER] = 1
+        self.scale_record_processors_with_workers = False
 
-        if self.run.cfg.record_processor_service_count is not None:
-            self.required_services[ServiceType.RECORD_PROCESSOR] = (
-                self.run.cfg.record_processor_service_count
-            )
-            self.scale_record_processors_with_workers = False
-        else:
-            self.scale_record_processors_with_workers = True
-
-        # In Kubernetes mode, WorkerPodManager is the only controller-facing
-        # authority for worker pods. Workers and record processors remain pod-local.
         if is_k8s_mode:
             self._k8s_topology = self._build_k8s_service_topology()
-            self.required_services.pop(ServiceType.RECORD_PROCESSOR, None)
-            self.required_services[ServiceType.WORKER_POD_MANAGER] = (
+            self.required_services[ServiceType.WORKER_GROUP_MANAGER] = (
                 self._k8s_topology.num_worker_pods
             )
 
@@ -240,7 +239,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             run=self.run,
             enable_event_bus=True,
             enable_dataset_manager=True,
-            enable_raw_inference=not is_k8s_mode,
+            enable_raw_inference=False,
         )
 
         # Control ROUTER lives outside the comms lifecycle so it stays
@@ -496,33 +495,9 @@ class SystemController(SignalHandlerMixin, BaseService):
         async with self.try_operation_or_stop("Start Service Manager"):
             await self.service_manager.start()
 
-        startup_tasks = []
-
-        # In non-Kubernetes mode, spawn workers and record processors locally.
-        # In Kubernetes mode, required worker-pod services are already started by
-        # the service manager as part of required_services.
-        is_k8s_mode = self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
-        if not is_k8s_mode:
-            from aiperf.workers.scaling import (
-                calculate_record_processor_count,
-                calculate_worker_count,
-            )
-
-            num_workers = calculate_worker_count(self.run.cfg)
-            startup_tasks.append(
-                self.service_manager.run_service(ServiceType.WORKER, num_workers)
-            )
-            if self.scale_record_processors_with_workers:
-                num_rp = calculate_record_processor_count(num_workers)
-                startup_tasks.append(
-                    self.service_manager.run_service(
-                        ServiceType.RECORD_PROCESSOR, num_rp
-                    )
-                )
-
-        startup_tasks.extend(
+        startup_tasks = [
             self.service_manager.run_service(st) for st in optional_services
-        )
+        ]
         if startup_tasks:
             await asyncio.gather(*startup_tasks)
 
@@ -616,15 +591,6 @@ class SystemController(SignalHandlerMixin, BaseService):
                 return
 
         self._configured_ids.add(service_id)
-        service_info = ServiceRegistry.services.get(service_id)
-        if (
-            service_info is not None
-            and service_info.service_type == ServiceType.WORKER
-            and self.run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES
-        ):
-            self._worker_startup_states[service_id] = str(WorkerStartupState.READY)
-            if self._all_expected_workers_ready():
-                self._all_workers_ready_event.set()
         total = len(self._configuring_ids)
         self.info(f"Configured '{service_id}' ({len(self._configured_ids)}/{total})")
         if self._all_expected_configured():
@@ -878,13 +844,13 @@ class SystemController(SignalHandlerMixin, BaseService):
                     "Timed out waiting for sufficient worker pod readiness",
                     missing={},
                 ) from None
-            worker_manager_ids = [
+            group_manager_ids = [
                 service.service_id
                 for service in ServiceRegistry.get_services(
-                    ServiceType.WORKER_POD_MANAGER
+                    ServiceType.WORKER_GROUP_MANAGER
                 )
             ]
-            for service_id in worker_manager_ids:
+            for service_id in group_manager_ids:
                 with contextlib.suppress(Exception):
                     await self._send_control_command(
                         service_id,
@@ -1003,11 +969,8 @@ class SystemController(SignalHandlerMixin, BaseService):
         target_types = [
             ServiceType.GPU_TELEMETRY_MANAGER,
             ServiceType.SERVER_METRICS_MANAGER,
+            ServiceType.WORKER_GROUP_MANAGER,
         ]
-        if self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES:
-            target_types.append(ServiceType.WORKER_POD_MANAGER)
-        else:
-            target_types.append(ServiceType.WORKER_MANAGER)
         target_ids = []
         for stype in target_types:
             target_ids.extend(s.service_id for s in ServiceRegistry.get_services(stype))
@@ -1504,23 +1467,28 @@ class SystemController(SignalHandlerMixin, BaseService):
                 )
                 if (
                     not already_configuring
-                    and message.num_workers is not None
-                    and message.num_record_processors is not None
+                    and message.declared_worker_capacity is not None
+                    and message.declared_record_processor_capacity is not None
                 ):
+                    self._declared_group_capacities[message.sid] = (
+                        message.declared_worker_capacity,
+                        message.declared_record_processor_capacity,
+                    )
                     self.info(
                         f"Pod '{message.sid}' reports capacity: "
-                        f"{message.num_workers} workers, "
-                        f"{message.num_record_processors} record processors"
+                        f"{message.declared_worker_capacity} workers, "
+                        f"{message.declared_record_processor_capacity} record processors"
                     )
                     if self._k8s_topology is not None and (
-                        message.num_workers != self._k8s_topology.workers_per_pod
-                        or message.num_record_processors
+                        message.declared_worker_capacity
+                        != self._k8s_topology.workers_per_pod
+                        or message.declared_record_processor_capacity
                         != self._k8s_topology.record_processors_per_pod
                     ):
                         self.warning(
                             f"Pod '{message.sid}' reported unexpected capacity "
-                            f"({message.num_workers} workers, "
-                            f"{message.num_record_processors} record processors). "
+                            f"({message.declared_worker_capacity} workers, "
+                            f"{message.declared_record_processor_capacity} record processors). "
                             f"Expected {self._k8s_topology.workers_per_pod} workers and "
                             f"{self._k8s_topology.record_processors_per_pod} "
                             "record processors per pod."
@@ -1761,7 +1729,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         """Wait for worker pods to upload raw record files to the API.
 
         Polls the raw_records subdirectory until we have at least one file
-        per WorkerPodManager, or the timeout expires.
+        per worker group manager, or the timeout expires.
         """
         raw_records_dir = (
             self.run.cfg.output.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
@@ -1770,25 +1738,25 @@ class SystemController(SignalHandlerMixin, BaseService):
         poll_interval = 1.0
         deadline = time.monotonic() + timeout
 
-        wpm_count = len(ServiceRegistry.get_services(ServiceType.WORKER_POD_MANAGER))
-        if wpm_count == 0:
-            self.debug("No WorkerPodManagers registered, skipping raw record wait")
+        wgm_count = len(ServiceRegistry.get_services(ServiceType.WORKER_GROUP_MANAGER))
+        if wgm_count == 0:
+            self.debug("No worker group managers registered, skipping raw record wait")
             return
 
-        self.info(f"Waiting for raw record uploads from {wpm_count} worker pod(s)...")
+        self.info(f"Waiting for raw record uploads from {wgm_count} worker group(s)...")
 
         while time.monotonic() < deadline:
             if raw_records_dir.exists():
                 files = list(raw_records_dir.glob("raw_records_*.jsonl"))
-                if len(files) >= wpm_count:
+                if len(files) >= wgm_count:
                     self.info(
                         f"Received {len(files)} raw record file(s) from "
-                        f"{wpm_count} pod(s), proceeding with export"
+                        f"{wgm_count} group(s), proceeding with export"
                     )
                     return
                 if files:
                     self.debug(
-                        f"Have {len(files)}/{wpm_count} raw record file(s), "
+                        f"Have {len(files)}/{wgm_count} raw record file(s), "
                         "waiting for remaining pods..."
                     )
             await asyncio.sleep(poll_interval)
@@ -1799,7 +1767,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             actual = len(list(raw_records_dir.glob("raw_records_*.jsonl")))
         if actual > 0:
             self.warning(
-                f"Timed out after {timeout}s: received {actual}/{wpm_count} "
+                f"Timed out after {timeout}s: received {actual}/{wgm_count} "
                 "raw record file(s). Proceeding with partial data."
             )
         else:

@@ -2,18 +2,40 @@
 # SPDX-License-Identifier: Apache-2.0
 import json
 import time
+from dataclasses import fields, is_dataclass
 
+import msgspec
 import orjson
 import pytest
 
-from aiperf.common.enums import LifecycleState, MessageType
+from aiperf.common.enums import (
+    CommAddress,
+    ConversationContextMode,
+    LifecycleState,
+    MessageType,
+)
 from aiperf.common.messages import (
     ErrorMessage,
     HeartbeatMessage,
     StatusMessage,
 )
 from aiperf.common.models import ErrorDetails
+from aiperf.common.pod_lifecycle_structs import (
+    GroupDatasetReady,
+    GroupDatasetStateQuery,
+    GroupDatasetStateSnapshot,
+    GroupManagerToPeerMessage,
+    GroupPeerAck,
+    GroupPeerCommand,
+    GroupPeerCommandAck,
+    GroupPeerHello,
+    GroupPeerShutdown,
+    GroupWorkerHealth,
+    GroupWorkerStartupState,
+    PeerToGroupManagerMessage,
+)
 from aiperf.plugin.enums import ServiceType
+from aiperf.workers.group_dataset_authority import GroupDatasetSnapshot
 
 
 def test_status_message():
@@ -343,6 +365,245 @@ class TestMessageToJsonBytes:
         # Should be deserializable
         restored = message_type.from_json(json_bytes)
         assert restored.message_type == message.message_type
+
+
+class TestGroupLifecycleWireContract:
+    """Focused contract tests for group-local lifecycle msgspec wire models."""
+
+    def test_group_dataset_snapshot_is_local_only_dataclass(self) -> None:
+        """The in-memory dataset snapshot should stay on the local-only model side."""
+        snapshot = GroupDatasetSnapshot(
+            benchmark_generation="bench-1",
+            dataset_generation="dataset-1",
+            ready=True,
+            error_message="none",
+        )
+
+        assert is_dataclass(snapshot)
+        assert GroupDatasetSnapshot.__slots__ == (
+            "benchmark_generation",
+            "dataset_generation",
+            "ready",
+            "error_message",
+        )
+        assert [field.name for field in fields(snapshot)] == [
+            "benchmark_generation",
+            "dataset_generation",
+            "ready",
+            "error_message",
+        ]
+        assert not hasattr(GroupDatasetSnapshot, "__struct_fields__")
+        assert snapshot.ready is True
+
+    @pytest.mark.parametrize(
+        ("message", "union_type"),
+        [
+            pytest.param(
+                GroupPeerAck(service_id="worker-0"),
+                GroupManagerToPeerMessage,
+                id="ack",
+            ),
+            pytest.param(
+                GroupDatasetReady(
+                    service_id="worker-group-manager-0",
+                    data_file_path="/tmp/data.bin",
+                    index_file_path="/tmp/index.bin",
+                    conversation_count=4,
+                    total_size_bytes=128,
+                ),
+                GroupManagerToPeerMessage,
+                id="dataset-ready",
+            ),
+            pytest.param(
+                GroupDatasetStateSnapshot(
+                    rid="rid-1",
+                    service_id="worker-group-manager-0",
+                    benchmark_generation="bench-1",
+                    dataset_generation="dataset-1",
+                    default_context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+                    data_file_path="/tmp/data.bin",
+                    index_file_path="/tmp/index.bin",
+                    conversation_count=12,
+                    total_size_bytes=345,
+                    ready=True,
+                ),
+                GroupManagerToPeerMessage,
+                id="dataset-snapshot",
+            ),
+            pytest.param(
+                GroupPeerCommand(
+                    cid="cmd-1",
+                    service_id="worker-0",
+                    command="shutdown",
+                ),
+                GroupManagerToPeerMessage,
+                id="command",
+            ),
+            pytest.param(
+                GroupPeerHello(
+                    service_id="worker-0",
+                    service_type="worker",
+                    pod_index="0",
+                ),
+                PeerToGroupManagerMessage,
+                id="hello",
+            ),
+            pytest.param(
+                GroupPeerShutdown(
+                    service_id="worker-0",
+                    service_type="worker",
+                ),
+                PeerToGroupManagerMessage,
+                id="shutdown",
+            ),
+            pytest.param(
+                GroupWorkerHealth(
+                    service_id="worker-0",
+                    pid=123,
+                    create_time=1.0,
+                    uptime=2.0,
+                    cpu_usage=3.5,
+                    memory_usage=4096,
+                    pss_memory=2048,
+                    io_counters=(1, 2, 3, 4, 5, 6),
+                    cpu_times=(0.1, 0.2, 0.3),
+                    num_ctx_switches=(7, 8),
+                    num_threads=9,
+                    task_total=10,
+                    task_failed=1,
+                    task_completed=8,
+                ),
+                PeerToGroupManagerMessage,
+                id="worker-health",
+            ),
+            pytest.param(
+                GroupWorkerHealth(
+                    service_id="worker-1",
+                    create_time=2.0,
+                    uptime=5.0,
+                    cpu_usage=10.0,
+                    memory_usage=8192,
+                    task_total=0,
+                    task_failed=0,
+                    task_completed=0,
+                ),
+                PeerToGroupManagerMessage,
+                id="worker-health-minimal",
+            ),
+            pytest.param(
+                GroupDatasetStateSnapshot(
+                    rid="rid-2",
+                    service_id="worker-group-manager-1",
+                ),
+                GroupManagerToPeerMessage,
+                id="dataset-snapshot-defaults",
+            ),
+            pytest.param(
+                GroupDatasetReady(
+                    service_id="worker-group-manager-0",
+                    data_file_path="/tmp/data.bin",
+                    index_file_path="/tmp/index.bin",
+                    conversation_count=4,
+                    total_size_bytes=128,
+                    success=False,
+                    error_message="download failed",
+                ),
+                GroupManagerToPeerMessage,
+                id="dataset-ready-failure",
+            ),
+            pytest.param(
+                GroupWorkerStartupState(
+                    service_id="worker-0",
+                    startup_state="ready",
+                    request_ns=123,
+                ),
+                PeerToGroupManagerMessage,
+                id="worker-startup-state",
+            ),
+            pytest.param(
+                GroupDatasetStateQuery(
+                    rid="rid-1",
+                    service_id="worker-0",
+                ),
+                PeerToGroupManagerMessage,
+                id="dataset-query",
+            ),
+            pytest.param(
+                GroupPeerCommandAck(
+                    cid="cmd-1",
+                    service_id="worker-0",
+                ),
+                PeerToGroupManagerMessage,
+                id="command-ack",
+            ),
+        ],
+    )  # fmt: skip
+    def test_group_lifecycle_tagged_unions_decode_all_wire_variants(
+        self,
+        message: object,
+        union_type: object,
+    ) -> None:
+        """Every wire struct should decode through its canonical tagged union."""
+        encoder = msgspec.msgpack.Encoder()
+        decoder = msgspec.msgpack.Decoder(union_type)
+
+        restored = decoder.decode(encoder.encode(message))
+
+        assert hasattr(type(message), "__struct_fields__")
+        assert restored == message
+        assert isinstance(restored, type(message))
+
+    def test_group_dataset_state_snapshot_maps_cleanly_to_local_snapshot(self) -> None:
+        """Wire snapshots should project onto the local-only dataset snapshot fields."""
+        source_snapshot = GroupDatasetSnapshot(
+            benchmark_generation="bench-1",
+            dataset_generation="dataset-1",
+            ready=True,
+        )
+        wire_snapshot = GroupDatasetStateSnapshot(
+            rid="rid-1",
+            service_id="worker-group-manager-0",
+            benchmark_generation=source_snapshot.benchmark_generation,
+            dataset_generation=source_snapshot.dataset_generation,
+            default_context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+            data_file_path="/tmp/data.bin",
+            index_file_path="/tmp/index.bin",
+            conversation_count=12,
+            total_size_bytes=345,
+            ready=source_snapshot.ready,
+            error_message=source_snapshot.error_message,
+        )
+
+        assert (
+            GroupDatasetSnapshot(
+                benchmark_generation=wire_snapshot.benchmark_generation,
+                dataset_generation=wire_snapshot.dataset_generation,
+                ready=wire_snapshot.ready,
+                error_message=wire_snapshot.error_message,
+            )
+            == source_snapshot
+        )
+
+    def test_group_lifecycle_contract_exposes_only_group_named_unions(self) -> None:
+        """Group-local lifecycle contracts should not retain pod-local aliases."""
+        encoder = msgspec.msgpack.Encoder()
+        peer_decoder = msgspec.msgpack.Decoder(GroupManagerToPeerMessage)
+        manager_decoder = msgspec.msgpack.Decoder(PeerToGroupManagerMessage)
+        ready = GroupDatasetReady(
+            service_id="worker-group-manager-0",
+            data_file_path="/tmp/data.bin",
+            index_file_path="/tmp/index.bin",
+            conversation_count=4,
+            total_size_bytes=128,
+        )
+        hello = GroupPeerHello(service_id="worker-0", service_type="worker")
+
+        decoded_ready = peer_decoder.decode(encoder.encode(ready))
+        decoded_hello = manager_decoder.decode(encoder.encode(hello))
+
+        assert decoded_ready == ready
+        assert decoded_hello == hello
+        assert not hasattr(CommAddress, "POD_LIFECYCLE")
 
 
 class TestMessageStringRepresentation:

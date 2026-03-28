@@ -85,7 +85,7 @@ def bootstrap_and_run_service(
 
         # Skip HF offline mode in Kubernetes pods: the parent process may not
         # have warmed the cache (e.g. controller pod), so children need network
-        # access.  Worker pods prefetch via WorkerPodManager before spawning
+        # access.  Worker pods prefetch via WorkerGroupManager before spawning
         # subprocesses, but the controller pod does not.
         if not os.environ.get("AIPERF_JOB_ID"):
             _enable_hf_offline_mode()

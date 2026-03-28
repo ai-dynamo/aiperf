@@ -2,10 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 
-from pydantic import Field
 from rich.console import Console
 from rich.table import Table
 
@@ -13,37 +11,19 @@ from aiperf.common.base_component_service import BaseComponentService
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
-from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.control_structs import Command
-from aiperf.common.enums import (
-    CommandType,
-    MessageType,
-    WorkerStatus,
-)
+from aiperf.common.enums import CommandType, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_command, on_message
-from aiperf.common.messages import (
-    WorkerHealthMessage,
-    WorkerStartupStateMessage,
-)
-from aiperf.common.messages.worker_messages import WorkerStatusSummaryMessage
-from aiperf.common.models.progress_models import WorkerStats
+from aiperf.common.messages import WorkerHealthMessage, WorkerStartupStateMessage
 from aiperf.plugin.enums import ServiceType
 from aiperf.ui.utils import format_bytes
-
-
-class WorkerStatusInfo(WorkerStats):
-    """Information about a worker's status."""
-
-    worker_id: str = Field(..., description="The ID of the worker")
-    last_error_ns: int | None = Field(
-        default=None,
-        description="The last time the worker had an error",
-    )
-    last_high_load_ns: int | None = Field(
-        default=None,
-        description="The last time the worker was in high load",
-    )
+from aiperf.workers.worker_group_state import (
+    WorkerStatusInfo,
+    build_worker_status_summary,
+    mark_stale_workers,
+    update_worker_status,
+)
 
 
 class WorkerManager(BaseComponentService):
@@ -88,65 +68,13 @@ class WorkerManager(BaseComponentService):
         self, info: WorkerStatusInfo, message: WorkerHealthMessage
     ) -> None:
         """Check the status of a worker."""
-        info.last_update_ns = time.time_ns()
-        # Error Status
-        if message.task_stats.failed > info.task_stats.failed:
-            info.last_error_ns = time.time_ns()
-            info.status = WorkerStatus.ERROR
-        elif (time.time_ns() - (info.last_error_ns or 0)) / NANOS_PER_SECOND < Environment.WORKER.ERROR_RECOVERY_TIME:  # fmt: skip
-            info.status = WorkerStatus.ERROR
-
-        # High Load Status
-        elif message.health.cpu_usage > Environment.WORKER.HIGH_LOAD_CPU_USAGE:
-            info.last_high_load_ns = time.time_ns()
-            self.warning(
-                f"CPU usage for {message.service_id} is {round(message.health.cpu_usage)}%. AIPerf results may be inaccurate."
-            )
-            info.status = WorkerStatus.HIGH_LOAD
-        elif (time.time_ns() - (info.last_high_load_ns or 0)) / NANOS_PER_SECOND < Environment.WORKER.HIGH_LOAD_RECOVERY_TIME:  # fmt: skip
-            info.status = WorkerStatus.HIGH_LOAD
-
-        # Idle Status
-        elif message.task_stats.total == 0 or message.task_stats.in_progress == 0:
-            info.status = WorkerStatus.IDLE
-
-        # Healthy Status
-        else:
-            info.status = WorkerStatus.HEALTHY
-
-        info.health = message.health
-        info.task_stats = message.task_stats
-
-        # Update aggregates with the new health snapshot
-        agg = info.health_aggregates
-        agg.memory_usage.update(message.health.memory_usage)
-        agg.cpu_usage.update(message.health.cpu_usage)
-        agg.num_threads.update(message.health.num_threads)
-        if message.health.num_ctx_switches:
-            agg.voluntary_ctx_switches.update(message.health.num_ctx_switches[0])
-            agg.involuntary_ctx_switches.update(message.health.num_ctx_switches[1])
-        if message.health.io_counters:
-            agg.io_read_bytes.update(message.health.io_counters[4])  # read_chars
-            agg.io_write_bytes.update(message.health.io_counters[5])  # write_chars
-        if message.health.cpu_times:
-            agg.cpu_time_user.update(message.health.cpu_times[0])  # user
-            agg.cpu_time_system.update(message.health.cpu_times[1])  # system
-            agg.cpu_time_iowait.update(message.health.cpu_times[2])  # iowait
+        update_worker_status(info, message, warning=self.warning)
 
     @background_task(immediate=False, interval=Environment.WORKER.CHECK_INTERVAL)
     async def _worker_status_loop(self) -> None:
         """Check the status of all workers."""
         self.debug("Checking worker status")
-
-        for _, info in self.worker_infos.items():
-            last_activity_ns = max(
-                info.last_update_ns or 0,
-                info.startup_state_updated_ns or 0,
-            )
-            if last_activity_ns == 0:
-                continue
-            if (time.time_ns() - last_activity_ns) / NANOS_PER_SECOND > Environment.WORKER.STALE_TIME:  # fmt: skip
-                info.status = WorkerStatus.STALE
+        mark_stale_workers(self.worker_infos)
 
     @background_task(
         immediate=False, interval=Environment.WORKER.STATUS_SUMMARY_INTERVAL
@@ -157,18 +85,12 @@ class WorkerManager(BaseComponentService):
 
     async def _publish_worker_summary(self) -> None:
         """Publish the current worker status and startup-state summary."""
-        summary = WorkerStatusSummaryMessage(
-            service_id=self.service_id,
-            worker_statuses={
-                worker_id: info.status for worker_id, info in self.worker_infos.items()
-            },
-            worker_startup_states={
-                worker_id: info.startup_state
-                for worker_id, info in self.worker_infos.items()
-                if info.startup_state is not None
-            },
+        await self.publish(
+            build_worker_status_summary(
+                service_id=self.service_id,
+                worker_infos=self.worker_infos,
+            )
         )
-        await self.publish(summary)
 
     @on_command(CommandType.REPORT_WORKER_STATUS_SUMMARY)
     async def _on_report_worker_status_summary(self, message: Command) -> None:
