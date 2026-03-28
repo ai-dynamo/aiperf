@@ -105,6 +105,7 @@ from aiperf.config.loader import (
     substitute_env_vars,
     validate_config_file,
 )
+from aiperf.config.metrics import MetricsConfig
 from aiperf.config.models import (
     CommunicationConfig,
     DualBindCommunicationConfig,
@@ -226,6 +227,7 @@ __all__ = [
     "LogNormalDistribution",
     "LoggingConfig",
     "MissingEnvironmentVariableError",
+    "MetricsConfig",
     "ModelItem",
     "ModelsAdvanced",
     "MultimodalDistribution",

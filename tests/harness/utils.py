@@ -14,11 +14,15 @@ from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.models import (
     InputsFile,
     JsonExportData,
-    MetricRecordInfo,
-    RawRecordInfo,
     ServerMetricsExportData,
     SessionPayloads,
     SlimRecord,
+)
+from aiperf.common.models.record_models import (
+    MetricRecordInfo,
+    RawRecordInfo,
+    decode_metric_record_info_json,
+    decode_raw_record_info_json,
 )
 
 
@@ -162,7 +166,7 @@ class AIPerfResults:
         with open(file_path, encoding="utf-8") as f:
             for line in f:
                 if line.strip():
-                    records.append(MetricRecordInfo.model_validate_json(line))
+                    records.append(decode_metric_record_info_json(line))
         return records
 
     def _load_csv_records(self) -> list[dict[str, str]] | None:
@@ -188,7 +192,7 @@ class AIPerfResults:
         with open(file_path, encoding="utf-8") as f:
             for line in f:
                 if line.strip():
-                    records.append(RawRecordInfo.model_validate_json(line))
+                    records.append(decode_raw_record_info_json(line))
         return records
 
     def _load_server_metrics_json(self) -> ServerMetricsExportData | None:

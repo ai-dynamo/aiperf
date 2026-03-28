@@ -7,6 +7,7 @@ Usage:
     uv run python dev/benchmarks/record_processing_benchmark.py
     uv run python dev/benchmarks/record_processing_benchmark.py --scenario parser
     uv run python dev/benchmarks/record_processing_benchmark.py --scenario rp
+    uv run python dev/benchmarks/record_processing_benchmark.py --scenario rm-ingest
     uv run python dev/benchmarks/record_processing_benchmark.py --scenario export
     uv run python dev/benchmarks/record_processing_benchmark.py --json
 """
@@ -17,12 +18,14 @@ import argparse
 import asyncio
 import copy
 import gc
+import math
 import multiprocessing
 import socket
 import statistics
 import sys
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,7 +46,13 @@ from aiperf.common.inference_wire import (
     encode_inference_results_wire_message,
     wire_message_to_request_record,
 )
-from aiperf.common.messages.inference_messages import MetricRecordsMessage
+from aiperf.common.metric_records_wire import (
+    MetricRecordMetadata,
+    MetricRecordsData,
+    MetricRecordsWireMessage,
+    build_metric_records_data,
+    build_metric_records_wire_message,
+)
 from aiperf.common.models import (
     MetricRecordInfo,
     ParsedResponse,
@@ -59,11 +68,7 @@ from aiperf.common.models import (
     Usage,
 )
 from aiperf.common.models.dataset_models import Conversation
-from aiperf.common.models.record_models import (
-    MetricRecordMetadata,
-    MetricValue,
-    RawRecordInfo,
-)
+from aiperf.common.models.record_models import MetricValue, RawRecordInfo
 from aiperf.config import BenchmarkConfig
 from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.credit.structs import Credit, CreditContext
@@ -75,6 +80,8 @@ from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from aiperf.records.inference_result_parser import InferenceResultParser
 from aiperf.records.record_processor_service import RecordProcessor
+from aiperf.records.records_manager import RecordsManager
+from aiperf.records.records_tracker import RecordsTracker
 from aiperf.workers.session_manager import UserSessionManager
 
 _MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
@@ -148,6 +155,51 @@ class SyntheticMetricProcessor:
         return self._result
 
 
+class BenchmarkMetricProcessor:
+    """Lightweight RM downstream processor for synthetic ingestion benchmarks."""
+
+    def __init__(self) -> None:
+        self._totals: dict[str, float] = {}
+
+    async def process_result(self, record_data: MetricRecordsData) -> None:
+        for tag, value in record_data.metrics.items():
+            if isinstance(value, list):
+                numeric_value = float(sum(value))
+            else:
+                numeric_value = float(value)
+            self._totals[tag] = self._totals.get(tag, 0.0) + numeric_value
+
+
+class BenchmarkExportProcessor:
+    """Lightweight export-like processor that measures serialization cost only."""
+
+    async def process_result(self, record_data: MetricRecordsData) -> None:
+        orjson.dumps(record_data.model_dump(mode="json", exclude_none=True))
+
+
+class BenchmarkRecordsManager:
+    """Minimal object that can run the real RecordsManager hot-path methods."""
+
+    def __init__(self, metric_processors: list[Any]) -> None:
+        self._records_tracker = RecordsTracker()
+        self._metric_results_processors = metric_processors
+        self._error_tracker = SimpleNamespace(
+            increment_error_count_for_phase=_noop,
+        )
+        self._handle_all_records_received = _noop_async
+        self.is_trace_enabled = False
+        self.trace = _noop
+
+    async def _send_results_to_results_processors(
+        self,
+        record_data: MetricRecordsData,
+    ) -> None:
+        await RecordsManager._send_results_to_results_processors(self, record_data)
+
+    async def _on_metric_records(self, message: MetricRecordsWireMessage) -> None:
+        await RecordsManager._on_metric_records(self, message)
+
+
 class FakeEndpointMetadata:
     produces_tokens = True
     tokenizes_input = True
@@ -170,6 +222,10 @@ class FakeStreamingRouterClient:
 
 
 def _noop(*args: Any, **kwargs: Any) -> None:
+    return None
+
+
+async def _noop_async(*args: Any, **kwargs: Any) -> None:
     return None
 
 
@@ -387,6 +443,93 @@ def _make_metric_metadata(request_index: int) -> MetricRecordMetadata:
         record_processor_id="record-processor-0",
         benchmark_phase="profiling",
     )
+
+
+def _make_rm_metric_results(
+    *,
+    processor_count: int,
+    metrics_per_processor: int,
+    request_index: int,
+) -> list[dict[str, int | float]]:
+    results: list[dict[str, int | float]] = []
+    for processor_index in range(processor_count):
+        result = {
+            f"bench.metric_{processor_index}_{metric_index}": float(
+                request_index + processor_index + metric_index / 10
+            )
+            for metric_index in range(metrics_per_processor)
+        }
+        if processor_index == 0:
+            result["request_latency"] = 10.0 + request_index / 1000
+            result["output_tokens"] = 800
+        results.append(result)
+    return results
+
+
+def _make_rm_metric_message(
+    *,
+    request_index: int,
+    processor_count: int,
+    metrics_per_processor: int,
+) -> MetricRecordsWireMessage:
+    results = _make_rm_metric_results(
+        processor_count=processor_count,
+        metrics_per_processor=metrics_per_processor,
+        request_index=request_index,
+    )
+    metrics = {}
+    for result in results:
+        metrics.update(result)
+    return build_metric_records_wire_message(
+        service_id="record-processor-bench",
+        metadata=_make_metric_metadata(request_index),
+        metrics=metrics,
+        trace_data=None,
+        error=None,
+    )
+
+
+def _make_rm_metric_messages(
+    args: argparse.Namespace,
+) -> list[MetricRecordsWireMessage]:
+    return [
+        _make_rm_metric_message(
+            request_index=request_index,
+            processor_count=args.processors,
+            metrics_per_processor=args.metrics_per_processor,
+        )
+        for request_index in range(args.records)
+    ]
+
+
+def _make_rm_metric_data_batch(
+    messages: list[MetricRecordsWireMessage],
+) -> list[MetricRecordsData]:
+    return [
+        build_metric_records_data(
+            metadata=message.metadata,
+            metrics=message.metrics,
+            trace_data=None,
+            error=None,
+        )
+        for message in messages
+    ]
+
+
+def _chunked(items: list[Any], parts: int) -> list[list[Any]]:
+    if parts <= 1:
+        return [items]
+    chunk_size = max(1, math.ceil(len(items) / parts))
+    return [
+        items[index : index + chunk_size] for index in range(0, len(items), chunk_size)
+    ]
+
+
+async def _run_concurrent_batches(
+    batches: list[list[Any]],
+    worker: Callable[[list[Any]], Awaitable[None]],
+) -> None:
+    await asyncio.gather(*(worker(batch) for batch in batches if batch))
 
 
 def _make_metric_record_info(metric_count: int) -> MetricRecordInfo:
@@ -746,10 +889,14 @@ async def benchmark_core_stages(args: argparse.Namespace) -> list[BenchmarkSampl
             processor, parsed_record, metadata
         )
         metric_messages.append(
-            MetricRecordsMessage(
+            build_metric_records_wire_message(
                 service_id="record-processor-bench",
                 metadata=metadata,
-                results=raw_results,
+                metrics={
+                    tag: value
+                    for result in raw_results
+                    for tag, value in result.items()
+                },
                 trace_data=None,
                 error=None,
             )
@@ -757,9 +904,22 @@ async def benchmark_core_stages(args: argparse.Namespace) -> list[BenchmarkSampl
 
     def rp_rm_message_encode(_: int) -> None:
         for message in metric_messages:
-            message.to_data()
+            build_metric_records_data(
+                metadata=message.metadata,
+                metrics=message.metrics,
+                trace_data=None,
+                error=None,
+            )
 
-    metric_record_batch = [message.to_data() for message in metric_messages]
+    metric_record_batch = [
+        build_metric_records_data(
+            metadata=message.metadata,
+            metrics=message.metrics,
+            trace_data=None,
+            error=None,
+        )
+        for message in metric_messages
+    ]
 
     async def rm_ingest_aggregation(_: int) -> None:
         local_processor = _build_metric_results_processor(use_server_token_count=True)
@@ -1163,14 +1323,23 @@ async def benchmark_record_processor_path(
                 parsed_record,
                 metadata,
             )
-            message = MetricRecordsMessage(
+            message = build_metric_records_wire_message(
                 service_id="record-processor-bench",
                 metadata=metadata,
-                results=raw_results,
+                metrics={
+                    tag: value
+                    for result in raw_results
+                    for tag, value in result.items()
+                },
                 trace_data=None,
                 error=None,
             )
-            _ = message.to_data()
+            _ = build_metric_records_data(
+                metadata=message.metadata,
+                metrics=message.metrics,
+                trace_data=None,
+                error=None,
+            )
             RecordProcessor._free_record_data(
                 processor, parsed_record.request, parsed_record
             )
@@ -1192,6 +1361,167 @@ async def benchmark_record_processor_path(
             operation=operation,
         )
     ]
+
+
+async def _benchmark_rm_to_data_merge(
+    args: argparse.Namespace,
+    messages: list[MetricRecordsWireMessage],
+) -> BenchmarkSample:
+    batches = _chunked(messages, args.producer_tasks)
+
+    async def worker(batch: list[Any]) -> None:
+        for message in batch:
+            _ = build_metric_records_data(
+                metadata=message.metadata,
+                metrics=message.metrics,
+                trace_data=None,
+                error=None,
+            )
+
+    async def operation(_: int) -> None:
+        await _run_concurrent_batches(batches, worker)
+
+    return await _time_async_operation(
+        name="rm_ingest::to_data_merge",
+        items=len(messages),
+        repeats=args.repeats,
+        warmup_runs=args.warmup_runs,
+        details={
+            "processors": args.processors,
+            "metrics_per_processor": args.metrics_per_processor,
+            "producer_tasks": args.producer_tasks,
+        },
+        operation=operation,
+    )
+
+
+async def _benchmark_rm_tracker_only(
+    args: argparse.Namespace,
+    record_data_batch: list[MetricRecordsData],
+) -> BenchmarkSample:
+    batches = _chunked(record_data_batch, args.producer_tasks)
+
+    async def worker(batch: list[Any]) -> None:
+        tracker = RecordsTracker()
+        for record_data in batch:
+            tracker.update_from_record_data(record_data)
+            tracker.check_and_set_all_records_received_for_phase(
+                record_data.metadata.benchmark_phase
+            )
+
+    async def operation(_: int) -> None:
+        await _run_concurrent_batches(batches, worker)
+
+    return await _time_async_operation(
+        name="rm_ingest::tracker_only",
+        items=len(record_data_batch),
+        repeats=args.repeats,
+        warmup_runs=args.warmup_runs,
+        details={"phase": "profiling", "producer_tasks": args.producer_tasks},
+        operation=operation,
+    )
+
+
+async def _benchmark_rm_metric_processor_only(
+    args: argparse.Namespace,
+    record_data_batch: list[MetricRecordsData],
+) -> BenchmarkSample:
+    batches = _chunked(record_data_batch, args.producer_tasks)
+
+    async def worker(batch: list[Any]) -> None:
+        processor = BenchmarkMetricProcessor()
+        for record_data in batch:
+            await processor.process_result(record_data)
+
+    async def operation(_: int) -> None:
+        await _run_concurrent_batches(batches, worker)
+
+    return await _time_async_operation(
+        name="rm_ingest::metric_processor_only",
+        items=len(record_data_batch),
+        repeats=args.repeats,
+        warmup_runs=args.warmup_runs,
+        details={
+            "downstream": "BenchmarkMetricProcessor",
+            "producer_tasks": args.producer_tasks,
+        },
+        operation=operation,
+    )
+
+
+async def _benchmark_rm_on_metric_records_total(
+    args: argparse.Namespace,
+    messages: list[MetricRecordsWireMessage],
+) -> BenchmarkSample:
+    batches = _chunked(messages, args.producer_tasks)
+
+    async def worker(batch: list[Any]) -> None:
+        benchmark_rm = BenchmarkRecordsManager([BenchmarkMetricProcessor()])
+        for message in batch:
+            await benchmark_rm._on_metric_records(message)
+
+    async def operation(_: int) -> None:
+        await _run_concurrent_batches(batches, worker)
+
+    return await _time_async_operation(
+        name="rm_ingest::on_metric_records_total",
+        items=len(messages),
+        repeats=args.repeats,
+        warmup_runs=args.warmup_runs,
+        details={
+            "processors": args.processors,
+            "metrics_per_processor": args.metrics_per_processor,
+            "producer_tasks": args.producer_tasks,
+            "streaming_shape": True,
+            "target_output_tokens": 800,
+        },
+        operation=operation,
+    )
+
+
+async def _benchmark_rm_full_with_exports(
+    args: argparse.Namespace,
+    messages: list[MetricRecordsWireMessage],
+) -> BenchmarkSample:
+    batches = _chunked(messages, args.producer_tasks)
+
+    async def worker(batch: list[Any]) -> None:
+        benchmark_rm = BenchmarkRecordsManager(
+            [BenchmarkMetricProcessor(), BenchmarkExportProcessor()]
+        )
+        for message in batch:
+            await benchmark_rm._on_metric_records(message)
+
+    async def operation(_: int) -> None:
+        await _run_concurrent_batches(batches, worker)
+
+    return await _time_async_operation(
+        name="rm_ingest::full_with_exports",
+        items=len(messages),
+        repeats=args.repeats,
+        warmup_runs=args.warmup_runs,
+        details={
+            "includes_export_serialization": True,
+            "producer_tasks": args.producer_tasks,
+        },
+        operation=operation,
+    )
+
+
+async def benchmark_records_manager_ingestion(
+    args: argparse.Namespace,
+) -> list[BenchmarkSample]:
+    messages = _make_rm_metric_messages(args)
+    record_data_batch = _make_rm_metric_data_batch(messages)
+    results = [
+        await _benchmark_rm_to_data_merge(args, messages),
+        await _benchmark_rm_tracker_only(args, record_data_batch),
+        await _benchmark_rm_metric_processor_only(args, record_data_batch),
+        await _benchmark_rm_on_metric_records_total(args, messages),
+    ]
+    if args.rm_include_exports:
+        results.append(await _benchmark_rm_full_with_exports(args, messages))
+    return results
 
 
 async def benchmark_full_path(args: argparse.Namespace) -> list[BenchmarkSample]:
@@ -1244,7 +1574,7 @@ async def benchmark_full_path(args: argparse.Namespace) -> list[BenchmarkSample]
 
     async def run_once() -> dict[str, float]:
         timings = {name: 0.0 for name in stage_names}
-        metric_messages: list[MetricRecordsMessage] = []
+        metric_messages: list[MetricRecordsWireMessage] = []
         record_data_batch = []
 
         for record in base_records:
@@ -1314,17 +1644,26 @@ async def benchmark_full_path(args: argparse.Namespace) -> list[BenchmarkSample]
             )
             timings["rp_process_record"] += time.perf_counter() - started
 
-            message = MetricRecordsMessage(
+            message = build_metric_records_wire_message(
                 service_id="record-processor-bench",
                 metadata=metadata,
-                results=raw_results,
+                metrics={
+                    tag: value
+                    for result in raw_results
+                    for tag, value in result.items()
+                },
                 trace_data=None,
                 error=None,
             )
             metric_messages.append(message)
 
             started = time.perf_counter()
-            record_data = message.to_data()
+            record_data = build_metric_records_data(
+                metadata=message.metadata,
+                metrics=message.metrics,
+                trace_data=None,
+                error=None,
+            )
             timings["rp_rm_message_encode"] += time.perf_counter() - started
             record_data_batch.append(record_data)
 
@@ -1871,6 +2210,8 @@ async def _run_async_scenarios(args: argparse.Namespace) -> list[BenchmarkSample
         results.extend(await benchmark_parser_path(args))
     if args.scenario in {"all", "rp"}:
         results.extend(await benchmark_record_processor_path(args))
+    if args.scenario in {"all", "rm-ingest"}:
+        results.extend(await benchmark_records_manager_ingestion(args))
     if args.scenario in {"all", "zmq"}:
         results.extend(await benchmark_zmq_dispatch(args))
     if args.scenario in {"all", "tcp-connect"}:
@@ -1897,6 +2238,7 @@ def parse_args() -> argparse.Namespace:
             "full-path",
             "parser",
             "rp",
+            "rm-ingest",
             "zmq",
             "tcp-connect",
             "tcp-zmq",
@@ -1927,10 +2269,21 @@ def parse_args() -> argparse.Namespace:
         "--processors", type=int, default=3, help="Synthetic RP processors."
     )
     parser.add_argument(
+        "--producer-tasks",
+        type=int,
+        default=4,
+        help="Concurrent producer tasks for rm-ingest scenarios.",
+    )
+    parser.add_argument(
         "--metrics-per-processor",
         type=int,
         default=6,
         help="Synthetic metrics emitted by each RP processor.",
+    )
+    parser.add_argument(
+        "--rm-include-exports",
+        action="store_true",
+        help="Include export-style downstream processors in rm-ingest benchmark.",
     )
     parser.add_argument(
         "--export-metrics",

@@ -10,8 +10,11 @@ from aiperf.common.inference_wire import (
     build_inference_results_wire_message,
     encode_inference_results_wire_message,
 )
-from aiperf.common.messages import MetricRecordsMessage
-from aiperf.common.models.record_models import MetricRecordMetadata
+from aiperf.common.metric_records_wire import (
+    MetricRecordMetadata,
+    MetricRecordsWireMessage,
+    build_metric_records_wire_message,
+)
 from tests.harness.fake_communication import FakeCommunication, FakeCommunicationBus
 
 
@@ -129,14 +132,14 @@ class TestFakeCommunication:
             codec=RECORDS_CODEC,
         )
 
-        received: list[MetricRecordsMessage] = []
+        received: list[MetricRecordsWireMessage] = []
 
-        async def callback(message: MetricRecordsMessage) -> None:
+        async def callback(message: MetricRecordsWireMessage) -> None:
             received.append(message)
 
         pull_client.register_pull_callback(MessageType.METRIC_RECORDS, callback)
 
-        message = MetricRecordsMessage(
+        message = build_metric_records_wire_message(
             service_id="record-processor-1",
             metadata=MetricRecordMetadata(
                 request_num=1,
@@ -149,11 +152,13 @@ class TestFakeCommunication:
                 record_processor_id="rp-1",
                 benchmark_phase="profiling",
             ),
-            results=[{"request_latency": 3.14}],
+            metrics={"request_latency": 3.14},
+            trace_data=None,
+            error=None,
         )
 
         await push_client.push_raw(RECORDS_CODEC.encode(message))
 
         assert len(received) == 1
         assert received[0].service_id == "record-processor-1"
-        assert received[0].results == [{"request_latency": 3.14}]
+        assert received[0].metrics == {"request_latency": 3.14}

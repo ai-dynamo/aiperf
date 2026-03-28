@@ -69,6 +69,7 @@ dependencies = [
   "kr8s>=0.20.15",
   "duckdb>=1.5.0",
   "httpcore[http2]>=1.0.0",
+  "tdigest>=0.5.2.2",
 ]
 
 # CLI Entrypoints

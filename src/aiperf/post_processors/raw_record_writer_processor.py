@@ -11,12 +11,9 @@ import aiofiles
 
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
+from aiperf.common.metric_records_wire import MetricRecordMetadata
 from aiperf.common.mixins import AIPerfLoggerMixin, BufferedJSONLWriterMixin
-from aiperf.common.models import (
-    MetricRecordMetadata,
-    ParsedResponseRecord,
-    RawRecordInfo,
-)
+from aiperf.common.models import ParsedResponseRecord, RawRecordInfo
 from aiperf.common.models.record_models import RequestInfo
 from aiperf.common.redact import redact_headers
 from aiperf.config.defaults import OutputDefaults
@@ -107,7 +104,7 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
 
         if payload is None:
             payload = self._endpoint.format_payload(request_info)
-        return RawRecordInfo.model_construct(
+        return RawRecordInfo(
             metadata=metadata,
             start_perf_ns=record.request.start_perf_ns,
             payload=payload,

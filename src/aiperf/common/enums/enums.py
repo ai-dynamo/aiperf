@@ -497,6 +497,16 @@ class ServerMetricsDiscoveryMode(CaseInsensitiveStrEnum):
     """Disable automatic discovery. Only use explicitly provided URLs."""
 
 
+class ListMetricAggregationMode(CaseInsensitiveStrEnum):
+    """Aggregation strategy for list-valued metrics in benchmark summaries."""
+
+    EXACT = "exact"
+    """Preserve exact list values for aggregation and summary statistics."""
+
+    TDIGEST = "tdigest"
+    """Use t-digest sketches for scalable percentile aggregation of list metrics."""
+
+
 class ServerMetricsFormat(CaseInsensitiveStrEnum):
     """Format options for server metrics export.
 

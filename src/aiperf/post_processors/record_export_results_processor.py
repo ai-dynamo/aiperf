@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.common.messages.inference_messages import MetricRecordsData
+from aiperf.common.metric_records_wire import MetricRecordsData
 from aiperf.common.mixins import BufferedJSONLWriterMixin
 from aiperf.common.models.record_models import MetricRecordInfo, MetricResult
 from aiperf.metrics.metric_dicts import MetricRecordDict

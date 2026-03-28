@@ -28,12 +28,12 @@ from aiperf.common.inference_wire import (
     InferenceResultsWireMessage,
     wire_message_to_request_record,
 )
-from aiperf.common.messages import (
-    MetricRecordsMessage,
+from aiperf.common.metric_records_wire import (
+    MetricRecordMetadata,
+    build_metric_records_wire_message,
 )
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
-    MetricRecordMetadata,
     ParsedResponseRecord,
     RequestRecord,
 )
@@ -253,6 +253,20 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         )
 
     @on_pull_message(MessageType.INFERENCE_RESULTS)
+    def _merge_metric_results(
+        self, raw_results: list[MetricRecordDict | BaseException]
+    ) -> MetricRecordDict:
+        """Merge processor result dicts into the downstream metric payload."""
+        metrics: MetricRecordDict = {}
+        for result in raw_results:
+            if isinstance(result, BaseException):
+                self.error(
+                    f"Error processing record: {result!r}: {traceback.format_exception(result)}"
+                )
+                continue
+            metrics.update(result)
+        return metrics
+
     async def _on_inference_results(self, message: InferenceResultsWireMessage) -> None:
         """Handle an inference results message."""
         worker_id, record = wire_message_to_request_record(
@@ -278,21 +292,13 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         raw_results = await self._process_record(parsed_record, metadata)
 
         trace_data, error = self._free_record_data(record, parsed_record)
-
-        results = []
-        for result in raw_results:
-            if isinstance(result, BaseException):
-                self.error(
-                    f"Error processing record: {result!r}: {traceback.format_exception(result)}"
-                )
-            else:
-                results.append(result)
+        metrics = self._merge_metric_results(raw_results)
 
         await self.records_push_client.push(
-            MetricRecordsMessage(
+            build_metric_records_wire_message(
                 service_id=self.service_id,
                 metadata=metadata,
-                results=results,
+                metrics=metrics,
                 trace_data=trace_data,
                 error=error,
             )
@@ -304,7 +310,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """Free large data structures from the record after all processors have run.
 
         All metrics and post-processors consume these fields during _process_record().
-        The only data sent downstream in MetricRecordsMessage is metadata, results,
+        The only data sent downstream on the records wire is metadata, metrics,
         trace_data, and error -- so everything else can be released here.
 
         We assign None to fields typed as non-optional lists (turns, responses) to let

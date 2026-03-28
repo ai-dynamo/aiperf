@@ -5,7 +5,7 @@
 import asyncio
 import time
 from pathlib import Path
-from typing import Generic
+from typing import Any, Generic
 
 import aiofiles
 import orjson
@@ -75,24 +75,9 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
             self._file_handle = await aiofiles.open(self.output_file, mode="wb")
 
     async def buffered_write(self, record: BaseModelT) -> None:
-        """Write a Pydantic model to the buffer with automatic flushing.
-
-        This method serializes the provided Pydantic model to JSON bytes using orjson
-        and adds it to the internal buffer. If the buffer reaches the configured batch
-        size, it automatically flushes the buffer to disk.
-
-        Uses binary mode with orjson for optimal performance:
-        - 6x faster for large records (>20KB)
-        - No encode/decode overhead
-        - Efficient for all record sizes
-
-        Args:
-            record: A Pydantic BaseModel instance to write
-        """
+        """Write a record to the buffer with automatic flushing."""
         try:
-            # Serialize to bytes using orjson (faster for large records)
-            # Use exclude_none=True to omit None fields (smaller output)
-            json_bytes = orjson.dumps(record.model_dump(exclude_none=True, mode="json"))
+            json_bytes = self._serialize_record(record)
 
             buffer_to_flush = None
             self._buffer.append(json_bytes)
@@ -108,6 +93,13 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
 
         except Exception as e:
             self.error(f"Failed to write record: {e!r}")
+
+    def _serialize_record(self, record: Any) -> bytes:
+        if hasattr(record, "to_json_bytes"):
+            return record.to_json_bytes()
+        if hasattr(record, "model_dump"):
+            return orjson.dumps(record.model_dump(exclude_none=True, mode="json"))
+        raise TypeError(f"Unsupported JSONL record type: {type(record)}")
 
     async def _flush_buffer(self, buffer_to_flush: list[bytes]) -> None:
         """Write buffered records to disk using bulk write.

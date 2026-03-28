@@ -6,8 +6,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.inference_wire import build_inference_results_wire_message
-from aiperf.common.messages import MetricRecordsMessage
-from aiperf.common.models.record_models import MetricRecordMetadata
+from aiperf.common.metric_records_wire import (
+    MetricRecordMetadata,
+    MetricRecordsWireMessage,
+)
 from aiperf.common.utils import compute_time_ns
 from aiperf.records.record_processor_service import RecordProcessor
 
@@ -185,7 +187,7 @@ class TestRecordProcessorWireMessages:
         sample_request_record,
         sample_parsed_record,
     ) -> None:
-        """RecordProcessor should consume the msgspec wire envelope and emit MetricRecordsMessage."""
+        """RecordProcessor should consume the msgspec wire envelope and emit MetricRecordsWireMessage."""
         processor = MagicMock(spec=RecordProcessor)
         processor.run = MagicMock()
         processor.run.cfg = sample_request_record.request_info.config.model_copy(
@@ -198,6 +200,9 @@ class TestRecordProcessorWireMessages:
             return_value=sample_parsed_record
         )
         processor._process_record = AsyncMock(return_value=[{"request_latency": 12.5}])
+        processor._merge_metric_results = MagicMock(
+            return_value={"request_latency": 12.5}
+        )
         processor._free_record_data = MagicMock(return_value=(None, None))
         metadata = MetricRecordMetadata(
             request_num=1,
@@ -230,6 +235,9 @@ class TestRecordProcessorWireMessages:
         assert metadata_args[1] == "worker-7"
 
         pushed_message = processor.records_push_client.push.call_args.args[0]
-        assert isinstance(pushed_message, MetricRecordsMessage)
-        assert pushed_message.metadata is metadata
-        assert pushed_message.results == [{"request_latency": 12.5}]
+        assert isinstance(pushed_message, MetricRecordsWireMessage)
+        assert pushed_message.metadata.worker_id == metadata.worker_id
+        assert (
+            pushed_message.metadata.record_processor_id == metadata.record_processor_id
+        )
+        assert pushed_message.metrics == {"request_latency": 12.5}

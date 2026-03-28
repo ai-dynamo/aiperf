@@ -5,10 +5,15 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from aiperf.common.enums import MetricType
+from aiperf.common.enums import ListMetricAggregationMode, MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
 from aiperf.config import AIPerfConfig
+from aiperf.metrics.list_metric_aggregation import (
+    ExactListMetricAggregator,
+    ListMetricAggregator,
+    TDigestListMetricAggregator,
+)
 from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
 from aiperf.metrics.types.credit_drop_latency_metric import CreditDropLatencyMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
@@ -61,23 +66,86 @@ class TestMetricResultsProcessor:
         assert list(processor._results["test_record"].data) == [42.0, 84.0]
 
     @pytest.mark.asyncio
-    async def test_process_result_record_metric_list_values(
+    async def test_process_result_record_metric_list_values_use_exact_aggregator_by_default(
         self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
-        """Test processing record metric with list values extends the array."""
+        """Test list-valued record metrics use the default exact aggregator."""
         processor = MetricResultsProcessor(_make_run(mock_user_config))
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
-        # Process list of values
         message = create_metric_records_message(
             x_request_id="test-1",
             results=[{"test_record": [10.0, 20.0, 30.0]}],
         )
         await processor.process_result(message.to_data())
 
+        assert (
+            processor._list_metric_aggregation_mode == ListMetricAggregationMode.EXACT
+        )
         assert "test_record" in processor._results
-        assert isinstance(processor._results["test_record"], MetricArray)
-        assert list(processor._results["test_record"].data) == [10.0, 20.0, 30.0]
+        assert isinstance(processor._results["test_record"], ExactListMetricAggregator)
+
+        result = processor._results["test_record"].to_result(
+            "test_record",
+            "Test Record",
+            "count",
+        )
+        assert result == MetricResult(
+            tag="test_record",
+            header="Test Record",
+            unit="count",
+            min=10.0,
+            max=30.0,
+            avg=20.0,
+            sum=60.0,
+            std=8.16496580927726,
+            p1=10.2,
+            p5=11.0,
+            p10=12.0,
+            p25=15.0,
+            p50=20.0,
+            p75=25.0,
+            p90=28.0,
+            p95=29.0,
+            p99=29.8,
+            count=3,
+        )
+
+    @pytest.mark.asyncio
+    async def test_process_result_record_metric_list_values_use_tdigest_aggregator(
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
+    ) -> None:
+        """Test list-valued record metrics use the configured tdigest aggregator."""
+        config = mock_user_config.model_copy(deep=True)
+        config.metrics.list_metric_aggregation = ListMetricAggregationMode.TDIGEST
+        processor = MetricResultsProcessor(_make_run(config))
+        processor._tags_to_types = {"test_record": MetricType.RECORD}
+
+        message = create_metric_records_message(
+            x_request_id="test-1",
+            results=[{"test_record": [10.0, 20.0, 30.0]}],
+        )
+        await processor.process_result(message.to_data())
+
+        assert (
+            processor._list_metric_aggregation_mode == ListMetricAggregationMode.TDIGEST
+        )
+        assert "test_record" in processor._results
+        assert isinstance(
+            processor._results["test_record"], TDigestListMetricAggregator
+        )
+
+        result = processor._results["test_record"].to_result(
+            "test_record",
+            "Test Record",
+            "count",
+        )
+        assert result.count == 3
+        assert result.min == 10.0
+        assert result.max == 30.0
+        assert result.avg == pytest.approx(20.0)
+        assert result.sum == pytest.approx(60.0)
+        assert result.p50 == pytest.approx(20.0, abs=1.0)
 
     @pytest.mark.asyncio
     async def test_process_result_aggregate_metric(
@@ -240,6 +308,32 @@ class TestMetricResultsProcessor:
 
         assert result == expected_result
         metric_array.to_result.assert_called_once_with(
+            RequestLatencyMetric.tag,
+            RequestLatencyMetric.header,
+            str(RequestLatencyMetric.unit),
+        )
+
+    def test_create_metric_result_from_list_metric_aggregator(
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
+    ) -> None:
+        """Test creating MetricResult from ListMetricAggregator."""
+        processor = MetricResultsProcessor(_make_run(mock_user_config))
+        processor._instances_map = {RequestLatencyMetric.tag: RequestLatencyMetric()}
+        aggregator: ListMetricAggregator = ExactListMetricAggregator()
+
+        expected_result = MetricResult(
+            tag=RequestLatencyMetric.tag,
+            header=RequestLatencyMetric.header,
+            unit=str(RequestLatencyMetric.unit),
+            avg=20.0,
+            count=3,
+        )
+        aggregator.to_result = Mock(return_value=expected_result)
+
+        result = processor._create_metric_result(RequestLatencyMetric.tag, aggregator)
+
+        assert result == expected_result
+        aggregator.to_result.assert_called_once_with(
             RequestLatencyMetric.tag,
             RequestLatencyMetric.header,
             str(RequestLatencyMetric.unit),

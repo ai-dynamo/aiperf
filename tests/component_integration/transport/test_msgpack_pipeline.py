@@ -4,7 +4,8 @@
 import pytest
 
 from aiperf.common.inference_wire import InferenceResultsWireMessage
-from aiperf.common.messages import InferenceResultsMessage, MetricRecordsMessage
+from aiperf.common.messages import InferenceResultsMessage
+from aiperf.common.metric_records_wire import MetricRecordsWireMessage
 from tests.component_integration.conftest import (
     AIPerfRunnerResultWithSharedBus,
 )
@@ -50,7 +51,7 @@ class TestMsgpackPipeline:
         metric_payloads = [
             payload
             for payload in runner_result.sent_payloads
-            if isinstance(payload.payload, MetricRecordsMessage)
+            if isinstance(payload.payload, MetricRecordsWireMessage)
         ]
 
         assert len(wire_payloads) == 4

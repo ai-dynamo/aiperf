@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from aiperf.common.metric_records_wire import MetricRecordMetadata
 from aiperf.common.models.auto_routed_model import AutoRoutedModel
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.credit_models import (
@@ -58,7 +59,6 @@ from aiperf.common.models.record_models import (
     ImageRetrievalResponseData,
     InferenceServerResponse,
     MetricRecordInfo,
-    MetricRecordMetadata,
     MetricResult,
     MetricValue,
     ParsedResponse,

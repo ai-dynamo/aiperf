@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 
 from aiperf.common.messages import TelemetryRecordsMessage
-from aiperf.common.messages.inference_messages import MetricRecordsData
+from aiperf.common.metric_records_wire import MetricRecordMetadata, MetricRecordsData
 from aiperf.common.models import (
     ErrorDetails,
     MetricResult,
@@ -16,7 +16,6 @@ from aiperf.common.models import (
     TelemetryMetrics,
     TelemetryRecord,
 )
-from aiperf.common.models.record_models import MetricRecordMetadata
 from aiperf.common.types import MetricTagT
 
 

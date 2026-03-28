@@ -51,6 +51,7 @@ from aiperf.config.dataset import (
 from aiperf.config.endpoint import (
     EndpointConfig,
 )
+from aiperf.config.metrics import MetricsConfig
 from aiperf.config.models import (
     AccuracyConfig,
     LoggingConfig,
@@ -323,6 +324,14 @@ class BenchmarkConfig(BaseConfig):
         Field(
             default_factory=LoggingConfig,
             description="Logging configuration for verbosity and debug settings.",
+        ),
+    ]
+
+    metrics: Annotated[
+        MetricsConfig,
+        Field(
+            default_factory=MetricsConfig,
+            description="Metrics aggregation configuration for benchmark summaries.",
         ),
     ]
 

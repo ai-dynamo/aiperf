@@ -41,8 +41,6 @@ if TYPE_CHECKING:
 from aiperf.common.control_structs import Command
 from aiperf.common.messages import (
     AllRecordsReceivedMessage,
-    MetricRecordsData,
-    MetricRecordsMessage,
     ProcessRecordsResultMessage,
     ProcessServerMetricsResultMessage,
     ProcessTelemetryResultMessage,
@@ -50,6 +48,11 @@ from aiperf.common.messages import (
     RecordsProcessingStatsMessage,
     ServerMetricsRecordMessage,
     TelemetryRecordsMessage,
+)
+from aiperf.common.metric_records_wire import (
+    MetricRecordsData,
+    MetricRecordsWireMessage,
+    wire_message_to_record_data,
 )
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
@@ -201,12 +204,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 self.error(f"Failed to create results processor {entry.name}: {e}")
 
     @on_pull_message(MessageType.METRIC_RECORDS)
-    async def _on_metric_records(self, message: MetricRecordsMessage) -> None:
+    async def _on_metric_records(self, message: MetricRecordsWireMessage) -> None:
         """Handle a metric records message."""
         if self.is_trace_enabled:
             self.trace(f"Received metric records: {message}")
 
-        record_data = message.to_data()
+        record_data = wire_message_to_record_data(message)
 
         self._records_tracker.update_from_record_data(record_data)
 
@@ -357,6 +360,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self, record_data: MetricRecordsData
     ) -> None:
         """Send the results to each of the metric results processors."""
+        if not self._metric_results_processors:
+            return
+        if len(self._metric_results_processors) == 1:
+            await self._metric_results_processors[0].process_result(record_data)
+            return
         await asyncio.gather(
             *[
                 results_processor.process_result(record_data)

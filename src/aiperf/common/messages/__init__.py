@@ -16,8 +16,6 @@ from aiperf.common.messages.dataset_messages import (
 )
 from aiperf.common.messages.inference_messages import (
     InferenceResultsMessage,
-    MetricRecordsData,
-    MetricRecordsMessage,
     RealtimeMetricsMessage,
 )
 from aiperf.common.messages.progress_messages import (
@@ -74,8 +72,6 @@ __all__ = [
     "InferenceResultsMessage",
     "MemoryReportMessage",
     "Message",
-    "MetricRecordsData",
-    "MetricRecordsMessage",
     "ProcessRecordsResultMessage",
     "ProcessServerMetricsResultMessage",
     "ProcessTelemetryResultMessage",

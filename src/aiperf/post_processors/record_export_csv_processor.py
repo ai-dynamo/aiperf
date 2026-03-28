@@ -13,13 +13,9 @@ from aiperf.common.enums import (
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.hooks import on_init
-from aiperf.common.messages.inference_messages import MetricRecordsData
+from aiperf.common.metric_records_wire import MetricRecordMetadata, MetricRecordsData
 from aiperf.common.mixins.buffered_csv_writer_mixin import BufferedCSVWriterMixin
-from aiperf.common.models.record_models import (
-    MetricRecordMetadata,
-    MetricResult,
-    MetricValue,
-)
+from aiperf.common.models.record_models import MetricResult, MetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor

@@ -6,8 +6,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from aiperf.common.exceptions import PostProcessorDisabled
+from aiperf.common.metric_records_wire import MetricRecordMetadata
 from aiperf.common.mixins import AIPerfLifecycleMixin
-from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
+from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics.metric_dicts import MetricRecordDict
 
 if TYPE_CHECKING:

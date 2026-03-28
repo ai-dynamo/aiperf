@@ -182,7 +182,7 @@ This section describes the end-to-end message flow during a benchmark run, showi
 2. Workers access dataset entries via memory-mapped files
 3. Workers send requests to Inference Server (external HTTP)
 4. Workers push raw results to Record Processors
-5. Record Processors push metric records to Records Manager
+5. Record Processors push metric records to Records Manager via a dedicated msgspec MessagePack wire payload on the records PUSH/PULL channel
 6. Records Manager aggregates and exports final results
 
 ## Communication Architecture

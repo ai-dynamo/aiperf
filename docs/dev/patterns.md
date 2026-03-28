@@ -173,7 +173,12 @@ async def _handle(self, msg: MyMsg) -> None:
 
 Auto-subscription happens during `@on_init` phase.
 
-For hot-path pod-local lifecycle traffic (for example `WorkerPodManager` talking to sibling workers/record processors in Kubernetes mode), prefer tagged `msgspec.Struct` unions over event-bus messages and send them over the streaming DEALER/ROUTER clients. Keep credit-router traffic on the existing credit channel.
+For hot-path transport paths, prefer tagged `msgspec.Struct` payloads over routed Pydantic messages.
+
+- Use streaming DEALER/ROUTER + tagged `msgspec.Struct` unions for pod-local lifecycle traffic (for example `WorkerPodManager` talking to sibling workers/record processors in Kubernetes mode).
+- Use dedicated msgspec wire structs plus channel-specific codecs for PUSH/PULL hot paths such as the record-processor -> records-manager metric-record channel.
+- Keep event-bus `Message` subclasses for general Pub/Sub traffic where routed Pydantic models remain sufficient.
+- Keep credit-router traffic on the existing credit channel.
 
 ## Plugin System Pattern
 

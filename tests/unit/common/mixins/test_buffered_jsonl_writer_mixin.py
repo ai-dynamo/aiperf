@@ -6,17 +6,20 @@ import json
 import tempfile
 from pathlib import Path
 
+import msgspec
 import pytest
-from pydantic import BaseModel
 
 from aiperf.common.mixins.buffered_jsonl_writer_mixin import BufferedJSONLWriterMixin
 
 
-class SampleRecord(BaseModel):
-    """Sample Pydantic model for testing."""
+class SampleRecord(msgspec.Struct, frozen=True, kw_only=True):
+    """Sample msgspec model for testing."""
 
     id: int
     value: str
+
+    def to_json_bytes(self) -> bytes:
+        return msgspec.json.encode(self)
 
 
 class TestBufferedJSONLWriterMixin:
@@ -46,6 +49,7 @@ class TestBufferedJSONLWriterMixin:
         writer = BufferedJSONLWriterMixin[SampleRecord](
             output_file=temp_output_file,
             batch_size=batch_size,
+            flush_interval=1.0,
         )
         await writer.initialize()
         await writer.start()
@@ -83,6 +87,7 @@ class TestBufferedJSONLWriterMixin:
         writer = BufferedJSONLWriterMixin[SampleRecord](
             output_file=temp_output_file,
             batch_size=batch_size,
+            flush_interval=1.0,
         )
         await writer.initialize()
         await writer.start()
@@ -105,6 +110,7 @@ class TestBufferedJSONLWriterMixin:
         writer = BufferedJSONLWriterMixin[SampleRecord](
             output_file=temp_output_file,
             batch_size=10,
+            flush_interval=1.0,
         )
         await writer.initialize()
         await writer.start()
@@ -122,6 +128,7 @@ class TestBufferedJSONLWriterMixin:
         writer = BufferedJSONLWriterMixin[SampleRecord](
             output_file=temp_output_file,
             batch_size=10,
+            flush_interval=1.0,
         )
         await writer.initialize()
         await writer.start()

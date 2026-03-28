@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import csv
 import io
 from pathlib import Path
@@ -11,9 +12,7 @@ import pytest
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.models.error_models import ErrorDetails
-from aiperf.common.models.record_models import (
-    MetricValue,
-)
+from aiperf.common.models.record_models import MetricValue
 from aiperf.config import AIPerfConfig
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin.enums import EndpointType
@@ -55,6 +54,19 @@ def _make_csv_config(tmp_artifact_dir: Path, **artifacts_overrides) -> AIPerfCon
     )
 
 
+async def wait_for_flush_tasks(processor) -> None:
+    """Wait for one-shot flush tasks without blocking on periodic background tasks."""
+    while True:
+        flush_tasks = [
+            task
+            for task in processor.tasks
+            if task.get_coro().__name__ == "_csv_flush_buffer"
+        ]
+        if not flush_tasks:
+            return
+        await asyncio.gather(*flush_tasks)
+
+
 @pytest.fixture
 def tmp_artifact_dir(tmp_path: Path) -> Path:
     """Create a temporary artifact directory for testing."""
@@ -71,7 +83,7 @@ def csv_config(tmp_artifact_dir: Path) -> AIPerfConfig:
 
 @pytest.fixture
 def sample_metric_records_message():
-    """Create a sample MetricRecordsMessage for testing."""
+    """Create a sample MetricRecordsData for testing."""
     return create_metric_records_message(
         service_id="processor-1",
         x_request_id="test-record-123",
@@ -200,7 +212,7 @@ class TestRecordExportCSVProcessorProcessResult:
                 "to_display_dict",
                 return_value=mock_display_dict,
             ):
-                await processor.process_result(sample_metric_records_message.to_data())
+                await processor.process_result(sample_metric_records_message)
 
         rows = _parse_csv_output(processor.output_file)
         assert len(rows) == 1
@@ -230,7 +242,7 @@ class TestRecordExportCSVProcessorProcessResult:
         )
 
         with patch.object(MetricRecordDict, "to_display_dict", return_value={}):
-            await processor.process_result(sample_metric_records_message.to_data())
+            await processor.process_result(sample_metric_records_message)
 
         assert processor.rows_written == 0
 
@@ -253,7 +265,7 @@ class TestRecordExportCSVProcessorProcessResult:
             ),
             patch.object(processor, "error") as mock_error,
         ):
-            await processor.process_result(sample_metric_records_message.to_data())
+            await processor.process_result(sample_metric_records_message)
             assert mock_error.call_count >= 1
 
         assert processor.rows_written == 0
@@ -286,7 +298,7 @@ class TestRecordExportCSVProcessorProcessResult:
                         request_start_ns=1_000_000_000 + i,
                         results=[{"metric1": 100}],
                     )
-                    await processor.process_result(message.to_data())
+                    await processor.process_result(message)
 
         assert processor.rows_written == 5
         rows = _parse_csv_output(processor.output_file)
@@ -320,7 +332,7 @@ class TestRecordExportCSVProcessorFileFormat:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(sample_metric_records_message.to_data())
+                await processor.process_result(sample_metric_records_message)
 
         content = processor.output_file.read_text()
         reader = csv.reader(io.StringIO(content))
@@ -347,7 +359,7 @@ class TestRecordExportCSVProcessorFileFormat:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(sample_metric_records_message.to_data())
+                await processor.process_result(sample_metric_records_message)
 
         content = processor.output_file.read_text()
         reader = csv.reader(io.StringIO(content))
@@ -399,7 +411,7 @@ class TestRecordExportCSVProcessorFileFormat:
                         session_num=i
                         // 2,  # session 0 for req 0,1; session 1 for req 2
                     )
-                    await processor.process_result(msg.to_data())
+                    await processor.process_result(msg)
 
         content = processor.output_file.read_text()
         reader = csv.DictReader(io.StringIO(content))
@@ -443,7 +455,7 @@ class TestRecordExportCSVProcessorErrorRecords:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(message.to_data())
+                await processor.process_result(message)
 
         rows = _parse_csv_output(processor.output_file)
         assert len(rows) == 1
@@ -474,7 +486,7 @@ class TestRecordExportCSVProcessorErrorRecords:
 
         async with aiperf_lifecycle(processor):
             with patch.object(MetricRecordDict, "to_display_dict", return_value={}):
-                await processor.process_result(message.to_data())
+                await processor.process_result(message)
 
         assert processor.rows_written == 1
         rows = _parse_csv_output(processor.output_file)
@@ -534,9 +546,9 @@ class TestRecordExportCSVProcessorShutdown:
                         request_start_ns=1_000_000_000 + i,
                         results=[{"test_metric": 42}],
                     )
-                    await processor.process_result(message.to_data())
+                    await processor.process_result(message)
 
-                await processor.wait_for_tasks()
+                await wait_for_flush_tasks(processor)
         finally:
             await processor.stop()
 
@@ -578,10 +590,10 @@ class TestRecordExportCSVProcessorLifecycle:
                             turn_index=0,
                             request_start_ns=1_000_000_000 + i,
                             results=[{"inter_token_latency": 100}],
-                        ).to_data()
+                        )
                     )
 
-                await processor.wait_for_tasks()
+                await wait_for_flush_tasks(processor)
         finally:
             await processor.stop()
 
@@ -631,7 +643,7 @@ class TestRecordExportCSVProcessorMetricFormatting:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(message.to_data())
+                await processor.process_result(message)
 
         rows = _parse_csv_output(processor.output_file)
         assert len(rows) == 1
@@ -664,7 +676,7 @@ class TestRecordExportCSVProcessorMetricFormatting:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(message.to_data())
+                await processor.process_result(message)
 
         rows = _parse_csv_output(processor.output_file)
         assert len(rows) == 1
@@ -702,7 +714,7 @@ class TestRecordExportCSVProcessorPerChunkData:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(message.to_data())
+                await processor.process_result(message)
 
         rows = _parse_csv_output(processor.output_file)
         assert len(rows) == 1
@@ -740,7 +752,7 @@ class TestRecordExportCSVProcessorPerChunkData:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(message.to_data())
+                await processor.process_result(message)
 
         rows = _parse_csv_output(processor.output_file)
         assert len(rows) == 1
@@ -796,12 +808,12 @@ class TestRecordExportCSVProcessorMixedMetrics:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=error_display
             ):
-                await processor.process_result(error_msg.to_data())
+                await processor.process_result(error_msg)
             # Success record arrives with more metrics
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=success_display
             ):
-                await processor.process_result(success_msg.to_data())
+                await processor.process_result(success_msg)
 
         rows = _parse_csv_output(processor.output_file)
         assert len(rows) == 2
@@ -862,11 +874,11 @@ class TestRecordExportCSVProcessorMixedMetrics:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=success_display
             ):
-                await processor.process_result(success_msg.to_data())
+                await processor.process_result(success_msg)
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=error_display
             ):
-                await processor.process_result(error_msg.to_data())
+                await processor.process_result(error_msg)
 
         rows = _parse_csv_output(processor.output_file)
         assert len(rows) == 2

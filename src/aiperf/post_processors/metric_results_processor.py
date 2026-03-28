@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.enums import (
+    ListMetricAggregationMode,
     MetricDictValueTypeT,
     MetricFlags,
     MetricType,
@@ -13,12 +14,16 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.messages.inference_messages import MetricRecordsData
+from aiperf.common.metric_records_wire import MetricRecordsData
 from aiperf.common.models import MetricResult
 from aiperf.common.types import MetricTagT
 from aiperf.metrics import BaseAggregateMetric
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.display_units import to_display_unit
+from aiperf.metrics.list_metric_aggregation import (
+    ListMetricAggregator,
+    build_list_metric_aggregator,
+)
 from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
@@ -50,6 +55,9 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         # Create the results dict, which will be used to store the results of non-derived metrics,
         # and then be updated with the derived metrics.
         self._results: MetricResultsDict = MetricResultsDict()
+        self._list_metric_aggregation_mode: ListMetricAggregationMode = (
+            run.cfg.metrics.list_metric_aggregation
+        )
 
         # Get all of the metric classes.
         _all_metric_classes: list[type[BaseMetric]] = MetricRegistry.all_classes()
@@ -87,14 +95,28 @@ class MetricResultsProcessor(BaseMetricsProcessor):
             try:
                 metric_type = self._tags_to_types[tag]
                 if metric_type == MetricType.RECORD:
-                    if tag not in results_dict:
-                        results_dict[tag] = MetricArray()
                     if isinstance(value, list):
-                        # NOTE: Right now we only support list-based metrics by extending the array.
-                        #       In the future, we possibly could support having nested arrays.
-                        results_dict[tag].extend(value)  # type: ignore
+                        existing_values = results_dict.get(tag)
+                        if existing_values is None:
+                            existing_values = build_list_metric_aggregator(
+                                self._list_metric_aggregation_mode
+                            )
+                            results_dict[tag] = existing_values
+                        if not isinstance(existing_values, ListMetricAggregator):
+                            raise TypeError(
+                                f"Expected ListMetricAggregator for list-valued metric '{tag}', got {type(existing_values)}"
+                            )
+                        existing_values.extend(value)
                     else:
-                        results_dict[tag].append(value)  # type: ignore
+                        existing_values = results_dict.get(tag)
+                        if existing_values is None:
+                            existing_values = MetricArray()
+                            results_dict[tag] = existing_values
+                        if not isinstance(existing_values, MetricArray):
+                            raise TypeError(
+                                f"Expected MetricArray for scalar metric '{tag}', got {type(existing_values)}"
+                            )
+                        existing_values.append(value)
 
                 elif metric_type == MetricType.AGGREGATE:
                     metric: BaseAggregateMetric = instances_map[tag]  # type: ignore
@@ -196,7 +218,7 @@ class MetricResultsProcessor(BaseMetricsProcessor):
 
         metric_class = self._instances_map[tag]
 
-        if isinstance(values, MetricArray):
+        if isinstance(values, MetricArray | ListMetricAggregator):
             return values.to_result(tag, metric_class.header, str(metric_class.unit))
 
         if isinstance(values, int | float):

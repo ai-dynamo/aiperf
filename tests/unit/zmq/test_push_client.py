@@ -15,6 +15,11 @@ from aiperf.common.enums import MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import CommunicationError, NotInitializedError
 from aiperf.common.messages import Message
+from aiperf.common.metric_records_wire import (
+    MetricRecordMetadata,
+    MetricRecordsWireMessage,
+    build_metric_records_wire_message,
+)
 from aiperf.zmq.push_client import ZMQPushClient
 
 
@@ -76,9 +81,7 @@ class TestZMQPushClientPush:
         assert "test-123" in sent_str
 
     @pytest.mark.asyncio
-    async def test_push_uses_custom_codec(
-        self, mock_zmq_socket, mock_zmq_context, sample_message
-    ):
+    async def test_push_uses_custom_codec(self, mock_zmq_socket, mock_zmq_context):
         """Test that push encodes bytes through the configured codec."""
         client = ZMQPushClient(
             address="tcp://127.0.0.1:5555",
@@ -87,15 +90,34 @@ class TestZMQPushClientPush:
         )
         await client.initialize()
 
-        await client.push(sample_message)
+        message = build_metric_records_wire_message(
+            service_id="record-processor-1",
+            metadata=MetricRecordMetadata(
+                request_num=1,
+                session_num=1,
+                conversation_id="conversation-1",
+                turn_index=0,
+                request_start_ns=100,
+                request_end_ns=200,
+                worker_id="worker-1",
+                record_processor_id="rp-1",
+                benchmark_phase="profiling",
+            ),
+            metrics={"request_latency": 3.14},
+            trace_data=None,
+            error=None,
+        )
+
+        await client.push(message)
 
         sent_data = mock_zmq_socket.send.call_args[0][0]
         assert isinstance(sent_data, bytes)
         assert b'"message_type"' not in sent_data
 
         decoded = RECORDS_CODEC.decode(sent_data)
-        assert decoded.message_type == sample_message.message_type
-        assert decoded.request_id == sample_message.request_id
+        assert isinstance(decoded, MetricRecordsWireMessage)
+        assert decoded.message_type == MessageType.METRIC_RECORDS
+        assert decoded.metrics == {"request_latency": 3.14}
 
     @pytest.mark.asyncio
     async def test_push_raw_sends_pre_serialized_bytes_unchanged(

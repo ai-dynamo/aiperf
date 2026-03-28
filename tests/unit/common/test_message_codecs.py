@@ -3,14 +3,17 @@
 
 from aiperf.common.channel_codecs import RECORDS_CODEC
 from aiperf.common.message_codecs import JSON_MESSAGE_CODEC, codec_cache_key
-from aiperf.common.messages import MetricRecordsMessage
-from aiperf.common.models.record_models import MetricRecordMetadata
+from aiperf.common.metric_records_wire import (
+    MetricRecordMetadata,
+    MetricRecordsWireMessage,
+    build_metric_records_wire_message,
+)
 
 
 class TestMessageCodecs:
-    def test_records_codec_round_trips_metric_records_message(self) -> None:
-        """MessagePack records codec should rehydrate the routed Pydantic subclass."""
-        message = MetricRecordsMessage(
+    def test_records_codec_round_trips_metric_records_wire_message(self) -> None:
+        """MessagePack records codec should round-trip the msgspec wire payload."""
+        message = build_metric_records_wire_message(
             service_id="record-processor-1",
             metadata=MetricRecordMetadata(
                 request_num=7,
@@ -23,18 +26,21 @@ class TestMessageCodecs:
                 record_processor_id="record-processor-1",
                 benchmark_phase="profiling",
             ),
-            results=[{"request_latency": 12.5, "output_sequence_length": 8}],
+            metrics={"request_latency": 12.5, "output_sequence_length": 8},
+            trace_data=None,
+            error=None,
         )
 
         encoded = RECORDS_CODEC.encode(message)
         decoded = RECORDS_CODEC.decode(encoded)
 
-        assert isinstance(decoded, MetricRecordsMessage)
+        assert isinstance(decoded, MetricRecordsWireMessage)
         assert decoded.service_id == "record-processor-1"
         assert decoded.metadata.worker_id == "worker-1"
-        assert decoded.results == [
-            {"request_latency": 12.5, "output_sequence_length": 8}
-        ]
+        assert decoded.metrics == {
+            "request_latency": 12.5,
+            "output_sequence_length": 8,
+        }
 
     def test_codec_cache_key_uses_json_default_and_custom_cache_keys(self) -> None:
         """Codec cache keys should stay stable for client cache partitioning."""

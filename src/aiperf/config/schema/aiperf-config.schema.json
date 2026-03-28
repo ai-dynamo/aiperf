@@ -2720,6 +2720,15 @@
       "title": "IpcCommunicationConfig",
       "type": "object"
     },
+    "ListMetricAggregationMode": {
+      "description": "Aggregation strategy for list-valued metrics in benchmark summaries.",
+      "enum": [
+        "exact",
+        "tdigest"
+      ],
+      "title": "ListMetricAggregationMode",
+      "type": "string"
+    },
     "LogNormalDistribution": {
       "additionalProperties": false,
       "description": "Log-normal parameterized by mean and median (right-skewed, always positive).\n\nSkew is controlled by the mean/median ratio: larger ratio = heavier right tail.\nWhen mean == median the distribution is deterministic.\n\nInternally: sigma = sqrt(2 * log(mean / median)), mu = log(median).",
@@ -2798,6 +2807,19 @@
         }
       },
       "title": "LoggingConfig",
+      "type": "object"
+    },
+    "MetricsConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for benchmark metric aggregation behavior.",
+      "properties": {
+        "listMetricAggregation": {
+          "$ref": "#/$defs/ListMetricAggregationMode",
+          "default": "exact",
+          "description": "Aggregation mode for list-valued metrics in benchmark summaries."
+        }
+      },
+      "title": "MetricsConfig",
       "type": "object"
     },
     "ModelItem": {
@@ -5978,6 +6000,10 @@
     },
     "logging": {
       "$ref": "#/$defs/LoggingConfig"
+    },
+    "metrics": {
+      "$ref": "#/$defs/MetricsConfig",
+      "description": "Metrics aggregation configuration for benchmark summaries."
     },
     "accuracy": {
       "anyOf": [

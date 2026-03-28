@@ -5,11 +5,15 @@
 from __future__ import annotations
 
 from aiperf.common.inference_wire import InferenceResultsWireMessage
-from aiperf.common.message_codecs import MsgspecStructCodec, PydanticMsgpackCodec
+from aiperf.common.message_codecs import MsgspecStructCodec
+from aiperf.common.metric_records_wire import MetricRecordsWireMessage
 
 RAW_INFERENCE_CODEC = MsgspecStructCodec(
     decode_type=InferenceResultsWireMessage,
     cache_key="raw-inference-msgpack",
 )
 
-RECORDS_CODEC = PydanticMsgpackCodec(cache_key="records-msgpack")
+RECORDS_CODEC = MsgspecStructCodec(
+    decode_type=MetricRecordsWireMessage,
+    cache_key="records-msgpack",
+)

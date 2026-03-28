@@ -24,7 +24,11 @@ from pydantic import Field
 from aiperf.common.constants import STAT_KEYS
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import AIPerfBaseModel
-from aiperf.common.models.record_models import MetricRecordInfo, MetricResult
+from aiperf.common.models.record_models import (
+    MetricRecordInfo,
+    MetricResult,
+    decode_metric_record_info_json,
+)
 from aiperf.common.models.server_metrics_models import (
     CounterTimeslice,
     GaugeTimeslice,
@@ -729,7 +733,7 @@ class DataLoader(AIPerfLoggerMixin):
             raise DataLoadError("JSONL file not found", path=str(jsonl_path))
 
         def parse_line(line: str) -> dict:
-            metric_record = MetricRecordInfo.model_validate_json(line)
+            metric_record = decode_metric_record_info_json(line)
             return self._convert_to_flat_dict(metric_record)
 
         records = self._read_jsonl_with_error_handling(
@@ -771,10 +775,10 @@ class DataLoader(AIPerfLoggerMixin):
 
     def _convert_to_flat_dict(self, record: MetricRecordInfo) -> dict:
         """
-        Convert a MetricRecordInfo Pydantic model to a flat dictionary for DataFrame.
+        Convert a MetricRecordInfo artifact record to a flat dictionary for DataFrame.
 
         Args:
-            record: Pydantic model from JSONL line.
+            record: Decoded record artifact from a JSONL line.
 
         Returns:
             Flattened dictionary with metrics and metadata at top level.

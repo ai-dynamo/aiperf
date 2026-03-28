@@ -124,7 +124,7 @@ class MetricResultsDict(BaseMetricDict[MetricDictValueTypeT]):
     of all metrics that have been computed for an entire run.
 
     This will include:
-    - All `BaseRecordMetric`s as a MetricArray of their values.
+    - All `BaseRecordMetric`s as a MetricArray or ListMetricAggregator of their values.
     - The most recent value of each `BaseAggregateMetric`.
     - The value of any `BaseDerivedMetric` that has already been computed.
     """

@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue
+from aiperf.common.metric_records_wire import MetricRecordMetadata
 from aiperf.common.models import ParsedResponseRecord
-from aiperf.common.models.record_models import MetricRecordMetadata
 from aiperf.common.types import MetricTagT
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor

@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import logging
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -11,11 +12,11 @@ import pytest
 from aiperf.common.enums import CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.common.messages import MetricRecordsMessage
+from aiperf.common.metric_records_wire import MetricRecordMetadata, MetricRecordsData
 from aiperf.common.models.record_models import (
     MetricRecordInfo,
-    MetricRecordMetadata,
     MetricValue,
+    decode_metric_record_info_json,
 )
 from aiperf.common.models.trace_models import AioHttpTraceData
 from aiperf.config import AIPerfConfig
@@ -29,6 +30,19 @@ from tests.unit.post_processors.conftest import (
     aiperf_lifecycle,
     create_metric_records_message,
 )
+
+
+async def wait_for_flush_tasks(processor) -> None:
+    """Wait for one-shot flush tasks without blocking on periodic background tasks."""
+    while True:
+        flush_tasks = [
+            task
+            for task in processor.tasks
+            if task.get_coro().__name__ == "_flush_buffer"
+        ]
+        if not flush_tasks:
+            return
+        await asyncio.gather(*flush_tasks)
 
 
 @pytest.fixture
@@ -65,7 +79,7 @@ def user_config_records_export(tmp_artifact_dir: Path) -> AIPerfConfig:
 
 @pytest.fixture
 def sample_metric_records_message():
-    """Create a sample MetricRecordsMessage for testing."""
+    """Create a sample MetricRecordsData for testing."""
     return create_metric_records_message(
         service_id="processor-1",
         x_request_id="test-record-123",
@@ -192,7 +206,7 @@ class TestRecordExportResultsProcessorProcessResult:
     async def test_process_result_writes_valid_data(
         self,
         user_config_records_export: AIPerfConfig,
-        sample_metric_records_message: MetricRecordsMessage,
+        sample_metric_records_message: MetricRecordsData,
         mock_metric_registry: Mock,
     ):
         """Test that process_result writes valid data to file."""
@@ -212,13 +226,13 @@ class TestRecordExportResultsProcessorProcessResult:
                 "to_display_dict",
                 return_value=mock_display_dict,
             ):
-                await processor.process_result(sample_metric_records_message.to_data())
+                await processor.process_result(sample_metric_records_message)
 
         lines = processor.output_file.read_text().splitlines()
 
         assert len(lines) == 1
         record_dict = orjson.loads(lines[0])
-        record = MetricRecordInfo.model_validate(record_dict)
+        record = decode_metric_record_info_json(orjson.dumps(record_dict))
         assert record.metadata.x_request_id == "test-record-123"
         assert record.metadata.conversation_id == "conv-456"
         assert record.metadata.turn_index == 0
@@ -234,7 +248,7 @@ class TestRecordExportResultsProcessorProcessResult:
     async def test_process_result_with_empty_display_metrics(
         self,
         user_config_records_export: AIPerfConfig,
-        sample_metric_records_message: MetricRecordsMessage,
+        sample_metric_records_message: MetricRecordsData,
         mock_metric_registry: Mock,
     ):
         """Test that process_result skips records with empty display metrics."""
@@ -245,7 +259,7 @@ class TestRecordExportResultsProcessorProcessResult:
 
         # Mock to_display_dict to return empty dict
         with patch.object(MetricRecordDict, "to_display_dict", return_value={}):
-            await processor.process_result(sample_metric_records_message.to_data())
+            await processor.process_result(sample_metric_records_message)
 
         # Should not write anything since display_metrics is empty
         assert processor.lines_written == 0
@@ -257,7 +271,7 @@ class TestRecordExportResultsProcessorProcessResult:
     async def test_process_result_handles_errors_gracefully(
         self,
         user_config_records_export: AIPerfConfig,
-        sample_metric_records_message: MetricRecordsMessage,
+        sample_metric_records_message: MetricRecordsData,
         mock_metric_registry: Mock,
     ):
         """Test that errors during processing don't raise exceptions."""
@@ -274,7 +288,7 @@ class TestRecordExportResultsProcessorProcessResult:
             patch.object(processor, "error") as mock_error,
         ):
             # Should not raise
-            await processor.process_result(sample_metric_records_message.to_data())
+            await processor.process_result(sample_metric_records_message)
 
             # Should log the error
             assert mock_error.call_count >= 1
@@ -286,7 +300,7 @@ class TestRecordExportResultsProcessorProcessResult:
     async def test_process_result_multiple_messages(
         self,
         user_config_records_export: AIPerfConfig,
-        sample_metric_records_message: MetricRecordsMessage,
+        sample_metric_records_message: MetricRecordsData,
         mock_metric_registry: Mock,
     ):
         """Test processing multiple messages accumulates records."""
@@ -311,7 +325,7 @@ class TestRecordExportResultsProcessorProcessResult:
                         request_start_ns=1_000_000_000 + i,
                         results=[{"metric1": 100}, {"metric2": 200}],
                     )
-                    await processor.process_result(message.to_data())
+                    await processor.process_result(message)
 
         assert processor.lines_written == 5
         assert processor.output_file.exists()
@@ -322,7 +336,7 @@ class TestRecordExportResultsProcessorProcessResult:
 
         for line in lines:
             record_dict = orjson.loads(line)
-            record = MetricRecordInfo.model_validate(record_dict)
+            record = decode_metric_record_info_json(orjson.dumps(record_dict))
             assert isinstance(record, MetricRecordInfo)
             assert record.metadata.x_request_id.startswith("record-")  # type: ignore[union-attr]
             assert "request_latency" in record.metrics
@@ -335,7 +349,7 @@ class TestRecordExportResultsProcessorFileFormat:
     async def test_output_is_valid_jsonl(
         self,
         user_config_records_export: AIPerfConfig,
-        sample_metric_records_message: MetricRecordsMessage,
+        sample_metric_records_message: MetricRecordsData,
         mock_metric_registry: Mock,
     ):
         """Test that output file is valid JSONL format."""
@@ -350,7 +364,7 @@ class TestRecordExportResultsProcessorFileFormat:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(sample_metric_records_message.to_data())
+                await processor.process_result(sample_metric_records_message)
 
         lines = processor.output_file.read_text().splitlines()
 
@@ -358,14 +372,14 @@ class TestRecordExportResultsProcessorFileFormat:
             if line.strip():
                 record_dict = orjson.loads(line)
                 assert isinstance(record_dict, dict)
-                record = MetricRecordInfo.model_validate(record_dict)
+                record = decode_metric_record_info_json(orjson.dumps(record_dict))
                 assert isinstance(record, MetricRecordInfo)
 
     @pytest.mark.asyncio
     async def test_record_structure_is_complete(
         self,
         user_config_records_export: AIPerfConfig,
-        sample_metric_records_message: MetricRecordsMessage,
+        sample_metric_records_message: MetricRecordsData,
         mock_metric_registry: Mock,
     ):
         """Test that each record has the expected structure."""
@@ -380,13 +394,13 @@ class TestRecordExportResultsProcessorFileFormat:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(sample_metric_records_message.to_data())
+                await processor.process_result(sample_metric_records_message)
 
         lines = processor.output_file.read_text().splitlines()
 
         for line in lines:
             record_dict = orjson.loads(line)
-            record = MetricRecordInfo.model_validate(record_dict)
+            record = decode_metric_record_info_json(orjson.dumps(record_dict))
 
             assert isinstance(record.metadata, MetricRecordMetadata)
             assert isinstance(record.metrics, dict)
@@ -435,10 +449,10 @@ class TestRecordExportResultsProcessorLogging:
                             request_start_ns=1_000_000_000 + i,
                             results=[{"metric1": 100}, {"metric2": 200}],
                         )
-                        await processor.process_result(message.to_data())
+                        await processor.process_result(message)
 
-                    # Wait for async flush task to complete
-                    await processor.wait_for_tasks()
+                    # Wait for the scheduled flush task to complete.
+                    await wait_for_flush_tasks(processor)
 
                 # Check that flushing debug message was logged
                 assert any("Flushing" in record.message for record in caplog.records)
@@ -447,7 +461,7 @@ class TestRecordExportResultsProcessorLogging:
     async def test_error_logging_on_write_failure(
         self,
         user_config_records_export: AIPerfConfig,
-        sample_metric_records_message: MetricRecordsMessage,
+        sample_metric_records_message: MetricRecordsData,
         mock_metric_registry: Mock,
     ):
         """Test that errors are logged when write fails."""
@@ -462,7 +476,7 @@ class TestRecordExportResultsProcessorLogging:
             ),
             patch.object(processor, "error") as mock_error,
         ):
-            await processor.process_result(sample_metric_records_message.to_data())
+            await processor.process_result(sample_metric_records_message)
 
             assert mock_error.call_count >= 1
             call_args = str(mock_error.call_args_list[0])
@@ -476,7 +490,7 @@ class TestRecordExportResultsProcessorShutdown:
     async def test_shutdown_logs_statistics(
         self,
         user_config_records_export: AIPerfConfig,
-        sample_metric_records_message: MetricRecordsMessage,
+        sample_metric_records_message: MetricRecordsData,
         mock_metric_registry: Mock,
     ):
         """Test that shutdown logs final statistics."""
@@ -502,10 +516,10 @@ class TestRecordExportResultsProcessorShutdown:
                         request_start_ns=1_000_000_000 + i,
                         results=[{"metric1": 100}],
                     )
-                    await processor.process_result(message.to_data())
+                    await processor.process_result(message)
 
-                # Wait for any pending flush tasks
-                await processor.wait_for_tasks()
+                # Wait for any pending flush tasks.
+                await wait_for_flush_tasks(processor)
 
             await processor.stop()
 
@@ -676,13 +690,13 @@ class TestRecordExportResultsProcessorHttpTrace:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(message.to_data())
+                await processor.process_result(message)
 
         lines = processor.output_file.read_text().splitlines()
         assert len(lines) == 1
 
         record_dict = orjson.loads(lines[0])
-        record = MetricRecordInfo.model_validate(record_dict)
+        record = decode_metric_record_info_json(orjson.dumps(record_dict))
 
         # Verify trace_data is NOT in the output
         assert record.trace_data is None
@@ -716,13 +730,13 @@ class TestRecordExportResultsProcessorHttpTrace:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(message.to_data())
+                await processor.process_result(message)
 
         lines = processor.output_file.read_text().splitlines()
         assert len(lines) == 1
 
         record_dict = orjson.loads(lines[0])
-        record = MetricRecordInfo.model_validate(record_dict)
+        record = decode_metric_record_info_json(orjson.dumps(record_dict))
 
         # Verify trace_data IS in the output
         assert record.trace_data is not None
@@ -770,13 +784,13 @@ class TestRecordExportResultsProcessorHttpTrace:
                 with patch.object(
                     MetricRecordDict, "to_display_dict", return_value=mock_display_dict
                 ):
-                    await processor.process_result(message.to_data())
+                    await processor.process_result(message)
 
             lines = processor.output_file.read_text().splitlines()
             assert len(lines) == 1
 
             record_dict = orjson.loads(lines[0])
-            record = MetricRecordInfo.model_validate(record_dict)
+            record = decode_metric_record_info_json(orjson.dumps(record_dict))
 
             # Metrics should always be present
             assert "request_latency" in record.metrics
@@ -810,13 +824,13 @@ class TestRecordExportResultsProcessorHttpTrace:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(message.to_data())
+                await processor.process_result(message)
 
         lines = processor.output_file.read_text().splitlines()
         assert len(lines) == 1
 
         record_dict = orjson.loads(lines[0])
-        record = MetricRecordInfo.model_validate(record_dict)
+        record = decode_metric_record_info_json(orjson.dumps(record_dict))
 
         # trace_data should be None since the record had no trace data
         assert record.trace_data is None
@@ -829,7 +843,7 @@ class TestRecordExportResultsProcessorPerChunkData:
     async def test_list_metrics_excluded_by_default(
         self,
         user_config_records_export: AIPerfConfig,
-        sample_metric_records_message: MetricRecordsMessage,
+        sample_metric_records_message: MetricRecordsData,
         mock_metric_registry: Mock,
     ):
         """Test that list-valued metrics are excluded when export_per_chunk_data is False (default)."""
@@ -848,11 +862,11 @@ class TestRecordExportResultsProcessorPerChunkData:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(sample_metric_records_message.to_data())
+                await processor.process_result(sample_metric_records_message)
 
         lines = processor.output_file.read_text().splitlines()
         assert len(lines) == 1
-        record = MetricRecordInfo.model_validate_json(lines[0])
+        record = decode_metric_record_info_json(lines[0])
         assert "request_latency" in record.metrics
         assert "inter_chunk_latency" not in record.metrics
 
@@ -860,7 +874,7 @@ class TestRecordExportResultsProcessorPerChunkData:
     async def test_list_metrics_included_when_enabled(
         self,
         tmp_artifact_dir: Path,
-        sample_metric_records_message: MetricRecordsMessage,
+        sample_metric_records_message: MetricRecordsData,
         mock_metric_registry: Mock,
     ):
         """Test that list-valued metrics are included when export_per_chunk_data is True."""
@@ -902,11 +916,11 @@ class TestRecordExportResultsProcessorPerChunkData:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(sample_metric_records_message.to_data())
+                await processor.process_result(sample_metric_records_message)
 
         lines = processor.output_file.read_text().splitlines()
         assert len(lines) == 1
-        record = MetricRecordInfo.model_validate_json(lines[0])
+        record = decode_metric_record_info_json(lines[0])
         assert "request_latency" in record.metrics
         assert "inter_chunk_latency" in record.metrics
         assert record.metrics["inter_chunk_latency"].value == [0.1, 0.2, 0.3]
@@ -947,11 +961,11 @@ class TestRecordExportResultsProcessorLifecycle:
                             turn_index=0,
                             request_start_ns=1_000_000_000 + i,
                             results=[{"inter_token_latency": 100}],
-                        ).to_data()
+                        )
                     )
 
-                # Wait for all async flush tasks to complete
-                await processor.wait_for_tasks()
+                # Wait for all async flush tasks to complete.
+                await wait_for_flush_tasks(processor)
         finally:
             await processor.stop()
 
@@ -965,7 +979,7 @@ class TestRecordExportResultsProcessorLifecycle:
         assert len(lines) == Environment.RECORD.EXPORT_BATCH_SIZE * 2
 
         for i, line in enumerate(lines):
-            record = MetricRecordInfo.model_validate_json(line)
+            record = decode_metric_record_info_json(line)
             assert record.metadata.x_request_id == f"record-{i}"
             assert record.metadata.conversation_id == f"conv-{i}"
             assert record.metadata.turn_index == 0

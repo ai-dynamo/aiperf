@@ -11,13 +11,12 @@ import pytest
 
 from aiperf.common.enums import (
     CreditPhase,
-    MessageType,
     MetricFlags,
     MetricValueTypeT,
 )
 from aiperf.common.enums.metric_enums import GenericMetricUnit
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.messages import MetricRecordsMessage
+from aiperf.common.metric_records_wire import MetricRecordMetadata, MetricRecordsData
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
     ErrorDetails,
@@ -30,7 +29,6 @@ from aiperf.common.models import (
     TextResponse,
 )
 from aiperf.common.models.record_models import (
-    MetricRecordMetadata,
     ProfileResults,
     TokenCounts,
 )
@@ -562,36 +560,23 @@ def create_metric_records_message(
     x_request_id: str | None = None,
     trace_data: Any | None = None,
     **metadata_kwargs,
-) -> MetricRecordsMessage:
-    """
-    Create a MetricRecordsMessage with sensible defaults.
-
-    Args:
-        service_id: Service ID
-        results: List of metric result dictionaries
-        error: Error details if any
-        metadata: Pre-built metadata, or None to build from kwargs
-        x_request_id: Record ID (set as x_request_id in metadata if provided)
-        trace_data: HTTP trace data for the request (optional)
-        **metadata_kwargs: Args passed to create_metric_metadata if metadata is None
-
-    Returns:
-        MetricRecordsMessage object
-    """
+) -> MetricRecordsData:
+    """Create msgspec MetricRecordsData with sensible defaults."""
     if results is None:
         results = []
 
+    metrics: dict[MetricTagT, MetricValueTypeT] = {}
+    for result in results:
+        metrics.update(result)
+
     if metadata is None:
-        # If x_request_id is provided, use it as x_request_id
         if x_request_id is not None and "x_request_id" not in metadata_kwargs:
             metadata_kwargs["x_request_id"] = x_request_id
         metadata = create_metric_metadata(**metadata_kwargs)
 
-    return MetricRecordsMessage(
-        message_type=MessageType.METRIC_RECORDS,
-        service_id=service_id,
+    return MetricRecordsData(
         metadata=metadata,
-        results=results,
+        metrics=metrics,
         error=error,
         trace_data=trace_data,
     )

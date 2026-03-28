@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Annotated, Any, AnyStr, Protocol, runtime_checkable
 
+import msgspec
 import orjson
 from pydantic import (
     ConfigDict,
@@ -24,6 +25,10 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import STAT_KEYS
 from aiperf.common.enums import CreditPhase, MetricValueTypeT, SSEFieldType
 from aiperf.common.exceptions import InvalidInferenceResultError
+from aiperf.common.metric_records_wire import (
+    MetricRecordMetadata,
+    metric_record_metadata_from_model,
+)
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
@@ -76,91 +81,12 @@ class MetricResult(JsonMetricResult):
         return result
 
 
-class MetricValue(AIPerfBaseModel):
+@dataclass(frozen=True, slots=True)
+class MetricValue:
     """The value of a metric converted to display units for export."""
 
     value: MetricValueTypeT
     unit: str
-
-
-class MetricRecordMetadata(AIPerfBaseModel):
-    """The metadata of a metric record for export."""
-
-    request_num: int | None = Field(
-        default=None,
-        description="The sequential index of the request in the benchmark (0-based). Each credit issued gets a unique"
-        " request_num, including child turns in multi-turn conversations.",
-    )
-    session_num: int = Field(
-        ...,
-        description="The sequential number of the session in the benchmark. For single-turn datasets, this will be the"
-        " request index. For multi-turn datasets, this will be the session index.",
-    )
-    x_request_id: str | None = Field(
-        default=None,
-        description="The X-Request-ID header of the request. This is a unique ID for the request.",
-    )
-    x_correlation_id: str | None = Field(
-        default=None,
-        description="The X-Correlation-ID header of the request. This is a shared ID for each user session/conversation in multi-turn.",
-    )
-    conversation_id: str | None = Field(
-        default=None,
-        description="The ID of the conversation (if applicable). This can be used to lookup the original request data from the inputs.json file.",
-    )
-    turn_index: int | None = Field(
-        default=None,
-        description="The index of the turn in the conversation (if applicable). This can be used to lookup the original request data from the inputs.json file.",
-    )
-    credit_issued_ns: int | None = Field(
-        default=None,
-        description="Wall clock timestamp (time.time_ns) when the credit was issued by the rate limiter. "
-        "This is the control point for accurate rate measurement, before ZeroMQ transit to workers.",
-    )
-    credit_received_ns: int | None = Field(
-        default=None,
-        description="Wall clock timestamp when the worker received the credit from the controller. "
-        "credit_received_ns - credit_issued_ns = ZMQ transit + event loop pickup time.",
-    )
-    request_start_ns: int = Field(
-        ...,
-        description="The wall clock timestamp of the request start time measured as time.time_ns().",
-    )
-    request_ack_ns: int | None = Field(
-        default=None,
-        description="The wall clock timestamp of the request acknowledgement from the server, measured as time.time_ns(), if applicable. "
-        "This is only applicable to streaming requests, and servers that send 200 OK back immediately after the request is received.",
-    )
-    request_end_ns: int = Field(
-        ...,
-        description="The wall clock timestamp of the request end time measured as time.time_ns(). If the request failed, "
-        "this will be the time of the error.",
-    )
-    worker_id: str = Field(
-        ..., description="The ID of the AIPerf worker that processed the request."
-    )
-    record_processor_id: str = Field(
-        ...,
-        description="The ID of the AIPerf record processor that processed the record.",
-    )
-    benchmark_phase: CreditPhase = Field(
-        ...,
-        description="The name of the benchmark phase (e.g. 'warmup', 'main', 'cooldown').",
-    )
-    was_cancelled: bool = Field(
-        default=False,
-        description="Whether the request was cancelled during execution.",
-    )
-    cancellation_time_ns: int | None = Field(
-        default=None,
-        description="The wall clock timestamp of the request cancellation time measured as time.time_ns(), if applicable. "
-        "This is only applicable to requests that were cancelled.",
-    )
-    clock_offset_ns: int | None = Field(
-        default=None,
-        description="Clock offset between worker and controller in nanoseconds. "
-        "To convert worker timestamps to controller time: controller_time = timestamp_ns - clock_offset_ns.",
-    )
 
 
 class ProfileResults(AIPerfBaseModel):
@@ -1012,61 +938,80 @@ class ParsedResponseRecord:
             self.request.error = ErrorDetails.from_exception(err)
 
 
-class MetricRecordInfo(AIPerfBaseModel):
+class MetricRecordInfo(msgspec.Struct, frozen=True, kw_only=True, omit_defaults=True):
     """The full info of a metric record including the metadata, metrics, and error for export."""
 
-    metadata: MetricRecordMetadata = Field(
-        ...,
-        description="The metadata of the record. Should match the metadata in the MetricRecordsMessage.",
-    )
-    metrics: dict[str, MetricValue] = Field(
-        ...,
-        description="A dictionary containing all metric values along with their units.",
-    )
-    trace_data: SerializeAsAny[TraceDataExport] | None = Field(
-        default=None,
-        description="Comprehensive trace data captured via a trace config with wall-clock timestamps. "
-        "Includes detailed timing for connection establishment, DNS resolution, request/response events, etc. "
-        "The type of the trace data is determined by the transport and library used.",
-    )
-    error: ErrorDetails | None = Field(
-        default=None,
-        description="The error details if the request failed.",
-    )
+    metadata: MetricRecordMetadata
+    metrics: dict[str, MetricValue]
+    trace_data: TraceDataExport | None = None
+    error: ErrorDetails | None = None
+
+    def to_json_bytes(self) -> bytes:
+        return _METRIC_RECORD_INFO_ENCODER.encode(self)
 
 
-class RawRecordInfo(AIPerfBaseModel):
+class RawRecordInfo(msgspec.Struct, frozen=True, kw_only=True, omit_defaults=True):
     """The full info of a raw record including the request record for export."""
 
-    metadata: MetricRecordMetadata = Field(
-        ...,
-        description="The metadata of the record. Should match the metadata in the MetricRecordsMessage.",
+    metadata: MetricRecordMetadata
+    start_perf_ns: int
+    payload: dict[str, Any]
+    request_headers: dict[str, str] | None = None
+    status: int | None = None
+    response_headers: dict[str, str] | None = None
+    responses: list[Any]
+    error: ErrorDetails | None = None
+
+    def to_json_bytes(self) -> bytes:
+        return _RAW_RECORD_INFO_ENCODER.encode(self)
+
+
+def _record_info_enc_hook(obj: Any) -> Any:
+    if isinstance(obj, MetricValue):
+        return {"value": obj.value, "unit": obj.unit}
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump(exclude_none=True, mode="json")
+    raise TypeError(f"Unsupported record artifact type: {type(obj)}")
+
+
+def _record_info_dec_hook(type_: type, obj: Any) -> Any:
+    if type_ is MetricValue:
+        return MetricValue(**obj)
+    if issubclass(type_, AIPerfBaseModel):
+        return type_.model_validate(obj)
+    raise NotImplementedError(f"Unsupported record artifact decode type: {type_}")
+
+
+_METRIC_RECORD_INFO_ENCODER = msgspec.json.Encoder(enc_hook=_record_info_enc_hook)
+_RAW_RECORD_INFO_ENCODER = msgspec.json.Encoder(enc_hook=_record_info_enc_hook)
+
+
+def decode_metric_record_info_json(data: str | bytes) -> MetricRecordInfo:
+    payload = orjson.loads(data)
+    trace_data = payload.get("trace_data")
+    return MetricRecordInfo(
+        metadata=metric_record_metadata_from_model(payload["metadata"]),
+        metrics={
+            key: MetricValue(**value) for key, value in payload["metrics"].items()
+        },
+        trace_data=TraceDataExport.model_validate(trace_data) if trace_data else None,
+        error=ErrorDetails.model_validate(payload["error"])
+        if payload.get("error")
+        else None,
     )
-    start_perf_ns: int = Field(
-        default_factory=time.perf_counter_ns,
-        description="The start reference time of the request in nanoseconds used for latency calculations (perf_counter_ns).",
-    )
-    payload: dict[str, Any] = Field(
-        ...,
-        description="The raw request payload sent to the server.",
-    )
-    request_headers: dict[str, str] | None = Field(
-        default=None,
-        description="The headers of the request.",
-    )
-    status: int | None = Field(
-        default=None,
-        description="The status code of the response.",
-    )
-    response_headers: dict[str, str] | None = Field(
-        default=None,
-        description="The headers of the response.",
-    )
-    responses: SerializeAsAny[list[SSEMessage | TextResponse | BinaryResponse]] = Field(
-        ...,
-        description="The raw responses received from the request.",
-    )
-    error: ErrorDetails | None = Field(
-        default=None,
-        description="The error details if the request failed.",
+
+
+def decode_raw_record_info_json(data: str | bytes) -> RawRecordInfo:
+    payload = orjson.loads(data)
+    return RawRecordInfo(
+        metadata=metric_record_metadata_from_model(payload["metadata"]),
+        start_perf_ns=payload["start_perf_ns"],
+        payload=payload["payload"],
+        request_headers=payload.get("request_headers"),
+        status=payload.get("status"),
+        response_headers=payload.get("response_headers"),
+        responses=payload["responses"],
+        error=ErrorDetails.model_validate(payload["error"])
+        if payload.get("error")
+        else None,
     )

@@ -5,7 +5,7 @@ import time
 from collections import defaultdict
 
 from aiperf.common.enums import CreditPhase
-from aiperf.common.messages import MetricRecordsData
+from aiperf.common.metric_records_wire import MetricRecordsData
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     CreditPhaseStats,

@@ -10,7 +10,7 @@ from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import MetricResult
 
 if TYPE_CHECKING:
-    from aiperf.common.messages.inference_messages import MetricRecordsData
+    from aiperf.common.metric_records_wire import MetricRecordsData
     from aiperf.config import BenchmarkRun
 
 
