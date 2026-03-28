@@ -12,7 +12,7 @@ import zmq
 
 from aiperf.common.enums import LifecycleState
 from aiperf.common.exceptions import NotInitializedError
-from aiperf.credit.messages import RouterToWorkerMessage, WorkerReady
+from aiperf.credit.messages import RouterToWorkerMessage, WorkerDispatchable
 from aiperf.credit.structs import Credit
 from aiperf.zmq.streaming_dealer_client import ZMQStreamingDealerClient
 
@@ -153,7 +153,7 @@ class TestZMQStreamingDealerClientSend:
 
             mock_socket.send.assert_called_once()
             sent_data = mock_socket.send.call_args[0][0]
-            decoded = msgspec.msgpack.decode(sent_data, type=WorkerReady)
+            decoded = msgspec.msgpack.decode(sent_data, type=WorkerDispatchable)
             assert decoded.worker_id == sample_worker_ready.worker_id
 
     @pytest.mark.asyncio
@@ -163,7 +163,7 @@ class TestZMQStreamingDealerClientSend:
         """Test sending multiple structs."""
         async with streaming_dealer_test_helper.create_client() as client:
             mock_socket = client.socket
-            structs = [WorkerReady(worker_id=f"worker-{i}") for i in range(3)]
+            structs = [WorkerDispatchable(worker_id=f"worker-{i}") for i in range(3)]
 
             for struct in structs:
                 await client.send(struct)

@@ -204,7 +204,7 @@ class ClockOffsetTracker:
         and waits for TimePong responses (delivered via ``handle_pong``).
         The minimum RTT is stored as ``baseline_rtt_ns``.
 
-        This should be called once during startup before WorkerReady is sent.
+        This should be called once during startup before WorkerDispatchable is sent.
 
         Args:
             send_ping: Async callable that sends a TimePing on the credit channel.

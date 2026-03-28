@@ -16,7 +16,7 @@ import zmq.asyncio
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.credit.messages import (
     RouterToWorkerMessage,
-    WorkerReady,
+    WorkerDispatchable,
     WorkerToRouterMessage,
 )
 from aiperf.credit.structs import Credit
@@ -135,7 +135,7 @@ class TestStreamingRouterClientReceiver:
             await asyncio.wait_for(handler_called.wait(), timeout=1.0)
 
             assert received_identity == "worker-1"
-            assert isinstance(received_message, WorkerReady)
+            assert isinstance(received_message, WorkerDispatchable)
             assert received_message.worker_id == sample_worker_ready.worker_id
         finally:
             await client.stop()
@@ -215,7 +215,7 @@ class TestStreamingDealerClientSend:
         mock_zmq_socket.send.assert_called_once()
         call_args = mock_zmq_socket.send.call_args[0][0]
 
-        decoded = msgspec.msgpack.decode(call_args, type=WorkerReady)
+        decoded = msgspec.msgpack.decode(call_args, type=WorkerDispatchable)
         assert decoded.worker_id == sample_worker_ready.worker_id
 
     @pytest.mark.asyncio

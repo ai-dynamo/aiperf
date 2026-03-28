@@ -19,7 +19,7 @@ from aiperf.common.messages import HeartbeatMessage
 from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
-    WorkerReady,
+    WorkerDispatchable,
     WorkerShutdown,
 )
 from aiperf.credit.structs import Credit
@@ -141,8 +141,8 @@ def sample_credit():
 
 @pytest.fixture
 def sample_worker_ready():
-    """Create a sample WorkerReady struct for testing."""
-    return WorkerReady(worker_id="worker-1")
+    """Create a sample WorkerDispatchable struct for testing."""
+    return WorkerDispatchable(worker_id="worker-1")
 
 
 @pytest.fixture
