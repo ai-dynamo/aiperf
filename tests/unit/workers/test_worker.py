@@ -483,7 +483,7 @@ class TestKubernetesMode:
     async def test_profile_configure_waits_for_worker_ready(
         self, config: AIPerfConfig
     ) -> None:
-        """PROFILE_CONFIGURE should not complete until WorkerReady has been sent."""
+        """PROFILE_CONFIGURE should not complete until WorkerDispatchable has been sent."""
         config.runtime.service_run_type = ServiceRunType.KUBERNETES
         worker = Worker(
             run=self._make_run(config),

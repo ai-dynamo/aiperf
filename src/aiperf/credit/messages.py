@@ -66,14 +66,37 @@ class CreditsCompleteMessage(BaseServiceMessage):
 # =============================================================================
 
 
-class WorkerReady(Struct, frozen=True, kw_only=True, tag_field="t", tag="wr"):
-    """Worker announces readiness to receive credits.
+class WorkerConnected(Struct, frozen=True, kw_only=True, tag_field="t", tag="wc"):
+    """Worker announces that its return path is connected.
 
-    Sent by worker immediately after connecting to router.
-    Router uses this to add worker to load balancing pool.
+    Sent by worker after establishing the credit/return channels.
+    Router tracks the worker as connected but does not route credits yet.
     """
 
     worker_id: str
+
+
+class WorkerDispatchable(Struct, frozen=True, kw_only=True, tag_field="t", tag="wd"):
+    """Worker announces readiness to receive routed credits.
+
+    Sent by worker after startup gates complete. Router uses this to add the
+    worker to the routing pool.
+    """
+
+    worker_id: str
+
+
+class WorkerUndispatchable(
+    Struct, omit_defaults=True, frozen=True, kw_only=True, tag_field="t", tag="wu"
+):
+    """Worker announces that it should be removed from routing.
+
+    Sent by worker when it remains connected but must stop receiving new
+    credits.
+    """
+
+    worker_id: str
+    reason: str | None = None
 
 
 class WorkerShutdown(Struct, frozen=True, kw_only=True, tag_field="t", tag="ws"):
@@ -138,7 +161,7 @@ class FirstToken(Struct, frozen=True, kw_only=True, tag_field="t", tag="ft"):
 class TimePing(Struct, frozen=True, kw_only=True, tag_field="t", tag="tp"):
     """Worker requests RTT measurement from router.
 
-    Sent during startup before WorkerReady. Router echoes back as TimePong
+    Sent during startup before WorkerDispatchable. Router echoes back as TimePong
     so the worker can measure round-trip time on the credit channel.
 
     Attributes:
@@ -224,9 +247,14 @@ CreditChannelMessage: TypeAlias = (
 
 # Return channel (Worker -> Router): truly unidirectional
 WorkerToRouterMessage: TypeAlias = (
-    WorkerReady | WorkerShutdown | CreditReturn | FirstToken | TimePing | InFlightReport
+    WorkerConnected
+    | WorkerDispatchable
+    | WorkerUndispatchable
+    | WorkerShutdown
+    | CreditReturn
+    | FirstToken
+    | TimePing
+    | InFlightReport
 )
 
-# Backwards-compat alias: default decode type for DEALER clients that
-# haven't been migrated to explicit channel types yet.
 RouterToWorkerMessage: TypeAlias = Credit | CancelCredits | TimePong

@@ -84,7 +84,8 @@ from aiperf.credit.messages import (
     InFlightReconciliation,
     InFlightReport,
     TimePong,
-    WorkerReady,
+    WorkerConnected,
+    WorkerDispatchable,
     WorkerShutdown,
 )
 from aiperf.credit.structs import Credit, CreditContext
@@ -214,7 +215,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.credit_dealer_client.register_receiver(self._on_credit_message)
 
         # Return channel (Worker -> Router): send-only. CreditReturn, FirstToken,
-        # WorkerReady, WorkerShutdown, TimePing. No incoming messages.
+        # WorkerConnected, WorkerDispatchable, WorkerShutdown, TimePing.
+        # No incoming messages.
         self.return_dealer_client: StreamingDealerClientProtocol = (
             self.comms.create_streaming_dealer_client(
                 address=CommAddress.CREDIT_RETURN_ROUTER,
@@ -279,12 +281,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     @on_start
     async def _send_worker_ready_message(self) -> None:
-        """Send WorkerReady to announce presence.
-
-        In Kubernetes mode, deferred until the dataset is downloaded so the
-        worker never receives credits before it can serve them.
-        """
+        """Announce connectivity, then become dispatchable when startup gates clear."""
         await self._publish_startup_state(WorkerStartupState.STARTING)
+        await self.return_dealer_client.send(WorkerConnected(worker_id=self.service_id))
         if self._is_kubernetes_mode():
             if self.pod_lifecycle_dealer_client is not None:
                 await self.pod_lifecycle_dealer_client.send(
@@ -296,12 +295,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 )
             await self._publish_startup_state(WorkerStartupState.WAITING_FOR_DATASET)
             self.debug(
-                "Kubernetes mode: deferring WorkerReady until dataset is downloaded"
+                "Kubernetes mode: deferring WorkerDispatchable until dataset is downloaded"
             )
             return
         await self._publish_startup_state(WorkerStartupState.ROUTER_PROBING)
         await self._measure_baseline_rtt()
-        await self.return_dealer_client.send(WorkerReady(worker_id=self.service_id))
+        await self.return_dealer_client.send(
+            WorkerDispatchable(worker_id=self.service_id)
+        )
         await self._publish_startup_state(WorkerStartupState.READY)
         self._worker_ready_event.set()
 
@@ -411,7 +412,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         await self._publish_startup_state(WorkerStartupState.ROUTER_PROBING)
         await self._measure_baseline_rtt()
-        await self.return_dealer_client.send(WorkerReady(worker_id=self.service_id))
+        await self.return_dealer_client.send(
+            WorkerDispatchable(worker_id=self.service_id)
+        )
         await self._publish_startup_state(WorkerStartupState.READY)
         self._worker_ready_event.set()
 
@@ -1032,7 +1035,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self._dataset_configured_event.wait(),
             timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
         )
-        self.debug("Waiting for WorkerReady to be acknowledged before profiling")
+        self.debug("Waiting for WorkerDispatchable to be acknowledged before profiling")
         await asyncio.wait_for(
             self._worker_ready_event.wait(),
             timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,

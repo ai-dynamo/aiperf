@@ -42,9 +42,11 @@ from aiperf.credit.messages import (
     InFlightReport,
     TimePing,
     TimePong,
-    WorkerReady,
+    WorkerConnected,
+    WorkerDispatchable,
     WorkerShutdown,
     WorkerToRouterMessage,
+    WorkerUndispatchable,
 )
 from aiperf.credit.structs import Credit
 
@@ -245,7 +247,8 @@ class StickyCreditRouter(CommunicationMixin):
             )
         )
 
-        # Return channel: Worker -> Router (CreditReturn, FirstToken, WorkerReady,
+        # Return channel: Worker -> Router (CreditReturn, FirstToken,
+        # WorkerConnected, WorkerDispatchable, WorkerUndispatchable,
         # WorkerShutdown, TimePing). Router replies with CreditAck / TimePong.
         self._return_router_client: StreamingRouterClientProtocol = (
             self.comms.create_streaming_router_client(
@@ -276,6 +279,7 @@ class StickyCreditRouter(CommunicationMixin):
         # Rebuilt on worker add/remove (rare) to keep routing fast (common).
         self._workers_cache: list[WorkerLoad] = []
         self._workers: dict[str, WorkerLoad] = {}
+        self._connected_workers: set[str] = set()
         self._initializing_workers: set[str] = set()
 
         # Map load level -> set of worker_ids at that load (O(1) add/remove)
@@ -491,7 +495,10 @@ class StickyCreditRouter(CommunicationMixin):
                     worker_id,
                     TimePong(sequence=message.sequence, sent_at_ns=message.sent_at_ns),
                 )
-            case WorkerReady():
+            case WorkerConnected():
+                self._connected_workers.add(worker_id)
+            case WorkerDispatchable():
+                self._connected_workers.add(worker_id)
                 if detached := self._detached_workers.get(worker_id):
                     self._register_worker(worker_id)
                     await self._reclaim_detached_worker_credits(
@@ -501,7 +508,12 @@ class StickyCreditRouter(CommunicationMixin):
                     )
                 else:
                     self._register_worker(worker_id)
+            case WorkerUndispatchable():
+                self._connected_workers.add(worker_id)
+                if worker_id in self._workers:
+                    self._unregister_worker(worker_id)
             case WorkerShutdown():
+                self._connected_workers.discard(worker_id)
                 if worker_id in self._workers:
                     worker_load = self._unregister_worker(
                         worker_id,
@@ -512,7 +524,9 @@ class StickyCreditRouter(CommunicationMixin):
                     self._detach_worker(worker_id, worker_load)
                 elif worker_id in self._initializing_workers:
                     self._initializing_workers.discard(worker_id)
-                    self.info(f"Worker {worker_id} shut down before becoming ready")
+                    self.info(
+                        f"Worker {worker_id} shut down before becoming dispatchable"
+                    )
                 elif worker_id in self._detached_workers:
                     self.debug(
                         lambda: f"Worker {worker_id} sent duplicate shutdown while detached"
