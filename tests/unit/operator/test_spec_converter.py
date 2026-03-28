@@ -243,6 +243,31 @@ class TestToDeploymentConfig:
         deploy = converter.to_deployment_config()
         assert deploy.image == "nvcr.io/nvidia/aiperf:latest"
 
+    def test_converts_keep_failed_pods_flag(self) -> None:
+        converter = AIPerfJobSpecConverter(
+            {
+                "keepFailedPods": True,
+                "benchmark": {
+                    "models": ["mock"],
+                    "endpoint": {"urls": ["http://example/v1/chat/completions"]},
+                    "datasets": {"main": {"type": "synthetic"}},
+                    "phases": {
+                        "profiling": {
+                            "type": "concurrency",
+                            "requests": 10,
+                            "concurrency": 1,
+                        }
+                    },
+                },
+            },
+            "test-job",
+            "default",
+        )
+
+        deploy = converter.to_deployment_config()
+
+        assert deploy.keep_failed_pods is True
+
 
 class TestCalculateWorkers:
     """Tests for calculate_workers method."""

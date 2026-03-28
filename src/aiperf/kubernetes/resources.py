@@ -405,6 +405,7 @@ class KubernetesDeployment(AIPerfBaseModel):
             workers_per_pod=self.workers_per_pod or self.config.runtime.workers_per_pod,
             record_processors_per_pod=self.config.runtime.record_processors_per_pod,
             ttl_seconds=self.deployment.ttl_seconds_after_finished,
+            keep_failed_pods=self.deployment.keep_failed_pods,
             pod_template=self.deployment.pod_template,
             scheduling=self.deployment.scheduling,
             gpu_telemetry_enabled=self.run.cfg.gpu_telemetry.enabled,

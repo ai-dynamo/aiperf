@@ -492,6 +492,19 @@ class TestKubernetesDeployment:
         jobset_spec = deployment.get_jobset_spec()
         assert jobset_spec.resource_mode == "none"
 
+    def test_get_jobset_spec_propagates_keep_failed_pods(self, sample_config) -> None:
+        """Test get_jobset_spec carries keep_failed_pods into JobSet plumbing."""
+        deployment = KubernetesDeployment(
+            job_id="abc123",
+            config=sample_config,
+            deployment=DeploymentConfig(
+                image="aiperf:latest",
+                keep_failed_pods=True,
+            ),
+        )
+        jobset_spec = deployment.get_jobset_spec()
+        assert jobset_spec.keep_failed_pods is True
+
     def test_get_all_manifests_auto_namespace(
         self, basic_deployment: KubernetesDeployment
     ) -> None:

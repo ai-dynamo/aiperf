@@ -14,6 +14,8 @@ from aiperf.common.enums import CommAddress, CommandType, ExportLevel, MessageTy
 from aiperf.common.hooks import on_command, on_pull_message, on_start, on_stop
 from aiperf.common.pod_lifecycle_structs import (
     PodManagerToPeerMessage,
+    PodPeerCommand,
+    PodPeerCommandAck,
     PodPeerHello,
     PodPeerShutdown,
 )
@@ -89,6 +91,9 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                     decode_type=PodManagerToPeerMessage,
                 )
             )
+            self.pod_lifecycle_dealer_client.register_receiver(
+                self._on_pod_lifecycle_message
+            )
 
         self.records_processors: list[RecordProcessorProtocol] = []
         for entry in plugins.iter_entries(PluginType.RECORD_PROCESSOR):
@@ -112,6 +117,25 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             except Exception as e:
                 self.exception(f"Error creating record processor: {e!r}")
                 raise
+
+    def _uses_controller_control_channel(self) -> bool:
+        """Record processors stay pod-local in Kubernetes mode."""
+        return self.run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES
+
+    async def _on_pod_lifecycle_message(self, message: PodManagerToPeerMessage) -> None:
+        """Handle pod-local lifecycle messages from WorkerPodManager."""
+        if not isinstance(message, PodPeerCommand):
+            return
+        if self.pod_lifecycle_dealer_client is None:
+            return
+        if message.command == str(CommandType.SHUTDOWN):
+            await self.stop()
+        else:
+            self.warning(f"Unknown pod-local command: {message.command}")
+            return
+        await self.pod_lifecycle_dealer_client.send(
+            PodPeerCommandAck(cid=message.cid, service_id=self.service_id)
+        )
 
     @on_start
     async def _register_with_worker_pod_manager(self) -> None:
@@ -138,10 +162,14 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             )
         )
 
+    async def _configure_for_profiling(self) -> None:
+        """Configure parser state needed before profiling begins."""
+        await self.inference_result_parser.configure()
+
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(self, message: Command) -> None:
         """Configure the tokenizers."""
-        await self.inference_result_parser.configure()
+        await self._configure_for_profiling()
 
     async def get_tokenizer(self, model: str) -> Tokenizer:
         """Get the tokenizer for a given model."""

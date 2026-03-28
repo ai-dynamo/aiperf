@@ -68,6 +68,8 @@ from aiperf.common.pod_lifecycle_structs import (
     PodDatasetStateQuery,
     PodDatasetStateSnapshot,
     PodManagerToPeerMessage,
+    PodPeerCommand,
+    PodPeerCommandAck,
     PodPeerHello,
     PodPeerShutdown,
     PodWorkerHealth,
@@ -316,6 +318,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """Check if running in Kubernetes mode."""
         return self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
 
+    def _uses_controller_control_channel(self) -> bool:
+        """Workers stay pod-local in Kubernetes mode."""
+        return not self._is_kubernetes_mode()
+
     async def _measure_baseline_rtt(self) -> None:
         """Measure baseline RTT on the credit channel before announcing readiness."""
         await self.clock_offset_tracker.measure_baseline_rtt(
@@ -329,6 +335,21 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         elif isinstance(message, PodDatasetStateSnapshot):
             self._latest_pod_dataset_state = message
             await self._complete_k8s_startup_flow(message)
+        elif isinstance(message, PodPeerCommand):
+            await self._handle_pod_peer_command(message)
+
+    async def _handle_pod_peer_command(self, message: PodPeerCommand) -> None:
+        """Handle pod-local lifecycle commands from WorkerPodManager."""
+        if self.pod_lifecycle_dealer_client is None:
+            return
+        if message.command == str(CommandType.SHUTDOWN):
+            await self.stop()
+        else:
+            self.warning(f"Unknown pod-local command: {message.command}")
+            return
+        await self.pod_lifecycle_dealer_client.send(
+            PodPeerCommandAck(cid=message.cid, service_id=self.service_id)
+        )
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(self, msg: DatasetConfiguredNotification) -> None:
@@ -1078,9 +1099,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         wire_data = await asyncio.to_thread(self._serialize_inference_wire, record)
         self.execute_async(self.inference_results_push_client.push_raw(wire_data))
 
-    @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _on_profile_configure_command(self, message: Command) -> None:
-        """Configure the worker."""
+    async def _configure_for_profiling(self) -> None:
+        """Wait for startup gates, then enable profiling-time instrumentation."""
         self.debug("Waiting for dataset to be configured before starting profiling")
         await asyncio.wait_for(
             self._dataset_configured_event.wait(),
@@ -1112,6 +1132,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         # Start memory profiler if enabled via environment
         self._memory_profiler.start()
+
+    @on_command(CommandType.PROFILE_CONFIGURE)
+    async def _on_profile_configure_command(self, message: Command) -> None:
+        """Configure the worker."""
+        await self._configure_for_profiling()
 
     @on_stop
     async def _worker_stop(self) -> None:

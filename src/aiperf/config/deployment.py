@@ -121,6 +121,10 @@ class DeploymentConfig(BaseConfig):
         le=365,
         description="Days to retain result files before cleanup",
     )
+    keep_failed_pods: bool = Field(
+        default=False,
+        description="Preserve failed JobSet pod attempts for debugging.",
+    )
     cancel: bool = Field(
         default=False,
         description="Set to true to cancel the job",

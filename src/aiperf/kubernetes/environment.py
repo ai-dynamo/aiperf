@@ -319,6 +319,10 @@ class _K8sEnvironment(BaseSettings):
     RESULTS_SIDECAR: ResourceSettings = Field(default_factory=lambda: _resource_settings("RESULTS_SIDECAR_", "250m", "512Mi"), description="Results sidecar resources for serving exported files")
     WORKER_POD: ResourceSettings = Field(default_factory=lambda: _resource_settings("WORKER_POD_", "4000m", "12Gi"), description="Worker pod container resources (workers + record processors + WPM)")
     # fmt: on
+    RECORD_PROCESSOR_CPU_REQUEST: str | None = Field(
+        default=None,
+        description="Optional per-record-processor CPU request override inside worker pods",
+    )
     RECORD_PROCESSOR_SCALE_FACTOR: int = Field(
         default=1,
         ge=1,

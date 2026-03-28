@@ -13,6 +13,9 @@ import subprocess
 from pathlib import Path
 
 REPOSITORY = "nvcr.io/nvidian/dynamo-dev/aiperf"
+OPERATOR_RELEASE = "aiperf-operator"
+OPERATOR_NAMESPACE = "acasagrande-aiperf"
+OPERATOR_IMAGE_PULL_SECRET = "nvcr-imagepullsecret"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_IMAGE_FILES = [
     PROJECT_ROOT / "deploy/helm/aiperf-operator/values.yaml",
@@ -61,6 +64,39 @@ def rewrite_image_refs(
             changed_files.append(file_path)
 
     return changed_files
+
+
+def build_redeploy_command(image: str) -> list[str]:
+    """Build the Helm command that redeploys the running operator."""
+    repository, tag = image.rsplit(":", 1)
+    return [
+        "helm",
+        "upgrade",
+        "--install",
+        OPERATOR_RELEASE,
+        str(PROJECT_ROOT / "deploy/helm/aiperf-operator"),
+        "--namespace",
+        OPERATOR_NAMESPACE,
+        "--create-namespace",
+        "--set",
+        f"image.repository={repository}",
+        "--set",
+        f"image.tag={tag}",
+        "--set",
+        f"imagePullSecrets[0].name={OPERATOR_IMAGE_PULL_SECRET}",
+    ]
+
+
+def build_rollout_status_command() -> list[str]:
+    """Build the kubectl command that waits for the operator rollout."""
+    return [
+        "kubectl",
+        "rollout",
+        "status",
+        f"deployment/{OPERATOR_RELEASE}",
+        "-n",
+        OPERATOR_NAMESPACE,
+    ]
 
 
 def docker_config_has_registry_auth(registry: str) -> bool:
@@ -155,6 +191,8 @@ def main(argv: list[str] | None = None) -> int:
     command = build_push_command(
         image=image, dockerfile="Dockerfile", build_context=PROJECT_ROOT
     )
+    redeploy_command = build_redeploy_command(image)
+    rollout_status_command = build_rollout_status_command()
 
     print(f"Publishing image: {image}")
     print("Command:")
@@ -162,6 +200,8 @@ def main(argv: list[str] | None = None) -> int:
     print("Files to update:")
     for file_path in target_files:
         print(f"- {file_path.relative_to(PROJECT_ROOT)}")
+    print("Operator redeploy:")
+    print(" ".join(redeploy_command))
 
     if args.dry_run:
         return 0
@@ -175,6 +215,8 @@ def main(argv: list[str] | None = None) -> int:
 
     run_command(command)
     changed_files = rewrite_image_refs(target_files, repository=REPOSITORY, new_tag=tag)
+    run_command(redeploy_command)
+    run_command(rollout_status_command)
 
     print("Updated files:")
     for file_path in changed_files:

@@ -98,6 +98,7 @@ class AIPerfJobSpecConverter:
             "timeoutSeconds",
             "ttlSecondsAfterFinished",
             "resultsTtlDays",
+            "keepFailedPods",
             "cancel",
             "podTemplate",
             "scheduling",

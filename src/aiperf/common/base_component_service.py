@@ -90,6 +90,8 @@ class BaseComponentService(BaseService):
     @on_init
     async def _init_control_client(self) -> None:
         """Initialize and start the DEALER control client independently of comms."""
+        if not self._uses_controller_control_channel():
+            return
         self.control_client.register_receiver(self._handle_control_command)
         await self.control_client.initialize()
         await self.control_client.start()
@@ -97,11 +99,17 @@ class BaseComponentService(BaseService):
     @on_stop
     async def _stop_control_client(self) -> None:
         """Stop the DEALER control client."""
+        if not self._uses_controller_control_channel():
+            return
         await self.control_client.stop()
 
     # -------------------------------------------------------------------------
     # Registration & connection probes
     # -------------------------------------------------------------------------
+
+    def _uses_controller_control_channel(self) -> bool:
+        """Return whether this service should use the controller control channel."""
+        return True
 
     def _make_registration(self) -> Registration:
         """Build a Registration struct for this service.
@@ -125,6 +133,10 @@ class BaseComponentService(BaseService):
         proves the controller is reachable. Registration is idempotent.
         After probes succeed, publish the startup memory captured at init.
         """
+        if not self._uses_controller_control_channel():
+            await super()._run_connection_probes()
+            return
+
         await self._register_until_ack(
             send_interval=Environment.SERVICE.REGISTRATION_INTERVAL,
             overall_timeout=Environment.SERVICE.REGISTRATION_TIMEOUT,
@@ -210,6 +222,8 @@ class BaseComponentService(BaseService):
         Runs from registration until background tasks start (RUNNING state).
         The regular ``_heartbeat_task`` takes over once the service is running.
         """
+        if not self._uses_controller_control_channel():
+            return
         try:
             while not self.stop_requested:
                 await self.control_client.send(
@@ -228,6 +242,8 @@ class BaseComponentService(BaseService):
     @background_task(interval=Environment.SERVICE.HEARTBEAT_INTERVAL, immediate=True)
     async def _heartbeat_task(self) -> None:
         """Send a heartbeat to the system controller over the DEALER/ROUTER channel."""
+        if not self._uses_controller_control_channel():
+            return
         # Cancel the early heartbeat loop — the regular one takes over now
         early_task = getattr(self, "_early_heartbeat_task", None)
         if early_task and not early_task.done():
@@ -245,6 +261,8 @@ class BaseComponentService(BaseService):
         self, old_state: LifecycleState, new_state: LifecycleState
     ) -> None:
         """Send state change to the system controller over the DEALER/ROUTER channel."""
+        if not self._uses_controller_control_channel():
+            return
         if self.stop_requested:
             return
         if not self.comms.was_initialized:
@@ -267,6 +285,8 @@ class BaseComponentService(BaseService):
         reading: MemoryReading | None = None,
     ) -> None:
         """Send own memory stats to the controller via the control channel."""
+        if not self._uses_controller_control_channel():
+            return
         if reading is None:
             from aiperf.common.memory_tracker import MemorySnapshot
 

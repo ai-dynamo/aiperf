@@ -302,6 +302,10 @@ class JobSetSpec(AIPerfBaseModel):
     ttl_seconds: int | None = Field(
         default=None, description="TTL after finished (uses K8sEnvironment default)"
     )
+    keep_failed_pods: bool = Field(
+        default=False,
+        description="Preserve failed JobSet pod attempts for debugging.",
+    )
 
     # Pod template
     pod_template: PodTemplateConfig = Field(
@@ -441,6 +445,16 @@ class JobSetSpec(AIPerfBaseModel):
         """Format MiB as a Kubernetes memory quantity."""
         return f"{mib}Mi"
 
+    def _pod_template_env_value(self, name: str) -> str | None:
+        """Return a string value from podTemplate env when present."""
+        for item in self.pod_template.env:
+            if (item or {}).get("name") != name:
+                continue
+            value = (item or {}).get("value")
+            if isinstance(value, str):
+                return value
+        return None
+
     def _split_worker_pod_resources(
         self,
         worker_count: int,
@@ -470,7 +484,28 @@ class JobSetSpec(AIPerfBaseModel):
             [128] + ([80] * worker_count) + ([256] * record_processor_count)
         )
 
-        cpu_shares = self._split_weighted_total(total_mcpu, cpu_weights)
+        record_processor_cpu_request = (
+            self._pod_template_env_value("AIPERF_K8S_RECORD_PROCESSOR_CPU_REQUEST")
+            or K8sEnvironment.RECORD_PROCESSOR_CPU_REQUEST
+        )
+        if record_processor_cpu_request is None or record_processor_count == 0:
+            cpu_shares = self._split_weighted_total(total_mcpu, cpu_weights)
+        else:
+            record_processor_mcpu = int(
+                round(parse_cpu(record_processor_cpu_request) * 1000)
+            )
+            fixed_record_processor_total = (
+                record_processor_mcpu * record_processor_count
+            )
+            remaining_mcpu = max(0, total_mcpu - fixed_record_processor_total)
+            non_record_processor_weights = [100] + ([131] * worker_count)
+            cpu_shares = (
+                self._split_weighted_total(
+                    remaining_mcpu,
+                    non_record_processor_weights,
+                )
+                + [record_processor_mcpu] * record_processor_count
+            )
         memory_shares = self._split_weighted_total(total_mib, memory_weights)
 
         burstable = self.resource_mode == "burstable"
@@ -920,16 +955,16 @@ class JobSetSpec(AIPerfBaseModel):
             },
         )
 
-        # Worker replicated job — keep worker Jobs/pods around long enough for
-        # post-failure debugging instead of deleting them immediately.
         worker_job = ReplicatedJobSpec(
             name="workers",
             replicas=self.worker_replicas,
             containers=self._create_worker_containers(controller_dns),
             volumes=volumes,
             restart_policy=RestartPolicy.ON_FAILURE,
-            backoff_limit=jobset_config.WORKER_BACKOFF_LIMIT,
-            job_ttl_seconds=self.ttl_seconds,
+            backoff_limit=(
+                0 if self.keep_failed_pods else jobset_config.WORKER_BACKOFF_LIMIT
+            ),
+            job_ttl_seconds=None if self.keep_failed_pods else self.ttl_seconds,
             pod_template=self.pod_template,
             job_id=self.job_id,
         )
@@ -981,12 +1016,13 @@ class JobSetSpec(AIPerfBaseModel):
         if self.scheduling.queue_name:
             manifest["spec"]["suspend"] = True
 
-        # Add TTL (use instance value if set, otherwise use environment default)
-        ttl = (
-            self.ttl_seconds
-            if self.ttl_seconds is not None
-            else jobset_config.TTL_SECONDS_AFTER_FINISHED
-        )
+        ttl = None
+        if not self.keep_failed_pods:
+            ttl = (
+                self.ttl_seconds
+                if self.ttl_seconds is not None
+                else jobset_config.TTL_SECONDS_AFTER_FINISHED
+            )
         if ttl is not None:
             manifest["spec"]["ttlSecondsAfterFinished"] = ttl
 

@@ -195,6 +195,10 @@ class StreamingRouterClientProtocol(CommunicationClientProtocol, Protocol):
         """
         ...
 
+    async def request_to(self, identity: str, message: MessageT, timeout: float) -> Any:
+        """Send request to specific DEALER client and wait for a response."""
+        ...
+
 
 @runtime_checkable
 class StreamingDealerClientProtocol(CommunicationClientProtocol, Protocol):

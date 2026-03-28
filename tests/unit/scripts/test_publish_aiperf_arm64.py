@@ -94,6 +94,96 @@ def test_build_push_command_uses_buildx_arm64_push() -> None:
     ]
 
 
+def test_build_redeploy_command_uses_acasagrande_namespace() -> None:
+    """Operator redeploy should target the script-specific namespace."""
+    module = _load_module()
+
+    command = module.build_redeploy_command(
+        image="nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260326-050715-1d7f82a87"
+    )
+
+    assert command == [
+        "helm",
+        "upgrade",
+        "--install",
+        "aiperf-operator",
+        str(module.PROJECT_ROOT / "deploy/helm/aiperf-operator"),
+        "--namespace",
+        "acasagrande-aiperf",
+        "--create-namespace",
+        "--set",
+        "image.repository=nvcr.io/nvidian/dynamo-dev/aiperf",
+        "--set",
+        "image.tag=k8s-arm64-20260326-050715-1d7f82a87",
+        "--set",
+        "imagePullSecrets[0].name=nvcr-imagepullsecret",
+    ]
+
+
+def test_main_redeploys_operator_after_publish(monkeypatch) -> None:
+    """A successful publish should redeploy the running operator."""
+    module = _load_module()
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(module, "require_buildx", lambda: None)
+    monkeypatch.setattr(
+        module, "docker_config_has_registry_auth", lambda registry: True
+    )
+    monkeypatch.setattr(module, "git_short_sha", lambda: "1d7f82a87")
+    monkeypatch.setattr(
+        module,
+        "rewrite_image_refs",
+        lambda *args, **kwargs: [
+            module.PROJECT_ROOT / "dev/deploy/mock-250k-streaming.yaml"
+        ],
+    )
+    monkeypatch.setattr(module, "run_command", lambda command: commands.append(command))
+
+    exit_code = module.main(["--file", "dev/deploy/mock-250k-streaming.yaml"])
+
+    assert exit_code == 0
+    assert len(commands) == 3
+    assert commands[0] == [
+        "docker",
+        "buildx",
+        "build",
+        "--platform",
+        "linux/arm64",
+        "--push",
+        "-t",
+        commands[0][7],
+        "-f",
+        "Dockerfile",
+        str(module.PROJECT_ROOT),
+    ]
+    assert commands[0][7].startswith("nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-")
+    assert commands[1] == [
+        "helm",
+        "upgrade",
+        "--install",
+        "aiperf-operator",
+        str(module.PROJECT_ROOT / "deploy/helm/aiperf-operator"),
+        "--namespace",
+        "acasagrande-aiperf",
+        "--create-namespace",
+        "--set",
+        "image.repository=nvcr.io/nvidian/dynamo-dev/aiperf",
+        "--set",
+        commands[1][11],
+        "--set",
+        "imagePullSecrets[0].name=nvcr-imagepullsecret",
+    ]
+    assert commands[1][11].startswith("image.tag=k8s-arm64-")
+    assert commands[2] == [
+        "kubectl",
+        "rollout",
+        "status",
+        "deployment/aiperf-operator",
+        "-n",
+        "acasagrande-aiperf",
+    ]
+
+
 def test_main_dry_run_skips_buildx_and_auth_checks(monkeypatch, capsys) -> None:
     """Dry-run should print actions without requiring Docker or NVCR auth."""
     module = _load_module()

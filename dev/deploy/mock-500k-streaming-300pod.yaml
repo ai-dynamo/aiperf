@@ -1,8 +1,8 @@
-# Small-scale streaming test to validate streaming works
+# 500k concurrency streaming benchmark against mock server with 300 worker pods
 apiVersion: aiperf.nvidia.com/v1alpha1
 kind: AIPerfJob
 metadata:
-  name: mock-10k-streaming-1
+  name: mock-500k-streaming-300pod
   namespace: acasagrande-aiperf-bench
 spec:
   benchmark:
@@ -21,20 +21,22 @@ spec:
         prompts:
           isl:
             mean: 550
+          osl: 2500
 
     phases:
       profiling:
         type: concurrency
-        requests: 50000
-        concurrency: 10000
+        requests: 1500000
+        concurrency: 500000
 
     tokenizer:
       name: builtin
 
     runtime:
       ui: none
+      workers: 1500
       workers_per_pod: 5
-      record_processors_per_pod: 1
+      record_processors_per_pod: 2
 
     gpu_telemetry:
       enabled: false
@@ -46,9 +48,9 @@ spec:
       records:
         - jsonl
 
-  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260328-071642-43450c5e6
+  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260328-055723-e7f05a9b7
   connectionsPerWorker: 1000
-  resourceMode: none
+  resourceMode: burstable
   ttlSecondsAfterFinished: 600
 
   podTemplate:
@@ -85,3 +87,7 @@ spec:
         value: "1"
       - name: AIPERF_K8S_SYSTEM_CONTROLLER_MEMORY
         value: 8Gi
+      - name: AIPERF_K8S_API_MEMORY
+        value: 32Gi
+      - name: AIPERF_K8S_API_CPU
+        value: "1000m"

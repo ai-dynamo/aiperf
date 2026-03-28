@@ -530,6 +530,14 @@ def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
     operator = _deployment_config_properties()
     spec_properties["image"] = operator.pop("image")
     spec_properties["imagePullPolicy"] = operator.pop("imagePullPolicy")
+    spec_properties["keepFailedPods"] = {
+        "type": "boolean",
+        "description": (
+            "Preserve failed JobSet pod attempts for debugging by disabling "
+            "retries and TTL cleanup."
+        ),
+        "default": False,
+    }
 
     # AIPerfConfig fields nested under benchmark key.
     # No properties are listed because Pydantic's before-validators accept shorthand

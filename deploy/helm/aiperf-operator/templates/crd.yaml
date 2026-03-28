@@ -73,6 +73,10 @@ spec:
                 - Always
                 - Never
                 - IfNotPresent
+              keepFailedPods:
+                type: boolean
+                description: Preserve failed JobSet pod attempts for debugging.
+                default: false
               benchmark:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true

@@ -14,6 +14,7 @@ import asyncio
 import os
 import tempfile
 import time
+import uuid
 import zlib
 from pathlib import Path
 
@@ -60,6 +61,8 @@ from aiperf.common.pod_lifecycle_structs import (
     PodDatasetStateQuery,
     PodDatasetStateSnapshot,
     PodPeerAck,
+    PodPeerCommand,
+    PodPeerCommandAck,
     PodPeerHello,
     PodPeerShutdown,
     PodWorkerHealth,
@@ -80,9 +83,10 @@ class WorkerPodManager(BaseComponentService):
     This service is the main process in a worker pod container. It:
     1. Downloads the dataset once from the control-plane (via HTTP API)
     2. Runs the pod-local raw-inference proxy over the shared IPC volume
-    3. Reports worker/record-processor capacity to the control-plane
-    4. Republishes dataset download notifications for late-starting workers
-    5. Uploads raw record files after sibling record-processor containers flush them
+    3. Owns the pod's only controller-facing lifecycle connection
+    4. Configures and shuts down pod-local workers and record processors
+    5. Republishes dataset download notifications for late-starting workers
+    6. Uploads raw record files after sibling record-processor containers flush them
 
     Architecture:
         Worker Pod (multi-container)
@@ -138,6 +142,7 @@ class WorkerPodManager(BaseComponentService):
         self._pod_peer_identities: dict[str, str] = {}
         self._pod_peer_types: dict[str, str] = {}
         self._record_processors_shutdown: set[str] = set()
+        self._configure_started = False
 
         self.pod_lifecycle_router: StreamingRouterClientProtocol = (
             self.comms.create_streaming_router_client(
@@ -203,7 +208,7 @@ class WorkerPodManager(BaseComponentService):
         """Start the WorkerPodManager.
 
         Worker and record-processor containers start independently and register
-        with the controller on their own. Tokenizer prefetch is kicked off in
+        with the pod-local lifecycle router. Tokenizer prefetch is kicked off in
         the background so it does not delay pod-manager registration.
         """
         self.info("WorkerPodManager starting...")
@@ -287,6 +292,83 @@ class WorkerPodManager(BaseComponentService):
                 return None
             case PodDatasetStateQuery():
                 return self._build_pod_dataset_snapshot(message.rid)
+            case PodPeerCommandAck():
+                return message
+
+    def _expected_peer_counts(self) -> dict[str, int]:
+        """Return the required pod-local peer counts by service type."""
+        return {
+            str(ServiceType.WORKER): self.workers_per_pod,
+            str(ServiceType.RECORD_PROCESSOR): self.record_processors_per_pod,
+        }
+
+    def _registered_peer_counts(self) -> dict[str, int]:
+        """Return the currently registered pod-local peer counts by service type."""
+        counts: dict[str, int] = {}
+        for service_type in self._pod_peer_types.values():
+            counts[service_type] = counts.get(service_type, 0) + 1
+        return counts
+
+    async def _wait_for_expected_peers(self) -> None:
+        """Wait for the full pod-local worker and record-processor set to register."""
+        deadline = (
+            asyncio.get_running_loop().time()
+            + Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT
+        )
+        expected = self._expected_peer_counts()
+        while asyncio.get_running_loop().time() < deadline:
+            counts = self._registered_peer_counts()
+            if all(
+                counts.get(service_type, 0) >= expected_count
+                for service_type, expected_count in expected.items()
+            ):
+                return
+            await asyncio.sleep(0.2)
+        counts = self._registered_peer_counts()
+        raise TimeoutError(
+            "Timed out waiting for pod-local peers to register: "
+            f"expected={expected}, registered={counts}"
+        )
+
+    async def _send_pod_command(self, service_id: str, command: CommandType) -> None:
+        """Send a pod-local lifecycle command and wait for its ack."""
+        identity = self._pod_peer_identities[service_id]
+        response = await self.pod_lifecycle_router.request_to(
+            identity,
+            PodPeerCommand(
+                cid=uuid.uuid4().hex,
+                service_id=self.service_id,
+                command=str(command),
+            ),
+            timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
+        )
+        if not isinstance(response, PodPeerCommandAck):
+            raise TypeError(
+                f"Unexpected pod-local response from {service_id}: {type(response).__name__}"
+            )
+
+    async def _wait_for_local_startup_convergence(self) -> None:
+        """Wait for the pod-local worker and record-processor set to converge."""
+        await self._wait_for_expected_peers()
+        await self._dataset_download_event.wait()
+
+    async def _shutdown_local_peers(self) -> None:
+        """Ask pod-local workers and record processors to shut down."""
+        peer_ids = list(self._pod_peer_identities)
+        if not peer_ids:
+            return
+        results = await asyncio.gather(
+            *(
+                self._send_pod_command(service_id, CommandType.SHUTDOWN)
+                for service_id in peer_ids
+            ),
+            return_exceptions=True,
+        )
+        for service_id, result in zip(peer_ids, results, strict=False):
+            if isinstance(result, Exception):
+                self.warning(
+                    f"Failed to shut down pod-local peer {service_id}: {result!r}"
+                )
 
     def _build_pod_dataset_ready(
         self,
@@ -678,6 +760,15 @@ class WorkerPodManager(BaseComponentService):
             if (time.time_ns() - last_activity_ns) / NANOS_PER_SECOND > Environment.WORKER.STALE_TIME:  # fmt: skip
                 info.status = WorkerStatus.STALE
 
+    @on_command(CommandType.PROFILE_CONFIGURE)
+    async def _on_profile_configure(self, message: Command) -> None:
+        """Wait for pod-local startup convergence before profiling."""
+        if self._configure_started:
+            return
+        self._configure_started = True
+        await self._wait_for_local_startup_convergence()
+        await self._publish_worker_summary()
+
     @background_task(
         immediate=False, interval=Environment.WORKER.STATUS_SUMMARY_INTERVAL
     )
@@ -767,6 +858,7 @@ class WorkerPodManager(BaseComponentService):
     async def _stop_worker_pod_manager(self) -> None:
         """Stop pod-local infrastructure, then upload raw records to controller."""
         self._stopping = True
+        await self._shutdown_local_peers()
         await self._wait_for_record_processor_shutdowns()
         await self._wait_for_raw_record_files()
         await self._proxy_manager.stop()

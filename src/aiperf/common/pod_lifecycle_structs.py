@@ -100,14 +100,32 @@ class PodDatasetStateSnapshot(
     error_message: str | None = None
 
 
+class PodPeerCommand(Struct, frozen=True, kw_only=True, tag_field="t", tag="cmd"):
+    """Pod-local lifecycle command sent from WorkerPodManager to a sibling peer."""
+
+    cid: str
+    service_id: str
+    command: str
+
+
+class PodPeerCommandAck(
+    Struct, frozen=True, kw_only=True, tag_field="t", tag="cmd_ack"
+):
+    """Acknowledgement for a pod-local lifecycle command."""
+
+    cid: str
+    service_id: str
+
+
 PeerToPodManagerMessage: TypeAlias = (
     PodPeerHello
     | PodPeerShutdown
     | PodWorkerHealth
     | PodWorkerStartupState
     | PodDatasetStateQuery
+    | PodPeerCommandAck
 )
 
 PodManagerToPeerMessage: TypeAlias = (
-    PodPeerAck | PodDatasetReady | PodDatasetStateSnapshot
+    PodPeerAck | PodDatasetReady | PodDatasetStateSnapshot | PodPeerCommand
 )

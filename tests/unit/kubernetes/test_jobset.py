@@ -309,6 +309,49 @@ class TestJobSetSpec:
         manifest = spec.to_k8s_manifest()
         assert manifest["spec"]["ttlSecondsAfterFinished"] == 600
 
+    def test_jobset_manifest_keep_failed_pods_disables_worker_retries_and_ttls(
+        self,
+    ) -> None:
+        """Debug retention mode should disable worker retries and TTL cleanup."""
+        spec = JobSetSpec(
+            name="aiperf-test",
+            namespace="default",
+            job_id="test-123",
+            image="aiperf:latest",
+            worker_replicas=2,
+            keep_failed_pods=True,
+        )
+
+        manifest = spec.to_k8s_manifest()
+        controller_job, worker_job = manifest["spec"]["replicatedJobs"]
+
+        assert controller_job["template"]["spec"]["backoffLimit"] == 0
+        assert worker_job["template"]["spec"]["backoffLimit"] == 0
+        assert "ttlSecondsAfterFinished" not in worker_job["template"]["spec"]
+        assert "ttlSecondsAfterFinished" not in manifest["spec"]
+
+    def test_jobset_manifest_default_keeps_existing_retry_and_ttl_behavior(
+        self,
+    ) -> None:
+        """Default mode should preserve current worker retry and explicit TTL behavior."""
+        spec = JobSetSpec(
+            name="aiperf-test",
+            namespace="default",
+            job_id="test-123",
+            image="aiperf:latest",
+            worker_replicas=2,
+            ttl_seconds=600,
+            keep_failed_pods=False,
+        )
+
+        manifest = spec.to_k8s_manifest()
+        controller_job, worker_job = manifest["spec"]["replicatedJobs"]
+
+        assert controller_job["template"]["spec"]["backoffLimit"] == 0
+        assert worker_job["template"]["spec"]["backoffLimit"] == 3
+        assert worker_job["template"]["spec"]["ttlSecondsAfterFinished"] == 600
+        assert manifest["spec"]["ttlSecondsAfterFinished"] == 600
+
     def test_to_k8s_manifest_controller_containers(
         self, basic_jobset_spec: JobSetSpec
     ) -> None:
