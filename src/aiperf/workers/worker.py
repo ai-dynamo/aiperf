@@ -286,8 +286,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     async def _send_worker_ready_message(self) -> None:
         """Announce connectivity, then become dispatchable when startup gates clear."""
         await self._publish_startup_state(WorkerStartupState.STARTING)
-        await self._publish_startup_state(WorkerStartupState.ROUTER_PROBING)
-        await self._measure_baseline_rtt()
         await self.return_dealer_client.send(WorkerConnected(worker_id=self.service_id))
         if self._is_kubernetes_mode():
             if self.pod_lifecycle_dealer_client is not None:
@@ -304,6 +302,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 "Kubernetes mode: deferring WorkerDispatchable until pod-local dataset state is ready"
             )
             return
+        await self._publish_startup_state(WorkerStartupState.ROUTER_PROBING)
+        await self._measure_baseline_rtt()
         await self.return_dealer_client.send(
             WorkerDispatchable(worker_id=self.service_id)
         )
