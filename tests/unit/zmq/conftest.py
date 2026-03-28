@@ -19,8 +19,10 @@ from aiperf.common.messages import HeartbeatMessage
 from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
+    WorkerConnected,
     WorkerDispatchable,
     WorkerShutdown,
+    WorkerUndispatchable,
 )
 from aiperf.credit.structs import Credit
 
@@ -140,9 +142,21 @@ def sample_credit():
 
 
 @pytest.fixture
+def sample_worker_connected():
+    """Create a sample WorkerConnected struct for testing."""
+    return WorkerConnected(worker_id="worker-1")
+
+
+@pytest.fixture
 def sample_worker_ready():
     """Create a sample WorkerDispatchable struct for testing."""
     return WorkerDispatchable(worker_id="worker-1")
+
+
+@pytest.fixture
+def sample_worker_undispatchable():
+    """Create a sample WorkerUndispatchable struct for testing."""
+    return WorkerUndispatchable(worker_id="worker-1", reason="draining")
 
 
 @pytest.fixture

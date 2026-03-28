@@ -16,8 +16,10 @@ import zmq.asyncio
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.credit.messages import (
     RouterToWorkerMessage,
+    WorkerConnected,
     WorkerDispatchable,
     WorkerToRouterMessage,
+    WorkerUndispatchable,
 )
 from aiperf.credit.structs import Credit
 from aiperf.zmq.streaming_dealer_client import ZMQStreamingDealerClient
@@ -89,13 +91,28 @@ class TestStreamingRouterClientReceiver:
     """Test ZMQStreamingRouterClient message receiving."""
 
     @pytest.mark.asyncio
-    async def test_receives_worker_ready_and_calls_handler(
-        self, mock_zmq_context, sample_worker_ready, wait_for_background_task
+    @pytest.mark.parametrize(
+        "message_fixture,expected_type",
+        [
+            ("sample_worker_connected", WorkerConnected),
+            ("sample_worker_ready", WorkerDispatchable),
+            ("sample_worker_undispatchable", WorkerUndispatchable),
+        ],
+        ids=["worker_connected", "worker_dispatchable", "worker_undispatchable"],
+    )  # fmt: skip
+    async def test_receives_worker_state_message_and_calls_handler(
+        self,
+        mock_zmq_context,
+        request,
+        message_fixture,
+        expected_type,
+        wait_for_background_task,
     ):
-        """Should receive messages from DEALERs and call registered handler."""
+        """Should decode worker state messages from DEALER clients."""
         handler_called = asyncio.Event()
         received_identity = None
         received_message = None
+        message = request.getfixturevalue(message_fixture)
 
         async def handler(identity: str, message: WorkerToRouterMessage):
             nonlocal received_identity, received_message
@@ -103,24 +120,20 @@ class TestStreamingRouterClientReceiver:
             received_message = message
             handler_called.set()
 
-        # Setup mock socket to return one message
         mock_socket = AsyncMock(spec=zmq.asyncio.Socket)
         mock_socket.bind = Mock()
         mock_socket.setsockopt = Mock()
         mock_socket.send_multipart = AsyncMock()
 
-        # Return message in ROUTER format: [identity, message_bytes]
         call_count = 0
 
         async def recv_multipart_handler():
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                await asyncio.sleep(0.01)  # Small delay
-                return [b"worker-1", msgspec.msgpack.encode(sample_worker_ready)]
-            else:
-                # Block forever on subsequent calls
-                await asyncio.Future()
+                await asyncio.sleep(0.01)
+                return [b"worker-1", msgspec.msgpack.encode(message)]
+            await asyncio.Future()
 
         mock_socket.recv_multipart = recv_multipart_handler
         mock_zmq_context.socket = Mock(return_value=mock_socket)
@@ -131,12 +144,11 @@ class TestStreamingRouterClientReceiver:
         await client.start()
 
         try:
-            # Wait for message to be received
             await asyncio.wait_for(handler_called.wait(), timeout=1.0)
 
             assert received_identity == "worker-1"
-            assert isinstance(received_message, WorkerDispatchable)
-            assert received_message.worker_id == sample_worker_ready.worker_id
+            assert isinstance(received_message, expected_type)
+            assert received_message == message
         finally:
             await client.stop()
 
@@ -200,23 +212,37 @@ class TestStreamingDealerClientSend:
     """Test ZMQStreamingDealerClient.send method."""
 
     @pytest.mark.asyncio
-    async def test_sends_struct_with_msgpack(
-        self, mock_zmq_socket, mock_zmq_context, sample_worker_ready
+    @pytest.mark.parametrize(
+        "message_fixture,expected_type",
+        [
+            ("sample_worker_connected", WorkerConnected),
+            ("sample_worker_ready", WorkerDispatchable),
+            ("sample_worker_undispatchable", WorkerUndispatchable),
+        ],
+        ids=["worker_connected", "worker_dispatchable", "worker_undispatchable"],
+    )  # fmt: skip
+    async def test_sends_worker_state_struct_with_msgpack(
+        self,
+        mock_zmq_socket,
+        mock_zmq_context,
+        request,
+        message_fixture,
+        expected_type,
     ):
-        """Should send struct using msgpack and single-frame send."""
+        """Should send worker state structs using msgpack and single-frame send."""
         client = ZMQStreamingDealerClient(
             address="tcp://localhost:5555", identity="worker-1"
         )
         await client.initialize()
+        message = request.getfixturevalue(message_fixture)
 
-        await client.send(sample_worker_ready)
+        await client.send(message)
 
-        # Verify message was sent (DEALER uses send, not send_multipart)
         mock_zmq_socket.send.assert_called_once()
         call_args = mock_zmq_socket.send.call_args[0][0]
 
-        decoded = msgspec.msgpack.decode(call_args, type=WorkerDispatchable)
-        assert decoded.worker_id == sample_worker_ready.worker_id
+        decoded = msgspec.msgpack.decode(call_args, type=expected_type)
+        assert decoded == message
 
     @pytest.mark.asyncio
     async def test_raises_if_not_initialized(

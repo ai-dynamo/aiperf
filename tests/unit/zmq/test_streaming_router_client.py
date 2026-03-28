@@ -14,8 +14,10 @@ import zmq
 from aiperf.common.enums import LifecycleState
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.credit.messages import (
+    WorkerConnected,
     WorkerDispatchable,
     WorkerToRouterMessage,
+    WorkerUndispatchable,
 )
 from aiperf.credit.structs import (
     Credit,
@@ -191,26 +193,40 @@ class TestZMQStreamingRouterClientReceiver:
             assert client.state == LifecycleState.RUNNING
 
     @pytest.mark.asyncio
-    async def test_receiver_calls_handler_on_worker_ready(
-        self, streaming_router_test_helper, sample_worker_ready, create_callback_tracker
+    @pytest.mark.parametrize(
+        "message_fixture,expected_type",
+        [
+            ("sample_worker_connected", WorkerConnected),
+            ("sample_worker_ready", WorkerDispatchable),
+            ("sample_worker_undispatchable", WorkerUndispatchable),
+        ],
+        ids=["worker_connected", "worker_dispatchable", "worker_undispatchable"],
+    )  # fmt: skip
+    async def test_receiver_calls_handler_on_worker_state_message(
+        self,
+        streaming_router_test_helper,
+        request,
+        message_fixture,
+        expected_type,
+        create_callback_tracker,
     ):
-        """Test that receiver calls handler when WorkerDispatchable arrives."""
+        """Test that receiver decodes worker state messages from DEALER clients."""
         identity = "worker-1"
         callback, event, received = create_callback_tracker()
+        message = request.getfixturevalue(message_fixture)
 
         async def test_handler(
             recv_identity: str, message: WorkerToRouterMessage
         ) -> None:
             await callback((recv_identity, message))
 
-        # Setup mock to return message once then block forever
         call_count = 0
 
         async def mock_recv():
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return [identity.encode(), msgspec.msgpack.encode(sample_worker_ready)]
+                return [identity.encode(), msgspec.msgpack.encode(message)]
             await asyncio.Future()  # Block forever after first call
 
         streaming_router_test_helper.setup_mock_socket(
@@ -218,7 +234,6 @@ class TestZMQStreamingRouterClientReceiver:
         )
 
         async with streaming_router_test_helper.create_client() as client:
-            # Register handler BEFORE starting to avoid race condition
             client.register_receiver(test_handler)
             await client.start()
 
@@ -226,8 +241,8 @@ class TestZMQStreamingRouterClientReceiver:
             assert len(received) == 1
             recv_identity, recv_message = received[0]
             assert recv_identity == identity
-            assert isinstance(recv_message, WorkerDispatchable)
-            assert recv_message.worker_id == sample_worker_ready.worker_id
+            assert isinstance(recv_message, expected_type)
+            assert recv_message == message
 
     @pytest.mark.asyncio
     async def test_receiver_warns_when_no_handler_registered(

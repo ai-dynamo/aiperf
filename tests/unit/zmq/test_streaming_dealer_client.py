@@ -12,7 +12,12 @@ import zmq
 
 from aiperf.common.enums import LifecycleState
 from aiperf.common.exceptions import NotInitializedError
-from aiperf.credit.messages import RouterToWorkerMessage, WorkerDispatchable
+from aiperf.credit.messages import (
+    RouterToWorkerMessage,
+    WorkerConnected,
+    WorkerDispatchable,
+    WorkerUndispatchable,
+)
 from aiperf.credit.structs import Credit
 from aiperf.zmq.streaming_dealer_client import ZMQStreamingDealerClient
 
@@ -142,19 +147,33 @@ class TestZMQStreamingDealerClientSend:
     """Test ZMQStreamingDealerClient.send method."""
 
     @pytest.mark.asyncio
-    async def test_send_sends_struct(
-        self, streaming_dealer_test_helper, sample_worker_ready
+    @pytest.mark.parametrize(
+        "message_fixture,expected_type",
+        [
+            ("sample_worker_connected", WorkerConnected),
+            ("sample_worker_ready", WorkerDispatchable),
+            ("sample_worker_undispatchable", WorkerUndispatchable),
+        ],
+        ids=["worker_connected", "worker_dispatchable", "worker_undispatchable"],
+    )  # fmt: skip
+    async def test_send_sends_worker_state_struct(
+        self,
+        streaming_dealer_test_helper,
+        request,
+        message_fixture,
+        expected_type,
     ):
-        """Test that send sends struct correctly using msgpack."""
+        """Test that send msgpack-encodes worker state structs correctly."""
         async with streaming_dealer_test_helper.create_client() as client:
             mock_socket = client.socket
+            message = request.getfixturevalue(message_fixture)
 
-            await client.send(sample_worker_ready)
+            await client.send(message)
 
             mock_socket.send.assert_called_once()
             sent_data = mock_socket.send.call_args[0][0]
-            decoded = msgspec.msgpack.decode(sent_data, type=WorkerDispatchable)
-            assert decoded.worker_id == sample_worker_ready.worker_id
+            decoded = msgspec.msgpack.decode(sent_data, type=expected_type)
+            assert decoded == message
 
     @pytest.mark.asyncio
     async def test_send_multiple_structs(
