@@ -80,6 +80,7 @@ from aiperf.common.messages import (
     ProcessRecordsResultMessage,
     ProcessServerMetricsResultMessage,
     ProcessTelemetryResultMessage,
+    WorkerPodStateMessage,
     WorkerStatusSummaryMessage,
 )
 from aiperf.common.models import (
@@ -160,20 +161,13 @@ class SystemController(SignalHandlerMixin, BaseService):
         else:
             self.scale_record_processors_with_workers = True
 
-        # In Kubernetes mode, workers and record processors are external pods.
-        # The controller must wait for the full worker-pod topology, not a
-        # placeholder "first worker", otherwise profiling can begin before the
-        # rest of the pod fleet has registered and configured.
+        # In Kubernetes mode, WorkerPodManager is the only controller-facing
+        # authority for worker pods. Workers and record processors remain pod-local.
         if is_k8s_mode:
             self._k8s_topology = self._build_k8s_service_topology()
+            self.required_services.pop(ServiceType.RECORD_PROCESSOR, None)
             self.required_services[ServiceType.WORKER_POD_MANAGER] = (
                 self._k8s_topology.num_worker_pods
-            )
-            self.required_services[ServiceType.WORKER] = (
-                self._k8s_topology.total_workers
-            )
-            self.required_services[ServiceType.RECORD_PROCESSOR] = (
-                self._k8s_topology.total_record_processors
             )
 
         self.proxy_manager: ProxyManager = ProxyManager(
@@ -260,6 +254,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._telemetry_endpoints_reachable: list[str] = []
         self._server_metrics_endpoints_configured: list[str] = []
         self._worker_startup_states: dict[str, str] = {}
+        self._pod_states: dict[str, WorkerPodStateMessage] = {}
         self._all_workers_ready_event: asyncio.Event = asyncio.Event()
         self._server_metrics_endpoints_reachable: list[str] = []
         self._pod_failure_watcher_task: asyncio.Task | None = None
@@ -488,12 +483,11 @@ class SystemController(SignalHandlerMixin, BaseService):
             await self.service_manager.check_pods_healthy()
 
         self.info(
-            "Post-configure startup flow: waiting for worker app-level READY state "
-            f"({self.required_services.get(ServiceType.WORKER, 0)} workers, "
-            f"timeout={Environment.SERVICE.PROFILE_START_TIMEOUT}s)"
+            "Post-configure startup flow: waiting for sufficient worker pod readiness "
+            f"(timeout={Environment.SERVICE.PROFILE_START_TIMEOUT}s)"
         )
-        async with self.try_operation_or_stop("Wait For Workers Ready"):
-            await self._wait_for_all_workers_ready(
+        async with self.try_operation_or_stop("Wait For Worker Pods Ready"):
+            await self._wait_for_sufficient_worker_pods(
                 timeout=Environment.SERVICE.PROFILE_START_TIMEOUT,
             )
 
@@ -768,7 +762,6 @@ class SystemController(SignalHandlerMixin, BaseService):
         expected_workers = self.required_services.get(ServiceType.WORKER, 0)
         if expected_workers <= 0:
             return True
-
         ready_workers = [
             worker_id
             for worker_id, state in self._worker_startup_states.items()
@@ -776,49 +769,45 @@ class SystemController(SignalHandlerMixin, BaseService):
         ]
         return len(ready_workers) >= expected_workers
 
-    async def _wait_for_all_workers_ready(self, timeout: float) -> None:
-        """Wait for all expected workers to reach app-level READY state."""
-        expected_workers = self.required_services.get(ServiceType.WORKER, 0)
-        if expected_workers <= 0:
-            return
+    def _ready_worker_pod_count(self) -> int:
+        """Count worker pods that are currently dispatchable."""
+        return sum(
+            1
+            for pod in self._pod_states.values()
+            if pod.dispatchable_workers >= 1 and pod.ready_record_processors >= 1
+        )
+
+    def _all_target_worker_pods_ready(self) -> bool:
+        """Check whether the full desired worker-pod topology is ready."""
+        if self._k8s_topology is None:
+            return self._ready_worker_pod_count() >= 1
+        return self._ready_worker_pod_count() >= self._k8s_topology.num_worker_pods
+
+    def _has_sufficient_ready_worker_pods(self) -> bool:
+        """Check whether enough worker pods are dispatchable to start profiling."""
+        if self.run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES:
+            return True
+        return self._ready_worker_pod_count() >= 1
+
+    async def _wait_for_sufficient_worker_pods(self, timeout: float) -> None:
+        """Wait until enough worker pods are dispatchable to start profiling."""
         if self.run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES:
             return
-        if self._all_expected_workers_ready():
-            self.info(f"All {expected_workers} workers are app-level READY")
-            return
-
         begin = time.perf_counter()
+        grace_period = min(5.0, timeout)
         self._all_workers_ready_event.clear()
         while True:
-            remaining = timeout - (time.perf_counter() - begin)
-            ready_count = sum(
-                1
-                for state in self._worker_startup_states.values()
-                if state == str(WorkerStartupState.READY)
-            )
-            startup_summary = self._summarize_pending_worker_startup_states(
-                {
-                    worker_id
-                    for worker_id, info in ServiceRegistry.services.items()
-                    if info.service_type == ServiceType.WORKER
-                    and self._worker_startup_states.get(worker_id)
-                    != str(WorkerStartupState.READY)
-                }
-            )
+            elapsed = time.perf_counter() - begin
+            if self._all_target_worker_pods_ready():
+                return
+            if elapsed >= grace_period and self._has_sufficient_ready_worker_pods():
+                return
+            remaining = timeout - elapsed
             if remaining <= 0:
                 raise ServiceRegistrationTimeoutError(
-                    f"Timed out waiting for workers to become READY "
-                    f"({ready_count}/{expected_workers}). "
-                    f"Pending worker startup: {startup_summary}",
+                    "Timed out waiting for sufficient worker pod readiness",
                     missing={},
                 ) from None
-
-            self.info(
-                f"Waiting for worker READY state: {ready_count}/{expected_workers} "
-                f"({time.perf_counter() - begin:.1f}s elapsed). "
-                f"Pending worker startup: {startup_summary}"
-            )
-
             worker_manager_ids = [
                 service.service_id
                 for service in ServiceRegistry.get_services(
@@ -832,25 +821,26 @@ class SystemController(SignalHandlerMixin, BaseService):
                         CommandType.REPORT_WORKER_STATUS_SUMMARY,
                         timeout=min(remaining, 5.0),
                     )
-
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(
                     self._all_workers_ready_event.wait(),
                     timeout=min(remaining, 5.0),
                 )
             self._all_workers_ready_event.clear()
-            if self._all_expected_workers_ready():
-                self.info(f"All {expected_workers} workers are app-level READY")
-                return
 
     @on_message(MessageType.WORKER_STATUS_SUMMARY)
     async def _on_worker_status_summary(
         self, message: WorkerStatusSummaryMessage
     ) -> None:
-        """Track the latest worker startup states for configure-wait diagnostics."""
+        """Track worker startup states for diagnostics."""
         for worker_id, startup_state in message.worker_startup_states.items():
             self._worker_startup_states[worker_id] = str(startup_state)
-        if self._all_expected_workers_ready():
+
+    @on_message(MessageType.WORKER_POD_STATE)
+    async def _on_worker_pod_state(self, message: WorkerPodStateMessage) -> None:
+        """Track aggregate worker-pod snapshots for Kubernetes startup gating."""
+        self._pod_states[message.pod_index] = message
+        if self._has_sufficient_ready_worker_pods():
             self._all_workers_ready_event.set()
 
     async def _wait_for_endpoint_ready(self) -> None:

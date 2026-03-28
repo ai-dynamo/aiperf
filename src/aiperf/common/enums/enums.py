@@ -388,6 +388,7 @@ class MessageType(CaseInsensitiveStrEnum):
     SERVER_METRICS_RECORD = "server_metrics_record"
     SERVER_METRICS_STATUS = "server_metrics_status"
     WORKER_HEALTH = "worker_health"
+    WORKER_POD_STATE = "worker_pod_state"
     WORKER_STARTUP_STATE = "worker_startup_state"
     WORKER_STATUS_SUMMARY = "worker_status_summary"
 

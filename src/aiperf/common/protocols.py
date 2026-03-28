@@ -175,7 +175,7 @@ class StreamingRouterClientProtocol(CommunicationClientProtocol, Protocol):
 
     def register_receiver(
         self,
-        handler: Callable[[str, MessageT], Coroutine[Any, Any, None]],
+        handler: Callable[[str, MessageT], Coroutine[Any, Any, MessageOutputT | None]],
     ) -> None:
         """
         Register handler for incoming messages from DEALER clients.
@@ -219,6 +219,10 @@ class StreamingDealerClientProtocol(CommunicationClientProtocol, Protocol):
         Args:
             message: The message to send
         """
+        ...
+
+    async def request(self, message: MessageT, timeout: float) -> Any:
+        """Send request to ROUTER and wait for a response."""
         ...
 
 

@@ -45,7 +45,10 @@ from aiperf.common.messages import (
     WorkerHealthMessage,
     WorkerStartupStateMessage,
 )
-from aiperf.common.messages.worker_messages import WorkerStatusSummaryMessage
+from aiperf.common.messages.worker_messages import (
+    WorkerPodStateMessage,
+    WorkerStatusSummaryMessage,
+)
 from aiperf.common.models import (
     MemoryMapClientMetadata,
     ProcessHealth,
@@ -54,6 +57,8 @@ from aiperf.common.models import (
 from aiperf.common.pod_lifecycle_structs import (
     PeerToPodManagerMessage,
     PodDatasetReady,
+    PodDatasetStateQuery,
+    PodDatasetStateSnapshot,
     PodPeerAck,
     PodPeerHello,
     PodPeerShutdown,
@@ -147,6 +152,9 @@ class WorkerPodManager(BaseComponentService):
         self._dataset_downloaded = False
         self._dataset_download_event = asyncio.Event()
         self._dataset_client_metadata: MemoryMapClientMetadata | None = None
+        self._dataset_metadata = None
+        self._benchmark_generation: str | None = None
+        self._dataset_generation: str | None = None
         self._dataset_download_task: asyncio.Task[None] | None = None
         self._tokenizer_prefetch_task: asyncio.Task[None] | None = None
         self._stopping = False
@@ -222,15 +230,14 @@ class WorkerPodManager(BaseComponentService):
         Downloads the dataset from control-plane so workers can access it via mmap.
         After download, notifies sibling workers directly over the pod lifecycle channel.
         """
+        self._dataset_metadata = message.metadata
+        self._benchmark_generation = message.benchmark_generation
+        self._dataset_generation = message.dataset_generation
+
         if self._dataset_downloaded:
             self.debug(
-                "Dataset already downloaded, re-sending pod lifecycle dataset-ready for late subscribers"
+                "Dataset already downloaded; late workers should query pod-local current state"
             )
-            if self._dataset_client_metadata is not None:
-                await self._notify_registered_workers_of_dataset(
-                    client_metadata=self._dataset_client_metadata,
-                    success=True,
-                )
             return
 
         if self._dataset_download_task is not None:
@@ -259,17 +266,6 @@ class WorkerPodManager(BaseComponentService):
                 self._pod_peer_types[message.service_id] = message.service_type
                 if message.service_type == str(ServiceType.RECORD_PROCESSOR):
                     self._record_processors_shutdown.discard(message.service_id)
-                if (
-                    message.service_type == str(ServiceType.WORKER)
-                    and self._dataset_client_metadata is not None
-                ):
-                    await self.pod_lifecycle_router.send_to(
-                        identity,
-                        self._build_pod_dataset_ready(
-                            client_metadata=self._dataset_client_metadata,
-                            success=self._dataset_downloaded,
-                        ),
-                    )
                 return PodPeerAck(service_id=self.service_id)
             case PodPeerShutdown():
                 self._pod_peer_types[message.service_id] = message.service_type
@@ -289,6 +285,8 @@ class WorkerPodManager(BaseComponentService):
                 info.startup_state_updated_ns = message.request_ns
                 await self._publish_worker_summary()
                 return None
+            case PodDatasetStateQuery():
+                return self._build_pod_dataset_snapshot(message.rid)
 
     def _build_pod_dataset_ready(
         self,
@@ -307,6 +305,33 @@ class WorkerPodManager(BaseComponentService):
             pod_index=self._pod_index,
             success=success,
             error_message=error_message,
+        )
+
+    def _build_pod_dataset_snapshot(self, rid: str) -> PodDatasetStateSnapshot:
+        """Build a queryable current-state dataset snapshot for sibling workers."""
+        metadata = self._dataset_client_metadata
+        return PodDatasetStateSnapshot(
+            rid=rid,
+            service_id=self.service_id,
+            benchmark_generation=self._benchmark_generation,
+            dataset_generation=self._dataset_generation,
+            default_context_mode=(
+                self._dataset_metadata.default_context_mode
+                if self._dataset_metadata is not None
+                else None
+            ),
+            data_file_path=str(metadata.data_file_path)
+            if metadata is not None
+            else None,
+            index_file_path=(
+                str(metadata.index_file_path) if metadata is not None else None
+            ),
+            conversation_count=metadata.conversation_count
+            if metadata is not None
+            else 0,
+            total_size_bytes=metadata.total_size_bytes if metadata is not None else 0,
+            pod_index=self._pod_index,
+            ready=self._dataset_downloaded and metadata is not None,
         )
 
     async def _notify_registered_workers_of_dataset(
@@ -661,19 +686,62 @@ class WorkerPodManager(BaseComponentService):
         await self._publish_worker_summary()
 
     async def _publish_worker_summary(self) -> None:
-        """Publish the current worker status and startup-state summary."""
+        """Publish worker-centric and pod-centric state snapshots."""
+        startup_states = {
+            worker_id: info.startup_state
+            for worker_id, info in self.worker_health.items()
+            if info.startup_state is not None
+        }
         summary = WorkerStatusSummaryMessage(
             service_id=self.service_id,
             worker_statuses={
                 worker_id: info.status for worker_id, info in self.worker_health.items()
             },
-            worker_startup_states={
-                worker_id: info.startup_state
-                for worker_id, info in self.worker_health.items()
-                if info.startup_state is not None
-            },
+            worker_startup_states=startup_states,
+        )
+        ready_workers = sum(
+            1 for state in startup_states.values() if state == WorkerStartupState.READY
+        )
+        router_connected_workers = sum(
+            1
+            for state in startup_states.values()
+            if state
+            in {
+                WorkerStartupState.ROUTER_PROBING,
+                WorkerStartupState.WAITING_FOR_DATASET,
+                WorkerStartupState.READY,
+            }
+        )
+        ready_record_processors = sum(
+            1
+            for service_type in self._pod_peer_types.values()
+            if service_type == str(ServiceType.RECORD_PROCESSOR)
+        )
+        pod_state = (
+            "ready"
+            if ready_workers >= 1 and ready_record_processors >= 1
+            else "starting"
+        )
+        pod_summary = WorkerPodStateMessage(
+            service_id=self.service_id,
+            pod_index=self._pod_index or "",
+            benchmark_generation=self._benchmark_generation,
+            dataset_generation=self._dataset_generation,
+            declared_workers=self.workers_per_pod,
+            declared_record_processors=self.record_processors_per_pod,
+            router_connected_workers=router_connected_workers,
+            dispatchable_workers=ready_workers,
+            ready_workers=ready_workers,
+            ready_record_processors=ready_record_processors,
+            degraded_workers=max(0, self.workers_per_pod - ready_workers),
+            degraded_record_processors=max(
+                0, self.record_processors_per_pod - ready_record_processors
+            ),
+            pod_state=pod_state,
+            admission_state=("dispatchable" if ready_workers >= 1 else "admitting"),
         )
         await self.publish(summary)
+        await self.publish(pod_summary)
 
     @on_command(CommandType.REPORT_WORKER_STATUS_SUMMARY)
     async def _on_report_worker_status_summary(self, message: Command) -> None:

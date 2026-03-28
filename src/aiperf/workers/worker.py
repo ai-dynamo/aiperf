@@ -65,6 +65,8 @@ from aiperf.common.models import (
 )
 from aiperf.common.pod_lifecycle_structs import (
     PodDatasetReady,
+    PodDatasetStateQuery,
+    PodDatasetStateSnapshot,
     PodManagerToPeerMessage,
     PodPeerHello,
     PodPeerShutdown,
@@ -87,6 +89,7 @@ from aiperf.credit.messages import (
     WorkerConnected,
     WorkerDispatchable,
     WorkerShutdown,
+    WorkerUndispatchable,
 )
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.dataset.protocols import DatasetClientStoreProtocol
@@ -256,7 +259,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
         self._pending_dataset_config: DatasetConfiguredNotification | None = None
-        self._pending_dataset_ready: PodDatasetReady | None = None
+        self._latest_pod_dataset_state: PodDatasetStateSnapshot | None = None
         self._worker_ready_event = asyncio.Event()
         self._startup_state: WorkerStartupState | None = None
 
@@ -283,6 +286,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     async def _send_worker_ready_message(self) -> None:
         """Announce connectivity, then become dispatchable when startup gates clear."""
         await self._publish_startup_state(WorkerStartupState.STARTING)
+        await self._publish_startup_state(WorkerStartupState.ROUTER_PROBING)
+        await self._measure_baseline_rtt()
         await self.return_dealer_client.send(WorkerConnected(worker_id=self.service_id))
         if self._is_kubernetes_mode():
             if self.pod_lifecycle_dealer_client is not None:
@@ -294,12 +299,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     )
                 )
             await self._publish_startup_state(WorkerStartupState.WAITING_FOR_DATASET)
+            await self._complete_k8s_startup_flow()
             self.debug(
-                "Kubernetes mode: deferring WorkerDispatchable until dataset is downloaded"
+                "Kubernetes mode: deferring WorkerDispatchable until pod-local dataset state is ready"
             )
             return
-        await self._publish_startup_state(WorkerStartupState.ROUTER_PROBING)
-        await self._measure_baseline_rtt()
         await self.return_dealer_client.send(
             WorkerDispatchable(worker_id=self.service_id)
         )
@@ -320,6 +324,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """Handle pod-local lifecycle messages from WorkerPodManager."""
         if isinstance(message, PodDatasetReady):
             await self._on_dataset_ready(message)
+        elif isinstance(message, PodDatasetStateSnapshot):
+            self._latest_pod_dataset_state = message
+            await self._complete_k8s_startup_flow(message)
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(self, msg: DatasetConfiguredNotification) -> None:
@@ -344,17 +351,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self.debug("Dataset already initialized, ignoring rebroadcast")
             return
 
-        # In Kubernetes mode, wait for WorkerPodManager to download the dataset first.
-        # WorkerPodManager will send PodDatasetReady with local paths.
+        # In Kubernetes mode, WorkerPodManager owns the current pod-local dataset state.
         if self._is_kubernetes_mode():
             self._pending_dataset_config = msg
-            pending_ready = self._pending_dataset_ready
-            if pending_ready is not None:
-                await self._complete_k8s_dataset_handshake(pending_ready)
-                return
-            self.debug(
-                "Kubernetes mode: waiting for PodDatasetReady before initializing dataset client"
-            )
+            await self._complete_k8s_startup_flow()
             return
 
         # Local mode: initialize immediately with provided client_metadata
@@ -376,42 +376,65 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self.debug("Dataset already initialized, ignoring download rebroadcast")
             return
 
-        if self._pending_dataset_config is None:
-            self.debug("Received dataset-ready before config; storing for later")
-            self._pending_dataset_ready = msg
-            return
+        await self._complete_k8s_startup_flow()
 
-        await self._complete_k8s_dataset_handshake(msg)
+    async def _query_pod_dataset_state(self) -> PodDatasetStateSnapshot | None:
+        """Fetch the current pod-local dataset state from WorkerPodManager."""
+        if self.pod_lifecycle_dealer_client is None or not hasattr(
+            self.pod_lifecycle_dealer_client, "request"
+        ):
+            return None
 
-    async def _complete_k8s_dataset_handshake(self, msg: PodDatasetReady) -> None:
-        """Finish K8s dataset initialization once config and pod-local dataset-ready are both present."""
-        if self._pending_dataset_config is None:
-            self._pending_dataset_ready = msg
-            return
-
-        if not msg.success:
-            self.error(f"Dataset download failed: {msg.error_message}")
-            self.warning(
-                "Waiting for a successful PodDatasetReady before initializing the dataset client"
+        try:
+            response = await self.pod_lifecycle_dealer_client.request(
+                PodDatasetStateQuery(
+                    rid=uuid.uuid4().hex,
+                    service_id=self.service_id,
+                ),
+                timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
             )
-            self._pending_dataset_ready = msg
+        except asyncio.TimeoutError:
+            return None
+        if not isinstance(response, PodDatasetStateSnapshot):
+            return None
+        self._latest_pod_dataset_state = response
+        return response
+
+    async def _complete_k8s_startup_flow(
+        self,
+        snapshot: PodDatasetStateSnapshot | None = None,
+    ) -> None:
+        """Make the worker dispatchable once pod-local dataset state is ready."""
+        if not self._is_kubernetes_mode() or self._worker_ready_event.is_set():
             return
 
-        dataset_metadata = self._pending_dataset_config.metadata
+        if self._dataset_configured_event.is_set():
+            if self._worker_ready_event.is_set():
+                return
+            await self.return_dealer_client.send(
+                WorkerDispatchable(worker_id=self.service_id)
+            )
+            await self._publish_startup_state(WorkerStartupState.READY)
+            self._worker_ready_event.set()
+            return
+
+        current_snapshot = snapshot or await self._query_pod_dataset_state()
+        if current_snapshot is None or not current_snapshot.ready:
+            return
+
         await self._initialize_dataset_client(
             MemoryMapClientMetadata(
-                data_file_path=Path(msg.data_file_path),
-                index_file_path=Path(msg.index_file_path),
-                conversation_count=msg.conversation_count,
-                total_size_bytes=msg.total_size_bytes,
+                data_file_path=Path(current_snapshot.data_file_path),
+                index_file_path=Path(current_snapshot.index_file_path),
+                conversation_count=current_snapshot.conversation_count,
+                total_size_bytes=current_snapshot.total_size_bytes,
             ),
-            dataset_metadata,
         )
+        if current_snapshot.default_context_mode is not None:
+            self.session_manager.set_default_context_mode(
+                current_snapshot.default_context_mode
+            )
         self._pending_dataset_config = None
-        self._pending_dataset_ready = None
-
-        await self._publish_startup_state(WorkerStartupState.ROUTER_PROBING)
-        await self._measure_baseline_rtt()
         await self.return_dealer_client.send(
             WorkerDispatchable(worker_id=self.service_id)
         )
@@ -467,6 +490,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """Send WorkerShutdown to announce shutdown."""
         try:
             await self._publish_startup_state(WorkerStartupState.SHUTTING_DOWN)
+            if self._is_kubernetes_mode():
+                await self.return_dealer_client.send(
+                    WorkerUndispatchable(worker_id=self.service_id, reason="shutdown")
+                )
             if self.pod_lifecycle_dealer_client is not None:
                 await self.pod_lifecycle_dealer_client.send(
                     PodPeerShutdown(

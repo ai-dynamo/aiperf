@@ -398,6 +398,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             service_id=self.service_id,
             metadata=self.dataset_metadata,
             client_metadata=client_metadata,
+            benchmark_generation=self.run.cfg.artifacts.benchmark_id,
+            dataset_generation=f"{self.run.cfg.artifacts.benchmark_id}:dataset",
         )
         await self.publish(notification)
         self._rebroadcast_task = asyncio.create_task(

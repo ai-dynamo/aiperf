@@ -25,6 +25,8 @@ class DatasetMixin:
 
         # Dataset metadata received from DatasetManager
         self._dataset_client_metadata: MemoryMapClientMetadata | None = None
+        self._benchmark_generation: str | None = None
+        self._dataset_generation: str | None = None
         self._dataset_configured = asyncio.Event()
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
@@ -39,6 +41,8 @@ class DatasetMixin:
         """
         if isinstance(message.client_metadata, MemoryMapClientMetadata):
             self._dataset_client_metadata = message.client_metadata
+            self._benchmark_generation = message.benchmark_generation
+            self._dataset_generation = message.dataset_generation
             self._dataset_configured.set()
             self.info(
                 f"Dataset configured: {message.client_metadata.conversation_count} conversations, "
@@ -53,6 +57,16 @@ class DatasetMixin:
     def dataset_client_metadata(self) -> MemoryMapClientMetadata | None:
         """Get the dataset client metadata."""
         return self._dataset_client_metadata
+
+    @property
+    def benchmark_generation(self) -> str | None:
+        """Get the active benchmark generation."""
+        return self._benchmark_generation
+
+    @property
+    def dataset_generation(self) -> str | None:
+        """Get the active dataset generation."""
+        return self._dataset_generation
 
     @property
     def dataset_configured(self) -> asyncio.Event:

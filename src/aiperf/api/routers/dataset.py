@@ -12,6 +12,7 @@ from typing import Annotated
 import aiofiles.os as aio_os
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
 from aiperf.common.compression import (
@@ -32,12 +33,38 @@ DatasetDep = Annotated["DatasetRouter", component_dependency("dataset")]
 dataset_router = APIRouter(tags=["Dataset"], include_in_schema=False)
 
 
+class DatasetStateResponse(BaseModel):
+    """Current dataset snapshot for late-joining Kubernetes workers."""
+
+    ready: bool = Field(..., description="Whether the dataset snapshot is ready.")
+    benchmark_generation: str | None = Field(
+        default=None,
+        description="Current benchmark generation identifier.",
+    )
+    dataset_generation: str | None = Field(
+        default=None,
+        description="Current dataset generation identifier.",
+    )
+    conversation_count: int = Field(
+        default=0,
+        description="Number of conversations in the current dataset.",
+    )
+    total_size_bytes: int = Field(
+        default=0,
+        description="Total dataset size in bytes.",
+    )
+    data_url: str = Field(..., description="Dataset data download endpoint.")
+    index_url: str = Field(..., description="Dataset index download endpoint.")
+
+
 class DatasetRouter(MessageBusClientMixin, BaseRouter):
     """Owns dataset metadata and exposes /api/dataset endpoints."""
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._dataset_client_metadata: MemoryMapClientMetadata | None = None
+        self._benchmark_generation: str | None = None
+        self._dataset_generation: str | None = None
         self._dataset_configured = asyncio.Event()
 
     def get_router(self) -> APIRouter:
@@ -50,6 +77,8 @@ class DatasetRouter(MessageBusClientMixin, BaseRouter):
         """Store dataset file paths from DatasetManager."""
         if isinstance(message.client_metadata, MemoryMapClientMetadata):
             self._dataset_client_metadata = message.client_metadata
+            self._benchmark_generation = message.benchmark_generation
+            self._dataset_generation = message.dataset_generation
             self._dataset_configured.set()
             self.info(
                 f"Dataset configured: {message.client_metadata.conversation_count} conversations, "
@@ -63,6 +92,14 @@ class DatasetRouter(MessageBusClientMixin, BaseRouter):
     @property
     def dataset_client_metadata(self) -> MemoryMapClientMetadata | None:
         return self._dataset_client_metadata
+
+    @property
+    def benchmark_generation(self) -> str | None:
+        return self._benchmark_generation
+
+    @property
+    def dataset_generation(self) -> str | None:
+        return self._dataset_generation
 
     @property
     def dataset_configured(self) -> asyncio.Event:
@@ -157,4 +194,20 @@ async def get_dataset_index(
         metadata.compressed,
         request.headers.get("accept-encoding"),
         "Index",
+    )
+
+
+@dataset_router.get("/api/dataset/state", response_model=DatasetStateResponse)
+async def get_dataset_state(component: DatasetDep) -> DatasetStateResponse:
+    """Return the current versioned dataset snapshot for late joiners."""
+    await _wait_for_dataset_metadata(component)
+    metadata = component.dataset_client_metadata
+    return DatasetStateResponse(
+        ready=True,
+        benchmark_generation=component.benchmark_generation,
+        dataset_generation=component.dataset_generation,
+        conversation_count=metadata.conversation_count,
+        total_size_bytes=metadata.total_size_bytes,
+        data_url="/api/dataset/data",
+        index_url="/api/dataset/index",
     )

@@ -10,6 +10,8 @@ from typing import TypeAlias
 
 from msgspec import Struct
 
+from aiperf.common.enums import ConversationContextMode
+
 
 class PodPeerHello(Struct, frozen=True, kw_only=True, tag_field="t", tag="hello"):
     """Initial registration of a pod-local peer with WorkerPodManager."""
@@ -72,8 +74,40 @@ class PodDatasetReady(Struct, frozen=True, kw_only=True, tag_field="t", tag="dat
     error_message: str | None = None
 
 
+class PodDatasetStateQuery(Struct, frozen=True, kw_only=True, tag_field="t", tag="dq"):
+    """Request the current pod-local dataset state from WorkerPodManager."""
+
+    rid: str
+    service_id: str
+
+
+class PodDatasetStateSnapshot(
+    Struct, frozen=True, kw_only=True, tag_field="t", tag="ds"
+):
+    """Current pod-local dataset snapshot returned by WorkerPodManager."""
+
+    rid: str
+    service_id: str
+    benchmark_generation: str | None = None
+    dataset_generation: str | None = None
+    default_context_mode: ConversationContextMode | None = None
+    data_file_path: str | None = None
+    index_file_path: str | None = None
+    conversation_count: int = 0
+    total_size_bytes: int = 0
+    pod_index: str | None = None
+    ready: bool = False
+    error_message: str | None = None
+
+
 PeerToPodManagerMessage: TypeAlias = (
-    PodPeerHello | PodPeerShutdown | PodWorkerHealth | PodWorkerStartupState
+    PodPeerHello
+    | PodPeerShutdown
+    | PodWorkerHealth
+    | PodWorkerStartupState
+    | PodDatasetStateQuery
 )
 
-PodManagerToPeerMessage: TypeAlias = PodPeerAck | PodDatasetReady
+PodManagerToPeerMessage: TypeAlias = (
+    PodPeerAck | PodDatasetReady | PodDatasetStateSnapshot
+)

@@ -46,6 +46,56 @@ class WorkerStatusSummaryMessage(BaseServiceMessage):
     )
 
 
+class WorkerPodStateMessage(BaseServiceMessage):
+    """Controller-facing aggregate snapshot for a Kubernetes worker pod."""
+
+    message_type: MessageTypeT = MessageType.WORKER_POD_STATE
+
+    pod_index: str = Field(..., description="The Kubernetes worker pod index.")
+    benchmark_generation: str | None = Field(
+        default=None,
+        description="The current benchmark generation loaded by this pod.",
+    )
+    dataset_generation: str | None = Field(
+        default=None,
+        description="The current dataset generation loaded by this pod.",
+    )
+    declared_workers: int = Field(
+        ..., description="Configured worker count declared by this pod."
+    )
+    declared_record_processors: int = Field(
+        ..., description="Configured record-processor count declared by this pod."
+    )
+    router_connected_workers: int = Field(
+        default=0,
+        description="Workers that have connected to the credit router.",
+    )
+    dispatchable_workers: int = Field(
+        default=0,
+        description="Workers currently eligible to receive credits.",
+    )
+    ready_workers: int = Field(
+        default=0,
+        description="Workers that have fully completed startup.",
+    )
+    ready_record_processors: int = Field(
+        default=0,
+        description="Record processors currently available in the pod.",
+    )
+    degraded_workers: int = Field(
+        default=0,
+        description="Configured workers that are not currently ready.",
+    )
+    degraded_record_processors: int = Field(
+        default=0,
+        description="Configured record processors that are not currently ready.",
+    )
+    pod_state: str = Field(..., description="Aggregate worker-pod lifecycle state.")
+    admission_state: str = Field(
+        ..., description="Whether this pod is admitting new work."
+    )
+
+
 class WorkerStartupStateMessage(BaseServiceMessage, RequiresRequestNSMixin):
     """Message for a worker startup lifecycle transition."""
 

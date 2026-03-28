@@ -14,13 +14,18 @@ import pytest
 from pytest import param
 
 from aiperf.common.control_structs import Command
-from aiperf.common.enums import CommandType, WorkerStartupState, WorkerStatus
+from aiperf.common.enums import (
+    CommandType,
+    WorkerStartupState,
+    WorkerStatus,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.messages import (
     DatasetConfiguredNotification,
     WorkerHealthMessage,
 )
 from aiperf.common.messages.worker_messages import (
+    WorkerPodStateMessage,
     WorkerStartupStateMessage,
     WorkerStatusSummaryMessage,
 )
@@ -31,6 +36,8 @@ from aiperf.common.models import (
     WorkerTaskStats,
 )
 from aiperf.common.pod_lifecycle_structs import (
+    PodDatasetStateQuery,
+    PodDatasetStateSnapshot,
     PodPeerHello,
     PodPeerShutdown,
     PodWorkerHealth,
@@ -152,6 +159,8 @@ def dataset_notification() -> DatasetConfiguredNotification:
             conversation_count=0,
             total_size_bytes=0,
         ),
+        benchmark_generation="gen-1",
+        dataset_generation="data-1",
     )
 
 
@@ -384,11 +393,42 @@ class TestDatasetHandling:
 
         # First notification
         await manager._on_dataset_configured(dataset_notification)
-        # Second notification (should trigger a re-send, not a re-download)
+        # Second notification should not re-download or rely on rebroadcast
         await manager._on_dataset_configured(dataset_notification)
 
         assert manager._download_dataset.call_count == 1
-        assert manager._notify_registered_workers_of_dataset.await_count == 2
+        assert manager._notify_registered_workers_of_dataset.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_dataset_state_query_returns_current_snapshot(
+        self,
+        worker_pod_manager: WorkerPodManager,
+    ) -> None:
+        """Workers should be able to query current dataset truth directly."""
+        manager = worker_pod_manager
+        manager._benchmark_generation = "gen-1"
+        manager._dataset_generation = "data-1"
+        manager._dataset_downloaded = True
+        manager._dataset_client_metadata = MemoryMapClientMetadata(
+            data_file_path=Path("/tmp/dataset.dat"),
+            index_file_path=Path("/tmp/index.dat"),
+            conversation_count=3,
+            total_size_bytes=128,
+        )
+        manager._dataset_metadata = DatasetMetadata(
+            conversations=[],
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+
+        response = await manager._on_pod_lifecycle_message(
+            "identity-1",
+            PodDatasetStateQuery(rid="rid-1", service_id="worker-1"),
+        )
+
+        assert isinstance(response, PodDatasetStateSnapshot)
+        assert response.ready is True
+        assert response.dataset_generation == "data-1"
+        assert response.data_file_path == "/tmp/dataset.dat"
 
     @pytest.mark.asyncio
     async def test_concurrent_dataset_notifications_do_not_overlap_downloads(
@@ -588,7 +628,7 @@ class TestHealthMonitoring:
             manager.worker_health["test-pod-manager_worker_0"].startup_state
             == WorkerStartupState.WAITING_FOR_DATASET
         )
-        summary = manager.publish.await_args.args[0]
+        summary = manager.publish.await_args_list[0].args[0]
         assert isinstance(summary, WorkerStatusSummaryMessage)
         assert summary.worker_startup_states == {
             "test-pod-manager_worker_0": WorkerStartupState.WAITING_FOR_DATASET
@@ -633,11 +673,16 @@ class TestHealthMonitoring:
             ),
         )
 
-        summary = worker_pod_manager.publish.await_args.args[0]
+        published_messages = [
+            call.args[0] for call in worker_pod_manager.publish.await_args_list
+        ]
+        summary = published_messages[0]
+        pod_summary = published_messages[-1]
         assert isinstance(summary, WorkerStatusSummaryMessage)
         assert summary.worker_startup_states == {
             "worker_0": WorkerStartupState.WAITING_FOR_DATASET
         }
+        assert isinstance(pod_summary, WorkerPodStateMessage)
 
     @pytest.mark.asyncio
     async def test_report_worker_status_summary_command_publishes_summary(
@@ -670,12 +715,15 @@ class TestHealthMonitoring:
             Command(cmd=CommandType.REPORT_WORKER_STATUS_SUMMARY, cid="cid")
         )
 
-        summary = manager.publish.await_args.args[0]
+        published_messages = [call.args[0] for call in manager.publish.await_args_list]
+        summary = published_messages[0]
+        pod_summary = published_messages[-1]
         assert isinstance(summary, WorkerStatusSummaryMessage)
         assert summary.worker_statuses == {"worker_0": WorkerStatus.HEALTHY}
         assert summary.worker_startup_states == {
             "worker_0": WorkerStartupState.WAITING_FOR_DATASET
         }
+        assert isinstance(pod_summary, WorkerPodStateMessage)
 
 
 # =============================================================================

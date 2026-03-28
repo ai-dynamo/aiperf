@@ -78,6 +78,14 @@ class DatasetConfiguredNotification(BaseServiceMessage):
         ...,
         description="Client access metadata (e.g., mmap file paths) for workers to read dataset.",
     )
+    benchmark_generation: str = Field(
+        ...,
+        description="Version token for the active benchmark configuration.",
+    )
+    dataset_generation: str = Field(
+        ...,
+        description="Version token for the configured dataset payload.",
+    )
 
     @field_validator("client_metadata", mode="before")
     @classmethod
