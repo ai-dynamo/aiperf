@@ -437,12 +437,12 @@ class TestKubernetesMode:
         mock_msg.client_metadata = MagicMock()
         mock_msg.metadata = MagicMock()
         k8s_worker._initialize_dataset_client = AsyncMock()
-        k8s_worker._complete_k8s_startup_flow = AsyncMock()
+        k8s_worker._complete_group_startup_flow = AsyncMock()
 
         await k8s_worker._on_dataset_configured(mock_msg)
 
         k8s_worker._initialize_dataset_client.assert_not_awaited()
-        k8s_worker._complete_k8s_startup_flow.assert_not_awaited()
+        k8s_worker._complete_group_startup_flow.assert_not_awaited()
         assert not k8s_worker._dataset_configured_event.is_set()
 
     @pytest.mark.asyncio
@@ -516,10 +516,10 @@ class TestKubernetesMode:
         await configure_task
 
     @pytest.mark.asyncio
-    async def test_local_worker_marks_ready_on_start(
+    async def test_local_worker_defers_readiness_to_group_startup_flow(
         self, config: AIPerfConfig
     ) -> None:
-        """Local workers should be considered ready immediately after startup."""
+        """Group-managed local workers defer readiness until group dataset is ready."""
         config.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
         worker = Worker(
             run=self._make_run(config),
@@ -531,25 +531,19 @@ class TestKubernetesMode:
 
         await worker._send_worker_ready_message()
 
-        assert worker._worker_ready_event.is_set()
-        assert [
-            call.args[0].startup_state for call in worker.publish.await_args_list
-        ] == [
-            WorkerStartupState.STARTING,
-            WorkerStartupState.ROUTER_PROBING,
-            WorkerStartupState.READY,
-        ]
+        assert not worker._worker_ready_event.is_set()
+        assert worker._startup_state == WorkerStartupState.WAITING_FOR_DATASET
 
     @pytest.mark.asyncio
-    async def test_local_worker_uses_global_message_bus_probe_on_startup(
+    async def test_local_worker_skips_global_message_bus_probe_in_group_managed_mode(
         self, local_worker: Worker
     ) -> None:
-        """Local workers should still run the global PUB/SUB probe during startup."""
+        """Group-managed local workers skip the global PUB/SUB probe."""
         local_worker._run_connection_probes = AsyncMock()
 
         await local_worker._wait_for_successful_probe()
 
-        local_worker._run_connection_probes.assert_awaited_once()
+        local_worker._run_connection_probes.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_k8s_worker_skips_global_message_bus_probe_during_startup(
@@ -619,17 +613,17 @@ class TestKubernetesMode:
         assert worker._worker_ready_event.is_set()
 
     @pytest.mark.asyncio
-    async def test_local_worker_subscribes_to_dataset_configured_notification(
+    async def test_local_worker_suppresses_dataset_broadcast_in_group_managed_mode(
         self, local_worker: Worker
     ) -> None:
-        """Non-group-managed workers should keep the dataset broadcast subscription."""
+        """Group-managed local workers suppress the global dataset broadcast subscription."""
         local_worker.sub_client.subscribe_all = AsyncMock()
         local_worker.sub_client.subscribe = AsyncMock()
 
         await local_worker._setup_on_message_hooks()
 
         subscriptions = local_worker.sub_client.subscribe_all.await_args.args[0]
-        assert MessageType.DATASET_CONFIGURED_NOTIFICATION in subscriptions
+        assert MessageType.DATASET_CONFIGURED_NOTIFICATION not in subscriptions
 
     @pytest.mark.asyncio
     async def test_k8s_worker_becomes_dispatchable_after_query_ready(
@@ -652,7 +646,7 @@ class TestKubernetesMode:
         )
         k8s_worker._initialize_dataset_client = AsyncMock()
 
-        await k8s_worker._complete_k8s_startup_flow()
+        await k8s_worker._complete_group_startup_flow()
 
         k8s_worker._initialize_dataset_client.assert_awaited_once()
         assert isinstance(
@@ -685,7 +679,7 @@ class TestKubernetesMode:
         k8s_worker._initialize_dataset_client = AsyncMock()
 
         await asyncio.wait_for(
-            k8s_worker._retry_k8s_dataset_state_until_ready(), timeout=2.5
+            k8s_worker._retry_group_dataset_state_until_ready(), timeout=2.5
         )
 
         assert k8s_worker._query_pod_dataset_state.await_count >= 2
@@ -768,7 +762,9 @@ class TestKubernetesMode:
             success=True,
         )
 
-        snapshot_task = asyncio.create_task(worker._complete_k8s_startup_flow(snapshot))
+        snapshot_task = asyncio.create_task(
+            worker._complete_group_startup_flow(snapshot)
+        )
         await init_started.wait()
         dataset_ready_task = asyncio.create_task(
             worker._on_dataset_ready(dataset_ready)
@@ -817,8 +813,8 @@ class TestKubernetesMode:
             ready=True,
         )
 
-        await worker._complete_k8s_startup_flow(snapshot)
-        await worker._complete_k8s_startup_flow(snapshot)
+        await worker._complete_group_startup_flow(snapshot)
+        await worker._complete_group_startup_flow(snapshot)
 
         worker._initialize_dataset_client.assert_awaited_once()
         assert worker._worker_ready_event.is_set()
@@ -903,7 +899,7 @@ class TestKubernetesMode:
         worker.return_dealer_client.send = AsyncMock()
         worker._initialize_dataset_client = AsyncMock()
 
-        await worker._complete_k8s_startup_flow(
+        await worker._complete_group_startup_flow(
             GroupDatasetStateSnapshot(
                 rid="rid-1",
                 service_id="worker-pod-manager",

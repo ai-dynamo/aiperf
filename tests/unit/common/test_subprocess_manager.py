@@ -335,6 +335,8 @@ class TestSubprocessManagerSpawn:
         )
         subprocess_manager.run.cfg.runtime.workers = 5
         subprocess_manager.run.cfg.runtime.record_processors = 3
+        for phase in subprocess_manager.run.cfg.phases.values():
+            phase.concurrency = None
         mock_process = MagicMock(spec=Process)
         mock_process.pid = 60002
 
@@ -368,6 +370,8 @@ class TestSubprocessManagerSpawn:
         )
         subprocess_manager.run.cfg.runtime.workers = 5
         subprocess_manager.run.cfg.runtime.record_processors = 3
+        for phase in subprocess_manager.run.cfg.phases.values():
+            phase.concurrency = None
         group_process = mock_process_factory(pid=60003)
         worker_process = mock_process_factory(pid=60004)
         mock_ctx = MagicMock()

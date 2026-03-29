@@ -177,6 +177,10 @@ class TestMakeBenchmarkRun:
 class TestSingleRunErrorPaths:
     """Verify error handling in _run_single_benchmark."""
 
+    @pytest.fixture(autouse=True)
+    def _prevent_forkserver(self, mock_get_global_error_queue):
+        """Prevent forkserver initialization when calling _run_single_benchmark."""
+
     @patch("aiperf.config.resolvers.build_default_resolver_chain")
     @patch("aiperf.common.logging.setup_rich_logging")
     def test_resolver_chain_failure_exits(

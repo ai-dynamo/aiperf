@@ -148,8 +148,8 @@ class TestRunSingleBenchmark:
     """Test the _run_single_benchmark function."""
 
     @pytest.fixture(autouse=True)
-    def _mock_tokenizer_validation(self):
-        """Prevent real HF network calls during single benchmark tests."""
+    def _mock_tokenizer_validation(self, mock_get_global_error_queue):
+        """Prevent real HF network calls and forkserver init during single benchmark tests."""
         with patch(
             "aiperf.common.tokenizer_validator.validate_tokenizer_early",
             return_value={"test-model": "test-model"},

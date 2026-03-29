@@ -28,8 +28,8 @@ _BASE = dict(
 
 
 @pytest.fixture(autouse=True)
-def _mock_tokenizer_validation():
-    """Prevent real HF network calls during CLI runner tests."""
+def _mock_tokenizer_validation(mock_get_global_error_queue):
+    """Prevent real HF network calls and forkserver init during CLI runner tests."""
     with patch(
         "aiperf.common.tokenizer_validator.validate_tokenizer_early",
         return_value={"test-model": "test-model"},

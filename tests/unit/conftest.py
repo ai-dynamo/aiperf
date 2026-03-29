@@ -9,6 +9,7 @@ and made available to test functions in the same directory and subdirectories.
 
 import asyncio
 import logging
+import multiprocessing
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from io import BytesIO
@@ -410,6 +411,15 @@ def reset_service_registry():
     BaseService.reset_service_type_cache()
 
 
+@pytest.fixture(autouse=True)
+def _reset_error_queue_singleton():
+    """Prevent forkserver state from leaking between unit tests."""
+    yield
+    import aiperf.common.error_queue as eq
+
+    eq._global_error_queue = None
+
+
 @pytest.fixture
 def temporary_registry() -> Generator[PluginRegistry, None, None]:
     """Fixture for isolated plugin registry testing.
@@ -802,6 +812,14 @@ def mock_bootstrap_and_run_service():
 def mock_get_global_log_queue():
     """Mock aiperf.common.logging.get_global_log_queue() for testing."""
     with patch("aiperf.common.logging.get_global_log_queue") as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_get_global_error_queue():
+    """Mock get_global_error_queue to prevent forkserver initialization in unit tests."""
+    with patch("aiperf.common.error_queue.get_global_error_queue") as mock:
+        mock.return_value = MagicMock(spec=multiprocessing.Queue)
         yield mock
 
 

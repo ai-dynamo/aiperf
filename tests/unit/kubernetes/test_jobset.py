@@ -427,7 +427,7 @@ class TestJobSetSpec:
             "--type",
             "worker_group_manager",
             "--benchmark-run",
-            "/config/run_config.json",
+            f"{K8sEnvironment.JOBSET.CONFIG_MOUNT_PATH}/run_config.json",
             "--health-port",
             str(K8sEnvironment.PORTS.WORKER_HEALTH),
         ]
@@ -704,7 +704,7 @@ class TestJobSetSpecContainerDetails:
             for c in containers
             if c["name"].startswith("worker-")
             or c["name"].startswith("record-processor-")
-            or c["name"] == "worker-pod-manager"
+            or c["name"] == "worker-group-manager"
         }
         assert worker_side
         for container in containers:
@@ -726,7 +726,7 @@ class TestJobSetSpecContainerDetails:
             for c in containers
             if c["name"].startswith("worker-")
             or c["name"].startswith("record-processor-")
-            or c["name"] == "worker-pod-manager"
+            or c["name"] == "worker-group-manager"
         }
         assert worker_side
         for container in containers:
@@ -748,7 +748,7 @@ class TestJobSetSpecContainerDetails:
             for c in containers
             if c["name"].startswith("worker-")
             or c["name"].startswith("record-processor-")
-            or c["name"] == "worker-pod-manager"
+            or c["name"] == "worker-group-manager"
         }
         assert worker_side
         for container in containers:
@@ -881,12 +881,14 @@ class TestJobSetSpecDNSConfiguration:
         )
         manifest = spec.to_k8s_manifest()
 
-        # Find worker-pod-manager and check its AIPERF_K8S_ZMQ_CONTROLLER_HOST env var
+        # Find worker-group-manager and check its AIPERF_K8S_ZMQ_CONTROLLER_HOST env var
         worker_job = next(
             j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "workers"
         )
         containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
-        wpm_container = next(c for c in containers if c["name"] == "worker-pod-manager")
+        wpm_container = next(
+            c for c in containers if c["name"] == "worker-group-manager"
+        )
 
         controller_host_env = next(
             e
@@ -916,7 +918,9 @@ class TestJobSetSpecDNSConfiguration:
             j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "workers"
         )
         containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
-        wpm_container = next(c for c in containers if c["name"] == "worker-pod-manager")
+        wpm_container = next(
+            c for c in containers if c["name"] == "worker-group-manager"
+        )
 
         controller_host_env = next(
             e
@@ -948,7 +952,9 @@ class TestJobSetSpecDNSConfiguration:
             j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "workers"
         )
         containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
-        wpm_container = next(c for c in containers if c["name"] == "worker-pod-manager")
+        wpm_container = next(
+            c for c in containers if c["name"] == "worker-group-manager"
+        )
 
         controller_host_env = next(
             e
@@ -1067,7 +1073,7 @@ class TestJobSetSpecStartupProbes:
                     if not (
                         c["name"].startswith("worker-")
                         or c["name"].startswith("record-processor-")
-                        or c["name"] == "worker-pod-manager"
+                        or c["name"] == "worker-group-manager"
                     )
                 ]
             if job["name"] == "controller":
@@ -1090,7 +1096,7 @@ class TestJobSetSpecStartupProbes:
                     if not (
                         c["name"].startswith("worker-")
                         or c["name"].startswith("record-processor-")
-                        or c["name"] == "worker-pod-manager"
+                        or c["name"] == "worker-group-manager"
                     )
                 ]
             if job["name"] == "controller":
@@ -1112,7 +1118,7 @@ class TestJobSetSpecStartupProbes:
                     if not (
                         c["name"].startswith("worker-")
                         or c["name"].startswith("record-processor-")
-                        or c["name"] == "worker-pod-manager"
+                        or c["name"] == "worker-group-manager"
                     )
                 ]
             if job["name"] == "controller":
@@ -1138,7 +1144,7 @@ class TestJobSetSpecStartupProbes:
                     if not (
                         c["name"].startswith("worker-")
                         or c["name"].startswith("record-processor-")
-                        or c["name"] == "worker-pod-manager"
+                        or c["name"] == "worker-group-manager"
                     )
                 ]
             if job["name"] == "controller":
