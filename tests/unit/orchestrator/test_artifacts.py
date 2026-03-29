@@ -18,10 +18,10 @@ from aiperf.orchestrator.aggregation.base import AggregateResult
 from aiperf.orchestrator.aggregation.confidence import ConfidenceMetric
 
 
-@pytest.mark.asyncio
 class TestAggregateExporters:
     """Tests for aggregate exporters."""
 
+    @pytest.mark.asyncio
     async def test_write_aggregate_json(self, tmp_path):
         """Test writing aggregate result to JSON."""
         # Create a simple aggregate result
@@ -89,6 +89,7 @@ class TestAggregateExporters:
         assert data["metrics"]["ttft_avg"]["ci_high"] == 111.5
         assert data["metrics"]["ttft_avg"]["t_critical"] == 2.262
 
+    @pytest.mark.asyncio
     async def test_write_aggregate_csv(self, tmp_path):
         """Test writing aggregate result to CSV."""
         # Create aggregate result with multiple metrics
@@ -151,6 +152,7 @@ class TestAggregateExporters:
         assert "105.00" in content  # ttft mean
         assert "11.00" in content  # tpot mean
 
+    @pytest.mark.asyncio
     async def test_write_creates_directory(self, tmp_path):
         """Test that write methods create output directory if it doesn't exist."""
         aggregate = AggregateResult(
@@ -215,6 +217,7 @@ class TestAggregateExporters:
         assert json_result.max == 105.0
         assert json_result.unit == "ms"
 
+    @pytest.mark.asyncio
     async def test_write_detailed_json(self, tmp_path):
         """Test writing detailed aggregate result to JSON."""
         aggregate = AggregateResult(
@@ -249,6 +252,7 @@ class TestAggregateExporters:
         assert data["metadata"]["source"] == "combined_percentiles"
         assert data["metrics"]["ttft"]["avg"] == 105.0
 
+    @pytest.mark.asyncio
     async def test_detailed_json_version_fallback(self, tmp_path):
         """Test that version falls back to 'unknown' when importlib fails."""
         aggregate = AggregateResult(
