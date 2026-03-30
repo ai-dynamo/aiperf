@@ -124,6 +124,9 @@ _FALLBACK_INSIGHT = TokenizerErrorInsight(
 )
 
 _TRUST_REMOTE_CODE_RE = re.compile(r"trust_remote_code", re.IGNORECASE)
+_BACKEND_TOKENIZER_INSTANTIATION_RE = re.compile(
+    r"couldn't instantiate the backend tokenizer", re.IGNORECASE
+)
 _MISSING_PACKAGE_PATTERNS = [
     re.compile(r"no module named ['\"]([^'\"]+)['\"]", re.IGNORECASE),
     re.compile(
@@ -176,6 +179,22 @@ def _detect_error(
             ],
             fixes=[
                 "Add: [green]--tokenizer-trust-remote-code[/green]",
+            ],
+        )
+
+    # Check for backend tokenizer instantiation failure before type-specific matching
+    if error_message and _BACKEND_TOKENIZER_INSTANTIATION_RE.search(error_message):
+        return TokenizerErrorInsight(
+            title="No Text Tokenizer",
+            causes=[
+                "This model does not have a standard text tokenizer",
+                "Common for image generation, video generation, and some multimodal models",
+            ],
+            investigation=[
+                "Check [cyan]huggingface.co/<model>/tree/main[/cyan] for tokenizer files",
+            ],
+            fixes=[
+                "Pass a compatible text tokenizer: [green]--tokenizer gpt2[/green]",
             ],
         )
 
