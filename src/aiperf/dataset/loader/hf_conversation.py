@@ -80,7 +80,10 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
         max_conversations = self._max_conversations()
 
         for row in dataset:
-            if max_conversations is not None and len(conversations) >= max_conversations:
+            if (
+                max_conversations is not None
+                and len(conversations) >= max_conversations
+            ):
                 break
 
             messages = row.get(self.conversation_column) or []
