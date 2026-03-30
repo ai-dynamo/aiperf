@@ -241,30 +241,46 @@ class TestHFInstructionResponseDatasetLoader:
 
         assert conversations[0].turns[0].images == []
 
-    async def test_max_conversations_capped_by_request_count(self, user_config):
+    async def test_non_streaming_returns_all_rows(self, user_config):
         from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 
-        loadgen = LoadGeneratorConfig(request_count=2)
         config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]), loadgen=loadgen
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            loadgen=LoadGeneratorConfig(request_count=2),
         )
         loader = HFInstructionResponseDatasetLoader(
             user_config=config,
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="problem",
+            streaming=False,
+        )
+        data = {"dataset": [{"problem": f"Q{i}"} for i in range(10)]}
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 10
+
+    async def test_streaming_capped_by_request_count(self, user_config):
+        from aiperf.common.config.loadgen_config import LoadGeneratorConfig
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            loadgen=LoadGeneratorConfig(request_count=2),
+        )
+        loader = HFInstructionResponseDatasetLoader(
+            user_config=config,
+            hf_dataset_name="test/data",
+            hf_split="train",
+            prompt_column="problem",
+            streaming=True,
         )
         data = {"dataset": [{"problem": f"Q{i}"} for i in range(10)]}
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations) == 2
 
-    async def test_max_conversations_falls_back_to_num_dataset_entries(
-        self, user_config
-    ):
+    async def test_streaming_falls_back_to_num_dataset_entries(self, user_config):
         from aiperf.common.config.conversation_config import ConversationConfig
         from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 
-        # benchmark_duration keeps request_count=None so the fallback is exercised
         conversation = ConversationConfig(num_dataset_entries=3)
         config = UserConfig(
             endpoint=EndpointConfig(model_names=["test-model"]),
@@ -276,6 +292,7 @@ class TestHFInstructionResponseDatasetLoader:
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="problem",
+            streaming=True,
         )
         data = {"dataset": [{"problem": f"Q{i}"} for i in range(10)]}
         conversations = await loader.convert_to_conversations(data)

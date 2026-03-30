@@ -65,7 +65,7 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
         message = messages[0]
         if isinstance(message, list):
             message = message[0] if message else None
-        if not message:
+        if not message or not isinstance(message, dict):
             return None
         text = str(message.get(self.message_content_key, ""))
         return text.replace("<image>", "").strip() or None
@@ -80,7 +80,7 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
         max_conversations = self._max_conversations()
 
         for row in dataset:
-            if len(conversations) >= max_conversations:
+            if max_conversations is not None and len(conversations) >= max_conversations:
                 break
 
             messages = row.get(self.conversation_column) or []

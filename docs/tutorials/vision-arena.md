@@ -43,7 +43,7 @@ curl -s 127.0.0.1:8000/v1/chat/completions \
 
 {/* aiperf-run-vllm-vision-openai-endpoint-server */}
 ```bash
-  aiperf profile \
+aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --streaming \

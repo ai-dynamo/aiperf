@@ -52,7 +52,7 @@ class HFInstructionResponseDatasetLoader(BaseHFDatasetLoader):
         max_conversations = self._max_conversations()
 
         for row in dataset:
-            if len(conversations) >= max_conversations:
+            if max_conversations is not None and len(conversations) >= max_conversations:
                 break
 
             prompt = row.get(self.prompt_column)

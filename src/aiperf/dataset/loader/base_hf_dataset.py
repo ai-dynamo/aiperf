@@ -78,14 +78,17 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
                 return [self._pil_to_image(pil)]
         return []
 
-    def _max_conversations(self) -> int:
+    def _max_conversations(self) -> int | None:
         """Return the maximum number of conversations to build from the dataset.
 
-        Uses request_count when set (e.g. --request-count 100), otherwise falls
-        back to num_dataset_entries (--num-prompts / --num-dataset-entries, default 100).
-        This prevents streaming datasets from fetching the entire remote dataset
-        in duration-based benchmarks where request_count is None.
+        Returns None for non-streaming datasets.
+
+        For streaming datasets, caps at request_count when set, otherwise
+        num_dataset_entries (--num-prompts, default 100), to prevent fetching
+        the entire remote dataset in duration-based benchmarks.
         """
+        if not self.streaming:
+            return None
         request_count = self.user_config.loadgen.request_count
         if request_count is not None:
             return request_count

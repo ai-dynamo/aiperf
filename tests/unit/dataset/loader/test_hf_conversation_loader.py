@@ -106,6 +106,17 @@ class TestHFConversationDatasetLoader:
         assert len(conversations) == 1
         assert conversations[0].turns[0].texts[0].contents[0] == "Valid"
 
+    async def test_skips_non_dict_message(self, loader):
+        data = {
+            "dataset": [
+                {"conversation": ["raw_string_message"]},
+                {"conversation": [{"role": "user", "content": "Valid"}]},
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].texts[0].contents[0] == "Valid"
+
     async def test_skips_missing_conversation_column(self, loader):
         data = {
             "dataset": [
@@ -230,18 +241,42 @@ class TestHFConversationDatasetLoader:
         conversations = await loader.convert_to_conversations({"dataset": []})
         assert conversations == []
 
-    async def test_max_conversations_capped_by_request_count(self, user_config):
+    async def test_non_streaming_returns_all_rows(self, user_config):
         from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 
-        loadgen = LoadGeneratorConfig(request_count=3)
         config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]), loadgen=loadgen
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            loadgen=LoadGeneratorConfig(request_count=3),
         )
         loader = HFConversationDatasetLoader(
             user_config=config,
             hf_dataset_name="test/data",
             hf_split="train",
             conversation_column="conversation",
+            streaming=False,
+        )
+        data = {
+            "dataset": [
+                {"conversation": [{"role": "user", "content": f"Q{i}"}]}
+                for i in range(10)
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 10
+
+    async def test_streaming_capped_by_request_count(self, user_config):
+        from aiperf.common.config.loadgen_config import LoadGeneratorConfig
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            loadgen=LoadGeneratorConfig(request_count=3),
+        )
+        loader = HFConversationDatasetLoader(
+            user_config=config,
+            hf_dataset_name="test/data",
+            hf_split="train",
+            conversation_column="conversation",
+            streaming=True,
         )
         data = {
             "dataset": [
@@ -252,13 +287,10 @@ class TestHFConversationDatasetLoader:
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations) == 3
 
-    async def test_max_conversations_falls_back_to_num_dataset_entries(
-        self, user_config
-    ):
+    async def test_streaming_falls_back_to_num_dataset_entries(self, user_config):
         from aiperf.common.config.conversation_config import ConversationConfig
         from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 
-        # benchmark_duration keeps request_count=None so the fallback is exercised
         conversation = ConversationConfig(num_dataset_entries=4)
         config = UserConfig(
             endpoint=EndpointConfig(model_names=["test-model"]),
@@ -270,6 +302,7 @@ class TestHFConversationDatasetLoader:
             hf_dataset_name="test/data",
             hf_split="train",
             conversation_column="conversation",
+            streaming=True,
         )
         data = {
             "dataset": [
