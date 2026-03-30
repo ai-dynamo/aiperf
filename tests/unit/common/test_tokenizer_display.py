@@ -196,8 +196,8 @@ class TestDisplayTokenizerValidationError:
             (
                 ["TokenizerError", "ValueError"],
                 "Couldn't instantiate the backend tokenizer from one of: (1) a `tokenizers` library serialization file",
-                "No Text Tokenizer",
-                ["--tokenizer gpt2", "image generation"],
+                "No Standard Tokenizer",
+                ["--tokenizer gpt2", "tokenizer_config.json"],
             ),
             # Fallback for unknown error
             (

@@ -185,16 +185,16 @@ def _detect_error(
     # Check for backend tokenizer instantiation failure before type-specific matching
     if error_message and _BACKEND_TOKENIZER_INSTANTIATION_RE.search(error_message):
         return TokenizerErrorInsight(
-            title="No Text Tokenizer",
+            title="No Standard Tokenizer",
             causes=[
-                "This model does not have a standard text tokenizer",
-                "Common for image generation, video generation, and some multimodal models",
+                "Model does not expose a standard HuggingFace tokenizer",
             ],
             investigation=[
-                "Check [cyan]huggingface.co/<model>/tree/main[/cyan] for tokenizer files",
+                "Check [cyan]huggingface.co/<model>/tree/main[/cyan] for a tokenizer_config.json",
             ],
             fixes=[
                 "Pass a compatible text tokenizer: [green]--tokenizer gpt2[/green]",
+                "Pass the tokenizer subdirectory: [green]--tokenizer ./model/tokenizer[/green]",
             ],
         )
 
