@@ -117,6 +117,18 @@ class TestHFConversationDatasetLoader:
         assert len(conversations) == 1
         assert conversations[0].turns[0].texts[0].contents[0] == "Valid"
 
+    async def test_skips_non_str_content_value(self, loader):
+        data = {
+            "dataset": [
+                {"conversation": [{"role": "user", "content": ["list", "value"]}]},
+                {"conversation": [{"role": "user", "content": None}]},
+                {"conversation": [{"role": "user", "content": "Valid"}]},
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].texts[0].contents[0] == "Valid"
+
     async def test_skips_missing_conversation_column(self, loader):
         data = {
             "dataset": [

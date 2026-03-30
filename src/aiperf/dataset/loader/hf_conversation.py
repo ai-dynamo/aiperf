@@ -67,8 +67,10 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
             message = message[0] if message else None
         if not message or not isinstance(message, dict):
             return None
-        text = str(message.get(self.message_content_key, ""))
-        return text.replace("<image>", "").strip() or None
+        value = message.get(self.message_content_key)
+        if not isinstance(value, str):
+            return None
+        return value.replace("<image>", "").strip() or None
 
     async def convert_to_conversations(
         self, data: dict[str, Any]
