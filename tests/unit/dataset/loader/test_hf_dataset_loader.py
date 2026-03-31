@@ -1,9 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import io
 from unittest.mock import MagicMock, patch
 
 import pytest
+from PIL import Image as PILImage
 
 from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.exceptions import DatasetLoaderError
@@ -12,6 +14,10 @@ from aiperf.dataset.loader.hf_instruction_response import (
     HFInstructionResponseDatasetLoader,
 )
 from aiperf.plugin.enums import DatasetSamplingStrategy
+
+
+def _make_pil_image(width: int = 4, height: int = 4) -> PILImage.Image:
+    return PILImage.new("RGB", (width, height), color=(255, 0, 0))
 
 
 @pytest.fixture
@@ -88,6 +94,38 @@ class TestBaseHFDatasetLoader:
             name="my-subset",
             split="test",
             trust_remote_code=False,
+            streaming=False,
+        )
+
+    async def test_streaming_defaults_to_false(self, user_config):
+        loader = HFInstructionResponseDatasetLoader(
+            user_config=user_config,
+            hf_dataset_name="test/data",
+            hf_split="train",
+            prompt_column="q",
+        )
+        assert loader.streaming is False
+
+    async def test_streaming_true_passed_to_hf_load_dataset(self, user_config):
+        loader = HFInstructionResponseDatasetLoader(
+            user_config=user_config,
+            hf_dataset_name="test/data",
+            hf_split="train",
+            prompt_column="q",
+            streaming=True,
+        )
+        mock_load_dataset = MagicMock(return_value=[])
+        with patch(
+            "aiperf.dataset.loader.base_hf_dataset.hf_load_dataset", mock_load_dataset
+        ):
+            loader._load_hf_dataset()
+
+        mock_load_dataset.assert_called_once_with(
+            "test/data",
+            name=None,
+            split="train",
+            trust_remote_code=False,
+            streaming=True,
         )
 
 
@@ -155,3 +193,127 @@ class TestHFInstructionResponseDatasetLoader:
         assert conversations[0].turns[0].texts[0].contents[0] == (
             "What is the capital of France?"
         )
+
+    async def test_turns_have_no_images_when_image_column_not_set(self, loader):
+        data = {"dataset": [{"problem": "What is 2+2?"}]}
+        conversations = await loader.convert_to_conversations(data)
+        assert conversations[0].turns[0].images == []
+
+    async def test_image_column_attaches_image_to_turn(self, user_config):
+        loader = HFInstructionResponseDatasetLoader(
+            user_config=user_config,
+            hf_dataset_name="Lin-Chen/MMStar",
+            hf_split="val",
+            prompt_column="question",
+            image_column="image",
+        )
+        pil_img = _make_pil_image()
+        data = {"dataset": [{"question": "Describe this image.", "image": pil_img}]}
+        conversations = await loader.convert_to_conversations(data)
+
+        turn = conversations[0].turns[0]
+        assert len(turn.images) == 1
+        assert turn.images[0].contents[0].startswith("data:image/jpeg;base64,")
+
+    async def test_image_column_missing_value_produces_no_images(self, user_config):
+        loader = HFInstructionResponseDatasetLoader(
+            user_config=user_config,
+            hf_dataset_name="Lin-Chen/MMStar",
+            hf_split="val",
+            prompt_column="question",
+            image_column="image",
+        )
+        data = {"dataset": [{"question": "No image here."}]}
+        conversations = await loader.convert_to_conversations(data)
+
+        assert conversations[0].turns[0].images == []
+
+    async def test_image_column_non_pil_value_produces_no_images(self, user_config):
+        loader = HFInstructionResponseDatasetLoader(
+            user_config=user_config,
+            hf_dataset_name="Lin-Chen/MMStar",
+            hf_split="val",
+            prompt_column="question",
+            image_column="image",
+        )
+        data = {"dataset": [{"question": "Bad image.", "image": "not-a-pil-object"}]}
+        conversations = await loader.convert_to_conversations(data)
+
+        assert conversations[0].turns[0].images == []
+
+    async def test_non_streaming_returns_all_rows(self, user_config):
+        from aiperf.common.config.loadgen_config import LoadGeneratorConfig
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            loadgen=LoadGeneratorConfig(request_count=2),
+        )
+        loader = HFInstructionResponseDatasetLoader(
+            user_config=config,
+            hf_dataset_name="test/data",
+            hf_split="train",
+            prompt_column="problem",
+            streaming=False,
+        )
+        data = {"dataset": [{"problem": f"Q{i}"} for i in range(10)]}
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 10
+
+    async def test_streaming_capped_by_request_count(self, user_config):
+        from aiperf.common.config.loadgen_config import LoadGeneratorConfig
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            loadgen=LoadGeneratorConfig(request_count=2),
+        )
+        loader = HFInstructionResponseDatasetLoader(
+            user_config=config,
+            hf_dataset_name="test/data",
+            hf_split="train",
+            prompt_column="problem",
+            streaming=True,
+        )
+        data = {"dataset": [{"problem": f"Q{i}"} for i in range(10)]}
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 2
+
+    async def test_streaming_falls_back_to_num_dataset_entries(self, user_config):
+        from aiperf.common.config.conversation_config import ConversationConfig
+        from aiperf.common.config.loadgen_config import LoadGeneratorConfig
+
+        conversation = ConversationConfig(num_dataset_entries=3)
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input={"conversation": conversation},
+            loadgen=LoadGeneratorConfig(benchmark_duration=60),
+        )
+        loader = HFInstructionResponseDatasetLoader(
+            user_config=config,
+            hf_dataset_name="test/data",
+            hf_split="train",
+            prompt_column="problem",
+            streaming=True,
+        )
+        data = {"dataset": [{"problem": f"Q{i}"} for i in range(10)]}
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 3
+
+    async def test_pil_to_image_returns_jpeg_data_url(self, user_config):
+        loader = HFInstructionResponseDatasetLoader(
+            user_config=user_config,
+            hf_dataset_name="test/data",
+            hf_split="train",
+            prompt_column="q",
+            image_column="img",
+        )
+        pil_img = _make_pil_image()
+        result = loader._pil_to_image(pil_img)
+
+        assert result.contents[0].startswith("data:image/jpeg;base64,")
+        # Verify the base64 payload decodes to a valid JPEG
+        import base64
+
+        b64_data = result.contents[0].split(",", 1)[1]
+        raw = base64.b64decode(b64_data)
+        decoded = PILImage.open(io.BytesIO(raw))
+        assert decoded.format == "JPEG"
