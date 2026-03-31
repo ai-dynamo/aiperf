@@ -292,21 +292,10 @@ class VideoGenerator(BaseGenerator):
                 f"Failed to create {self.config.format.upper()} with ffmpeg: {e}"
             )
 
-            # Provide specific error messages based on the error type
-            if "No such file or directory" in str(e) or "not found" in str(e):
-                raise RuntimeError(
-                    "FFmpeg binary not accessible. Please ensure FFmpeg is installed and in your PATH."
-                ) from e
-            elif "Codec" in str(e) or "codec" in str(e):
-                raise RuntimeError(
-                    f"Video codec '{self.config.codec}' is not supported. "
-                    f"Please use a valid FFmpeg codec (e.g., libvpx-vp9, libx264, libx265, h264_nvenc)."
-                ) from e
-            else:
-                raise RuntimeError(
-                    f"FFmpeg failed to create video: {e}\n"
-                    f"Codec: {self.config.codec}, Size: {self.config.width}x{self.config.height}, FPS: {self.config.fps}"
-                ) from e
+            raise RuntimeError(
+                f"FFmpeg failed to create video: {e}\n"
+                f"Codec: {self.config.codec}, Size: {self.config.width}x{self.config.height}, FPS: {self.config.fps}"
+            ) from e
 
     def _create_video_with_ffmpeg(self, frames: list[Image.Image]) -> str:
         """Create video data using ffmpeg-python with improved error handling."""
