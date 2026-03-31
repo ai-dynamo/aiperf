@@ -192,6 +192,13 @@ class TestDisplayTokenizerValidationError:
                 "Custom Tokenizer Code",
                 ["--tokenizer-trust-remote-code"],
             ),
+            # no text tokenizer (image/video generation models)
+            (
+                ["TokenizerError", "ValueError"],
+                "Couldn't instantiate the backend tokenizer from one of: (1) a `tokenizers` library serialization file",
+                "No Standard Tokenizer",
+                ["--tokenizer gpt2", "tokenizer_config.json"],
+            ),
             # Fallback for unknown error
             (
                 ["TokenizerError", "UnknownError"],
@@ -224,6 +231,7 @@ class TestDisplayTokenizerValidationError:
             "timeout",
             "import_error_tiktoken",
             "trust_remote_code",
+            "no_text_tokenizer",
             "unknown_fallback",
             "ambiguous_name_error",
             "no_cause_chain_fallback",
