@@ -336,8 +336,33 @@ class BailianTrace(AIPerfBaseModel):
     )
 
 
+class BurstGPTTrace(AIPerfBaseModel):
+    """Defines the schema for BurstGPT real-world LLM traffic trace data.
+
+    See https://github.com/HPMLL/BurstGPT for the upstream dataset.
+
+    Each row prescribes request/response token counts; no prompt text is stored —
+    AIPerf synthesizes prompts of the prescribed length. Each row is treated as
+    an independent single-turn request; session IDs are assigned automatically.
+
+    Timestamps are seconds since the start of the trace and are converted to
+    milliseconds internally.
+    """
+
+    timestamp: float = Field(
+        description="Seconds since the start of the trace. Converted to milliseconds internally.",
+    )
+    input_length: int = Field(description="Input token count (Request tokens)")
+    output_length: int = Field(description="Output token count (Response tokens)")
+
+
 CustomDatasetT = TypeVar(
     "CustomDatasetT",
-    bound=SingleTurn | MultiTurn | RandomPool | MooncakeTrace | BailianTrace,
+    bound=SingleTurn
+    | MultiTurn
+    | RandomPool
+    | MooncakeTrace
+    | BailianTrace
+    | BurstGPTTrace,
 )
 """A union type of all custom data types."""
