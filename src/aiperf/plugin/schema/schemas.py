@@ -278,6 +278,10 @@ class EndpointMetadata(BaseModel):
         default=False,
         description="Whether endpoint uses async job polling (submit job, poll for status, retrieve result).",
     )
+    requires_form_data: bool = Field(
+        default=False,
+        description="Whether endpoint supports multipart/form-data request encoding.",
+    )
     requires_inline_media: bool = Field(
         default=False,
         description="Whether endpoint requires media URLs to be downloaded and inlined as base64 data URLs.",
