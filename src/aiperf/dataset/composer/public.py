@@ -87,12 +87,21 @@ class PublicDatasetComposer(BaseDatasetComposer):
 
         if loader_metadata.hf_dataset_name is not None:
             kwargs["hf_dataset_name"] = loader_metadata.hf_dataset_name
-            if loader_metadata.hf_split is not None:
-                kwargs["hf_split"] = loader_metadata.hf_split
+            kwargs["hf_split"] = loader_metadata.hf_split
             if loader_metadata.hf_subset is not None:
                 kwargs["hf_subset"] = loader_metadata.hf_subset
 
         if loader_metadata.prompt_column is not None:
             kwargs["prompt_column"] = loader_metadata.prompt_column
+
+        if loader_metadata.image_column is not None:
+            kwargs["image_column"] = loader_metadata.image_column
+
+        if loader_metadata.conversation_column is not None:
+            kwargs["conversation_column"] = loader_metadata.conversation_column
+            kwargs["message_content_key"] = loader_metadata.message_content_key
+
+        if loader_metadata.streaming:
+            kwargs["streaming"] = loader_metadata.streaming
 
         return kwargs

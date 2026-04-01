@@ -370,6 +370,26 @@ class PublicDatasetLoaderMetadata(BaseModel):
         default=None,
         description="Column name containing the prompt/instruction text. Required for HFInstructionResponseDatasetLoader.",
     )
+    image_column: str | None = Field(
+        default=None,
+        description="Column name containing the image data (PIL Image). Used for multimodal datasets.",
+    )
+    conversation_column: str | None = Field(
+        default=None,
+        description="Column name containing the conversation messages array. Required for HFConversationDatasetLoader.",
+    )
+    message_content_key: str = Field(
+        default="content",
+        description="Key inside each message dict for the text content. Used with conversation_column (e.g. 'content', 'value').",
+    )
+    streaming: bool = Field(
+        default=False,
+        description=(
+            "Whether to load the HuggingFace dataset in streaming mode. "
+            "Use true for large datasets (>10 GB) to avoid downloading the full dataset. "
+            "Use false (default) for small datasets to leverage HF caching and len() support."
+        ),
+    )
 
 
 class ServiceMetadata(BaseModel):

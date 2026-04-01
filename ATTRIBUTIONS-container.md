@@ -17,7 +17,7 @@ This document provides attribution information for third-party software componen
 - **Website**: https://ffmpeg.org/
 - **License**: LGPL v2.1+
 - **Usage**: Video and audio processing library (included in runtime container)
-- **Build Configuration**: Built without GPL components (`--disable-gpl --disable-nonfree --enable-libvpx`)
+- **Build Configuration**: Built without GPL components (`--disable-gpl --disable-nonfree --enable-libvorbis --enable-libvpx`)
 
 **License Text:**
 
@@ -107,6 +107,120 @@ The libvpx source code is available at:
 - libvpx is dynamically linked with FFmpeg
 - BSD license is compatible with Apache 2.0
 
+### libvorbis
+
+**Component Information:**
+- **Software**: libvorbis (Vorbis Audio Codec)
+- **Version**: 1.3.7 (from Debian Bookworm)
+- **Source**: Debian Bookworm
+- **Website**: https://xiph.org/vorbis/
+- **License**: BSD 3-Clause
+- **Usage**: Vorbis audio codec library (included in runtime container, used by FFmpeg for WebM audio encoding)
+
+**License Text:**
+
+> Copyright (c) 2002-2020 Xiph.org Foundation
+>
+> Redistribution and use in source and binary forms, with or without
+> modification, are permitted provided that the following conditions
+> are met:
+>
+> - Redistributions of source code must retain the above copyright
+> notice, this list of conditions and the following disclaimer.
+>
+> - Redistributions in binary form must reproduce the above copyright
+> notice, this list of conditions and the following disclaimer in the
+> documentation and/or other materials provided with the distribution.
+>
+> - Neither the name of the Xiph.org Foundation nor the names of its
+> contributors may be used to endorse or promote products derived from
+> this software without specific prior written permission.
+>
+> THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+> ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+> LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+> A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION
+> OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+> SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+> LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+> DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+> THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+> (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+> OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+>
+> Full license text: https://gitlab.xiph.org/xiph/vorbis/-/blob/v1.3.7/COPYING
+
+**Source Code Availability:**
+
+The libvorbis source code is available at:
+- Debian package: https://packages.debian.org/bookworm/libvorbis-dev
+- Debian source package: `apt-get source libvorbis` from Debian Bookworm repositories
+- Upstream Xiph.org source: https://gitlab.xiph.org/xiph/vorbis
+
+**Compliance Notes:**
+
+- libvorbis binary is copied from Debian Bookworm base image
+- No modifications were made to libvorbis source code
+- libvorbis is dynamically linked with FFmpeg
+- BSD license is compatible with Apache 2.0
+
+### libogg
+
+**Component Information:**
+- **Software**: libogg (Ogg Container Format)
+- **Version**: 1.3.5 (from Debian Bookworm)
+- **Source**: Debian Bookworm
+- **Website**: https://xiph.org/ogg/
+- **License**: BSD 3-Clause
+- **Usage**: Ogg container format library (included in runtime container, dependency of libvorbis)
+
+**License Text:**
+
+> Copyright (c) 2002, Xiph.org Foundation
+>
+> Redistribution and use in source and binary forms, with or without
+> modification, are permitted provided that the following conditions
+> are met:
+>
+> - Redistributions of source code must retain the above copyright
+> notice, this list of conditions and the following disclaimer.
+>
+> - Redistributions in binary form must reproduce the above copyright
+> notice, this list of conditions and the following disclaimer in the
+> documentation and/or other materials provided with the distribution.
+>
+> - Neither the name of the Xiph.org Foundation nor the names of its
+> contributors may be used to endorse or promote products derived from
+> this software without specific prior written permission.
+>
+> THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+> ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+> LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+> A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION
+> OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+> SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+> LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+> DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+> THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+> (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+> OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+>
+> Full license text: https://gitlab.xiph.org/xiph/ogg/-/blob/v1.3.5/COPYING
+
+**Source Code Availability:**
+
+The libogg source code is available at:
+- Debian package: https://packages.debian.org/bookworm/libogg-dev
+- Debian source package: `apt-get source libogg` from Debian Bookworm repositories
+- Upstream Xiph.org source: https://gitlab.xiph.org/xiph/ogg
+
+**Compliance Notes:**
+
+- libogg binary is copied from Debian Bookworm base image
+- No modifications were made to libogg source code
+- libogg is dynamically linked with FFmpeg (via libvorbis)
+- BSD license is compatible with Apache 2.0
+
 ### Bash
 
 **Component Information:**
@@ -162,6 +276,18 @@ BSD 3-Clause is compatible with Apache 2.0:
 - Attribution requirements are satisfied through this document
 - No conflict with Apache 2.0 terms
 
+### libvorbis (BSD 3-Clause)
+BSD 3-Clause is compatible with Apache 2.0:
+- BSD is a permissive license that allows redistribution with minimal restrictions
+- Attribution requirements are satisfied through this document
+- No conflict with Apache 2.0 terms
+
+### libogg (BSD 3-Clause)
+BSD 3-Clause is compatible with Apache 2.0:
+- BSD is a permissive license that allows redistribution with minimal restrictions
+- Attribution requirements are satisfied through this document
+- No conflict with Apache 2.0 terms
+
 ### Bash (GPL v3+)
 GPL is compatible with Apache 2.0 when:
 - Bash runs as a separate executable and is not linked with Apache 2.0 code
@@ -170,4 +296,4 @@ GPL is compatible with Apache 2.0 when:
 - Proper attribution is provided (as above)
 
 ---
-*Last updated: March 9, 2026*
+*Last updated: March 30, 2026*
