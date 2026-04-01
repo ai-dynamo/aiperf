@@ -123,7 +123,7 @@ When creating a PR, you can run this skill yourself within your branch (or insid
   ⎿  Successfully loaded skill
 ```
 
-You are contributed to use this to self-review as a first pass review before a maintainer reviews your PR.
+You are encouraged to use this to self-review as a first pass review before a maintainer reviews your PR.
 
 Please note, the skill does run `aiperf` and utilizes a mock server. If you are working on a laptop or personal work station, be aware that this may slow down your computer during review.
 
