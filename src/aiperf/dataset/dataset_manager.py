@@ -218,6 +218,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             "for inline encoding"
         )
 
+        max_image_bytes = 100 * 1024 * 1024  # 100 MB
+
         async with aiohttp.ClientSession() as session:
             for url in url_to_locations:
                 async with session.get(
@@ -227,7 +229,19 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                         raise RuntimeError(
                             f"Failed to download media URL '{url}': HTTP {resp.status}"
                         )
-                    data = await resp.read()
+                    if (
+                        resp.content_length is not None
+                        and resp.content_length > max_image_bytes
+                    ):
+                        raise RuntimeError(
+                            f"Image at '{url}' exceeds {max_image_bytes} byte limit "
+                            f"(Content-Length: {resp.content_length})"
+                        )
+                    data = await resp.content.read(max_image_bytes + 1)
+                    if len(data) > max_image_bytes:
+                        raise RuntimeError(
+                            f"Image at '{url}' exceeds {max_image_bytes} byte limit"
+                        )
 
                 img = PILImage.open(BytesIO(data))
                 if img.format is None:
