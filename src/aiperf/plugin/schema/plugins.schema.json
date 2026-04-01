@@ -851,6 +851,12 @@
               "description": "Whether endpoint uses async job polling (submit job, poll for status, retrieve result).",
               "title": "Requires Polling",
               "type": "boolean"
+            },
+            "requires_inline_media": {
+              "default": false,
+              "description": "Whether endpoint requires media URLs to be downloaded and inlined as base64 data URLs.",
+              "title": "Requires Inline Media",
+              "type": "boolean"
             }
           },
           "required": [

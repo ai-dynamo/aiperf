@@ -321,6 +321,7 @@ endpoint:
       produces_tokens: false
       tokenizes_input: false
       supports_images: true
+      requires_inline_media: true
       metrics_title: Image Retrieval Metrics
 
   nim_embeddings:

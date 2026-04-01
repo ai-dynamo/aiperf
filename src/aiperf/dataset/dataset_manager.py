@@ -5,9 +5,13 @@ from __future__ import annotations
 import asyncio
 import gc
 import time
+from io import BytesIO
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
+import aiohttp
 import orjson
+from PIL import Image as PILImage
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import OutputDefaults, ServiceConfig, UserConfig
@@ -16,6 +20,7 @@ from aiperf.common.enums import (
     CommandType,
     ConversationContextMode,
     CreditPhase,
+    ImageFormat,
     MessageType,
 )
 from aiperf.common.environment import Environment
@@ -39,6 +44,7 @@ from aiperf.common.models import (
     SessionPayloads,
 )
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.dataset.utils import encode_image
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     ComposerType,
@@ -184,6 +190,64 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             revision=tokenizer_config.revision,
             resolve_alias=tokenizer_config.should_resolve_alias,
         )
+
+    async def _convert_media_urls_to_inline(self) -> None:
+        """Download HTTP(S) image URLs and replace them with base64 data URLs.
+
+        Collects unique URLs across all conversations/turns, downloads each once,
+        and replaces all occurrences in-place. This is needed for endpoints that
+        require inline media (e.g., NIM Image Retrieval).
+        """
+        url_to_locations: dict[str, list[tuple[list[str], int]]] = {}
+
+        for conversation in self.dataset.values():
+            for turn in conversation.turns:
+                for image in turn.images:
+                    for i, content in enumerate(image.contents):
+                        parsed = urlparse(content)
+                        if parsed.scheme in ("http", "https") and parsed.netloc:
+                            url_to_locations.setdefault(content, []).append(
+                                (image.contents, i)
+                            )
+
+        if not url_to_locations:
+            return
+
+        self.info(
+            f"Downloading {len(url_to_locations)} unique media URL(s) "
+            "for inline encoding"
+        )
+
+        async with aiohttp.ClientSession() as session:
+            for url in url_to_locations:
+                async with session.get(
+                    url, timeout=aiohttp.ClientTimeout(total=60)
+                ) as resp:
+                    if resp.status != 200:
+                        raise RuntimeError(
+                            f"Failed to download media URL '{url}': HTTP {resp.status}"
+                        )
+                    data = await resp.read()
+
+                img = PILImage.open(BytesIO(data))
+                if img.format is None:
+                    raise RuntimeError(
+                        f"Failed to determine image format for URL '{url}'"
+                    )
+                if img.format.upper() not in list(ImageFormat):
+                    raise RuntimeError(
+                        f"'{img.format}' from URL '{url}' is not a supported "
+                        f"image format: {', '.join(ImageFormat)}"
+                    )
+                data_url = (
+                    f"data:image/{img.format.lower()};base64,"
+                    f"{encode_image(img, img.format)}"
+                )
+
+                for contents_list, index in url_to_locations[url]:
+                    contents_list[index] = data_url
+
+        self.info("Media URL download and inline encoding complete")
 
     def _generate_input_payloads(
         self,
@@ -333,6 +397,12 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._conversation_ids_cache = [
             conversation.session_id for conversation in conversations
         ]
+
+        endpoint_meta: EndpointMetadata = plugins.get_endpoint_metadata(
+            self.user_config.endpoint.type
+        )
+        if endpoint_meta.requires_inline_media:
+            await self._convert_media_urls_to_inline()
 
         # Initialize backing store and stream conversations to mmap files
         # Workers read directly from these files
