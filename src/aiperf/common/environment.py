@@ -168,6 +168,23 @@ class _DatasetSettings(BaseSettings):
         default=300.0,
         description="Timeout in seconds for public dataset loading operations",
     )
+    MEDIA_DOWNLOAD_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=60.0,
+        description="Timeout in seconds per media URL download when inline encoding is required",
+    )
+    MEDIA_DOWNLOAD_MAX_BYTES: int = Field(
+        ge=1,
+        default=100 * 1024 * 1024,
+        description="Maximum size in bytes for a single downloaded media file (default 100 MB)",
+    )
+    MEDIA_DOWNLOAD_MAX_CONCURRENCY: int = Field(
+        ge=1,
+        le=100,
+        default=10,
+        description="Maximum number of concurrent media URL downloads",
+    )
 
 
 class _DeveloperSettings(BaseSettings):

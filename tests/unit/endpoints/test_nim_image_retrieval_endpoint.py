@@ -47,9 +47,9 @@ class TestImageRetrievalEndpointFormatPayload:
         assert payload["input"][0]["url"] == BASE64_PNG
 
     def test_format_payload_multiple_images(self, endpoint, model_endpoint):
-        """Test format_payload with multiple images."""
-        img1 = "https://example.com/img1.png"
-        img2 = "https://example.com/img2.png"
+        """Test format_payload with multiple base64 images."""
+        img1 = BASE64_PNG
+        img2 = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ=="
         turn = Turn(
             images=[Image(contents=[img1, img2])], model="image-retrieval-model"
         )
@@ -63,10 +63,11 @@ class TestImageRetrievalEndpointFormatPayload:
 
     def test_format_payload_multiple_image_objects(self, endpoint, model_endpoint):
         """Test format_payload with multiple Image objects."""
+        img2 = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ=="
         turn = Turn(
             images=[
                 Image(contents=[BASE64_PNG]),
-                Image(contents=["https://example.com/other.png"]),
+                Image(contents=[img2]),
             ],
             model="image-retrieval-model",
         )

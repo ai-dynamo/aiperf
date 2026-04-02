@@ -17,7 +17,7 @@ from aiperf.common.messages import (
     DatasetConfiguredNotification,
 )
 from aiperf.common.messages.command_messages import ProfileConfigureCommand
-from aiperf.common.models import Conversation, Text, Turn
+from aiperf.common.models import Conversation, Image, Text, Turn
 from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.plugin.enums import (
     CustomDatasetType,
@@ -664,3 +664,190 @@ class TestDatasetManagerTokenizerSkip:
                 input=InputConfig(),
                 tokenizer=TokenizerConfig(name="test-model"),
             )
+
+
+# ============================================================================
+# Media URL Inline Conversion Tests
+# ============================================================================
+
+# 1x1 red PNG image bytes
+_TINY_PNG_BYTES = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+    b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00"
+    b"\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0\x00\x00\x03\x01"
+    b"\x01\x00\xc9\xfe\x92\xef\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+class TestConvertMediaUrlsToInline:
+    """Tests for DatasetManager._convert_media_urls_to_inline."""
+
+    @pytest.fixture
+    async def dataset_manager(self, mock_tokenizer):
+        user_config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"], type="image_retrieval"),
+            input=InputConfig(),
+        )
+        service_config = ServiceConfig()
+        dm = DatasetManager(service_config, user_config)
+        await dm.initialize()
+        dm.publish = AsyncMock()
+        return dm
+
+    @pytest.mark.asyncio
+    async def test_converts_http_urls_to_data_urls(self, dataset_manager):
+        """HTTP image URLs are downloaded and replaced with base64 data URLs."""
+        url = "https://example.com/image.png"
+        dataset_manager.dataset = {
+            "s1": Conversation(
+                session_id="s1",
+                turns=[Turn(images=[Image(contents=[url])], model="test-model")],
+            )
+        }
+
+        with patch(
+            "aiperf.dataset.dataset_manager.aiohttp.ClientSession"
+        ) as mock_session_cls:
+            mock_content = AsyncMock()
+            mock_content.read = AsyncMock(return_value=_TINY_PNG_BYTES)
+
+            mock_resp = AsyncMock()
+            mock_resp.status = 200
+            mock_resp.content_length = len(_TINY_PNG_BYTES)
+            mock_resp.content = mock_content
+            mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+            mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+            mock_session = AsyncMock()
+            mock_session.get = MagicMock(return_value=mock_resp)
+            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session.__aexit__ = AsyncMock(return_value=False)
+            mock_session_cls.return_value = mock_session
+
+            await dataset_manager._convert_media_urls_to_inline()
+
+        contents = dataset_manager.dataset["s1"].turns[0].images[0].contents
+        assert len(contents) == 1
+        assert contents[0].startswith("data:image/png;base64,")
+
+    @pytest.mark.asyncio
+    async def test_skips_already_encoded_data_urls(self, dataset_manager):
+        """Already-encoded data URLs are left unchanged."""
+        data_url = "data:image/png;base64,iVBORw0KGgo="
+        dataset_manager.dataset = {
+            "s1": Conversation(
+                session_id="s1",
+                turns=[Turn(images=[Image(contents=[data_url])], model="test-model")],
+            )
+        }
+
+        await dataset_manager._convert_media_urls_to_inline()
+
+        assert dataset_manager.dataset["s1"].turns[0].images[0].contents[0] == data_url
+
+    @pytest.mark.asyncio
+    async def test_deduplicates_same_url_across_turns(self, dataset_manager):
+        """Same URL appearing in multiple turns is downloaded only once."""
+        url = "https://example.com/image.png"
+        dataset_manager.dataset = {
+            "s1": Conversation(
+                session_id="s1",
+                turns=[
+                    Turn(images=[Image(contents=[url])], model="test-model"),
+                    Turn(images=[Image(contents=[url])], model="test-model"),
+                ],
+            )
+        }
+
+        with patch(
+            "aiperf.dataset.dataset_manager.aiohttp.ClientSession"
+        ) as mock_session_cls:
+            mock_content = AsyncMock()
+            mock_content.read = AsyncMock(return_value=_TINY_PNG_BYTES)
+
+            mock_resp = AsyncMock()
+            mock_resp.status = 200
+            mock_resp.content_length = len(_TINY_PNG_BYTES)
+            mock_resp.content = mock_content
+            mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+            mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+            mock_session = AsyncMock()
+            mock_session.get = MagicMock(return_value=mock_resp)
+            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session.__aexit__ = AsyncMock(return_value=False)
+            mock_session_cls.return_value = mock_session
+
+            await dataset_manager._convert_media_urls_to_inline()
+
+        # Both turns should have the same data URL
+        t0 = dataset_manager.dataset["s1"].turns[0].images[0].contents[0]
+        t1 = dataset_manager.dataset["s1"].turns[1].images[0].contents[0]
+        assert t0.startswith("data:image/png;base64,")
+        assert t0 == t1
+        # Only one GET request should have been made
+        mock_session.get.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_raises_on_download_failure(self, dataset_manager):
+        """RuntimeError is raised when a URL download fails."""
+        url = "https://example.com/missing.png"
+        dataset_manager.dataset = {
+            "s1": Conversation(
+                session_id="s1",
+                turns=[Turn(images=[Image(contents=[url])], model="test-model")],
+            )
+        }
+
+        with patch(
+            "aiperf.dataset.dataset_manager.aiohttp.ClientSession"
+        ) as mock_session_cls:
+            mock_resp = AsyncMock()
+            mock_resp.status = 404
+            mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+            mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+            mock_session = AsyncMock()
+            mock_session.get = MagicMock(return_value=mock_resp)
+            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session.__aexit__ = AsyncMock(return_value=False)
+            mock_session_cls.return_value = mock_session
+
+            with pytest.raises(RuntimeError, match="HTTP 404"):
+                await dataset_manager._convert_media_urls_to_inline()
+
+    @pytest.mark.asyncio
+    async def test_noop_when_no_urls(self, dataset_manager):
+        """No error or download when dataset has no HTTP URLs."""
+        dataset_manager.dataset = {
+            "s1": Conversation(
+                session_id="s1",
+                turns=[
+                    Turn(
+                        images=[Image(contents=["data:image/png;base64,abc"])],
+                        model="test-model",
+                    )
+                ],
+            )
+        }
+
+        # Should complete without any HTTP calls
+        await dataset_manager._convert_media_urls_to_inline()
+
+
+class TestConfigureDatasetInlineMediaGating:
+    """Tests that endpoint metadata correctly declares requires_inline_media."""
+
+    def test_image_retrieval_requires_inline_media(self):
+        """image_retrieval endpoint metadata has requires_inline_media=True."""
+        from aiperf.plugin import plugins
+
+        meta = plugins.get_endpoint_metadata("image_retrieval")
+        assert meta.requires_inline_media is True
+
+    def test_chat_does_not_require_inline_media(self):
+        """chat endpoint metadata has requires_inline_media=False."""
+        from aiperf.plugin import plugins
+
+        meta = plugins.get_endpoint_metadata("chat")
+        assert meta.requires_inline_media is False
