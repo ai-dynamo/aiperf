@@ -222,6 +222,8 @@ Server metrics collection is enabled by default. To disable it:
 ```bash
 aiperf profile \
     --model meta/llama-3.1-8b-instruct \
+    --endpoint-type chat \
+    --streaming \
     --url localhost:8000 \
     --public-dataset speed_bench_qualitative \
     --no-server-metrics \

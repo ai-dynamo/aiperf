@@ -30,10 +30,11 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import sys
 from pathlib import Path
 from statistics import mean
+
+import orjson
 
 QUALITATIVE_CATEGORIES = [
     "coding",
@@ -95,8 +96,7 @@ def load_profile(run_dir: Path) -> dict | None:
     path = run_dir / PROFILE_JSON
     if not path.exists():
         return None
-    with open(path) as f:
-        return json.load(f)
+    return orjson.loads(path.read_bytes())
 
 
 def load_server_metrics(run_dir: Path) -> dict | None:
@@ -104,8 +104,7 @@ def load_server_metrics(run_dir: Path) -> dict | None:
     path = run_dir / SERVER_METRICS_JSON
     if not path.exists():
         return None
-    with open(path) as f:
-        return json.load(f)
+    return orjson.loads(path.read_bytes())
 
 
 def extract_category(profile: dict) -> str | None:
@@ -159,7 +158,9 @@ def extract_accept_length(server_metrics: dict) -> float | None:
     # vLLM: compute from counters (accepted_tokens / num_drafts)
     # Each draft step produces 1 verification token + accepted draft tokens,
     # so acceptance length = (accepted / drafts) + 1
-    accepted = _get_metric_stat(metrics, "vllm:spec_decode_num_accepted_tokens", "total")
+    accepted = _get_metric_stat(
+        metrics, "vllm:spec_decode_num_accepted_tokens", "total"
+    )
     drafts = _get_metric_stat(metrics, "vllm:spec_decode_num_drafts", "total")
     if accepted is not None and drafts and drafts > 0:
         return (accepted / drafts) + 1.0
@@ -188,8 +189,12 @@ def extract_accept_rate(server_metrics: dict) -> float | None:
             return val
 
     # vLLM: compute from counters (accepted_tokens / draft_tokens)
-    accepted = _get_metric_stat(metrics, "vllm:spec_decode_num_accepted_tokens", "total")
-    draft_tokens = _get_metric_stat(metrics, "vllm:spec_decode_num_draft_tokens", "total")
+    accepted = _get_metric_stat(
+        metrics, "vllm:spec_decode_num_accepted_tokens", "total"
+    )
+    draft_tokens = _get_metric_stat(
+        metrics, "vllm:spec_decode_num_draft_tokens", "total"
+    )
     if accepted is not None and draft_tokens and draft_tokens > 0:
         return accepted / draft_tokens
 
@@ -281,7 +286,7 @@ def write_csv(
     """Write the matrix as a CSV file."""
     with open(output, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["Model"] + columns + ["Overall"])
+        writer.writerow(["Model", *columns, "Overall"])
         for model, data in sorted(results.items()):
             row = [model]
             values = []
@@ -337,7 +342,7 @@ def print_table(
 
     except ImportError:
         # Fallback: plain text table
-        header = ["Model"] + columns + ["Overall"]
+        header = ["Model", *columns, "Overall"]
         widths = [max(len(h), 8) for h in header]
         widths[0] = max(widths[0], max((len(m) for m in results), default=8))
 
