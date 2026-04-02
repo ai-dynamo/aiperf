@@ -1,3 +1,4 @@
+# check=skip=UndefinedVar
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 FROM python:3.13-slim-bookworm AS base
@@ -86,11 +87,14 @@ WORKDIR /workspace
 RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential \
+        libogg-dev \
+        libvorbis-dev \
+        libvpx-dev \
         nasm \
         pkg-config \
         wget \
         yasm \
-        libvpx-dev \
+        zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and build ffmpeg with libvpx (VP9 codec)
@@ -103,6 +107,7 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz \
         --disable-nonfree \
         --enable-shared \
         --disable-static \
+        --enable-libvorbis \
         --enable-libvpx \
         --disable-doc \
         --disable-htmlpages \
@@ -114,10 +119,14 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz \
     && cd .. \
     && rm -rf ffmpeg-8.0.1 ffmpeg-8.0.1.tar.xz \
     && cp -P /usr/lib/*/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || \
-       cp -P /usr/lib/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libvpx.so not found"; exit 1; }
+       cp -P /usr/lib/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libvpx.so not found"; exit 1; } \
+    && cp -P /usr/lib/*/libvorbis.so* /usr/lib/*/libvorbisenc.so* /opt/ffmpeg/lib/ 2>/dev/null || \
+       cp -P /usr/lib/libvorbis.so* /usr/lib/libvorbisenc.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libvorbis.so not found"; exit 1; } \
+    && cp -P /usr/lib/*/libogg.so* /opt/ffmpeg/lib/ 2>/dev/null || \
+       cp -P /usr/lib/libogg.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libogg.so not found"; exit 1; }
 
-ENV PATH="/opt/ffmpeg/bin${PATH:+:${PATH}}" \
-    LD_LIBRARY_PATH="/opt/ffmpeg/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+ENV PATH="/opt/ffmpeg/bin${PATH:+:${PATH}}"
+ENV LD_LIBRARY_PATH="/opt/ffmpeg/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
 # Create directories for the nvs user (UID 1000 in NVIDIA distroless)
 RUN mkdir -p /app /app/artifacts /app/.cache \
@@ -154,7 +163,7 @@ ENTRYPOINT ["/bin/bash", "-c"]
 ############################################
 ############# Runtime Image ################
 ############################################
-FROM nvcr.io/nvidia/distroless/python:3.13-v4.0.1-dev AS runtime
+FROM nvcr.io/nvidia/distroless/python:3.13-v4.0.3-dev AS runtime
 
 # Include license and attribution files
 COPY LICENSE ATTRIBUTIONS*.md /legal/
@@ -164,8 +173,8 @@ COPY --from=env-builder --chown=1000:1000 --chmod=755 /bin/bash /bin/bash
 
 # Copy ffmpeg binaries and libraries (includes libvpx)
 COPY --from=env-builder --chown=1000:1000 /opt/ffmpeg /opt/ffmpeg
-ENV PATH="/opt/ffmpeg/bin${PATH:+:${PATH}}" \
-    LD_LIBRARY_PATH="/opt/ffmpeg/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+ENV PATH="/opt/ffmpeg/bin${PATH:+:${PATH}}"
+ENV LD_LIBRARY_PATH="/opt/ffmpeg/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
 # Setup the directories with permissions for nvs user
 COPY --from=env-builder --chown=1000:1000 /app /app

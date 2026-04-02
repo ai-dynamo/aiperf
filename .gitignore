@@ -35,3 +35,4 @@ src/aiperf/plugin/enums.pyi
 # Cursor - ignore user settings
 .cursor/*
 !.cursor/rules/
+.worktrees/
