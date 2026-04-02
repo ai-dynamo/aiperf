@@ -52,6 +52,8 @@ from aiperf.plugin.enums import (
     PluginType,
     ServiceRunType,
 )
+from aiperf.transports.aiohttp_client import create_tcp_connector
+from aiperf.transports.http_defaults import AioHttpDefaults
 
 if TYPE_CHECKING:
     from aiperf.dataset.protocols import (
@@ -213,34 +215,40 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         if not url_to_locations:
             return
 
+        dataset_env = Environment.DATASET
+        max_bytes = dataset_env.MEDIA_DOWNLOAD_MAX_BYTES
+        timeout = aiohttp.ClientTimeout(total=dataset_env.MEDIA_DOWNLOAD_TIMEOUT)
+        max_concurrency = dataset_env.MEDIA_DOWNLOAD_MAX_CONCURRENCY
+
         self.info(
             f"Downloading {len(url_to_locations)} unique media URL(s) "
-            "for inline encoding"
+            f"for inline encoding (concurrency={max_concurrency})"
         )
 
-        max_image_bytes = 100 * 1024 * 1024  # 100 MB
+        semaphore = asyncio.Semaphore(max_concurrency)
+        url_to_data_url: dict[str, str] = {}
 
-        async with aiohttp.ClientSession() as session:
-            for url in url_to_locations:
-                async with session.get(
-                    url, timeout=aiohttp.ClientTimeout(total=60)
-                ) as resp:
+        async def _download_and_encode(
+            session: aiohttp.ClientSession, url: str
+        ) -> None:
+            async with semaphore:
+                async with session.get(url, timeout=timeout) as resp:
                     if resp.status != 200:
                         raise RuntimeError(
                             f"Failed to download media URL '{url}': HTTP {resp.status}"
                         )
                     if (
                         resp.content_length is not None
-                        and resp.content_length > max_image_bytes
+                        and resp.content_length > max_bytes
                     ):
                         raise RuntimeError(
-                            f"Image at '{url}' exceeds {max_image_bytes} byte limit "
+                            f"Image at '{url}' exceeds {max_bytes} byte limit "
                             f"(Content-Length: {resp.content_length})"
                         )
-                    data = await resp.content.read(max_image_bytes + 1)
-                    if len(data) > max_image_bytes:
+                    data = await resp.content.read(max_bytes + 1)
+                    if len(data) > max_bytes:
                         raise RuntimeError(
-                            f"Image at '{url}' exceeds {max_image_bytes} byte limit"
+                            f"Image at '{url}' exceeds {max_bytes} byte limit"
                         )
 
                 img = PILImage.open(BytesIO(data))
@@ -253,13 +261,24 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                         f"'{img.format}' from URL '{url}' is not a supported "
                         f"image format: {', '.join(ImageFormat)}"
                     )
-                data_url = (
+                url_to_data_url[url] = (
                     f"data:image/{img.format.lower()};base64,"
                     f"{encode_image(img, img.format)}"
                 )
 
-                for contents_list, index in url_to_locations[url]:
-                    contents_list[index] = data_url
+        connector = create_tcp_connector()
+        async with aiohttp.ClientSession(
+            connector=connector,
+            trust_env=AioHttpDefaults.TRUST_ENV,
+        ) as session:
+            await asyncio.gather(
+                *[_download_and_encode(session, url) for url in url_to_locations]
+            )
+
+        for url, locations in url_to_locations.items():
+            data_url = url_to_data_url[url]
+            for contents_list, index in locations:
+                contents_list[index] = data_url
 
         self.info("Media URL download and inline encoding complete")
 
