@@ -30,6 +30,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Total Output Tokens](#total-output-tokens)
     - [Total Output Sequence Length](#total-output-sequence-length)
     - [Total Input Sequence Length](#total-input-sequence-length)
+    - [E2E Output Token Throughput](#e2e-output-token-throughput)
     - [Output Token Throughput](#output-token-throughput)
     - [Total Token Throughput](#total-token-throughput)
   - [Image Metrics](#image-metrics)
@@ -409,6 +410,25 @@ total_isl = sum(r.input_sequence_length for r in records if r.valid)
 
 **Notes:**
 - Useful for understanding the input workload, capacity planning, and analyzing the relationship between input size and system performance.
+
+---
+
+### E2E Output Token Throughput
+
+**Type:** [Record Metric](#record-metrics)
+
+Per-request output token throughput based on end-to-end request latency. Unlike [Output Token Throughput Per User](#output-token-throughput-per-user) (which uses 1/ITL and excludes TTFT), this metric includes TTFT, queuing, and all other overhead in the denominator. Available for both streaming and non-streaming responses.
+
+**Formula:**
+```python
+e2e_output_token_throughput = output_sequence_length / request_latency_seconds
+```
+
+**Notes:**
+- Uses total request latency (not ITL), so values will be slightly lower than Output Token Throughput Per User for streaming responses.
+- Available for non-streaming responses (unlike Output Token Throughput Per User which requires streaming).
+- Flags: `PRODUCES_TOKENS_ONLY | LARGER_IS_BETTER`
+- Depends on Output Sequence Length and Request Latency metrics.
 
 ---
 
