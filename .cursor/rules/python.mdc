@@ -15,9 +15,9 @@ Python 3.10+ async AI benchmarking tool for measuring LLM inference server perfo
 **Reference documentation:**
 - [`docs/architecture.md`](docs/architecture.md) - Three-plane architecture, core components, credit system, data flow, communication patterns
 - [`docs/dev/patterns.md`](docs/dev/patterns.md) - Code examples for CLI commands, services, models, messages, plugins, error handling, logging, testing
-- [`docs/cli_options.md`](docs/cli_options.md) - Complete CLI command and option reference
-- [`docs/environment_variables.md`](docs/environment_variables.md) - All `AIPERF_*` environment variables by subsystem
-- [`docs/metrics_reference.md`](docs/metrics_reference.md) - Metric definitions, formulas, and requirements
+- [`docs/cli-options.md`](docs/cli-options.md) - Complete CLI command and option reference
+- [`docs/environment-variables.md`](docs/environment-variables.md) - All `AIPERF_*` environment variables by subsystem
+- [`docs/metrics-reference.md`](docs/metrics-reference.md) - Metric definitions, formulas, and requirements
 - [`docs/plugins/plugin-system.md`](docs/plugins/plugin-system.md) - Plugin architecture, categories, creation guide
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) - Development setup, available commands, pre-commit hooks, DCO
 
@@ -136,13 +136,13 @@ When making changes, update the appropriate documentation files. When adding a n
 | Architecture, components, data flow, communication | `docs/architecture.md` |
 | Coding standards, build commands, new patterns | `CLAUDE.md` + `.github/copilot-instructions.md` + `.cursor/rules/python.mdc` |
 | Code patterns, examples, base classes | `docs/dev/patterns.md` |
-| CLI arguments or commands | `docs/cli_options.md` (auto-generated via `make generate-cli-docs`) |
-| Environment variables | `docs/environment_variables.md` (auto-generated via `make generate-env-vars-docs`) |
-| Metrics definitions or formulas | `docs/metrics_reference.md` |
+| CLI arguments or commands | `docs/cli-options.md` (auto-generated via `make generate-cli-docs`) |
+| Environment variables | `docs/environment-variables.md` (auto-generated via `make generate-env-vars-docs`) |
+| Metrics definitions or formulas | `docs/metrics-reference.md` |
 | Plugin system, categories, creation | `docs/plugins/plugin-system.md` |
 | Accuracy benchmarks, graders | `docs/accuracy/` |
-| Server metrics, schemas | `docs/server_metrics/` |
-| Benchmark modes, timing, traces | `docs/benchmark_modes/` |
+| Server metrics, schemas | `docs/server-metrics/` |
+| Benchmark modes, timing, traces | `docs/benchmark-modes/` |
 | Tokenizer, reference docs | `docs/reference/` |
 | Dataset synthesis API | `docs/api/synthesis.md` |
 | Dev setup, make targets, pre-commit | `CONTRIBUTING.md` |

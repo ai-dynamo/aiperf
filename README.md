@@ -103,9 +103,9 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 
 - Scalable multiprocess architecture with 9 services communicating via ZMQ
 - 3 UI modes: `dashboard` (real-time TUI), `simple` (progress bars), `none` (headless)
-- Multiple benchmarking modes: concurrency, request-rate, [request-rate with max concurrency](docs/tutorials/request-rate-concurrency.md), [trace replay](docs/benchmark_modes/trace_replay.md)
+- Multiple benchmarking modes: concurrency, request-rate, [request-rate with max concurrency](docs/tutorials/request-rate-concurrency.md), [trace replay](docs/benchmark-modes/trace-replay.md)
 - Extensible plugin system for endpoints, datasets, transports, and metrics
-- [Public dataset support](docs/benchmark_datasets.md) including ShareGPT and custom formats
+- [Public dataset support](docs/benchmark-datasets.md) including ShareGPT and custom formats
 
 ## Supported APIs
 
@@ -132,7 +132,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Multi-URL Load Balancing](docs/tutorials/multi-url-load-balancing.md) - Distribute across servers
 
 ### Workloads and Data
-- [Trace Benchmarking](docs/benchmark_modes/trace_replay.md) - Deterministic workload replay
+- [Trace Benchmarking](docs/benchmark-modes/trace-replay.md) - Deterministic workload replay
 - [Bailian Traces](docs/tutorials/bailian-trace.md) - Bailian production trace replay
 - [Custom Prompt Benchmarking](docs/tutorials/custom-prompt-benchmarking.md) - Send exact prompts as-is
 - [Custom Dataset](docs/tutorials/custom-dataset.md) - Custom dataset formats
@@ -168,21 +168,21 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Profile Exports](docs/tutorials/working-with-profile-exports.md) - Post-processing with Pydantic models
 - [Visualization and Plotting](docs/tutorials/plot.md) - PNG charts and multi-run comparison
 - [GPU Telemetry](docs/tutorials/gpu-telemetry.md) - DCGM metrics collection
-- [Server Metrics](docs/server_metrics/server-metrics.md) - Prometheus-compatible metrics
+- [Server Metrics](docs/server-metrics/server-metrics.md) - Prometheus-compatible metrics
 
 ## Documentation
 
 | Document | Purpose |
 |----------|---------|
 | [Architecture](docs/architecture.md) | Three-plane architecture, core components, credit system, data flow |
-| [CLI Options](docs/cli_options.md) | Complete command and option reference |
-| [Metrics Reference](docs/metrics_reference.md) | All metric definitions, formulas, and requirements |
-| [Environment Variables](docs/environment_variables.md) | All `AIPERF_*` configuration variables |
+| [CLI Options](docs/cli-options.md) | Complete command and option reference |
+| [Metrics Reference](docs/metrics-reference.md) | All metric definitions, formulas, and requirements |
+| [Environment Variables](docs/environment-variables.md) | All `AIPERF_*` configuration variables |
 | [Plugin System](docs/plugins/plugin-system.md) | Plugin architecture, 25+ categories, creation guide |
 | [Creating Plugins](docs/plugins/creating-your-first-plugin.md) | Step-by-step plugin tutorial |
 | [Accuracy Benchmarks](docs/accuracy/accuracy_stubs.md) | Accuracy evaluation stubs and datasets |
-| [Benchmark Modes](docs/benchmark_modes/trace_replay.md) | Trace replay and timing modes |
-| [Server Metrics](docs/server_metrics/server-metrics.md) | Prometheus-compatible server metrics collection |
+| [Benchmark Modes](docs/benchmark-modes/trace-replay.md) | Trace replay and timing modes |
+| [Server Metrics](docs/server-metrics/server-metrics.md) | Prometheus-compatible server metrics collection |
 | [Tokenizer Auto-Detection](docs/reference/tokenizer-auto-detection.md) | Pre-flight tokenizer detection |
 | [Conversation Context Mode](docs/reference/conversation-context-mode.md) | How conversation history accumulates in multi-turn |
 | [Dataset Synthesis API](docs/api/synthesis.md) | Synthesis module API reference |
