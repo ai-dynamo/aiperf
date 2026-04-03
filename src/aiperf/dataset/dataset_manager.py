@@ -315,13 +315,26 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
         return composer.create_dataset()
 
+    async def _load_accuracy_dataset(self) -> list[Conversation]:
+        from aiperf.dataset.loader.accuracy_dataset_loader import AccuracyDatasetLoader
+        from aiperf.plugin.enums import DatasetSamplingStrategy
+
+        loader = AccuracyDatasetLoader(user_config=self.user_config)
+        if "dataset_sampling_strategy" not in self.user_config.input.model_fields_set:
+            self.user_config.input.dataset_sampling_strategy = (
+                DatasetSamplingStrategy.SEQUENTIAL
+            )
+        return await loader.load()
+
     async def _configure_dataset(self) -> None:
         if self.user_config is None:
             raise self._service_error("User config is required for dataset manager")
 
         self.dataset_configured.clear()
 
-        if self.user_config.input.public_dataset is not None:
+        if self.user_config.accuracy.enabled:
+            conversations = await self._load_accuracy_dataset()
+        elif self.user_config.input.public_dataset is not None:
             conversations = await self._load_public_dataset()
         elif (
             self.user_config.input.custom_dataset_type is not None
