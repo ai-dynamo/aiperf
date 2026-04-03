@@ -220,6 +220,7 @@ class LoadGeneratorDefaults:
 class WorkersDefaults:
     MIN = None
     MAX = None
+    DIRECT = None
 
 
 @dataclass(frozen=True)

@@ -111,7 +111,7 @@ ServiceType = plugins.create_enum(PluginType.SERVICE, "ServiceType", module=__na
 
 ServiceRunTypeStr: TypeAlias = str
 ServiceRunType = plugins.create_enum(PluginType.SERVICE_MANAGER, "ServiceRunType", module=__name__)
-"""Dynamic enum for service manager. Example: ServiceRunType.KUBERNETES, ServiceRunType.MULTIPROCESSING"""
+"""Dynamic enum for service manager. Example: ServiceRunType.DIRECT_WORKER, ServiceRunType.KUBERNETES, ServiceRunType.MULTIPROCESSING"""
 
 CommunicationBackendStr: TypeAlias = str
 CommunicationBackend = plugins.create_enum(PluginType.COMMUNICATION, "CommunicationBackend", module=__name__)

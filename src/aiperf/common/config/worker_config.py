@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from typing import Annotated
+from typing import Annotated, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
@@ -37,3 +37,28 @@ class WorkersConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = WorkersDefaults.MAX
+
+    direct: Annotated[
+        bool | None,
+        Field(
+            description="Enable direct worker mode: co-locate a single Worker inside TimingManager's process "
+            "and deliver credits via method calls instead of ZMQ. Eliminates IPC overhead for "
+            "ultra-low-latency benchmarks. Some endpoints enable this automatically. "
+            "Use --no-workers-direct to force standard multi-process workers.",
+        ),
+        CLIParameter(
+            name=("--workers-direct",),
+            negative=("--no-workers-direct",),
+            group=_CLI_GROUP,
+        ),
+    ] = WorkersDefaults.DIRECT
+
+    @model_validator(mode="after")
+    def validate_direct_incompatible_with_max(self) -> Self:
+        """Direct worker mode uses a single co-located worker, so --workers-max is meaningless."""
+        if self.direct and "max" in self.model_fields_set:
+            raise ValueError(
+                "--workers-direct and --workers-max cannot be used together. "
+                "Direct worker mode uses a single co-located worker."
+            )
+        return self

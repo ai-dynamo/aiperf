@@ -941,6 +941,10 @@ Directory path for ZMQ IPC (Inter-Process Communication) socket files. When usin
 
 Maximum number of workers to create. If not specified, the number of workers will be determined by the formula `min(concurrency, (num CPUs * 0.75) - 1)`, with a default max cap of 32. Any value provided will still be capped by the concurrency value (if specified), but not by the max cap.
 
+#### `--workers-direct`, `--no-workers-direct`
+
+Enable direct worker mode: co-locate a single Worker inside TimingManager's process and deliver credits via method calls instead of ZMQ. Eliminates IPC overhead for ultra-low-latency benchmarks. Some endpoints enable this automatically. Use --no-workers-direct to force standard multi-process workers.
+
 ### Service
 
 #### `--log-level` `<str>`

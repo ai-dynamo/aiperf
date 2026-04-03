@@ -1,8 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import asyncio
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -188,6 +191,16 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Initialized when DatasetConfiguredNotification is received via factory
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
+        self._engine_ready = asyncio.Event()
+
+        # In-process mode callbacks — when set, credit returns and first token events
+        # are delivered via direct method call instead of ZMQ DEALER socket.
+        self._credit_return_callback: (
+            Callable[[CreditReturn], Awaitable[None]] | None
+        ) = None
+        self._first_token_callback: Callable[[FirstToken], Awaitable[None]] | None = (
+            None
+        )
 
         # Only send FirstToken messages when prefill concurrency limiting is active.
         # Detecting first token requires parsing each SSE chunk, so skip this overhead
@@ -211,6 +224,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     async def _send_worker_ready_message(self) -> None:
         """Send WorkerReady to announce presence."""
         await self.credit_dealer_client.send(WorkerReady(worker_id=self.service_id))
+        self._engine_ready.set()
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(self, msg: DatasetConfiguredNotification) -> None:
@@ -339,7 +353,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             first_token_sent=credit_context.first_token_sent,
             error=str(credit_context.error) if credit_context.error else None,
         )
-        self.execute_async(self.credit_dealer_client.send(credit_return))
+        self.execute_async(self._send_credit_return(credit_return))
         credit_context.returned = True
 
         # Explicitly clear references to help refcounting (GC is disabled on workers)
@@ -361,6 +375,50 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     )
                 )
 
+    # ── In-process mode public API ──────────────────────────────────────
+
+    def receive_credit(self, credit: Credit) -> None:
+        """Receive a credit directly for in-process mode.
+
+        Bypasses ZMQ deserialization. Equivalent to receiving a Credit
+        via the DEALER socket.
+        """
+        self._schedule_credit_drop_task(credit)
+
+    async def cancel_credits(self, credit_ids: set[int]) -> None:
+        """Cancel in-flight credits directly for in-process mode."""
+        await self._on_cancel_credits_message(CancelCredits(credit_ids=credit_ids))
+
+    def set_credit_return_callback(
+        self,
+        callback: Callable[[CreditReturn], Awaitable[None]],
+    ) -> None:
+        """Register callback for returning credits in in-process mode."""
+        self._credit_return_callback = callback
+
+    def set_first_token_callback(
+        self,
+        callback: Callable[[FirstToken], Awaitable[None]],
+    ) -> None:
+        """Register callback for first token events in in-process mode."""
+        self._first_token_callback = callback
+
+    # ── Credit return / first token dispatch ────────────────────────────
+
+    async def _send_credit_return(self, credit_return: CreditReturn) -> None:
+        """Send credit return via callback (in-process) or ZMQ DEALER socket."""
+        if self._credit_return_callback is not None:
+            await self._credit_return_callback(credit_return)
+        else:
+            await self.credit_dealer_client.send(credit_return)
+
+    async def _send_first_token(self, first_token: FirstToken) -> None:
+        """Send first token via callback (in-process) or ZMQ DEALER socket."""
+        if self._first_token_callback is not None:
+            await self._first_token_callback(first_token)
+        else:
+            await self.credit_dealer_client.send(first_token)
+
     async def _on_credit_drop_message_task(self, credit_context: CreditContext) -> None:
         """Handle incoming credit from TimingManager via StickyCreditRouter.
 
@@ -376,6 +434,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         For tasks cancelled before they start, the done callback handles the return.
         """
         try:
+            await self._engine_ready.wait()
             if not self.inference_client:
                 raise NotInitializedError("Inference server client not initialized.")
             await self._process_credit(credit_context)
@@ -394,7 +453,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 first_token_sent=credit_context.first_token_sent,
                 error=str(credit_context.error) if credit_context.error else None,
             )
-            await self.credit_dealer_client.send(credit_return)
+            await self._send_credit_return(credit_return)
             # Mark as returned AFTER send succeeds
             # If send fails/cancelled, done callback will retry
             # Router idempotency guard handles duplicates
@@ -437,7 +496,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     return False  # Keep looking for meaningful content
 
                 # Meaningful content found - send FirstToken to router
-                await self.credit_dealer_client.send(
+                await self._send_first_token(
                     FirstToken(
                         credit_id=credit.id,
                         phase=credit.phase,

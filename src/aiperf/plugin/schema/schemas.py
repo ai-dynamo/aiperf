@@ -282,6 +282,10 @@ class EndpointMetadata(BaseModel):
         default=False,
         description="Whether endpoint requires media URLs to be downloaded and inlined as base64 data URLs.",
     )
+    direct_worker: bool = Field(
+        default=False,
+        description="Whether endpoint benefits from direct worker mode (Worker co-located in TimingManager's process with credit delivery via method calls instead of ZMQ).",
+    )
 
 
 class TransportMetadata(BaseModel):

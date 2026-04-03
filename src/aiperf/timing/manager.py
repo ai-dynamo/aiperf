@@ -22,10 +22,12 @@ from aiperf.common.messages import (
     ProfileConfigureCommand,
 )
 from aiperf.common.models import DatasetMetadata
-from aiperf.credit.sticky_router import StickyCreditRouter
+from aiperf.credit.direct_credit_router import DirectCreditRouter
+from aiperf.credit.sticky_router import CreditRouterProtocol, StickyCreditRouter
 from aiperf.timing.config import TimingConfig
 from aiperf.timing.phase.publisher import PhasePublisher
 from aiperf.timing.phase_orchestrator import PhaseOrchestrator
+from aiperf.workers.worker import Worker
 
 
 class TimingManager(BaseComponentService):
@@ -62,14 +64,25 @@ class TimingManager(BaseComponentService):
         self._dataset_configured_event = asyncio.Event()
         self._dataset_metadata: DatasetMetadata | None = None
 
-        # StickyCreditRouter handles everything: routing, sending, returns,
-        # worker lifecycle. Created early to handle worker connections
-        # immediately, as well as attaching to the lifecycle.
-        self.sticky_router: StickyCreditRouter = StickyCreditRouter(
-            service_config=service_config,
-            service_id=self.service_id,
-        )
-        self.attach_child_lifecycle(self.sticky_router)
+        if self._is_direct_worker_mode(service_config, user_config):
+            # Direct: deliver credits directly to a co-located Worker
+            direct_router = DirectCreditRouter()
+            self._direct_worker = self._create_direct_worker(
+                service_config, user_config
+            )
+            direct_router.attach_worker(self._direct_worker)
+            self.attach_child_lifecycle(self._direct_worker)
+            self.credit_router: CreditRouterProtocol = direct_router
+        else:
+            # Standard: ZMQ-based routing to separate worker processes
+            self._direct_worker = None
+            sticky_router = StickyCreditRouter(
+                service_config=service_config,
+                service_id=self.service_id,
+            )
+            self.attach_child_lifecycle(sticky_router)
+            self.credit_router = sticky_router
+
         self.event_loop_monitor = EventLoopMonitor(self.service_id)
 
         self._phase_orchestrator: PhaseOrchestrator | None = None
@@ -108,7 +121,7 @@ class TimingManager(BaseComponentService):
         self._phase_orchestrator = PhaseOrchestrator(
             config=self.config,
             phase_publisher=self.phase_publisher,
-            credit_router=self.sticky_router,
+            credit_router=self.credit_router,
             dataset_metadata=self._dataset_metadata,
         )
         await self._phase_orchestrator.initialize()
@@ -147,6 +160,34 @@ class TimingManager(BaseComponentService):
             await self._phase_orchestrator.stop()
 
         self.event_loop_monitor.stop()
+
+    @staticmethod
+    def _is_direct_worker_mode(
+        service_config: ServiceConfig, user_config: UserConfig
+    ) -> bool:
+        """Determine whether to use direct worker mode.
+
+        Resolution order:
+        1. CLI flag (--workers-direct / --no-workers-direct) — explicit override
+        2. Endpoint metadata (direct_worker: true in plugins.yaml) — default hint
+        """
+        cli_override = service_config.workers.direct
+        if cli_override is not None:
+            return cli_override
+        try:
+            return user_config._endpoint_metadata().direct_worker
+        except Exception:
+            return False
+
+    def _create_direct_worker(
+        self, service_config: ServiceConfig, user_config: UserConfig
+    ) -> Worker:
+        """Create a Worker co-located in TimingManager's process."""
+        return Worker(
+            service_config=service_config,
+            user_config=user_config,
+            service_id=f"{self.service_id}-worker",
+        )
 
 
 def main() -> None:

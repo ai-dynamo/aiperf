@@ -182,6 +182,13 @@ service_manager:
       as a separate process with ZMQ IPC communication for high-performance local
       execution.
 
+  direct_worker:
+    class: aiperf.controller.direct_worker_service_manager:DirectWorkerServiceManager
+    description: |
+      Direct worker service manager. Extends multiprocessing manager but skips
+      Worker spawning since the Worker is co-located inside TimingManager's
+      process and receives credits via DirectCreditRouter.
+
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -322,6 +329,7 @@ endpoint:
       tokenizes_input: false
       supports_images: true
       requires_inline_media: true
+      direct_worker: true
       metrics_title: Image Retrieval Metrics
 
   nim_embeddings:

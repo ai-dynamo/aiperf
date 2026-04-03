@@ -245,11 +245,11 @@ class TestTimingManagerStartProfilingAndInitialization:
         mgr = create_manager(user_config)
         assert mgr.config.phase_configs[0].timing_mode == TimingMode.REQUEST_RATE
 
-    def test_creates_phase_publisher_and_sticky_router(
+    def test_creates_phase_publisher_and_credit_router(
         self, create_manager, user_config
     ) -> None:
         mgr = create_manager(user_config)
-        assert mgr.phase_publisher is not None and mgr.sticky_router is not None
+        assert mgr.phase_publisher is not None and mgr.credit_router is not None
 
     def test_no_orchestrator_and_event_not_set_initially(
         self, create_manager, user_config
