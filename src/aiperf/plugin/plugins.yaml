@@ -369,6 +369,22 @@ endpoint:
       tokenizes_input: true
       metrics_title: SOLIDO RAG Metrics
 
+  raw:
+    class: aiperf.endpoints.raw_endpoint:RawEndpoint
+    description: |
+      Raw payload endpoint for verbatim API replay. Does not format payloads --
+      use with raw_payload or inputs_json dataset types. Parses responses using
+      auto-detection with optional JMESPath extraction via response_field.
+    metadata:
+      endpoint_path: null
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      supports_audio: true
+      supports_images: true
+      supports_videos: true
+      metrics_title: LLM Metrics
+
   template:
     class: aiperf.endpoints.template_endpoint:TemplateEndpoint
     description: |
@@ -484,6 +500,21 @@ custom_dataset_loader:
       Single-turn dataset loader supporting multi-modal data and client-side
       batching. Supports text, images, audio with optional timestamps or delays.
       Does NOT support multi-turn features.
+
+  raw_payload:
+    class: aiperf.dataset.loader.raw_payload:RawPayloadDatasetLoader
+    description: |
+      Raw payload JSONL loader for verbatim API replay. Each line is a complete
+      API request body sent directly to the transport with zero formatting.
+      Supports single file (one conversation per line) and directory mode
+      (one JSONL file per multi-turn conversation).
+
+  inputs_json:
+    class: aiperf.dataset.loader.inputs_json:InputsJsonPayloadLoader
+    description: |
+      Inputs JSON payload loader for verbatim API replay. Loads AIPerf InputsFile
+      format with pre-formatted payloads. Preserves multi-turn session structure
+      and sends each payload directly to the transport without endpoint formatting.
 
 # =============================================================================
 # Dataset Samplers

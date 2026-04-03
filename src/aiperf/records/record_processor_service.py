@@ -142,6 +142,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
 
         return MetricRecordMetadata(
             credit_issued_ns=record.request_info.credit_issued_ns,
+            credit_received_ns=record.request_info.credit_received_ns,
             request_start_ns=start_time_ns,
             request_ack_ns=request_ack_ns,
             request_end_ns=request_end_ns,

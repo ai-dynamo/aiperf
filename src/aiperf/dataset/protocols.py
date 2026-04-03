@@ -216,3 +216,17 @@ class DatasetClientStoreProtocol(AIPerfLifecycleProtocol, Protocol):
             KeyError: If conversation_id not found
         """
         ...
+
+    async def get_payload_bytes(
+        self, conversation_id: str, turn_index: int
+    ) -> bytes | None:
+        """Retrieve pre-encoded payload bytes for a specific turn.
+
+        Args:
+            conversation_id: The session ID of the conversation
+            turn_index: Turn index within the conversation
+
+        Returns:
+            Pre-encoded JSON bytes or None if not available
+        """
+        ...

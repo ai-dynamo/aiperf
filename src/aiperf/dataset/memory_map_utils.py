@@ -14,6 +14,13 @@ Flow (Kubernetes):
     2. WorkerPodManager downloads compressed files once per pod from control-plane via HTTP API
     3. WorkerPodManager decompresses files locally
     4. Workers read via mmap through MemoryMapDatasetClientStore
+
+Storage formats:
+    - ``conversation``: Each entry is a JSON-serialized Conversation object.
+      Used for normal datasets. Workers deserialize to get full Conversation.
+    - ``payload_bytes``: Each entry is pre-encoded payload bytes (one per turn).
+      Used for verbatim API replay. Workers read bytes directly from mmap
+      and send to transport without deserialization.
 """
 
 import asyncio
@@ -27,10 +34,12 @@ from pathlib import Path
 from typing import Any
 
 import aiofiles
+import orjson
 from pydantic import Field, field_validator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import BYTES_PER_MIB
+from aiperf.common.enums import MemoryMapFormat
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import (
     MemoryMapFileOperationError,
@@ -65,16 +74,18 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
     Writes each conversation immediately — constant memory usage regardless of dataset size.
     Preserves insertion order.
 
+    The storage format is set explicitly via the ``format`` parameter.
+
     Directory Structure (normal mode)::
 
         {base_path}/aiperf_mmap_{benchmark_id}/
-        ├── dataset.dat   # Serialized conversation data (JSON bytes)
+        ├── dataset.dat   # Serialized data (Conversation JSON or raw payload bytes)
         └── index.dat     # Byte offset index for O(1) lookups
 
     Directory Structure (compress_only mode for Kubernetes)::
 
         {base_path}/aiperf_mmap_{benchmark_id}/
-        ├── dataset.dat.zst   # zstd-compressed conversation data
+        ├── dataset.dat.zst   # zstd-compressed data
         └── index.dat.zst     # zstd-compressed index (offsets are for decompressed data)
     """
 
@@ -82,6 +93,7 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         self,
         benchmark_id: str | None = None,
         compress_only: bool = False,
+        format: MemoryMapFormat = MemoryMapFormat.CONVERSATION,
         **kwargs: Any,
     ) -> None:
         """Initialize memory-mapped storage.
@@ -91,11 +103,13 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             compress_only: If True, stream directly to compressed files without creating
                 uncompressed versions. Use for Kubernetes where DatasetManager doesn't need
                 local mmap access. Workers decompress after download.
+            format: Storage format for the dataset files.
             **kwargs: Additional configuration (unused for local mmap)
         """
         super().__init__()
         self._finalized = False
         self._compress_only = compress_only
+        self._format: MemoryMapFormat = format
 
         # Streaming state (one of _data_file or _stream_writer+_raw_data_file is active)
         self._data_file = None
@@ -103,18 +117,18 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         self._stream_writer = None
         self._current_offset = 0
         self._offsets: dict[str, ConversationOffset] = {}
+        self._payload_offsets: dict[str, list[PayloadOffset]] = {}
         self._session_ids: list[str] = []  # Maintain insertion order
 
-        # File paths (configurable base path for k8s mounted volumes)
-        # Directory structure: {base_path}/aiperf_mmap_{benchmark_id}/
+        # File paths point to actual files written:
+        # compress_only=True  -> .dat.zst (k8s workers decompress after download)
+        # compress_only=False -> .dat    (local mmap access)
         base_path = Environment.DATASET.MMAP_BASE_PATH or Path(tempfile.gettempdir())
         dir_suffix = benchmark_id or f"{os.getpid()}_{id(self)}"
         mmap_dir = base_path / f"aiperf_mmap_{dir_suffix}"
-        self._data_path: Path = mmap_dir / "dataset.dat"
-        self._index_path: Path = mmap_dir / "index.dat"
-        # Pre-compressed files for Kubernetes HTTP transfer
-        self._compressed_data_path: Path = mmap_dir / "dataset.dat.zst"
-        self._compressed_index_path: Path = mmap_dir / "index.dat.zst"
+        ext = ".dat.zst" if compress_only else ".dat"
+        self._data_path: Path = mmap_dir / f"dataset{ext}"
+        self._index_path: Path = mmap_dir / f"index{ext}"
         self._compressed_size: int = 0
 
     @on_init
@@ -125,17 +139,24 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         if self._compress_only:
             zstd = _import_zstandard()
             compressor = zstd.ZstdCompressor(level=Environment.COMPRESSION.ZSTD_LEVEL)
-            self._raw_data_file = self._compressed_data_path.open("wb")
+            self._raw_data_file = self._data_path.open("wb")
             self._stream_writer = compressor.stream_writer(self._raw_data_file)
             self.info(
                 f"Memory-mapped backing store initialized in compress_only mode "
-                f"(streaming to {self._compressed_data_path})"
+                f"(streaming to {self._data_path})"
             )
         else:
             self._data_file = await aiofiles.open(self._data_path, "wb")
             self.info(
                 f"Memory-mapped backing store initialized (streaming to {self._data_path})"
             )
+
+    async def _write_bytes(self, data: bytes) -> None:
+        """Write bytes to the active output (compressed stream or async file)."""
+        if self._compress_only:
+            self._stream_writer.write(data)
+        else:
+            await self._data_file.write(data)
 
     async def add_conversation(
         self, conversation_id: str, conversation: Conversation
@@ -152,20 +173,25 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         if self._finalized:
             raise RuntimeError("Cannot add conversations after finalization")
 
-        conv_bytes = conversation.model_dump_json().encode("utf-8")
-
-        if self._compress_only:
-            # Write to zstd streaming compressor (sync I/O, but fast)
-            self._stream_writer.write(conv_bytes)
+        if self._format == MemoryMapFormat.PAYLOAD_BYTES:
+            turn_offsets: list[PayloadOffset] = []
+            for turn in conversation.turns:
+                payload_bytes = orjson.dumps(turn.raw_payload)
+                turn_offsets.append(
+                    PayloadOffset(offset=self._current_offset, size=len(payload_bytes))
+                )
+                self._current_offset += len(payload_bytes)
+                await self._write_bytes(payload_bytes)
+            self._payload_offsets[conversation_id] = turn_offsets
         else:
-            await self._data_file.write(conv_bytes)
+            conv_bytes = conversation.model_dump_json().encode("utf-8")
+            self._offsets[conversation_id] = ConversationOffset(
+                offset=self._current_offset, size=len(conv_bytes)
+            )
+            self._current_offset += len(conv_bytes)
+            await self._write_bytes(conv_bytes)
 
-        # Track uncompressed offset (workers need this after decompression)
-        self._offsets[conversation_id] = ConversationOffset(
-            offset=self._current_offset, size=len(conv_bytes)
-        )
         self._session_ids.append(conversation_id)
-        self._current_offset += len(conv_bytes)
 
         if len(self._session_ids) % 1000 == 0:
             self.debug(
@@ -196,8 +222,10 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             raise RuntimeError("Already finalized")
 
         index = MemoryMapDatasetIndex(
+            format=self._format,
             conversation_ids=self._session_ids,
             offsets=self._offsets,
+            payload_offsets=self._payload_offsets,
             total_size=self._current_offset,
         )
         index_bytes = index.model_dump_json(by_alias=True).encode("utf-8")
@@ -211,10 +239,19 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
 
     async def _finalize_compressed(self, index_bytes: bytes) -> None:
         """Close zstd stream and write compressed index."""
-        self._stream_writer.close()
-        self._raw_data_file.close()
-        compressed_data_size = self._compressed_data_path.stat().st_size
 
+        def _compress_sync() -> None:
+            self._stream_writer.close()
+            self._raw_data_file.close()
+
+            zstd = _import_zstandard()
+            compressor = zstd.ZstdCompressor(level=Environment.COMPRESSION.ZSTD_LEVEL)
+            compressed_index = compressor.compress(index_bytes)
+            self._index_path.write_bytes(compressed_index)
+
+        await asyncio.to_thread(_compress_sync)
+
+        compressed_data_size = self._data_path.stat().st_size
         self.info(
             f"Compressed data file finalized: {len(self._session_ids)} conversations, "
             f"{self._current_offset / BYTES_PER_MIB:,.2f} MB uncompressed -> "
@@ -222,13 +259,8 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             f"({compressed_data_size / self._current_offset * 100 if self._current_offset > 0 else 0:.1f}%)"
         )
 
-        zstd = _import_zstandard()
-        compressor = zstd.ZstdCompressor(level=Environment.COMPRESSION.ZSTD_LEVEL)
-        compressed_index = compressor.compress(index_bytes)
-        self._compressed_index_path.write_bytes(compressed_index)
-
         self._compressed_size = compressed_data_size
-        self.info(f"Compressed index file created: {self._compressed_index_path}")
+        self.info(f"Compressed index file created: {self._index_path}")
 
     async def _finalize_uncompressed(self, index_bytes: bytes) -> None:
         """Close data file and write uncompressed index."""
@@ -257,14 +289,14 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             )
 
         return MemoryMapClientMetadata(
+            format=self._format,
             data_file_path=self._data_path,
             index_file_path=self._index_path,
             conversation_count=len(self._session_ids),
             total_size_bytes=self._current_offset,
-            compressed_data_file_path=self._compressed_data_path if self._compress_only else None,
-            compressed_index_file_path=self._compressed_index_path if self._compress_only else None,
+            compressed=self._compress_only,
             compressed_size_bytes=self._compressed_size if self._compress_only else 0,
-        )  # fmt: skip
+        )
 
     @on_stop
     async def _cleanup(self) -> None:
@@ -278,12 +310,7 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         if self._data_file is not None and not self._data_file.closed:
             await self._data_file.close()
 
-        for path in [
-            self._data_path,
-            self._index_path,
-            self._compressed_data_path,
-            self._compressed_index_path,
-        ]:
+        for path in [self._data_path, self._index_path]:
             if path.exists():
                 try:
                     path.unlink()
@@ -319,7 +346,10 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
         self.debug(
             lambda: f"Opening memory-mapped files: data={self._data_path}, index={self._index_path}"
         )
-        self._client = MemoryMapDatasetClient(self._data_path, self._index_path)
+        self._client = MemoryMapDatasetClient(
+            self._data_path,
+            self._index_path,
+        )
         self.debug(
             lambda: f"Memory-mapped client store initialized with "
             f"{len(self._client.index.conversation_ids)} conversations"
@@ -345,6 +375,24 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
             None, self._client.get_conversation, conversation_id
         )
 
+    async def get_payload_bytes(
+        self, conversation_id: str, turn_index: int
+    ) -> bytes | None:
+        """Retrieve pre-encoded payload bytes for a specific turn.
+
+        Args:
+            conversation_id: The session ID of the conversation
+            turn_index: Turn index within the conversation
+
+        Returns:
+            Pre-encoded JSON bytes or None if not available
+        """
+        if self._client is None or self._loop is None:
+            raise RuntimeError("Client store not initialized. Call initialize() first.")
+        return await self._loop.run_in_executor(
+            None, self._client.get_payload_bytes, conversation_id, turn_index
+        )
+
     @on_stop
     async def _cleanup(self) -> None:
         """Close memory-mapped files."""
@@ -361,18 +409,37 @@ class ConversationOffset(AIPerfBaseModel):
     size: int = Field(ge=0, description="Size of the conversation data in bytes")
 
 
+class PayloadOffset(AIPerfBaseModel):
+    """Offset information for a single turn's payload in the data file."""
+
+    offset: int = Field(
+        description="Byte offset where payload data starts (-1 if no payload)"
+    )
+    size: int = Field(ge=0, description="Size of the payload data in bytes")
+
+
 class MemoryMapDatasetIndex(AIPerfBaseModel):
     """Index structure for the memory-mapped dataset.
 
     All data is stored as uncompressed JSON bytes serialized with orjson.
     """
 
+    format: MemoryMapFormat = Field(
+        default=MemoryMapFormat.CONVERSATION,
+        description="Storage format: 'conversation' for serialized Conversations, "
+        "'payload_bytes' for pre-encoded per-turn payload bytes.",
+    )
     conversation_ids: list[str] = Field(
         default_factory=list, description="List of all conversation IDs in the dataset"
     )
     offsets: dict[str, ConversationOffset] = Field(
         default_factory=dict,
         description="Mapping of conversation IDs to their byte offsets and sizes",
+    )
+    payload_offsets: dict[str, list[PayloadOffset]] = Field(
+        default_factory=dict,
+        description="Mapping of conversation IDs to per-turn payload offsets. "
+        "Used when format is 'payload_bytes'.",
     )
     total_size: int = Field(
         default=0, ge=0, description="Total size of the serialized dataset in bytes"
@@ -393,7 +460,11 @@ class MemoryMapDatasetClient:
     Use as context manager or call close() explicitly.
     """
 
-    def __init__(self, data_file_path: Path | str, index_file_path: Path | str) -> None:
+    def __init__(
+        self,
+        data_file_path: Path | str,
+        index_file_path: Path | str,
+    ) -> None:
         """Open memory-mapped files and load the index.
 
         Args:
@@ -444,8 +515,6 @@ class MemoryMapDatasetClient:
             raise MemoryMapSerializationError(f"Invalid index data: {e}") from e
 
         # Safety net: closes resources when object is garbage collected if close() wasn't called.
-        # weakref.finalize holds a weak ref to self, and the callback receives the resources
-        # as args (not self) so cleanup can run even after self is gone.
         self._finalizer = weakref.finalize(
             self,
             self._cleanup_finalizer,
@@ -456,7 +525,7 @@ class MemoryMapDatasetClient:
         )
 
         _logger.debug(
-            lambda: f"MemoryMapDatasetClient initialized successfully: data_file={self.data_file_path}, index_file={self.index_file_path}, conversations={len(self.index.conversation_ids)}, size={self.index.total_size} bytes"
+            lambda: f"MemoryMapDatasetClient initialized successfully: data_file={self.data_file_path}, index_file={self.index_file_path}, conversations={len(self.index.conversation_ids)}, size={self.index.total_size} bytes, format={self.index.format}"
         )
 
     def __enter__(self) -> "MemoryMapDatasetClient":
@@ -472,7 +541,12 @@ class MemoryMapDatasetClient:
         """Context manager exit with automatic cleanup."""
         self.close()
 
-    _RESOURCE_ATTRS = ("data_mmap", "index_mmap", "data_file", "index_file")
+    _RESOURCE_ATTRS = (
+        "data_mmap",
+        "index_mmap",
+        "data_file",
+        "index_file",
+    )
 
     @staticmethod
     def _cleanup_finalizer(
@@ -526,15 +600,23 @@ class MemoryMapDatasetClient:
         Raises:
             KeyError: If conversation_id is not found
             MemoryMapSerializationError: If conversation data is corrupted
+                or format is payload_bytes
         """
+        if self.index.format == MemoryMapFormat.PAYLOAD_BYTES:
+            raise MemoryMapSerializationError(
+                f"Cannot retrieve Conversation '{conversation_id}' in payload_bytes format. "
+                "Use get_payload_bytes() instead."
+            )
+
         if conversation_id not in self.index.offsets:
             raise KeyError(f"Conversation '{conversation_id}' not found in dataset")
 
         offset_info = self.index.offsets[conversation_id]
 
         try:
-            self.data_mmap.seek(offset_info.offset)
-            conv_bytes = self.data_mmap.read(offset_info.size)
+            conv_bytes = self.data_mmap[
+                offset_info.offset : offset_info.offset + offset_info.size
+            ]
 
             _logger.debug(
                 lambda: f"Loading conversation '{conversation_id}': offset={offset_info.offset}, size={offset_info.size} bytes"
@@ -547,6 +629,30 @@ class MemoryMapDatasetClient:
                 f"Failed to load conversation '{conversation_id}' from {self.data_file_path}: {e}"
             )
             raise
+
+    def get_payload_bytes(self, conversation_id: str, turn_index: int) -> bytes | None:
+        """Get pre-encoded payload bytes for a specific turn.
+
+        Returns bytes directly from the mmap -- zero deserialization overhead.
+
+        Args:
+            conversation_id: Conversation ID
+            turn_index: Turn index within the conversation
+
+        Returns:
+            Pre-encoded JSON bytes or None if not available
+        """
+        if self.index.format != MemoryMapFormat.PAYLOAD_BYTES:
+            return None
+        turn_offsets = self.index.payload_offsets.get(conversation_id)
+        if turn_offsets is None or turn_index >= len(turn_offsets):
+            return None
+        offset_info = turn_offsets[turn_index]
+        if offset_info.offset < 0:
+            return None
+        return bytes(
+            self.data_mmap[offset_info.offset : offset_info.offset + offset_info.size]
+        )
 
     def close(self) -> None:
         """Close the memory-mapped files and associated resources.

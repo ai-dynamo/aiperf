@@ -91,6 +91,8 @@ Request 3: sends Turn 3 as-is
 Each turn is sent exactly as it appears in the dataset.
 
 Default for:
+- [Raw payload replay](../tutorials/raw-payload-replay.md) (pre-built API request bodies)
+- [Inputs JSON replay](../tutorials/inputs-json-replay.md) (pre-formatted multi-turn payloads)
 - Mooncake traces with pre-built `messages` arrays
 
 ### `message_array_without_responses`

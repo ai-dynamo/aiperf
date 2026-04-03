@@ -7,23 +7,19 @@ from pathlib import Path
 from typing import Any
 
 import jinja2
-import jmespath
 import orjson
 
 from aiperf.common.exceptions import InvalidStateError
-from aiperf.common.models import (
-    InferenceServerResponse,
-    ParsedResponse,
-    RequestInfo,
-)
+from aiperf.common.models import RequestInfo
 from aiperf.endpoints.base_endpoint import BaseEndpoint
+from aiperf.endpoints.response_mixin import JMESPathResponseMixin
 
 NAMED_TEMPLATES: dict[str, str] = {
     "nv-embedqa": '{"text": {{ texts|tojson }}}',
 }
 
 
-class TemplateEndpoint(BaseEndpoint):
+class TemplateEndpoint(JMESPathResponseMixin, BaseEndpoint):
     """Custom template endpoint using Jinja2 for payload formatting.
 
     Allows users to define custom request payload formats using Jinja2 templates.
@@ -59,16 +55,7 @@ class TemplateEndpoint(BaseEndpoint):
         )
         self.info(f"Compiled template ({len(template_source)} chars)")
 
-        response_field = extra_dict.get("response_field")
-        self._compiled_jmespath = None
-        if response_field:
-            try:
-                self._compiled_jmespath = jmespath.compile(response_field)
-                self.info(f"Compiled JMESPath query: '{response_field}'")
-            except jmespath.exceptions.JMESPathError as e:
-                self.error(
-                    f"Failed to compile JMESPath query: '{response_field}' - {e!r}"
-                )
+        self._init_response_parser()
 
         self._extra_fields = {
             k: v
@@ -139,39 +126,3 @@ class TemplateEndpoint(BaseEndpoint):
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
-
-    def parse_response(
-        self, response: InferenceServerResponse
-    ) -> ParsedResponse | None:
-        """Parse template response with auto-detection or custom JMESPath query.
-
-        Args:
-            response: Raw response from inference server
-
-        Returns:
-            Parsed response with auto-detected type (text, embeddings, rankings)
-        """
-        json_obj = response.get_json()
-        if not json_obj:
-            if text := response.get_text():
-                return ParsedResponse(
-                    perf_ns=response.perf_ns, data=self.make_text_response_data(text)
-                )
-            return None
-
-        response_data = None
-        if self._compiled_jmespath:
-            try:
-                if value := self._compiled_jmespath.search(json_obj):
-                    response_data = self.convert_to_response_data(value)
-            except (jmespath.exceptions.JMESPathError, TypeError) as e:
-                self.warning(f"JMESPath search failed: {e!r}. Trying auto-detection.")
-
-        if not response_data:
-            response_data = self.auto_detect_and_extract(json_obj)
-
-        return (
-            ParsedResponse(perf_ns=response.perf_ns, data=response_data)
-            if response_data
-            else None
-        )

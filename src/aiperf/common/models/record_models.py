@@ -112,6 +112,11 @@ class MetricRecordMetadata(AIPerfBaseModel):
         description="Wall clock timestamp (time.time_ns) when the credit was issued by the rate limiter. "
         "This is the control point for accurate rate measurement, before ZeroMQ transit to workers.",
     )
+    credit_received_ns: int | None = Field(
+        default=None,
+        description="Wall clock timestamp (time.time_ns) when the worker received the credit. "
+        "credit_received_ns - credit_issued_ns = ZMQ transit time (same clock domain).",
+    )
     request_start_ns: int = Field(
         ...,
         description="The wall clock timestamp of the request start time measured as time.time_ns().",
@@ -521,6 +526,12 @@ class RequestInfo(AIPerfBaseModel):
         description="Wall clock timestamp (time.time_ns) when the credit was issued by the rate limiter. "
         "This is the control point for accurate rate measurement, before ZeroMQ transit to workers.",
     )
+    credit_received_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Wall clock timestamp (time.time_ns) when the worker received the credit. "
+        "credit_received_ns - credit_issued_ns = ZMQ transit time (same clock domain).",
+    )
     is_final_turn: bool = Field(
         default=True,
         description="Whether this is the final turn in the conversation. "
@@ -531,6 +542,11 @@ class RequestInfo(AIPerfBaseModel):
         ge=0,
         description="Index of the URL to use when multiple --url values are configured. "
         "None means use the default (first) URL. Used for round-robin load balancing.",
+    )
+    payload_bytes: bytes | None = Field(
+        default=None,
+        exclude=True,
+        description="Pre-encoded payload bytes from payload mmap. Bypasses all serialization.",
     )
 
 

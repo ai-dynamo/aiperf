@@ -242,6 +242,30 @@ class TestInferenceClient:
         with pytest.raises(ValueError, match="no turns"):
             await inference_client.send_request(request_info)
 
+    @pytest.mark.asyncio
+    async def test_send_request_allows_empty_turns_with_payload_bytes(
+        self, inference_client
+    ):
+        """Empty turns must be accepted when payload_bytes provides the pre-built body."""
+        request_info = RequestInfo(
+            model_endpoint=inference_client.model_endpoint,
+            turns=[],
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="test-id",
+            x_correlation_id="test-corr",
+            conversation_id="test-conv",
+            payload_bytes=b'{"model":"test","messages":[]}',
+        )
+
+        inference_client.transport.send_request = AsyncMock(
+            return_value=RequestRecord(request_info=request_info)
+        )
+
+        record = await inference_client.send_request(request_info)
+        assert record is not None
+
     def test_enrich_request_record_uses_last_turn_model(self, inference_client):
         """Test _enrich_request_record uses turns[-1] not turns[turn_index].
 
@@ -276,3 +300,63 @@ class TestInferenceClient:
         )
 
         assert result.model_name == "standalone-model"
+
+    @pytest.mark.asyncio
+    async def test_send_request_uses_payload_bytes_when_set(
+        self, inference_client, sample_request_info, sample_request_record
+    ):
+        """Test that payload_bytes bypasses endpoint.format_payload."""
+        request_info = sample_request_info
+        request_info.payload_bytes = (
+            b'{"messages": [{"role": "user", "content": "raw"}]}'
+        )
+
+        inference_client.transport.send_request = AsyncMock(
+            return_value=sample_request_record
+        )
+
+        await inference_client.send_request(request_info)
+
+        # format_payload should NOT be called when payload_bytes is set
+        inference_client.endpoint.format_payload.assert_not_called()
+        call_args = inference_client.transport.send_request.call_args
+        assert call_args.kwargs["payload"] == request_info.payload_bytes
+
+    @pytest.mark.asyncio
+    async def test_send_request_uses_raw_payload_from_turn(
+        self, inference_client, sample_request_info, sample_request_record
+    ):
+        """Test that raw_payload on turn bypasses endpoint.format_payload."""
+        from aiperf.common.models import Text, Turn
+
+        raw = {"messages": [{"role": "user", "content": "raw turn"}], "model": "x"}
+        request_info = sample_request_info
+        request_info.turns = [
+            Turn(role="user", raw_payload=raw, texts=[Text(contents=["x"])])
+        ]
+        request_info.turn_index = 0
+
+        inference_client.transport.send_request = AsyncMock(
+            return_value=sample_request_record
+        )
+
+        await inference_client.send_request(request_info)
+
+        inference_client.endpoint.format_payload.assert_not_called()
+        call_args = inference_client.transport.send_request.call_args
+        assert call_args.kwargs["payload"] == raw
+
+    @pytest.mark.asyncio
+    async def test_enrich_handles_empty_turns(
+        self, inference_client, sample_request_info, sample_request_record
+    ):
+        """Test that _enrich_request_record handles turn_index >= len(turns)."""
+        request_info = sample_request_info
+        request_info.turns = []
+        request_info.turn_index = 0
+
+        record = sample_request_record
+        enriched = inference_client._enrich_request_record(
+            record=record, request_info=request_info
+        )
+        assert enriched.model_name == "test-model"

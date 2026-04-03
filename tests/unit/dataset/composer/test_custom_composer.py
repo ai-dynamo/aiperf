@@ -6,7 +6,7 @@ from unittest.mock import Mock, mock_open, patch
 import pytest
 
 from aiperf.common.config import SynthesisConfig
-from aiperf.common.models import Conversation, Turn
+from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.composer.custom import CustomDatasetComposer
 from aiperf.dataset.loader import (
     MooncakeTraceDatasetLoader,
@@ -285,3 +285,173 @@ class TestSynthesisValidation:
 
         # Should not raise - max_isl doesn't trigger should_synthesize()
         composer._validate_synthesis_config(CustomDatasetType.SINGLE_TURN)
+
+
+class TestPreformatPayloads:
+    """Test class for CustomDatasetComposer._preformat_payloads."""
+
+    def test_preformat_sets_raw_payload_on_turns(self, custom_config, mock_tokenizer):
+        """Test that _preformat_payloads populates raw_payload on each turn."""
+        conversations = [
+            Conversation(
+                session_id="s1",
+                turns=[
+                    Turn(role="user", texts=[Text(contents=["hi"])]),
+                ],
+            ),
+            Conversation(
+                session_id="s2",
+                turns=[
+                    Turn(role="user", texts=[Text(contents=["bye"])]),
+                ],
+            ),
+        ]
+
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+
+        with patch(
+            "aiperf.dataset.composer.custom.format_conversation_payloads"
+        ) as mock_fmt:
+            mock_fmt.return_value = iter(
+                [
+                    (
+                        "s1",
+                        0,
+                        {"model": "m", "messages": [{"role": "user", "content": "hi"}]},
+                    ),
+                    (
+                        "s2",
+                        0,
+                        {
+                            "model": "m",
+                            "messages": [{"role": "user", "content": "bye"}],
+                        },
+                    ),
+                ]
+            )
+            composer._preformat_payloads(conversations)
+
+        assert conversations[0].turns[0].raw_payload == {
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+        assert conversations[1].turns[0].raw_payload == {
+            "model": "m",
+            "messages": [{"role": "user", "content": "bye"}],
+        }
+
+    def test_preformat_skips_on_not_implemented(self, custom_config, mock_tokenizer):
+        """Test that _preformat_payloads gracefully skips when endpoint raises NotImplementedError."""
+        conversations = [
+            Conversation(
+                session_id="s1",
+                turns=[
+                    Turn(role="user", texts=[Text(contents=["hi"])]),
+                ],
+            ),
+        ]
+
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+
+        with patch(
+            "aiperf.dataset.composer.custom.format_conversation_payloads"
+        ) as mock_fmt:
+            mock_fmt.return_value = Mock(__iter__=Mock(side_effect=NotImplementedError))
+            composer._preformat_payloads(conversations)
+
+        assert conversations[0].turns[0].raw_payload is None
+
+    def test_preformat_multi_turn_conversation(self, custom_config, mock_tokenizer):
+        """Test that _preformat_payloads handles multi-turn conversations correctly."""
+        conversations = [
+            Conversation(
+                session_id="s1",
+                turns=[
+                    Turn(role="user", texts=[Text(contents=["hello"])]),
+                    Turn(role="user", texts=[Text(contents=["world"])]),
+                ],
+            ),
+        ]
+
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+
+        with patch(
+            "aiperf.dataset.composer.custom.format_conversation_payloads"
+        ) as mock_fmt:
+            mock_fmt.return_value = iter(
+                [
+                    ("s1", 0, {"turn": 0}),
+                    ("s1", 1, {"turn": 1}),
+                ]
+            )
+            composer._preformat_payloads(conversations)
+
+        assert conversations[0].turns[0].raw_payload == {"turn": 0}
+        assert conversations[0].turns[1].raw_payload == {"turn": 1}
+
+    @pytest.mark.parametrize(
+        "dataset_type",
+        [CustomDatasetType.SINGLE_TURN, CustomDatasetType.RANDOM_POOL],
+    )
+    @patch("aiperf.dataset.composer.custom.check_file_exists")
+    @patch("aiperf.dataset.composer.custom.plugins.get_class")
+    def test_create_dataset_calls_preformat_for_single_turn_types(
+        self,
+        mock_get_class,
+        mock_check_file,
+        custom_config,
+        mock_tokenizer,
+        dataset_type,
+    ):
+        """Test that create_dataset calls _preformat_payloads for single-turn dataset types."""
+        mock_check_file.return_value = None
+        mock_loader = Mock()
+        mock_loader.load_dataset.return_value = {}
+        mock_loader.convert_to_conversations.return_value = [
+            Conversation(
+                session_id="s1",
+                turns=[Turn(role="user", texts=[Text(contents=["hi"])])],
+            ),
+        ]
+        mock_loader_class = Mock()
+        mock_loader_class.return_value = mock_loader
+        mock_loader_class.get_preferred_sampling_strategy.return_value = (
+            DatasetSamplingStrategy.SEQUENTIAL
+        )
+        mock_get_class.return_value = mock_loader_class
+
+        custom_config.input.custom_dataset_type = dataset_type
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+
+        with patch.object(composer, "_preformat_payloads") as mock_preformat:
+            composer.create_dataset()
+            mock_preformat.assert_called_once()
+
+    @patch("aiperf.dataset.composer.custom.check_file_exists")
+    @patch("aiperf.dataset.composer.custom.plugins.get_class")
+    def test_create_dataset_skips_preformat_for_multi_turn(
+        self, mock_get_class, mock_check_file, custom_config, mock_tokenizer
+    ):
+        """Test that create_dataset does NOT call _preformat_payloads for multi-turn datasets."""
+        mock_check_file.return_value = None
+        mock_loader = Mock()
+        mock_loader.load_dataset.return_value = {}
+        mock_loader.convert_to_conversations.return_value = [
+            Conversation(
+                session_id="s1",
+                turns=[Turn(role="user", texts=[Text(contents=["hi"])])],
+            ),
+        ]
+        mock_loader_class = Mock()
+        mock_loader_class.return_value = mock_loader
+        mock_loader_class.get_preferred_sampling_strategy.return_value = (
+            DatasetSamplingStrategy.SEQUENTIAL
+        )
+        mock_get_class.return_value = mock_loader_class
+
+        custom_config.input.custom_dataset_type = CustomDatasetType.MULTI_TURN
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+
+        with patch.object(composer, "_preformat_payloads") as mock_preformat:
+            composer.create_dataset()
+            mock_preformat.assert_not_called()

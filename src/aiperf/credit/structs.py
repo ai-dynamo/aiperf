@@ -60,6 +60,7 @@ class CreditContext(
     Attributes:
         credit: The credit being processed.
         drop_perf_ns: The performance timestamp when the credit was dropped.
+        credit_received_ns: Wall clock timestamp (time.time_ns) when the worker received the credit.
         cancelled: True if the credit was cancelled before completion.
         returned: True if the credit was returned after completion.
         first_token_sent: True if the first token was sent before this return.
@@ -68,6 +69,7 @@ class CreditContext(
 
     credit: Credit
     drop_perf_ns: int
+    credit_received_ns: int = 0
     cancelled: bool = False
     returned: bool = False
     first_token_sent: bool = False

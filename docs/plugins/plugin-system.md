@@ -379,6 +379,7 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `nim_embeddings` | `NIMEmbeddingsEndpoint` | NVIDIA NIM Embeddings |
 | `nim_rankings` | `NIMRankingsEndpoint` | NVIDIA NIM Rankings |
 | `solido_rag` | `SolidoEndpoint` | Solido RAG Pipeline |
+| `raw` | `RawEndpoint` | Raw payload passthrough for verbatim API replay |
 | `template` | `TemplateEndpoint` | Template for custom endpoints |
 | `video_generation` | `VideoGenerationEndpoint` | Text-to-video generation API |
 

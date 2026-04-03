@@ -7,7 +7,7 @@ from typing import Any, ClassVar
 
 from pydantic import Field, field_validator
 
-from aiperf.common.enums import ConversationContextMode, MediaType
+from aiperf.common.enums import ConversationContextMode, MediaType, MemoryMapFormat
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.types import MediaTypeT
 from aiperf.plugin.enums import DatasetClientStoreType, DatasetSamplingStrategy
@@ -37,13 +37,17 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
 
     client_type: DatasetClientStoreType = DatasetClientStoreType.MEMORY_MAP
 
+    format: MemoryMapFormat = Field(
+        default=MemoryMapFormat.CONVERSATION,
+        description="Storage format of the memory-mapped dataset files.",
+    )
     data_file_path: Path = Field(
         ...,
-        description="Path to the memory-mapped data file containing serialized conversations.",
+        description="Path to the data file. Points to dataset.dat (local) or dataset.dat.zst (k8s).",
     )
     index_file_path: Path = Field(
         ...,
-        description="Path to the memory-mapped index file for O(1) conversation lookups.",
+        description="Path to the index file. Points to index.dat (local) or index.dat.zst (k8s).",
     )
     conversation_count: int = Field(
         default=0,
@@ -51,20 +55,15 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
     )
     total_size_bytes: int = Field(
         default=0,
-        description="Total size of the data file in bytes.",
+        description="Total uncompressed size of the data file in bytes.",
     )
-    # Pre-compressed files for Kubernetes HTTP transfer (optional)
-    compressed_data_file_path: Path | None = Field(
-        default=None,
-        description="Path to zstd-compressed data file for HTTP transfer (K8s only).",
-    )
-    compressed_index_file_path: Path | None = Field(
-        default=None,
-        description="Path to zstd-compressed index file for HTTP transfer (K8s only).",
+    compressed: bool = Field(
+        default=False,
+        description="Whether data/index files are zstd-compressed (k8s compress_only mode).",
     )
     compressed_size_bytes: int = Field(
         default=0,
-        description="Total size of the compressed data file in bytes.",
+        description="Size of the compressed data file in bytes. 0 when not compressed.",
     )
 
 
@@ -158,6 +157,12 @@ class Turn(AIPerfBaseModel):
     videos: list[Video] = Field(
         default=[], description="Collection of video data in each turn."
     )
+    raw_payload: dict[str, Any] | None = Field(
+        default=None,
+        description="Complete pre-built API request payload for verbatim replay. "
+        "When set, bypasses all endpoint payload construction (format_payload) "
+        "and sends this dict directly to the transport.",
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -209,6 +214,7 @@ class Turn(AIPerfBaseModel):
                 )
                 for vid in self.videos
             ],
+            raw_payload=None,
         )
 
 

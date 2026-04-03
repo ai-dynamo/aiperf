@@ -236,6 +236,16 @@ class LifecycleState(CaseInsensitiveStrEnum):
     FAILED = "failed"
 
 
+class MemoryMapFormat(CaseInsensitiveStrEnum):
+    """Storage format for memory-mapped dataset files."""
+
+    CONVERSATION = "conversation"
+    """Each entry is a JSON-serialized Conversation object."""
+
+    PAYLOAD_BYTES = "payload_bytes"
+    """Each entry is pre-encoded payload bytes for verbatim API replay."""
+
+
 class MediaType(CaseInsensitiveStrEnum):
     """The various types of media (e.g. text, image, audio, video)."""
 

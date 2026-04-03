@@ -149,6 +149,9 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Reproducibility](docs/reproducibility.md) - Deterministic datasets with `--random-seed`
 - [Template Endpoint](docs/tutorials/template-endpoint.md) - Custom Jinja2 request templates
 - [Multi-Turn Conversations](docs/tutorials/multi-turn.md) - Multi-turn conversation benchmarking
+- [Conversation Context Mode](docs/reference/conversation-context-mode.md) - Control how conversation history accumulates
+- [Raw Payload Replay](docs/tutorials/raw-payload-replay.md) - Replay pre-built API request bodies verbatim
+- [Inputs JSON Replay](docs/tutorials/inputs-json-replay.md) - Replay multi-turn sessions from inputs.json format
 - [Local Tokenizer](docs/tutorials/local-tokenizer.md) - Use local tokenizers without HuggingFace
 
 ### Endpoint Types

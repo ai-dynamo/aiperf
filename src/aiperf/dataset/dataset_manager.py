@@ -19,8 +19,8 @@ from aiperf.common.enums import (
     CommAddress,
     CommandType,
     ConversationContextMode,
-    CreditPhase,
     ImageFormat,
+    MemoryMapFormat,
     MessageType,
 )
 from aiperf.common.environment import Environment
@@ -40,7 +40,6 @@ from aiperf.common.models import (
     DatasetMetadata,
     InputsFile,
     ModelEndpointInfo,
-    RequestInfo,
     SessionPayloads,
 )
 from aiperf.common.tokenizer import Tokenizer
@@ -60,7 +59,6 @@ if TYPE_CHECKING:
         DatasetBackingStoreProtocol,
         DatasetClientStoreProtocol,
     )
-    from aiperf.endpoints.protocols import EndpointProtocol
     from aiperf.plugin.schema.schemas import EndpointMetadata
 
 
@@ -107,13 +105,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             service_config.service_run_type == ServiceRunType.KUBERNETES
         )
 
-        BackingStoreClass = plugins.get_class(
-            PluginType.DATASET_BACKING_STORE, DatasetBackingStoreType.MEMORY_MAP
-        )
-        self._backing_store: DatasetBackingStoreProtocol = BackingStoreClass(
-            benchmark_id=user_config.benchmark_id,
-            compress_only=self._compress_only,
-        )
+        self._backing_store: DatasetBackingStoreProtocol | None = None
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._default_context_mode: ConversationContextMode | None = None
 
@@ -288,39 +280,31 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     ) -> InputsFile:
         """Generate input payloads from the dataset for use in the inputs.json file."""
         inputs = InputsFile()
-
-        EndpointClass = plugins.get_class(
-            PluginType.ENDPOINT, model_endpoint.endpoint.type
-        )
-        endpoint: EndpointProtocol = EndpointClass(model_endpoint=model_endpoint)
-        self.debug(
-            lambda: f"Created endpoint protocol for {model_endpoint.endpoint.type}, "
-            f"class: {endpoint.__class__.__name__}",
-        )
         session_payloads_map: dict[str, list] = {}
-        for conversation in self.dataset.values():
-            session_id = conversation.session_id
-            if session_id not in session_payloads_map:
-                session_payloads_map[session_id] = []
 
-            for i, turn in enumerate(conversation.turns):
-                request_info = RequestInfo(
-                    model_endpoint=model_endpoint,
-                    turns=[turn],
-                    turn_index=i,
-                    credit_num=i,
-                    credit_phase=CreditPhase.PROFILING,
-                    x_request_id="",
-                    x_correlation_id="",
-                    conversation_id=conversation.session_id,
-                )
-                request_info.endpoint_headers = endpoint.get_endpoint_headers(
-                    request_info
-                )
-                request_info.endpoint_params = endpoint.get_endpoint_params(
-                    request_info
-                )
-                payload = endpoint.format_payload(request_info)
+        has_raw_payloads = any(
+            turn.raw_payload is not None
+            for conv in self.dataset.values()
+            for turn in conv.turns
+        )
+
+        if has_raw_payloads:
+            for conversation in self.dataset.values():
+                payloads = [
+                    turn.raw_payload
+                    for turn in conversation.turns
+                    if turn.raw_payload is not None
+                ]
+                if payloads:
+                    session_payloads_map[conversation.session_id] = payloads
+        else:
+            from aiperf.dataset.payload_formatting import format_conversation_payloads
+
+            for session_id, _turn_idx, payload in format_conversation_payloads(
+                self.dataset.values(), model_endpoint
+            ):
+                if session_id not in session_payloads_map:
+                    session_payloads_map[session_id] = []
                 session_payloads_map[session_id].append(payload)
 
         for session_id, payloads in session_payloads_map.items():
@@ -437,11 +421,30 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         if endpoint_meta.requires_inline_media:
             await self._convert_media_urls_to_inline()
 
+        # Determine storage format from conversations
+        has_payload_bytes = any(
+            turn.raw_payload is not None
+            for conv in conversations
+            for turn in conv.turns
+        )
+        mmap_format = (
+            MemoryMapFormat.PAYLOAD_BYTES
+            if has_payload_bytes
+            else MemoryMapFormat.CONVERSATION
+        )
+
         # Initialize backing store and stream conversations to mmap files
         # Workers read directly from these files
+        BackingStoreClass = plugins.get_class(
+            PluginType.DATASET_BACKING_STORE, DatasetBackingStoreType.MEMORY_MAP
+        )
+        self._backing_store = BackingStoreClass(
+            benchmark_id=self.user_config.benchmark_id,
+            compress_only=self._compress_only,
+            format=mmap_format,
+        )
         await self._backing_store.initialize()
-        conversations_dict = {conv.session_id: conv for conv in conversations}
-        await self._backing_store.add_conversations(conversations_dict)
+        await self._backing_store.add_conversations(self.dataset)
         await self._backing_store.finalize()
         # In Kubernetes mode (compress_only=True), files are already compressed
         # during finalize(). In local mode, uncompressed files are used directly.

@@ -7,13 +7,22 @@ Unit tests for DatasetManager._generate_inputs_json_file method.
 import json
 import logging
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
 
 from aiperf.common.config.config_defaults import OutputDefaults
-from aiperf.common.models import InputsFile, SessionPayloads
+from aiperf.common.enums import ModelSelectionStrategy
+from aiperf.common.models import Conversation, InputsFile, SessionPayloads, Turn
+from aiperf.common.models.model_endpoint_info import (
+    EndpointInfo,
+    ModelEndpointInfo,
+    ModelInfo,
+    ModelListInfo,
+)
 from aiperf.plugin import plugins
+from aiperf.plugin.enums import EndpointType
 
 
 def _validate_chat_payload_structure(payload: dict) -> None:
@@ -227,3 +236,72 @@ class TestDatasetManagerInputsJsonGeneration:
         log_messages = [record.message for record in caplog.records]
         assert any("Generating inputs.json file" in msg for msg in log_messages)
         assert any("inputs.json file generated" in msg for msg in log_messages)
+
+
+class TestGenerateInputPayloadsRawEndpoint:
+    """_generate_input_payloads must use raw_payload directly, not format_payload."""
+
+    @staticmethod
+    def _make_dataset_manager_stub(
+        conversations: dict[str, Conversation],
+    ) -> Any:
+        from aiperf.dataset.dataset_manager import DatasetManager
+
+        mgr = object.__new__(DatasetManager)
+        mgr.dataset = conversations
+        return mgr
+
+    @staticmethod
+    def _raw_model_endpoint() -> ModelEndpointInfo:
+        return ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(type=EndpointType.RAW, base_url="http://localhost"),
+        )
+
+    def test_raw_payloads_bypass_format_conversation_payloads(self) -> None:
+        """Conversations with raw_payload turns must not call format_payload."""
+        raw1 = {"model": "m", "messages": [{"role": "user", "content": "hi"}]}
+        raw2 = {"model": "m", "messages": [{"role": "user", "content": "bye"}]}
+        conv = Conversation(
+            session_id="s1",
+            turns=[
+                Turn(role="user", raw_payload=raw1),
+                Turn(role="user", raw_payload=raw2),
+            ],
+        )
+        mgr = self._make_dataset_manager_stub({"s1": conv})
+
+        inputs = mgr._generate_input_payloads(self._raw_model_endpoint())
+        assert len(inputs.data) == 1
+        assert inputs.data[0].session_id == "s1"
+        assert inputs.data[0].payloads == [raw1, raw2]
+
+    def test_normal_payloads_still_use_format_conversation_payloads(self) -> None:
+        """Non-raw conversations must still go through format_conversation_payloads."""
+        from aiperf.common.models.dataset_models import Text
+
+        conv = Conversation(
+            session_id="s1",
+            turns=[Turn(role="user", texts=[Text(contents=["hello"])])],
+        )
+        mgr = self._make_dataset_manager_stub({"s1": conv})
+
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(type=EndpointType.CHAT, base_url="http://localhost"),
+        )
+
+        with patch(
+            "aiperf.dataset.payload_formatting.format_conversation_payloads"
+        ) as mock_fmt:
+            mock_fmt.return_value = iter([("s1", 0, {"formatted": True})])
+            inputs = mgr._generate_input_payloads(model_endpoint)
+
+        assert len(inputs.data) == 1
+        assert inputs.data[0].payloads == [{"formatted": True}]
