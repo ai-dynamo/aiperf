@@ -252,7 +252,12 @@ def parse_str_as_numeric_dict(
     if input_string is None:
         return None
     if isinstance(input_string, dict):
-        return input_string
+        try:
+            return {k: float(v) for k, v in input_string.items()}
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                f"User Config: goodput dict values must be numeric, got {input_string!r}"
+            ) from e
     if not isinstance(input_string, str):
         raise ValueError(
             f"User Config: expected a string of space-separated 'key:value' pairs, got {type(input_string).__name__}"
