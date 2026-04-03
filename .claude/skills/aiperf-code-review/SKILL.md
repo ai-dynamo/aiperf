@@ -8,7 +8,7 @@
   5. Reproduce the confirmed issues with the real `aiperf` CLI against the in-repo mock server.
   6. Keep runtime receipts under `artifacts/`.
   7. Update the living document with both source-level and runtime evidence.
-  8. Draft the clearest possible top-level GitHub PR comment and post it on the correct PR.
+  8. Draft inline GitHub PR review comments anchored to the exact file and line of each finding, plus a short top-level summary comment.
 
   Requirements:
   - Treat `artifacts/code-review.md` as a living document. Update it in place if it already exists.
@@ -28,21 +28,19 @@
   - Keep logs, command outputs, relevant generated files, and small summaries that make the proof easy to inspect.
   - If MLflow reproduction is needed, use a local SQLite MLflow backend so unrelated MLflow filesystem-store issues do not pollute the validation.
   - Do not overwrite unrelated user changes.
-  - Do not stop after gathering evidence; finish by updating the document and posting the GitHub comment.
+  - Do not stop after gathering evidence; finish by updating the document, then present the planned GitHub comments to the user for confirmation before posting.
 
   GitHub deliverable:
-  - Post a single top-level PR comment that is clear to the PR authors.
-  - The comment should summarize:
-    - whether each finding is real
-    - severity
-    - the key source-level reasoning
-    - the key runtime evidence
-    - recommended fix order
-  - After posting, return the PR comment URL.
+  - Post inline review comments using the GitHub PR review API (`gh api repos/{owner}/{repo}/pulls/{number}/reviews`).
+  - Each confirmed finding gets its own inline comment anchored to the relevant file path and diff line number.
+  - Include a short top-level summary in the review body covering: fix order, overall assessment, and what is working well.
+  - IMPORTANT: Before posting anything to GitHub, show the user the full set of planned comments (inline + summary) and ask for explicit confirmation. Only post after the user approves.
+  - To determine the correct diff line position for each inline comment, run `gh api repos/{owner}/{repo}/pulls/{number}/files` to get the patch hunks, then count lines within the patch to find the `position` value.
+  - After posting, return the PR review URL.
 
   Final response to me:
   - Keep it concise.
   - Tell me where the living document is.
   - Tell me where the receipts are.
-  - Tell me the GitHub comment URL.
+  - Tell me the GitHub review URL.
   - Mention any caveats encountered during reproduction.
