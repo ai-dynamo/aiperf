@@ -191,7 +191,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Initialized when DatasetConfiguredNotification is received via factory
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
-        self._engine_ready = asyncio.Event()
 
         # In-process mode callbacks — when set, credit returns and first token events
         # are delivered via direct method call instead of ZMQ DEALER socket.
@@ -220,11 +219,16 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
         )
 
+    @property
+    def _is_direct_mode(self) -> bool:
+        """True when running in-process with direct credit delivery (no ZMQ DEALER peer)."""
+        return self._credit_return_callback is not None
+
     @on_start
     async def _send_worker_ready_message(self) -> None:
         """Send WorkerReady to announce presence."""
-        await self.credit_dealer_client.send(WorkerReady(worker_id=self.service_id))
-        self._engine_ready.set()
+        if not self._is_direct_mode:
+            await self.credit_dealer_client.send(WorkerReady(worker_id=self.service_id))
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(self, msg: DatasetConfiguredNotification) -> None:
@@ -251,6 +255,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     @on_stop
     async def _send_worker_shutdown_message(self) -> None:
         """Send WorkerShutdown to announce shutdown."""
+        if self._is_direct_mode:
+            return
         try:
             await self.credit_dealer_client.send(
                 WorkerShutdown(worker_id=self.service_id)
@@ -434,7 +440,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         For tasks cancelled before they start, the done callback handles the return.
         """
         try:
-            await self._engine_ready.wait()
             if not self.inference_client:
                 raise NotInitializedError("Inference server client not initialized.")
             await self._process_credit(credit_context)

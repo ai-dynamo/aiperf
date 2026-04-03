@@ -262,9 +262,6 @@ class TestCreditReturnCallbackIntegration:
         callback = AsyncMock(side_effect=lambda cr: returned.append(cr))
         worker.set_credit_return_callback(callback)
 
-        # Engine is ready
-        worker._engine_ready.set()
-
         # Stub out _process_credit so the full pipeline completes without needing
         # real inference clients, dataset clients, etc.
         monkeypatch.setattr(worker, "_process_credit", AsyncMock())
@@ -293,9 +290,6 @@ class TestCreditReturnCallbackIntegration:
 
         # Enable prefill concurrency so first_token_callback is created
         worker._prefill_concurrency_enabled = True
-
-        # Engine is ready
-        worker._engine_ready.set()
 
         # We need _process_credit to actually run (not be mocked) so the
         # first_token_callback closure is exercised.  But we need to mock the
