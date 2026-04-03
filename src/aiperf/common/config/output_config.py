@@ -139,7 +139,10 @@ class OutputConfig(BaseConfig):
             return self
 
         base_path = self.profile_export_prefix
-        base_str = str(base_path)
+        # profile_export_prefix is a filename prefix — artifact_directory controls the directory.
+        # If the user passes an absolute path, use only the name so that per-run artifact
+        # isolation (orchestrator sets artifact_directory per run) is not bypassed.
+        base_str = base_path.name if base_path.is_absolute() else str(base_path)
 
         # Check complex suffixes first (longest to shortest) to avoid double-suffixing
         # e.g., if user passes "foo_raw.jsonl", we want "foo" not "foo_raw"
