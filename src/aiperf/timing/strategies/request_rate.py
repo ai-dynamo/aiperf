@@ -107,6 +107,11 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         # Drained by execute_phase at each rate interval (priority over new sessions).
         self._continuation_turns: asyncio.Queue[TurnToSend] = asyncio.Queue()
 
+        # Event signalled when a credit is returned (slot freed).
+        # Used by execute_phase to block efficiently instead of busy-waiting
+        # when no concurrency slots are available (e.g. concurrency_burst mode).
+        self._credit_returned: asyncio.Event = asyncio.Event()
+
         interval_config = IntervalGeneratorConfig.from_phase_config(self._config)
         self.info(
             f"Creating interval generator: pattern={interval_config.arrival_pattern}, "
@@ -191,9 +196,7 @@ class RequestRateStrategy(AIPerfLoggerMixin):
                         )
                         return
                     case None:  # No slot available, retry later
-                        # Always yield to event loop to allow callbacks to run.
-                        # This is especially critical to prevent deadlock in CONCURRENCY_BURST mode (0 interval).
-                        await yield_to_event_loop()
+                        await self._wait_for_credit_return()
 
             # Priority 3: No more sessions to start and queue is empty.
             # Check if we're done sending entirely.
@@ -201,11 +204,9 @@ class RequestRateStrategy(AIPerfLoggerMixin):
                 return
             else:
                 # Can still send turns but queue is empty and can't start new
-                # sessions (session limit reached). Skip this interval and wait for
-                # continuation turns to arrive from callbacks.
-                # Always yield to event loop to allow callbacks to run.
-                # This is especially critical to prevent deadlock in CONCURRENCY_BURST mode (0 interval).
-                await yield_to_event_loop()
+                # sessions (session limit reached). Wait for continuation turns
+                # to arrive from credit return callbacks.
+                await self._wait_for_credit_return()
 
     async def handle_credit_return(self, credit: Credit) -> None:
         """Queue the next turn of this conversation for the main loop.
@@ -218,6 +219,9 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         simulating user "think time" between turns in a conversation.
         """
         if credit.is_final_turn:
+            # Final turn frees a session slot — wake the loop so it can
+            # acquire the slot for a new session.
+            self._credit_returned.set()
             return
 
         meta = self._conversation_source.get_next_turn_metadata(credit)
@@ -227,10 +231,37 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         if meta.delay_ms is not None:
             self._scheduler.schedule_later(
                 meta.delay_ms / MILLIS_PER_SECOND,
-                self._continuation_turns.put(turn),
+                self._put_and_notify(turn),
             )
         else:
             self._continuation_turns.put_nowait(turn)
+
+        # Wake the loop after state is updated. For immediate puts the turn
+        # is already in the queue so the loop sees it at Priority 1. For
+        # delayed puts this wakes the loop to re-check slot availability
+        # (the credit return freed a concurrency slot); the delayed
+        # _put_and_notify will wake it again when the turn is ready.
+        self._credit_returned.set()
+
+    async def _wait_for_credit_return(self) -> None:
+        """Wait efficiently for a credit return.
+
+        Burst mode (zero interval): block on the event to avoid busy-looping
+        at 100% CPU. The loop resumes when handle_credit_return sets the event.
+
+        Rate-limited mode (positive interval): just yield so the loop goes
+        back to the top and sleeps for the next rate interval as normal.
+        """
+        if self._rate_generator.rate == 0:
+            self._credit_returned.clear()
+            await self._credit_returned.wait()
+        else:
+            await yield_to_event_loop()
+
+    async def _put_and_notify(self, turn: TurnToSend) -> None:
+        """Queue a continuation turn and wake the loop."""
+        self._continuation_turns.put_nowait(turn)
+        self._credit_returned.set()
 
     def set_request_rate(self, new_rate: float) -> None:
         """Update the request rate dynamically.

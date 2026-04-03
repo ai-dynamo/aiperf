@@ -505,6 +505,11 @@ class MemoryMapDatasetClient:
             index_data = self.index_mmap.read()
             self.index = MemoryMapDatasetIndex.model_validate_json(index_data)
 
+            # Pre-fault all data pages into memory so reads don't pay
+            # page fault latency on the hot path.
+            if hasattr(mmap, "MADV_WILLNEED"):
+                self.data_mmap.madvise(mmap.MADV_WILLNEED)
+
         except OSError as e:
             self._cleanup_resources()
             raise MemoryMapFileOperationError(

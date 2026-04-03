@@ -274,11 +274,24 @@ async def _text_stream_wrapper(ctx: RequestCtx, req: CompletionRequest, endpoint
 # ============================================================================
 
 
-async def _wait_for_processing(base_ms: float, per_unit_ms: float, units: int) -> None:
-    """Wait for processing based on base latency + per-unit latency."""
+async def _wait_for_processing(
+    base_ms: float,
+    per_unit_ms: float,
+    units: int,
+    start_time: float | None = None,
+) -> None:
+    """Wait for processing based on base latency + per-unit latency.
+
+    If start_time is provided (perf_counter), the sleep is reduced by the
+    time already elapsed so the total handler time matches the target.
+    """
     total_ms = base_ms + (per_unit_ms * units)
     if total_ms > 0:
-        await asyncio.sleep(total_ms / 1000.0)
+        if start_time is not None:
+            elapsed_ms = (perf_counter() - start_time) * 1000.0
+            total_ms = max(0, total_ms - elapsed_ms)
+        if total_ms > 0:
+            await asyncio.sleep(total_ms / 1000.0)
 
 
 def generate_embedding(text: str, dim: int = 768) -> list[float]:
@@ -329,6 +342,7 @@ async def embeddings(req: EmbeddingRequest, request: Request) -> ORJSONResponse:
             server_config.embedding_base_latency,
             server_config.embedding_per_input_latency,
             len(req.inputs),
+            start_time=start_time,
         )
 
         record_embedding_success(
@@ -378,6 +392,7 @@ async def _handle_ranking_request(
             server_config.ranking_base_latency,
             server_config.ranking_per_passage_latency,
             len(req.passage_texts),
+            start_time=start_time,
         )
 
         record_ranking_success(
@@ -509,10 +524,12 @@ def _build_image_retrieval_response_data(
 
 @app.post("/v1/image/infer", response_model=None)
 @with_error_injection
-async def image_retrieval(req: ImageRetrievalRequest) -> ORJSONResponse:
+async def image_retrieval(
+    req: ImageRetrievalRequest, request: Request
+) -> ORJSONResponse:
     """Mock NIM Image Retrieval endpoint."""
     endpoint = "/v1/image/infer"
-    start_time = perf_counter()
+    start_time = request.state.start_time
     num_images = len(req.input)
 
     with track_request(endpoint, "image-retrieval"):
@@ -520,6 +537,7 @@ async def image_retrieval(req: ImageRetrievalRequest) -> ORJSONResponse:
             server_config.image_retrieval_base_latency,
             server_config.image_retrieval_per_image_latency,
             num_images,
+            start_time=start_time,
         )
 
         record_image_retrieval_success(
