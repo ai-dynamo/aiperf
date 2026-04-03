@@ -14,8 +14,9 @@ class SpeedBenchLoader(BaseHFDatasetLoader):
     SPEED-Bench (SPEculative Evaluation Dataset) provides prompts for
     benchmarking speculative decoding across diverse semantic domains and
     input sequence lengths. Each row contains a ``turns`` column with a
-    list of plain strings representing a multi-turn conversation, and a
-    ``category`` column identifying the semantic domain or entropy tier.
+    list of plain strings and a ``category`` column identifying the
+    semantic domain or entropy tier. Only the first turn is used as the
+    benchmark prompt; subsequent turns are discarded.
 
     When ``category`` is set in plugin metadata, only rows matching that
     category are loaded. This enables per-category acceptance rate

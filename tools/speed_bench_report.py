@@ -56,7 +56,6 @@ THROUGHPUT_TIERS = ["low_entropy", "mixed", "high_entropy"]
 # Different engines expose this under different names.
 ACCEPT_LENGTH_METRICS = [
     "sglang:spec_accept_length",
-    "vllm:spec_decode_num_accepted_tokens",
     "vllm:spec_decode_mean_accepted_length",
     "trtllm:spec_accept_length",
 ]
@@ -96,7 +95,12 @@ def load_profile(run_dir: Path) -> dict | None:
     path = run_dir / PROFILE_JSON
     if not path.exists():
         return None
-    return orjson.loads(path.read_bytes())
+    try:
+        with open(path, "rb") as f:
+            return orjson.loads(f.read())
+    except (OSError, orjson.JSONDecodeError) as e:
+        print(f"Warning: failed to read {path}: {e}", file=sys.stderr)
+        return None
 
 
 def load_server_metrics(run_dir: Path) -> dict | None:
@@ -104,7 +108,12 @@ def load_server_metrics(run_dir: Path) -> dict | None:
     path = run_dir / SERVER_METRICS_JSON
     if not path.exists():
         return None
-    return orjson.loads(path.read_bytes())
+    try:
+        with open(path, "rb") as f:
+            return orjson.loads(f.read())
+    except (OSError, orjson.JSONDecodeError) as e:
+        print(f"Warning: failed to read {path}: {e}", file=sys.stderr)
+        return None
 
 
 def extract_category(profile: dict) -> str | None:
@@ -268,11 +277,11 @@ def detect_columns(results: dict[str, dict[str, float | None]]) -> list[str]:
     for model_data in results.values():
         all_cats.update(model_data.keys())
 
-    # Check if these are qualitative categories
-    if all_cats & set(QUALITATIVE_CATEGORIES):
+    # Check if all categories are qualitative
+    if all_cats <= set(QUALITATIVE_CATEGORIES):
         return [c for c in QUALITATIVE_CATEGORIES if c in all_cats]
-    # Check if these are throughput tiers
-    if all_cats & set(THROUGHPUT_TIERS):
+    # Check if all categories are throughput tiers
+    if all_cats <= set(THROUGHPUT_TIERS):
         return [c for c in THROUGHPUT_TIERS if c in all_cats]
     # Mixed or throughput ISL variants
     return sorted(all_cats)

@@ -104,7 +104,7 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --public-dataset speed_bench_coding \
-    --server-metrics http://localhost:8000/v1/metrics \
+    --server-metrics http://localhost:8000/metrics \
     --concurrency 16 \
     --output-artifact-dir ./artifacts/speed_bench_coding
 ```
@@ -125,7 +125,7 @@ for cat in $CATEGORIES; do
       --streaming \
       --url localhost:8000 \
       --public-dataset "speed_bench_${cat}" \
-      --server-metrics http://localhost:8000/v1/metrics \
+      --server-metrics http://localhost:8000/metrics \
       --concurrency 16 \
       --output-artifact-dir "./artifacts/speed_bench_${cat}"
 done
@@ -170,7 +170,7 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --public-dataset speed_bench_qualitative \
-    --server-metrics http://localhost:8000/v1/metrics \
+    --server-metrics http://localhost:8000/metrics \
     --concurrency 16
 ```
 
@@ -187,7 +187,7 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --public-dataset speed_bench_throughput_1k \
-    --server-metrics http://localhost:8000/v1/metrics \
+    --server-metrics http://localhost:8000/metrics \
     --concurrency 64 \
     --benchmark-duration 120
 ```
@@ -207,7 +207,7 @@ for tier in low_entropy mixed high_entropy; do
       --streaming \
       --url localhost:8000 \
       --public-dataset "speed_bench_throughput_1k_${tier}" \
-      --server-metrics http://localhost:8000/v1/metrics \
+      --server-metrics http://localhost:8000/metrics \
       --concurrency 64 \
       --benchmark-duration 60
 done
