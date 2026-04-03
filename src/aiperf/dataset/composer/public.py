@@ -104,4 +104,7 @@ class PublicDatasetComposer(BaseDatasetComposer):
         if loader_metadata.streaming:
             kwargs["streaming"] = loader_metadata.streaming
 
+        if loader_metadata.category is not None:
+            kwargs["category"] = loader_metadata.category
+
         return kwargs

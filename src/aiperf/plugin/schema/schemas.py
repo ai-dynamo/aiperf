@@ -394,6 +394,10 @@ class PublicDatasetLoaderMetadata(BaseModel):
             "Use false (default) for small datasets to leverage HF caching and len() support."
         ),
     )
+    category: str | None = Field(
+        default=None,
+        description="Filter dataset rows to a specific category value. Used by loaders that support per-category subsets (e.g. SPEED-Bench).",
+    )
 
 
 class ServiceMetadata(BaseModel):
