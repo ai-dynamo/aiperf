@@ -91,6 +91,32 @@ AIPerf auto-discovers the Prometheus endpoint at `{url}/metrics`. If your server
 
 ---
 
+## Recommended Defaults
+
+### Non-Reasoning Models
+
+For standard (non-reasoning) models, use `temperature=0` and a 4K output length cap:
+
+```bash
+aiperf profile \
+    --model meta/llama-3.1-8b-instruct \
+    --endpoint-type chat \
+    --streaming \
+    --url localhost:8000 \
+    --public-dataset speed_bench_coding \
+    --osl 4096 \
+    --extra-inputs temperature:0 \
+    --concurrency 16
+```
+
+Do not set `ignore_eos` — let the model stop naturally at its end-of-sequence token.
+
+### Reasoning Models
+
+For reasoning models (e.g., DeepSeek-R1, QwQ), follow the model card's recommended settings for temperature, top_p, and output length. Reasoning models typically require higher output limits and specific sampling parameters.
+
+---
+
 ## Per-Category Acceptance Rate Benchmarking
 
 To measure acceptance rates per category (matching the SPEED-Bench paper methodology), run each category separately. Each run collects speculative decoding metrics from the server's Prometheus endpoint.
@@ -105,6 +131,8 @@ aiperf profile \
     --url localhost:8000 \
     --public-dataset speed_bench_coding \
     --server-metrics http://localhost:8000/metrics \
+    --osl 4096 \
+    --extra-inputs temperature:0 \
     --concurrency 16 \
     --output-artifact-dir ./artifacts/speed_bench_coding
 ```
@@ -126,6 +154,8 @@ for cat in $CATEGORIES; do
       --url localhost:8000 \
       --public-dataset "speed_bench_${cat}" \
       --server-metrics http://localhost:8000/metrics \
+      --osl 4096 \
+      --extra-inputs temperature:0 \
       --concurrency 16 \
       --output-artifact-dir "./artifacts/speed_bench_${cat}"
 done
