@@ -11,16 +11,16 @@ SPEED-Bench paper format.
 Usage::
 
     # Scan a parent directory for per-category run subdirectories
-    python tools/speed_bench_report.py ./artifacts/
+    python scripts/speed_bench_report.py ./artifacts/
 
     # Or list run directories explicitly
-    python tools/speed_bench_report.py \\
+    python scripts/speed_bench_report.py \\
         ./artifacts/run_coding/ \\
         ./artifacts/run_math/ \\
         ./artifacts/run_writing/
 
     # Options
-    python tools/speed_bench_report.py ./artifacts/ \\
+    python scripts/speed_bench_report.py ./artifacts/ \\
         --format both \\
         --output speed_bench_report.csv \\
         --metric accept_length
@@ -122,7 +122,7 @@ def extract_category(profile: dict) -> str | None:
         dataset = profile["input_config"]["input"]["public_dataset"]
     except (KeyError, TypeError):
         return None
-    if not dataset or not dataset.startswith("speed_bench_"):
+    if not isinstance(dataset, str) or not dataset.startswith("speed_bench_"):
         return None
     return dataset.removeprefix("speed_bench_")
 

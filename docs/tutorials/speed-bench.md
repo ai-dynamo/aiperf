@@ -131,7 +131,7 @@ for cat in $CATEGORIES; do
 done
 
 # Assemble the matrix report
-python tools/speed_bench_report.py ./artifacts/ --format both
+python scripts/speed_bench_report.py ./artifacts/ --format both
 ```
 
 This produces a CSV (`speed_bench_report.csv`) and console table:
@@ -151,10 +151,10 @@ Additional report metrics:
 
 ```bash
 # Acceptance rate matrix (accepted / draft tokens)
-python tools/speed_bench_report.py ./artifacts/ --metric accept_rate
+python scripts/speed_bench_report.py ./artifacts/ --metric accept_rate
 
 # Throughput matrix (output tokens/sec per category)
-python tools/speed_bench_report.py ./artifacts/ --metric throughput
+python scripts/speed_bench_report.py ./artifacts/ --metric throughput
 ```
 
 ---

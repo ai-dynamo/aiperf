@@ -36,7 +36,7 @@ async def coding_loader(user_config: UserConfig) -> SpeedBenchLoader:
 
 
 def _make_speed_bench_row(
-    turns: list[str],
+    turns: list[str | None],
     category: str = "coding",
     question_id: str = "q1",
 ) -> dict:
@@ -110,67 +110,36 @@ class TestSpeedBenchLoader:
         conversations = await loader.convert_to_conversations({"dataset": []})
         assert conversations == []
 
-    async def test_skips_empty_turns_list(self, loader):
+    @pytest.mark.parametrize(
+        "invalid_row",
+        [
+            pytest.param(
+                {"question_id": "q1", "category": "coding"}, id="missing_turns"
+            ),
+            pytest.param(
+                {"question_id": "q1", "category": "coding", "turns": None},
+                id="none_turns",
+            ),
+            pytest.param(
+                {"question_id": "q1", "category": "coding", "turns": "not a list"},
+                id="non_list_turns",
+            ),
+            pytest.param(_make_speed_bench_row([]), id="empty_turns_list"),
+            pytest.param(_make_speed_bench_row([""]), id="empty_first_turn"),
+            pytest.param(_make_speed_bench_row(["   "]), id="whitespace_first_turn"),
+            pytest.param(_make_speed_bench_row([None]), id="none_first_turn"),
+        ],
+    )
+    async def test_skips_invalid_row(self, loader, invalid_row):
         data = {
             "dataset": [
-                _make_speed_bench_row([]),
+                invalid_row,
                 _make_speed_bench_row(["Valid"]),
             ]
         }
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations) == 1
         assert conversations[0].turns[0].texts[0].contents[0] == "Valid"
-
-    async def test_skips_missing_turns_field(self, loader):
-        data = {
-            "dataset": [
-                {"question_id": "q1", "category": "coding"},
-                _make_speed_bench_row(["Valid"]),
-            ]
-        }
-        conversations = await loader.convert_to_conversations(data)
-        assert len(conversations) == 1
-
-    async def test_skips_none_turns(self, loader):
-        data = {
-            "dataset": [
-                {"question_id": "q1", "category": "coding", "turns": None},
-                _make_speed_bench_row(["Valid"]),
-            ]
-        }
-        conversations = await loader.convert_to_conversations(data)
-        assert len(conversations) == 1
-
-    async def test_skips_non_list_turns(self, loader):
-        data = {
-            "dataset": [
-                {"question_id": "q1", "category": "coding", "turns": "not a list"},
-                _make_speed_bench_row(["Valid"]),
-            ]
-        }
-        conversations = await loader.convert_to_conversations(data)
-        assert len(conversations) == 1
-
-    async def test_skips_empty_first_turn(self, loader):
-        data = {
-            "dataset": [
-                _make_speed_bench_row([""]),
-                _make_speed_bench_row(["   "]),
-                _make_speed_bench_row(["Valid"]),
-            ]
-        }
-        conversations = await loader.convert_to_conversations(data)
-        assert len(conversations) == 1
-
-    async def test_skips_none_first_turn(self, loader):
-        data = {
-            "dataset": [
-                _make_speed_bench_row([None]),
-                _make_speed_bench_row(["Valid"]),
-            ]
-        }
-        conversations = await loader.convert_to_conversations(data)
-        assert len(conversations) == 1
 
 
 @pytest.mark.asyncio
