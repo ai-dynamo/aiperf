@@ -31,6 +31,7 @@ class DirectCreditRouter:
     def __init__(self) -> None:
         self._worker: Worker | None = None
         self._credits_complete: bool = False
+        self._in_flight_credits: set[int] = set()
         self._on_return_callback: (
             Callable[[str, CreditReturn], Awaitable[None]] | None
         ) = None
@@ -73,8 +74,10 @@ class DirectCreditRouter:
         the worker_id automatically.
         """
         worker_id = self.worker_id
+        in_flight = self._in_flight_credits
 
         async def wrapped(credit_return: CreditReturn) -> None:
+            in_flight.discard(credit_return.credit.id)
             await callback(worker_id, credit_return)
 
         return wrapped
@@ -120,6 +123,7 @@ class DirectCreditRouter:
         """
         if self._worker is None:
             raise RuntimeError("No worker attached to DirectCreditRouter")
+        self._in_flight_credits.add(credit.id)
         self._worker.receive_credit(credit)
 
     async def cancel_all_credits(self) -> None:
@@ -130,7 +134,8 @@ class DirectCreditRouter:
         """
         if self._worker is None:
             raise RuntimeError("No worker attached to DirectCreditRouter")
-        await self._worker.cancel_all_credits()
+        if self._in_flight_credits:
+            await self._worker.cancel_credits(self._in_flight_credits.copy())
 
     def mark_credits_complete(self) -> None:
         """Mark that all credits have been issued and returned.

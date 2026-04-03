@@ -389,12 +389,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """Cancel in-flight credits directly for in-process mode."""
         await self._on_cancel_credits_message(CancelCredits(credit_ids=credit_ids))
 
-    async def cancel_all_credits(self) -> None:
-        """Cancel all in-flight credits. Used by DirectCreditRouter."""
-        credit_ids = set(self.credit_tasks.keys())
-        if credit_ids:
-            await self.cancel_credits(credit_ids)
-
     def set_credit_return_callback(
         self,
         callback: Callable[[CreditReturn], Awaitable[None]],

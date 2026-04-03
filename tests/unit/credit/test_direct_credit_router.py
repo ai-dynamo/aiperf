@@ -46,7 +46,7 @@ def _make_mock_worker(service_id: str = "worker-1") -> MagicMock:
     worker = MagicMock()
     worker.service_id = service_id
     worker.receive_credit = MagicMock()
-    worker.cancel_all_credits = AsyncMock()
+    worker.cancel_credits = AsyncMock()
     worker.set_credit_return_callback = MagicMock()
     worker.set_first_token_callback = MagicMock()
     return worker
@@ -132,14 +132,28 @@ class TestCancelAllCredits:
     """Verify cancel propagation to attached worker."""
 
     @pytest.mark.asyncio
-    async def test_cancel_all_credits_calls_worker(self) -> None:
+    async def test_cancel_all_credits_passes_tracked_ids(self) -> None:
+        router = DirectCreditRouter()
+        worker = _make_mock_worker()
+        router.attach_worker(worker)
+
+        await router.send_credit(_make_credit(credit_id=1))
+        await router.send_credit(_make_credit(credit_id=2))
+        await router.cancel_all_credits()
+
+        worker.cancel_credits.assert_awaited_once()
+        cancelled_ids = worker.cancel_credits.call_args[0][0]
+        assert cancelled_ids == {1, 2}
+
+    @pytest.mark.asyncio
+    async def test_cancel_all_credits_noop_when_no_in_flight(self) -> None:
         router = DirectCreditRouter()
         worker = _make_mock_worker()
         router.attach_worker(worker)
 
         await router.cancel_all_credits()
 
-        worker.cancel_all_credits.assert_awaited_once()
+        worker.cancel_credits.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_cancel_all_credits_raises_without_worker(self) -> None:
