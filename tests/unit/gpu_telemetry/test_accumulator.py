@@ -7,6 +7,7 @@ import pytest
 
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
+from aiperf.common.models.server_metrics_models import TimeRangeFilter
 from aiperf.common.models.telemetry_models import (
     GpuMetadata,
     GpuTelemetryData,
@@ -381,3 +382,171 @@ class TestGPUTelemetryAccumulator:
 
         assert len(gpu0_results) > 0
         assert len(gpu1_results) > 0
+
+
+class TestComputeEfficiencyMetrics:
+    """Test GPUTelemetryAccumulator.compute_efficiency_metrics."""
+
+    @pytest.fixture
+    def accumulator(
+        self,
+        mock_user_config: UserConfig,
+        mock_service_config: ServiceConfig,
+        mock_pub_client,
+    ) -> GPUTelemetryAccumulator:
+        return GPUTelemetryAccumulator(
+            user_config=mock_user_config,
+            service_config=mock_service_config,
+            pub_client=mock_pub_client,
+        )
+
+    @pytest.fixture
+    def time_filter(self) -> TimeRangeFilter:
+        return TimeRangeFilter(start_ns=2_000_000_000, end_ns=5_000_000_000)
+
+    def _make_gpu_mock(
+        self,
+        power_avg: float | None = None,
+        energy_delta_mj: float | None = None,
+    ) -> Mock:
+        """Return a GpuTelemetryData mock with controllable metric results."""
+        metadata = GpuMetadata(
+            gpu_index=0,
+            gpu_uuid="GPU-test-uuid-0000",
+            gpu_model_name="Test GPU",
+        )
+        gpu = Mock(spec=GpuTelemetryData)
+        gpu.metadata = metadata
+
+        def get_metric_result(
+            metric_name: str,
+            tag: str,
+            header: str,
+            unit: str,
+            time_filter: TimeRangeFilter | None = None,
+            is_counter: bool = False,
+        ) -> MetricResult:
+            if metric_name == "gpu_power_usage":
+                if power_avg is None:
+                    raise NoMetricValue("No power data")
+                return MetricResult(
+                    tag=tag, header=header, unit=unit, avg=power_avg, count=3
+                )
+            if metric_name == "energy_consumption":
+                if energy_delta_mj is None:
+                    raise NoMetricValue("No energy data")
+                return MetricResult(
+                    tag=tag, header=header, unit=unit, avg=energy_delta_mj
+                )
+            raise NoMetricValue(f"No data for {metric_name}")
+
+        gpu.get_metric_result.side_effect = get_metric_result
+        return gpu
+
+    def test_happy_path_all_metrics_present(
+        self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
+    ) -> None:
+        """power + energy + tokens all present → three MetricResults returned."""
+        gpu = self._make_gpu_mock(
+            power_avg=200.0, energy_delta_mj=0.001
+        )  # 0.001 MJ = 1000 J
+        accumulator._hierarchy.dcgm_endpoints = {
+            "http://node1:9401/metrics": {"GPU-test": gpu}
+        }
+        metric_results = [
+            MetricResult(
+                tag="total_output_tokens",
+                header="Total Output Tokens",
+                unit="tokens",
+                avg=2000.0,
+            )
+        ]
+
+        results = accumulator.compute_efficiency_metrics(metric_results, time_filter)
+
+        tags = {r.tag for r in results}
+        assert tags == {
+            "total_gpu_power",
+            "total_gpu_energy",
+            "output_tokens_per_joule",
+        }
+
+        power = next(r for r in results if r.tag == "total_gpu_power")
+        assert power.avg == pytest.approx(200.0)
+        assert power.unit == str(PowerMetricUnit.WATT)
+
+        energy = next(r for r in results if r.tag == "total_gpu_energy")
+        assert energy.avg == pytest.approx(1000.0)  # 0.001 MJ * 1e6
+        assert energy.unit == str(EnergyMetricUnit.JOULE)
+
+        tpj = next(r for r in results if r.tag == "output_tokens_per_joule")
+        assert tpj.avg == pytest.approx(2.0)  # 2000 tokens / 1000 J
+        assert tpj.unit == "tokens/J"
+
+    def test_no_energy_data_omits_energy_and_tokens_per_joule(
+        self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
+    ) -> None:
+        """No energy data → only power metric returned; tokens/J absent."""
+        gpu = self._make_gpu_mock(power_avg=150.0, energy_delta_mj=None)
+        accumulator._hierarchy.dcgm_endpoints = {
+            "http://node1:9401/metrics": {"GPU-test": gpu}
+        }
+        metric_results = [
+            MetricResult(tag="total_output_tokens", header="h", unit="t", avg=1000.0)
+        ]
+
+        results = accumulator.compute_efficiency_metrics(metric_results, time_filter)
+
+        tags = {r.tag for r in results}
+        assert "total_gpu_power" in tags
+        assert "total_gpu_energy" not in tags
+        assert "output_tokens_per_joule" not in tags
+
+    def test_no_gpu_data_returns_empty_list(
+        self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
+    ) -> None:
+        """No GPU data → empty list returned without error."""
+        results = accumulator.compute_efficiency_metrics([], time_filter)
+        assert results == []
+
+    def test_missing_total_output_tokens_omits_tokens_per_joule(
+        self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
+    ) -> None:
+        """total_output_tokens absent from metric_results → tokens/J absent, no error."""
+        gpu = self._make_gpu_mock(power_avg=200.0, energy_delta_mj=0.001)
+        accumulator._hierarchy.dcgm_endpoints = {
+            "http://node1:9401/metrics": {"GPU-test": gpu}
+        }
+
+        results = accumulator.compute_efficiency_metrics([], time_filter)
+
+        tags = {r.tag for r in results}
+        assert "total_gpu_power" in tags
+        assert "total_gpu_energy" in tags
+        assert "output_tokens_per_joule" not in tags
+
+    def test_multiple_gpus_sums_power_and_energy(
+        self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
+    ) -> None:
+        """Multiple GPUs across endpoints → power and energy summed, count reflects GPU count."""
+        gpu0 = self._make_gpu_mock(power_avg=100.0, energy_delta_mj=0.0005)  # 500 J
+        gpu1 = self._make_gpu_mock(power_avg=150.0, energy_delta_mj=0.0005)  # 500 J
+        accumulator._hierarchy.dcgm_endpoints = {
+            "http://node1:9401/metrics": {"GPU-0": gpu0, "GPU-1": gpu1}
+        }
+        metric_results = [
+            MetricResult(tag="total_output_tokens", header="h", unit="t", avg=1000.0)
+        ]
+
+        results = accumulator.compute_efficiency_metrics(metric_results, time_filter)
+
+        power = next(r for r in results if r.tag == "total_gpu_power")
+        assert power.avg == pytest.approx(250.0)  # 100 + 150
+        assert power.count == 2
+
+        energy = next(r for r in results if r.tag == "total_gpu_energy")
+        assert energy.avg == pytest.approx(1000.0)  # 500 + 500
+        assert energy.count == 2
+
+        tpj = next(r for r in results if r.tag == "output_tokens_per_joule")
+        assert tpj.avg == pytest.approx(1.0)  # 1000 tokens / 1000 J
