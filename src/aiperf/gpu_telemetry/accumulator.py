@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import GPUTelemetryMode
+from aiperf.common.enums import EnergyMetricUnit, GPUTelemetryMode, PowerMetricUnit
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue, PostProcessorDisabled
 from aiperf.common.hooks import background_task
@@ -301,3 +301,143 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         return TelemetryExportData(
             summary=summary, endpoints=endpoints, error_summary=error_summary
         )
+
+    def compute_efficiency_metrics(
+        self,
+        metric_results: list[MetricResult],
+        time_filter: TimeRangeFilter,
+    ) -> list[MetricResult]:
+        """Compute cross-boundary power efficiency metrics.
+
+        Iterates all GPUs across all endpoints, summing avg(gpu_power_usage) and
+        energy_consumption deltas. Returns up to three MetricResult objects:
+        total GPU power (W), total GPU energy (J), and output tokens per joule
+        (tokens/J). GPUs missing power data are skipped entirely.
+
+        Args:
+            metric_results: All metric results from the profiling phase. Used to
+                            look up total_output_tokens for tokens/J calculation.
+            time_filter: Time range covering the profiling phase (warmup excluded).
+
+        Returns:
+            List of MetricResult objects. Empty if no GPU power data is available.
+        """
+        results: list[MetricResult] = []
+        total_output_tokens_result = next(
+            (r for r in metric_results if r.tag == "total_output_tokens"), None
+        )
+        total_output_tokens = (
+            total_output_tokens_result.avg
+            if total_output_tokens_result is not None
+            else None
+        )
+        self.debug(
+            lambda: f"compute_efficiency_metrics: time_filter={time_filter}, "
+            f"total_output_tokens={total_output_tokens}, "
+            f"endpoints={list(self._hierarchy.dcgm_endpoints.keys())}"
+        )
+        total_power_w = 0.0
+        total_energy_j = 0.0
+        power_gpu_count = 0
+        energy_gpu_count = 0
+
+        for gpu_data_dict in self._hierarchy.dcgm_endpoints.values():
+            for gpu_uuid, gpu_data in gpu_data_dict.items():
+                try:
+                    power_result = gpu_data.get_metric_result(
+                        "gpu_power_usage",
+                        "gpu_power_usage",
+                        "GPU Power Usage",
+                        str(PowerMetricUnit.WATT),
+                        time_filter=time_filter,
+                    )
+                    if power_result.avg is not None:
+                        self.debug(
+                            lambda uuid=gpu_uuid,
+                            avg=power_result.avg: f"GPU {uuid[:12]} power avg={avg:.2f}W"
+                        )
+                        total_power_w += power_result.avg
+                        power_gpu_count += 1
+                    else:
+                        self.debug(
+                            lambda uuid=gpu_uuid: f"GPU {uuid[:12]} power result has no avg"
+                        )
+                except NoMetricValue:
+                    self.debug(
+                        lambda uuid=gpu_uuid: f"No power data for GPU {uuid[:12]}"
+                    )
+
+                try:
+                    energy_result = gpu_data.get_metric_result(
+                        "energy_consumption",
+                        "energy_consumption",
+                        "Energy Consumption",
+                        str(EnergyMetricUnit.MEGAJOULE),
+                        time_filter=time_filter,
+                        is_counter=True,
+                    )
+                    if energy_result.avg is not None:
+                        energy_j = energy_result.avg * 1e6
+                        self.debug(
+                            lambda uuid=gpu_uuid,
+                            ej=energy_j: f"GPU {uuid[:12]} energy delta={ej:.2f}J"
+                        )
+                        total_energy_j += energy_j
+                        energy_gpu_count += 1
+                    else:
+                        self.debug(
+                            lambda uuid=gpu_uuid: f"GPU {uuid[:12]} energy result has no avg"
+                        )
+                except NoMetricValue:
+                    self.debug(
+                        lambda uuid=gpu_uuid: f"No energy data for GPU {uuid[:12]}"
+                    )
+
+        self.debug(
+            f"compute_efficiency_metrics totals: power={total_power_w:.2f}W "
+            f"({power_gpu_count} GPUs), energy={total_energy_j:.2f}J ({energy_gpu_count} GPUs)"
+        )
+
+        if power_gpu_count > 0:
+            results.append(
+                MetricResult(
+                    tag="total_gpu_power",
+                    header="Total GPU Power",
+                    unit=str(PowerMetricUnit.WATT),
+                    avg=total_power_w,
+                    count=power_gpu_count,
+                )
+            )
+        else:
+            self.debug("No GPU power data available")
+
+        if energy_gpu_count > 0:
+            results.append(
+                MetricResult(
+                    tag="total_gpu_energy",
+                    header="Total GPU Energy",
+                    unit=str(EnergyMetricUnit.JOULE),
+                    avg=total_energy_j,
+                    count=energy_gpu_count,
+                )
+            )
+        else:
+            self.debug("No GPU energy data available, skipping total_gpu_energy")
+
+        if total_output_tokens is not None and total_energy_j > 0:
+            results.append(
+                MetricResult(
+                    tag="output_tokens_per_joule",
+                    header="Output Tokens per Joule",
+                    unit="tokens/J",
+                    avg=total_output_tokens / total_energy_j,
+                    count=1,
+                )
+            )
+        else:
+            self.debug(
+                f"Skipping output_tokens_per_joule: "
+                f"total_output_tokens={total_output_tokens}, total_energy_j={total_energy_j:.2f}"
+            )
+
+        return results
