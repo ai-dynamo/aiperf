@@ -701,6 +701,18 @@ class ReasoningResponseData(BaseResponseData):
         return "".join([self.reasoning or "", self.content or ""])
 
 
+@dataclass(slots=True)
+class ToolCallResponseData(BaseResponseData):
+    """Parsed tool call response data (streaming delta or complete message)."""
+
+    text: str
+    """Combined model-generated text from tool calls (function names and arguments)."""
+
+    def get_text(self) -> str:
+        """Get the text of the response."""
+        return self.text
+
+
 class RAGSources(RootModel[dict[str, Any] | list[Any]]):
     """RAG sources can be either a dictionary or list format."""
 
@@ -835,6 +847,7 @@ class ParsedResponse:
     data: SerializeAsAny[
         ReasoningResponseData
         | TextResponseData
+        | ToolCallResponseData
         | EmbeddingResponseData
         | RankingsResponseData
         | ImageRetrievalResponseData

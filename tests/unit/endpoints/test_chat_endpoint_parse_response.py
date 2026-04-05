@@ -4,7 +4,11 @@
 
 import pytest
 
-from aiperf.common.models.record_models import ReasoningResponseData, TextResponseData
+from aiperf.common.models.record_models import (
+    ReasoningResponseData,
+    TextResponseData,
+    ToolCallResponseData,
+)
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
@@ -205,3 +209,164 @@ class TestChatEndpointParseResponse:
 
         assert parsed is not None
         assert parsed.data.text == content_text
+
+    def test_parse_response_streaming_tool_calls_only(self, endpoint):
+        """Test parsing streaming chunk with only tool_calls returns ToolCallResponseData."""
+        mock_response = create_mock_response(
+            123456789,
+            {
+                "object": "chat.completion.chunk",
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {"function": {"arguments": '{"location": "Paris"}'}}
+                            ]
+                        }
+                    }
+                ],
+            },
+        )
+
+        parsed = endpoint.parse_response(mock_response)
+
+        assert parsed is not None
+        assert isinstance(parsed.data, ToolCallResponseData)
+        assert parsed.data.text == '{"location": "Paris"}'
+
+    def test_parse_response_non_streaming_tool_calls_only(self, endpoint):
+        """Test parsing non-streaming response with only tool_calls."""
+        mock_response = create_mock_response(
+            123456789,
+            {
+                "object": "chat.completion",
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {"function": {"arguments": '{"query": "test"}'}}
+                            ]
+                        }
+                    }
+                ],
+            },
+        )
+
+        parsed = endpoint.parse_response(mock_response)
+
+        assert parsed is not None
+        assert isinstance(parsed.data, ToolCallResponseData)
+        assert parsed.data.text == '{"query": "test"}'
+
+    def test_parse_response_tool_calls_with_content_prioritizes_content(self, endpoint):
+        """Test that content takes priority over tool_calls when both present."""
+        mock_response = create_mock_response(
+            123456789,
+            {
+                "object": "chat.completion.chunk",
+                "choices": [
+                    {
+                        "delta": {
+                            "content": "Some text",
+                            "tool_calls": [
+                                {"function": {"arguments": '{"key": "val"}'}}
+                            ],
+                        }
+                    }
+                ],
+            },
+        )
+
+        parsed = endpoint.parse_response(mock_response)
+
+        assert parsed is not None
+        assert isinstance(parsed.data, TextResponseData)
+        assert parsed.data.text == "Some text"
+
+    def test_parse_response_multiple_tool_calls_concatenated(self, endpoint):
+        """Test that name and arguments from multiple tool calls are concatenated."""
+        mock_response = create_mock_response(
+            123456789,
+            {
+                "object": "chat.completion.chunk",
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "get_weather",
+                                        "arguments": '{"a":',
+                                    }
+                                },
+                                {"function": {"arguments": '"b"}'}},
+                            ]
+                        }
+                    }
+                ],
+            },
+        )
+
+        parsed = endpoint.parse_response(mock_response)
+
+        assert parsed is not None
+        assert isinstance(parsed.data, ToolCallResponseData)
+        assert parsed.data.text == 'get_weather{"a":"b"}'
+
+    def test_parse_response_tool_call_name_only(self, endpoint):
+        """Test parsing tool call chunk with only function name (first streaming chunk)."""
+        mock_response = create_mock_response(
+            123456789,
+            {
+                "object": "chat.completion.chunk",
+                "choices": [
+                    {"delta": {"tool_calls": [{"function": {"name": "search"}}]}}
+                ],
+            },
+        )
+
+        parsed = endpoint.parse_response(mock_response)
+
+        assert parsed is not None
+        assert isinstance(parsed.data, ToolCallResponseData)
+        assert parsed.data.text == "search"
+
+    def test_parse_response_tool_calls_empty_arguments_returns_none(self, endpoint):
+        """Test that tool_calls with empty arguments returns None."""
+        mock_response = create_mock_response(
+            123456789,
+            {
+                "object": "chat.completion.chunk",
+                "choices": [
+                    {"delta": {"tool_calls": [{"function": {"arguments": ""}}]}}
+                ],
+            },
+        )
+
+        parsed = endpoint.parse_response(mock_response)
+        assert parsed is None
+
+    def test_parse_response_reasoning_takes_priority_over_tool_calls(self, endpoint):
+        """Test that reasoning takes priority over tool_calls."""
+        mock_response = create_mock_response(
+            123456789,
+            {
+                "object": "chat.completion",
+                "choices": [
+                    {
+                        "message": {
+                            "reasoning_content": "Thinking...",
+                            "tool_calls": [
+                                {"function": {"arguments": '{"key": "val"}'}}
+                            ],
+                        }
+                    }
+                ],
+            },
+        )
+
+        parsed = endpoint.parse_response(mock_response)
+
+        assert parsed is not None
+        assert isinstance(parsed.data, ReasoningResponseData)
+        assert parsed.data.reasoning == "Thinking..."
