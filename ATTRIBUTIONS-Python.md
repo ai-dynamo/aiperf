@@ -1060,24 +1060,24 @@ License: `MIT`
 
 Except when otherwise stated (look for LICENSE files in directories or
 information at the beginning of each file) all software and
-documentation is licensed as follows: 
+documentation is licensed as follows:
 
     MIT No Attribution
 
-    Permission is hereby granted, free of charge, to any person 
-    obtaining a copy of this software and associated documentation 
-    files (the "Software"), to deal in the Software without 
-    restriction, including without limitation the rights to use, 
-    copy, modify, merge, publish, distribute, sublicense, and/or 
-    sell copies of the Software, and to permit persons to whom the 
+    Permission is hereby granted, free of charge, to any person
+    obtaining a copy of this software and associated documentation
+    files (the "Software"), to deal in the Software without
+    restriction, including without limitation the rights to use,
+    copy, modify, merge, publish, distribute, sublicense, and/or
+    sell copies of the Software, and to permit persons to whom the
     Software is furnished to do so.
 
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS 
-    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL 
-    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
-    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER 
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
     DEALINGS IN THE SOFTWARE.
 
 ```
@@ -4764,7 +4764,7 @@ License: OFL-1.1
 
   The OFL allows the licensed fonts to be used, studied, modified and
   redistributed freely as long as they are not sold by themselves. The
-  fonts, including any derivative works, can be bundled, embedded, 
+  fonts, including any derivative works, can be bundled, embedded,
   redistributed and/or sold with any software provided that any reserved
   names are not used by derivative works. The fonts and derivatives,
   however, cannot be released under any other type of license. The
@@ -4841,7 +4841,7 @@ License: OFL-1.1
 
 
 Name: BaKoMa Fonts
-Files: matplotlib/mpl-data/fonts/ttf/cm*.ttf matplotlib/mpl-data/fonts/afm/cm*.afm 
+Files: matplotlib/mpl-data/fonts/ttf/cm*.ttf matplotlib/mpl-data/fonts/afm/cm*.afm
 Description: Computer Modern Fonts in PostScript Type 1 and TrueType font formats.
 License: BaKoMa Fonts Licence
         BaKoMa Fonts Licence
@@ -4855,22 +4855,22 @@ License: BaKoMa Fonts Licence
 
       2) BaKoMa-AMS (1.2/19-Jan-95)
          AMS TeX fonts in PostScript Type 1 and TrueType font formats.
-     
+
     Copyright (C) 1994, 1995, Basil K. Malyshev. All Rights Reserved.
 
-    Permission to copy and distribute these fonts for any purpose is 
-    hereby granted without fee, provided that the above copyright notice, 
-    author statement and this permission notice appear in all copies of 
+    Permission to copy and distribute these fonts for any purpose is
+    hereby granted without fee, provided that the above copyright notice,
+    author statement and this permission notice appear in all copies of
     these fonts and related documentation.
 
-    Permission to modify and distribute modified fonts for any purpose is 
-    hereby granted without fee, provided that the copyright notice, 
-    author statement, this permission notice and location of original 
+    Permission to modify and distribute modified fonts for any purpose is
+    hereby granted without fee, provided that the copyright notice,
+    author statement, this permission notice and location of original
     fonts (http://www.ctan.org/tex-archive/fonts/cm/ps-type1/bakoma)
     appear in all copies of modified fonts and related documentation.
 
     Permission to use these fonts (embedding into PostScript, PDF, SVG
-    and printing by using any software) is hereby granted without fee. 
+    and printing by using any software) is hereby granted without fee.
     It is not required to provide any notices about using these fonts.
 
    Basil K. Malyshev
@@ -4930,7 +4930,7 @@ License: Bitstream-Charter
 
 
 Name: JSXTools resize observer
-Files: 
+Files:
 Description: Minimal polyfill for the ResizeObserver API
 License: CC0-1.0
   # CC0 1.0 Universal
@@ -5048,10 +5048,10 @@ Files: matplotlib/_qhull.*.so
 Description: Convex hull, Delaunay triangulation, Voronoi diagrams, Halfspace intersection
 License: Qhull
                       Qhull, Copyright (c) 1993-2020
-                      
+
                               C.B. Barber
-                             Arlington, MA 
-                            
+                             Arlington, MA
+
                                  and
 
          The National Science and Technology Research Center for
@@ -5061,30 +5061,30 @@ License: Qhull
 
                          email: qhull@qhull.org
 
-  This software includes Qhull from C.B. Barber and The Geometry Center.  
+  This software includes Qhull from C.B. Barber and The Geometry Center.
   Files derived from Qhull 1.0 are copyrighted by the Geometry Center.  The
-  remaining files are copyrighted by C.B. Barber.  Qhull is free software 
-  and may be obtained via http from www.qhull.org.  It may be freely copied, 
+  remaining files are copyrighted by C.B. Barber.  Qhull is free software
+  and may be obtained via http from www.qhull.org.  It may be freely copied,
   modified, and redistributed under the following conditions:
 
   1. All copyright notices must remain intact in all files.
 
-  2. A copy of this text file must be distributed along with any copies 
-     of Qhull that you redistribute; this includes copies that you have 
-     modified, or copies of programs or other software products that 
+  2. A copy of this text file must be distributed along with any copies
+     of Qhull that you redistribute; this includes copies that you have
+     modified, or copies of programs or other software products that
      include Qhull.
 
   3. If you modify Qhull, you must include a notice giving the
      name of the person performing the modification, the date of
      modification, and the reason for such modification.
 
-  4. When distributing modified versions of Qhull, or other software 
-     products that include Qhull, you must provide notice that the original 
+  4. When distributing modified versions of Qhull, or other software
+     products that include Qhull, you must provide notice that the original
      source code may be obtained as noted above.
 
-  5. There is no warranty or other guarantee of fitness for Qhull, it is 
-     provided solely "as is".  Bug reports or fixes may be sent to 
-     qhull_bug@qhull.org; the authors may or may not act on them as 
+  5. There is no warranty or other guarantee of fitness for Qhull, it is
+     provided solely "as is".  Bug reports or fixes may be sent to
+     qhull_bug@qhull.org; the authors may or may not act on them as
      they desire.
 
 
@@ -5155,73 +5155,73 @@ Description: STIX fonts
 License:
   TERMS AND CONDITIONS
 
-     1. Permission is hereby granted, free of charge, to any person 
-  obtaining a copy of the STIX Fonts-TM set accompanying this license 
-  (collectively, the "Fonts") and the associated documentation files 
-  (collectively with the Fonts, the "Font Software"), to reproduce and 
-  distribute the Font Software, including the rights to use, copy, merge 
-  and publish copies of the Font Software, and to permit persons to whom 
-  the Font Software is furnished to do so same, subject to the following 
+     1. Permission is hereby granted, free of charge, to any person
+  obtaining a copy of the STIX Fonts-TM set accompanying this license
+  (collectively, the "Fonts") and the associated documentation files
+  (collectively with the Fonts, the "Font Software"), to reproduce and
+  distribute the Font Software, including the rights to use, copy, merge
+  and publish copies of the Font Software, and to permit persons to whom
+  the Font Software is furnished to do so same, subject to the following
   terms and conditions (the "License").
 
-     2. The following copyright and trademark notice and these Terms and 
-  Conditions shall be included in all copies of one or more of the Font 
-  typefaces and any derivative work created as permitted under this 
+     2. The following copyright and trademark notice and these Terms and
+  Conditions shall be included in all copies of one or more of the Font
+  typefaces and any derivative work created as permitted under this
   License:
 
-    Copyright (c) 2001-2005 by the STI Pub Companies, consisting of 
-  the American Institute of Physics, the American Chemical Society, the 
-  American Mathematical Society, the American Physical Society, Elsevier, 
-  Inc., and The Institute of Electrical and Electronic Engineers, Inc. 
-  Portions copyright (c) 1998-2003 by MicroPress, Inc. Portions copyright 
-  (c) 1990 by Elsevier, Inc. All rights reserved. STIX Fonts-TM is a 
+    Copyright (c) 2001-2005 by the STI Pub Companies, consisting of
+  the American Institute of Physics, the American Chemical Society, the
+  American Mathematical Society, the American Physical Society, Elsevier,
+  Inc., and The Institute of Electrical and Electronic Engineers, Inc.
+  Portions copyright (c) 1998-2003 by MicroPress, Inc. Portions copyright
+  (c) 1990 by Elsevier, Inc. All rights reserved. STIX Fonts-TM is a
   trademark of The Institute of Electrical and Electronics Engineers, Inc.
 
-     3. You may (a) convert the Fonts from one format to another (e.g., 
-  from TrueType to PostScript), in which case the normal and reasonable 
-  distortion that occurs during such conversion shall be permitted and (b) 
-  embed or include a subset of the Fonts in a document for the purposes of 
-  allowing users to read text in the document that utilizes the Fonts. In 
-  each case, you may use the STIX Fonts-TM mark to designate the resulting 
+     3. You may (a) convert the Fonts from one format to another (e.g.,
+  from TrueType to PostScript), in which case the normal and reasonable
+  distortion that occurs during such conversion shall be permitted and (b)
+  embed or include a subset of the Fonts in a document for the purposes of
+  allowing users to read text in the document that utilizes the Fonts. In
+  each case, you may use the STIX Fonts-TM mark to designate the resulting
   Fonts or subset of the Fonts.
 
-     4. You may also (a) add glyphs or characters to the Fonts, or modify 
-  the shape of existing glyphs, so long as the base set of glyphs is not 
-  removed and (b) delete glyphs or characters from the Fonts, provided 
-  that the resulting font set is distributed with the following 
-  disclaimer: "This [name] font does not include all the Unicode points 
-  covered in the STIX Fonts-TM set but may include others." In each case, 
-  the name used to denote the resulting font set shall not include the 
+     4. You may also (a) add glyphs or characters to the Fonts, or modify
+  the shape of existing glyphs, so long as the base set of glyphs is not
+  removed and (b) delete glyphs or characters from the Fonts, provided
+  that the resulting font set is distributed with the following
+  disclaimer: "This [name] font does not include all the Unicode points
+  covered in the STIX Fonts-TM set but may include others." In each case,
+  the name used to denote the resulting font set shall not include the
   term "STIX" or any similar term.
 
-     5. You may charge a fee in connection with the distribution of the 
-  Font Software, provided that no copy of one or more of the individual 
+     5. You may charge a fee in connection with the distribution of the
+  Font Software, provided that no copy of one or more of the individual
   Font typefaces that form the STIX Fonts-TM set may be sold by itself.
 
-     6. THE FONT SOFTWARE IS PROVIDED "AS IS," WITHOUT WARRANTY OF ANY 
-  KIND, EXPRESS OR IMPLIED, INCLUDING, BUT NOT LIMITED TO, ANY WARRANTIES 
-  OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT 
-  OF COPYRIGHT, PATENT, TRADEMARK OR OTHER RIGHT. IN NO EVENT SHALL 
-  MICROPRESS OR ANY OF THE STI PUB COMPANIES BE LIABLE FOR ANY CLAIM, 
-  DAMAGES OR OTHER LIABILITY, INCLUDING, BUT NOT LIMITED TO, ANY GENERAL, 
-  SPECIAL, INDIRECT, INCIDENTAL OR CONSEQUENTIAL DAMAGES, WHETHER IN AN 
-  ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM OR OUT OF THE USE OR 
-  INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER DEALINGS IN THE FONT 
+     6. THE FONT SOFTWARE IS PROVIDED "AS IS," WITHOUT WARRANTY OF ANY
+  KIND, EXPRESS OR IMPLIED, INCLUDING, BUT NOT LIMITED TO, ANY WARRANTIES
+  OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+  OF COPYRIGHT, PATENT, TRADEMARK OR OTHER RIGHT. IN NO EVENT SHALL
+  MICROPRESS OR ANY OF THE STI PUB COMPANIES BE LIABLE FOR ANY CLAIM,
+  DAMAGES OR OTHER LIABILITY, INCLUDING, BUT NOT LIMITED TO, ANY GENERAL,
+  SPECIAL, INDIRECT, INCIDENTAL OR CONSEQUENTIAL DAMAGES, WHETHER IN AN
+  ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM OR OUT OF THE USE OR
+  INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER DEALINGS IN THE FONT
   SOFTWARE.
 
-     7. Except as contained in the notice set forth in Section 2, the 
-  names MicroPress Inc. and STI Pub Companies, as well as the names of the 
-  companies/organizations that compose the STI Pub Companies, shall not be 
-  used in advertising or otherwise to promote the sale, use or other 
-  dealings in the Font Software without the prior written consent of the 
+     7. Except as contained in the notice set forth in Section 2, the
+  names MicroPress Inc. and STI Pub Companies, as well as the names of the
+  companies/organizations that compose the STI Pub Companies, shall not be
+  used in advertising or otherwise to promote the sale, use or other
+  dealings in the Font Software without the prior written consent of the
   respective company or organization.
 
-     8. This License shall become null and void in the event of any 
+     8. This License shall become null and void in the event of any
   material breach of the Terms and Conditions herein by licensee.
 
-     9. A substantial portion of the STIX Fonts set was developed by 
-  MicroPress Inc. for the STI Pub Companies. To obtain additional 
-  mathematical fonts, please contact MicroPress, Inc., 68-30 Harrow 
+     9. A substantial portion of the STIX Fonts set was developed by
+  MicroPress Inc. for the STI Pub Companies. To obtain additional
+  mathematical fonts, please contact MicroPress, Inc., 68-30 Harrow
   Street, Forest Hills, NY 11375, USA - Phone: (718) 575-1816.
 
 
@@ -5857,8 +5857,8 @@ THE POSSIBILITY OF SUCH DAMAGE.**
 
 # Components
 
-Many parts of this module have been derived from original sources, 
-often the algorithm's designer. Component licenses are located with 
+Many parts of this module have been derived from original sources,
+often the algorithm's designer. Component licenses are located with
 the component code.
 ```
 
@@ -6181,7 +6181,7 @@ Mozilla Public License Version 2.0
     means any form of the work other than Source Code Form.
 
 1.7. "Larger Work"
-    means a work that combines Covered Software with other material, in 
+    means a work that combines Covered Software with other material, in
     a separate file or files, that is not Covered Software.
 
 1.8. "License"
@@ -12506,24 +12506,24 @@ All rights reserved.
 Redistribution and use in source and binary forms, with or without modification,
 are permitted provided that the following conditions are met:
 
-* Redistributions of source code must retain the above copyright notice, this 
+* Redistributions of source code must retain the above copyright notice, this
   list of conditions and the following disclaimer.
-* Redistributions in binary form must reproduce the above copyright notice, 
-  this list of conditions and the following disclaimer in the documentation 
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
   and/or other materials provided with the distribution.
-* Neither the name of the copyright holder nor the names of its contributors may 
-  be used to endorse or promote products derived from this software without 
+* Neither the name of the copyright holder nor the names of its contributors may
+  be used to endorse or promote products derived from this software without
   specific prior written permission.
 
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED 
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE 
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE 
-LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
-CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE 
-GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) 
-HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT 
-LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT 
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE
+GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
 OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
@@ -14671,10 +14671,10 @@ Wanner with the original descriptions below.
   - `spatial/qhull_src/COPYING_QHULL.txt`:
 ```
                     Qhull, Copyright (c) 1993-2020
-                    
+
                             C.B. Barber
-                           Arlington, MA 
-                          
+                           Arlington, MA
+
                                and
 
        The National Science and Technology Research Center for
@@ -14684,30 +14684,30 @@ Wanner with the original descriptions below.
 
                        email: qhull@qhull.org
 
-This software includes Qhull from C.B. Barber and The Geometry Center.  
+This software includes Qhull from C.B. Barber and The Geometry Center.
 Files derived from Qhull 1.0 are copyrighted by the Geometry Center.  The
-remaining files are copyrighted by C.B. Barber.  Qhull is free software 
-and may be obtained via http from www.qhull.org.  It may be freely copied, 
+remaining files are copyrighted by C.B. Barber.  Qhull is free software
+and may be obtained via http from www.qhull.org.  It may be freely copied,
 modified, and redistributed under the following conditions:
 
 1. All copyright notices must remain intact in all files.
 
-2. A copy of this text file must be distributed along with any copies 
-   of Qhull that you redistribute; this includes copies that you have 
-   modified, or copies of programs or other software products that 
+2. A copy of this text file must be distributed along with any copies
+   of Qhull that you redistribute; this includes copies that you have
+   modified, or copies of programs or other software products that
    include Qhull.
 
 3. If you modify Qhull, you must include a notice giving the
    name of the person performing the modification, the date of
    modification, and the reason for such modification.
 
-4. When distributing modified versions of Qhull, or other software 
-   products that include Qhull, you must provide notice that the original 
+4. When distributing modified versions of Qhull, or other software
+   products that include Qhull, you must provide notice that the original
    source code may be obtained as noted above.
 
-5. There is no warranty or other guarantee of fitness for Qhull, it is 
-   provided solely "as is".  Bug reports or fixes may be sent to 
-   qhull_bug@qhull.org; the authors may or may not act on them as 
+5. There is no warranty or other guarantee of fitness for Qhull, it is
+   provided solely "as is".  Bug reports or fixes may be sent to
+   qhull_bug@qhull.org; the authors may or may not act on them as
    they desire.
 ```
 
