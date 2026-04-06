@@ -122,6 +122,36 @@ class TestBuildLoaderKwargs:
             kwargs = composer._build_loader_kwargs(PublicDatasetType.AIMO)
         assert kwargs == {}
 
+    def test_category_forwarded_when_set(self, aimo_config):
+        from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
+
+        composer = PublicDatasetComposer(aimo_config, None)
+        with patch(
+            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
+            return_value=PublicDatasetLoaderMetadata(
+                hf_dataset_name="nvidia/SPEED-Bench",
+                hf_split="test",
+                hf_subset="qualitative",
+                category="coding",
+            ),
+        ):
+            kwargs = composer._build_loader_kwargs(PublicDatasetType.AIMO)
+        assert kwargs["category"] == "coding"
+
+    def test_no_category_in_kwargs_when_none(self, aimo_config):
+        from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
+
+        composer = PublicDatasetComposer(aimo_config, None)
+        with patch(
+            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
+            return_value=PublicDatasetLoaderMetadata(
+                hf_dataset_name="nvidia/SPEED-Bench",
+                hf_split="test",
+            ),
+        ):
+            kwargs = composer._build_loader_kwargs(PublicDatasetType.AIMO)
+        assert "category" not in kwargs
+
 
 @pytest.mark.asyncio
 class TestCreateDatasetAsync:
