@@ -88,7 +88,11 @@ class CustomDatasetComposer(BaseDatasetComposer):
                 for line in f:
                     if not (line := line.strip()):
                         continue
-                    data = load_json_str(line)
+                    try:
+                        data = load_json_str(line)
+                    except Exception:
+                        # Non-JSON file (e.g. CSV) — fall back to filename-based detection
+                        return self._infer_type(data=None, filename=file_path)
                     return self._infer_type(data=data, filename=file_path)
 
         except ValueError as e:
