@@ -142,8 +142,10 @@ class TestConsoleUsageDiscrepancyExporter:
             # Check for investigation steps
             assert "Investigation Steps:" in output
             assert "profile_export.jsonl" in output
-            assert "usage_*_diff_pct" in output
+            assert "usage_prompt_tokens_diff_pct" in output
             assert "AIPERF_METRICS_USAGE_PCT_DIFF_THRESHOLD" in output
+            # Should NOT mention deprecated flag
+            assert "--use-server-token-count" not in output
 
     async def test_custom_threshold_displayed(self, mock_user_config):
         """Test that custom threshold value is displayed in warning."""

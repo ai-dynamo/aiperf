@@ -31,15 +31,89 @@ class InputSequenceLengthMetric(BaseRecordMetric[int]):
         record_metrics: MetricRecordDict,
     ) -> int:
         """
-        This method extracts the input token count from the record and returns it.
+        Extract the input token count from the record.
+
+        Returns server-reported prompt token count when available (the common
+        case). Falls back to client-side token_counts.input_local for the rare case
+        where the server does not report prompt token counts.
 
         Raises:
-            ValueError: If the record does not have an input token count.
+            NoMetricValue: If neither server nor client input token count is available.
         """
-        if record.token_counts is None or record.token_counts.input is None:
+        if record.token_counts is None:
             raise NoMetricValue("Input Token Count is not available for the record.")
 
-        return record.token_counts.input
+        # Prefer server-reported prompt tokens
+        if record.token_counts.input is not None:
+            return record.token_counts.input
+
+        # Rare fallback: server didn't report prompt tokens, use client-side
+        if record.token_counts.input_local is not None:
+            return record.token_counts.input_local
+
+        raise NoMetricValue("Input Token Count is not available for the record.")
+
+
+class InputSequenceLengthServerMetric(BaseRecordMetric[int]):
+    """
+    Server-reported Input Sequence Length — file-only metric.
+
+    Returns the server-reported prompt token count (``token_counts.input``).
+    Raises ``NoMetricValue`` when the server did not report a value.
+    """
+
+    tag = "input_sequence_length_server"
+    header = "Input Sequence Length (Server)"
+    short_header = "ISL Server"
+    unit = GenericMetricUnit.TOKENS
+    flags = (
+        MetricFlags.TOKENIZES_INPUT_ONLY
+        | MetricFlags.LARGER_IS_BETTER
+        | MetricFlags.NO_CONSOLE
+    )
+    required_metrics = None
+
+    def _parse_record(
+        self,
+        record: ParsedResponseRecord,
+        record_metrics: MetricRecordDict,
+    ) -> int:
+        if record.token_counts is not None and record.token_counts.input is not None:
+            return record.token_counts.input
+        raise NoMetricValue("Server-reported input token count is not available.")
+
+
+class InputSequenceLengthLocalMetric(BaseRecordMetric[int]):
+    """
+    Client-side tokenized Input Sequence Length — file-only metric.
+
+    Returns the client-side tokenized prompt token count
+    (``token_counts.input_local``).  Raises ``NoMetricValue`` when the
+    client-side value is not available.
+    """
+
+    tag = "input_sequence_length_local"
+    header = "Input Sequence Length (Local)"
+    short_header = "ISL Local"
+    unit = GenericMetricUnit.TOKENS
+    flags = (
+        MetricFlags.TOKENIZES_INPUT_ONLY
+        | MetricFlags.LARGER_IS_BETTER
+        | MetricFlags.NO_CONSOLE
+    )
+    required_metrics = None
+
+    def _parse_record(
+        self,
+        record: ParsedResponseRecord,
+        record_metrics: MetricRecordDict,
+    ) -> int:
+        if (
+            record.token_counts is not None
+            and record.token_counts.input_local is not None
+        ):
+            return record.token_counts.input_local
+        raise NoMetricValue("Client-side input token count is not available.")
 
 
 class TotalInputSequenceLengthMetric(DerivedSumMetric[int, InputSequenceLengthMetric]):

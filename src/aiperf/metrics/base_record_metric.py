@@ -29,7 +29,7 @@ class BaseRecordMetric(
             record: ParsedResponseRecord,
             record_metrics: MetricRecordDict,
         ) -> int:
-            return record.token_counts.input
+            return record.token_counts.input_local
     ```
     """
 

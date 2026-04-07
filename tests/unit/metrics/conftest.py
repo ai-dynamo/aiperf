@@ -54,7 +54,11 @@ def create_record(
     start_ns: int = 100,
     responses: list[int] | None = None,
     input_tokens: int | None = None,
+    input_local_tokens: int | None = None,
     output_tokens_per_response: int = 1,
+    output_local_tokens: int | None = None,
+    reasoning_tokens: int | None = None,
+    reasoning_local_tokens: int | None = None,
     error: ErrorDetails | None = None,
 ) -> ParsedResponseRecord:
     """
@@ -91,8 +95,11 @@ def create_record(
         responses=response_data,
         token_counts=TokenCounts(
             input=input_tokens,
+            input_local=input_local_tokens,
             output=len(responses) * output_tokens_per_response,
-            reasoning=None,
+            output_local=output_local_tokens,
+            reasoning=reasoning_tokens,
+            reasoning_local=reasoning_local_tokens,
         ),
     )
 

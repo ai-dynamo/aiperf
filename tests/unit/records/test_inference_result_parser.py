@@ -35,8 +35,7 @@ def spy_tokenizer():
 
 @pytest.fixture
 def server_token_parser(setup_inference_parser):
-    """Parser with server token count enabled."""
-    setup_inference_parser.user_config.endpoint.use_server_token_count = True
+    """Parser fixture — now identical to default parser since both counts are always computed."""
     return setup_inference_parser
 
 
@@ -115,7 +114,7 @@ class TestInvalidRecords:
             )
 
         assert result.request == record
-        assert result.token_counts.input == 8
+        assert result.token_counts.input_local == 8
         assert result.responses == []
 
     async def test_no_content_responses_converted_to_error(
@@ -140,7 +139,7 @@ class TestInvalidRecords:
         assert record.has_error
         assert record.error.type == "InvalidInferenceResultError"
         assert "No responses with actual content" in record.error.message
-        assert result.token_counts.input == 8
+        assert result.token_counts.input_local == 8
         assert result.responses == []
 
     async def test_existing_errors_not_overwritten(
@@ -156,7 +155,7 @@ class TestInvalidRecords:
         assert record.error.message == "Original error"
         assert record.error.type == "ServerError"
         assert record.error.code == 500
-        assert result.token_counts.input == 8
+        assert result.token_counts.input_local == 8
         assert result.responses == []
 
     @pytest.mark.parametrize(
@@ -196,7 +195,7 @@ class TestInvalidRecords:
         result = await inference_result_parser.parse_request_record(record)
 
         assert result.request == record
-        assert result.token_counts.input == 8
+        assert result.token_counts.input_local == 8
         assert result.responses == []
         assert record.error is not None
 
@@ -258,10 +257,10 @@ class TestAsyncTokenizerEncode:
         assert result == 8
         assert spy_tokenizer.encode.call_count == 1
 
-    async def test_client_side_token_counts_uses_async(
+    async def test_compute_token_counts_uses_async(
         self, setup_inference_parser, spy_tokenizer
     ):
-        """_compute_client_side_token_counts calls async _compute_token_count for output/reasoning."""
+        """_compute_token_counts calls async _compute_token_count for output/reasoning."""
         setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
         record = RequestRecord(
             request_info=create_test_request_info(turns=[]),
@@ -274,22 +273,22 @@ class TestAsyncTokenizerEncode:
             [make_parsed_response(text="output tokens here")],
         )
 
-        result = await setup_inference_parser._compute_client_side_token_counts(
+        result = await setup_inference_parser._compute_token_counts(
             record, [make_parsed_response(text="output tokens here")]
         )
 
-        assert result.output == 3
+        assert result.output_local == 3
         assert spy_tokenizer.encode.called
 
 
 @pytest.mark.asyncio
 class TestServerTokenCount:
-    """Tests for --use-server-token-count flag functionality."""
+    """Tests for always-both token counting behavior (client input + server output overlay)."""
 
-    async def test_uses_server_values(
+    async def test_server_overlay_on_client(
         self, server_token_parser, request_record, spy_tokenizer
     ):
-        """Server token counts are used when flag is enabled."""
+        """Server usage populates input; client-side populates input_local."""
         server_token_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
         setup_parser_responses(
             server_token_parser,
@@ -302,39 +301,63 @@ class TestServerTokenCount:
 
         result = await server_token_parser.process_valid_record(request_record)
 
+        # input is server-reported, input_local is client-side (8 words in sample turn)
         assert result.token_counts.input == 150
+        assert result.token_counts.input_local == 8
+        # Output/reasoning are server-reported
         assert result.token_counts.output == 40  # 50 - 10
         assert result.token_counts.reasoning == 10
-        spy_tokenizer.encode.assert_not_called()
+        assert spy_tokenizer.encode.called
 
-    async def test_missing_usage_returns_none(
-        self, server_token_parser, request_record
+    async def test_no_server_usage_falls_back_to_client(
+        self, server_token_parser, request_record, spy_tokenizer
     ):
-        """None is returned when server doesn't provide usage."""
+        """When server provides no usage, client-side values are used as fallback."""
+        server_token_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
         setup_parser_responses(
-            server_token_parser, [make_parsed_response(include_usage=False)]
+            server_token_parser,
+            [make_parsed_response(text="hello world", include_usage=False)],
         )
 
         result = await server_token_parser.process_valid_record(request_record)
 
+        # No server input; client-side stored in input_local
         assert result.token_counts.input is None
+        assert result.token_counts.input_local == 8
+        # Server didn't report, so output/reasoning remain None; client fallback in _local fields
         assert result.token_counts.output is None
+        assert (
+            result.token_counts.output_local == 2
+        )  # "hello world" = 2 words (client fallback)
         assert result.token_counts.reasoning is None
+        assert result.token_counts.reasoning_local is None
 
-    async def test_partial_usage(self, server_token_parser, request_record):
-        """Partial usage information is handled correctly."""
+    async def test_partial_server_usage(
+        self, server_token_parser, request_record, spy_tokenizer
+    ):
+        """Only prompt_tokens from server — no server output/reasoning."""
+        server_token_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
         setup_parser_responses(
-            server_token_parser, [make_parsed_response(prompt_tokens=150)]
+            server_token_parser,
+            [make_parsed_response(text="output text", prompt_tokens=150)],
         )
 
         result = await server_token_parser.process_valid_record(request_record)
 
+        # input is server-reported, input_local is client-side
         assert result.token_counts.input == 150
+        assert result.token_counts.input_local == 8
+        # Server didn't report completion_tokens, so output/reasoning remain None; client fallback in _local fields
         assert result.token_counts.output is None
+        assert result.token_counts.output_local == 2  # "output text" = 2 words
         assert result.token_counts.reasoning is None
+        assert result.token_counts.reasoning_local is None
 
-    async def test_streaming_uses_last_value(self, server_token_parser, request_record):
-        """Last non-None usage value is used for streaming responses."""
+    async def test_streaming_uses_last_server_value(
+        self, server_token_parser, request_record, spy_tokenizer
+    ):
+        """Last non-None server usage value is used for streaming responses."""
+        server_token_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
         setup_parser_responses(
             server_token_parser,
             [
@@ -350,15 +373,16 @@ class TestServerTokenCount:
 
         result = await server_token_parser.process_valid_record(request_record)
 
+        # input is server-reported (last value), input_local is client-side
         assert result.token_counts.input == 150
+        assert result.token_counts.input_local == 8
+        # Output is server-reported (last value)
         assert result.token_counts.output == 50
 
-    async def test_client_tokenization_when_disabled(
+    async def test_server_output_overrides_client(
         self, setup_inference_parser, request_record, spy_tokenizer
     ):
-        """Client-side tokenization works when flag is disabled."""
-        assert not setup_inference_parser.user_config.endpoint.use_server_token_count
-
+        """Server output values are used over client-computed values."""
         setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
         setup_parser_responses(
             setup_inference_parser,
@@ -371,8 +395,11 @@ class TestServerTokenCount:
 
         result = await setup_inference_parser.process_valid_record(request_record)
 
-        assert result.token_counts.input == 8
-        assert result.token_counts.output == 3
+        # input is server-reported, input_local is client-side
+        assert result.token_counts.input == 999
+        assert result.token_counts.input_local == 8
+        # Output is server-reported (999 completion - 0 reasoning = 999)
+        assert result.token_counts.output == 999
         assert spy_tokenizer.encode.called
 
     @pytest.mark.parametrize(
@@ -408,11 +435,13 @@ class TestServerTokenCount:
         assert result == expected_output
 
     async def test_warning_when_no_usage_provided(
-        self, server_token_parser, request_record
+        self, server_token_parser, request_record, spy_tokenizer
     ):
         """Warning is logged when server provides no usage information."""
+        server_token_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
         setup_parser_responses(
-            server_token_parser, [make_parsed_response(include_usage=False)]
+            server_token_parser,
+            [make_parsed_response(text="output", include_usage=False)],
         )
 
         with patch.object(server_token_parser, "warning") as mock_warning:
@@ -491,5 +520,75 @@ class TestContextPromptISL:
 
         parsed_record = await setup_inference_parser.parse_request_record(record)
 
-        assert parsed_record.token_counts.input == 19
+        assert parsed_record.token_counts.input_local == 19
         assert parsed_record.responses == []
+
+
+@pytest.mark.asyncio
+class TestTokenizeInputFlag:
+    """Tests for --tokenize-input / --no-tokenize-input gating."""
+
+    async def test_no_tokenize_input_skips_input_local(
+        self, setup_inference_parser, request_record, spy_tokenizer
+    ):
+        """tokenize_input=False with server reporting → input_local is None."""
+        setup_inference_parser.tokenize_input = False
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+        setup_parser_responses(
+            setup_inference_parser,
+            [make_parsed_response(prompt_tokens=150, completion_tokens=50)],
+        )
+
+        result = await setup_inference_parser.process_valid_record(request_record)
+
+        assert result.token_counts.input == 150
+        assert result.token_counts.input_local is None
+
+    async def test_no_tokenize_input_fallback(
+        self, setup_inference_parser, request_record, spy_tokenizer
+    ):
+        """tokenize_input=False without server usage → input_local computed as fallback."""
+        setup_inference_parser.tokenize_input = False
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+        setup_parser_responses(
+            setup_inference_parser,
+            [make_parsed_response(text="output", include_usage=False)],
+        )
+
+        result = await setup_inference_parser.process_valid_record(request_record)
+
+        assert result.token_counts.input is None
+        assert result.token_counts.input_local == 8  # 8 words in sample turn
+
+    async def test_explicit_no_tokenize_input_skips_fallback(
+        self, setup_inference_parser, request_record, spy_tokenizer
+    ):
+        """Explicit --no-tokenize-input without server usage → no fallback."""
+        setup_inference_parser.tokenize_input = False
+        setup_inference_parser._explicit_no_tokenize_input = True
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+        setup_parser_responses(
+            setup_inference_parser,
+            [make_parsed_response(text="output", include_usage=False)],
+        )
+
+        result = await setup_inference_parser.process_valid_record(request_record)
+
+        assert result.token_counts.input is None
+        assert result.token_counts.input_local is None
+
+    async def test_tokenize_input_always_computes(
+        self, setup_inference_parser, request_record, spy_tokenizer
+    ):
+        """tokenize_input=True → input_local always computed (existing behavior)."""
+        setup_inference_parser.tokenize_input = True
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+        setup_parser_responses(
+            setup_inference_parser,
+            [make_parsed_response(prompt_tokens=150, completion_tokens=50)],
+        )
+
+        result = await setup_inference_parser.process_valid_record(request_record)
+
+        assert result.token_counts.input == 150
+        assert result.token_counts.input_local == 8

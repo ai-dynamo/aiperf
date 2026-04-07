@@ -46,10 +46,6 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
             disallowed_flags |= MetricFlags.PRODUCES_VIDEO_ONLY
         if not self.user_config.endpoint.streaming:
             disallowed_flags |= MetricFlags.STREAMING_ONLY
-        if self.user_config.endpoint.use_server_token_count:
-            # Disable usage diff metrics if server token counts are used, because
-            # these metrics are only applicable when client side tokenization is enabled.
-            disallowed_flags |= MetricFlags.USAGE_DIFF_ONLY
         if not Environment.DEV.MODE and not Environment.DEV.SHOW_EXPERIMENTAL_METRICS:
             disallowed_flags |= MetricFlags.EXPERIMENTAL
 

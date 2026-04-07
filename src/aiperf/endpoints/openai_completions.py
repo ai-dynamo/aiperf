@@ -52,11 +52,7 @@ class CompletionsEndpoint(BaseEndpoint):
         if extra:
             payload.update(extra)
 
-        if (
-            model_endpoint.endpoint.streaming
-            and model_endpoint.endpoint.use_server_token_count
-        ):
-            # Automatically set stream_options to include usage when using server token counts
+        if model_endpoint.endpoint.streaming and model_endpoint.endpoint.stream_usage:
             if "stream_options" not in payload:
                 payload["stream_options"] = {"include_usage": True}
             elif (

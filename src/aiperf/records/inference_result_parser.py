@@ -45,12 +45,44 @@ class InferenceResultParser(CommunicationMixin):
         )
         self.endpoint = EndpointClass(model_endpoint=self.model_endpoint)
         endpoint_meta = plugins.get_endpoint_metadata(self.model_endpoint.endpoint.type)
-        # Disable tokenization if the endpoint doesn't produce tokens and doesn't tokenize input, or
-        # if the user config is set to use server token counts.
         self.disable_tokenization: bool = (
-            user_config.endpoint.use_server_token_count
-            or (not endpoint_meta.produces_tokens and not endpoint_meta.tokenizes_input)
+            not endpoint_meta.produces_tokens and not endpoint_meta.tokenizes_input
         )
+        self.tokenize_output: bool = user_config.tokenizer.tokenize_output
+        self.tokenize_input: bool = user_config.tokenizer.tokenize_input
+        self._explicit_no_tokenize_input: bool = (
+            "tokenize_input" in user_config.tokenizer.model_fields_set
+            and not user_config.tokenizer.tokenize_input
+        )
+        self._warned_no_usage: bool = False
+        if (
+            self.model_endpoint.endpoint.streaming
+            and self.model_endpoint.endpoint.stream_usage
+        ):
+            self.info(
+                "stream_options.include_usage is enabled for streaming requests. "
+                "Server-reported token counts will be requested. "
+                "Use --no-stream-usage if the server does not support stream_options."
+            )
+        if not self.disable_tokenization and self._explicit_no_tokenize_input:
+            self.info(
+                "Input tokenization is disabled (--no-tokenize-input). "
+                "Client-side input token counts will not be computed, even as fallback. "
+                "Use --tokenize-input to enable."
+            )
+        elif not self.disable_tokenization and not self.tokenize_input:
+            self.info(
+                "Always-on input tokenization is disabled. "
+                "Client-side input tokenization will still occur as a fallback "
+                "when the server does not report prompt tokens. "
+                "Use --tokenize-input to enable for all requests."
+            )
+        if not self.disable_tokenization and not self.tokenize_output:
+            self.info(
+                "Output tokenization is disabled. "
+                "Usage output and reasoning token diff metrics will not be available. "
+                "Use --tokenize-output to enable."
+            )
         self.debug(
             lambda: f"Created endpoint for {self.model_endpoint.endpoint.type}, "
             f"class: {self.endpoint.__class__.__name__}",
@@ -125,20 +157,18 @@ class InferenceResultParser(CommunicationMixin):
 
         if request_record.has_error:
             # Even for error records, compute input token count if possible
-            input_token_count = None
-            if not self.disable_tokenization:
+            input_local = None
+            if not self.disable_tokenization and not self._explicit_no_tokenize_input:
                 # Suppress exceptions during token counting for error records to avoid masking the original error.
-                # If token counting fails, we still return the error record with token_counts.input=None.
+                # If token counting fails, we still return the error record with token_counts.input_local=None.
                 with suppress(Exception):
-                    input_token_count = await self.compute_input_token_count(
-                        request_record
-                    )
+                    input_local = await self.compute_input_token_count(request_record)
 
             return ParsedResponseRecord(
                 request=request_record,
                 responses=[],
                 token_counts=TokenCounts(
-                    input=input_token_count,
+                    input_local=input_local,
                 ),
             )
 
@@ -156,7 +186,7 @@ class InferenceResultParser(CommunicationMixin):
                         request=record.request,
                         responses=[],
                         token_counts=TokenCounts(
-                            input=record.token_counts.input
+                            input_local=record.token_counts.input_local
                             if record.token_counts
                             else None
                         ),
@@ -172,13 +202,16 @@ class InferenceResultParser(CommunicationMixin):
                 # TODO: We should add an ErrorDetails to the response record and not the request record.
                 self.exception(f"Error processing valid record: {e}")
                 request_record.error = ErrorDetails.from_exception(e)
-                input_token_count = None
+                input_local = None
 
-                if not self.disable_tokenization:
+                if (
+                    not self.disable_tokenization
+                    and not self._explicit_no_tokenize_input
+                ):
                     # Suppress exceptions during token counting for error records to avoid masking the original error.
-                    # If token counting fails, we still return the error record with token_counts.input=None.
+                    # If token counting fails, we still return the error record with token_counts.input_local=None.
                     with suppress(Exception):
-                        input_token_count = await self.compute_input_token_count(
+                        input_local = await self.compute_input_token_count(
                             request_record
                         )
 
@@ -186,7 +219,7 @@ class InferenceResultParser(CommunicationMixin):
                     request=request_record,
                     responses=[],
                     token_counts=TokenCounts(
-                        input=input_token_count,
+                        input_local=input_local,
                     ),
                 )
 
@@ -210,15 +243,7 @@ class InferenceResultParser(CommunicationMixin):
         if self.user_config.output.export_level != ExportLevel.RAW:
             request_record.responses = None
 
-        # Compute token counts based on configuration
-        if self.user_config.endpoint.use_server_token_count:
-            token_counts = await self._compute_server_token_counts(resp)
-        elif not self.disable_tokenization:
-            token_counts = await self._compute_client_side_token_counts(
-                request_record, resp
-            )
-        else:
-            token_counts = TokenCounts()
+        token_counts = await self._compute_token_counts(request_record, resp)
 
         return ParsedResponseRecord(
             request=request_record,
@@ -270,41 +295,86 @@ class InferenceResultParser(CommunicationMixin):
         # boundary issues that could occur if we were to tokenize each text individually.
         return await self._compute_token_count(tokenizer, prompt_texts, separator=" ")
 
-    async def _compute_server_token_counts(
-        self, responses: list[ParsedResponse]
+    async def _compute_token_counts(
+        self, request_record: RequestRecord, responses: list[ParsedResponse]
     ) -> TokenCounts:
-        """Compute token counts using server-provided usage fields.
+        """Compute token counts using server usage for input/output/reasoning and client-side tokenization for input_local.
+
+        Server-reported usage fields are used for input, output, and reasoning counts.
+        Client-side tokenization is computed for input and stored as `input_local`.
+        Client-side output/reasoning tokenization is stored in `output_local`/`reasoning_local`
+        either as a fallback (when server doesn't report) or when `--tokenize-output` is enabled.
 
         Args:
+            request_record: The request record containing input data
             responses: List of parsed responses from the server
 
         Returns:
-            TokenCounts populated with server-reported values
+            TokenCounts with both client and server values populated
         """
+        # Server-reported counts (extracted first to enable fallback logic)
         input_token_count = self._extract_server_input_token_count(responses)
-        reasoning_token_count = self._extract_server_reasoning_token_count(responses)
-        output_token_count = self._extract_server_output_token_count(
-            responses, reasoning_token_count
+        reasoning_server = self._extract_server_reasoning_token_count(responses)
+        output_server = self._extract_server_output_token_count(
+            responses, reasoning_server
         )
 
-        token_counts = TokenCounts(
-            input=input_token_count,
-            reasoning=reasoning_token_count,
-            output=output_token_count,
-        )
-
-        # Warn if server provided no usage information
+        # Warn once if server provided no usage information at all
         if (
-            token_counts.input is None
-            and token_counts.output is None
-            and token_counts.reasoning is None
+            not self._warned_no_usage
+            and input_token_count is None
+            and output_server is None
+            and reasoning_server is None
         ):
+            self._warned_no_usage = True
             self.warning(
                 "Server did not provide token usage information. Token count metrics will be unavailable. "
                 "Verify that your API endpoint supports usage reporting (stream_options are automatically configured for OpenAI-compatible endpoints)."
             )
 
-        return token_counts
+        # Client-side input tokenization
+        input_local: int | None = None
+        if (
+            not self.disable_tokenization
+            and not self._explicit_no_tokenize_input
+            and (self.tokenize_input or input_token_count is None)
+        ):
+            try:
+                input_local = await self.compute_input_token_count(request_record)
+            except Exception as e:
+                self.warning(f"Client-side input tokenization failed: {e}")
+
+        # Client-side output/reasoning tokenization
+        output_local: int | None = None
+        reasoning_local: int | None = None
+        need_local = (
+            self.tokenize_output or output_server is None or reasoning_server is None
+        )
+        if not self.disable_tokenization and need_local:
+            try:
+                tokenizer = await self.get_tokenizer(request_record.model_name)
+                output_texts, reasoning_texts = self._parse_output_and_reasoning_texts(
+                    responses
+                )
+                if self.tokenize_output or output_server is None:
+                    output_local = await self._compute_token_count(
+                        tokenizer, output_texts
+                    )
+                if self.tokenize_output or reasoning_server is None:
+                    reasoning_local = await self._compute_token_count(
+                        tokenizer, reasoning_texts
+                    )
+            except Exception as e:
+                self.warning(f"Client-side output/reasoning tokenization failed: {e}")
+
+        return TokenCounts(
+            input=input_token_count,
+            input_local=input_local,
+            output=output_server,
+            output_local=output_local,
+            reasoning=reasoning_server,
+            reasoning_local=reasoning_local,
+        )
 
     def _parse_output_and_reasoning_texts(
         self, responses: list[ParsedResponse]
@@ -350,35 +420,6 @@ class InferenceResultParser(CommunicationMixin):
         text = separator.join(texts)
         tokens = await asyncio.to_thread(tokenizer.encode, text)
         return len(tokens)
-
-    async def _compute_client_side_token_counts(
-        self, request_record: RequestRecord, responses: list[ParsedResponse]
-    ) -> TokenCounts:
-        """Compute token counts using client-side tokenization.
-
-        Args:
-            request_record: The request record containing input data
-            responses: List of parsed responses from the server
-
-        Returns:
-            TokenCounts populated with client-side tokenized values
-        """
-        input_token_count = await self.compute_input_token_count(request_record)
-
-        tokenizer = await self.get_tokenizer(request_record.model_name)
-        output_texts, reasoning_texts = self._parse_output_and_reasoning_texts(
-            responses
-        )
-        output_token_count = await self._compute_token_count(tokenizer, output_texts)
-        reasoning_token_count = await self._compute_token_count(
-            tokenizer, reasoning_texts
-        )
-
-        return TokenCounts(
-            input=input_token_count,
-            reasoning=reasoning_token_count,
-            output=output_token_count,
-        )
 
     def _extract_server_input_token_count(
         self, responses: list[ParsedResponse]

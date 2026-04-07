@@ -167,8 +167,13 @@ Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request 
 
 #### `--use-server-token-count`
 
-Use server-reported token counts from API usage fields instead of client-side tokenization. When enabled, tokenizers are still loaded (needed for dataset generation) but tokenizer.encode() is not called for computing metrics. Token count fields will be None if the server does not provide usage information. For OpenAI-compatible streaming endpoints (chat/completions), stream_options.include_usage is automatically configured when this flag is enabled.
+[Deprecated] This flag is a no-op and will be removed in a future release. AIPerf now prefers server-reported token counts when available and falls back to client-side tokenization for input. Use --tokenize-output to enable client-side output tokenization.
 <br/>_Flag (no value required)_
+
+#### `--stream-usage`, `--no-stream-usage`
+
+Automatically include stream_options.include_usage in streaming requests to retrieve server-reported token counts. Disable with --no-stream-usage if the server does not support stream_options.
+<br/>_Default: `True`_
 
 #### `--connection-reuse-strategy` `<str>`
 
@@ -662,6 +667,16 @@ Specific tokenizer version to load from HuggingFace Hub. Can be a branch name (e
 
 Allow execution of custom Python code from HuggingFace Hub tokenizer repositories. Required for tokenizers with custom implementations not in the standard `transformers` library. **Security Warning**: Only enable for trusted repositories, as this executes arbitrary code. Unnecessary for standard tokenizers.
 <br/>_Flag (no value required)_
+
+#### `--tokenize-output`
+
+Enable client-side tokenization of output and reasoning tokens, even when the server reports token counts. When enabled, locally computed counts are stored alongside server-reported values for validation and comparison. Without this flag, local output/reasoning tokenization only occurs as a fallback when the server does not report counts.
+<br/>_Flag (no value required)_
+
+#### `--tokenize-input`, `--no-tokenize-input`
+
+Enable client-side tokenization of input prompts for every request. When enabled, locally computed input token counts are always stored in token_counts.input_local. When disabled, client-side input tokenization only occurs as a fallback when the server does not report prompt tokens. Use --no-tokenize-input to disable client-side input tokenization entirely, including fallback. Automatically set to False for user-provided input datasets (--custom-dataset-type or --public-dataset) unless explicitly overridden.
+<br/>_Default: `True`_
 
 ### Load Generator
 

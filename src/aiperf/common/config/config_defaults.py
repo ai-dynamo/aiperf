@@ -45,6 +45,7 @@ class EndpointDefaults:
     API_KEY = None
     USE_LEGACY_MAX_TOKENS = False
     USE_SERVER_TOKEN_COUNT = False
+    STREAM_USAGE = True
     CONNECTION_REUSE_STRATEGY = ConnectionReuseStrategy.POOLED
     DOWNLOAD_VIDEO_CONTENT = False
 

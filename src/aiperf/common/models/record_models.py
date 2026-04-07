@@ -86,6 +86,15 @@ class MetricValue(AIPerfBaseModel):
 class MetricRecordMetadata(AIPerfBaseModel):
     """The metadata of a metric record for export."""
 
+    token_counts: TokenCounts | None = Field(
+        default=None,
+        description="Token counts for the record, containing both server-reported and client-side values. "
+        "Always present when the endpoint tokenizes input. "
+        "Server-reported fields: input, output, reasoning (None when the server did not report them). "
+        "Client-side fields: input_local (always computed when tokenization is enabled), "
+        "output_local and reasoning_local (computed as fallback when server does not report, "
+        "or when --tokenize-output is enabled).",
+    )
     session_num: int = Field(
         ...,
         description="The sequential number of the session in the benchmark. For single-turn datasets, this will be the"
@@ -873,13 +882,17 @@ class TokenCounts:
     """Token counts for a record."""
 
     input: int | None = None
-    """The number of input tokens. None if token count could not be calculated."""
-
+    """Server-reported prompt token count from the API usage field."""
+    input_local: int | None = None
+    """Input tokens computed by the client-side tokenizer."""
     output: int | None = None
-    """The number of output tokens across all responses. None if token count could not be calculated."""
-
+    """Server-reported output token count (completion minus reasoning)."""
+    output_local: int | None = None
+    """Output tokens computed by the client-side tokenizer."""
     reasoning: int | None = None
-    """The number of reasoning tokens. None if token count could not be calculated or the model does not support reasoning."""
+    """Server-reported reasoning token count."""
+    reasoning_local: int | None = None
+    """Reasoning tokens computed by the client-side tokenizer."""
 
 
 @dataclass

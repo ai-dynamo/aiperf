@@ -13,7 +13,9 @@ class CLIParameter(Parameter):
     """
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, show_env_var=False, negative=False, **kwargs)
+        kwargs.setdefault("show_env_var", False)
+        kwargs.setdefault("negative", False)
+        super().__init__(*args, **kwargs)
 
 
 class DisableCLI(CLIParameter):

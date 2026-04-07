@@ -25,8 +25,12 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Prefill Throughput Per User](#prefill-throughput-per-user)
   - [Token Based Metrics](#token-based-metrics)
     - [Output Token Count](#output-token-count)
+    - [Output Token Count — Server (file-only)](#output-token-count--server-file-only)
+    - [Output Token Count — Local (file-only)](#output-token-count--local-file-only)
     - [Output Sequence Length (OSL)](#output-sequence-length-osl)
     - [Input Sequence Length (ISL)](#input-sequence-length-isl)
+    - [Input Sequence Length — Server (file-only)](#input-sequence-length--server-file-only)
+    - [Input Sequence Length — Local (file-only)](#input-sequence-length--local-file-only)
     - [Total Output Tokens](#total-output-tokens)
     - [Total Output Sequence Length](#total-output-sequence-length)
     - [Total Input Sequence Length](#total-input-sequence-length)
@@ -42,6 +46,8 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Video Peak Memory](#video-peak-memory)
   - [Reasoning Metrics](#reasoning-metrics)
     - [Reasoning Token Count](#reasoning-token-count)
+    - [Reasoning Token Count — Server (file-only)](#reasoning-token-count--server-file-only)
+    - [Reasoning Token Count — Local (file-only)](#reasoning-token-count--local-file-only)
     - [Total Reasoning Tokens](#total-reasoning-tokens)
   - [Usage Field Metrics](#usage-field-metrics)
     - [Usage Prompt Tokens](#usage-prompt-tokens)
@@ -315,18 +321,45 @@ All metrics in this section require token-producing endpoints that return text c
 
 **Type:** [Record Metric](#record-metrics)
 
-The number of output tokens generated for a single request, _excluding reasoning tokens_. This represents the output tokens returned to the user across all responses for the request.
+The number of output tokens generated for a single request, _excluding reasoning tokens_. Prefers server-reported `token_counts.output` when available, falling back to client-side `token_counts.output_local`.
 
 **Formula:**
 ```python
-output_token_count = len(tokenizer.encode(content, add_special_tokens=False))
+# Server-preferred (falls back to client-side)
+output_token_count = token_counts.output if token_counts.output is not None else token_counts.output_local
 ```
 
 **Notes:**
-- Tokenization uses `add_special_tokens=False` to count only content tokens, excluding special tokens added by the tokenizer.
+- When the server reports completion tokens, that value (minus reasoning) is used.
+- Falls back to client-side tokenization when server does not report completion tokens, or when `--tokenize-output` provides a local value.
 - For streaming requests with multiple responses, the responses are joined together and then tokens are counted.
 - For models that expose reasoning in a separate `reasoning_content` field, this metric counts only non-reasoning output tokens.
-- If reasoning appears inside the regular `content` (e.g., `<think>` blocks), those tokens will be counted unless explicitly filtered.
+
+---
+
+### Output Token Count — Server (file-only)
+
+**Type:** [Record Metric](#record-metrics)
+
+The server-reported output token count (`token_counts.output`) for a single request. This metric is **file-only** (`NO_CONSOLE`) and is exported to `profile_export.jsonl` but not shown on the console.
+
+**Formula:**
+```python
+output_token_count_server = token_counts.output  # None → NoMetricValue
+```
+
+---
+
+### Output Token Count — Local (file-only)
+
+**Type:** [Record Metric](#record-metrics)
+
+The client-side tokenized output token count for a single request. This metric is **file-only** (`NO_CONSOLE`) and is exported to `profile_export.jsonl` but not shown on the console. Populated when `--tokenize-output` is enabled, or as a fallback when the server does not report completion tokens.
+
+**Formula:**
+```python
+output_token_count_local = len(tokenizer.encode(content, add_special_tokens=False))  # None → NoMetricValue
+```
 
 ---
 
@@ -338,10 +371,17 @@ The total number of completion tokens (output + reasoning) generated for a singl
 
 **Formula:**
 ```python
-output_sequence_length = (output_token_count or 0) + (reasoning_token_count or 0)
+# All-server when both are available, otherwise all-client
+if token_counts.output is not None and token_counts.reasoning is not None:
+    output_sequence_length = token_counts.output + token_counts.reasoning
+elif token_counts.output_local is not None:
+    output_sequence_length = token_counts.output_local + (token_counts.reasoning_local or 0)
+else:
+    output_sequence_length = (token_counts.output or 0) + (token_counts.reasoning or 0)
 ```
 
 **Notes:**
+- OSL uses consistent source selection (all-server or all-client) to avoid double-counting. Some servers embed reasoning tokens inside `completion_tokens` but leave `reasoning_tokens` null — mixing server output with client reasoning would count reasoning twice.
 - For models that do not support/separate reasoning tokens, OSL equals the output token count.
 
 ---
@@ -350,16 +390,50 @@ output_sequence_length = (output_token_count or 0) + (reasoning_token_count or 0
 
 **Type:** [Record Metric](#record-metrics)
 
-The number of input/prompt tokens for a single request. This represents the size of the input sent to the model.
+The number of input/prompt tokens for a single request. This represents the size of the input sent to the model. Prefers server-reported `usage.prompt_tokens` when available, falling back to client-side tokenization.
 
 **Formula:**
 ```python
-input_sequence_length = len(tokenizer.encode(prompt, add_special_tokens=False))
+# Server-preferred (falls back to client-side)
+if usage.prompt_tokens is not None:
+    input_sequence_length = usage.prompt_tokens
+else:
+    input_sequence_length = len(tokenizer.encode(prompt, add_special_tokens=False))
 ```
 
 **Notes:**
-- Tokenization uses `add_special_tokens=False` to count only content tokens, excluding special tokens added by the tokenizer.
+- When the server reports `usage.prompt_tokens`, that value is used for ISL (and thus for console display and derived metrics).
+- Falls back to client-side tokenization when server does not report prompt token counts, unless `--no-tokenize-input` is explicitly specified.
+- Client-side tokenization uses `add_special_tokens=False` to count only content tokens.
+- Automatically disabled for user-provided input datasets; use `--tokenize-input` to force.
+- Use `--no-tokenize-input` to disable client-side input tokenization entirely (no fallback).
 - Useful for understanding the relationship between input size and latency/throughput.
+
+---
+
+### Input Sequence Length — Server (file-only)
+
+**Type:** [Record Metric](#record-metrics)
+
+The server-reported prompt token count (`usage.prompt_tokens`) for a single request. This metric is **file-only** (`NO_CONSOLE`) and is exported to `profile_export.jsonl` but not shown on the console.
+
+**Formula:**
+```python
+input_sequence_length_server = usage.prompt_tokens  # None → NoMetricValue
+```
+
+---
+
+### Input Sequence Length — Local (file-only)
+
+**Type:** [Record Metric](#record-metrics)
+
+The client-side tokenized prompt token count for a single request. This metric is **file-only** (`NO_CONSOLE`) and is exported to `profile_export.jsonl` but not shown on the console.
+
+**Formula:**
+```python
+input_sequence_length_local = len(tokenizer.encode(prompt, add_special_tokens=False))  # None → NoMetricValue
+```
 
 ---
 
@@ -576,16 +650,44 @@ All metrics in this section require models and backends that expose reasoning co
 
 **Type:** [Record Metric](#record-metrics)
 
-The number of reasoning tokens generated for a single request. These are tokens used for "thinking" or chain-of-thought reasoning before generating the final output.
+The number of reasoning tokens generated for a single request. Prefers server-reported `token_counts.reasoning` when available, falling back to client-side `token_counts.reasoning_local`.
 
 **Formula:**
 ```python
-reasoning_token_count = len(tokenizer.encode(reasoning_content, add_special_tokens=False))
+# Server-preferred (falls back to client-side)
+reasoning_token_count = token_counts.reasoning if token_counts.reasoning is not None else token_counts.reasoning_local
 ```
 
 **Notes:**
-- Tokenization uses `add_special_tokens=False` to count only content tokens, excluding special tokens added by the tokenizer.
+- When the server reports reasoning tokens via `completion_tokens_details.reasoning_tokens`, that value is used.
+- Falls back to client-side tokenization when server does not report reasoning tokens, or when `--tokenize-output` provides a local value.
 - Does **not** differentiate `<think>` tags or extract reasoning from within the regular `content` field.
+
+---
+
+### Reasoning Token Count — Server (file-only)
+
+**Type:** [Record Metric](#record-metrics)
+
+The server-reported reasoning token count (`token_counts.reasoning`) for a single request. This metric is **file-only** (`NO_CONSOLE`) and is exported to `profile_export.jsonl` but not shown on the console.
+
+**Formula:**
+```python
+reasoning_token_count_server = token_counts.reasoning  # None → NoMetricValue
+```
+
+---
+
+### Reasoning Token Count — Local (file-only)
+
+**Type:** [Record Metric](#record-metrics)
+
+The client-side tokenized reasoning token count for a single request. This metric is **file-only** (`NO_CONSOLE`) and is exported to `profile_export.jsonl` but not shown on the console. Populated when `--tokenize-output` is enabled, or as a fallback when the server does not report reasoning tokens.
+
+**Formula:**
+```python
+reasoning_token_count_local = len(tokenizer.encode(reasoning_content, add_special_tokens=False))  # None → NoMetricValue
+```
 
 ---
 
@@ -733,24 +835,24 @@ total_usage_total_tokens = sum(r.usage_total_tokens for r in records if r.valid)
 
 ## Usage Discrepancy Metrics
 
-<Note>
-These metrics measure the percentage difference between API-reported token counts (`usage` fields) and client-computed token counts. They are **not displayed in console output** but help identify tokenizer mismatches or counting discrepancies.
-</Note>
+> [!NOTE]
+> These metrics measure the percentage difference between API-reported token counts (`usage` fields) and client-computed token counts. They are **not displayed in console output** but help identify tokenizer mismatches or counting discrepancies. Prompt diff requires both server-reported and client-computed input token counts. Client-side input tokenization is used as a fallback when the server omits prompt tokens, unless `--no-tokenize-input` is explicitly specified. Output and reasoning diff metrics require `--tokenize-output` to populate both server and client values.
 
 ### Usage Prompt Tokens Diff %
 
 **Type:** [Record Metric](#record-metrics)
 
-The percentage difference between API-reported prompt tokens and client-computed Input Sequence Length.
+The percentage difference between API-reported prompt tokens and client-computed input token count (`token_counts.input_local`).
 
 **Formula:**
 ```python
-usage_prompt_tokens_diff_pct = abs((usage_prompt_tokens - input_sequence_length) / input_sequence_length) * 100
+usage_prompt_tokens_diff_pct = abs((usage_prompt_tokens - client_input_tokens) / client_input_tokens) * 100
 ```
 
 **Notes:**
-- Values close to 0% indicate good agreement between client and server token counts.
+- Values close to 0% indicate good agreement between client and server prompt token counts.
 - Large differences may indicate tokenizer mismatches or special token handling differences.
+- Uses client-side `token_counts.input_local` (not `input_sequence_length`, which prefers server values).
 
 ---
 
@@ -758,16 +860,16 @@ usage_prompt_tokens_diff_pct = abs((usage_prompt_tokens - input_sequence_length)
 
 **Type:** [Record Metric](#record-metrics)
 
-The percentage difference between API-reported completion tokens and client-computed Output Sequence Length.
+The percentage difference between server-reported output tokens (`token_counts.output`) and client-computed output token count (`token_counts.output_local`). Requires `--tokenize-output` to populate both values.
 
 **Formula:**
 ```python
-usage_completion_tokens_diff_pct = abs((usage_completion_tokens - output_sequence_length) / output_sequence_length) * 100
+usage_completion_tokens_diff_pct = abs((server_output_tokens - client_output_tokens) / client_output_tokens) * 100
 ```
 
 **Notes:**
-- Values close to 0% indicate good agreement between client and server token counts.
-- Large differences may indicate tokenizer mismatches or different counting methods.
+- Requires `--tokenize-output` flag to enable client-side output tokenization alongside server values.
+- Values close to 0% indicate good agreement between client and server output token counts.
 
 ---
 
@@ -775,16 +877,16 @@ usage_completion_tokens_diff_pct = abs((usage_completion_tokens - output_sequenc
 
 **Type:** [Record Metric](#record-metrics)
 
-The percentage difference between API-reported reasoning tokens and client-computed Reasoning Token Count.
+The percentage difference between server-reported reasoning tokens (`token_counts.reasoning`) and client-computed reasoning token count (`token_counts.reasoning_local`). Requires `--tokenize-output` to populate both values.
 
 **Formula:**
 ```python
-usage_reasoning_tokens_diff_pct = abs((usage_reasoning_tokens - reasoning_token_count) / reasoning_token_count) * 100
+usage_reasoning_tokens_diff_pct = abs((server_reasoning_tokens - client_reasoning_tokens) / client_reasoning_tokens) * 100
 ```
 
 **Notes:**
-- Only available for reasoning-enabled models.
-- Values close to 0% indicate good agreement between client and server reasoning token counts.
+- Requires `--tokenize-output` flag to enable client-side reasoning tokenization alongside server values.
+- Only applicable to models that support reasoning tokens.
 
 ---
 
@@ -792,16 +894,16 @@ usage_reasoning_tokens_diff_pct = abs((usage_reasoning_tokens - reasoning_token_
 
 **Type:** [Aggregate Metric](#aggregate-metrics)
 
-The number of requests where token count differences exceed a threshold (default 10%).
+The number of requests where the prompt token count difference exceeds a threshold (default 10%).
 
 **Formula:**
 ```python
-usage_discrepancy_count = sum(1 for r in records if r.any_diff > threshold)
+usage_discrepancy_count = sum(1 for r in records if r.prompt_diff > threshold)
 ```
 
 **Notes:**
 - Default threshold is 10% difference.
-- Counts requests where prompt, completion, or reasoning token differences are significant.
+- Counts requests where the prompt token difference is significant.
 - Useful for monitoring overall token count agreement quality.
 
 ---
@@ -1374,7 +1476,6 @@ Metric flags are used to control when and how metrics are computed, displayed, a
 | <a id="flag-tokenizes-input-only"></a>`TOKENIZES_INPUT_ONLY` | Only computed when endpoint tokenizes input | Requires endpoints that process and tokenize input text; skipped for non-text endpoints |
 | <a id="flag-http-trace-only"></a>`HTTP_TRACE_ONLY` | Only computed when HTTP trace data is available | Requires HTTP request tracing to be enabled; provides detailed HTTP lifecycle timing metrics |
 | <a id="flag-supports-video-only"></a>`SUPPORTS_VIDEO_ONLY` | Only computed for video endpoints | Requires video-capable endpoints; skipped for other endpoint types |
-| <a id="flag-usage-diff-only"></a>`USAGE_DIFF_ONLY` | Only computed when usage field data is available | Requires API responses to include usage field with token counts for comparison with client-computed values |
 | <a id="flag-produces-video-only"></a>`PRODUCES_VIDEO_ONLY` | Only computed for video-producing endpoints | Requires endpoints that produce video output (e.g., SGLang video generation) |
 
 ## Composite Flags

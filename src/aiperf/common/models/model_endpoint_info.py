@@ -106,10 +106,6 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointDefaults.USE_LEGACY_MAX_TOKENS,
         description="Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request payloads.",
     )
-    use_server_token_count: bool = Field(
-        default=EndpointDefaults.USE_SERVER_TOKEN_COUNT,
-        description="Use server-reported token counts from API usage fields instead of client-side tokenization.",
-    )
     connection_reuse_strategy: ConnectionReuseStrategy = Field(
         default=EndpointDefaults.CONNECTION_REUSE_STRATEGY,
         description="Transport connection reuse strategy.",
@@ -117,6 +113,10 @@ class EndpointInfo(AIPerfBaseModel):
     download_video_content: bool = Field(
         default=EndpointDefaults.DOWNLOAD_VIDEO_CONTENT,
         description="For video generation endpoints, download the video content after generation completes.",
+    )
+    stream_usage: bool = Field(
+        default=EndpointDefaults.STREAM_USAGE,
+        description="Automatically include stream_options.include_usage in streaming requests.",
     )
     collect_trace_chunks: bool = Field(
         default=False,
@@ -155,9 +155,9 @@ class EndpointInfo(AIPerfBaseModel):
             timeout=user_config.endpoint.timeout_seconds,
             api_key=user_config.endpoint.api_key,
             use_legacy_max_tokens=user_config.endpoint.use_legacy_max_tokens,
-            use_server_token_count=user_config.endpoint.use_server_token_count,
             connection_reuse_strategy=user_config.endpoint.connection_reuse_strategy,
             download_video_content=user_config.endpoint.download_video_content,
+            stream_usage=user_config.endpoint.stream_usage,
             collect_trace_chunks=user_config.output.export_http_trace,
         )
 

@@ -1057,3 +1057,20 @@ class UserConfig(BaseConfig):
         """Validate accuracy benchmarking configuration."""
         # Stub: validation logic will be added when accuracy mode is implemented
         return self
+
+    @model_validator(mode="after")
+    def _auto_configure_tokenize_input(self) -> Self:
+        """Disable always-on input tokenization for user-provided datasets.
+
+        When the user provides their own input (--custom-dataset-type or --public-dataset),
+        default to fallback-only input tokenization (only tokenize when server doesn't report
+        prompt tokens). The user can override with explicit --tokenize-input.
+        """
+        if "tokenize_input" not in self.tokenizer.model_fields_set:
+            has_user_input = (
+                self.input.custom_dataset_type is not None
+                or self.input.public_dataset is not None
+            )
+            if has_user_input:
+                self.tokenizer.tokenize_input = False
+        return self

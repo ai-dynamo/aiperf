@@ -37,17 +37,41 @@ class OutputSequenceLengthMetric(BaseRecordMetric[int]):
         """
         This method extracts the output and reasoning token counts from the record and returns the sum.
 
+        Uses a consistent source for both components to avoid mixing server and
+        client counts (which can double-count when the server's completion_tokens
+        already includes reasoning tokens but doesn't break them out separately).
+
         Raises:
-            ValueError: If the record does not have a output or reasoning token count.
+            NoMetricValue: If neither server nor local values are available for both components.
         """
-        if record.token_counts is None or (
-            record.token_counts.output is None and record.token_counts.reasoning is None
-        ):
+        if record.token_counts is None:
             raise NoMetricValue(
                 "Output and reasoning token counts are missing in the record."
             )
 
-        return (record.token_counts.output or 0) + (record.token_counts.reasoning or 0)
+        tc = record.token_counts
+        server_output = tc.output
+        server_reasoning = tc.reasoning
+
+        if server_output is not None and server_reasoning is not None:
+            output = server_output
+            reasoning = server_reasoning
+        elif tc.output_local is not None:
+            # Server didn't report both components — use all-client to avoid
+            # mixing sources (server output may already include reasoning).
+            output = tc.output_local
+            reasoning = tc.reasoning_local
+        else:
+            # No client-local available either — use whatever we have
+            output = server_output
+            reasoning = server_reasoning
+
+        if output is None and reasoning is None:
+            raise NoMetricValue(
+                "Output and reasoning token counts are missing in the record."
+            )
+
+        return (output or 0) + (reasoning or 0)
 
 
 class TotalOutputSequenceLengthMetric(

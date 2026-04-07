@@ -43,17 +43,6 @@ def validate_tokenizer_early(
 
     endpoint_meta = plugins.get_endpoint_metadata(user_config.endpoint.type)
 
-    # Skip if using server token counts with non-synthetic data
-    input_cfg = user_config.input
-    is_synthetic = (
-        input_cfg.public_dataset is None
-        and input_cfg.custom_dataset_type is None
-        and input_cfg.file is None
-    )
-    if user_config.endpoint.use_server_token_count and not is_synthetic:
-        logger.debug("Using server token counts, skipping tokenizer validation")
-        return None
-
     if not endpoint_meta.produces_tokens and not endpoint_meta.tokenizes_input:
         logger.debug("Endpoint doesn't require tokenizer, skipping validation")
         return None
