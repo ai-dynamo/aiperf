@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import orjson
+
 from aiperf.common.config import UserConfig
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation
@@ -90,7 +92,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
                         continue
                     try:
                         data = load_json_str(line)
-                    except Exception:
+                    except orjson.JSONDecodeError:
                         # Non-JSON file (e.g. CSV) — fall back to filename-based detection
                         return self._infer_type(data=None, filename=file_path)
                     return self._infer_type(data=data, filename=file_path)

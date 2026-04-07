@@ -55,7 +55,7 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
                 input_length=int(row["Request tokens"]),
                 output_length=int(row["Response tokens"]),
             )
-        except (KeyError, ValueError):
+        except (KeyError, TypeError, ValueError):
             return None
 
     def _preprocess_trace(self, trace: BurstGPTTrace) -> None:
