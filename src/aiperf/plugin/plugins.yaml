@@ -1621,21 +1621,23 @@ public_dataset_loader:
     class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
     description: |
       Blazedit edit-distance benchmark dataset with ~5k character code contexts (vdaita).
-      Loads code change requests as single-turn requests.
+      Prompts combine the code file and change request, matching vLLM's BlazeditDataset format.
     metadata:
       hf_dataset_name: vdaita/edit_5k_char
       hf_split: train
       prompt_column: change_request
+      prompt_template: "Given a code file, please apply the change requests and generate the new file.\n\nOriginal file:\n```python\n{code}\n```\n\nChange request:\n{change_request}\n\nPlease generate the new code file in the \"New file\" section below."
 
   blazedit_10k:
     class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
     description: |
       Blazedit edit-distance benchmark dataset with ~10k character code contexts (vdaita).
-      Loads code change requests as single-turn requests.
+      Prompts combine the code file and change request, matching vLLM's BlazeditDataset format.
     metadata:
       hf_dataset_name: vdaita/edit_10k_char
       hf_split: train
       prompt_column: change_request
+      prompt_template: "Given a code file, please apply the change requests and generate the new file.\n\nOriginal file:\n```python\n{code}\n```\n\nChange request:\n{change_request}\n\nPlease generate the new code file in the \"New file\" section below."
 
 # =============================================================================
 # ZMQ Proxies

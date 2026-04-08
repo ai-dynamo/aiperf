@@ -107,4 +107,7 @@ class PublicDatasetComposer(BaseDatasetComposer):
         if loader_metadata.category is not None:
             kwargs["category"] = loader_metadata.category
 
+        if loader_metadata.prompt_template is not None:
+            kwargs["prompt_template"] = loader_metadata.prompt_template
+
         return kwargs

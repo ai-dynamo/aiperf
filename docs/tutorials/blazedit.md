@@ -42,8 +42,12 @@ curl -s localhost:8000/v1/chat/completions \
 
 ## Profile with Blazedit Dataset
 
-AIPerf loads the Blazedit dataset from HuggingFace and uses each change request as a
-single-turn prompt.
+AIPerf loads the Blazedit dataset from HuggingFace and constructs prompts that include the
+full code file alongside the change request, matching the evaluation approach used by vLLM's
+benchmark suite. Each prompt averages ~1,500 input tokens for the 5k variant.
+
+Use `--prompt-output-tokens-mean` to cap output length — without it the model regenerates the
+entire modified file, producing thousands of output tokens per request.
 
 **5k character variant:**
 
@@ -55,47 +59,47 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --public-dataset blazedit_5k \
-    --request-count 10 \
-    --concurrency 4
+    --request-count 5 \
+    --concurrency 4 \
+    --prompt-output-tokens-mean 512
 ```
 {/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Sample Output (Successful Run):**
 
 ```
-
-                                        NVIDIA AIPerf | LLM Metrics
-┏━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┓
-┃           Metric ┃       avg ┃       min ┃        max ┃        p99 ┃        p90 ┃       p50 ┃       std ┃
-┡━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━┩
-│    Time to First │    732.60 │    396.55 │   1,141.02 │   1,141.01 │   1,140.93 │    555.79 │    328.18 │
-│       Token (ms) │           │           │            │            │            │           │           │
-│   Time to Second │     65.57 │     54.31 │      83.25 │      82.63 │      77.06 │     65.06 │     10.31 │
-│       Token (ms) │           │           │            │            │            │           │           │
-│    Time to First │ 58,962.62 │ 22,013.22 │ 125,567.46 │ 122,218.68 │  92,079.71 │ 48,100.15 │ 30,413.87 │
-│     Output Token │           │           │            │            │            │           │           │
-│             (ms) │           │           │            │            │            │           │           │
-│  Request Latency │ 86,958.47 │ 49,516.99 │ 155,572.57 │ 151,516.69 │ 115,013.81 │ 83,652.11 │ 30,423.22 │
-│             (ms) │           │           │            │            │            │           │           │
-│      Inter Token │     71.55 │     45.91 │      77.97 │      77.96 │      77.93 │     74.36 │      9.19 │
-│     Latency (ms) │           │           │            │            │            │           │           │
-│     Output Token │     14.30 │     12.83 │      21.78 │      21.17 │      15.65 │     13.45 │      2.57 │
-│   Throughput Per │           │           │            │            │            │           │           │
-│             User │           │           │            │            │            │           │           │
-│ (tokens/sec/use… │           │           │            │            │            │           │           │
-│  Output Sequence │  1,250.10 │    703.00 │   2,399.00 │   2,367.32 │   2,082.20 │  1,146.00 │    543.01 │
-│  Length (tokens) │           │           │            │            │            │           │           │
-│   Input Sequence │     35.50 │     21.00 │      57.00 │      55.83 │      45.30 │     33.00 │     10.04 │
-│  Length (tokens) │           │           │            │            │            │           │           │
-│     Output Token │     44.98 │       N/A │        N/A │        N/A │        N/A │       N/A │       N/A │
-│       Throughput │           │           │            │            │            │           │           │
-│     (tokens/sec) │           │           │            │            │            │           │           │
-│          Request │      0.04 │       N/A │        N/A │        N/A │        N/A │       N/A │       N/A │
-│       Throughput │           │           │            │            │            │           │           │
-│   (requests/sec) │           │           │            │            │            │           │           │
-│    Request Count │     10.00 │       N/A │        N/A │        N/A │        N/A │       N/A │       N/A │
-│       (requests) │           │           │            │            │            │           │           │
-└──────────────────┴───────────┴───────────┴────────────┴────────────┴────────────┴───────────┴───────────┘
+                          NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┓
+┃           Metric ┃       avg ┃       min ┃       max ┃       p99 ┃       p90 ┃       p50 ┃       std ┃
+┡━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━┩
+│    Time to First │  2,563.25 │    344.17 │  3,144.87 │  3,144.87 │  3,144.84 │  3,144.55 │  1,110.31 │
+│       Token (ms) │           │           │           │           │           │           │           │
+│   Time to Second │     94.15 │     40.08 │    107.95 │    107.95 │    107.95 │    107.93 │     27.04 │
+│       Token (ms) │           │           │           │           │           │           │           │
+│    Time to First │ 54,707.53 │ 49,364.22 │ 60,050.84 │ 59,943.97 │ 58,982.18 │ 54,707.53 │  5,343.31 │
+│     Output Token │           │           │           │           │           │           │           │
+│             (ms) │           │           │           │           │           │           │           │
+│  Request Latency │ 54,396.21 │ 20,093.94 │ 62,997.77 │ 62,997.77 │ 62,997.75 │ 62,997.54 │ 17,151.18 │
+│             (ms) │           │           │           │           │           │           │           │
+│      Inter Token │    101.77 │     38.73 │    117.60 │    117.60 │    117.59 │    117.59 │     31.52 │
+│     Latency (ms) │           │           │           │           │           │           │           │
+│     Output Token │     11.97 │      8.50 │     25.82 │     25.13 │     18.90 │      8.50 │      6.93 │
+│   Throughput Per │           │           │           │           │           │           │           │
+│             User │           │           │           │           │           │           │           │
+│ (tokens/sec/use… │           │           │           │           │           │           │           │
+│  Output Sequence │    510.40 │    510.00 │    511.00 │    511.00 │    511.00 │    510.00 │      0.49 │
+│  Length (tokens) │           │           │           │           │           │           │           │
+│   Input Sequence │  1,485.60 │  1,161.00 │  1,739.00 │  1,733.08 │  1,679.80 │  1,569.00 │    200.73 │
+│  Length (tokens) │           │           │           │           │           │           │           │
+│     Output Token │     30.75 │       N/A │       N/A │       N/A │       N/A │       N/A │       N/A │
+│       Throughput │           │           │           │           │           │           │           │
+│     (tokens/sec) │           │           │           │           │           │           │           │
+│          Request │      0.06 │       N/A │       N/A │       N/A │       N/A │       N/A │       N/A │
+│       Throughput │           │           │           │           │           │           │           │
+│   (requests/sec) │           │           │           │           │           │           │           │
+│    Request Count │      5.00 │       N/A │       N/A │       N/A │       N/A │       N/A │       N/A │
+│       (requests) │           │           │           │           │           │           │           │
+└──────────────────┴───────────┴───────────┴───────────┴───────────┴───────────┴───────────┴───────────┘
 ```
 
 **10k character variant:**
@@ -108,48 +112,8 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --public-dataset blazedit_10k \
-    --request-count 10 \
-    --concurrency 4
+    --request-count 5 \
+    --concurrency 4 \
+    --prompt-output-tokens-mean 512
 ```
 {/* /aiperf-run-vllm-default-openai-endpoint-server */}
-
-**Sample Output (Successful Run):**
-
-```
-
-                                        NVIDIA AIPerf | LLM Metrics
-┏━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━┓
-┃         Metric ┃        avg ┃       min ┃        max ┃        p99 ┃        p90 ┃        p50 ┃       std ┃
-┡━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━┩
-│  Time to First │     950.96 │    350.77 │   1,598.25 │   1,598.22 │   1,597.92 │     645.16 │    525.26 │
-│     Token (ms) │            │           │            │            │            │            │           │
-│ Time to Second │      65.78 │     49.93 │      92.18 │      90.85 │      78.82 │      63.63 │     13.91 │
-│     Token (ms) │            │           │            │            │            │            │           │
-│  Time to First │  69,605.83 │ 29,908.82 │ 112,177.39 │ 111,778.85 │ 108,192.05 │  62,257.42 │ 27,027.18 │
-│   Output Token │            │           │            │            │            │            │           │
-│           (ms) │            │           │            │            │            │            │           │
-│        Request │ 107,469.40 │ 54,653.07 │ 154,730.83 │ 154,133.85 │ 148,761.09 │ 104,468.66 │ 30,179.95 │
-│   Latency (ms) │            │           │            │            │            │            │           │
-│    Inter Token │      75.85 │     65.36 │      87.14 │      87.08 │      86.52 │      74.72 │      7.05 │
-│   Latency (ms) │            │           │            │            │            │            │           │
-│   Output Token │      13.30 │     11.48 │      15.30 │      15.23 │      14.63 │      13.38 │      1.22 │
-│ Throughput Per │            │           │            │            │            │            │           │
-│           User │            │           │            │            │            │            │           │
-│ (tokens/sec/u… │            │           │            │            │            │            │           │
-│         Output │   1,414.00 │    773.00 │   2,106.00 │   2,088.54 │   1,931.40 │   1,428.00 │    417.27 │
-│       Sequence │            │           │            │            │            │            │           │
-│         Length │            │           │            │            │            │            │           │
-│       (tokens) │            │           │            │            │            │            │           │
-│ Input Sequence │      46.20 │     27.00 │      69.00 │      67.56 │      54.60 │      44.50 │     10.13 │
-│         Length │            │           │            │            │            │            │           │
-│       (tokens) │            │           │            │            │            │            │           │
-│   Output Token │      48.24 │       N/A │        N/A │        N/A │        N/A │        N/A │       N/A │
-│     Throughput │            │           │            │            │            │            │           │
-│   (tokens/sec) │            │           │            │            │            │            │           │
-│        Request │       0.03 │       N/A │        N/A │        N/A │        N/A │        N/A │       N/A │
-│     Throughput │            │           │            │            │            │            │           │
-│ (requests/sec) │            │           │            │            │            │            │           │
-│  Request Count │      10.00 │       N/A │        N/A │        N/A │        N/A │        N/A │       N/A │
-│     (requests) │            │           │            │            │            │            │           │
-└────────────────┴────────────┴───────────┴────────────┴────────────┴────────────┴────────────┴───────────┘
-```

@@ -287,9 +287,12 @@ def generate_enums_py() -> str:
 
     for name, enum_name, plugin_names in enum_data:
         member = to_enum_member(name)
-        examples = ", ".join(
-            f"{enum_name}.{to_enum_member(n)}" for n in plugin_names[:3]
+        sample = (
+            [plugin_names[0], plugin_names[len(plugin_names) // 2], plugin_names[-1]]
+            if len(plugin_names) >= 3
+            else plugin_names
         )
+        examples = ", ".join(f"{enum_name}.{to_enum_member(n)}" for n in sample)
         lines.extend(
             [
                 f"{enum_name}Str: TypeAlias = str",

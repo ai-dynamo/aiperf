@@ -18,7 +18,7 @@ class SpecBenchLoader(BasePublicDatasetLoader):
     """
 
     tag = "SpecBench"
-    url = "https://raw.githubusercontent.com/hemingkx/Spec-Bench/main/data/spec_bench/question.jsonl"
+    url = "https://raw.githubusercontent.com/hemingkx/Spec-Bench/fd2c1cd7d2201ef71db4c5f4e455008f017967bf/data/spec_bench/question.jsonl"
     filename = "spec_bench.jsonl"
 
     async def load_dataset(self) -> dict[str, Any]:

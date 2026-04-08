@@ -164,10 +164,41 @@ class TestHFInstructionResponseDatasetLoader:
         assert len(conversations) == 1
         assert conversations[0].turns[0].texts[0].contents[0] == "Valid problem"
 
-    async def test_skips_missing_prompt_column(self, loader):
-        data = {"dataset": [{"other_field": "value"}, {"problem": "Valid"}]}
+    async def test_raises_on_missing_prompt_column(self, loader):
+        data = {"dataset": [{"other_field": "value"}]}
+        with pytest.raises(ValueError, match="Column 'problem' not found"):
+            await loader.convert_to_conversations(data)
+
+    async def test_prompt_template_combines_columns(self, user_config):
+        loader = HFInstructionResponseDatasetLoader(
+            user_config=user_config,
+            hf_dataset_name="test/data",
+            hf_split="train",
+            prompt_column="change_request",
+            prompt_template="{code}\n\n{change_request}",
+        )
+        data = {
+            "dataset": [{"code": "def foo(): pass", "change_request": "Add docstring"}]
+        }
         conversations = await loader.convert_to_conversations(data)
-        assert len(conversations) == 1
+
+        assert conversations[0].turns[0].texts[0].contents[0] == (
+            "def foo(): pass\n\nAdd docstring"
+        )
+
+    async def test_prompt_template_overrides_prompt_column(self, user_config):
+        loader = HFInstructionResponseDatasetLoader(
+            user_config=user_config,
+            hf_dataset_name="test/data",
+            hf_split="train",
+            prompt_column="change_request",
+            prompt_template="{code}\n\n{change_request}",
+        )
+        data = {"dataset": [{"code": "x = 1", "change_request": "rename x to y"}]}
+        conversations = await loader.convert_to_conversations(data)
+
+        assert "x = 1" in conversations[0].turns[0].texts[0].contents[0]
+        assert "rename x to y" in conversations[0].turns[0].texts[0].contents[0]
 
     async def test_session_ids_are_unique(self, loader):
         data = {"dataset": [{"problem": f"Q{i}"} for i in range(5)]}
