@@ -12,6 +12,7 @@ lighteval reference: lighteval/src/lighteval/tasks/tasks/mmlu.py
 
 from __future__ import annotations
 
+import asyncio
 from string import ascii_uppercase
 
 from datasets import DatasetDict, load_dataset
@@ -106,7 +107,9 @@ class MMLUBenchmark(AIPerfLoggerMixin):
         problems: list[BenchmarkProblem] = []
 
         for subject in subjects:
-            ds: DatasetDict = load_dataset(DATASET_NAME, subject)
+            ds: DatasetDict = await asyncio.to_thread(
+                load_dataset, DATASET_NAME, subject
+            )
             test_split = ds["test"]
             few_shots = self._build_few_shots(ds, n_shots)
 
