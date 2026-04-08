@@ -865,6 +865,12 @@
               "title": "Requires Polling",
               "type": "boolean"
             },
+            "requires_form_data": {
+              "default": false,
+              "description": "Whether endpoint supports multipart/form-data request encoding.",
+              "title": "Requires Form Data",
+              "type": "boolean"
+            },
             "requires_inline_media": {
               "default": false,
               "description": "Whether endpoint requires media URLs to be downloaded and inlined as base64 data URLs.",

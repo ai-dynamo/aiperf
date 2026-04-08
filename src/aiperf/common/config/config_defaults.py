@@ -47,6 +47,7 @@ class EndpointDefaults:
     USE_SERVER_TOKEN_COUNT = False
     CONNECTION_REUSE_STRATEGY = ConnectionReuseStrategy.POOLED
     DOWNLOAD_VIDEO_CONTENT = False
+    REQUEST_CONTENT_TYPE = None
 
 
 @dataclass(frozen=True)

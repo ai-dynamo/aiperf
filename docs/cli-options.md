@@ -187,6 +187,17 @@ Transport connection reuse strategy. 'pooled' (default): connections are pooled 
 For video generation endpoints, download the video content after generation completes. When enabled, request latency includes the video download time. When disabled (default), only generation time is measured.
 <br/>_Flag (no value required)_
 
+#### `--request-content-type` `<str>`
+
+Content type for request body serialization. By default, requests are sent as 'application/json'. Set to 'multipart/form-data' for servers that require form-encoded requests (e.g., vLLM video generation endpoints).
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `application/json` |  | Standard JSON encoding. Default for all endpoints. |
+| `multipart/form-data` |  | Multipart form encoding. Required by some video generation servers (e.g., vLLM). |
+
 ### Input
 
 #### `--extra-inputs` `<list>`
