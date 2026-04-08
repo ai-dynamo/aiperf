@@ -83,7 +83,9 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
 
         idx = metadata.session_num
         if idx >= len(self.problems):
-            return record_metrics
+            raise ValueError(
+                f"session_num {idx} is out of range for dataset with {len(self.problems)} problems"
+            )
 
         problem = self.problems[idx]
         response_text = self._extract_response_text(record)
