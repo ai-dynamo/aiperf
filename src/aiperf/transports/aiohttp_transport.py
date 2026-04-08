@@ -177,7 +177,9 @@ class AioHttpTransport(BaseTransport):
         headers: dict[str, str] = {"Accept": accept}
         content_type = request_info.model_endpoint.endpoint.request_content_type
         if content_type != RequestContentType.MULTIPART_FORM_DATA:
-            headers["Content-Type"] = content_type or "application/json"
+            headers["Content-Type"] = (
+                content_type or RequestContentType.APPLICATION_JSON
+            )
         return headers
 
     def get_url(self, request_info: RequestInfo) -> str:
@@ -412,14 +414,10 @@ class AioHttpTransport(BaseTransport):
         form_data = aiohttp.FormData()
         for key, value in payload.items():
             if value is not None:
-                form_data.add_field(
-                    key,
-                    str(
-                        int(value)
-                        if isinstance(value, float) and value.is_integer()
-                        else value
-                    ),
+                str_value = (
+                    str(value).lower() if isinstance(value, bool) else str(value)
                 )
+                form_data.add_field(key, str_value)
         return form_data
 
     async def _submit_video_job(
