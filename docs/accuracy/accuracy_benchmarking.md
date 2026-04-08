@@ -83,7 +83,7 @@ aiperf profile my-model --url http://localhost:8000 \
 
 Accuracy results are displayed in the console and exported to CSV:
 
-```
+```text
                   Accuracy Benchmark Results
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━┓
 ┃ Task                    ┃ Correct ┃ Total ┃ Accuracy ┃
@@ -98,7 +98,7 @@ CSV file: `<artifact_dir>/accuracy_results.csv`
 
 ## Architecture
 
-```
+```text
 AccuracyDatasetLoader          → Conversation/Turn objects (dataset pipeline)
 AccuracyRecordProcessor        → grades each response (record pipeline)
 AccuracyResultsProcessor       → aggregates per-task accuracy (results pipeline)

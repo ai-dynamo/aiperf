@@ -73,11 +73,11 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
             return
 
         idx = record_data.metadata.session_num
-        task = (
-            self._problems[idx].task
-            if idx < len(self._problems)
-            else "_unknown"
-        )
+        if idx >= len(self._problems):
+            raise ValueError(
+                f"session_num {idx} is out of range for dataset with {len(self._problems)} problems"
+            )
+        task = self._problems[idx].task
         is_correct = float(correct) >= 0.5
 
         self._overall_total += 1

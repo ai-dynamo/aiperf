@@ -6,9 +6,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.accuracy.accuracy_record_processor import AccuracyRecordProcessor
+from aiperf.accuracy.accuracy_results_processor import AccuracyResultsProcessor
 from aiperf.accuracy.models import BenchmarkProblem, GradingResult
 from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.config.accuracy_config import AccuracyConfig
+from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
 from tests.unit.post_processors.conftest import create_metric_metadata
 
@@ -104,3 +106,59 @@ class TestAccuracyRecordProcessorSessionBounds:
         result = await processor.process_record(sample_parsed_record, metadata)
 
         assert result["accuracy.correct"] == 1.0
+
+
+def _make_results_processor(
+    monkeypatch, user_config: UserConfig
+) -> AccuracyResultsProcessor:
+    mock_benchmark_cls = MagicMock()
+
+    monkeypatch.setattr(
+        "aiperf.accuracy.accuracy_results_processor.plugins.get_class",
+        lambda *_args, **_kwargs: mock_benchmark_cls,
+    )
+    monkeypatch.setattr(
+        "aiperf.accuracy.accuracy_results_processor.plugins.get_metadata",
+        lambda *_args, **_kwargs: {},
+    )
+
+    return AccuracyResultsProcessor(user_config=user_config)
+
+
+def _make_record_data(session_num: int, correct: float = 1.0) -> MetricRecordsData:
+    return MetricRecordsData(
+        metadata=create_metric_metadata(session_num=session_num),
+        metrics={"accuracy.correct": correct},
+    )
+
+
+@pytest.mark.asyncio
+class TestAccuracyResultsProcessorSessionBounds:
+    async def test_process_result_session_num_out_of_range_raises_value_error(
+        self, monkeypatch
+    ) -> None:
+        user_config = _make_user_config()
+        processor = _make_results_processor(monkeypatch, user_config)
+        processor._problems = [_make_problem()]
+
+        with pytest.raises(
+            ValueError,
+            match="session_num 1 is out of range for dataset with 1 problems",
+        ):
+            await processor.process_result(_make_record_data(session_num=1))
+
+    async def test_process_result_last_valid_session_num_succeeds(
+        self, monkeypatch
+    ) -> None:
+        user_config = _make_user_config()
+        processor = _make_results_processor(monkeypatch, user_config)
+        processor._problems = [
+            _make_problem(ground_truth="A"),
+            _make_problem(ground_truth="B"),
+        ]
+
+        await processor.process_result(_make_record_data(session_num=1, correct=1.0))
+
+        assert processor._overall_total == 1
+        assert processor._overall_correct == 1
+        assert processor._task_correct["test_task"] == 1
