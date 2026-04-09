@@ -397,10 +397,13 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
     async def _load_accuracy_dataset(self) -> list[Conversation]:
         from aiperf.dataset.loader.accuracy_dataset_loader import AccuracyDatasetLoader
-        from aiperf.plugin.enums import DatasetSamplingStrategy
+        from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 
         loader = AccuracyDatasetLoader(user_config=self.user_config)
-        if "dataset_sampling_strategy" not in self.user_config.input.model_fields_set:
+        if (
+            "dataset_sampling_strategy" not in self.user_config.input.model_fields_set
+            and self.user_config.timing_mode != TimingMode.FIXED_SCHEDULE
+        ):
             self.user_config.input.dataset_sampling_strategy = (
                 DatasetSamplingStrategy.SEQUENTIAL
             )
