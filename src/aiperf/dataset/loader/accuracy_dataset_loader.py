@@ -9,8 +9,9 @@ Each BenchmarkProblem becomes a single-turn Conversation with pre-formatted
 OpenAI-compatible messages in Turn.raw_messages.
 
 The problem ordering is deterministic: Conversation i corresponds to
-BenchmarkProblem i, ensuring AccuracyRecordProcessor (which also loads
-problems in the same order) can index by session_num.
+BenchmarkProblem i. AccuracyRecordProcessor maps each response back to its
+problem via session_num % len(problems), which handles both single-pass and
+multi-pass (num_requests > dataset size) runs correctly.
 """
 
 from __future__ import annotations

@@ -23,8 +23,9 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
     """Record processor for accuracy benchmarking.
 
     Lazily loads benchmark problems on first process_record call, then grades
-    each response against the corresponding ground truth. Uses session_num
-    from metadata to index into the problems list.
+    each response against the corresponding ground truth. Maps each response to
+    its problem via session_num % len(problems), supporting both single-pass and
+    multi-pass runs.
     """
 
     def __init__(
