@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import csv
 from pathlib import Path
 
@@ -40,33 +41,34 @@ class AccuracyDataExporter(AIPerfLoggerMixin):
         if results is None or results.records is None:
             return
 
-        accuracy_metrics = [
-            r for r in results.records if r.tag.startswith("accuracy.")
-        ]
+        accuracy_metrics = [r for r in results.records if r.tag.startswith("accuracy.")]
         if not accuracy_metrics:
             return
 
-        self._csv_path.parent.mkdir(parents=True, exist_ok=True)
+        rows: list[list] = []
+        for m in accuracy_metrics:
+            if m.tag == "accuracy.overall":
+                task_name = "OVERALL"
+            elif m.tag.startswith("accuracy.task."):
+                task_name = m.tag.removeprefix("accuracy.task.")
+            else:
+                continue
+            rows.append(
+                [
+                    task_name,
+                    int(m.sum or 0),
+                    int(m.count or 0),
+                    f"{m.current:.4f}" if m.current is not None else "",
+                ]
+            )
 
+        await asyncio.to_thread(self._write_csv, rows)
+        self.info(f"Accuracy results exported to {self._csv_path}")
+
+    def _write_csv(self, rows: list[list]) -> None:
+        self._csv_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._csv_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["task", "correct", "total", "accuracy"])
-
-            for m in accuracy_metrics:
-                if m.tag == "accuracy.overall":
-                    task_name = "OVERALL"
-                elif m.tag.startswith("accuracy.task."):
-                    task_name = m.tag.removeprefix("accuracy.task.")
-                else:
-                    continue
-
-                writer.writerow(
-                    [
-                        task_name,
-                        int(m.sum or 0),
-                        int(m.count or 0),
-                        f"{m.current:.4f}" if m.current is not None else "",
-                    ]
-                )
-
-        self.info(f"Accuracy results exported to {self._csv_path}")
+            for row in rows:
+                writer.writerow(row)
