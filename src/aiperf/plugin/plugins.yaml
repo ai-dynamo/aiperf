@@ -308,6 +308,7 @@ endpoint:
       produces_videos: true
       tokenizes_input: true
       requires_polling: true
+      requires_form_data: true
       metrics_title: Video Generation Metrics
 
   image_retrieval:
