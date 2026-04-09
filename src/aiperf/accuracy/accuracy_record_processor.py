@@ -81,13 +81,7 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         await self._ensure_problems_loaded()
         record_metrics = MetricRecordDict()
 
-        idx = metadata.session_num
-        if idx >= len(self.problems):
-            raise ValueError(
-                f"session_num {idx} is out of range for dataset with {len(self.problems)} problems"
-            )
-
-        problem = self.problems[idx]
+        problem = self.problems[metadata.session_num % len(self.problems)]
         response_text = self._extract_response_text(record)
 
         result: GradingResult = await self.grader.grade(

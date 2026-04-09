@@ -46,42 +46,67 @@ def _make_processor(monkeypatch, user_config: UserConfig) -> AccuracyRecordProce
     return AccuracyRecordProcessor(service_id="test", user_config=user_config)
 
 
-def _make_problem(ground_truth: str = "A") -> BenchmarkProblem:
+def _make_problem(ground_truth: str = "A", task: str = "test_task") -> BenchmarkProblem:
     return BenchmarkProblem(
         prompt="Which is correct?",
         ground_truth=ground_truth,
-        task="test_task",
+        task=task,
     )
 
 
 @pytest.mark.asyncio
 class TestAccuracyRecordProcessorSessionBounds:
-    async def test_process_record_session_num_out_of_range_raises_value_error(
+    async def test_process_record_wraps_when_session_num_exceeds_dataset(
         self, monkeypatch, sample_parsed_record
     ) -> None:
+        """session_num >= dataset size wraps via modulo so the correct problem is graded."""
         user_config = _make_user_config()
         processor = _make_processor(monkeypatch, user_config)
-        processor.problems = [_make_problem()]
+        processor.problems = [_make_problem(ground_truth="A")]
 
+        grading_result = GradingResult(
+            correct=True,
+            confidence=1.0,
+            reasoning="Correct",
+            extracted_answer="A",
+            ground_truth="A",
+        )
+        processor.grader.grade = AsyncMock(return_value=grading_result)
+
+        # session_num=1 wraps to index 0 (the only problem)
         metadata = create_metric_metadata(session_num=1)
+        result = await processor.process_record(sample_parsed_record, metadata)
 
-        with pytest.raises(
-            ValueError,
-            match="session_num 1 is out of range for dataset with 1 problems",
-        ):
-            await processor.process_record(sample_parsed_record, metadata)
+        assert result["accuracy.correct"] == 1.0
+        processor.grader.grade.assert_awaited_once_with("Hello world", "A")
 
-    async def test_process_record_session_num_out_of_range_error_includes_counts(
+    async def test_process_record_wraps_to_correct_problem(
         self, monkeypatch, sample_parsed_record
     ) -> None:
+        """With N problems, session_num=N+1 grades problem at index 1."""
         user_config = _make_user_config()
         processor = _make_processor(monkeypatch, user_config)
-        processor.problems = [_make_problem(), _make_problem()]
+        processor.problems = [
+            _make_problem(ground_truth="A"),
+            _make_problem(ground_truth="B"),
+            _make_problem(ground_truth="C"),
+        ]
 
-        metadata = create_metric_metadata(session_num=5)
+        grading_result = GradingResult(
+            correct=False,
+            confidence=1.0,
+            reasoning="Wrong",
+            extracted_answer="A",
+            ground_truth="B",
+        )
+        processor.grader.grade = AsyncMock(return_value=grading_result)
 
-        with pytest.raises(ValueError, match="session_num 5.*2 problems"):
-            await processor.process_record(sample_parsed_record, metadata)
+        # session_num=4 % 3 = index 1 (ground_truth="B")
+        metadata = create_metric_metadata(session_num=4)
+        result = await processor.process_record(sample_parsed_record, metadata)
+
+        assert result["accuracy.correct"] == 0.0
+        processor.grader.grade.assert_awaited_once_with("Hello world", "B")
 
     async def test_process_record_last_valid_session_num_succeeds(
         self, monkeypatch, sample_parsed_record
@@ -134,18 +159,35 @@ def _make_record_data(session_num: int, correct: float = 1.0) -> MetricRecordsDa
 
 @pytest.mark.asyncio
 class TestAccuracyResultsProcessorSessionBounds:
-    async def test_process_result_session_num_out_of_range_raises_value_error(
+    async def test_process_result_wraps_when_session_num_exceeds_dataset(
         self, monkeypatch
     ) -> None:
+        """session_num >= dataset size wraps via modulo so the correct task is recorded."""
         user_config = _make_user_config()
         processor = _make_results_processor(monkeypatch, user_config)
-        processor._problems = [_make_problem()]
+        processor._problems = [_make_problem(task="algebra")]
 
-        with pytest.raises(
-            ValueError,
-            match="session_num 1 is out of range for dataset with 1 problems",
-        ):
-            await processor.process_result(_make_record_data(session_num=1))
+        # session_num=1 wraps to index 0 (the only problem, task="algebra")
+        await processor.process_result(_make_record_data(session_num=1))
+
+        assert processor._task_total["algebra"] == 1
+        assert processor._overall_total == 1
+
+    async def test_process_result_wraps_to_correct_task(self, monkeypatch) -> None:
+        """With N problems, session_num=N+1 accumulates under the task at index 1."""
+        user_config = _make_user_config()
+        processor = _make_results_processor(monkeypatch, user_config)
+        processor._problems = [
+            _make_problem(task="algebra"),
+            _make_problem(task="history"),
+            _make_problem(task="biology"),
+        ]
+
+        # session_num=4 % 3 = index 1 → task="history"
+        await processor.process_result(_make_record_data(session_num=4))
+
+        assert processor._task_total["history"] == 1
+        assert processor._task_total.get("algebra", 0) == 0
 
     async def test_process_result_last_valid_session_num_succeeds(
         self, monkeypatch
