@@ -123,11 +123,9 @@ class TestCanLoad:
     def test_none_filename_returns_false(self) -> None:
         assert BurstGPTTraceDatasetLoader.can_load(filename=None) is False
 
-    def test_nonexistent_file_returns_false(self) -> None:
-        assert (
-            BurstGPTTraceDatasetLoader.can_load(filename="/tmp/does_not_exist.csv")
-            is False
-        )
+    def test_nonexistent_file_returns_false(self, tmp_path: Path) -> None:
+        non_existent = tmp_path / "does_not_exist.csv"
+        assert BurstGPTTraceDatasetLoader.can_load(filename=str(non_existent)) is False
 
 
 # ============================================================================
