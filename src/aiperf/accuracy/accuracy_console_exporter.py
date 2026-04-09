@@ -35,9 +35,7 @@ class AccuracyConsoleExporter(AIPerfLoggerMixin):
         if results is None or results.records is None:
             return
 
-        accuracy_metrics = [
-            r for r in results.records if r.tag.startswith("accuracy.")
-        ]
+        accuracy_metrics = [r for r in results.records if r.tag.startswith("accuracy.")]
         if not accuracy_metrics:
             return
 
