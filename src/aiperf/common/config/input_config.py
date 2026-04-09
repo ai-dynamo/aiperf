@@ -273,7 +273,7 @@ class InputConfig(BaseConfig):
             description="Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). "
             "AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. "
             "Run `aiperf plugins public_dataset_loader` to list available datasets. "
-            "Use `--hf-dataset-subset` to override the HuggingFace subset/config for HF-backed datasets.",
+            "Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.",
         ),
         CLIParameter(
             name=("--public-dataset"),
@@ -285,10 +285,11 @@ class InputConfig(BaseConfig):
         str | None,
         Field(
             description="HuggingFace dataset subset/config name to override the plugin default (e.g. `sharegpt4o`). "
-            "Only applies when using `--public-dataset` with a HuggingFace-backed loader.",
+            "Only applies when using `--public-dataset` with a HuggingFace-backed loader. "
+            "Takes priority over the subset defined in the plugin registry.",
         ),
         CLIParameter(
-            name=("--hf-dataset-subset",),
+            name=("--hf-subset",),
             group=_CLI_GROUP,
         ),
     ] = None
