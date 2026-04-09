@@ -5,6 +5,7 @@ import csv
 from pathlib import Path
 from typing import Any
 
+from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
 from aiperf.dataset.loader.models import BurstGPTTrace
 
@@ -36,7 +37,7 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
             with open(filename, newline="") as f:
                 reader = csv.DictReader(f)
                 return cls._REQUIRED_COLUMNS.issubset(set(reader.fieldnames or []))
-        except (OSError, csv.Error):
+        except (OSError, csv.Error, UnicodeDecodeError):
             return False
 
     # ------------------------------------------------------------------
@@ -81,6 +82,11 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
 
         with open(self.filename, newline="") as f:
             reader = csv.DictReader(f)
+            missing = self._REQUIRED_COLUMNS - set(reader.fieldnames or [])
+            if missing:
+                raise DatasetLoaderError(
+                    f"Missing required columns {missing} in '{self.filename}'"
+                )
             for row in reader:
                 trace = self._parse_row(row)
                 if trace is None:
@@ -118,9 +124,15 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
     def _reconstruct_traces(
         self, originals: list[BurstGPTTrace], synth_dicts: list[dict[str, Any]]
     ) -> list[BurstGPTTrace]:
+        if not originals:
+            raise ValueError("originals must not be empty")
+        if len(synth_dicts) != len(originals):
+            raise ValueError(
+                f"synth_dicts length ({len(synth_dicts)}) != originals length ({len(originals)})"
+            )
         result: list[BurstGPTTrace] = []
         for i, synth_dict in enumerate(synth_dicts):
-            original = originals[i] if i < len(originals) else originals[-1]
+            original = originals[i]
             result.append(
                 BurstGPTTrace(
                     timestamp=synth_dict.get("timestamp", original.timestamp),
