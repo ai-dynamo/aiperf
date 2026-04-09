@@ -435,6 +435,16 @@ dataset_composer:
 # Auto-detection: the custom composer tries loaders in priority order based on can_load().
 # =============================================================================
 custom_dataset_loader:
+  burst_gpt_trace:
+    class: aiperf.dataset.loader.burst_gpt:BurstGPTTraceDatasetLoader
+    description: |
+      BurstGPT real-world bursty LLM traffic trace from Microsoft Research
+      (https://github.com/HPMLL/BurstGPT). Each row prescribes request/response
+      token counts; session IDs are auto-generated. Prompts are synthesized.
+      Usage: --custom-dataset-type burst_gpt_trace --file burst_gpt.csv
+    metadata:
+      is_trace: true
+
   bailian_trace:
     class: aiperf.dataset.loader.bailian_trace:BailianTraceDatasetLoader
     description: |

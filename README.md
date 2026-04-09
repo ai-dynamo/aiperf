@@ -134,6 +134,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 ### Workloads and Data
 - [Trace Benchmarking](docs/benchmark-modes/trace-replay.md) - Deterministic workload replay
 - [Bailian Traces](docs/tutorials/bailian-trace.md) - Bailian production trace replay
+- [BurstGPT Traces](docs/tutorials/burst-gpt-trace.md) - BurstGPT real-world bursty traffic trace replay
 - [Custom Prompt Benchmarking](docs/tutorials/custom-prompt-benchmarking.md) - Send exact prompts as-is
 - [Custom Dataset](docs/tutorials/custom-dataset.md) - Custom dataset formats
 - [ShareGPT Dataset](docs/tutorials/sharegpt.md) - Profile with ShareGPT dataset
