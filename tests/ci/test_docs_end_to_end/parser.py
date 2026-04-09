@@ -54,32 +54,44 @@ class MarkdownParser:
             line = lines[i].strip()
 
             # Look for MDX comment tags: {/* tag-name */}
-            if line.startswith("{/*") and line.endswith("*/}"):
-                # Use [^*\s]\S* instead of [^*\s]+.*? to avoid ReDoS
-                # (both quantifiers can match the same chars, causing O(n²) backtracking)
-                tag_match = re.match(r"\{/\*\s*([^*\s]\S*)\s*\*/\}", line)
-                if tag_match:
-                    tag_name = tag_match.group(1).strip()
+            # Use [^*\s]\S* instead of [^*\s]+.*? to avoid ReDoS
+            # (both quantifiers can match the same chars, causing O(n²) backtracking)
+            mdx_match = (
+                re.match(r"\{/\*\s*([^*\s]\S*)\s*\*/\}", line)
+                if (line.startswith("{/*") and line.endswith("*/}"))
+                else None
+            )
 
-                    # Check for setup or aiperf-run tags ending with endpoint-server
-                    if self._is_target_tag(tag_name):
-                        logger.info(f"Found target tag: {tag_name}")
+            # Also look for HTML comment tags: <!-- tag-name -->
+            html_match = (
+                re.match(r"<!--\s*([^-\s]\S*)\s*-->", line)
+                if (line.startswith("<!--") and line.endswith("-->"))
+                else None
+            )
 
-                        # Extract the bash command
-                        bash_content = self._extract_bash_block(lines, i + 1)
+            tag_match = mdx_match or html_match
+            if tag_match:
+                tag_name = tag_match.group(1).strip()
 
-                        if bash_content:
-                            command = Command(
-                                tag_name=tag_name,
-                                command=bash_content,
-                                file_path=file_path,
-                                start_line=i + 1,
-                                end_line=i + len(bash_content.split("\n")) + 2,
-                            )
+                # Check for setup or aiperf-run tags ending with endpoint-server
+                if self._is_target_tag(tag_name):
+                    logger.info(f"Found target tag: {tag_name}")
 
-                            self._categorize_command(command)
-                        else:
-                            logger.warning(f"No bash block found after tag {tag_name}")
+                    # Extract the bash command
+                    bash_content = self._extract_bash_block(lines, i + 1)
+
+                    if bash_content:
+                        command = Command(
+                            tag_name=tag_name,
+                            command=bash_content,
+                            file_path=file_path,
+                            start_line=i + 1,
+                            end_line=i + len(bash_content.split("\n")) + 2,
+                        )
+
+                        self._categorize_command(command)
+                    else:
+                        logger.warning(f"No bash block found after tag {tag_name}")
             i += 1
 
     def _is_target_tag(self, tag_name: str) -> bool:
