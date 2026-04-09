@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from aiperf.accuracy.benchmark_loader import load_benchmark_problems
 from aiperf.accuracy.models import BenchmarkProblem, GradingResult
 from aiperf.common.config import UserConfig
 from aiperf.common.exceptions import PostProcessorDisabled
@@ -44,10 +45,6 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         benchmark_name = acc_cfg.benchmark
         grader_name = acc_cfg.grader
 
-        self._benchmark_cls = plugins.get_class(
-            PluginType.ACCURACY_BENCHMARK, benchmark_name
-        )
-
         if grader_name is None:
             meta = plugins.get_metadata(PluginType.ACCURACY_BENCHMARK, benchmark_name)
             grader_name = meta.get("default_grader", "multiple_choice")
@@ -55,25 +52,12 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         grader_cls = plugins.get_class(PluginType.ACCURACY_GRADER, grader_name)
         self.grader: BaseGrader = grader_cls(user_config=user_config)
 
-        self._n_shots = acc_cfg.n_shots
-        if self._n_shots == 0:
-            meta = plugins.get_metadata(PluginType.ACCURACY_BENCHMARK, benchmark_name)
-            default_n = meta.get("default_n_shots")
-            if default_n is not None:
-                self._n_shots = default_n
-
         self.problems: list[BenchmarkProblem] | None = None
 
     async def _ensure_problems_loaded(self) -> None:
         if self.problems is not None:
             return
-        acc_cfg = self.user_config.accuracy
-        benchmark = self._benchmark_cls(user_config=self.user_config)
-        self.problems = await benchmark.load_problems(
-            tasks=acc_cfg.tasks,
-            n_shots=self._n_shots,
-            enable_cot=acc_cfg.enable_cot,
-        )
+        self.problems = await load_benchmark_problems(self.user_config)
 
     async def process_record(
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata

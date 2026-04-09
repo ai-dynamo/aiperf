@@ -30,13 +30,11 @@ def _make_processor(monkeypatch, user_config: UserConfig) -> AccuracyRecordProce
     mock_grader_cls = MagicMock()
     mock_grader_cls.return_value = MagicMock()
 
-    mock_benchmark_cls = MagicMock()
-
+    # Only grader lookups remain in accuracy_record_processor; benchmark loading
+    # moved to benchmark_loader and is bypassed by setting processor.problems directly.
     monkeypatch.setattr(
         "aiperf.accuracy.accuracy_record_processor.plugins.get_class",
-        lambda plugin_type, name: mock_benchmark_cls
-        if "benchmark" in str(plugin_type).lower()
-        else mock_grader_cls,
+        lambda plugin_type, name: mock_grader_cls,
     )
     monkeypatch.setattr(
         "aiperf.accuracy.accuracy_record_processor.plugins.get_metadata",
@@ -136,17 +134,8 @@ class TestAccuracyRecordProcessorSessionBounds:
 def _make_results_processor(
     monkeypatch, user_config: UserConfig
 ) -> AccuracyResultsProcessor:
-    mock_benchmark_cls = MagicMock()
-
-    monkeypatch.setattr(
-        "aiperf.accuracy.accuracy_results_processor.plugins.get_class",
-        lambda *_args, **_kwargs: mock_benchmark_cls,
-    )
-    monkeypatch.setattr(
-        "aiperf.accuracy.accuracy_results_processor.plugins.get_metadata",
-        lambda *_args, **_kwargs: {},
-    )
-
+    # AccuracyResultsProcessor.__init__ no longer calls plugins directly;
+    # benchmark loading is in benchmark_loader and bypassed by setting _problems directly.
     return AccuracyResultsProcessor(user_config=user_config)
 
 
@@ -159,12 +148,9 @@ def _make_record_data(session_num: int, correct: float = 1.0) -> MetricRecordsDa
 
 @pytest.mark.asyncio
 class TestAccuracyResultsProcessorSessionBounds:
-    async def test_process_result_wraps_when_session_num_exceeds_dataset(
-        self, monkeypatch
-    ) -> None:
+    async def test_process_result_wraps_when_session_num_exceeds_dataset(self) -> None:
         """session_num >= dataset size wraps via modulo so the correct task is recorded."""
-        user_config = _make_user_config()
-        processor = _make_results_processor(monkeypatch, user_config)
+        processor = _make_results_processor(None, _make_user_config())
         processor._problems = [_make_problem(task="algebra")]
 
         # session_num=1 wraps to index 0 (the only problem, task="algebra")
@@ -173,10 +159,9 @@ class TestAccuracyResultsProcessorSessionBounds:
         assert processor._task_total["algebra"] == 1
         assert processor._overall_total == 1
 
-    async def test_process_result_wraps_to_correct_task(self, monkeypatch) -> None:
+    async def test_process_result_wraps_to_correct_task(self) -> None:
         """With N problems, session_num=N+1 accumulates under the task at index 1."""
-        user_config = _make_user_config()
-        processor = _make_results_processor(monkeypatch, user_config)
+        processor = _make_results_processor(None, _make_user_config())
         processor._problems = [
             _make_problem(task="algebra"),
             _make_problem(task="history"),
@@ -189,11 +174,8 @@ class TestAccuracyResultsProcessorSessionBounds:
         assert processor._task_total["history"] == 1
         assert processor._task_total.get("algebra", 0) == 0
 
-    async def test_process_result_last_valid_session_num_succeeds(
-        self, monkeypatch
-    ) -> None:
-        user_config = _make_user_config()
-        processor = _make_results_processor(monkeypatch, user_config)
+    async def test_process_result_last_valid_session_num_succeeds(self) -> None:
+        processor = _make_results_processor(None, _make_user_config())
         processor._problems = [
             _make_problem(ground_truth="A"),
             _make_problem(ground_truth="B"),

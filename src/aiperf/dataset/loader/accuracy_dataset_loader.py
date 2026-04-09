@@ -15,12 +15,11 @@ problems in the same order) can index by session_num.
 
 from __future__ import annotations
 
+from aiperf.accuracy.benchmark_loader import load_benchmark_problems
 from aiperf.accuracy.models import BenchmarkProblem
 from aiperf.common.config import UserConfig
 from aiperf.common.models.dataset_models import Conversation, Text, Turn
 from aiperf.common.session_id_generator import SessionIDGenerator
-from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType
 
 
 class AccuracyDatasetLoader:
@@ -39,26 +38,7 @@ class AccuracyDatasetLoader:
         return self._convert_to_conversations(problems)
 
     async def _load_problems(self) -> list[BenchmarkProblem]:
-        acc_cfg = self.user_config.accuracy
-        benchmark_cls = plugins.get_class(
-            PluginType.ACCURACY_BENCHMARK, acc_cfg.benchmark
-        )
-        benchmark = benchmark_cls(user_config=self.user_config)
-
-        n_shots = acc_cfg.n_shots
-        if n_shots == 0:
-            meta = plugins.get_metadata(
-                PluginType.ACCURACY_BENCHMARK, acc_cfg.benchmark
-            )
-            default_n = meta.get("default_n_shots")
-            if default_n is not None:
-                n_shots = default_n
-
-        return await benchmark.load_problems(
-            tasks=acc_cfg.tasks,
-            n_shots=n_shots,
-            enable_cot=acc_cfg.enable_cot,
-        )
+        return await load_benchmark_problems(self.user_config)
 
     def _convert_to_conversations(
         self, problems: list[BenchmarkProblem]
