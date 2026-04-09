@@ -51,7 +51,7 @@ navigation:
     - page: Profile with ShareGPT Dataset
       path: ../../docs/tutorials/sharegpt.md
     - page: Multi-Turn Conversations
-      path: ../../docs/tutorials/multi-turn.mdx
+      path: ../../docs/tutorials/multi-turn.md
     - page: Sequence Length Distributions for Advanced Benchmarking
       path: ../../docs/tutorials/sequence-distributions.md
     - page: Prefix Data Synthesis Tutorial

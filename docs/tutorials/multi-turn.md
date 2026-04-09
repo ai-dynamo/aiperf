@@ -87,7 +87,7 @@ docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
 
 Run a simple multi-turn benchmark with a fixed number of turns per conversation:
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+
 ```bash
 # Run 10 conversations, each with exactly 3 turns
 aiperf profile \
@@ -104,8 +104,6 @@ aiperf profile \
     --concurrency 2 \
     --random-seed 42
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
-
 **Sample Output (Successful Run):**
 ```
 INFO     Starting AIPerf System
@@ -140,7 +138,7 @@ This command will:
 
 Add variance to the number of turns per conversation for more realistic patterns:
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+
 ```bash
 # Run conversations with variable lengths (mean: 5, stddev: 2)
 aiperf profile \
@@ -157,8 +155,6 @@ aiperf profile \
     --concurrency 4 \
     --random-seed 42
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
-
 This creates conversations with varying lengths (typically 3-7 turns), simulating natural conversation patterns where some users ask quick questions and others engage in deeper discussions.
 
 ## Advanced Multi-Turn Scenarios
@@ -167,7 +163,7 @@ This creates conversations with varying lengths (typically 3-7 turns), simulatin
 
 Simulate real user "think time" between turns to model actual human interaction patterns:
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+
 ```bash
 # Add realistic delays between turns (mean: 2000ms, stddev: 500ms)
 aiperf profile \
@@ -186,8 +182,6 @@ aiperf profile \
     --concurrency 3 \
     --random-seed 42
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
-
 The turn delays simulate realistic pauses as users read responses and formulate follow-up questions. This is critical for:
 - Testing connection keep-alive mechanisms
 - Evaluating server-side session state management
@@ -197,7 +191,7 @@ The turn delays simulate realistic pauses as users read responses and formulate 
 
 Test how your server handles many simultaneous multi-turn conversations:
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+
 ```bash
 # Run 50 concurrent conversations with variable lengths
 aiperf profile \
@@ -214,8 +208,6 @@ aiperf profile \
     --concurrency 50 \
     --random-seed 42
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
-
 This benchmark:
 - Maintains 50 active conversations simultaneously
 - Tests session isolation and resource management
@@ -225,7 +217,7 @@ This benchmark:
 
 Combine request rate control with multi-turn conversations for controlled, sustained load:
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+
 ```bash
 # Start new conversations at 5 conversations/second
 aiperf profile \
@@ -242,8 +234,6 @@ aiperf profile \
     --output-tokens-mean 150 \
     --random-seed 42
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
-
 This approach is ideal for:
 - Modeling steady conversation arrival patterns
 - Avoiding thundering herd problems during testing
@@ -255,7 +245,7 @@ This approach is ideal for:
 
 Simulate realistic customer support interactions with varying conversation lengths:
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+
 ```bash
 # Model customer support conversations:
 # - Average 6-8 turns per conversation
@@ -280,13 +270,11 @@ aiperf profile \
     --concurrency 10 \
     --random-seed 42
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
-
 ### Context Window Stress Testing
 
 Test model performance with long conversations that accumulate substantial context:
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+
 ```bash
 # Test long conversations with growing context
 aiperf profile \
@@ -303,8 +291,6 @@ aiperf profile \
     --concurrency 2 \
     --random-seed 42
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
-
 Each turn in a conversation includes the full conversation history, so:
 - Turn 1: ~300 tokens input
 - Turn 5: ~300 + (4 × 250) = ~1300 tokens input
@@ -316,7 +302,7 @@ This helps identify performance degradation as context grows.
 
 Simulate sudden spikes in conversation activity:
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+
 ```bash
 # Simulate burst of conversation starts
 aiperf profile \
@@ -332,8 +318,6 @@ aiperf profile \
     --output-tokens-mean 120 \
     --random-seed 42
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
-
 ## How Multi-Turn Works
 
 ### Message History Accumulation
