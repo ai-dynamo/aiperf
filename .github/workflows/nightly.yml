@@ -4,7 +4,7 @@
 # Nightly build and release pipeline.
 #
 # Phases:
-#   1. Init     — compute version strings (rerun-stable via artifact)
+#   1. Init     — compute version strings and effective release mode (rerun-stable via artifact)
 #   2. Validate — pre-commit + test placeholders
 #   3. Build    — wheel (→ S3) + multi-arch containers (→ ECR)
 #   4. Tag      — create nightly git tag
@@ -12,8 +12,11 @@
 #   6. Scan     — trigger GitLab security scan (fire-and-forget)
 #   7. Summary  — always runs
 #
-# release=true (default): full pipeline including approval gate and GitLab scan.
-# release=false: build and tag only; skip staging and scan.
+# release=true (default for push/dispatch): full pipeline including approval gate and GitLab scan.
+# release=false (always for schedule):     build and tag only; skip staging and scan.
+#
+# The ref input accepts a branch name, tag, or commit SHA. When omitted the pipeline
+# builds from the tip-of-tree of the triggering ref (or the default branch for schedule).
 
 name: Nightly
 
@@ -26,11 +29,11 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: 'Git ref to build from (branch, tag, or full SHA). Defaults to the default branch.'
+        description: 'Branch name, tag, or commit SHA to build from. Defaults to tip-of-tree on the triggering ref.'
         default: ''
         required: false
       release:
-        description: 'Stage artifacts and trigger GitLab security scan. Requires automated-release approval.'
+        description: 'Stage artifacts and trigger GitLab security scan. Ignored for schedule — cron always sets release=false.'
         type: boolean
         default: true
       skip_security_scan:
@@ -72,6 +75,7 @@ jobs:
       wheel_filename: ${{ steps.version.outputs.wheel_filename }}
       base_version:   ${{ steps.version.outputs.base_version }}
       run_timestamp:  ${{ steps.version.outputs.run_timestamp }}
+      release:        ${{ steps.release.outputs.release }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -143,6 +147,18 @@ jobs:
           overwrite: true
           retention-days: 7
 
+      - name: Compute effective release mode
+        id: release
+        run: |
+          # schedule runs build+tag only — never stage or scan.
+          if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          elif [ "${{ inputs.release }}" = "false" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
   # ============================================================================
   # PHASE 2: VALIDATE
   # pre-commit is a real gate. Test jobs are placeholders until runners are ready.
@@ -195,11 +211,24 @@ jobs:
   gpu-e2e-tests:
     name: GPU End-to-End Tests
     needs: [prepare-nightly]
-    runs-on: ubuntu-latest
+    runs-on: prod-aiperf-tester-amd-gpu-v1
     if: ${{ inputs.publish_only != 'true' }}
     steps:
-      - name: Placeholder
-        run: echo "GPU runners not yet provisioned"
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Run test_docs_end_to_end
+        env:
+          AIPERF_SOURCE_DIR: ${{ github.workspace }}
+          CI_JOB_NAME: test_docs_end_to_end
+        run: |
+          bash -x tests/ci/test_docs_end_to_end/setup_test.sh
+
+      - name: Cleanup Docker containers
+        if: always()
+        run: docker compose -f docker-compose.yml down || true
 
   # ============================================================================
   # PHASE 3: BUILD
@@ -444,7 +473,7 @@ jobs:
     needs: [prepare-nightly, create-nightly-tag]
     runs-on: prod-aiperf-default-v1
     environment: automated-release
-    if: ${{ inputs.publish_only != 'true' && (github.event_name != 'workflow_dispatch' || inputs.release == true) }}
+    if: ${{ inputs.publish_only != 'true' && needs.prepare-nightly.outputs.release == 'true' }}
     env:
       CRANE_VERSION: v0.20.2
       CRANE_SHA256: ''
@@ -507,7 +536,7 @@ jobs:
     needs: [prepare-nightly, create-nightly-tag]
     runs-on: prod-aiperf-default-v1
     environment: automated-release
-    if: ${{ inputs.publish_only != 'true' && (github.event_name != 'workflow_dispatch' || inputs.release == true) }}
+    if: ${{ inputs.publish_only != 'true' && needs.prepare-nightly.outputs.release == 'true' }}
     steps:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -554,7 +583,7 @@ jobs:
     runs-on:
       group: gitlab_ci_runners
     environment: automated-release
-    if: ${{ inputs.publish_only != 'true' && inputs.skip_security_scan != 'true' && (github.event_name != 'workflow_dispatch' || inputs.release == true) }}
+    if: ${{ inputs.publish_only != 'true' && inputs.skip_security_scan != 'true' && needs.prepare-nightly.outputs.release == 'true' }}
     steps:
       - name: Trigger GitLab pipeline
         env:
@@ -642,7 +671,7 @@ jobs:
             echo "| Git ref | \`${{ inputs.ref || github.ref }}\` |"
             echo "| Branch | \`${GITHUB_REF_NAME}\` |"
             echo "| Trigger | ${{ github.event_name }} |"
-            echo "| Release mode | ${{ inputs.release }} |"
+            echo "| Release mode | ${{ needs.prepare-nightly.outputs.release }} |"
             echo ""
             echo "### Quality Gates"
             echo "| Gate | Result |"

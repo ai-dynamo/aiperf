@@ -1,12 +1,50 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# RC release automation pipeline.
+#
+# Phases:
+#   1. Gate     — extract version from branch name, compute RC number
+#   2. Validate — pre-commit + test placeholders
+#   3. Build    — wheel (→ S3) + multi-arch containers (→ ECR) + ECR manifest
+#   4. Approve  — [approve-release] human review before tagging
+#   5. Tag      — [automated-release] commit RC git tag
+#   6. Stage    — [automated-release] ECR → NGC; S3 → Artifactory
+#   7. Scan     — [automated-release] trigger GitLab security pipeline
+#   8. Summary  — always runs; Slack on failure
+#
+# Triggers:
+#   push to release/X.Y.Z  — automated RC build from release branch
+#   workflow_dispatch       — manual trigger with optional git ref override
+#
+# Version resolution:
+#   release/X.Y.Z branches → version extracted from branch name
+#   all other branches      → version = 0.0.0 (dev/test only)
+#
+# Security model:
+#   Builder runners use IAM instance profiles — no environment gate needed.
+#   Human approval (approve-release env) required before tag creation.
+#   Tag creation and all external publishing gated by automated-release env.
+
 name: RC
 
 on:
   push:
     branches:
+      - 'release/[0-9]*.[0-9]*.[0-9]*'
       - 'pvijayakrish/automate-release-rc'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build from (branch, tag, or full SHA). Defaults to triggered ref.'
+        default: ''
+        required: false
+
+# Prevent concurrent RC runs on the same branch from racing on tag creation.
+# cancel-in-progress: false — never cancel a run that may be pending human approval.
+concurrency:
+  group: rc-pipeline-${{ github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -27,18 +65,25 @@ jobs:
       pep440_version: ${{ steps.rc.outputs.pep440_version }}
       wheel_filename: ${{ steps.rc.outputs.wheel_filename }}
     steps:
-      - name: Set test version
-        id: extract
-        run: |
-          set -euo pipefail
-          VERSION="0.0.0"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref || github.ref_name }}
           fetch-depth: 0
           fetch-tags: true
+
+      - name: Extract version from branch
+        id: extract
+        run: |
+          set -euo pipefail
+          BRANCH="${{ inputs.ref || github.ref_name }}"
+          BRANCH="${BRANCH#refs/heads/}"
+          if [[ "${BRANCH}" =~ ^release/([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+          else
+            VERSION="0.0.0"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Determine RC number
         id: rc
@@ -109,22 +154,37 @@ jobs:
         run: echo "Temporarily skipped"
 
   gpu-e2e-tests:
-    name: GPU End-to-End Tests (skipped - no GPU runner)
+    name: GPU End-to-End Tests
     needs: [prepare-release]
-    runs-on: ubuntu-latest
+    runs-on: prod-aiperf-tester-amd-gpu-v1
     steps:
-      - name: Skip
-        run: echo "Skipped - GPU runners not yet available"
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref_name }}
+
+      - name: Run test_docs_end_to_end
+        if: false
+        env:
+          AIPERF_SOURCE_DIR: ${{ github.workspace }}
+          CI_JOB_NAME: test_docs_end_to_end
+        run: |
+          bash -x tests/ci/test_docs_end_to_end/setup_test.sh
+
+      - name: Cleanup Docker containers
+        if: always()
+        run: docker compose -f docker-compose.yml down || true
 
   # ============================================================================
   # BUILD ARTIFACTS
   # ============================================================================
 
+  # No environment: declaration — builder runners carry AWS credentials via IAM
+  # instance profile. The automated-release gate is enforced at tag creation and staging only.
   build-wheel:
     name: Build and Validate Wheel
     needs: [prepare-release]
     runs-on: prod-aiperf-builder-amd-v1
-    environment: automated-release
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -173,15 +233,14 @@ jobs:
           PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
         run: |
           set -euo pipefail
-          S3_KEY="wheels/aiperf/${PEP440_VERSION}/"
+          S3_KEY="aiperf/rc/${PEP440_VERSION}/"
           aws s3 cp wheel-out/dist/*.whl "s3://${S3_BUCKET}/${S3_KEY}" --sse AES256
-          echo "Uploaded wheel to s3://${S3_BUCKET}/${S3_KEY}"
+          echo "Wheel uploaded to S3 for ${PEP440_VERSION}"
 
   build-container:
     name: Build and Push Container (${{ matrix.arch }})
     needs: [prepare-release]
     runs-on: ${{ matrix.runner }}
-    environment: automated-release
     strategy:
       fail-fast: true
       matrix:
@@ -233,6 +292,60 @@ jobs:
             --tag "${IMAGE_REF}" \
             .
 
+  create-multiarch-manifest-ecr:
+    name: Create Multi-arch Manifest (ECR)
+    needs: [prepare-release, build-container]
+    runs-on: prod-aiperf-default-v1
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get ECR login token
+        id: ecr
+        env:
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          echo "password=$(aws ecr get-login-password --region "${AWS_DEFAULT_REGION}")" >> "$GITHUB_OUTPUT"
+
+      - name: Create multi-arch manifest on ECR
+        uses: ./.github/actions/create-multiarch-manifest
+        with:
+          registry:          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
+          registry-username: AWS
+          registry-password: ${{ steps.ecr.outputs.password }}
+          target-image: >-
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-release.outputs.pep440_version }}
+          source-images: >-
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-release.outputs.pep440_version }}-amd64
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-release.outputs.pep440_version }}-arm64
+
+  # ============================================================================
+  # APPROVE
+  # Human approval gate — pauses the pipeline after all builds and quality
+  # gates pass. A reviewer confirms artifacts are sound before the RC tag is
+  # committed and artifacts are staged externally.
+  # ============================================================================
+
+  approve-release:
+    name: Approve Release
+    needs:
+      - prepare-release
+      - pre-commit
+      - unit-tests
+      - integration-tests
+      - gpu-e2e-tests
+      - build-wheel
+      - create-multiarch-manifest-ecr
+    runs-on: ubuntu-latest
+    environment: approve-release
+    steps:
+      - name: Release approved
+        env:
+          RC_TAG:         ${{ needs.prepare-release.outputs.rc_tag }}
+          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+        run: |
+          echo "Release approved: ${RC_TAG} (${PEP440_VERSION})"
+
   # ============================================================================
   # TAG
   # ============================================================================
@@ -241,12 +354,7 @@ jobs:
     name: Create RC Tag
     needs:
       - prepare-release
-      - pre-commit
-      - unit-tests
-      - integration-tests
-      - gpu-e2e-tests
-      - build-wheel
-      - build-container
+      - approve-release
     runs-on: ubuntu-latest
     environment: automated-release
     steps:
@@ -304,7 +412,7 @@ jobs:
 
   stage-container:
     name: Stage Container (ECR to NGC)
-    needs: [prepare-release, create-rc-tag, build-container]
+    needs: [prepare-release, create-rc-tag]
     runs-on: prod-aiperf-default-v1
     environment: automated-release
     env:
@@ -323,7 +431,6 @@ jobs:
           aws ecr get-login-password --region ${AWS_DEFAULT_REGION} \
             | crane auth login "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com" --username AWS --password-stdin
           echo "${NGC_TOKEN}" | crane auth login nvcr.io -u "${NGC_USERNAME}" --password-stdin
-          echo "${NGC_TOKEN}" | docker login nvcr.io -u "${NGC_USERNAME}" --password-stdin
 
       - name: Copy images from ECR to NGC and create manifest
         env:
@@ -344,7 +451,7 @@ jobs:
 
   stage-wheel:
     name: Stage Wheel (S3 to Artifactory)
-    needs: [prepare-release, create-rc-tag, build-wheel]
+    needs: [prepare-release, create-rc-tag]
     runs-on: prod-aiperf-default-v1
     environment: automated-release
     steps:
@@ -363,7 +470,7 @@ jobs:
           set -euo pipefail
           TMPDIR="$(mktemp -d)"
           trap 'rm -rf "${TMPDIR}"' EXIT
-          aws s3 cp "s3://${S3_BUCKET}/wheels/aiperf/${PEP440_VERSION}/" "${TMPDIR}/" --recursive
+          aws s3 cp "s3://${S3_BUCKET}/aiperf/rc/${PEP440_VERSION}/" "${TMPDIR}/" --recursive
           uvx twine upload \
             --repository-url "${ARTIFACTORY_URL}" \
             --username "${ARTIFACTORY_USER}" \
@@ -401,50 +508,46 @@ jobs:
           WHEEL_FILENAME: ${{ needs.prepare-release.outputs.wheel_filename }}
           GITLAB_TOKEN: ${{ secrets.GITLAB_TRIGGER_TOKEN }}
           GITLAB_URL: ${{ secrets.GITLAB_PIPELINE_URL }}
+          ARTIFACTORY_PYPI_URL: ${{ secrets.ARTIFACTORY_PYPI_URL }}
         run: |
           set -euo pipefail
 
-          echo "=== Triggering GitLab Release Automation ==="
-          echo "Project:     aiperf"
-          echo "RC Tag:      ${RC_TAG}"
-          echo "PEP440:      ${PEP440_VERSION}"
-          echo "Wheel:       ${WHEEL_FILENAME}"
-          echo "Commit SHA:  ${{ github.sha }}"
-          echo "Run ID:      ${{ github.run_id }}"
+          # Write token to a temp file so it is not visible in the process list.
+          TOKEN_FILE=$(mktemp)
+          echo -n "${GITLAB_TOKEN}" > "${TOKEN_FILE}"
+          trap 'rm -f "${TOKEN_FILE}"' EXIT
 
-          HTTP_CODE=$(curl -sS -o /tmp/gitlab_trigger.json -w "%{http_code}" \
-            --fail-with-body \
+          RESPONSE=$(curl -fsSL \
             --request POST \
-            --form token="${GITLAB_TOKEN}" \
-            --form ref=main \
+            --form "token=<${TOKEN_FILE}" \
+            --form "ref=main" \
             --form "variables[PIPELINE_TYPE]=rc" \
+            --form "variables[RELEASE_TYPE]=rc" \
             --form "variables[PROJECT]=aiperf" \
+            --form "variables[SOURCE_BRANCH]=${GITHUB_REF_NAME}" \
             --form "variables[RC_TAG]=${RC_TAG}" \
             --form "variables[PEP440_VERSION]=${PEP440_VERSION}" \
             --form "variables[COMMIT_SHA]=${{ github.sha }}" \
             --form "variables[GITHUB_RUN_ID]=${{ github.run_id }}" \
             --form "variables[ARTIFACTS]=wheel,container" \
+            --form "variables[ARTIFACTORY_PYPI_URL]=${ARTIFACTORY_PYPI_URL}" \
             --form "variables[ENABLE_PULSE_SCAN]=true" \
             --form "variables[ENABLE_WHEEL_SCAN]=true" \
             --form "variables[ENABLE_SONARQUBE]=false" \
             "${GITLAB_URL}")
 
-          echo "GitLab API HTTP status: ${HTTP_CODE}"
+          PIPELINE_ID=$(echo "${RESPONSE}" | jq -r '.id // empty')
 
-          PIPELINE_URL=$(jq -r '.web_url // empty' /tmp/gitlab_trigger.json)
-          PIPELINE_ID=$(jq -r '.id // empty' /tmp/gitlab_trigger.json)
-          rm -f /tmp/gitlab_trigger.json
-
-          if [ -z "${PIPELINE_URL}" ]; then
-            echo "::error::Failed to trigger GitLab pipeline (HTTP ${HTTP_CODE})"
+          if [ -z "${PIPELINE_ID}" ]; then
+            echo "::error::Failed to trigger GitLab pipeline or parse response"
             exit 1
           fi
 
-          echo "GitLab pipeline triggered: ${PIPELINE_URL}"
+          echo "GitLab pipeline triggered: ID ${PIPELINE_ID}"
 
           {
             echo "### GitLab Release Automation"
-            echo "- **Pipeline**: [${PIPELINE_ID}](${PIPELINE_URL})"
+            echo "- **Pipeline ID**: ${PIPELINE_ID}"
             echo "- **Type**: RC (security scans + nSpect registration)"
             echo "- **Project**: aiperf"
             echo "- **RC Tag**: \`${RC_TAG}\`"
@@ -454,3 +557,84 @@ jobs:
             echo "2. Run wheeltamer wheel security scan"
             echo "3. Register artifacts with nSpect"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ============================================================================
+  # PIPELINE SUMMARY
+  # ============================================================================
+
+  pipeline-summary:
+    name: Pipeline Summary
+    needs:
+      - prepare-release
+      - pre-commit
+      - unit-tests
+      - integration-tests
+      - gpu-e2e-tests
+      - build-wheel
+      - build-container
+      - create-multiarch-manifest-ecr
+      - approve-release
+      - create-rc-tag
+      - stage-container
+      - stage-wheel
+      - trigger-gitlab-pipeline
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write pipeline summary
+        env:
+          RC_TAG:         ${{ needs.prepare-release.outputs.rc_tag }}
+          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+        run: |
+          {
+            echo "## RC Pipeline Summary"
+            echo ""
+            echo "| Property | Value |"
+            echo "|----------|-------|"
+            echo "| RC Tag | \`${RC_TAG}\` |"
+            echo "| Version | \`${PEP440_VERSION}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Branch | \`${GITHUB_REF_NAME}\` |"
+            echo "| Trigger | ${{ github.event_name }} |"
+            echo ""
+            echo "### Quality Gates"
+            echo "| Gate | Result |"
+            echo "|------|--------|"
+            echo "| pre-commit | ${{ needs.pre-commit.result }} |"
+            echo "| unit-tests | ${{ needs.unit-tests.result }} |"
+            echo "| integration-tests | ${{ needs.integration-tests.result }} |"
+            echo "| gpu-e2e-tests | ${{ needs.gpu-e2e-tests.result }} |"
+            echo ""
+            echo "### Build + Tag"
+            echo "| Job | Result |"
+            echo "|-----|--------|"
+            echo "| build-wheel (→ S3) | ${{ needs.build-wheel.result }} |"
+            echo "| build-container (→ ECR) | ${{ needs.build-container.result }} |"
+            echo "| create-multiarch-manifest-ecr | ${{ needs.create-multiarch-manifest-ecr.result }} |"
+            echo "| approve-release | ${{ needs.approve-release.result }} |"
+            echo "| create-rc-tag | ${{ needs.create-rc-tag.result }} |"
+            echo ""
+            echo "### Stage + Scan"
+            echo "| Job | Result |"
+            echo "|-----|--------|"
+            echo "| stage-container (→ NGC) | ${{ needs.stage-container.result }} |"
+            echo "| stage-wheel (→ Artifactory) | ${{ needs.stage-wheel.result }} |"
+            echo "| trigger-gitlab-pipeline | ${{ needs.trigger-gitlab-pipeline.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Notify on failure
+        if: ${{ failure() }}
+        env:
+          RC_TAG:        ${{ needs.prepare-release.outputs.rc_tag }}
+          RUN_URL:       ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SLACK_WEBHOOK: ${{ secrets.NIGHTLY_SLACK_WEBHOOK }}
+        run: |
+          if [ -z "${SLACK_WEBHOOK}" ]; then
+            echo "::warning::NIGHTLY_SLACK_WEBHOOK is not configured — skipping failure notification"
+            exit 0
+          fi
+          curl -fsSL \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --data "{\"text\":\"RC pipeline failed: ${RC_TAG}\n${RUN_URL}\"}" \
+            "${SLACK_WEBHOOK}"
