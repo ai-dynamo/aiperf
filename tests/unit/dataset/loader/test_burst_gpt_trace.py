@@ -216,7 +216,7 @@ class TestSynthesisHooks:
         assert result[0].input_length == 150
         assert result[0].output_length == 60
 
-    def test_reconstruct_falls_back_to_last_original(self, tmp_path: Path) -> None:
+    def test_reconstruct_raises_on_length_mismatch(self, tmp_path: Path) -> None:
         path = _make_csv_file([], tmp_path)
         loader = _make_loader(path)
         originals = [
@@ -226,8 +226,5 @@ class TestSynthesisHooks:
             {"timestamp": 200.0, "input_length": 150, "output_length": 60},
             {"timestamp": 300.0, "input_length": 180, "output_length": 70},
         ]
-        result = loader._reconstruct_traces(originals, synth_dicts)
-
-        assert len(result) == 2
-        assert result[1].input_length == 180
-        assert result[1].output_length == 70
+        with pytest.raises(ValueError, match="synth_dicts length"):
+            loader._reconstruct_traces(originals, synth_dicts)
