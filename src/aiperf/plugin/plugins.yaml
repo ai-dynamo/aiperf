@@ -1571,6 +1571,74 @@ public_dataset_loader:
       hf_subset: throughput_32k
       category: high_entropy
 
+  aimo_aime:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      AIMO validation AIME competition problems from HuggingFace (AI-MO).
+      Loads 90 AIME competition math problems as single-turn requests.
+    metadata:
+      hf_dataset_name: AI-MO/aimo-validation-aime
+      hf_split: train
+      prompt_column: problem
+
+  aimo_numina_cot:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      NuminaMath chain-of-thought math reasoning dataset from HuggingFace (AI-MO).
+      Loads competition math problems as single-turn requests.
+    metadata:
+      hf_dataset_name: AI-MO/NuminaMath-CoT
+      hf_split: train
+      prompt_column: problem
+
+  aimo_numina_1_5:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      NuminaMath 1.5 math reasoning dataset from HuggingFace (AI-MO).
+      Loads competition math problems as single-turn requests.
+    metadata:
+      hf_dataset_name: AI-MO/NuminaMath-1.5
+      hf_split: train
+      prompt_column: problem
+
+  spec_bench:
+    class: aiperf.dataset.loader.spec_bench:SpecBenchLoader
+    description: |
+      SpecBench speculative decoding benchmark dataset from GitHub (hemingkx).
+      Loads single-turn questions for evaluating speculative decoding methods.
+
+  instruct_coder:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      InstructCoder code instruction dataset from HuggingFace (likaixin).
+      Loads code generation instructions as single-turn requests.
+    metadata:
+      hf_dataset_name: likaixin/InstructCoder
+      hf_split: train
+      prompt_column: instruction
+
+  blazedit_5k:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      Blazedit edit-distance benchmark dataset with ~5k character code contexts (vdaita).
+      Prompts combine the code file and change request, matching vLLM's BlazeditDataset format.
+    metadata:
+      hf_dataset_name: vdaita/edit_5k_char
+      hf_split: train
+      prompt_column: change_request
+      prompt_template: "Given a code file, please apply the change requests and generate the new file.\n\nOriginal file:\n```python\n{code}\n```\n\nChange request:\n{change_request}\n\nPlease generate the new code file in the \"New file\" section below."
+
+  blazedit_10k:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      Blazedit edit-distance benchmark dataset with ~10k character code contexts (vdaita).
+      Prompts combine the code file and change request, matching vLLM's BlazeditDataset format.
+    metadata:
+      hf_dataset_name: vdaita/edit_10k_char
+      hf_split: train
+      prompt_column: change_request
+      prompt_template: "Given a code file, please apply the change requests and generate the new file.\n\nOriginal file:\n```python\n{code}\n```\n\nChange request:\n{change_request}\n\nPlease generate the new code file in the \"New file\" section below."
+
 # =============================================================================
 # ZMQ Proxies
 # =============================================================================
