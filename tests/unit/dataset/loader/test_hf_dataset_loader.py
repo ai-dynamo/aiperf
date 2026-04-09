@@ -10,10 +10,12 @@ from PIL import Image as PILImage
 from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation
+from aiperf.dataset.composer.public import PublicDatasetComposer
 from aiperf.dataset.loader.hf_instruction_response import (
     HFInstructionResponseDatasetLoader,
 )
 from aiperf.plugin.enums import DatasetSamplingStrategy
+from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
 
 
 def _make_pil_image(width: int = 4, height: int = 4) -> PILImage.Image:
@@ -348,3 +350,57 @@ class TestHFInstructionResponseDatasetLoader:
         raw = base64.b64decode(b64_data)
         decoded = PILImage.open(io.BytesIO(raw))
         assert decoded.format == "JPEG"
+
+
+def _make_hf_metadata(hf_subset: str | None = None) -> PublicDatasetLoaderMetadata:
+    return PublicDatasetLoaderMetadata(
+        hf_dataset_name="test/dataset",
+        hf_split="train",
+        hf_subset=hf_subset,
+        prompt_column="problem",
+    )
+
+
+def _make_composer(user_config: UserConfig) -> PublicDatasetComposer:
+    return PublicDatasetComposer(config=user_config, tokenizer=None)
+
+
+class TestPublicDatasetComposerHFSubsetOverride:
+    def test_cli_subset_overrides_plugin_metadata(self, user_config):
+        user_config.input.hf_dataset_subset = "cli-subset"
+        composer = _make_composer(user_config)
+        metadata = _make_hf_metadata(hf_subset="plugin-subset")
+
+        with patch(
+            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
+            return_value=metadata,
+        ):
+            kwargs = composer._build_loader_kwargs("aimo")
+
+        assert kwargs["hf_subset"] == "cli-subset"
+
+    def test_plugin_subset_used_when_no_cli_override(self, user_config):
+        user_config.input.hf_dataset_subset = None
+        composer = _make_composer(user_config)
+        metadata = _make_hf_metadata(hf_subset="plugin-subset")
+
+        with patch(
+            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
+            return_value=metadata,
+        ):
+            kwargs = composer._build_loader_kwargs("aimo")
+
+        assert kwargs["hf_subset"] == "plugin-subset"
+
+    def test_no_subset_kwarg_when_neither_set(self, user_config):
+        user_config.input.hf_dataset_subset = None
+        composer = _make_composer(user_config)
+        metadata = _make_hf_metadata(hf_subset=None)
+
+        with patch(
+            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
+            return_value=metadata,
+        ):
+            kwargs = composer._build_loader_kwargs("aimo")
+
+        assert "hf_subset" not in kwargs
