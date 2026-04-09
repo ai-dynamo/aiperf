@@ -84,11 +84,17 @@ class AccuracyDatasetLoader:
                 else 100
             )
 
+            prompt_text = (
+                f"{system_prompt}\n\n{problem.prompt}"
+                if system_prompt
+                else problem.prompt
+            )
+
             turn = Turn(
                 role="user",
                 raw_messages=messages,
                 max_tokens=gen_size,
-                texts=[Text(contents=[problem.prompt])],
+                texts=[Text(contents=[prompt_text])],
             )
 
             conversations.append(Conversation(session_id=session_id, turns=[turn]))
