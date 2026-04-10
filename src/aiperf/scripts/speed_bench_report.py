@@ -11,16 +11,16 @@ SPEED-Bench paper format.
 Usage::
 
     # Scan a parent directory for per-category run subdirectories
-    python scripts/speed_bench_report.py ./artifacts/
+    speed_bench_report ./artifacts/
 
     # Or list run directories explicitly
-    python scripts/speed_bench_report.py \\
+    speed_bench_report \\
         ./artifacts/run_coding/ \\
         ./artifacts/run_math/ \\
         ./artifacts/run_writing/
 
     # Options
-    python scripts/speed_bench_report.py ./artifacts/ \\
+    speed_bench_report ./artifacts/ \\
         --format both \\
         --output speed_bench_report.csv \\
         --metric accept_length
