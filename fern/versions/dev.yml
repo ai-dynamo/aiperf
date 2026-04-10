@@ -1,0 +1,159 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+navigation:
+  - page: Welcome to AIPerf Documentation
+    path: ../pages-dev/index.md
+  - section: Getting Started
+    contents:
+      - page: Profiling with AIPerf
+        path: ../pages-dev/tutorial.md
+      - page: "AIPerf: Comprehensive LLM Benchmarking"
+        path: ../pages-dev/comprehensive-llm-benchmarking.md
+      - page: Migrating from GenAI-Perf
+        path: ../pages-dev/migrating.md
+      - page: GenAI-Perf vs AIPerf CLI Feature Comparison Matrix
+        path: ../pages-dev/genai-perf-feature-comparison.md
+  - section: Tutorials
+    contents:
+      - section: Model & Endpoint Guides
+        collapsed: true
+        contents:
+          - page: Profile OpenAI-Compatible Text APIs Using AIPerf
+            path: ../pages-dev/tutorials/openai-text-endpoints.md
+          - page: Profile Hugging Face TGI Models with AIPerf
+            path: ../pages-dev/tutorials/huggingface-tgi.md
+          - page: Profile Vision Language Models with AIPerf
+            path: ../pages-dev/tutorials/vision.md
+          - page: Profile Audio Language Models with AIPerf
+            path: ../pages-dev/tutorials/audio.md
+          - page: Profile Embedding Models with AIPerf
+            path: ../pages-dev/tutorials/embeddings.md
+          - page: Profile Ranking Models with AIPerf
+            path: ../pages-dev/tutorials/rankings.md
+          - page: SGLang Image Generation
+            path: ../pages-dev/tutorials/image-generation.md
+          - page: SGLang Video Generation
+            path: ../pages-dev/tutorials/sglang-video-generation.md
+          - page: Synthetic Video Generation
+            path: ../pages-dev/tutorials/synthetic-video.md
+          - page: Template Endpoint
+            path: ../pages-dev/tutorials/template-endpoint.md
+      - section: Datasets & Inputs
+        collapsed: true
+        contents:
+          - page: Custom Dataset Guide
+            path: ../pages-dev/tutorials/custom-dataset.md
+          - page: Custom Prompt Benchmarking
+            path: ../pages-dev/tutorials/custom-prompt-benchmarking.md
+          - page: Profile with ShareGPT Dataset
+            path: ../pages-dev/tutorials/sharegpt.md
+          - page: Multi-Turn Conversations
+            path: ../pages-dev/tutorials/multi-turn.md
+          - page: Sequence Length Distributions for Advanced Benchmarking
+            path: ../pages-dev/tutorials/sequence-distributions.md
+          - page: Prefix Data Synthesis Tutorial
+            path: ../pages-dev/tutorials/prefix-synthesis.md
+      - section: Load Patterns & Scheduling
+        collapsed: true
+        contents:
+          - page: "Arrival Patterns: Simulating Realistic Traffic"
+            path: ../pages-dev/tutorials/arrival-patterns.md
+          - page: Fixed Schedule Benchmarking
+            path: ../pages-dev/tutorials/fixed-schedule.md
+          - page: Gradual Ramping
+            path: ../pages-dev/tutorials/ramping.md
+          - page: Request Rate with Max Concurrency
+            path: ../pages-dev/tutorials/request-rate-concurrency.md
+          - page: "Prefill Concurrency: Fine-Grained Benchmarking Control"
+            path: ../pages-dev/tutorials/prefill-concurrency.md
+          - page: Time-Based Benchmarking
+            path: ../pages-dev/tutorials/time-based-benchmarking.md
+          - page: Multi-URL Load Balancing
+            path: ../pages-dev/tutorials/multi-url-load-balancing.md
+          - page: Request Cancellation Testing
+            path: ../pages-dev/tutorials/request-cancellation.md
+          - page: Warmup Phase Configuration
+            path: ../pages-dev/tutorials/warmup.md
+      - section: Metrics & Analysis
+        collapsed: true
+        contents:
+          - page: Benchmark Goodput with AIPerf
+            path: ../pages-dev/tutorials/goodput.md
+          - page: Multi-Run Confidence Reporting
+            path: ../pages-dev/tutorials/multi-run-confidence.md
+          - page: Time Slicing for Performance Analysis
+            path: ../pages-dev/tutorials/timeslices.md
+          - page: HTTP Trace Metrics Guide
+            path: ../pages-dev/tutorials/http-trace-metrics.md
+          - page: Working with Profile Export Files
+            path: ../pages-dev/tutorials/working-with-profile-exports.md
+          - page: Visualization and Plotting with AIPerf
+            path: ../pages-dev/tutorials/plot.md
+          - page: User-Centric Timing for KV Cache Benchmarking
+            path: ../pages-dev/tutorials/user-centric-timing.md
+          - page: GPU Telemetry with AIPerf
+            path: ../pages-dev/tutorials/gpu-telemetry.md
+      - section: Configuration
+        collapsed: true
+        contents:
+          - page: User Interface
+            path: ../pages-dev/tutorials/ui-types.md
+          - page: Using Local Tokenizers Without HuggingFace
+            path: ../pages-dev/tutorials/local-tokenizer.md
+          - page: "Random Number Generation & Reproducibility"
+            path: ../pages-dev/reproducibility.md
+  - section: Benchmark Modes
+    collapsed: true
+    contents:
+      - page: Load Generator Options Reference
+        path: ../pages-dev/benchmark-modes/timing-modes-reference.md
+      - page: Trace Replay with Mooncake Traces
+        path: ../pages-dev/benchmark-modes/trace-replay.md
+  - section: Reference
+    collapsed: true
+    contents:
+      - page: Command Line Options
+        path: ../pages-dev/cli-options.md
+      - page: Environment Variables
+        path: ../pages-dev/environment-variables.md
+      - page: AIPerf Metrics Reference
+        path: ../pages-dev/metrics-reference.md
+      - page: Benchmark Datasets
+        path: ../pages-dev/benchmark-datasets.md
+      - page: Pre-Flight Tokenizer Auto Detection
+        path: ../pages-dev/reference/tokenizer-auto-detection.md
+  - section: Server Metrics
+    collapsed: true
+    contents:
+      - page: Server Metrics Collection
+        path: ../pages-dev/server-metrics/server-metrics.md
+      - page: AIPerf Server Metrics Reference
+        path: ../pages-dev/server-metrics/server-metrics-reference.md
+      - page: AIPerf Server Metrics JSON Export Schema
+        path: ../pages-dev/server-metrics/server-metrics-json-schema.md
+      - page: AIPerf Server Metrics Parquet Export Schema
+        path: ../pages-dev/server-metrics/server-metrics-parquet-schema.md
+  - section: Plugins
+    collapsed: true
+    contents:
+      - page: AIPerf Plugin System
+        path: ../pages-dev/plugins/plugin-system.md
+      - page: Creating Your First AIPerf Plugin
+        path: ../pages-dev/plugins/creating-your-first-plugin.md
+  - section: API
+    collapsed: true
+    contents:
+      - page: Prefix Synthesis API Reference
+        path: ../pages-dev/api/synthesis.md
+  - section: Architecture & Internals
+    collapsed: true
+    contents:
+      - page: Architecture of AIPerf
+        path: ../pages-dev/architecture.md
+      - page: Metrics Flow
+        path: ../pages-dev/diagrams/metrics-flow.md
+      - page: Mixins
+        path: ../pages-dev/diagrams/mixins.md
+      - page: AIPerf Code Patterns
+        path: ../pages-dev/dev/patterns.md

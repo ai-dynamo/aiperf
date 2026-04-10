@@ -1,0 +1,483 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Plugin System
+---
+# AIPerf Plugin System
+
+The AIPerf plugin system provides a flexible, extensible architecture for customizing benchmark behavior. It uses YAML-based configuration with lazy loading, priority-based conflict resolution, and dynamic enum generation.
+
+## Table of Contents
+
+- [Overview](#overview)
+  - [Terminology](#terminology)
+  - [Key Components](#key-components)
+- [Architecture](#architecture)
+- [Plugin Categories](#plugin-categories)
+- [Using Plugins](#using-plugins)
+- [Creating Custom Plugins](#creating-custom-plugins)
+- [Plugin Configuration](#plugin-configuration)
+- [CLI Commands](#cli-commands)
+- [Advanced Topics](#advanced-topics)
+
+## Overview
+
+The plugin system enables:
+
+- **Extensibility**: Add custom endpoints, exporters, and timing strategies without modifying core code
+- **Lazy Loading**: Classes load on first access, avoiding circular imports
+- **Conflict Resolution**: Higher priority plugins override lower priority ones
+- **Type Safety**: Auto-generated enums provide IDE autocomplete
+- **Validation**: Validate plugins without importing them
+
+### Terminology
+
+| Term | Description | Code Type |
+|------|-------------|-----------|
+| **Registry** | Global singleton holding all plugins | `_PluginRegistry` |
+| **Package** | Python package providing plugins | `PackageInfo` |
+| **Manifest** | `plugins.yaml` declaring plugins | `PluginsManifest` |
+| **Category** | Plugin type (e.g., `endpoint`, `transport`) | `PluginType` enum |
+| **Entry** | Single registered plugin (name, class_path, priority, metadata) | `PluginEntry` |
+| **Class** | Python class implementing a plugin (lazy-loaded) | `type` |
+| **Metadata** | Typed configuration (e.g., `EndpointMetadata`) | Pydantic model |
+
+**Hierarchy:**
+
+```text
+Registry (singleton)
+└── Package (1+) ─── discovered via entry points
+    └── Manifest (1+ per package) ─── plugins.yaml files
+        └── Category (1+)
+            └── Entry (1+) ─── PluginEntry
+                ├── Class ─── lazy-loaded Python class
+                └── Metadata ─── optional typed config
+```
+
+### Key Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Plugin Registry | `src/aiperf/plugin/plugins.py` | Singleton managing discovery and loading |
+| Plugin Entry | `src/aiperf/plugin/types.py` | Lazy-loading entry with metadata |
+| Categories | `src/aiperf/plugin/categories.yaml` | Category definitions with protocols |
+| Built-in Plugins | `src/aiperf/plugin/plugins.yaml` | Built-in plugin registrations |
+| Schemas | `src/aiperf/plugin/schema/schemas.py` | Pydantic models for validation |
+| Enums | `src/aiperf/plugin/enums.py` | Auto-generated enums from registry |
+| CLI | `src/aiperf/cli_commands/plugins_cli.py` | Plugin exploration commands |
+
+## Architecture
+
+### Discovery Flow
+
+```text
+Entry Points → plugins.yaml → Pydantic Validation → Registry
+                                                      ↓
+                              get_class() → Import Module → Cache
+```
+
+| Phase | Action |
+|-------|--------|
+| 1. Discovery | Scan `aiperf.plugins` entry points for `plugins.yaml` files |
+| 2. Loading | Parse YAML, validate with Pydantic, register with conflict resolution |
+| 3. Access | `get_class()` imports module, caches class for reuse |
+
+### Registry Singleton Pattern
+
+The plugin registry follows the singleton pattern with module-level exports:
+
+```python
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PluginType
+
+# Get a plugin class by name
+EndpointClass = plugins.get_class(PluginType.ENDPOINT, "chat")
+
+# Iterate all plugins in a category
+for entry, cls in plugins.iter_all(PluginType.ENDPOINT):
+    print(f"{entry.name}: {entry.description}")
+```
+
+## Plugin Categories
+
+AIPerf supports 25 plugin categories organized by function:
+
+### Timing Categories
+
+| Category | Enum | Description |
+|----------|------|-------------|
+| `timing_strategy` | `TimingMode` | Request scheduling strategies (fixed schedule, request rate, user-centric) |
+| `arrival_pattern` | `ArrivalPattern` | Inter-arrival time distributions (constant, Poisson, gamma, concurrency burst) |
+| `ramp` | `RampType` | Value ramping strategies (linear, exponential, Poisson) |
+
+### Dataset Categories
+
+| Category | Enum | Description |
+|----------|------|-------------|
+| `dataset_backing_store` | `DatasetBackingStoreType` | Server-side dataset storage |
+| `dataset_client_store` | `DatasetClientStoreType` | Worker-side dataset access |
+| `dataset_sampler` | `DatasetSamplingStrategy` | Sampling strategies (random, sequential, shuffle) |
+| `dataset_composer` | `ComposerType` | Dataset generation (synthetic, custom, rankings) |
+| `custom_dataset_loader` | `CustomDatasetType` | JSONL format loaders |
+
+### Endpoint and Transport Categories
+
+| Category | Enum | Description |
+|----------|------|-------------|
+| `endpoint` | `EndpointType` | API endpoint implementations (chat, completions, embeddings, etc.) |
+| `transport` | `TransportType` | Network transport (HTTP via aiohttp) |
+
+### Processing Categories
+
+| Category | Enum | Description |
+|----------|------|-------------|
+| `record_processor` | `RecordProcessorType` | Per-record metric computation |
+| `results_processor` | `ResultsProcessorType` | Aggregated results computation |
+| `data_exporter` | `DataExporterType` | File format exporters (CSV, JSON, Parquet) |
+| `console_exporter` | `ConsoleExporterType` | Terminal output exporters |
+
+### Accuracy Categories
+
+| Category | Enum | Description |
+|----------|------|-------------|
+| `accuracy_benchmark` | `AccuracyBenchmarkType` | Accuracy benchmark problem sets (MMLU, AIME, HellaSwag, BigBench, etc.) |
+| `accuracy_grader` | `AccuracyGraderType` | Grading strategies for accuracy evaluation (exact match, math, multiple choice, code execution) |
+
+### UI and Selection Categories
+
+| Category | Enum | Description |
+|----------|------|-------------|
+| `ui` | `UIType` | UI implementations (dashboard, simple, none) |
+| `url_selection_strategy` | `URLSelectionStrategy` | Request distribution (round-robin) |
+
+### Service Categories
+
+| Category | Enum | Description |
+|----------|------|-------------|
+| `service` | `ServiceType` | Core AIPerf services |
+| `service_manager` | `ServiceRunType` | Service orchestration (multiprocessing, Kubernetes) |
+
+### Visualization and Telemetry Categories
+
+| Category | Enum | Description |
+|----------|------|-------------|
+| `plot` | `PlotType` | Chart types (scatter, histogram, timeline, etc.) |
+| `gpu_telemetry_collector` | `GPUTelemetryCollectorType` | GPU metric collection (DCGM, pynvml) |
+
+### Infrastructure Categories (Internal)
+
+| Category | Enum | Description |
+|----------|------|-------------|
+| `communication` | `CommunicationBackend` | ZMQ backends (IPC, TCP, dual-bind) |
+| `communication_client` | `CommClientType` | Socket patterns (PUB, SUB, PUSH, PULL) |
+| `zmq_proxy` | `ZMQProxyType` | Message routing proxies |
+
+## Using Plugins
+
+```python
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PluginType, EndpointType
+
+# Get class by name, enum, or full path
+ChatEndpoint = plugins.get_class(PluginType.ENDPOINT, "chat")
+ChatEndpoint = plugins.get_class(PluginType.ENDPOINT, EndpointType.CHAT)
+ChatEndpoint = plugins.get_class(PluginType.ENDPOINT, "aiperf.endpoints.openai_chat:ChatEndpoint")
+
+# Iterate plugins
+for entry, cls in plugins.iter_all(PluginType.ENDPOINT):
+    print(f"{entry.name}: {entry.class_path}")
+
+# Get metadata (raw dict or typed)
+metadata = plugins.get_metadata("endpoint", "chat")
+endpoint_meta = plugins.get_endpoint_metadata("chat")  # Returns EndpointMetadata
+```
+
+| Function | Returns | Use Case |
+|----------|---------|----------|
+| `get_class(category, name)` | `type` | Get plugin class |
+| `iter_all(category)` | `Iterator[tuple[PluginEntry, type]]` | List all plugins |
+| `get_metadata(category, name)` | `dict` | Raw metadata |
+| `get_endpoint_metadata(name)` | `EndpointMetadata` | Typed endpoint config |
+| `get_transport_metadata(name)` | `TransportMetadata` | Typed transport config |
+| `get_plot_metadata(name)` | `PlotMetadata` | Typed plot config |
+| `get_service_metadata(name)` | `ServiceMetadata` | Typed service config |
+
+## Creating Custom Plugins
+
+<Tip>
+**Contributing directly to AIPerf?** You only need two things:
+1. Add your class under `src/aiperf/`
+2. Register it in `src/aiperf/plugin/plugins.yaml`
+
+The `pyproject.toml` entry points and separate package install below are only needed for external/third-party plugins.
+</Tip>
+
+**Quick Start** (4 steps):
+
+| Step | File | Action |
+|------|------|--------|
+| 1 | `my_endpoint.py` | Create class extending `BaseEndpoint` |
+| 2 | `plugins.yaml` | Register with class path, description, and metadata |
+| 3 | `pyproject.toml` | Add entry point: `my-package = "my_package:plugins.yaml"` |
+| 4 | Terminal | `pip install -e . && aiperf plugins endpoint my_custom` |
+
+### Minimal Endpoint Example
+
+```python
+# my_package/endpoints/custom_endpoint.py
+class MyCustomEndpoint(BaseEndpoint):
+    def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
+        turn = request_info.turns[-1]
+        texts = [content for text in turn.texts for content in text.contents if content]
+        return {"prompt": texts[0] if texts else ""}
+
+    def parse_response(self, response: InferenceServerResponse) -> ParsedResponse | None:
+        if json_obj := response.get_json():
+            return ParsedResponse(perf_ns=response.perf_ns, data=TextResponseData(text=json_obj.get("text", "")))
+        return None
+```
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ai-dynamo/aiperf/refs/heads/main/src/aiperf/plugin/schema/plugins.schema.json
+# my_package/plugins.yaml
+schema_version: "1.0"
+endpoint:
+  my_custom:
+    class: my_package.endpoints.custom_endpoint:MyCustomEndpoint
+    description: Custom endpoint for my API.
+    metadata: { endpoint_path: /v1/generate, supports_streaming: true, produces_tokens: true, tokenizes_input: true, metrics_title: My Custom Metrics }
+```
+
+<Note>
+Extend base classes (`BaseEndpoint`, etc.) to get logging, helpers, and default implementations. Only implement core methods.
+</Note>
+
+## Plugin Configuration
+
+### categories.yaml Schema
+
+Defines plugin categories with their protocols and metadata schemas:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ai-dynamo/aiperf/refs/heads/main/src/aiperf/plugin/schema/categories.schema.json
+schema_version: "1.0"
+
+endpoint:
+  protocol: aiperf.endpoints.protocols:EndpointProtocol
+  metadata_class: aiperf.plugin.schema.schemas:EndpointMetadata
+  enum: EndpointType
+  description: |
+    Endpoints define how to format requests and parse responses for different APIs.
+  internal: false  # Set to true for infrastructure categories
+```
+
+### plugins.yaml Schema
+
+Registers plugin implementations:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ai-dynamo/aiperf/refs/heads/main/src/aiperf/plugin/schema/plugins.schema.json
+schema_version: "1.0"
+
+endpoint:
+  chat:
+    class: aiperf.endpoints.openai_chat:ChatEndpoint
+    description: OpenAI Chat Completions endpoint.
+    priority: 0  # Higher priority wins conflicts
+    metadata:
+      endpoint_path: /v1/chat/completions
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      metrics_title: LLM Metrics
+```
+
+### Metadata Schemas
+
+Category-specific metadata is validated against Pydantic models in `aiperf.plugin.schema.schemas`:
+
+| Model | Key Fields |
+|-------|------------|
+| `EndpointMetadata` | `endpoint_path`, `supports_streaming`, `produces_tokens`, `tokenizes_input`, `metrics_title` + optional streaming/service/multimodal/polling fields |
+| `TransportMetadata` | `transport_type`, `url_schemes` |
+| `PlotMetadata` | `display_name`, `category` |
+| `ServiceMetadata` | `required`, `auto_start`, `disable_gc`, `replicable` |
+
+## CLI Commands
+
+| Command | Output |
+|---------|--------|
+| `aiperf plugins` | Installed packages with versions and plugin counts |
+| `aiperf plugins --all` | All categories with registered plugins |
+| `aiperf plugins endpoint` | All endpoint types with descriptions |
+| `aiperf plugins endpoint chat` | Details: class path, package, metadata |
+| `aiperf plugins --validate` | Validates class paths and existence |
+
+```bash
+$ aiperf plugins endpoint chat
+╭───────────────── endpoint:chat ─────────────────╮
+│ Type: chat                                      │
+│ Category: endpoint                              │
+│ Package: aiperf                                 │
+│ Class: aiperf.endpoints.openai_chat:ChatEndpoint│
+│                                                 │
+│ OpenAI Chat Completions endpoint. Supports      │
+│ multi-modal inputs and streaming responses.     │
+╰─────────────────────────────────────────────────╯
+```
+
+## Advanced Topics
+
+### Conflict Resolution
+
+| Priority | Rule |
+|----------|------|
+| 1 | Higher `priority` value wins |
+| 2 | External packages beat built-in (equal priority) |
+| 3 | First registered wins (with warning) |
+
+<Tip>
+Shadowed plugins remain accessible via full class path: `plugins.get_class("endpoint", "my_pkg.endpoints:MyEndpoint")`
+</Tip>
+
+### API Reference
+
+```python
+# Runtime registration (testing)
+plugins.register("endpoint", "test", TestEndpoint, priority=10)
+plugins.reset_registry()  # Reset to initial state
+
+# Dynamic enum generation
+MyEndpointType = plugins.create_enum(PluginType.ENDPOINT, "MyEndpointType", module=__name__)
+
+# Validation without importing
+errors = plugins.validate_all(check_class=True)  # {category: [(name, error), ...]}
+
+# Reverse lookup
+name = plugins.find_registered_name(PluginType.ENDPOINT, ChatEndpoint)  # "chat"
+
+# Package metadata
+pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...)
+```
+
+> **Type Safety**: `get_class()` returns typed results (e.g., `type[EndpointProtocol]`) with IDE autocomplete.
+
+## Built-in Plugins Reference
+
+### Endpoints
+
+| Name | Class | Description |
+|------|-------|-------------|
+| `chat` | `ChatEndpoint` | OpenAI Chat Completions API |
+| `chat_embeddings` | `ChatEmbeddingsEndpoint` | vLLM multimodal embeddings via chat API |
+| `completions` | `CompletionsEndpoint` | OpenAI Completions API |
+| `cohere_rankings` | `CohereRankingsEndpoint` | Cohere Reranking API |
+| `embeddings` | `EmbeddingsEndpoint` | OpenAI Embeddings API |
+| `hf_tei_rankings` | `HFTeiRankingsEndpoint` | HuggingFace TEI Rankings |
+| `huggingface_generate` | `HuggingFaceGenerateEndpoint` | HuggingFace TGI |
+| `image_generation` | `ImageGenerationEndpoint` | OpenAI Image Generation API |
+| `nim_embeddings` | `NIMEmbeddingsEndpoint` | NVIDIA NIM Embeddings |
+| `nim_rankings` | `NIMRankingsEndpoint` | NVIDIA NIM Rankings |
+| `solido_rag` | `SolidoEndpoint` | Solido RAG Pipeline |
+| `template` | `TemplateEndpoint` | Template for custom endpoints |
+| `video_generation` | `VideoGenerationEndpoint` | Text-to-video generation API |
+
+### Timing Strategies
+
+| Name | Class | Description |
+|------|-------|-------------|
+| `fixed_schedule` | `FixedScheduleStrategy` | Send requests at exact timestamps |
+| `request_rate` | `RequestRateStrategy` | Send requests at specified rate |
+| `user_centric_rate` | `UserCentricStrategy` | Each session acts as separate user |
+
+### Arrival Patterns
+
+| Name | Class | Description |
+|------|-------|-------------|
+| `constant` | `ConstantIntervalGenerator` | Fixed intervals between requests |
+| `poisson` | `PoissonIntervalGenerator` | Poisson process arrivals |
+| `gamma` | `GammaIntervalGenerator` | Gamma distribution with tunable smoothness |
+| `concurrency_burst` | `ConcurrencyBurstIntervalGenerator` | Send ASAP up to concurrency limit |
+
+### Dataset Composers
+
+| Name | Class | Description |
+|------|-------|-------------|
+| `synthetic` | `SyntheticDatasetComposer` | Generate synthetic conversations |
+| `custom` | `CustomDatasetComposer` | Load from JSONL files |
+| `synthetic_rankings` | `SyntheticRankingsDatasetComposer` | Generate ranking tasks |
+
+### UI Types
+
+| Name | Class | Description |
+|------|-------|-------------|
+| `dashboard` | `AIPerfDashboardUI` | Rich terminal dashboard |
+| `simple` | `TQDMProgressUI` | Simple tqdm progress bar |
+| `none` | `NoUI` | Headless execution |
+
+### Accuracy Benchmarks
+
+| Name | Class | Description |
+|------|-------|-------------|
+| `mmlu` | `MMLUBenchmark` | Massive Multitask Language Understanding |
+| `aime` | `AIMEBenchmark` | American Invitational Mathematics Examination |
+| `aime24` | `AIME24Benchmark` | AIME 2024 competition problems |
+| `aime25` | `AIME25Benchmark` | AIME 2025 competition problems |
+| `hellaswag` | `HellaSwagBenchmark` | HellaSwag commonsense reasoning |
+| `bigbench` | `BigBenchBenchmark` | BIG-Bench benchmark tasks |
+| `math_500` | `Math500Benchmark` | MATH-500 problem set |
+| `gpqa_diamond` | `GPQADiamondBenchmark` | GPQA Diamond graduate-level science |
+| `lcb_codegeneration` | `LCBCodeGenerationBenchmark` | LiveCodeBench code generation |
+
+### Accuracy Graders
+
+| Name | Class | Description |
+|------|-------|-------------|
+| `exact_match` | `ExactMatchGrader` | Exact string matching |
+| `math` | `MathGrader` | Mathematical expression evaluation |
+| `multiple_choice` | `MultipleChoiceGrader` | Multiple choice answer extraction |
+| `code_execution` | `CodeExecutionGrader` | Code execution and output comparison |
+
+## Troubleshooting
+
+### Plugin Not Found
+
+```text
+TypeNotFoundError: Type 'my_plugin' not found for category 'endpoint'.
+```
+
+**Solutions**:
+1. Verify the plugin is registered in `plugins.yaml`
+2. Check the entry point is defined in `pyproject.toml`
+3. Reinstall the package: `pip install -e .`
+4. Run `aiperf plugins --validate` to check for errors
+
+### Module Import Errors
+
+```text
+ImportError: Failed to import module for endpoint:my_plugin
+```
+
+**Solutions**:
+1. Verify the class path format: `module.path:ClassName`
+2. Check all dependencies are installed
+3. Verify the module is importable: `python -c "import module.path"`
+
+### Class Not Found
+
+```text
+AttributeError: Class 'MyClass' not found
+```
+
+**Solutions**:
+1. Verify the class name matches exactly (case-sensitive)
+2. Ensure the class is exported from the module
+3. Run `aiperf plugins --validate` for detailed error
+
+### Conflict Resolution Issues
+
+If your plugin is being shadowed by another:
+
+1. Use higher priority: `priority: 10` in `plugins.yaml`
+2. Access by full class path: `plugins.get_class("endpoint", "my_pkg.endpoints:MyEndpoint")`
+3. Check `aiperf plugins` to see which packages are loaded
