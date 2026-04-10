@@ -34,8 +34,8 @@ def validate_tokenizer_early(
     from rich.console import Console
 
     from aiperf.common.tokenizer import (
-        _TIKTOKEN_ENCODING_NAMES,
         BUILTIN_TOKENIZER_NAME,
+        TIKTOKEN_ENCODING_NAMES,
         Tokenizer,
     )
     from aiperf.common.tokenizer_display import (
@@ -70,7 +70,7 @@ def validate_tokenizer_early(
     # tiktoken-backed tokenizers need no HF resolution
     if (
         tokenizer_cfg.name == BUILTIN_TOKENIZER_NAME
-        or tokenizer_cfg.name in _TIKTOKEN_ENCODING_NAMES
+        or tokenizer_cfg.name in TIKTOKEN_ENCODING_NAMES
     ):
         logger.debug("Using tiktoken tokenizer, skipping HF alias resolution")
         return {model: tokenizer_cfg.name for model in model_names}

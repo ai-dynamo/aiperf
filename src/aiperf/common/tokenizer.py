@@ -25,7 +25,7 @@ BUILTIN_TOKENIZER_NAME = "builtin"
 _BUILTIN_ENCODING = "o200k_base"
 # tiktoken encoding names that should be routed through tiktoken, not HF.
 # "gpt2" is excluded because it's also a valid HF model name.
-_TIKTOKEN_ENCODING_NAMES = frozenset(
+TIKTOKEN_ENCODING_NAMES = frozenset(
     {
         "cl100k_base",
         "o200k_base",
@@ -282,7 +282,7 @@ class Tokenizer:
             AmbiguousTokenizerNameError: If the name is ambiguous.
             TokenizerError: If the tokenizer cannot be loaded.
         """
-        if name == BUILTIN_TOKENIZER_NAME or name in _TIKTOKEN_ENCODING_NAMES:
+        if name == BUILTIN_TOKENIZER_NAME or name in TIKTOKEN_ENCODING_NAMES:
             return cls._from_tiktoken(
                 _BUILTIN_ENCODING if name == BUILTIN_TOKENIZER_NAME else name
             )
