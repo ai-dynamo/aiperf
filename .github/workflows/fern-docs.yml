@@ -21,9 +21,10 @@
 #    - Triggers on PRs when docs/** or fern/** files change
 #    - Runs `fern check` and `fern docs broken-links`
 #
-# 2. SYNC & PUBLISH/PREVIEW: Syncs docs/ from main to fern/ on docs-website
-#    - Triggers on push to main (all pushes, sync detects no-ops internally)
-#    - Commits and pushes to docs-website, then publishes via `fern generate --docs`
+# 2. SYNC & PUBLISH/PREVIEW: Syncs docs/ from source branch to fern/ on docs-website
+#    - Triggers on push to main or PRs when docs/** or fern/** files change
+#    - On main: commits and pushes to docs-website, then publishes via `fern generate --docs`
+#    - On PRs: generates a preview URL via `fern generate --docs --preview` and comments on PR
 #    - Preserves versioned documentation (products[0]) from docs-website's docs.yml
 #
 # 3. VERSION RELEASE (tags): Creates versioned documentation snapshot
@@ -104,18 +105,27 @@ jobs:
         run: fern docs broken-links
 
   #############################################################################
-  # SYNC & PUBLISH - Syncs docs content to docs-website structure
-  # On main push: commits, pushes, and publishes to Fern
+  # SYNC & PUBLISH/PREVIEW - Syncs docs content to docs-website structure
+  # On main: commits, pushes to docs-website, then publishes via `fern generate --docs`
+  # On PRs: generates a preview URL via `fern generate --docs --preview` and comments on PR
   #############################################################################
 
-  sync-and-publish-docs:
-    name: Sync and publish docs
+  preview-or-publish-docs:
+    name: Preview or publish docs
     if: |
       github.ref_type != 'tag' &&
-      github.event_name != 'pull_request' &&
       (github.event.inputs.tag == '' || github.event.inputs.tag == null)
     runs-on: ubuntu-latest
     steps:
+      - name: Determine context
+        id: ctx
+        run: |
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            echo "is_main=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_main=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Checkout source branch
         uses: actions/checkout@v4
         with:
@@ -225,15 +235,55 @@ jobs:
         if: steps.changes.outputs.has_changes == 'true'
         run: npm install -g fern-api@$(jq -r '.version' docs-checkout/fern/fern.config.json)
 
+      ##########################################################################
+      # PREVIEW - Generate a preview URL for docs changes on PRs
+      ##########################################################################
+
+      - name: Generate docs preview
+        if: steps.ctx.outputs.is_main != 'true' && steps.changes.outputs.has_changes == 'true'
+        id: preview
+        working-directory: docs-checkout/fern
+        env:
+          FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
+        run: |
+          if OUTPUT=$(fern generate --docs --preview 2>&1); then
+            FERN_EXIT=0
+          else
+            FERN_EXIT=$?
+          fi
+          echo "$OUTPUT"
+          if [ $FERN_EXIT -ne 0 ]; then
+            echo "::error::Fern docs preview generation failed (exit $FERN_EXIT)"
+            exit 1
+          fi
+          URL=$(echo "$OUTPUT" | grep -oP 'Published docs to \K\S+') || true
+          if [ -n "$URL" ]; then
+            echo "url=$URL" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Comment preview URL on PR
+        if: steps.ctx.outputs.is_main != 'true' && steps.preview.outputs.url != '' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" \
+            --edit-last --create-if-none \
+            --body "**Fern Docs Preview:** ${{ steps.preview.outputs.url }}/dev"
+
+      ##########################################################################
+      # PUSH AND PUBLISH - push changes to docs-website branch and publish docs
+      ##########################################################################
+
       - name: Setup Git
-        if: steps.changes.outputs.has_changes == 'true'
+        if: steps.ctx.outputs.is_main == 'true' && steps.changes.outputs.has_changes == 'true'
         run: |
           cd docs-checkout
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Commit and push changes
-        if: steps.changes.outputs.has_changes == 'true'
+        if: steps.ctx.outputs.is_main == 'true' && steps.changes.outputs.has_changes == 'true'
         run: |
           cd docs-checkout
 
@@ -250,7 +300,7 @@ jobs:
           echo "Successfully synced dev docs to docs-website branch"
 
       - name: Publish Docs
-        if: steps.changes.outputs.has_changes == 'true'
+        if: steps.ctx.outputs.is_main == 'true' && steps.changes.outputs.has_changes == 'true'
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
         working-directory: docs-checkout/fern
