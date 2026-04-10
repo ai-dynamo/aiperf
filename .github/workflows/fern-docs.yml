@@ -216,7 +216,7 @@ jobs:
         id: changes
         run: |
           cd docs-checkout
-          if git diff --quiet && git diff --cached --quiet; then
+          if [ -z "$(git status --porcelain)" ]; then
             echo "has_changes=false" >> $GITHUB_OUTPUT
             echo "No changes detected"
           else
