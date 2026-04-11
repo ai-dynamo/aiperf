@@ -3,13 +3,15 @@
 
 """Tests for HuggingFace cache detection in the tokenizer module."""
 
+from pathlib import Path
+
 import pytest
 
 from aiperf.common.tokenizer import Tokenizer, _is_hf_cached
 
 
 @pytest.fixture
-def hf_cache(tmp_path, monkeypatch):
+def hf_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point HF_HUB_CACHE at a temporary directory."""
     monkeypatch.setattr("huggingface_hub.constants.HF_HUB_CACHE", str(tmp_path))
     return tmp_path
@@ -40,6 +42,11 @@ class TestIsHfCached:
 
     def test_empty_cache_dir(self, hf_cache) -> None:
         assert _is_hf_cached("anything") is False
+
+    def test_ambiguous_alias_returns_false(self, hf_cache) -> None:
+        (hf_cache / "models--org-a--gpt2").mkdir()
+        (hf_cache / "models--org-b--gpt2").mkdir()
+        assert _is_hf_cached("gpt2") is False
 
 
 class TestFindCachedModelForAlias:

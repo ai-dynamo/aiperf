@@ -3,6 +3,7 @@
 
 """Tests for early tokenizer validation."""
 
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,7 +17,7 @@ from aiperf.common.tokenizer_validator import validate_tokenizer_early
 
 
 @pytest.fixture
-def mock_user_config():
+def mock_user_config() -> MagicMock:
     """Create a mock UserConfig with tokenizer requiring endpoints."""
     config = MagicMock()
     config.endpoint.type = "openai_chat"
@@ -32,12 +33,12 @@ def mock_user_config():
 
 
 @pytest.fixture
-def mock_logger():
+def mock_logger() -> MagicMock:
     return MagicMock()
 
 
 @pytest.fixture
-def _mock_endpoint_meta():
+def _mock_endpoint_meta() -> Iterator[None]:
     """Mock plugins.get_endpoint_metadata to return token-producing endpoint."""
     meta = MagicMock()
     meta.produces_tokens = True

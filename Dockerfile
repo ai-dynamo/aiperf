@@ -135,9 +135,7 @@ RUN mkdir -p /app /app/artifacts /app/.cache \
 
 # Pre-cache tiktoken o200k_base encoding for --tokenizer builtin (MIT license, see ATTRIBUTIONS.md)
 RUN mkdir -p /opt/tiktoken_cache \
-    && CACHE_KEY=$(python -c "import hashlib; print(hashlib.sha1(b'https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken').hexdigest())") \
-    && wget -q -O /opt/tiktoken_cache/$CACHE_KEY \
-       https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken
+    && TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache python -c "import tiktoken; tiktoken.get_encoding('o200k_base')"
 
 # Install only the dependencies using uv
 COPY pyproject.toml .

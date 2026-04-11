@@ -130,14 +130,16 @@ def _is_hf_cached(name: str) -> bool:
     if exact.is_dir():
         return True
 
-    # Alias match: "gpt2" -> any "models--*--gpt2"
+    # Alias match: "gpt2" -> unique "models--*--gpt2"
     suffix = f"--{name.lower()}"
-    return any(
-        entry.is_dir()
+    matches = [
+        entry
+        for entry in cache_dir.iterdir()
+        if entry.is_dir()
         and entry.name.startswith("models--")
         and entry.name.lower().endswith(suffix)
-        for entry in cache_dir.iterdir()
-    )
+    ]
+    return len(matches) == 1
 
 
 def resolve_alias(name: str) -> AliasResolutionResult:
