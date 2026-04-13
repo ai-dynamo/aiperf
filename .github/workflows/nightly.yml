@@ -222,16 +222,16 @@ jobs:
               exit 1
             fi
           else
-            PEP440_VERSION=$(uv run python tools/version.py nightly --date "${{ needs.prepare-nightly.outputs.date }}")
+            PEP440_VERSION=$(uv run --with commitizen --with tomlkit python tools/version.py nightly --date "${{ needs.prepare-nightly.outputs.date }}")
           fi
-          NIGHTLY_TAG=$(uv run python tools/version.py to-semver "${PEP440_VERSION}")
+          NIGHTLY_TAG=$(uv run --with commitizen --with tomlkit python tools/version.py to-semver "${PEP440_VERSION}")
           echo "pep440_version=${PEP440_VERSION}" >> "$GITHUB_OUTPUT"
           echo "nightly_tag=${NIGHTLY_TAG}"       >> "$GITHUB_OUTPUT"
           echo "wheel_filename=aiperf-${PEP440_VERSION}-py3-none-any.whl" >> "$GITHUB_OUTPUT"
 
       - name: Patch version in pyproject.toml
         if: ${{ inputs.publish_only != 'true' }}
-        run: uv run python tools/version.py set "${{ steps.version.outputs.pep440_version }}"
+        run: uv run --with commitizen --with tomlkit python tools/version.py set "${{ steps.version.outputs.pep440_version }}"
 
       - name: Bootstrap BuildKit
         if: ${{ inputs.publish_only != 'true' }}
