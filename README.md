@@ -151,6 +151,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Time-based Benchmarking](docs/tutorials/time-based-benchmarking.md) - Duration-based testing
 - [Sequence Distributions](docs/tutorials/sequence-distributions.md) - Mixed ISL/OSL pairings
 - [Prefix Synthesis](docs/tutorials/prefix-synthesis.md) - Prefix data synthesis for KV cache testing
+- [Anonymize Trace](docs/tutorials/anonymize-trace.md) - Privacy-preserving trace sharing
 - [Reproducibility](docs/reproducibility.md) - Deterministic datasets with `--random-seed`
 - [Template Endpoint](docs/tutorials/template-endpoint.md) - Custom Jinja2 request templates
 - [Multi-Turn Conversations](docs/tutorials/multi-turn.md) - Multi-turn conversation benchmarking
