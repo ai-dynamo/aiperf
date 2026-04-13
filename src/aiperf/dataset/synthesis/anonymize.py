@@ -46,9 +46,14 @@ class RawConversationRecord(AIPerfBaseModel):
 
     @field_validator("messages")
     @classmethod
-    def messages_must_be_non_empty(cls, v: list[dict]) -> list[dict]:
+    def messages_must_be_valid(cls, v: list[dict]) -> list[dict]:
         if not v:
             raise ValueError("messages must contain at least one message")
+        for i, msg in enumerate(v):
+            if "role" not in msg:
+                raise ValueError(f"message {i} missing required 'role' key")
+            if "content" not in msg:
+                raise ValueError(f"message {i} missing required 'content' key")
         return v
 
 
@@ -132,6 +137,9 @@ def anonymize_trace(
     Returns:
         AnonymizeResult with processing summary.
     """
+    if block_size <= 0:
+        raise ValueError("block_size must be greater than 0")
+
     hasher = RollingHasher(block_size=block_size)
     records: list[RawConversationRecord] = []
     total_skipped = 0
@@ -149,56 +157,50 @@ def anonymize_trace(
                 _logger.warning("Skipping line %d: %s", line_num, e)
                 total_skipped += 1
 
-    # Group by session_id
-    sessions: dict[str | None, list[RawConversationRecord]] = defaultdict(list)
-    for record in records:
-        sessions[record.session_id].append(record)
-
-    # Sort turns within each session by timestamp (or preserve input order)
-    for session_records in sessions.values():
-        session_records.sort(
-            key=lambda r: r.timestamp if r.timestamp is not None else 0
-        )
-
     has_timestamps = any(r.timestamp is not None for r in records)
+
+    # Per-session accumulated message history for multi-turn conversations
+    session_history: dict[str, list[dict]] = defaultdict(list)
+    session_ids_seen: set[str] = set()
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
     total_processed = 0
 
+    # Process records in original order to preserve global request sequence.
+    # Multi-turn sessions maintain per-session accumulated context.
     with open(output_file, "w", encoding="utf-8") as f:
-        for session_id, session_records in sessions.items():
-            if session_id is None:
-                # Independent requests: no message accumulation
-                for record in session_records:
-                    total_processed += _process_record(
-                        record,
-                        list(record.messages),
-                        None,
-                        tokenizer,
-                        hasher,
-                        block_size,
-                        f,
-                    )
+        for record in records:
+            if record.session_id is None:
+                # Independent request: no message accumulation
+                total_processed += _process_record(
+                    record,
+                    list(record.messages),
+                    None,
+                    tokenizer,
+                    hasher,
+                    block_size,
+                    f,
+                )
             else:
                 # Multi-turn session: accumulate messages across turns
-                accumulated_messages: list[dict] = []
-                for record in session_records:
-                    accumulated_messages.extend(record.messages)
-                    total_processed += _process_record(
-                        record,
-                        accumulated_messages,
-                        session_id,
-                        tokenizer,
-                        hasher,
-                        block_size,
-                        f,
-                    )
-                    accumulated_messages.append(
-                        {"role": "assistant", "content": record.output}
-                    )
+                sid = record.session_id
+                session_ids_seen.add(sid)
+                session_history[sid].extend(record.messages)
+                total_processed += _process_record(
+                    record,
+                    session_history[sid],
+                    sid,
+                    tokenizer,
+                    hasher,
+                    block_size,
+                    f,
+                )
+                session_history[sid].append(
+                    {"role": "assistant", "content": record.output}
+                )
 
     stats = hasher.get_stats()
-    sessions_detected = sum(1 for sid in sessions if sid is not None)
+    sessions_detected = len(session_ids_seen)
 
     return AnonymizeResult(
         total_processed=total_processed,

@@ -80,6 +80,22 @@ class TestRawConversationRecord:
         with pytest.raises(ValidationError):
             RawConversationRecord.model_validate(data)
 
+    def test_message_missing_role_raises(self) -> None:
+        data = {
+            "messages": [{"content": "Hello"}],
+            "output": "Hi",
+        }
+        with pytest.raises(ValidationError, match="missing required 'role' key"):
+            RawConversationRecord.model_validate(data)
+
+    def test_message_missing_content_raises(self) -> None:
+        data = {
+            "messages": [{"role": "user"}],
+            "output": "Hi",
+        }
+        with pytest.raises(ValidationError, match="missing required 'content' key"):
+            RawConversationRecord.model_validate(data)
+
     def test_no_timestamp_is_valid(self) -> None:
         data = {
             "messages": [{"role": "user", "content": "Hello"}],
@@ -377,6 +393,85 @@ class TestAnonymizeTrace:
 
             lines = output_path.read_text().strip().split("\n")
             assert len(lines) == 2
+        finally:
+            input_path.unlink(missing_ok=True)
+            output_path.unlink(missing_ok=True)
+
+    def test_block_size_zero_raises(self, mock_tokenizer: MagicMock) -> None:
+        """Test that block_size <= 0 raises ValueError."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            f.write(
+                '{"messages": [{"role": "user", "content": "Hi"}], "output": "Hey"}\n'
+            )
+            input_path = Path(f.name)
+
+        output_path = input_path.with_name("output_bs0.jsonl")
+
+        try:
+            with pytest.raises(ValueError, match="block_size must be greater than 0"):
+                anonymize_trace(
+                    input_file=input_path,
+                    output_file=output_path,
+                    tokenizer=mock_tokenizer,
+                    block_size=0,
+                )
+        finally:
+            input_path.unlink(missing_ok=True)
+            output_path.unlink(missing_ok=True)
+
+    def test_interleaved_sessions_preserve_global_order(
+        self, mock_tokenizer: MagicMock
+    ) -> None:
+        """Test that interleaved sessions emit records in original input order."""
+        mock_tokenizer.encode.return_value = list(range(8))
+        mock_tokenizer.apply_chat_template.return_value = "template"
+
+        input_data = [
+            {
+                "timestamp": 0,
+                "session_id": "A",
+                "messages": [{"role": "user", "content": "A1"}],
+                "output": "respA1",
+            },
+            {
+                "timestamp": 100,
+                "session_id": "B",
+                "messages": [{"role": "user", "content": "B1"}],
+                "output": "respB1",
+            },
+            {
+                "timestamp": 200,
+                "session_id": "A",
+                "messages": [{"role": "user", "content": "A2"}],
+                "output": "respA2",
+            },
+        ]
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            for record in input_data:
+                f.write(orjson.dumps(record).decode() + "\n")
+            input_path = Path(f.name)
+
+        output_path = input_path.with_name("output_interleave.jsonl")
+
+        try:
+            anonymize_trace(
+                input_file=input_path,
+                output_file=output_path,
+                tokenizer=mock_tokenizer,
+                block_size=4,
+            )
+
+            lines = output_path.read_text().strip().split("\n")
+            assert len(lines) == 3
+
+            records = [orjson.loads(line) for line in lines]
+            # Output order must match input order: A, B, A
+            assert records[0]["session_id"] == "A"
+            assert records[0]["timestamp"] == 0
+            assert records[1]["session_id"] == "B"
+            assert records[1]["timestamp"] == 100
+            assert records[2]["session_id"] == "A"
+            assert records[2]["timestamp"] == 200
         finally:
             input_path.unlink(missing_ok=True)
             output_path.unlink(missing_ok=True)
