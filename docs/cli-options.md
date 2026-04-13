@@ -16,6 +16,10 @@ Install shell completion for this application.
 
 Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
 
+### [`anonymize-trace`](#aiperf-anonymize-trace)
+
+Anonymize raw chat logs into privacy-preserving Mooncake traces.
+
 ### [`profile`](#aiperf-profile)
 
 Run the Profile subcommand.
@@ -68,6 +72,33 @@ KV cache block size for analysis (default: 512).
 #### `--output-file` `<str>`
 
 Optional output path for analysis report (JSON).
+
+<hr/>
+
+## `aiperf anonymize-trace`
+
+Anonymize raw chat logs into privacy-preserving Mooncake traces.
+
+Converts OpenAI-compatible conversation logs into traces with block-hashed prefix patterns. Strips all text content, preserving only token counts and hash ID sequences for prefix-cache-aware benchmarking.
+
+The --model argument specifies the TARGET model you intend to benchmark against, not the model that generated the original logs. The target model's tokenizer and chat template are used to produce accurate token counts and prefix patterns.
+
+#### `--input-file` `<str>` _(Required)_
+
+Path to input JSONL with raw conversation logs.
+
+#### `--model` `<str>` _(Required)_
+
+HuggingFace model name for tokenizer and chat template (target model).
+
+#### `--output-file` `<str>`
+
+Path to output Mooncake trace JSONL. Defaults to &lt;input>_anonymized.jsonl.
+
+#### `--block-size` `<int>`
+
+Tokens per block for hashing (default: 512).
+<br/>_Default: `512`_
 
 <hr/>
 

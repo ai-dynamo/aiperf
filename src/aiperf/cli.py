@@ -30,6 +30,7 @@ app.register_install_completion_command()
 # Register all CLI commands (lazily loaded at invocation time)
 # NOTE: The order here determines the order they will appear in docs/cli_options.md
 app.command("aiperf.cli_commands.analyze_trace:app", name="analyze-trace")
+app.command("aiperf.cli_commands.anonymize_trace:app", name="anonymize-trace")
 app.command("aiperf.cli_commands.profile:app", name="profile")
 app.command("aiperf.cli_commands.plot:app", name="plot")
 app.command("aiperf.cli_commands.plugins:app", name="plugins")
