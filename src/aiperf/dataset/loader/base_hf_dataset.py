@@ -85,18 +85,23 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         URL strings are passed through directly; bytes are base64-encoded.
         """
         import base64
+        import mimetypes
 
         value = row.get(video_column)
         if isinstance(value, str) and value:
+            # Pass through any valid URI scheme; only prepend file:// for bare paths
             url = (
                 value
-                if value.startswith(("http://", "https://", "file://"))
+                if "://" in value or value.startswith("data:")
                 else f"file://{value}"
             )
             return [Video(name="", contents=[url])]
         if isinstance(value, dict) and "bytes" in value and value["bytes"]:
+            path = value.get("path", "")
+            mime_type = mimetypes.guess_type(path)[0] if path else None
+            mime_type = mime_type or "video/mp4"
             b64 = base64.b64encode(value["bytes"]).decode("utf-8")
-            return [Video(name="", contents=[f"data:video/mp4;base64,{b64}"])]
+            return [Video(name="", contents=[f"data:{mime_type};base64,{b64}"])]
         return []
 
     def _max_conversations(self) -> int | None:

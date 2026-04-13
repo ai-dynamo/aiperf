@@ -1,8 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
-from unittest.mock import patch
 
 import pytest
 
@@ -30,7 +29,13 @@ class TestMMVUFormatPrompt:
     def test_multiple_choice_formats_choices(self):
         row = {
             "question": "What technique is shown?",
-            "choices": {"A": "Dolly Zoom", "B": "Pan", "C": "Tilt", "D": "Zoom", "E": ""},
+            "choices": {
+                "A": "Dolly Zoom",
+                "B": "Pan",
+                "C": "Tilt",
+                "D": "Zoom",
+                "E": "",
+            },
         }
         prompt = MMVUDatasetLoader._format_prompt(row)
         assert prompt == "What technique is shown? A.Dolly Zoom B.Pan C.Tilt D.Zoom"
@@ -66,7 +71,13 @@ class TestMMVUConvertToConversations:
             "dataset": [
                 {
                     "question": "What technique is shown?",
-                    "choices": {"A": "Dolly Zoom", "B": "Pan", "C": "", "D": "", "E": ""},
+                    "choices": {
+                        "A": "Dolly Zoom",
+                        "B": "Pan",
+                        "C": "",
+                        "D": "",
+                        "E": "",
+                    },
                     "video": "https://example.com/video.mp4",
                 }
             ]
@@ -86,7 +97,10 @@ class TestMMVUConvertToConversations:
             ]
         }
         conversations = await loader.convert_to_conversations(data)
-        assert conversations[0].turns[0].texts[0].contents[0] == "What is shown? A.Cat B.Dog"
+        assert (
+            conversations[0].turns[0].texts[0].contents[0]
+            == "What is shown? A.Cat B.Dog"
+        )
 
     async def test_video_url_attached_to_turn(self, loader):
         data = {
@@ -107,7 +121,11 @@ class TestMMVUConvertToConversations:
         data = {
             "dataset": [
                 {"question": "", "choices": {}, "video": "https://example.com/0.mp4"},
-                {"question": "Valid?", "choices": {}, "video": "https://example.com/1.mp4"},
+                {
+                    "question": "Valid?",
+                    "choices": {},
+                    "video": "https://example.com/1.mp4",
+                },
             ]
         }
         conversations = await loader.convert_to_conversations(data)
@@ -121,7 +139,11 @@ class TestMMVUConvertToConversations:
     async def test_session_ids_are_unique(self, loader):
         data = {
             "dataset": [
-                {"question": f"Q{i}", "choices": {}, "video": f"https://example.com/{i}.mp4"}
+                {
+                    "question": f"Q{i}",
+                    "choices": {},
+                    "video": f"https://example.com/{i}.mp4",
+                }
                 for i in range(5)
             ]
         }
@@ -145,7 +167,10 @@ class TestExtractVideos:
         row = {"video": "https://huggingface.co/datasets/yale-nlp/MMVU/0.mp4"}
         videos = loader._extract_videos(row, "video")
         assert len(videos) == 1
-        assert videos[0].contents[0] == "https://huggingface.co/datasets/yale-nlp/MMVU/0.mp4"
+        assert (
+            videos[0].contents[0]
+            == "https://huggingface.co/datasets/yale-nlp/MMVU/0.mp4"
+        )
 
     async def test_local_path_prefixed_with_file_scheme(self, loader):
         row = {"video": "/tmp/video.mp4"}
@@ -157,12 +182,24 @@ class TestExtractVideos:
         videos = loader._extract_videos(row, "video")
         assert videos[0].contents[0] == "file:///tmp/video.mp4"
 
-    async def test_bytes_dict_encoded_as_base64(self, loader):
+    async def test_data_uri_passed_through(self, loader):
+        data_uri = "data:video/mp4;base64,abc123"
+        row = {"video": data_uri}
+        videos = loader._extract_videos(row, "video")
+        assert videos[0].contents[0] == data_uri
+
+    async def test_bytes_dict_defaults_to_mp4_mime(self, loader):
         raw = b"fake-video-bytes"
         row = {"video": {"bytes": raw}}
         videos = loader._extract_videos(row, "video")
         expected = f"data:video/mp4;base64,{base64.b64encode(raw).decode()}"
         assert videos[0].contents[0] == expected
+
+    async def test_bytes_dict_infers_mime_from_path(self, loader):
+        raw = b"fake-video-bytes"
+        row = {"video": {"bytes": raw, "path": "clip.webm"}}
+        videos = loader._extract_videos(row, "video")
+        assert videos[0].contents[0].startswith("data:video/webm;base64,")
 
     async def test_missing_column_returns_empty(self, loader):
         row = {"other": "value"}
