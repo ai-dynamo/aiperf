@@ -389,78 +389,23 @@ jobs:
             --format '{{.Manifest.Digest}}')
           echo "Pushed ${REGISTRY}/aiperf:${NIGHTLY_TAG} — digest: ${DIGEST}"
 
-  collect-license-artifacts:
-    name: Collect License Artifacts (${{ matrix.arch }})
-    needs: [prepare-nightly, build-container]
-    if: ${{ inputs.publish_only != 'true' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: prod-aiperf-builder-amd-v1
-            platform: linux/amd64
-          - arch: arm64
-            runner: prod-aiperf-builder-arm-v1
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref || github.ref }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Patch version in pyproject.toml
-        uses: ./.github/actions/update-pyproject-version
-        with:
-          version: ${{ needs.prepare-nightly.outputs.pep440_version }}
-
-      - name: Bootstrap BuildKit
-        uses: ./.github/actions/bootstrap-buildkit
-        with:
-          builder_name: ${{ env.BUILDER_NAME }}
-          arch: ${{ matrix.platform }}
-
-      - name: Log in to ECR
-        env:
-          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-        run: |
-          aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
-            | docker login --username AWS --password-stdin \
-                "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-
-      - name: Build license collector stage
-        env:
-          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-          NIGHTLY_TAG:        ${{ needs.prepare-nightly.outputs.nightly_tag }}
+      - name: Extract license artifacts
         run: |
           set -euo pipefail
-          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-          docker buildx build \
-            --platform "${{ matrix.platform }}" \
-            --target python-licenses \
-            --load \
-            -t "aiperf-licenses:${NIGHTLY_TAG}-${{ matrix.arch }}" \
-            .
-
-      - name: Extract license artifacts
-        env:
-          NIGHTLY_TAG: ${{ needs.prepare-nightly.outputs.nightly_tag }}
-        run: |
-          docker create --name license-extract "aiperf-licenses:${NIGHTLY_TAG}-${{ matrix.arch }}"
-          mkdir -p license-artifacts
-          docker cp license-extract:/opt/licenses/python/. ./license-artifacts/
-          docker rm license-extract
+          for ARCH in amd64 arm64; do
+            docker buildx build \
+              --platform "linux/${ARCH}" \
+              --target python-licenses \
+              --output "type=local,dest=./license-raw-${ARCH}" \
+              .
+            mkdir -p "./license-artifacts/${ARCH}"
+            cp -r "./license-raw-${ARCH}/opt/licenses/python/." "./license-artifacts/${ARCH}/"
+          done
 
       - name: Upload license artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: license-artifacts-${{ needs.prepare-nightly.outputs.pep440_version }}-${{ matrix.arch }}
+          name: license-artifacts-${{ needs.prepare-nightly.outputs.nightly_tag }}
           path: license-artifacts/
 
   # ============================================================================
@@ -469,7 +414,7 @@ jobs:
 
   clean-k8s-builder:
     name: Clean K8s Builder
-    needs: [pre-warm-builder, build-container, collect-license-artifacts]
+    needs: [pre-warm-builder, build-container]
     if: always()
     runs-on: prod-aiperf-default-v1
     steps:
@@ -709,7 +654,6 @@ jobs:
       - gpu-e2e-tests
       - build-wheel
       - build-container
-      - collect-license-artifacts
       - clean-k8s-builder
       - create-nightly-tag
       - stage-nightly-container
@@ -749,7 +693,6 @@ jobs:
             echo "|-----|--------|"
             echo "| build-wheel (→ S3) | ${{ needs.build-wheel.result }} |"
             echo "| build-container (→ ECR) | ${{ needs.build-container.result }} |"
-            echo "| collect-license-artifacts | ${{ needs.collect-license-artifacts.result }} |"
             echo "| create-nightly-tag | ${{ needs.create-nightly-tag.result }} |"
             echo ""
             echo "### Stage + Scan"

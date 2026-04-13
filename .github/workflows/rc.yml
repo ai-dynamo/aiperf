@@ -292,84 +292,24 @@ jobs:
             --format '{{.Manifest.Digest}}')
           echo "Pushed ${REGISTRY}/aiperf:${PEP440_VERSION} — digest: ${DIGEST}"
 
-      - name: Builder cleanup
-        if: always()
-        run: docker buildx rm ${{ env.BUILDER_NAME }} || true
-
-  collect-license-artifacts:
-    name: Collect License Artifacts (${{ matrix.arch }})
-    needs: [prepare-release, build-container]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: prod-aiperf-builder-amd-v1
-            platform: linux/amd64
-          - arch: arm64
-            runner: prod-aiperf-builder-arm-v1
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Patch version for RC
-        uses: ./.github/actions/update-pyproject-version
-        with:
-          version: ${{ needs.prepare-release.outputs.pep440_version }}
-
-      - name: Bootstrap BuildKit
-        uses: ./.github/actions/bootstrap-buildkit
-        with:
-          builder_name: ${{ env.BUILDER_NAME }}
-          arch: ${{ matrix.platform }}
-
-      - name: Login to ECR
-        env:
-          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-        run: |
-          aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
-            | docker login --username AWS --password-stdin \
-                "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-
-      - name: Build license collector stage
-        env:
-          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-          PEP440_VERSION:     ${{ needs.prepare-release.outputs.pep440_version }}
+      - name: Extract license artifacts
         run: |
           set -euo pipefail
-          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-          docker buildx build \
-            --platform "${{ matrix.platform }}" \
-            --target python-licenses \
-            --load \
-            -t "aiperf-licenses:${PEP440_VERSION}-${{ matrix.arch }}" \
-            .
-
-      - name: Extract license artifacts
-        env:
-          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
-        run: |
-          docker create --name license-extract "aiperf-licenses:${PEP440_VERSION}-${{ matrix.arch }}"
-          mkdir -p license-artifacts
-          docker cp license-extract:/opt/licenses/python/. ./license-artifacts/
-          docker rm license-extract
+          for ARCH in amd64 arm64; do
+            docker buildx build \
+              --platform "linux/${ARCH}" \
+              --target python-licenses \
+              --output "type=local,dest=./license-raw-${ARCH}" \
+              .
+            mkdir -p "./license-artifacts/${ARCH}"
+            cp -r "./license-raw-${ARCH}/opt/licenses/python/." "./license-artifacts/${ARCH}/"
+          done
 
       - name: Upload license artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: license-artifacts-${{ needs.prepare-release.outputs.pep440_version }}-${{ matrix.arch }}
+          name: license-artifacts-${{ needs.prepare-release.outputs.rc_tag }}
           path: license-artifacts/
-
-      - name: Builder cleanup
-        if: always()
-        run: docker buildx rm ${{ env.BUILDER_NAME }} || true
 
   # ============================================================================
   # APPROVE
@@ -388,7 +328,6 @@ jobs:
       - gpu-e2e-tests
       - build-wheel
       - build-container
-      - collect-license-artifacts
     runs-on: ubuntu-latest
     environment: approve-release
     steps:
@@ -620,7 +559,6 @@ jobs:
       - gpu-e2e-tests
       - build-wheel
       - build-container
-      - collect-license-artifacts
       - approve-release
       - create-rc-tag
       - stage-container
@@ -658,7 +596,6 @@ jobs:
             echo "|-----|--------|"
             echo "| build-wheel (→ S3) | ${{ needs.build-wheel.result }} |"
             echo "| build-container (→ ECR) | ${{ needs.build-container.result }} |"
-            echo "| collect-license-artifacts | ${{ needs.collect-license-artifacts.result }} |"
             echo "| approve-release | ${{ needs.approve-release.result }} |"
             echo "| create-rc-tag | ${{ needs.create-rc-tag.result }} |"
             echo ""
