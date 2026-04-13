@@ -41,6 +41,21 @@ class TestBasetenTraceDatasetLoader:
 
         assert BasetenTraceDatasetLoader.can_load(filename=path) is True
 
+    def test_can_load_parquet_schema_without_optional_columns(self, tmp_path: Path):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 10,
+                    "prompt": "hello",
+                    "input_tokens": 3,
+                    "output_tokens": 4,
+                }
+            ],
+        )
+
+        assert BasetenTraceDatasetLoader.can_load(filename=path) is True
+
     def test_load_dataset_normalizes_timestamps_and_groups_sessions(
         self, tmp_path: Path
     ):
@@ -217,6 +232,41 @@ class TestBasetenTraceDatasetLoader:
         assert len(dataset) == 1
         kept_session = next(iter(dataset.values()))
         assert len(kept_session) == 2
+
+    def test_trace_session_sampling_skips_when_no_effective_session_key(
+        self, tmp_path: Path
+    ):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "row-1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-1",
+                },
+                {
+                    "timestamp_start_unix_ms": 200,
+                    "prompt": "row-2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-2",
+                },
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            user_config=UserConfig(
+                endpoint=EndpointConfig(model_names=["test-model"]),
+                input=InputConfig(trace_session_sample_ratio=0.01, random_seed=7),
+            ),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        assert len(dataset) == 2
 
     def test_trace_session_sampling_falls_back_to_poor_man_session_id(
         self, tmp_path: Path

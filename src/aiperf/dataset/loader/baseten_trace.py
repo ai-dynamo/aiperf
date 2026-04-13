@@ -16,11 +16,15 @@ from aiperf.dataset.loader.models import BasetenTrace
 _METADATA_COLUMNS_TIME = "timestamp_start_unix_ms"
 _METADATA_COLUMNS_SESSION = "provided_session_id"
 _METADATA_COLUMNS_POOR_MAN_SESSION = "poor_man_session_id"
+_METADATA_COLUMNS = {
+    _METADATA_COLUMNS_TIME,
+    _METADATA_COLUMNS_SESSION,
+    _METADATA_COLUMNS_POOR_MAN_SESSION,
+}
 
 _REQUIRED_COLUMNS = {
     _METADATA_COLUMNS_TIME,
     "total_hashes",
-    _METADATA_COLUMNS_SESSION,
     "prompt",
     "input_tokens",
     "output_tokens",
@@ -76,9 +80,15 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
         groups: dict[str, list[BasetenTrace]] = defaultdict(list)
         for trace in items:
-            if session_key == "provided_session_id" and trace.provided_session_id is not None:
+            if (
+                session_key == _METADATA_COLUMNS_SESSION
+                and trace.provided_session_id is not None
+            ):
                 session_id = trace.provided_session_id
-            elif session_key == "poor_man_session_id" and trace.poor_man_session_id is not None:
+            elif (
+                session_key == _METADATA_COLUMNS_POOR_MAN_SESSION
+                and trace.poor_man_session_id is not None
+            ):
                 session_id = str(trace.poor_man_session_id)
             elif trace.provided_session_id is not None:
                 session_id = trace.provided_session_id
@@ -91,10 +101,9 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         for traces in groups.values():
             traces.sort(key=lambda trace: int(trace.timestamp or 0))
 
-        ordered_groups = self._sample_and_order_groups(groups)
-        return ordered_groups
+        return self._order_groups(groups)
 
-    def _sample_and_order_groups(
+    def _order_groups(
         self, groups: dict[str, list[BasetenTrace]]
     ) -> dict[str, list[BasetenTrace]]:
         session_entries = [
@@ -108,45 +117,32 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         ]
 
         session_entries.sort(key=lambda item: (item[0], item[1]))
-
-        if self._session_sample_ratio is not None and self._session_sample_ratio < 1.0:
-            original_entries = list(session_entries)
-            original_count = len(original_entries)
-            session_entries = [
-                entry
-                for entry in original_entries
-                if self._rng.uniform(0.0, 1.0) < self._session_sample_ratio
-            ]
-            if not session_entries and original_count > 0:
-                # Avoid turning a valid trace replay into an empty dataset for very small ratios.
-                session_entries = [self._rng.choice(original_entries)]
-            self.info(
-                f"Sampled {len(session_entries):,} of {original_count:,} sessions "
-                f"with trace_session_sample_ratio={self._session_sample_ratio}"
-            )
-
         return {session_id: traces for _, session_id, traces in session_entries}
 
     def _read_metadata_table(self):
-        return pq.read_table(self.filename, columns=list(_METADATA_COLUMNS))
+        schema = pq.read_schema(self.filename)
+        metadata_columns = [
+            column for column in _METADATA_COLUMNS if column in set(schema.names)
+        ]
+        return pq.read_table(self.filename, columns=metadata_columns)
 
     def _choose_session_key_from_metadata_rows(
         self, rows: list[dict[str, Any]]
     ) -> str | None:
-        provided_counts = Counter(
+        provided_ids = [
             str(row[_METADATA_COLUMNS_SESSION])
             for row in rows
             if row.get(_METADATA_COLUMNS_SESSION) is not None
-        )
-        poor_counts = Counter(
+        ]
+        poor_ids = [
             str(row[_METADATA_COLUMNS_POOR_MAN_SESSION])
             for row in rows
             if row.get(_METADATA_COLUMNS_POOR_MAN_SESSION) is not None
-        )
+        ]
 
-        if any(count > 1 for count in provided_counts.values()):
+        if provided_ids and len(set(provided_ids)) < len(provided_ids):
             return _METADATA_COLUMNS_SESSION
-        if any(count > 1 for count in poor_counts.values()):
+        if poor_ids and len(set(poor_ids)) < len(poor_ids):
             return _METADATA_COLUMNS_POOR_MAN_SESSION
         return None
 
@@ -272,13 +268,13 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         )
 
         if any(count > 1 for count in provided_counts.values()):
-            return "provided_session_id"
+            return _METADATA_COLUMNS_SESSION
         if any(count > 1 for count in poor_counts.values()):
-            return "poor_man_session_id"
+            return _METADATA_COLUMNS_POOR_MAN_SESSION
         if provided_counts:
-            return "provided_session_id"
+            return _METADATA_COLUMNS_SESSION
         if poor_counts:
-            return "poor_man_session_id"
+            return _METADATA_COLUMNS_POOR_MAN_SESSION
         return "generated"
 
     def _synthesis_exclude_fields(self) -> frozenset[str]:
