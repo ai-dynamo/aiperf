@@ -255,78 +255,6 @@ jobs:
   # instance profile. The automated-release gate is enforced at staging only.
   # ============================================================================
 
-  build-wheel:
-    name: Build Wheel
-    needs: [prepare-nightly, pre-commit, unit-tests, integration-tests, gpu-e2e-tests]
-    runs-on: prod-aiperf-builder-amd-v1
-    if: ${{ inputs.publish_only != 'true' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref || github.ref }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Patch version in pyproject.toml
-        uses: ./.github/actions/update-pyproject-version
-        with:
-          version: ${{ needs.prepare-nightly.outputs.pep440_version }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build wheel via Docker wheel-builder stage
-        run: |
-          docker buildx build \
-            --target wheel-builder \
-            --cache-from type=gha,scope=wheel-amd64 \
-            --cache-to   type=gha,scope=wheel-amd64,mode=max \
-            --output     type=local,dest=./dist/ \
-            .
-
-      - name: Detect and validate wheel
-        id: wheel
-        env:
-          EXPECTED_VERSION: ${{ needs.prepare-nightly.outputs.pep440_version }}
-        run: |
-          set -euo pipefail
-
-          mapfile -t WHEELS < <(find dist/ -name "aiperf-*.whl" -type f)
-          if [ "${#WHEELS[@]}" -eq 0 ]; then
-            echo "::error::No wheel found in dist/ after build"
-            exit 1
-          fi
-          if [ "${#WHEELS[@]}" -gt 1 ]; then
-            echo "::error::Multiple wheels found in dist/ — expected exactly one:"
-            printf '  %s\n' "${WHEELS[@]}"
-            exit 1
-          fi
-          WHEEL_PATH="${WHEELS[0]}"
-
-          uvx twine check "${WHEEL_PATH}"
-          uv venv .venv-check
-          uv pip install --python .venv-check/bin/python "${WHEEL_PATH}"
-          INSTALLED_VERSION=$(.venv-check/bin/python -c "import aiperf; print(aiperf.__version__)")
-          if [ "${INSTALLED_VERSION}" != "${EXPECTED_VERSION}" ]; then
-            echo "::error::Wheel version mismatch: expected '${EXPECTED_VERSION}', got '${INSTALLED_VERSION}'"
-            exit 1
-          fi
-          .venv-check/bin/aiperf --help
-
-          echo "wheel_path=${WHEEL_PATH}"                    >> "$GITHUB_OUTPUT"
-          echo "wheel_filename=$(basename "${WHEEL_PATH}")"  >> "$GITHUB_OUTPUT"
-
-      - name: Upload wheel to S3
-        env:
-          S3_BUCKET:      ${{ secrets.S3_CI_WHEELS_BUCKET }}
-          PEP440_VERSION: ${{ needs.prepare-nightly.outputs.pep440_version }}
-        run: |
-          set -euo pipefail
-          WHEEL=$(find dist/ -name "aiperf-*.whl" | head -1)
-          aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/aiperf/nightly/${PEP440_VERSION}/" --sse AES256
-
   build-container:
     name: Build Container
     needs: [prepare-nightly, pre-warm-builder]  # TODO: restore [prepare-nightly, pre-commit, unit-tests, integration-tests, gpu-e2e-tests, pre-warm-builder] once GPU runners are back
@@ -389,6 +317,44 @@ jobs:
             --format '{{.Manifest.Digest}}')
           echo "Pushed ${REGISTRY}/aiperf:${NIGHTLY_TAG} — digest: ${DIGEST}"
 
+      - name: Extract wheel
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --target wheel-builder \
+            --output "type=local,dest=./wheel-out" \
+            .
+
+      - name: Validate wheel
+        env:
+          EXPECTED_VERSION: ${{ needs.prepare-nightly.outputs.pep440_version }}
+        run: |
+          set -euo pipefail
+          mapfile -t WHEELS < <(find wheel-out/dist/ -name "aiperf-*.whl" -type f)
+          if [ "${#WHEELS[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one wheel, found ${#WHEELS[@]}"
+            exit 1
+          fi
+          WHEEL_PATH="${WHEELS[0]}"
+          uvx twine check "${WHEEL_PATH}"
+          uv venv .venv-check
+          uv pip install --python .venv-check/bin/python "${WHEEL_PATH}"
+          INSTALLED_VERSION=$(.venv-check/bin/python -c "import aiperf; print(aiperf.__version__)")
+          if [ "${INSTALLED_VERSION}" != "${EXPECTED_VERSION}" ]; then
+            echo "::error::Wheel version mismatch: expected '${EXPECTED_VERSION}', got '${INSTALLED_VERSION}'"
+            exit 1
+          fi
+          .venv-check/bin/aiperf --help
+
+      - name: Upload wheel to S3
+        env:
+          S3_BUCKET:      ${{ secrets.S3_CI_WHEELS_BUCKET }}
+          PEP440_VERSION: ${{ needs.prepare-nightly.outputs.pep440_version }}
+        run: |
+          set -euo pipefail
+          WHEEL=$(find wheel-out/dist/ -name "aiperf-*.whl" | head -1)
+          aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/aiperf/nightly/${PEP440_VERSION}/" --sse AES256
+
       - name: Extract license artifacts
         run: |
           set -euo pipefail
@@ -439,7 +405,7 @@ jobs:
 
   create-nightly-tag:
     name: Create Nightly Tag
-    needs: [prepare-nightly, build-wheel, build-container]
+    needs: [prepare-nightly, build-container]
     runs-on: ubuntu-latest
     if: ${{ inputs.publish_only != 'true' }}
     steps:
@@ -652,7 +618,6 @@ jobs:
       - unit-tests
       - integration-tests
       - gpu-e2e-tests
-      - build-wheel
       - build-container
       - clean-k8s-builder
       - create-nightly-tag
@@ -691,8 +656,7 @@ jobs:
             echo "### Build + Upload"
             echo "| Job | Result |"
             echo "|-----|--------|"
-            echo "| build-wheel (→ S3) | ${{ needs.build-wheel.result }} |"
-            echo "| build-container (→ ECR) | ${{ needs.build-container.result }} |"
+            echo "| build-container (→ ECR + S3) | ${{ needs.build-container.result }} |"
             echo "| create-nightly-tag | ${{ needs.create-nightly-tag.result }} |"
             echo ""
             echo "### Stage + Scan"
