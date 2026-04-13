@@ -159,6 +159,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 ### Endpoint Types
 - [Embeddings](docs/tutorials/embeddings.md) - Profile embedding models
 - [Rankings](docs/tutorials/rankings.md) - Profile ranking models
+- [OpenAI Responses API](docs/tutorials/openai-responses.md) - Profile OpenAI Responses API endpoints
 - [Audio](docs/tutorials/audio.md) - Profile audio language models
 - [Vision](docs/tutorials/vision.md) - Profile vision language models
 - [Image Generation](docs/tutorials/image-generation.md) - Benchmark any OpenAI-compatible image generation API
