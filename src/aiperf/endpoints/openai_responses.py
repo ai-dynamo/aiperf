@@ -62,12 +62,11 @@ class ResponsesEndpoint(BaseEndpoint):
             model_endpoint.endpoint.streaming
             and model_endpoint.endpoint.use_server_token_count
         ):
-            if "stream_options" not in payload:
-                payload["stream_options"] = {"include_usage": True}
-            elif (
-                isinstance(payload["stream_options"], dict)
-                and "include_usage" not in payload["stream_options"]
+            if "stream_options" not in payload or not isinstance(
+                payload["stream_options"], dict
             ):
+                payload["stream_options"] = {"include_usage": True}
+            elif "include_usage" not in payload["stream_options"]:
                 payload["stream_options"]["include_usage"] = True
 
         self.trace(lambda: f"Formatted payload: {payload}")
@@ -112,10 +111,9 @@ class ResponsesEndpoint(BaseEndpoint):
             and len(turn.texts[0].contents) == 1
             and len(turn.images) == 0
             and len(turn.audios) == 0
+            and len(turn.videos) == 0
         ):
-            item["content"] = (
-                turn.texts[0].contents[0] if turn.texts[0].contents else ""
-            )
+            item["content"] = turn.texts[0].contents[0]
             return
 
         content: list[dict[str, Any]] = []
@@ -213,8 +211,17 @@ class ResponsesEndpoint(BaseEndpoint):
                 )
             return None
 
+        if event_type == "response.output_text.done":
+            text = json_obj.get("text")
+            if text:
+                return ParsedResponse(
+                    perf_ns=perf_ns,
+                    data=TextResponseData(text=text),
+                )
+            return None
+
         if event_type == "response.completed":
-            resp = json_obj.get("response", {})
+            resp = json_obj.get("response") or {}
             usage = resp.get("usage") or None
             if usage:
                 return ParsedResponse(perf_ns=perf_ns, data=None, usage=usage)

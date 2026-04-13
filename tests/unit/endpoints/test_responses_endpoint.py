@@ -362,6 +362,12 @@ class TestResponsesEndpoint:
                 {"some_option": True, "include_usage": True},
                 id="adds_to_existing",
             ),
+            param(
+                True,
+                [("stream_options", None)],
+                {"include_usage": True},
+                id="none_replaced",
+            ),
             param(False, [], _NOT_PRESENT, id="not_added_when_not_streaming"),
         ],
     )  # fmt: skip
@@ -432,7 +438,15 @@ class TestResponsesEndpointParseResponse:
                 {"type": "response.content_part.added"}, id="event_content_part_added"
             ),
             param(
-                {"type": "response.output_text.done"}, id="event_output_text_done"
+                {"type": "response.output_text.done"}, id="event_output_text_done_no_text"
+            ),
+            param(
+                {"type": "response.output_text.done", "text": ""},
+                id="event_output_text_done_empty",
+            ),
+            param(
+                {"type": "response.completed", "response": None},
+                id="completed_null_response",
             ),
             param(
                 {"type": "response.output_item.done"}, id="event_output_item_done"
@@ -454,6 +468,11 @@ class TestResponsesEndpointParseResponse:
                 {"type": "response.output_text.delta", "delta": "Hello"},
                 "Hello",
                 id="streaming_delta",
+            ),
+            param(
+                {"type": "response.output_text.done", "text": "Final text"},
+                "Final text",
+                id="streaming_done_fallback",
             ),
             param(
                 {"object": "response", "output_text": "Fallback text"},
@@ -658,3 +677,12 @@ class TestResponsesEndpointParseResponse:
 
         assert parsed is not None
         assert parsed.usage == Usage(expected_usage)
+
+        output = json_data.get("output", []) if isinstance(json_data, dict) else []
+        has_message = any(
+            isinstance(item, dict) and item.get("type") == "message"
+            for item in output
+            if isinstance(output, list)
+        )
+        if has_message:
+            assert parsed.data is not None

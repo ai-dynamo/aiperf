@@ -23,6 +23,8 @@ navigation:
     contents:
     - page: Profile OpenAI-Compatible Text APIs Using AIPerf
       path: tutorials/openai-text-endpoints.md
+    - page: Profile the OpenAI Responses API with AIPerf
+      path: tutorials/openai-responses.md
     - page: Profile Hugging Face TGI Models with AIPerf
       path: tutorials/huggingface-tgi.md
     - page: Profile Vision Language Models with AIPerf

@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Profile the OpenAI Responses API with AIPerf
+---
 
 # Profile the OpenAI Responses API with AIPerf
 
@@ -71,7 +72,7 @@ aiperf profile \
 
 **Sample Output:**
 
-```
+```text
 INFO     Starting AIPerf System
 INFO     AIPerf System is PROFILING
 
@@ -310,6 +311,7 @@ For reference, AIPerf processes these Responses API streaming events:
 |---|---|
 | `response.output_text.delta` | Text content delta |
 | `response.reasoning_text.delta` | Reasoning content delta |
+| `response.output_text.done` | Final text (fallback for providers that emit text only in done events) |
 | `response.completed` | Usage statistics |
 | All other events | Skipped |
 
