@@ -55,6 +55,9 @@ concurrency:
   group: nightly-pipeline
   cancel-in-progress: false
 
+env:
+  BUILDER_NAME: b-${{ github.run_id }}-${{ github.run_attempt }}
+
 permissions:
   contents: write
   packages: write
@@ -309,20 +312,10 @@ jobs:
           aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/aiperf/nightly/${PEP440_VERSION}/" --sse AES256
 
   build-container:
-    name: Build Container (${{ matrix.arch }})
+    name: Build Container
     needs: [prepare-nightly, pre-commit, unit-tests, integration-tests, gpu-e2e-tests]
     if: ${{ inputs.publish_only != 'true' }}
-    strategy:
-      fail-fast: true
-      matrix:
-        include:
-          - arch: amd64
-            platform: linux/amd64
-            runner: prod-aiperf-builder-amd-v1
-          - arch: arm64
-            platform: linux/arm64
-            runner: prod-aiperf-builder-arm-v1
-    runs-on: ${{ matrix.runner }}
+    runs-on: prod-aiperf-default-v1
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -345,6 +338,75 @@ jobs:
         with:
           version: ${{ needs.prepare-nightly.outputs.pep440_version }}
 
+      - name: Initialize aiperf builder
+        uses: ./.github/actions/init-aiperf-builder
+        with:
+          builder_name: ${{ env.BUILDER_NAME }}
+
+      - name: Log in to ECR
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
+            | docker login --username AWS --password-stdin \
+                "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+
+      - name: Build and push multi-arch image to ECR
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          PEP440_VERSION:     ${{ needs.prepare-nightly.outputs.pep440_version }}
+        run: |
+          set -euo pipefail
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --target   runtime \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache" \
+            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache,mode=max" \
+            --push \
+            --tag "${REGISTRY}/aiperf:${PEP440_VERSION}" \
+            .
+
+          DIGEST=$(docker buildx imagetools inspect "${REGISTRY}/aiperf:${PEP440_VERSION}" \
+            --format '{{.Manifest.Digest}}')
+          echo "Pushed ${REGISTRY}/aiperf:${PEP440_VERSION} — digest: ${DIGEST}"
+
+      - name: Builder cleanup
+        if: always()
+        run: docker buildx rm ${{ env.BUILDER_NAME }} || true
+
+  collect-license-artifacts:
+    name: Collect License Artifacts (${{ matrix.arch }})
+    needs: [prepare-nightly, build-container]
+    if: ${{ inputs.publish_only != 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: prod-aiperf-builder-amd-v1
+            platform: linux/amd64
+          - arch: arm64
+            runner: prod-aiperf-builder-arm-v1
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Patch version in pyproject.toml
+        uses: ./.github/actions/update-pyproject-version
+        with:
+          version: ${{ needs.prepare-nightly.outputs.pep440_version }}
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -357,7 +419,7 @@ jobs:
             | docker login --username AWS --password-stdin \
                 "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
 
-      - name: Build and push ${{ matrix.arch }} image to ECR
+      - name: Build license collector stage
         env:
           AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
@@ -365,58 +427,28 @@ jobs:
         run: |
           set -euo pipefail
           REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-          IMAGE_TAG="${PEP440_VERSION}-${{ matrix.arch }}"
-
-          refresh_ecr_token() {
-            while sleep 21600; do
-              aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
-                | docker login --username AWS --password-stdin "${REGISTRY}" 2>/dev/null || true
-            done
-          }
-          refresh_ecr_token &
-          REFRESH_PID=$!
-          trap 'kill ${REFRESH_PID} 2>/dev/null || true' EXIT
-
           docker buildx build \
             --platform "${{ matrix.platform }}" \
-            --target   runtime \
-            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-${{ matrix.arch }}" \
-            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache-${{ matrix.arch }},mode=max" \
-            --push \
-            --tag "${REGISTRY}/aiperf:${IMAGE_TAG}" \
+            --target python-licenses \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache" \
+            --load \
+            -t "aiperf-licenses:${PEP440_VERSION}-${{ matrix.arch }}" \
             .
 
-          DIGEST=$(docker buildx imagetools inspect "${REGISTRY}/aiperf:${IMAGE_TAG}" \
-            --format '{{.Manifest.Digest}}')
-          echo "Pushed ${REGISTRY}/aiperf:${IMAGE_TAG} — digest: ${DIGEST}"
-
-  create-multiarch-manifest-ecr:
-    name: Create Multi-arch Manifest (ECR)
-    needs: [prepare-nightly, build-container]
-    runs-on: prod-aiperf-default-v1
-    if: ${{ inputs.publish_only != 'true' }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Get ECR login token
-        id: ecr
+      - name: Extract license artifacts
         env:
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          PEP440_VERSION: ${{ needs.prepare-nightly.outputs.pep440_version }}
         run: |
-          echo "password=$(aws ecr get-login-password --region "${AWS_DEFAULT_REGION}")" >> "$GITHUB_OUTPUT"
+          docker create --name license-extract "aiperf-licenses:${PEP440_VERSION}-${{ matrix.arch }}"
+          mkdir -p license-artifacts
+          docker cp license-extract:/opt/licenses/python/. ./license-artifacts/
+          docker rm license-extract
 
-      - name: Create multi-arch manifest on ECR
-        uses: ./.github/actions/create-multiarch-manifest
+      - name: Upload license artifacts
+        uses: actions/upload-artifact@v4
         with:
-          registry:          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
-          registry-username: AWS
-          registry-password: ${{ steps.ecr.outputs.password }}
-          target-image: >-
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.pep440_version }}
-          source-images: >-
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.pep440_version }}-amd64
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.pep440_version }}-arm64
+          name: license-artifacts-${{ needs.prepare-nightly.outputs.pep440_version }}-${{ matrix.arch }}
+          path: license-artifacts/
 
   # ============================================================================
   # PHASE 4: TAG
@@ -424,7 +456,7 @@ jobs:
 
   create-nightly-tag:
     name: Create Nightly Tag
-    needs: [prepare-nightly, build-wheel, create-multiarch-manifest-ecr]
+    needs: [prepare-nightly, build-wheel, build-container]
     runs-on: ubuntu-latest
     if: ${{ inputs.publish_only != 'true' }}
     steps:
@@ -508,7 +540,7 @@ jobs:
           echo "${NGC_TOKEN}" | crane auth login nvcr.io \
             --username "${NGC_USERNAME}" --password-stdin
 
-      - name: Copy multi-arch images ECR → NGC staging
+      - name: Copy multi-arch image ECR → NGC staging
         env:
           AWS_ACCOUNT_ID:         ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION:     ${{ secrets.AWS_DEFAULT_REGION }}
@@ -517,18 +549,9 @@ jobs:
         run: |
           set -euo pipefail
           ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-
-          for ARCH in amd64 arm64; do
-            crane copy \
-              "${ECR_REGISTRY}/aiperf:${PEP440_VERSION}-${ARCH}" \
-              "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}-${ARCH}"
-          done
-
-          crane delete "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}" 2>/dev/null || true
-          crane index append \
-            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}-amd64" \
-            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}-arm64" \
-            --tag      "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}"
+          crane copy \
+            "${ECR_REGISTRY}/aiperf:${PEP440_VERSION}" \
+            "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}"
           echo "Container staged: ${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}"
 
   stage-nightly-wheel:
@@ -647,7 +670,7 @@ jobs:
       - gpu-e2e-tests
       - build-wheel
       - build-container
-      - create-multiarch-manifest-ecr
+      - collect-license-artifacts
       - create-nightly-tag
       - stage-nightly-container
       - stage-nightly-wheel
@@ -686,7 +709,7 @@ jobs:
             echo "|-----|--------|"
             echo "| build-wheel (→ S3) | ${{ needs.build-wheel.result }} |"
             echo "| build-container (→ ECR) | ${{ needs.build-container.result }} |"
-            echo "| create-multiarch-manifest-ecr | ${{ needs.create-multiarch-manifest-ecr.result }} |"
+            echo "| collect-license-artifacts | ${{ needs.collect-license-artifacts.result }} |"
             echo "| create-nightly-tag | ${{ needs.create-nightly-tag.result }} |"
             echo ""
             echo "### Stage + Scan"

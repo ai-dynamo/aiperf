@@ -46,6 +46,9 @@ concurrency:
   group: rc-pipeline-${{ github.ref_name }}
   cancel-in-progress: false
 
+env:
+  BUILDER_NAME: b-${{ github.run_id }}-${{ github.run_attempt }}
+
 permissions:
   contents: write
   packages: write
@@ -238,19 +241,75 @@ jobs:
           echo "Wheel uploaded to S3 for ${PEP440_VERSION}"
 
   build-container:
-    name: Build and Push Container (${{ matrix.arch }})
+    name: Build and Push Container
     needs: [prepare-release]
-    runs-on: ${{ matrix.runner }}
+    runs-on: prod-aiperf-default-v1
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Patch version for RC
+        uses: ./.github/actions/update-pyproject-version
+        with:
+          version: ${{ needs.prepare-release.outputs.pep440_version }}
+
+      - name: Initialize aiperf builder
+        uses: ./.github/actions/init-aiperf-builder
+        with:
+          builder_name: ${{ env.BUILDER_NAME }}
+
+      - name: Login to ECR
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
+            | docker login --username AWS --password-stdin \
+                "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+
+      - name: Build and push multi-arch image to ECR
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          PEP440_VERSION:     ${{ needs.prepare-release.outputs.pep440_version }}
+        run: |
+          set -euo pipefail
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --target   runtime \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache" \
+            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache,mode=max" \
+            --push \
+            --tag "${REGISTRY}/aiperf:${PEP440_VERSION}" \
+            .
+
+          DIGEST=$(docker buildx imagetools inspect "${REGISTRY}/aiperf:${PEP440_VERSION}" \
+            --format '{{.Manifest.Digest}}')
+          echo "Pushed ${REGISTRY}/aiperf:${PEP440_VERSION} — digest: ${DIGEST}"
+
+      - name: Builder cleanup
+        if: always()
+        run: docker buildx rm ${{ env.BUILDER_NAME }} || true
+
+  collect-license-artifacts:
+    name: Collect License Artifacts (${{ matrix.arch }})
+    needs: [prepare-release, build-container]
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - arch: amd64
-            platform: linux/amd64
             runner: prod-aiperf-builder-amd-v1
+            platform: linux/amd64
           - arch: arm64
-            platform: linux/arm64
             runner: prod-aiperf-builder-arm-v1
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -268,56 +327,43 @@ jobs:
 
       - name: Login to ECR
         env:
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
         run: |
-          aws ecr get-login-password --region ${AWS_DEFAULT_REGION} \
-            | docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+          aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
+            | docker login --username AWS --password-stdin \
+                "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
 
-      - name: Build and push arch-specific image
+      - name: Build license collector stage
         env:
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+          PEP440_VERSION:     ${{ needs.prepare-release.outputs.pep440_version }}
         run: |
-          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-          IMAGE_REF="${ECR_REGISTRY}/aiperf:${PEP440_VERSION}-${{ matrix.arch }}"
-          CACHE_REF="${ECR_REGISTRY}/aiperf:cache-${{ matrix.arch }}"
+          set -euo pipefail
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
           docker buildx build \
-            --platform ${{ matrix.platform }} \
-            --target runtime \
-            --cache-from type=registry,ref=${CACHE_REF} \
-            --cache-to type=registry,ref=${CACHE_REF},mode=max \
-            --push \
-            --tag "${IMAGE_REF}" \
+            --platform "${{ matrix.platform }}" \
+            --target python-licenses \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache" \
+            --load \
+            -t "aiperf-licenses:${PEP440_VERSION}-${{ matrix.arch }}" \
             .
 
-  create-multiarch-manifest-ecr:
-    name: Create Multi-arch Manifest (ECR)
-    needs: [prepare-release, build-container]
-    runs-on: prod-aiperf-default-v1
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Get ECR login token
-        id: ecr
+      - name: Extract license artifacts
         env:
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
         run: |
-          echo "password=$(aws ecr get-login-password --region "${AWS_DEFAULT_REGION}")" >> "$GITHUB_OUTPUT"
+          docker create --name license-extract "aiperf-licenses:${PEP440_VERSION}-${{ matrix.arch }}"
+          mkdir -p license-artifacts
+          docker cp license-extract:/opt/licenses/python/. ./license-artifacts/
+          docker rm license-extract
 
-      - name: Create multi-arch manifest on ECR
-        uses: ./.github/actions/create-multiarch-manifest
+      - name: Upload license artifacts
+        uses: actions/upload-artifact@v4
         with:
-          registry:          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
-          registry-username: AWS
-          registry-password: ${{ steps.ecr.outputs.password }}
-          target-image: >-
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-release.outputs.pep440_version }}
-          source-images: >-
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-release.outputs.pep440_version }}-amd64
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-release.outputs.pep440_version }}-arm64
+          name: license-artifacts-${{ needs.prepare-release.outputs.pep440_version }}-${{ matrix.arch }}
+          path: license-artifacts/
 
   # ============================================================================
   # APPROVE
@@ -335,7 +381,8 @@ jobs:
       - integration-tests
       - gpu-e2e-tests
       - build-wheel
-      - create-multiarch-manifest-ecr
+      - build-container
+      - collect-license-artifacts
     runs-on: ubuntu-latest
     environment: approve-release
     steps:
@@ -432,21 +479,16 @@ jobs:
             | crane auth login "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com" --username AWS --password-stdin
           echo "${NGC_TOKEN}" | crane auth login nvcr.io -u "${NGC_USERNAME}" --password-stdin
 
-      - name: Copy images from ECR to NGC and create manifest
+      - name: Copy multi-arch image ECR → NGC
         env:
           ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
           NGC_IMAGE: nvcr.io/${{ secrets.NGC_PUBLISH_ORG }}/aiperf
           PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
         run: |
           set -euo pipefail
-          for ARCH in amd64 arm64; do
-            crane copy "${ECR_REGISTRY}/aiperf:${PEP440_VERSION}-${ARCH}" \
-                       "${NGC_IMAGE}:${PEP440_VERSION}-${ARCH}"
-          done
-          crane index append \
-            --manifest "${NGC_IMAGE}:${PEP440_VERSION}-amd64" \
-            --manifest "${NGC_IMAGE}:${PEP440_VERSION}-arm64" \
-            --tag "${NGC_IMAGE}:${PEP440_VERSION}"
+          crane copy "${ECR_REGISTRY}/aiperf:${PEP440_VERSION}" \
+                     "${NGC_IMAGE}:${PEP440_VERSION}"
+          echo "Container staged: ${NGC_IMAGE}:${PEP440_VERSION}"
 
 
   stage-wheel:
@@ -572,7 +614,7 @@ jobs:
       - gpu-e2e-tests
       - build-wheel
       - build-container
-      - create-multiarch-manifest-ecr
+      - collect-license-artifacts
       - approve-release
       - create-rc-tag
       - stage-container
@@ -610,7 +652,7 @@ jobs:
             echo "|-----|--------|"
             echo "| build-wheel (→ S3) | ${{ needs.build-wheel.result }} |"
             echo "| build-container (→ ECR) | ${{ needs.build-container.result }} |"
-            echo "| create-multiarch-manifest-ecr | ${{ needs.create-multiarch-manifest-ecr.result }} |"
+            echo "| collect-license-artifacts | ${{ needs.collect-license-artifacts.result }} |"
             echo "| approve-release | ${{ needs.approve-release.result }} |"
             echo "| create-rc-tag | ${{ needs.create-rc-tag.result }} |"
             echo ""

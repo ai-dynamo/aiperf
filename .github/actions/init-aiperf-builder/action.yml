@@ -1,0 +1,155 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: 'Initialize AIPerf Builder'
+description: 'Bootstrap a multi-arch buildx builder using the centralized dynamo-builder pods (remote driver) with Kubernetes driver fallback'
+
+# Connects to the dynamo-builder StatefulSet pods at index 0 for each
+# requested architecture via headless service DNS. Falls back to the
+# Kubernetes driver if the pods are unreachable.
+#
+# DNS pattern: buildkit-{arch}-0.buildkit-{arch}-headless.buildkit.svc.cluster.local
+#
+# Usage:
+#   - uses: ./.github/actions/init-aiperf-builder
+#     with:
+#       builder_name: my-builder
+#       arch: 'linux/amd64,linux/arm64'
+
+inputs:
+  builder_name:
+    description: 'Name for the buildx builder'
+    required: true
+  arch:
+    description: 'Comma-separated Docker platform(s): linux/amd64, linux/arm64, or linux/amd64,linux/arm64'
+    required: false
+    default: 'linux/amd64,linux/arm64'
+
+  # Kubernetes fallback driver options
+  namespace:
+    description: 'Kubernetes namespace for fallback buildkit pods'
+    required: false
+    default: 'buildkit'
+  replicas:
+    description: 'Number of fallback buildkit replicas'
+    required: false
+    default: '1'
+  requests_cpu:
+    description: 'CPU requests for fallback buildkit pods'
+    required: false
+    default: '12'
+  requests_memory:
+    description: 'Memory requests for fallback buildkit pods'
+    required: false
+    default: '26Gi'
+  limits_memory:
+    description: 'Memory limits for fallback buildkit pods'
+    required: false
+    default: '29Gi'
+  tolerations:
+    description: 'Tolerations for fallback buildkit pods'
+    required: false
+    default: 'key=buildkit-fallback-worker,value=true,operator=Equal,effect=NoSchedule'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Ensure nslookup is available
+      shell: bash
+      run: |
+        if ! command -v nslookup >/dev/null 2>&1; then
+          sudo apt-get update -qq && sudo apt-get install -y -qq dnsutils
+        fi
+
+    - name: Resolve worker addresses
+      id: resolve
+      shell: bash
+      run: |
+        NAMESPACE="buildkit"
+        PORT=1234
+
+        # Strip linux/ prefix to get bare arch names
+        ARCH="${{ inputs.arch }}"
+        ARCH="${ARCH//linux\//}"
+
+        WORKER_ADDRS=""
+        IFS=',' read -ra ARCHS <<< "$ARCH"
+        for arch in "${ARCHS[@]}"; do
+          DNS="buildkit-${arch}-0.buildkit-${arch}-headless.${NAMESPACE}.svc.cluster.local"
+          if nslookup "$DNS" >/dev/null 2>&1; then
+            WORKER_ADDRS="${WORKER_ADDRS:+${WORKER_ADDRS},}tcp://${DNS}:${PORT}"
+            echo "✅ Resolved ${arch} worker: ${DNS}"
+          else
+            echo "⚠️  No DNS for ${arch} worker (${DNS})"
+          fi
+        done
+
+        echo "worker_addresses=${WORKER_ADDRS}" >> "$GITHUB_OUTPUT"
+
+    - name: Create builder (remote driver)
+      if: steps.resolve.outputs.worker_addresses != ''
+      shell: bash
+      run: |
+        IFS=',' read -ra ADDRS <<< "${{ steps.resolve.outputs.worker_addresses }}"
+        FIRST=true
+        for addr in "${ADDRS[@]}"; do
+          if $FIRST; then
+            docker buildx create --use --name "${{ inputs.builder_name }}" --driver remote "$addr"
+            FIRST=false
+          else
+            docker buildx create --append --name "${{ inputs.builder_name }}" --driver remote "$addr"
+          fi
+        done
+
+    - name: Create builder (Kubernetes fallback)
+      if: steps.resolve.outputs.worker_addresses == ''
+      shell: bash
+      run: |
+        echo "::warning::Remote dynamo-builder pods unreachable — falling back to Kubernetes driver"
+        echo "## ⚠️ Fallback Build Warning" >> $GITHUB_STEP_SUMMARY
+        echo "dynamo-builder pods unavailable. Running on fallback Kubernetes pod. Please alert the ops team." >> $GITHUB_STEP_SUMMARY
+
+        # Strip linux/ prefix
+        ARCH="${{ inputs.arch }}"
+        ARCH="${ARCH//linux\//}"
+
+        FIRST=true
+        IFS=',' read -ra ARCHS <<< "$ARCH"
+        for arch in "${ARCHS[@]}"; do
+          # Comma-containing values (nodeselector, tolerations) must be wrapped in
+          # inner double quotes so buildx's CSV parser treats them as a single field
+          # rather than splitting on commas into separate driver options.
+          OPTS=(
+            '--driver-opt=namespace=${{ inputs.namespace }}'
+            '--driver-opt=loadbalance=sticky'
+            '--driver-opt=replicas=${{ inputs.replicas }}'
+            '--driver-opt=requests.cpu=${{ inputs.requests_cpu }}'
+            '--driver-opt=requests.memory=${{ inputs.requests_memory }}'
+            '--driver-opt=limits.memory=${{ inputs.limits_memory }}'
+            "--driver-opt=\"nodeselector=kubernetes.io/arch=${arch},purpose=aiperf-build\""
+            '--driver-opt="tolerations=${{ inputs.tolerations }}"'
+          )
+          if $FIRST; then
+            docker buildx create --use --name "${{ inputs.builder_name }}" \
+              --driver kubernetes --platform "linux/${arch}" "${OPTS[@]}"
+            FIRST=false
+          else
+            docker buildx create --append --name "${{ inputs.builder_name }}" \
+              --driver kubernetes --platform "linux/${arch}" "${OPTS[@]}"
+          fi
+        done
+
+    - name: Bootstrap builder
+      shell: bash
+      run: |
+        for i in 1 2 3; do
+          if docker buildx inspect "${{ inputs.builder_name }}" --bootstrap; then
+            echo "Bootstrap succeeded on attempt $i"
+            break
+          fi
+          if [ "$i" -eq 3 ]; then
+            echo "::error::Bootstrap failed after 3 attempts"
+            exit 1
+          fi
+          echo "::warning::Bootstrap attempt $i failed, retrying in 10s..."
+          sleep 10
+        done
