@@ -65,90 +65,21 @@ permissions:
 jobs:
   # ============================================================================
   # PHASE 1: INIT
-  # Version strings are computed once and saved as a workflow artifact so that
-  # partial reruns use the same versions as the original run.
+  # Compute the nightly date once. GitHub Actions preserves outputs from
+  # previously-successful jobs across re-runs, so the date is automatically
+  # pinned if build-artifacts is retried on a subsequent day.
   # ============================================================================
 
   prepare-nightly:
     name: Prepare Nightly
     runs-on: ubuntu-latest
     outputs:
-      nightly_tag:    ${{ steps.version.outputs.nightly_tag }}
-      pep440_version: ${{ steps.version.outputs.pep440_version }}
-      wheel_filename: ${{ steps.version.outputs.wheel_filename }}
-      base_version:   ${{ steps.version.outputs.base_version }}
-      run_timestamp:  ${{ steps.version.outputs.run_timestamp }}
-      release:        ${{ steps.release.outputs.release }}
+      date:    ${{ steps.date.outputs.date }}
+      release: ${{ steps.release.outputs.release }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.ref || github.ref }}
-
-      - name: Restore version artifact from prior attempt
-        id: restore
-        uses: actions/download-artifact@v8
-        with:
-          name: nightly-version
-          path: .nightly-version/
-        continue-on-error: true
-
-      - name: Compute or restore version strings
-        id: version
-        run: |
-          set -euo pipefail
-
-          if [ -f ".nightly-version/version-info.env" ]; then
-            echo "Restoring version strings from prior run attempt."
-            # shellcheck source=/dev/null
-            source .nightly-version/version-info.env
-          else
-            TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
-            HUMAN_TS=$(date -u +%Y-%m-%d-%H%M%S)
-
-            BASE_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
-            if [[ ! "${BASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "::error::Cannot parse base version from pyproject.toml (got '${BASE_VERSION}')"
-              exit 1
-            fi
-
-            if [ "${{ inputs.publish_only }}" = "true" ]; then
-              PEP440_VERSION="${{ inputs.pep440_version }}"
-              if [ -z "${PEP440_VERSION}" ]; then
-                echo "::error::publish_only=true requires pep440_version input"
-                exit 1
-              fi
-              NIGHTLY_TAG="nightly-republish-${PEP440_VERSION}"
-            else
-              NIGHTLY_TAG="nightly-${HUMAN_TS}"
-              PEP440_VERSION="${BASE_VERSION}.dev${TIMESTAMP}"
-            fi
-
-            WHEEL_FILENAME="aiperf-${PEP440_VERSION}-py3-none-any.whl"
-          fi
-
-          echo "nightly_tag=${NIGHTLY_TAG}"         >> "$GITHUB_OUTPUT"
-          echo "pep440_version=${PEP440_VERSION}"   >> "$GITHUB_OUTPUT"
-          echo "wheel_filename=${WHEEL_FILENAME}"   >> "$GITHUB_OUTPUT"
-          echo "base_version=${BASE_VERSION}"       >> "$GITHUB_OUTPUT"
-          echo "run_timestamp=${TIMESTAMP:-reused}" >> "$GITHUB_OUTPUT"
-
-          mkdir -p .nightly-version
-          {
-            echo "NIGHTLY_TAG=${NIGHTLY_TAG}"
-            echo "PEP440_VERSION=${PEP440_VERSION}"
-            echo "WHEEL_FILENAME=${WHEEL_FILENAME}"
-            echo "BASE_VERSION=${BASE_VERSION}"
-            echo "TIMESTAMP=${TIMESTAMP:-reused}"
-          } > .nightly-version/version-info.env
-
-      - name: Save version artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: nightly-version
-          path: .nightly-version/version-info.env
-          overwrite: true
-          retention-days: 7
+      - name: Compute nightly date
+        id: date
+        run: echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
 
       - name: Compute effective release mode
         id: release
@@ -255,11 +186,14 @@ jobs:
   # instance profile. The automated-release gate is enforced at staging only.
   # ============================================================================
 
-  build-container:
-    name: Build Container
+  build-artifacts:
+    name: Build Artifacts
     needs: [prepare-nightly, pre-warm-builder]  # TODO: restore [prepare-nightly, pre-commit, unit-tests, integration-tests, gpu-e2e-tests, pre-warm-builder] once GPU runners are back
-    if: ${{ inputs.publish_only != 'true' }}
     runs-on: prod-aiperf-default-v1
+    outputs:
+      pep440_version: ${{ steps.version.outputs.pep440_version }}
+      nightly_tag:    ${{ steps.version.outputs.nightly_tag }}
+      wheel_filename: ${{ steps.version.outputs.wheel_filename }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -277,17 +211,36 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v8
 
+      - name: Compute version strings
+        id: version
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.publish_only }}" = "true" ]; then
+            PEP440_VERSION="${{ inputs.pep440_version }}"
+            if [ -z "${PEP440_VERSION}" ]; then
+              echo "::error::publish_only=true requires pep440_version input"
+              exit 1
+            fi
+          else
+            PEP440_VERSION=$(uv run python tools/version.py nightly --date "${{ needs.prepare-nightly.outputs.date }}")
+          fi
+          NIGHTLY_TAG=$(uv run python tools/version.py to-semver "${PEP440_VERSION}")
+          echo "pep440_version=${PEP440_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "nightly_tag=${NIGHTLY_TAG}"       >> "$GITHUB_OUTPUT"
+          echo "wheel_filename=aiperf-${PEP440_VERSION}-py3-none-any.whl" >> "$GITHUB_OUTPUT"
+
       - name: Patch version in pyproject.toml
-        uses: ./.github/actions/update-pyproject-version
-        with:
-          version: ${{ needs.prepare-nightly.outputs.pep440_version }}
+        if: ${{ inputs.publish_only != 'true' }}
+        run: uv run python tools/version.py set "${{ steps.version.outputs.pep440_version }}"
 
       - name: Bootstrap BuildKit
+        if: ${{ inputs.publish_only != 'true' }}
         uses: ./.github/actions/bootstrap-buildkit
         with:
           builder_name: ${{ env.BUILDER_NAME }}
 
       - name: Log in to ECR
+        if: ${{ inputs.publish_only != 'true' }}
         env:
           AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
@@ -297,10 +250,11 @@ jobs:
                 "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
 
       - name: Build and push multi-arch image to ECR
+        if: ${{ inputs.publish_only != 'true' }}
         env:
           AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-          NIGHTLY_TAG:        ${{ needs.prepare-nightly.outputs.nightly_tag }}
+          NIGHTLY_TAG:        ${{ steps.version.outputs.nightly_tag }}
         run: |
           set -euo pipefail
           REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
@@ -318,6 +272,7 @@ jobs:
           echo "Pushed ${REGISTRY}/aiperf:${NIGHTLY_TAG} — digest: ${DIGEST}"
 
       - name: Extract wheel
+        if: ${{ inputs.publish_only != 'true' }}
         run: |
           docker buildx build \
             --platform linux/amd64 \
@@ -326,8 +281,9 @@ jobs:
             .
 
       - name: Validate wheel
+        if: ${{ inputs.publish_only != 'true' }}
         env:
-          EXPECTED_VERSION: ${{ needs.prepare-nightly.outputs.pep440_version }}
+          EXPECTED_VERSION: ${{ steps.version.outputs.pep440_version }}
         run: |
           set -euo pipefail
           mapfile -t WHEELS < <(find wheel-out/dist/ -name "aiperf-*.whl" -type f)
@@ -347,15 +303,17 @@ jobs:
           .venv-check/bin/aiperf --help
 
       - name: Upload wheel to S3
+        if: ${{ inputs.publish_only != 'true' }}
         env:
           S3_BUCKET:      ${{ secrets.S3_CI_WHEELS_BUCKET }}
-          PEP440_VERSION: ${{ needs.prepare-nightly.outputs.pep440_version }}
+          PEP440_VERSION: ${{ steps.version.outputs.pep440_version }}
         run: |
           set -euo pipefail
           WHEEL=$(find wheel-out/dist/ -name "aiperf-*.whl" | head -1)
           aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/aiperf/nightly/${PEP440_VERSION}/" --sse AES256
 
       - name: Extract license artifacts
+        if: ${{ inputs.publish_only != 'true' }}
         run: |
           set -euo pipefail
           for ARCH in amd64 arm64; do
@@ -369,9 +327,10 @@ jobs:
           done
 
       - name: Upload license artifacts
+        if: ${{ inputs.publish_only != 'true' }}
         uses: actions/upload-artifact@v7
         with:
-          name: license-artifacts-${{ needs.prepare-nightly.outputs.nightly_tag }}
+          name: license-artifacts-${{ steps.version.outputs.nightly_tag }}
           path: license-artifacts/
 
   # ============================================================================
@@ -380,7 +339,7 @@ jobs:
 
   clean-k8s-builder:
     name: Clean K8s Builder
-    needs: [pre-warm-builder, build-container]
+    needs: [pre-warm-builder, build-artifacts]
     if: always()
     runs-on: prod-aiperf-default-v1
     steps:
@@ -405,7 +364,7 @@ jobs:
 
   create-nightly-tag:
     name: Create Nightly Tag
-    needs: [prepare-nightly, build-container]
+    needs: [prepare-nightly, build-artifacts]
     runs-on: ubuntu-latest
     if: ${{ inputs.publish_only != 'true' }}
     steps:
@@ -418,7 +377,7 @@ jobs:
 
       - name: Push nightly tag (idempotent)
         env:
-          NIGHTLY_TAG: ${{ needs.prepare-nightly.outputs.nightly_tag }}
+          NIGHTLY_TAG: ${{ needs.build-artifacts.outputs.nightly_tag }}
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
@@ -451,7 +410,7 @@ jobs:
 
   stage-nightly-container:
     name: Stage Container (ECR → NGC Staging)
-    needs: [prepare-nightly, create-nightly-tag]
+    needs: [prepare-nightly, build-artifacts, create-nightly-tag]
     runs-on: prod-aiperf-default-v1
     environment: automated-release
     if: ${{ inputs.publish_only != 'true' && needs.prepare-nightly.outputs.release == 'true' }}
@@ -494,7 +453,7 @@ jobs:
           AWS_ACCOUNT_ID:         ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION:     ${{ secrets.AWS_DEFAULT_REGION }}
           NGC_STAGING_IMAGE_BASE: ${{ secrets.NGC_STAGING_IMAGE_BASE }}
-          NIGHTLY_TAG:            ${{ needs.prepare-nightly.outputs.nightly_tag }}
+          NIGHTLY_TAG:            ${{ needs.build-artifacts.outputs.nightly_tag }}
         run: |
           set -euo pipefail
           ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
@@ -505,7 +464,7 @@ jobs:
 
   stage-nightly-wheel:
     name: Stage Wheel (S3 → Artifactory)
-    needs: [prepare-nightly, create-nightly-tag]
+    needs: [prepare-nightly, build-artifacts, create-nightly-tag]
     runs-on: prod-aiperf-default-v1
     environment: automated-release
     if: ${{ inputs.publish_only != 'true' && needs.prepare-nightly.outputs.release == 'true' }}
@@ -519,7 +478,7 @@ jobs:
           ARTIFACTORY_URL:   ${{ secrets.ARTIFACTORY_URL }}
           ARTIFACTORY_USER:  ${{ secrets.ARTIFACTORY_USER }}
           ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
-          PEP440_VERSION:    ${{ needs.prepare-nightly.outputs.pep440_version }}
+          PEP440_VERSION:    ${{ needs.build-artifacts.outputs.pep440_version }}
         run: |
           set -euo pipefail
           TMPDIR=$(mktemp -d)
@@ -551,7 +510,7 @@ jobs:
 
   trigger-gitlab-security-scan:
     name: Trigger GitLab Security Scan
-    needs: [prepare-nightly, stage-nightly-container, stage-nightly-wheel]
+    needs: [prepare-nightly, build-artifacts, stage-nightly-container, stage-nightly-wheel]
     runs-on:
       group: gitlab_ci_runners
     environment: automated-release
@@ -561,8 +520,8 @@ jobs:
         env:
           GITLAB_TRIGGER_TOKEN:   ${{ secrets.GITLAB_TRIGGER_TOKEN }}
           GITLAB_TRIGGER_URL:     ${{ secrets.GITLAB_PIPELINE_URL }}
-          NIGHTLY_TAG:            ${{ needs.prepare-nightly.outputs.nightly_tag }}
-          PEP440_VERSION:         ${{ needs.prepare-nightly.outputs.pep440_version }}
+          NIGHTLY_TAG:            ${{ needs.build-artifacts.outputs.nightly_tag }}
+          PEP440_VERSION:         ${{ needs.build-artifacts.outputs.pep440_version }}
           ARTIFACTORY_PYPI_URL:   ${{ secrets.ARTIFACTORY_PYPI_URL }}
         run: |
           set -euo pipefail
@@ -618,7 +577,7 @@ jobs:
       - unit-tests
       - integration-tests
       - gpu-e2e-tests
-      - build-container
+      - build-artifacts
       - clean-k8s-builder
       - create-nightly-tag
       - stage-nightly-container
@@ -629,8 +588,8 @@ jobs:
     steps:
       - name: Write pipeline summary
         env:
-          NIGHTLY_TAG:    ${{ needs.prepare-nightly.outputs.nightly_tag }}
-          PEP440_VERSION: ${{ needs.prepare-nightly.outputs.pep440_version }}
+          NIGHTLY_TAG:    ${{ needs.build-artifacts.outputs.nightly_tag }}
+          PEP440_VERSION: ${{ needs.build-artifacts.outputs.pep440_version }}
         run: |
           {
             echo "## Nightly Pipeline Summary"
@@ -656,7 +615,7 @@ jobs:
             echo "### Build + Upload"
             echo "| Job | Result |"
             echo "|-----|--------|"
-            echo "| build-container (→ ECR + S3) | ${{ needs.build-container.result }} |"
+            echo "| build-artifacts (→ ECR + S3) | ${{ needs.build-artifacts.result }} |"
             echo "| create-nightly-tag | ${{ needs.create-nightly-tag.result }} |"
             echo ""
             echo "### Stage + Scan"
@@ -670,7 +629,7 @@ jobs:
       - name: Notify on failure
         if: ${{ failure() }}
         env:
-          NIGHTLY_TAG:   ${{ needs.prepare-nightly.outputs.nightly_tag }}
+          NIGHTLY_TAG:   ${{ needs.build-artifacts.outputs.nightly_tag }}
           RUN_URL:       ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SLACK_WEBHOOK: ${{ secrets.NIGHTLY_SLACK_WEBHOOK }}
         run: |
