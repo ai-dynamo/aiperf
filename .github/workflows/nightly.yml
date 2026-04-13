@@ -407,8 +407,11 @@ jobs:
         with:
           version: ${{ needs.prepare-nightly.outputs.pep440_version }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Initialize aiperf builder
+        uses: ./.github/actions/init-aiperf-builder
+        with:
+          builder_name: ${{ env.BUILDER_NAME }}
+          arch: ${{ matrix.platform }}
 
       - name: Log in to ECR
         env:
@@ -423,23 +426,22 @@ jobs:
         env:
           AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-          PEP440_VERSION:     ${{ needs.prepare-nightly.outputs.pep440_version }}
+          NIGHTLY_TAG:        ${{ needs.prepare-nightly.outputs.nightly_tag }}
         run: |
           set -euo pipefail
           REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
           docker buildx build \
             --platform "${{ matrix.platform }}" \
             --target python-licenses \
-            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache" \
             --load \
-            -t "aiperf-licenses:${PEP440_VERSION}-${{ matrix.arch }}" \
+            -t "aiperf-licenses:${NIGHTLY_TAG}-${{ matrix.arch }}" \
             .
 
       - name: Extract license artifacts
         env:
-          PEP440_VERSION: ${{ needs.prepare-nightly.outputs.pep440_version }}
+          NIGHTLY_TAG: ${{ needs.prepare-nightly.outputs.nightly_tag }}
         run: |
-          docker create --name license-extract "aiperf-licenses:${PEP440_VERSION}-${{ matrix.arch }}"
+          docker create --name license-extract "aiperf-licenses:${NIGHTLY_TAG}-${{ matrix.arch }}"
           mkdir -p license-artifacts
           docker cp license-extract:/opt/licenses/python/. ./license-artifacts/
           docker rm license-extract
@@ -449,6 +451,10 @@ jobs:
         with:
           name: license-artifacts-${{ needs.prepare-nightly.outputs.pep440_version }}-${{ matrix.arch }}
           path: license-artifacts/
+
+      - name: Builder cleanup
+        if: always()
+        run: docker buildx rm ${{ env.BUILDER_NAME }} || true
 
   # ============================================================================
   # PHASE 4: TAG
