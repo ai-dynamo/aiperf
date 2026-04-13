@@ -27,11 +27,15 @@ def main() -> None:
 
     sub.add_parser("current", help="Print base version from pyproject.toml")
 
-    p_dev = sub.add_parser("dev", help="Print PEP 440 or OCI dev version from git state")
+    p_dev = sub.add_parser(
+        "dev", help="Print PEP 440 or OCI dev version from git state"
+    )
     p_dev.add_argument("--container", action="store_true", help="Emit OCI-safe semver")
 
     p_nightly = sub.add_parser("nightly", help="Print nightly alpha version")
-    p_nightly.add_argument("--container", action="store_true", help="Emit OCI-safe semver")
+    p_nightly.add_argument(
+        "--container", action="store_true", help="Emit OCI-safe semver"
+    )
     p_nightly.add_argument(
         "--date",
         metavar="YYYYMMDD",
@@ -41,7 +45,9 @@ def main() -> None:
     p_semver = sub.add_parser("to-semver", help="Convert PEP 440 to OCI-safe semver")
     p_semver.add_argument("pep440", help="PEP 440 version string to convert")
 
-    p_set = sub.add_parser("set", help="Write a version string into pyproject.toml (no commit, no tag)")
+    p_set = sub.add_parser(
+        "set", help="Write a version string into pyproject.toml (no commit, no tag)"
+    )
     p_set.add_argument("version", help="PEP 440 version string to write")
 
     args = parser.parse_args()

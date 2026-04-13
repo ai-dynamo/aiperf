@@ -104,7 +104,9 @@ class AiperfVersionProvider(VersionProvider):
                 ver += ".dirty"
         return ver
 
-    def nightly_version(self, *, container: bool = False, date: str | None = None) -> str:
+    def nightly_version(
+        self, *, container: bool = False, date: str | None = None
+    ) -> str:
         """Compute a nightly alpha version string using a calver date.
 
         PEP 440:    0.6.0a20260403
