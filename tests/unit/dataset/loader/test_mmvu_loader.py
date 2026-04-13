@@ -63,6 +63,17 @@ class TestMMVUFormatPrompt:
         prompt = MMVUDatasetLoader._format_prompt(row)
         assert prompt == "A.Yes B.No"
 
+    def test_none_question_does_not_produce_none_string(self):
+        row = {"question": None, "choices": {"A": "Yes", "B": "No"}}
+        prompt = MMVUDatasetLoader._format_prompt(row)
+        assert "None" not in prompt
+        assert prompt == "A.Yes B.No"
+
+    def test_whitespace_only_question_treated_as_empty(self):
+        row = {"question": "   ", "choices": {"A": "Yes", "B": "No"}}
+        prompt = MMVUDatasetLoader._format_prompt(row)
+        assert prompt == "A.Yes B.No"
+
 
 @pytest.mark.asyncio
 class TestMMVUConvertToConversations:

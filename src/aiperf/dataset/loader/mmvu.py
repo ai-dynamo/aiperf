@@ -36,11 +36,13 @@ class MMVUDatasetLoader(BaseHFDatasetLoader):
     @staticmethod
     def _format_prompt(row: dict[str, Any]) -> str:
         """Build prompt from question and choices, matching vLLM benchmark format."""
-        question = row.get("question", "")
+        question = (row.get("question") or "").strip()
         choices = row.get("choices", {})
         if isinstance(choices, dict):
             choices_str = " ".join(f"{k}.{v}" for k, v in choices.items() if v)
-            return f"{question} {choices_str}".strip() if choices_str else question
+            if question and choices_str:
+                return f"{question} {choices_str}"
+            return question or choices_str
         return question
 
     async def convert_to_conversations(
