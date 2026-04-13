@@ -369,6 +369,30 @@ class Tokenizer:
         self._require_init()
         return self._tokenizer.decode(token_ids, **{**self._decode_args, **kwargs})
 
+    def apply_chat_template(
+        self,
+        messages: list[dict],
+        tokenize: bool = False,
+        add_generation_prompt: bool = True,
+    ) -> str:
+        """Apply the model's chat template to a list of messages.
+
+        Converts an OpenAI-compatible message array into a formatted string
+        using the model's chat template (e.g., ChatML, Llama format).
+
+        Args:
+            messages: List of message dicts with 'role' and 'content' keys.
+            tokenize: Whether to return token IDs instead of string.
+            add_generation_prompt: Whether to append the generation prompt.
+
+        Returns:
+            Formatted string with the chat template applied.
+        """
+        self._require_init()
+        return self._tokenizer.apply_chat_template(
+            messages, tokenize=tokenize, add_generation_prompt=add_generation_prompt
+        )
+
     @property
     def resolved_name(self) -> str | None:
         """The resolved model name used to load this tokenizer."""
