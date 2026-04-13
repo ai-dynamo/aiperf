@@ -149,6 +149,8 @@ navigation:
     path: benchmark-modes/timing-modes-reference.md
   - page: Trace Replay with Mooncake Traces
     path: benchmark-modes/trace-replay.md
+  - page: Baseten Trace Replay
+    path: tutorials/baseten-trace.md
 
 - section: Accuracy
   collapsed: true

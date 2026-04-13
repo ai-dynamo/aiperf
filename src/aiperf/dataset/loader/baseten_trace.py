@@ -1,0 +1,214 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+from __future__ import annotations
+
+from collections import Counter, defaultdict
+from pathlib import Path
+from typing import Any
+
+import pyarrow.parquet as pq
+
+from aiperf.common import random_generator as rng
+from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
+from aiperf.dataset.loader.models import BasetenTrace
+
+_REQUIRED_COLUMNS = {
+    "timestamp_start_unix_ms",
+    "prompt",
+    "input_tokens",
+    "output_tokens",
+}
+
+
+class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
+    """Loader for Baseten completion traces exported as Parquet."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._session_sample_ratio = self.user_config.input.trace_session_sample_ratio
+        self._rng = rng.derive("dataset.loader.baseten_trace.session_sampling")
+
+    @classmethod
+    def can_load(
+        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
+    ) -> bool:
+        if filename is None or Path(filename).suffix.lower() != ".parquet":
+            return False
+
+        if data is not None:
+            return _REQUIRED_COLUMNS.issubset(data.keys())
+
+        try:
+            schema = pq.read_schema(filename)
+        except Exception:
+            return False
+
+        return _REQUIRED_COLUMNS.issubset(schema.names)
+
+    def _parse_trace(self, line: str) -> BasetenTrace:
+        raise NotImplementedError("BasetenTraceDatasetLoader reads Parquet, not JSONL.")
+
+    def _preprocess_trace(self, trace: BasetenTrace) -> None:
+        trace.timestamp = int(trace.timestamp_start_unix_ms)
+        trace.input_length = int(trace.input_tokens)
+        trace.output_length = int(trace.output_tokens)
+        trace.text_input = trace.prompt
+        trace.hash_ids = list(trace.total_hashes or [])
+        trace.request_body = {"min_tokens": trace.output_length}
+        if trace.hash_ids:
+            trace.request_body["hash_ids"] = trace.hash_ids
+        if trace.block_size is not None:
+            trace.request_body["block_size"] = trace.block_size
+
+    def _group_traces(self, items: list[BasetenTrace]) -> dict[str, list[BasetenTrace]]:
+        if not items:
+            return {}
+
+        session_key = self._choose_session_key(items)
+        self.info(f"Using Baseten trace session key: {session_key}")
+
+        groups: dict[str, list[BasetenTrace]] = defaultdict(list)
+        for trace in items:
+            if session_key == "provided_session_id" and trace.provided_session_id is not None:
+                session_id = trace.provided_session_id
+            elif session_key == "poor_man_session_id" and trace.poor_man_session_id is not None:
+                session_id = str(trace.poor_man_session_id)
+            elif trace.provided_session_id is not None:
+                session_id = trace.provided_session_id
+            elif trace.poor_man_session_id is not None:
+                session_id = str(trace.poor_man_session_id)
+            else:
+                session_id = self.session_id_generator.next()
+            groups[session_id].append(trace)
+
+        for traces in groups.values():
+            traces.sort(key=lambda trace: int(trace.timestamp or 0))
+
+        ordered_groups = self._sample_and_order_groups(groups)
+        return ordered_groups
+
+    def _sample_and_order_groups(
+        self, groups: dict[str, list[BasetenTrace]]
+    ) -> dict[str, list[BasetenTrace]]:
+        session_entries = [
+            (
+                min(int(trace.timestamp or 0) for trace in traces),
+                session_id,
+                traces,
+            )
+            for session_id, traces in groups.items()
+            if traces
+        ]
+
+        session_entries.sort(key=lambda item: (item[0], item[1]))
+
+        if self._session_sample_ratio is not None and self._session_sample_ratio < 1.0:
+            original_entries = list(session_entries)
+            original_count = len(original_entries)
+            session_entries = [
+                entry
+                for entry in original_entries
+                if self._rng.uniform(0.0, 1.0) < self._session_sample_ratio
+            ]
+            if not session_entries and original_count > 0:
+                # Avoid turning a valid trace replay into an empty dataset for very small ratios.
+                session_entries = [self._rng.choice(original_entries)]
+            self.info(
+                f"Sampled {len(session_entries):,} of {original_count:,} sessions "
+                f"with trace_session_sample_ratio={self._session_sample_ratio}"
+            )
+
+        return {session_id: traces for _, session_id, traces in session_entries}
+
+    def load_dataset(self) -> dict[str, list[BasetenTrace]]:
+        self._skipped_traces = 0
+        self._skipped_max_isl = 0
+        self._capped_max_osl = 0
+
+        table = pq.read_table(self.filename)
+        items: list[BasetenTrace] = []
+
+        for row in table.to_pylist():
+            if "__version__" in row and "dataset_version" not in row:
+                row["dataset_version"] = row.pop("__version__")
+
+            trace = BasetenTrace.model_validate(row)
+            self._preprocess_trace(trace)
+
+            if not self._filter_and_cap_trace(trace):
+                continue
+
+            items.append(trace)
+
+        if items:
+            min_timestamp = min(int(trace.timestamp or 0) for trace in items)
+            for trace in items:
+                trace.timestamp = int(trace.timestamp or 0) - min_timestamp
+
+        self._log_filtering_summary()
+        data = self._group_traces(items)
+        self.debug(
+            lambda: (
+                f"Loaded {sum(len(v) for v in data.values()):,} Baseten traces "
+                f"across {len(data):,} sessions from {self.filename}"
+            )
+        )
+        return data
+
+    def _choose_session_key(self, items: list[BasetenTrace]) -> str:
+        provided_counts = Counter(
+            trace.provided_session_id
+            for trace in items
+            if trace.provided_session_id is not None
+        )
+        poor_counts = Counter(
+            trace.poor_man_session_id
+            for trace in items
+            if trace.poor_man_session_id is not None
+        )
+
+        if any(count > 1 for count in provided_counts.values()):
+            return "provided_session_id"
+        if any(count > 1 for count in poor_counts.values()):
+            return "poor_man_session_id"
+        if provided_counts:
+            return "provided_session_id"
+        if poor_counts:
+            return "poor_man_session_id"
+        return "generated"
+
+    def _synthesis_exclude_fields(self) -> frozenset[str]:
+        return frozenset(
+            {
+                "duration_e2e_ms",
+                "duration_ttft_ms",
+                "request_canceled",
+                "cached_tokens_reference",
+                "model_name",
+                "org_id",
+                "block_size",
+                "features",
+                "speculation_ratio",
+                "output_text",
+                "dataset_version",
+                "total_hashes_len",
+                "provided_session_id",
+                "poor_man_session_id",
+                "request_body",
+                "prompt",
+                "text_input",
+                "total_hashes",
+            }
+        )
+
+    def _reconstruct_traces(
+        self, originals: list[BasetenTrace], synth_dicts: list[dict[str, Any]]
+    ) -> list[BasetenTrace]:
+        result: list[BasetenTrace] = []
+        for i, synth_dict in enumerate(synth_dicts):
+            original = originals[i] if i < len(originals) else originals[-1]
+            merged = original.model_dump()
+            merged.update(synth_dict)
+            result.append(BasetenTrace.model_validate(merged))
+        return result

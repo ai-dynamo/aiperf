@@ -198,6 +198,7 @@ class InputConfig(BaseConfig):
         Field(
             description="Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. "
             "Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), "
+            "Parquet for `baseten_trace`, "
             "directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.",
         ),
         BeforeValidator(parse_file),
@@ -265,6 +266,22 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.FIXED_SCHEDULE_END_OFFSET
 
+    trace_session_sample_ratio: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0.0,
+            le=1.0,
+            description="Optional fraction of trace sessions to keep for replay. Applied at the whole-session level after rows are grouped into sessions, "
+            "preserving multi-turn integrity. Useful for replaying a live 10% slice of a large production trace. "
+            "Sampling is deterministic when `--random-seed` is set.",
+        ),
+        CLIParameter(
+            name=("--trace-session-sample-ratio",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.TRACE_SESSION_SAMPLE_RATIO
+
     public_dataset: Annotated[
         PublicDatasetType | None,
         Field(
@@ -297,7 +314,7 @@ class InputConfig(BaseConfig):
         Field(
             description="Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. "
             "Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), "
-            "`mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; "
+            "`mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; "
             "when using `random_pool`, `--conversation-num` defaults to 100 if not specified; "
             "batch sizes > 1 sample each modality independently from a flat pool and do not preserve "
             "per-entry associations — use `single_turn` if paired modalities must stay together). "

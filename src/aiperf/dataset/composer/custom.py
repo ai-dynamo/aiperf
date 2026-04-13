@@ -92,7 +92,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
                         continue
                     try:
                         data = load_json_str(line)
-                    except orjson.JSONDecodeError:
+                    except (orjson.JSONDecodeError, UnicodeDecodeError):
                         # Non-JSON file (e.g. CSV) — fall back to filename-based detection
                         return self._infer_type(data=None, filename=file_path)
                     return self._infer_type(data=data, filename=file_path)

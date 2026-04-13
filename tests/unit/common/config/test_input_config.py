@@ -38,6 +38,7 @@ def test_input_config_defaults():
     assert config.file == InputDefaults.FILE
     assert config.random_seed == InputDefaults.RANDOM_SEED
     assert config.custom_dataset_type == InputDefaults.CUSTOM_DATASET_TYPE
+    assert config.trace_session_sample_ratio == InputDefaults.TRACE_SESSION_SAMPLE_RATIO
     assert config.goodput == InputDefaults.GOODPUT
     assert isinstance(config.audio, AudioConfig)
     assert isinstance(config.image, ImageConfig)
@@ -66,6 +67,17 @@ def test_input_config_custom_values():
         assert config.file == PosixPath(temp_file.name)
         assert config.random_seed == 42
         assert config.custom_dataset_type == CustomDatasetType.MULTI_TURN
+
+
+def test_input_config_trace_session_sample_ratio():
+    config = InputConfig(trace_session_sample_ratio=0.1)
+    assert config.trace_session_sample_ratio == 0.1
+
+
+@pytest.mark.parametrize("ratio", [0.0, -0.1, 1.1])
+def test_input_config_trace_session_sample_ratio_validation(ratio):
+    with pytest.raises(ValidationError):
+        InputConfig(trace_session_sample_ratio=ratio)
 
 
 def test_input_config_file_validation():

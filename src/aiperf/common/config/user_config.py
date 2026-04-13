@@ -40,6 +40,30 @@ from aiperf.plugin.enums import (
 _logger = AIPerfLogger(__name__)
 
 
+def _is_parquet_file(path: str | Path | None) -> bool:
+    return path is not None and Path(path).suffix.lower() == ".parquet"
+
+
+def _read_first_parquet_row(path: str | Path) -> dict[str, Any] | None:
+    import pyarrow.parquet as pq
+
+    parquet_file = pq.ParquetFile(path)
+    if parquet_file.metadata.num_rows == 0:
+        return None
+
+    first_batch = next(parquet_file.iter_batches(batch_size=1), None)
+    if first_batch is None or first_batch.num_rows == 0:
+        return None
+
+    return first_batch.to_pylist()[0]
+
+
+def _count_parquet_rows(path: str | Path) -> int:
+    import pyarrow.parquet as pq
+
+    return pq.read_metadata(path).num_rows
+
+
 def _is_localhost_url(url: str) -> bool:
     """Check if a URL points to localhost."""
     from urllib.parse import urlparse
@@ -404,6 +428,14 @@ class UserConfig(BaseConfig):
             return False
 
         try:
+            if _is_parquet_file(self.input.file):
+                row = _read_first_parquet_row(self.input.file)
+                return (
+                    row is not None
+                    and "timestamp_start_unix_ms" in row
+                    and row["timestamp_start_unix_ms"] is not None
+                )
+
             with open(self.input.file) as f:
                 for line in f:
                     if not (line := line.strip()):
@@ -413,7 +445,7 @@ class UserConfig(BaseConfig):
                         return "timestamp" in data and data["timestamp"] is not None
                     except (JSONDecodeError, KeyError):
                         continue
-        except (OSError, FileNotFoundError):
+        except (OSError, FileNotFoundError, ImportError):
             _logger.warning(
                 f"Could not read dataset file {self.input.file} to check for timestamps"
             )
@@ -439,9 +471,13 @@ class UserConfig(BaseConfig):
                     with open(jsonl_file) as f:
                         count += sum(1 for line in f if line.strip())
                 return count
+
+            if _is_parquet_file(path):
+                return _count_parquet_rows(path)
+
             with open(path) as f:
                 return sum(1 for line in f if line.strip())
-        except (OSError, FileNotFoundError) as e:
+        except (OSError, FileNotFoundError, ImportError) as e:
             _logger.error(f"Cannot read dataset file {path}: {e}")
             return 0
 

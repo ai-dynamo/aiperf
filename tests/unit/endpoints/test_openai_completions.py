@@ -69,6 +69,28 @@ class TestCompletionsEndpoint:
         }
         assert payload == expected_payload
 
+    def test_format_payload_uses_latest_turn_for_multi_turn_sessions(self, model_endpoint):
+        endpoint = CompletionsEndpoint(model_endpoint)
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[
+                create_request_info(model_endpoint=model_endpoint, texts=["first"]).turns[0],
+                create_request_info(
+                    model_endpoint=model_endpoint,
+                    texts=["second"],
+                    max_tokens=33,
+                    request_body={"hash_ids": [1, 2], "block_size": 64},
+                ).turns[0],
+            ],
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["prompt"] == ["second"]
+        assert payload["max_tokens"] == 33
+        assert payload["hash_ids"] == [1, 2]
+        assert payload["block_size"] == 64
+
     @pytest.mark.parametrize(
         "streaming,use_server_token_count,user_extra,expected_stream_options",
         [

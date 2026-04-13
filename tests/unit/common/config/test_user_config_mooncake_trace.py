@@ -11,6 +11,9 @@ This module tests:
 
 from unittest.mock import mock_open, patch
 
+import pyarrow as pa
+import pyarrow.parquet as pq
+
 from aiperf.common.config import (
     EndpointConfig,
     InputConfig,
@@ -186,6 +189,37 @@ class TestMooncakeTraceRequestCount:
             count = config._count_dataset_entries()
             assert count == 3  # 3 non-empty/non-whitespace lines
 
+    def test_trace_parquet_uses_row_count(self, tmp_path):
+        parquet_path = tmp_path / "trace.parquet"
+        pq.write_table(
+            pa.Table.from_pylist(
+                [
+                    {
+                        "timestamp_start_unix_ms": 1000,
+                        "prompt": "a",
+                        "input_tokens": 10,
+                        "output_tokens": 4,
+                    },
+                    {
+                        "timestamp_start_unix_ms": 2000,
+                        "prompt": "b",
+                        "input_tokens": 11,
+                        "output_tokens": 5,
+                    },
+                ]
+            ),
+            parquet_path,
+        )
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                file=str(parquet_path),
+                custom_dataset_type=CustomDatasetType.BASETEN_TRACE,
+            ),
+        )
+
+        assert config._count_dataset_entries() == 2
+
 
 class TestTraceDatasetTimingDetection:
     """Test _should_use_fixed_schedule_for_trace_dataset() for automatic timing detection."""
@@ -235,6 +269,33 @@ class TestTraceDatasetTimingDetection:
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
             result = config._should_use_fixed_schedule_for_trace_dataset()
             assert result is False
+
+    def test_baseten_trace_parquet_with_timestamps_enables_fixed_schedule(
+        self, tmp_path
+    ):
+        parquet_path = tmp_path / "trace.parquet"
+        pq.write_table(
+            pa.Table.from_pylist(
+                [
+                    {
+                        "timestamp_start_unix_ms": 1000,
+                        "prompt": "a",
+                        "input_tokens": 10,
+                        "output_tokens": 4,
+                    }
+                ]
+            ),
+            parquet_path,
+        )
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                file=str(parquet_path),
+                custom_dataset_type=CustomDatasetType.BASETEN_TRACE,
+            ),
+        )
+
+        assert config._should_use_fixed_schedule_for_trace_dataset() is True
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)

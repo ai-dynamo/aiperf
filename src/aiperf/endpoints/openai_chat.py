@@ -66,6 +66,9 @@ class ChatEndpoint(BaseEndpoint):
             )
             payload[token_field] = turns[-1].max_tokens
 
+        if turns[-1].request_body:
+            payload.update(turns[-1].request_body)
+
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
 

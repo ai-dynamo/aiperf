@@ -346,6 +346,69 @@ class BailianTrace(AIPerfBaseModel):
     )
 
 
+class BasetenTrace(AIPerfBaseModel):
+    """Schema for Baseten completion traces exported as Parquet.
+
+    Each row represents one completion request with its recorded prompt, timing,
+    and optional hash-based cache metadata. Session replay is built by grouping
+    rows on a session key and sorting by ``timestamp_start_unix_ms``.
+    """
+
+    timestamp_start_unix_ms: int = Field(
+        description="Recorded request start timestamp in milliseconds. Used in"
+    )
+    prompt: str = Field(description="Literal completion prompt sent to the server.")
+    input_tokens: int = Field(description="Recorded prompt token count.")
+    output_tokens: int = Field(description="Recorded completion token count.")
+    total_hashes: list[int] = Field(
+        default_factory=list,
+        description="Optional KV-cache block hashes aligned to block_size.",
+    )
+    provided_session_id: str | None = Field(
+        default=None,
+        description="Session identifier exported directly from the source trace.",
+    )
+    poor_man_session_id: int | None = Field(
+        default=None,
+        description="Fallback derived session identifier when provided_session_id is not useful.",
+    )
+    duration_e2e_ms: int | None = Field(default=None)
+    duration_ttft_ms: int | None = Field(default=None)
+    cached_tokens_reference: int | None = Field(default=None)
+    model_name: str | None = Field(default=None)
+    block_size: int | None = Field(default=None)
+    features: str | None = Field(default=None)
+    speculation_ratio: float | None = Field(default=None)
+    output_text: str | None = Field(default=None)
+    dataset_version: str | None = Field(default=None, alias="__version__")
+    total_hashes_len: int | None = Field(default=None)
+
+    timestamp: int | float | None = Field(
+        default=None,
+        description="Normalized timestamp in milliseconds since the first event in the file.",
+    )
+    input_length: int | None = Field(
+        default=None,
+        description="Alias field used by shared trace filtering logic.",
+    )
+    output_length: int | None = Field(
+        default=None,
+        description="Alias field used by shared trace filtering logic.",
+    )
+    text_input: str | None = Field(
+        default=None,
+        description="Alias field used by shared trace conversation conversion logic.",
+    )
+    hash_ids: list[int] | None = Field(
+        default=None,
+        description="Alias field used by optional per-turn request-body forwarding.",
+    )
+    request_body: dict[str, Any] | None = Field(
+        default=None,
+        description="Optional per-row payload fields to merge into the outgoing request.",
+    )
+
+
 class BurstGPTTrace(AIPerfBaseModel):
     """Defines the schema for BurstGPT real-world LLM traffic trace data.
 
@@ -425,6 +488,7 @@ CustomDatasetT = TypeVar(
     | RandomPool
     | MooncakeTrace
     | BailianTrace
+    | BasetenTrace
     | BurstGPTTrace
     | SageMakerDataCaptureTrace,
 )

@@ -238,6 +238,7 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
             delay=getattr(trace, "delay", None),
             texts=[Text(name="text", contents=[prompt])],
             max_tokens=getattr(trace, "output_length", None),
+            request_body=getattr(trace, "request_body", None),
         )
 
     def convert_to_conversations(

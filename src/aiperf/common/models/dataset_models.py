@@ -136,6 +136,11 @@ class Turn(AIPerfBaseModel):
     max_tokens: int | None = Field(
         default=None, description="Maximum number of tokens to generate for this turn."
     )
+    request_body: dict[str, Any] | None = Field(
+        default=None,
+        description="Optional per-turn request body overrides merged into the outgoing payload. "
+        "Useful for trace datasets that carry row-specific inference fields.",
+    )
     raw_messages: list[dict[str, Any]] | None = Field(
         default=None,
         description="Pre-formatted OpenAI-compatible messages array. "
@@ -192,6 +197,7 @@ class Turn(AIPerfBaseModel):
             timestamp=self.timestamp,
             delay=self.delay,
             max_tokens=self.max_tokens,
+            request_body=dict(self.request_body) if self.request_body is not None else None,
             raw_messages=list(self.raw_messages)
             if self.raw_messages is not None
             else None,
