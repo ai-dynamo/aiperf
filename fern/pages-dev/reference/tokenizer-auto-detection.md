@@ -17,12 +17,27 @@ AIPerf resolves tokenizer names **before** spawning services via lightweight Hub
 
 Pre-flight is skipped when `--use-server-token-count` is set with a non-synthetic dataset, or when the endpoint type doesn't require tokenization.
 
+## Built-in Tokenizer
+
+Pass `--tokenizer builtin` to use a zero-network-access tokenizer backed by [tiktoken](https://github.com/openai/tiktoken) with the `o200k_base` encoding (GPT-4o / o1 / o3, 200k vocabulary). This skips all HuggingFace Hub alias resolution and downloads.
+
+Use this when you don't need a model-specific tokenizer and just want token counts for performance metrics. The encoding data is downloaded once on first use and cached locally by tiktoken -- subsequent runs require no network access.
+
+```bash
+aiperf profile --tokenizer builtin ...
+```
+
+## Automatic Cache Detection
+
+When a HuggingFace tokenizer has been previously downloaded, AIPerf detects it in the local HF cache and loads directly without any network calls. This applies to both alias resolution and tokenizer loading -- no `model_info()` API call, no ETag update check. First run downloads as normal; every subsequent run is fully offline.
+
 ## Alias Resolution
 
 1. **Local paths**: Absolute, `./`, `../`, or existing directories are used as-is.
-2. **Offline mode**: If `HF_HUB_OFFLINE` or `TRANSFORMERS_OFFLINE` is set, names are used as-is.
-3. **Direct lookup**: `model_info()` API call. Returns canonical `model.id` if found.
-4. **Search fallback**: If direct lookup fails (`RepositoryNotFoundError` or `HfHubHTTPError`), searches with `list_models(search=name, limit=50)`:
+2. **Cached locally**: If the model directory exists in the HF cache, the name is used as-is (no network).
+3. **Offline mode**: If `HF_HUB_OFFLINE` or `TRANSFORMERS_OFFLINE` is set, names are used as-is.
+4. **Direct lookup**: `model_info()` API call. Returns canonical `model.id` if found.
+5. **Search fallback**: If direct lookup fails (`RepositoryNotFoundError` or `HfHubHTTPError`), searches with `list_models(search=name, limit=50)`:
    - **Exact match**: Result ID matches input (case-insensitive).
    - **Suffix match**: Result ends with `/<name>`, picks highest downloads.
    - **Ambiguous**: No match found, returns top 5 suggestions.
@@ -103,7 +118,7 @@ If a tokenizer fails during service initialization, AIPerf walks the `__cause__`
 
 | Option | Description |
 |---|---|
-| `--tokenizer <name-or-path>` | Explicit tokenizer name or local path. If omitted, model names are used. |
+| `--tokenizer <name-or-path>` | Explicit tokenizer name, local path, or `builtin` for tiktoken. If omitted, model names are used. |
 | `--tokenizer-revision <rev>` | Git revision for the tokenizer repo. Default: `main`. |
 | `--tokenizer-trust-remote-code` | Allow execution of custom tokenizer code from the repo. |
 | `--use-server-token-count` | Skip client-side tokenization. Skips pre-flight validation with non-synthetic data. |
