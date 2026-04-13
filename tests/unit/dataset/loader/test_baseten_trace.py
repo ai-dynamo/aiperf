@@ -218,6 +218,61 @@ class TestBasetenTraceDatasetLoader:
         kept_session = next(iter(dataset.values()))
         assert len(kept_session) == 2
 
+    def test_trace_session_sampling_falls_back_to_poor_man_session_id(
+        self, tmp_path: Path
+    ):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "s1-t1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-1",
+                    "poor_man_session_id": 100,
+                },
+                {
+                    "timestamp_start_unix_ms": 200,
+                    "prompt": "s1-t2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-2",
+                    "poor_man_session_id": 100,
+                },
+                {
+                    "timestamp_start_unix_ms": 300,
+                    "prompt": "s2-t1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-3",
+                    "poor_man_session_id": 200,
+                },
+                {
+                    "timestamp_start_unix_ms": 400,
+                    "prompt": "s2-t2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-4",
+                    "poor_man_session_id": 200,
+                },
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            user_config=UserConfig(
+                endpoint=EndpointConfig(model_names=["test-model"]),
+                input=InputConfig(trace_session_sample_ratio=0.01, random_seed=7),
+            ),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        assert len(dataset) == 1
+        kept_session = next(iter(dataset.values()))
+        assert len(kept_session) == 2
+
 
 class TestBasetenTraceModel:
     def test_model_maps_alias_fields(self):
