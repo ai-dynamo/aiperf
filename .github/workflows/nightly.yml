@@ -81,13 +81,13 @@ jobs:
       release:        ${{ steps.release.outputs.release }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Restore version artifact from prior attempt
         id: restore
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: nightly-version
           path: .nightly-version/
@@ -143,7 +143,7 @@ jobs:
           } > .nightly-version/version-info.env
 
       - name: Save version artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-version
           path: .nightly-version/version-info.env
@@ -168,7 +168,7 @@ jobs:
     if: ${{ inputs.publish_only != 'true' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.ref }}
 
@@ -190,12 +190,12 @@ jobs:
     if: ${{ inputs.publish_only != 'true' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -234,7 +234,7 @@ jobs:
     if: false  # TODO: restore to ${{ inputs.publish_only != 'true' }} once GPU runners are healthy
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.ref }}
 
@@ -262,7 +262,7 @@ jobs:
     runs-on: prod-aiperf-default-v1
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.ref }}
 
@@ -275,7 +275,7 @@ jobs:
           fi
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8
 
       - name: Patch version in pyproject.toml
         uses: ./.github/actions/update-pyproject-version
@@ -369,7 +369,7 @@ jobs:
           done
 
       - name: Upload license artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: license-artifacts-${{ needs.prepare-nightly.outputs.nightly_tag }}
           path: license-artifacts/
@@ -385,7 +385,7 @@ jobs:
     runs-on: prod-aiperf-default-v1
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.ref }}
 
@@ -410,7 +410,7 @@ jobs:
     if: ${{ inputs.publish_only != 'true' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.NIGHTLY_GITHUB_PAT || github.token }}
@@ -511,7 +511,7 @@ jobs:
     if: ${{ inputs.publish_only != 'true' && needs.prepare-nightly.outputs.release == 'true' }}
     steps:
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8
 
       - name: Upload wheel from S3 to Artifactory
         env:

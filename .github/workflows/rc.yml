@@ -69,7 +69,7 @@ jobs:
       wheel_filename: ${{ steps.rc.outputs.wheel_filename }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.ref_name }}
           fetch-depth: 0
@@ -125,10 +125,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -162,7 +162,7 @@ jobs:
     runs-on: prod-aiperf-tester-amd-gpu-v1
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.ref_name }}
 
@@ -190,10 +190,10 @@ jobs:
     runs-on: prod-aiperf-default-v1
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8
 
       - name: Patch version for RC
         uses: ./.github/actions/update-pyproject-version
@@ -289,7 +289,7 @@ jobs:
           done
 
       - name: Upload license artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: license-artifacts-${{ needs.prepare-release.outputs.rc_tag }}
           path: license-artifacts/
@@ -333,7 +333,7 @@ jobs:
     environment: automated-release
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.RC_GITHUB_PAT }}
@@ -425,7 +425,7 @@ jobs:
     environment: automated-release
     steps:
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8
 
       - name: Copy wheel from S3 to Artifactory
         env:
