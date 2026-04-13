@@ -82,21 +82,34 @@ FROM base AS env-builder
 
 WORKDIR /workspace
 
-# Build ffmpeg from source with libvpx
-RUN apt-get update -y && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+# Install build dependencies and collect copyright files for newly installed packages
+RUN dpkg-query -W -f='${Package}\n' | sort > /tmp/dpkg-before.txt \
+    && apt-get update -y \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential \
         nasm \
         pkg-config \
         wget \
         yasm \
         libvpx-dev \
+        zlib1g-dev \
+    && dpkg-query -W -f='${Package}\n' | sort \
+    | comm -13 /tmp/dpkg-before.txt - > /tmp/dpkg-new.txt \
+    && mkdir -p /opt/licenses/dpkg \
+    && while read pkg; do \
+        if [ -f "/usr/share/doc/${pkg}/copyright" ]; then \
+            cp "/usr/share/doc/${pkg}/copyright" "/opt/licenses/dpkg/${pkg}.copyright"; \
+        fi; \
+    done < /tmp/dpkg-new.txt \
+    && cp /usr/share/doc/bash/copyright /opt/licenses/dpkg/bash.copyright 2>/dev/null || true \
+    && rm -f /tmp/dpkg-before.txt /tmp/dpkg-new.txt \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and build ffmpeg with libvpx (VP9 codec)
-RUN wget https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz \
-    && tar -xf ffmpeg-8.0.1.tar.xz \
-    && cd ffmpeg-8.0.1 \
+ARG FFMPEG_VERSION=8.0.1
+RUN wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
+    && tar -xf ffmpeg-${FFMPEG_VERSION}.tar.xz \
+    && cd ffmpeg-${FFMPEG_VERSION} \
     && ./configure \
         --prefix=/opt/ffmpeg \
         --disable-gpl \
@@ -112,7 +125,10 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz \
     && make -j$(nproc) \
     && make install \
     && cd .. \
-    && rm -rf ffmpeg-8.0.1 ffmpeg-8.0.1.tar.xz \
+    && mkdir -p /opt/licenses/ffmpeg \
+    && cp ffmpeg-${FFMPEG_VERSION}/COPYING.LGPLv2.1 /opt/licenses/ffmpeg/ \
+    && cp ffmpeg-${FFMPEG_VERSION}/LICENSE.md /opt/licenses/ffmpeg/ \
+    && rm -rf ffmpeg-${FFMPEG_VERSION} ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && cp -P /usr/lib/*/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || \
        cp -P /usr/lib/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libvpx.so not found"; exit 1; }
 
@@ -137,6 +153,42 @@ RUN uv pip install /dist/aiperf-*.whl \
 RUN uv pip uninstall setuptools
 
 ############################################
+######### Python License Collector #########
+############################################
+FROM env-builder AS python-licenses
+
+COPY tools/generate_python_attributions.py /tmp/generate_python_attributions.py
+COPY tools/requirements.licenses.txt /tmp/requirements.licenses.txt
+COPY tools/licenses.toml /tmp/licenses.toml
+
+# Layer 1: pip-licenses — snapshot venv diff to exclude the tool itself from output
+RUN uv pip list --format=freeze | awk -F== '{print $1}' | sort > /tmp/venv-before.txt \
+    && uv pip install -r /tmp/requirements.licenses.txt \
+    && uv pip list --format=freeze | awk -F== '{print $1}' | sort > /tmp/venv-after.txt \
+    && IGNORE=$(comm -13 /tmp/venv-before.txt /tmp/venv-after.txt | tr '\n' ' ') \
+    && mkdir -p /opt/licenses/python \
+    && pip-licenses \
+        --ignore-packages $IGNORE \
+        --format=json \
+        --with-license-file \
+        --output-file=/opt/licenses/python/licenses.json \
+    && pip-licenses \
+        --ignore-packages $IGNORE \
+        --format=json-license-finder \
+        --output-file=/opt/licenses/python/ATTRIBUTIONS-Python.json \
+    && python3 /tmp/generate_python_attributions.py \
+        /opt/licenses/python/licenses.json \
+        /opt/licenses/python/ATTRIBUTIONS-Python.md \
+        /opt/licenses/python/python-deps.csv \
+        /tmp/licenses.toml \
+    && rm /tmp/venv-before.txt /tmp/venv-after.txt
+
+# Layer 2: cyclonedx-bom via uvx — installs in isolated env, scans specified venv only
+RUN uvx --from cyclonedx-bom cyclonedx-py environment /opt/aiperf/venv/bin/python \
+    --output-format JSON \
+    --output-file /opt/licenses/python/sbom.cdx.json
+
+############################################
 ############### Test Image #################
 ############################################
 # Test stage: env-builder has aiperf, just add curl
@@ -156,8 +208,12 @@ ENTRYPOINT ["/bin/bash", "-c"]
 ############################################
 FROM nvcr.io/nvidia/distroless/python:3.13-v4.0.1-dev AS runtime
 
-# Include license and attribution files
-COPY LICENSE ATTRIBUTIONS*.md /legal/
+# Include project license and asset attributions
+COPY LICENSE ATTRIBUTIONS.md /legal/
+
+# Include dynamically collected third-party licenses
+COPY --from=env-builder /opt/licenses/ /licenses/
+COPY --from=python-licenses /opt/licenses/python/ATTRIBUTIONS-Python.md /licenses/python/ATTRIBUTIONS-Python.md
 
 # Copy bash with executable permissions preserved using --chmod
 COPY --from=env-builder --chown=1000:1000 --chmod=755 /bin/bash /bin/bash
