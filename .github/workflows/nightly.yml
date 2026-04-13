@@ -271,6 +271,28 @@ jobs:
             --format '{{.Manifest.Digest}}')
           echo "Pushed ${REGISTRY}/aiperf:${NIGHTLY_TAG} — digest: ${DIGEST}"
 
+      - name: Extract license artifacts
+        if: ${{ inputs.publish_only != 'true' }}
+        run: |
+          set -euo pipefail
+          for ARCH in amd64 arm64; do
+            docker buildx build \
+              --progress=plain \
+              --platform "linux/${ARCH}" \
+              --target python-licenses \
+              --output "type=local,dest=./license-raw-${ARCH}" \
+              .
+            mkdir -p "./license-artifacts/${ARCH}"
+            cp -r "./license-raw-${ARCH}/opt/licenses/python/." "./license-artifacts/${ARCH}/"
+          done
+
+      - name: Upload license artifacts
+        if: ${{ inputs.publish_only != 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: license-artifacts-${{ steps.version.outputs.nightly_tag }}
+          path: license-artifacts/
+
       - name: Extract wheel
         if: ${{ inputs.publish_only != 'true' }}
         run: |
@@ -311,27 +333,6 @@ jobs:
           set -euo pipefail
           WHEEL=$(find wheel-out/dist/ -name "aiperf-*.whl" | head -1)
           aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/aiperf/nightly/${PEP440_VERSION}/" --sse AES256
-
-      - name: Extract license artifacts
-        if: ${{ inputs.publish_only != 'true' }}
-        run: |
-          set -euo pipefail
-          for ARCH in amd64 arm64; do
-            docker buildx build \
-              --platform "linux/${ARCH}" \
-              --target python-licenses \
-              --output "type=local,dest=./license-raw-${ARCH}" \
-              .
-            mkdir -p "./license-artifacts/${ARCH}"
-            cp -r "./license-raw-${ARCH}/opt/licenses/python/." "./license-artifacts/${ARCH}/"
-          done
-
-      - name: Upload license artifacts
-        if: ${{ inputs.publish_only != 'true' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: license-artifacts-${{ steps.version.outputs.nightly_tag }}
-          path: license-artifacts/
 
   # ============================================================================
   # PHASE 3b: CLEANUP
