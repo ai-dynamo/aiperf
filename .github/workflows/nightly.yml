@@ -215,7 +215,7 @@ jobs:
     name: GPU End-to-End Tests
     needs: [prepare-nightly]
     runs-on: prod-aiperf-tester-amd-gpu-v1
-    if: ${{ inputs.publish_only != 'true' }}
+    if: false  # TODO: restore to ${{ inputs.publish_only != 'true' }} once GPU runners are healthy
     steps:
       - name: Checkout
         uses: actions/checkout@v4
