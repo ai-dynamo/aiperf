@@ -11,12 +11,14 @@ Usage:
     python3 tools/generate_python_attributions.py \\
         <input.json> <output.md> <output.csv> <licenses.toml>
 """
+
 import csv
 import json
 import re
 import sys
-import tomllib
 from pathlib import Path
+
+import tomllib
 
 _HEADER = """\
 <!--
@@ -126,11 +128,13 @@ _SPDX_MAP: dict[str, str] = {
 
 # Classifier tokens that carry no license identity and should be dropped when
 # splitting multi-classifier strings (e.g. "DFSG approved; MIT License").
-_CLASSIFIER_NOISE: frozenset[str] = frozenset({
-    "dfsg approved",
-    "osi approved",
-    "public domain",
-})
+_CLASSIFIER_NOISE: frozenset[str] = frozenset(
+    {
+        "dfsg approved",
+        "osi approved",
+        "public domain",
+    }
+)
 
 # Splits a compound SPDX expression into individual identifiers.
 # Handles AND/OR operators and parentheses, e.g.:
@@ -213,8 +217,7 @@ def main() -> None:
     deny: set[str] = set(config["licenses"]["deny"])
     # Build exception lookup keyed by (name, version)
     exceptions: dict[tuple[str, str], dict] = {
-        (e["name"], e["version"]): e
-        for e in config.get("exceptions", [])
+        (e["name"], e["version"]): e for e in config.get("exceptions", [])
     }
 
     data = json.loads(input_path.read_text())
@@ -280,7 +283,9 @@ def main() -> None:
         writer = csv.writer(f)
         writer.writerow(["dependency_type", "name", "version", "spdx_license"])
         for pkg in sorted_data:
-            writer.writerow(["python", pkg["Name"], pkg["Version"], pkg.get("License", "UNKNOWN")])
+            writer.writerow(
+                ["python", pkg["Name"], pkg["Version"], pkg.get("License", "UNKNOWN")]
+            )
 
 
 if __name__ == "__main__":
