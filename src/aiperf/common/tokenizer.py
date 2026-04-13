@@ -112,12 +112,37 @@ def _is_offline_mode() -> bool:
     )
 
 
+def _find_hf_cache_aliases(name: str) -> list[Path]:
+    """Find HF cache directories matching a model name alias.
+
+    Scans the HF hub cache for ``models--*--<name>`` directories
+    (case-insensitive suffix match).
+
+    Returns:
+        List of matching cache directory paths.
+    """
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    cache_dir = Path(HF_HUB_CACHE)
+    if not cache_dir.is_dir():
+        return []
+
+    suffix = f"--{name.lower()}"
+    return [
+        entry
+        for entry in cache_dir.iterdir()
+        if entry.is_dir()
+        and entry.name.startswith("models--")
+        and entry.name.lower().endswith(suffix)
+    ]
+
+
 def _is_hf_cached(name: str) -> bool:
     """Check if a HuggingFace model is available in the local cache.
 
     Looks for ``models--<name>/`` (with ``/`` replaced by ``--``) inside the
-    HF hub cache directory.  Also handles alias-style short names by scanning
-    for directories whose suffix matches ``--<name>``.
+    HF hub cache directory.  Also handles alias-style short names, returning
+    True only when a single unambiguous match exists.
     """
     from huggingface_hub.constants import HF_HUB_CACHE
 
@@ -130,16 +155,7 @@ def _is_hf_cached(name: str) -> bool:
     if exact.is_dir():
         return True
 
-    # Alias match: "gpt2" -> unique "models--*--gpt2"
-    suffix = f"--{name.lower()}"
-    matches = [
-        entry
-        for entry in cache_dir.iterdir()
-        if entry.is_dir()
-        and entry.name.startswith("models--")
-        and entry.name.lower().endswith(suffix)
-    ]
-    return len(matches) == 1
+    return len(_find_hf_cache_aliases(name)) == 1
 
 
 def resolve_alias(name: str) -> AliasResolutionResult:
@@ -342,24 +358,12 @@ class Tokenizer:
         Returns:
             The full model ID (e.g. "openai-community/gpt2") or None.
         """
-        from huggingface_hub.constants import HF_HUB_CACHE
-
-        cache_dir = Path(HF_HUB_CACHE)
-        if not cache_dir.is_dir():
+        matches = _find_hf_cache_aliases(name)
+        if len(matches) != 1:
             return None
-
-        suffix = f"--{name.lower()}"
-        for entry in cache_dir.iterdir():
-            if (
-                entry.is_dir()
-                and entry.name.startswith("models--")
-                and entry.name.lower().endswith(suffix)
-            ):
-                # Convert "models--openai-community--gpt2" -> "openai-community/gpt2"
-                model_id = entry.name[len("models--") :].replace("--", "/")
-                _logger.debug(f"Found cached model for alias '{name}': {model_id}")
-                return model_id
-        return None
+        model_id = matches[0].name[len("models--") :].replace("--", "/")
+        _logger.debug(f"Found cached model for alias '{name}': {model_id}")
+        return model_id
 
     @classmethod
     def _from_pretrained_local(

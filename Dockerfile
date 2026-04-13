@@ -133,10 +133,6 @@ RUN mkdir -p /app /app/artifacts /app/.cache \
     && chown -R 1000:1000 /app \
     && chmod -R 755 /app
 
-# Pre-cache tiktoken o200k_base encoding for --tokenizer builtin (MIT license, see ATTRIBUTIONS.md)
-RUN mkdir -p /opt/tiktoken_cache \
-    && TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache python -c "import tiktoken; tiktoken.get_encoding('o200k_base')"
-
 # Install only the dependencies using uv
 COPY pyproject.toml .
 RUN uv sync --active --no-install-project
@@ -148,6 +144,10 @@ RUN uv pip install /dist/aiperf-*.whl \
 
 # Remove setuptools as it is not needed for the runtime image
 RUN uv pip uninstall setuptools
+
+# Pre-cache tiktoken o200k_base encoding for --tokenizer builtin (MIT license, see ATTRIBUTIONS.md)
+RUN mkdir -p /opt/tiktoken_cache \
+    && TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache python -c "import tiktoken; tiktoken.get_encoding('o200k_base')"
 
 ############################################
 ############### Test Image #################

@@ -68,3 +68,8 @@ class TestFindCachedModelForAlias:
         (hf_cache / "models--OpenAI-Community--GPT2").mkdir()
         result = Tokenizer._find_cached_model_for_alias("gpt2")
         assert result == "OpenAI-Community/GPT2"
+
+    def test_ambiguous_alias_returns_none(self, hf_cache) -> None:
+        (hf_cache / "models--org-a--gpt2").mkdir()
+        (hf_cache / "models--org-b--gpt2").mkdir()
+        assert Tokenizer._find_cached_model_for_alias("gpt2") is None
