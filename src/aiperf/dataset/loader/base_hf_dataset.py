@@ -10,7 +10,7 @@ from PIL import Image as PILImage
 
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.exceptions import DatasetLoaderError
-from aiperf.common.models import Conversation, Image
+from aiperf.common.models import Conversation, Image, Video
 from aiperf.dataset import utils
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
@@ -76,6 +76,27 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
             pil = next((v for v in value if isinstance(v, PILImage.Image)), None)
             if pil:
                 return [self._pil_to_image(pil)]
+        return []
+
+    def _extract_videos(self, row: dict[str, Any], video_column: str) -> list[Video]:
+        """Extract videos from a dataset row column.
+
+        Handles URL strings and dicts with raw bytes (HF video format).
+        URL strings are passed through directly; bytes are base64-encoded.
+        """
+        import base64
+
+        value = row.get(video_column)
+        if isinstance(value, str) and value:
+            url = (
+                value
+                if value.startswith(("http://", "https://", "file://"))
+                else f"file://{value}"
+            )
+            return [Video(name="", contents=[url])]
+        if isinstance(value, dict) and "bytes" in value and value["bytes"]:
+            b64 = base64.b64encode(value["bytes"]).decode("utf-8")
+            return [Video(name="", contents=[f"data:video/mp4;base64,{b64}"])]
         return []
 
     def _max_conversations(self) -> int | None:
