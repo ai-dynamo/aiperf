@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import IO, TYPE_CHECKING
 
 import orjson
 from pydantic import Field, field_validator
@@ -63,6 +63,52 @@ class AnonymizeResult(AIPerfBaseModel):
     unique_hash_ids: int = Field(description="Number of unique hash IDs generated.")
     no_timestamps_warning: bool = Field(description="Whether input had no timestamps.")
     output_file: Path = Field(description="Path to the output file.")
+
+
+def _process_record(
+    record: RawConversationRecord,
+    messages: list[dict],
+    session_id: str | None,
+    tokenizer: Tokenizer,
+    hasher: RollingHasher,
+    block_size: int,
+    f: IO[str],
+) -> int:
+    """Process a single record and write to output file.
+
+    Args:
+        record: The raw conversation record.
+        messages: Messages to tokenize (may be accumulated for multi-turn).
+        session_id: Session ID to include in output, or None.
+        tokenizer: Tokenizer instance.
+        hasher: RollingHasher instance.
+        block_size: Tokens per block.
+        f: Output file handle.
+
+    Returns:
+        1 (count of records processed).
+    """
+    templated = tokenizer.apply_chat_template(messages)
+    input_ids = tokenizer.encode(templated)
+    output_ids = tokenizer.encode(record.output)
+
+    blocks = [
+        input_ids[i : i + block_size] for i in range(0, len(input_ids), block_size)
+    ]
+    hash_ids = hasher.hash_token_blocks(blocks) if blocks else []
+
+    output_record: dict = {
+        "input_length": len(input_ids),
+        "output_length": len(output_ids),
+        "hash_ids": hash_ids,
+    }
+    if record.timestamp is not None:
+        output_record["timestamp"] = record.timestamp
+    if session_id is not None:
+        output_record["session_id"] = session_id
+
+    f.write(orjson.dumps(output_record).decode() + "\n")
+    return 1
 
 
 def anonymize_trace(
@@ -121,37 +167,35 @@ def anonymize_trace(
 
     with open(output_file, "w", encoding="utf-8") as f:
         for session_id, session_records in sessions.items():
-            accumulated_messages: list[dict] = []
-
-            for record in session_records:
-                accumulated_messages.extend(record.messages)
-
-                templated = tokenizer.apply_chat_template(accumulated_messages)
-                input_ids = tokenizer.encode(templated)
-                output_ids = tokenizer.encode(record.output)
-
-                blocks = [
-                    input_ids[i : i + block_size]
-                    for i in range(0, len(input_ids), block_size)
-                ]
-                hash_ids = hasher.hash_token_blocks(blocks) if blocks else []
-
-                output_record: dict = {
-                    "input_length": len(input_ids),
-                    "output_length": len(output_ids),
-                    "hash_ids": hash_ids,
-                }
-                if record.timestamp is not None:
-                    output_record["timestamp"] = record.timestamp
-                if session_id is not None:
-                    output_record["session_id"] = session_id
-
-                f.write(orjson.dumps(output_record).decode() + "\n")
-                total_processed += 1
-
-                accumulated_messages.append(
-                    {"role": "assistant", "content": record.output}
-                )
+            if session_id is None:
+                # Independent requests: no message accumulation
+                for record in session_records:
+                    total_processed += _process_record(
+                        record,
+                        list(record.messages),
+                        None,
+                        tokenizer,
+                        hasher,
+                        block_size,
+                        f,
+                    )
+            else:
+                # Multi-turn session: accumulate messages across turns
+                accumulated_messages: list[dict] = []
+                for record in session_records:
+                    accumulated_messages.extend(record.messages)
+                    total_processed += _process_record(
+                        record,
+                        accumulated_messages,
+                        session_id,
+                        tokenizer,
+                        hasher,
+                        block_size,
+                        f,
+                    )
+                    accumulated_messages.append(
+                        {"role": "assistant", "content": record.output}
+                    )
 
     stats = hasher.get_stats()
     sessions_detected = sum(1 for sid in sessions if sid is not None)

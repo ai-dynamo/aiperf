@@ -216,6 +216,63 @@ class TestAnonymizeTrace:
             input_path.unlink(missing_ok=True)
             output_path.unlink(missing_ok=True)
 
+    def test_independent_requests_no_accumulation(
+        self, mock_tokenizer: MagicMock
+    ) -> None:
+        """Test that independent requests (no session_id) don't accumulate messages."""
+        # Each independent request should produce the same input_length
+        # if their tokenization is the same — NOT growing lengths from accumulation
+        mock_tokenizer.encode.return_value = list(range(8))
+        mock_tokenizer.apply_chat_template.return_value = "template"
+
+        input_data = [
+            {
+                "timestamp": 0,
+                "messages": [{"role": "user", "content": "Q1"}],
+                "output": "A1",
+            },
+            {
+                "timestamp": 100,
+                "messages": [{"role": "user", "content": "Q2"}],
+                "output": "A2",
+            },
+            {
+                "timestamp": 200,
+                "messages": [{"role": "user", "content": "Q3"}],
+                "output": "A3",
+            },
+        ]
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            for record in input_data:
+                f.write(orjson.dumps(record).decode() + "\n")
+            input_path = Path(f.name)
+
+        output_path = input_path.with_name("output_no_accum.jsonl")
+
+        try:
+            anonymize_trace(
+                input_file=input_path,
+                output_file=output_path,
+                tokenizer=mock_tokenizer,
+                block_size=4,
+            )
+
+            lines = output_path.read_text().strip().split("\n")
+            assert len(lines) == 3
+
+            # All independent requests should have the same input_length
+            lengths = [orjson.loads(line)["input_length"] for line in lines]
+            assert lengths == [8, 8, 8]
+
+            # apply_chat_template should be called with only each request's own messages
+            calls = mock_tokenizer.apply_chat_template.call_args_list
+            for call in calls:
+                messages_arg = call[0][0]
+                assert len(messages_arg) == 1  # Not accumulated
+        finally:
+            input_path.unlink(missing_ok=True)
+            output_path.unlink(missing_ok=True)
+
     def test_prefix_overlap_across_requests(self, mock_tokenizer: MagicMock) -> None:
         """Test that independent requests with shared prefixes produce shared hash_ids."""
         mock_tokenizer.encode.return_value = list(range(8))
