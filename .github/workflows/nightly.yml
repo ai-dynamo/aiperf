@@ -356,7 +356,7 @@ jobs:
         env:
           AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-          PEP440_VERSION:     ${{ needs.prepare-nightly.outputs.pep440_version }}
+          NIGHTLY_TAG:        ${{ needs.prepare-nightly.outputs.nightly_tag }}
         run: |
           set -euo pipefail
           REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
@@ -367,12 +367,12 @@ jobs:
             --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache" \
             --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache,mode=max" \
             --push \
-            --tag "${REGISTRY}/aiperf:${PEP440_VERSION}" \
+            --tag "${REGISTRY}/aiperf:${NIGHTLY_TAG}" \
             .
 
-          DIGEST=$(docker buildx imagetools inspect "${REGISTRY}/aiperf:${PEP440_VERSION}" \
+          DIGEST=$(docker buildx imagetools inspect "${REGISTRY}/aiperf:${NIGHTLY_TAG}" \
             --format '{{.Manifest.Digest}}')
-          echo "Pushed ${REGISTRY}/aiperf:${PEP440_VERSION} — digest: ${DIGEST}"
+          echo "Pushed ${REGISTRY}/aiperf:${NIGHTLY_TAG} — digest: ${DIGEST}"
 
       - name: Builder cleanup
         if: always()
@@ -545,14 +545,14 @@ jobs:
           AWS_ACCOUNT_ID:         ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION:     ${{ secrets.AWS_DEFAULT_REGION }}
           NGC_STAGING_IMAGE_BASE: ${{ secrets.NGC_STAGING_IMAGE_BASE }}
-          PEP440_VERSION:         ${{ needs.prepare-nightly.outputs.pep440_version }}
+          NIGHTLY_TAG:            ${{ needs.prepare-nightly.outputs.nightly_tag }}
         run: |
           set -euo pipefail
           ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
           crane copy \
-            "${ECR_REGISTRY}/aiperf:${PEP440_VERSION}" \
-            "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}"
-          echo "Container staged: ${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}"
+            "${ECR_REGISTRY}/aiperf:${NIGHTLY_TAG}" \
+            "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${NIGHTLY_TAG}"
+          echo "Container staged: ${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${NIGHTLY_TAG}"
 
   stage-nightly-wheel:
     name: Stage Wheel (S3 → Artifactory)
