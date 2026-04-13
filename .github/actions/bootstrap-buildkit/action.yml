@@ -14,6 +14,12 @@ description: 'Bootstrap a multi-arch buildx builder using the centralized dynamo
 #     with:
 #       builder_name: my-builder
 #       arch: 'linux/amd64,linux/arm64'
+#
+# Cleanup usage (skip_bootstrap: true re-registers the builder so it can be removed):
+#   - uses: ./.github/actions/init-aiperf-builder
+#     with:
+#       builder_name: my-builder
+#       skip_bootstrap: 'true'
 
 inputs:
   builder_name:
@@ -23,6 +29,14 @@ inputs:
     description: 'Comma-separated Docker platform(s): linux/amd64, linux/arm64, or linux/amd64,linux/arm64'
     required: false
     default: 'linux/amd64,linux/arm64'
+  skip_bootstrap:
+    description: 'Skip the bootstrap step — only re-registers the builder context. Use in cleanup jobs.'
+    required: false
+    default: 'false'
+  fresh_builder:
+    description: 'Force removal and recreation of the builder before bootstrapping. Use in pre-warm jobs.'
+    required: false
+    default: 'false'
 
   # Kubernetes fallback driver options
   namespace:
@@ -85,6 +99,15 @@ runs:
 
         echo "worker_addresses=${WORKER_ADDRS}" >> "$GITHUB_OUTPUT"
 
+    - name: Handle fresh builder
+      if: inputs.fresh_builder == 'true'
+      shell: bash
+      run: |
+        if docker buildx inspect "${{ inputs.builder_name }}" > /dev/null 2>&1; then
+          echo "Forcing fresh builder: removing existing '${{ inputs.builder_name }}'."
+          docker buildx rm "${{ inputs.builder_name }}" || true
+        fi
+
     - name: Create builder (remote driver)
       if: steps.resolve.outputs.worker_addresses != ''
       shell: bash
@@ -139,6 +162,7 @@ runs:
         done
 
     - name: Bootstrap builder
+      if: inputs.skip_bootstrap != 'true'
       shell: bash
       run: |
         for i in 1 2 3; do

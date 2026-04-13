@@ -162,6 +162,22 @@ jobs:
             echo "release=true" >> "$GITHUB_OUTPUT"
           fi
 
+  pre-warm-builder:
+    name: Pre-warm K8s Builder
+    runs-on: prod-aiperf-default-v1
+    if: ${{ inputs.publish_only != 'true' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Bootstrap BuildKit workers
+        uses: ./.github/actions/bootstrap-buildkit
+        with:
+          builder_name: ${{ env.BUILDER_NAME }}
+          fresh_builder: 'true'
+
   # ============================================================================
   # PHASE 2: VALIDATE
   # pre-commit is a real gate. Test jobs are placeholders until runners are ready.
@@ -313,7 +329,7 @@ jobs:
 
   build-container:
     name: Build Container
-    needs: [prepare-nightly]  # TODO: restore [prepare-nightly, pre-commit, unit-tests, integration-tests, gpu-e2e-tests] once GPU runners are back
+    needs: [prepare-nightly, pre-warm-builder]  # TODO: restore [prepare-nightly, pre-commit, unit-tests, integration-tests, gpu-e2e-tests, pre-warm-builder] once GPU runners are back
     if: ${{ inputs.publish_only != 'true' }}
     runs-on: prod-aiperf-default-v1
     steps:
@@ -338,8 +354,8 @@ jobs:
         with:
           version: ${{ needs.prepare-nightly.outputs.pep440_version }}
 
-      - name: Initialize aiperf builder
-        uses: ./.github/actions/init-aiperf-builder
+      - name: Bootstrap BuildKit
+        uses: ./.github/actions/bootstrap-buildkit
         with:
           builder_name: ${{ env.BUILDER_NAME }}
 
@@ -365,7 +381,6 @@ jobs:
             --platform linux/amd64,linux/arm64 \
             --target   runtime \
             --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache" \
-            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache,mode=max" \
             --push \
             --tag "${REGISTRY}/aiperf:${NIGHTLY_TAG}" \
             .
@@ -373,10 +388,6 @@ jobs:
           DIGEST=$(docker buildx imagetools inspect "${REGISTRY}/aiperf:${NIGHTLY_TAG}" \
             --format '{{.Manifest.Digest}}')
           echo "Pushed ${REGISTRY}/aiperf:${NIGHTLY_TAG} — digest: ${DIGEST}"
-
-      - name: Builder cleanup
-        if: always()
-        run: docker buildx rm ${{ env.BUILDER_NAME }} || true
 
   collect-license-artifacts:
     name: Collect License Artifacts (${{ matrix.arch }})
@@ -407,8 +418,8 @@ jobs:
         with:
           version: ${{ needs.prepare-nightly.outputs.pep440_version }}
 
-      - name: Initialize aiperf builder
-        uses: ./.github/actions/init-aiperf-builder
+      - name: Bootstrap BuildKit
+        uses: ./.github/actions/bootstrap-buildkit
         with:
           builder_name: ${{ env.BUILDER_NAME }}
           arch: ${{ matrix.platform }}
@@ -452,8 +463,29 @@ jobs:
           name: license-artifacts-${{ needs.prepare-nightly.outputs.pep440_version }}-${{ matrix.arch }}
           path: license-artifacts/
 
-      - name: Builder cleanup
-        if: always()
+  # ============================================================================
+  # PHASE 3b: CLEANUP
+  # ============================================================================
+
+  clean-k8s-builder:
+    name: Clean K8s Builder
+    needs: [pre-warm-builder, build-container, collect-license-artifacts]
+    if: always()
+    runs-on: prod-aiperf-default-v1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Re-register builder context (skip bootstrap)
+        uses: ./.github/actions/bootstrap-buildkit
+        continue-on-error: true
+        with:
+          builder_name: ${{ env.BUILDER_NAME }}
+          skip_bootstrap: 'true'
+
+      - name: Remove builder
         run: docker buildx rm ${{ env.BUILDER_NAME }} || true
 
   # ============================================================================
@@ -670,6 +702,7 @@ jobs:
     name: Pipeline Summary
     needs:
       - prepare-nightly
+      - pre-warm-builder
       - pre-commit
       - unit-tests
       - integration-tests
@@ -677,6 +710,7 @@ jobs:
       - build-wheel
       - build-container
       - collect-license-artifacts
+      - clean-k8s-builder
       - create-nightly-tag
       - stage-nightly-container
       - stage-nightly-wheel
