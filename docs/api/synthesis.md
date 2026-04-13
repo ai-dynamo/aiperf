@@ -558,3 +558,48 @@ except ValueError as e:
 
 - [Prefix Synthesis Tutorial](../tutorials/prefix-synthesis.md)
 - [Trace Replay](../benchmark-modes/trace-replay.md)
+
+---
+
+### Functions
+
+#### `anonymize_trace`
+
+Convert raw chat logs into a privacy-preserving Mooncake trace.
+
+```python
+from aiperf.dataset.synthesis.anonymize import anonymize_trace
+
+result = anonymize_trace(
+    input_file=Path("raw_logs.jsonl"),
+    output_file=Path("anonymized.jsonl"),
+    tokenizer=tokenizer,
+    block_size=512,
+)
+```
+
+**Parameters:**
+- `input_file` (Path): Path to input JSONL with raw conversation logs
+- `output_file` (Path): Path to write output Mooncake trace JSONL
+- `tokenizer` (Tokenizer): Tokenizer instance for the target model
+- `block_size` (int): Tokens per block for hashing (default: 512)
+
+**Returns:** `AnonymizeResult` with fields:
+- `total_processed` (int): Records successfully processed
+- `total_skipped` (int): Malformed records skipped
+- `sessions_detected` (int): Unique multi-turn sessions found
+- `unique_hash_ids` (int): Unique hash IDs generated
+- `no_timestamps_warning` (bool): Whether input had no timestamps
+- `output_file` (Path): Path to the output file
+
+---
+
+#### `RawConversationRecord`
+
+Pydantic model for validating input JSONL records.
+
+**Fields:**
+- `messages` (list[dict]): OpenAI-compatible message array (required, non-empty)
+- `output` (str): Assistant response text (required)
+- `timestamp` (int | float | None): Request timestamp in milliseconds (optional)
+- `session_id` (str | None): Session identifier for multi-turn grouping (optional)
