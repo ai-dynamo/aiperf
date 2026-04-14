@@ -112,6 +112,21 @@ def _is_offline_mode() -> bool:
     )
 
 
+def _tokenizer_load_failure_hint(exc: BaseException) -> str:
+    """Extra guidance for common HuggingFace tokenizer load failures."""
+    s = str(exc).lower()
+    if (
+        "does not recognize" in s
+        or "unrecognized model" in s
+        or ("architecture" in s and ("unknown" in s or "not supported" in s))
+    ):
+        return (
+            " If this checkpoint uses a newer architecture, upgrade `transformers`"
+            " or enable tokenizer trust_remote_code in config when the repo ships custom code."
+        )
+    return ""
+
+
 def _find_hf_cache_aliases(name: str) -> list[Path]:
     """Find HF cache directories matching a model name alias.
 
@@ -343,8 +358,9 @@ class Tokenizer:
         except AmbiguousTokenizerNameError:
             raise
         except Exception as e:
+            hint = _tokenizer_load_failure_hint(e)
             raise TokenizerError(
-                f"Failed to load tokenizer '{name}'", tokenizer_name=name
+                f"Failed to load tokenizer '{name}'{hint}", tokenizer_name=name
             ) from e
         return tokenizer_cls
 
