@@ -124,7 +124,7 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
             # if path is a file, validate the first non-empty line against the RandomPool model
             # if the line is valid, increment the valid count and break the loop,
             # otherwise a ValidationError will be raised and the function will exit early
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 for line in f:
                     if not (line := line.strip()):
                         continue
@@ -205,7 +205,7 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         """
         dataset_pool: list[RandomPool] = []
 
-        with open(file_path) as f:
+        with open(file_path, encoding="utf-8") as f:
             for line in f:
                 if (line := line.strip()) == "":
                     continue  # Skip empty lines

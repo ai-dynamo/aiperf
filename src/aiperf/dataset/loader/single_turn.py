@@ -101,7 +101,7 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
         """
         data: dict[str, list[SingleTurn]] = defaultdict(list)
 
-        with open(self.filename) as f:
+        with open(self.filename, encoding="utf-8") as f:
             for line in f:
                 if (line := line.strip()) == "":
                     continue  # Skip empty lines

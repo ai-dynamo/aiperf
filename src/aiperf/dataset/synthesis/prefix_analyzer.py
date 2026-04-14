@@ -49,7 +49,7 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
         trace_file = Path(trace_file)
 
         # First pass: collect all data
-        with open(trace_file) as f:
+        with open(trace_file, encoding="utf-8") as f:
             for line in f:
                 if line.strip():
                     data = orjson.loads(line)

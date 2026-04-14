@@ -86,7 +86,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
                 return self._infer_type(data=None, filename=file_path)
 
             # For files, read first non-empty line and use both content and path detection
-            with open(file_path) as f:
+            with open(file_path, encoding="utf-8") as f:
                 for line in f:
                     if not (line := line.strip()):
                         continue
