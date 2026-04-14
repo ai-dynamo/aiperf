@@ -15,6 +15,23 @@ from aiperf.plugin.enums import CustomDatasetType
 class TestSingleTurn:
     """Basic functionality tests for SingleTurn model."""
 
+    def test_create_with_input_alias_for_text(self):
+        """JSONL may use ``input``; it must populate ``text`` for modality validation."""
+        data = SingleTurn.model_validate(
+            {"type": "single_turn", "input": "What is deep learning?"}
+        )
+        assert data.text == "What is deep learning?"
+
+    def test_input_and_text_conflict_raises(self):
+        with pytest.raises(ValueError, match="input.*text"):
+            SingleTurn.model_validate(
+                {
+                    "type": "single_turn",
+                    "input": "a",
+                    "text": "b",
+                }
+            )
+
     def test_create_with_text_only(self):
         """Test creating SingleTurn with text."""
         data = SingleTurn(text="What is deep learning?")
