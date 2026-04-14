@@ -22,7 +22,7 @@ class RequestLatencyMetric(BaseRecordMetric[int]):
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     display_order = 300
-    flags = MetricFlags.NONE
+    flags = MetricFlags.PERCENTILE_INCLUDES_FAILED_REQUESTS
     required_metrics = None
 
     def _parse_record(

@@ -95,14 +95,22 @@ class TestConsoleExporter:
     @pytest.mark.asyncio
     async def test_export_prints_expected_table(self, mock_exporter_config, capsys):
         exporter = ConsoleMetricsExporter(mock_exporter_config)
-        await exporter.export(Console(width=115))
+        await exporter.export(Console(width=200))
         output = capsys.readouterr().out
         assert "NVIDIA AIPerf | LLM Metrics" in output
-        assert "Time to First Token (ms)" in output or "Time to First Token" in output
-        assert "Request Latency (ms)" in output or "Request Latency" in output
-        assert "Inter Token Latency (ms)" in output or "Inter Token Latency" in output
-        assert "Request Throughput" in output
-        assert "requests/sec" in output
+        # Stat headers may be Rich-ellipsis (e.g. adj_p…) when the table is wide
+        assert "adj_p" in output
+        assert ("Time to First Token" in output) or (
+            "First" in output and "Token" in output
+        )
+        # Request latency / throughput labels often truncate (Requ… / Thro…) with many columns
+        assert "15.30" in output
+        assert ("Inter Token Latency" in output) or (
+            "Inter" in output and "Token" in output
+        )
+        assert "95.00" in output
+        # Throughput unit may truncate (e.g. "(req…") when the metric column is narrow
+        assert ("requests/sec" in output) or ("Thro" in output and "req" in output)
 
     @pytest.mark.parametrize(
         "metric_tag, should_show",
@@ -176,6 +184,9 @@ class TestConsoleExporter:
         assert row[4] == "[dim]N/A[/dim]"
         assert row[5] == "15.50"
         assert row[6] == "12.30"
+        assert row[7] == "[dim]N/A[/dim]"
+        assert row[8] == "[dim]N/A[/dim]"
+        assert row[9] == "[dim]N/A[/dim]"
 
     def test_get_title_returns_expected_string(self, mock_exporter_config):
         exporter = ConsoleMetricsExporter(mock_exporter_config)

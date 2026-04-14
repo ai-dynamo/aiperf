@@ -21,7 +21,7 @@ from pydantic import (
 from pydantic.functional_validators import AfterValidator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.constants import STAT_KEYS
+from aiperf.common.constants import ADJ_PERCENTILE_STAT_KEYS, STAT_KEYS
 from aiperf.common.enums import CreditPhase, MetricValueTypeT, SSEFieldType
 from aiperf.common.exceptions import InvalidInferenceResultError
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -72,6 +72,8 @@ class MetricResult(JsonMetricResult):
         for stat in [
             s for s in STAT_KEYS if s != "sum"
         ]:  # sum is not included in the JsonMetricResult
+            setattr(result, stat, getattr(self, stat, None))
+        for stat in ADJ_PERCENTILE_STAT_KEYS:
             setattr(result, stat, getattr(self, stat, None))
         return result
 

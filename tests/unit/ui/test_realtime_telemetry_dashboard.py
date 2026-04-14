@@ -47,11 +47,16 @@ class TestGPUMetricsTable:
 
         row_cells = gpu_metrics_table._format_metric_row(metric)
 
-        # Should have 9 cells: metric name + 8 stats
-        assert len(row_cells) == 9
+        # Metric name + current + avg/min/max/p99/p90/p50 + adj_p95/adj_p99 + std
+        assert len(row_cells) == 11
 
         # First cell should be the metric name with unit
         assert row_cells[0].plain == "GPU Power Usage (W)"
+
+        assert row_cells[1].plain == "250.50"  # current
+        assert row_cells[8].plain == "N/A"  # adj_p95
+        assert row_cells[9].plain == "N/A"  # adj_p99
+        assert row_cells[10].plain == "15.50"  # std
 
         # All cells should be Text objects
         assert all(isinstance(cell, Text) for cell in row_cells)

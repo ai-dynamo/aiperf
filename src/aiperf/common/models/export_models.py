@@ -38,6 +38,11 @@ class JsonMetricResult(AIPerfBaseModel):
     min: int | float | None = None
     max: int | float | None = None
     std: float | None = None
+    # AIPerf extension: percentiles with failed requests modeled as unbounded latency.
+    adj_p50: float | None = None
+    adj_p90: float | None = None
+    adj_p95: float | None = None
+    adj_p99: float | None = None
 
 
 # =============================================================================

@@ -264,9 +264,9 @@ class TestGPUTelemetryConsoleExporter:
         assert "Power" in output
         assert "Usage" in output
         assert "Energy" in output
-        assert "Utilization" in output
+        assert "Utiliz" in output
         assert "Memory" in output
-        assert "Temperature" in output
+        assert "Temper" in output  # may render as "Temper…" in narrow cells
         # Check for statistical columns
         assert "avg" in output or "min" in output or "max" in output
 

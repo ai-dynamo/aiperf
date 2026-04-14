@@ -4,6 +4,7 @@
 import pytest
 from pytest import approx
 
+from aiperf.common.enums import MetricFlags
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.inter_token_latency_metric import InterTokenLatencyMetric
@@ -16,6 +17,13 @@ from tests.unit.metrics.conftest import create_record, run_simple_metrics_pipeli
 
 
 class TestInterTokenLatencyMetric:
+    def test_adjusted_percentiles_include_failed_requests(self):
+        """#688: ITL gets adj_* percentiles like request_latency and TTFT."""
+        assert InterTokenLatencyMetric.has_flags(
+            MetricFlags.PERCENTILE_INCLUDES_FAILED_REQUESTS
+        )
+        assert InterTokenLatencyMetric.has_flags(MetricFlags.STREAMING_TOKENS_ONLY)
+
     def test_inter_token_latency_basic_calculation(self):
         """Test ITL calculation: (request_latency - ttft) / (output_tokens - 1)"""
 

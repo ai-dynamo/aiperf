@@ -20,6 +20,7 @@ from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.display_units import to_display_unit
 from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
+from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 
@@ -173,7 +174,10 @@ class MetricResultsProcessor(BaseMetricsProcessor):
 
         # Compute metric results, filter internal/experimental, and convert to display units
         results = [
-            to_display_unit(self._create_metric_result(tag, values), MetricRegistry)
+            to_display_unit(
+                self._create_metric_result(tag, values, results_source=self._results),
+                MetricRegistry,
+            )
             for tag, values in self._results.items()
             if self._should_include_in_summary(tag)
         ]
@@ -186,14 +190,29 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         return self._results
 
     def _create_metric_result(
-        self, tag: MetricTagT, values: MetricDictValueTypeT
+        self,
+        tag: MetricTagT,
+        values: MetricDictValueTypeT,
+        *,
+        results_source: MetricResultsDict | None = None,
     ) -> MetricResult:
         """Create a MetricResult from a the current values of a metric."""
 
         metric_class = self._instances_map[tag]
+        src = results_source if results_source is not None else self._results
 
         if isinstance(values, MetricArray):
-            return values.to_result(tag, metric_class.header, str(metric_class.unit))
+            inflation = 0
+            if metric_class.has_flags(MetricFlags.PERCENTILE_INCLUDES_FAILED_REQUESTS):
+                raw_errors = src.get(ErrorRequestCountMetric.tag)
+                if raw_errors is not None and int(raw_errors) > 0:
+                    inflation = int(raw_errors)
+            return values.to_result(
+                tag,
+                metric_class.header,
+                str(metric_class.unit),
+                percentile_inflation_failures=inflation,
+            )
 
         if isinstance(values, int | float):
             return MetricResult(

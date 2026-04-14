@@ -243,6 +243,7 @@ class TestMetricResultsProcessor:
             RequestLatencyMetric.tag,
             RequestLatencyMetric.header,
             str(RequestLatencyMetric.unit),
+            percentile_inflation_failures=0,
         )
 
     def test_create_metric_result_invalid_type(

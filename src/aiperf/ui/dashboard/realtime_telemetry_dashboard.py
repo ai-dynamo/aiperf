@@ -38,7 +38,18 @@ class GPUMetricsTable(Widget):
     }
     """
 
-    STATS_FIELDS = ["current", "avg", "min", "max", "p99", "p90", "p50", "std"]
+    STATS_FIELDS = [
+        "current",
+        "avg",
+        "min",
+        "max",
+        "p99",
+        "p90",
+        "p50",
+        "adj_p95",
+        "adj_p99",
+        "std",
+    ]
     COLUMNS = ["Metric", *STATS_FIELDS]
 
     def __init__(

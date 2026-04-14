@@ -17,7 +17,17 @@ from aiperf.metrics.metric_registry import MetricRegistry
 class ConsoleMetricsExporter(AIPerfLoggerMixin):
     """A class that exports data to the console"""
 
-    STAT_COLUMN_KEYS = ["avg", "min", "max", "p99", "p90", "p50", "std"]
+    STAT_COLUMN_KEYS = [
+        "avg",
+        "min",
+        "max",
+        "p99",
+        "p90",
+        "p50",
+        "adj_p95",
+        "adj_p99",
+        "std",
+    ]
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(**kwargs)

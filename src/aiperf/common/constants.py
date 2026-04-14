@@ -23,5 +23,8 @@ STAT_KEYS = [
     "std",
 ]
 
+# Optional percentile stats when failed requests are modeled as unbounded latency.
+ADJ_PERCENTILE_STAT_KEYS = ["adj_p50", "adj_p90", "adj_p95", "adj_p99"]
+
 GOOD_REQUEST_COUNT_TAG = "good_request_count"
 """GoodRequestCount metric tag"""

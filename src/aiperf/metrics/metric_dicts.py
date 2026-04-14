@@ -185,13 +185,34 @@ class MetricArray(Generic[MetricValueTypeVarT]):
         """Return number of elements."""
         return len(self._array)
 
-    def to_result(self, tag: MetricTagT, header: str, unit: str) -> MetricResult:
-        """Compute metric stats with zero-copy"""
+    def to_result(
+        self,
+        tag: MetricTagT,
+        header: str,
+        unit: str,
+        *,
+        percentile_inflation_failures: int = 0,
+    ) -> MetricResult:
+        """Compute metric stats with zero-copy.
+
+        Args:
+            percentile_inflation_failures: When > 0, append this many ``+inf`` samples before
+                computing ``adj_*`` percentiles (failed requests as unbounded latency).
+        """
 
         arr = self.data
         p1, p5, p10, p25, p50, p75, p90, p95, p99 = np.percentile(
             arr, [1, 5, 10, 25, 50, 75, 90, 95, 99]
         )
+        adj_p50 = adj_p90 = adj_p95 = adj_p99 = None
+        if percentile_inflation_failures > 0:
+            inflated = np.concatenate(
+                [arr, np.full(percentile_inflation_failures, np.inf, dtype=np.float64)]
+            )
+            adj_p50, adj_p90, adj_p95, adj_p99 = np.percentile(
+                inflated, [50, 90, 95, 99]
+            )
+
         return MetricResult(
             tag=tag,
             header=header,
@@ -211,4 +232,8 @@ class MetricArray(Generic[MetricValueTypeVarT]):
             p95=p95,
             p99=p99,
             count=len(self._array),
+            adj_p50=adj_p50,
+            adj_p90=adj_p90,
+            adj_p95=adj_p95,
+            adj_p99=adj_p99,
         )

@@ -267,17 +267,18 @@ class TestHttpTraceConsoleExporter:
             show_trace_timing=True,
         )
         exporter = HttpTraceConsoleExporter(config)
-        await exporter.export(Console(width=120))
+        await exporter.export(Console(width=200))
 
         output = capsys.readouterr().out
         assert "NVIDIA AIPerf | HTTP Trace Timing" in output
-        assert "HTTP Blocked" in output
-        assert "HTTP DNS Lookup" in output
-        assert "HTTP Connecting" in output
-        assert "HTTP Sending" in output
-        assert "HTTP Waiting (TTFB)" in output
-        assert "HTTP Receiving" in output
-        assert "HTTP Duration (excl. conn)" in output
+        # Metric column is narrow vs. many stat columns; names often truncate with "…"
+        assert "Bloc" in output  # HTTP Blocked
+        assert "DNS" in output and "Look" in output  # HTTP DNS Lookup
+        assert "Conn" in output  # HTTP Connecting
+        assert "Send" in output  # HTTP Sending
+        assert "Wait" in output and "TTF" in output  # HTTP Waiting (TTFB)
+        assert "Rece" in output  # HTTP Receiving
+        assert "Dura" in output and "conn" in output  # HTTP Duration (excl. conn)
 
     @pytest.mark.asyncio
     async def test_export_filters_non_trace_metrics(
@@ -290,12 +291,12 @@ class TestHttpTraceConsoleExporter:
             show_trace_timing=True,
         )
         exporter = HttpTraceConsoleExporter(config)
-        await exporter.export(Console(width=120))
+        await exporter.export(Console(width=200))
 
         output = capsys.readouterr().out
         # HTTP trace metrics should be present
-        assert "HTTP Blocked" in output
-        assert "HTTP Duration (excl. conn)" in output
+        assert "Bloc" in output
+        assert "Dura" in output and "conn" in output
         # Regular metrics should NOT be present
         assert "Time to First Token" not in output
         assert "Request Latency" not in output
@@ -311,7 +312,7 @@ class TestHttpTraceConsoleExporter:
             show_trace_timing=True,
         )
         exporter = HttpTraceConsoleExporter(config)
-        await exporter.export(Console(width=120))
+        await exporter.export(Console(width=200))
 
         output = capsys.readouterr().out
         # Should not print anything when there are no records
