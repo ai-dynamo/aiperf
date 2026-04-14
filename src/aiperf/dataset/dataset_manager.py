@@ -300,6 +300,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                     x_request_id="",
                     x_correlation_id="",
                     conversation_id=conversation.session_id,
+                    system_message=conversation.system_message,
+                    user_context_message=conversation.user_context_message,
                 )
                 request_info.endpoint_headers = endpoint.get_endpoint_headers(
                     request_info
