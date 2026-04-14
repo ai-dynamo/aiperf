@@ -214,6 +214,54 @@ class TestDatasetManagerInputsJsonGeneration:
             )
 
     @pytest.mark.asyncio
+    async def test_generate_inputs_json_includes_system_message(
+        self,
+        populated_dataset_manager,
+        capture_file_writes,
+    ):
+        """Test that system_message from conversation is included in payloads."""
+        # Set system_message on first conversation
+        populated_dataset_manager.dataset[
+            "session_1"
+        ].system_message = "You are a helpful assistant."
+
+        await populated_dataset_manager._generate_inputs_json_file()
+
+        written_json = json.loads(capture_file_writes.written_content)
+        session_1 = next(
+            s for s in written_json["data"] if s["session_id"] == "session_1"
+        )
+
+        # System message should appear as the first message with role "system"
+        first_payload_messages = session_1["payloads"][0]["messages"]
+        assert first_payload_messages[0]["role"] == "system"
+        assert first_payload_messages[0]["content"] == "You are a helpful assistant."
+
+    @pytest.mark.asyncio
+    async def test_generate_inputs_json_includes_user_context_message(
+        self,
+        populated_dataset_manager,
+        capture_file_writes,
+    ):
+        """Test that user_context_message from conversation is included in payloads."""
+        populated_dataset_manager.dataset[
+            "session_2"
+        ].user_context_message = "Context about this user session."
+
+        await populated_dataset_manager._generate_inputs_json_file()
+
+        written_json = json.loads(capture_file_writes.written_content)
+        session_2 = next(
+            s for s in written_json["data"] if s["session_id"] == "session_2"
+        )
+
+        # User context message should appear in the messages
+        messages = session_2["payloads"][0]["messages"]
+        assert any(
+            msg["content"] == "Context about this user session." for msg in messages
+        )
+
+    @pytest.mark.asyncio
     async def test_generate_inputs_json_logging(
         self,
         populated_dataset_manager,
