@@ -4,6 +4,7 @@
 
 from unittest.mock import AsyncMock, Mock, patch
 
+import aiohttp
 import orjson
 import pytest
 
@@ -550,3 +551,158 @@ class TestVideoRequestRouting:
             mock_polling.assert_called_once_with(
                 video_request_info, {"prompt": "A cat playing piano"}
             )
+
+
+def create_multipart_video_model_endpoint_info():
+    """Create a video generation model endpoint with multipart/form-data content type."""
+    from aiperf.common.enums import (
+        ConnectionReuseStrategy,
+        ModelSelectionStrategy,
+        RequestContentType,
+    )
+    from aiperf.common.models.model_endpoint_info import (
+        EndpointInfo,
+        ModelEndpointInfo,
+        ModelInfo,
+        ModelListInfo,
+    )
+
+    return ModelEndpointInfo(
+        models=ModelListInfo(
+            models=[ModelInfo(name="wan2.1")],
+            model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+        ),
+        endpoint=EndpointInfo(
+            type=EndpointType.VIDEO_GENERATION,
+            base_urls=["http://localhost:8000"],
+            custom_endpoint="/v1/videos",
+            streaming=False,
+            api_key=None,
+            headers=[],
+            connection_reuse_strategy=ConnectionReuseStrategy.POOLED,
+            request_content_type=RequestContentType.MULTIPART_FORM_DATA,
+        ),
+    )
+
+
+class TestMultipartFormData:
+    """Tests for multipart/form-data support in video generation."""
+
+    @pytest.fixture
+    def multipart_model_endpoint(self):
+        return create_multipart_video_model_endpoint_info()
+
+    @pytest.fixture
+    def multipart_request_info(self, multipart_model_endpoint):
+        return create_request_info(multipart_model_endpoint)
+
+    @pytest.fixture
+    def multipart_transport(self, multipart_model_endpoint):
+        transport = AioHttpTransport(model_endpoint=multipart_model_endpoint)
+        transport.aiohttp_client = AsyncMock()
+        return transport
+
+    def test_get_transport_headers_multipart_omits_content_type(
+        self, multipart_transport, multipart_request_info
+    ):
+        """Content-Type must be absent so aiohttp auto-sets it with boundary."""
+        headers = multipart_transport.get_transport_headers(multipart_request_info)
+        assert "Content-Type" not in headers
+        assert headers["Accept"] == "application/json"
+
+    def test_get_transport_headers_json_includes_content_type(
+        self, transport, video_request_info
+    ):
+        """Default JSON content type is set explicitly."""
+        headers = transport.get_transport_headers(video_request_info)
+        assert headers["Content-Type"] == "application/json"
+
+    def test_build_form_data_simple_payload(self):
+        """Test FormData construction from a simple payload."""
+        payload = {"prompt": "A cat", "model": "wan2.1", "size": "1280x720"}
+        form_data = AioHttpTransport._build_form_data(payload)
+        assert isinstance(form_data, aiohttp.FormData)
+
+    def test_build_form_data_skips_none_values(self):
+        """Test that None values are excluded from FormData."""
+        payload = {"prompt": "A cat", "model": None, "size": "1280x720"}
+        form_data = AioHttpTransport._build_form_data(payload)
+        # Inspect the internal fields - aiohttp FormData stores (MultiDict, headers, value)
+        field_names = [field[0]["name"] for field in form_data._fields]
+        assert "prompt" in field_names
+        assert "size" in field_names
+        assert "model" not in field_names
+
+    @pytest.mark.asyncio
+    async def test_submit_video_job_with_form_data(self, multipart_transport):
+        """Test that _submit_video_job sends FormData when use_form_data=True."""
+        multipart_transport.aiohttp_client.post_request.return_value = (
+            create_request_record(
+                status=200,
+                body=orjson.dumps({"id": "video-456", "status": "queued"}).decode(),
+            )
+        )
+
+        result = await multipart_transport._submit_video_job(
+            "http://localhost/v1/videos",
+            {"prompt": "A cat playing piano", "model": "wan2.1"},
+            {"Accept": "application/json"},
+            use_form_data=True,
+        )
+
+        assert not isinstance(result, ErrorDetails)
+        job_id, _ = result
+        assert job_id == "video-456"
+
+        # Verify FormData was passed (not bytes)
+        call_args = multipart_transport.aiohttp_client.post_request.call_args
+        payload_arg = call_args.args[1]
+        assert isinstance(payload_arg, aiohttp.FormData)
+
+    @pytest.mark.asyncio
+    async def test_submit_video_job_json_default(self, transport):
+        """Test that _submit_video_job sends JSON bytes by default."""
+        transport.aiohttp_client.post_request.return_value = create_request_record(
+            status=200,
+            body=orjson.dumps({"id": "video-789", "status": "queued"}).decode(),
+        )
+
+        result = await transport._submit_video_job(
+            "http://localhost/v1/videos",
+            {"prompt": "A cat"},
+            {"Content-Type": "application/json"},
+        )
+
+        assert not isinstance(result, ErrorDetails)
+        call_args = transport.aiohttp_client.post_request.call_args
+        payload_arg = call_args.args[1]
+        assert isinstance(payload_arg, bytes)
+
+    @pytest.mark.asyncio
+    async def test_send_video_request_with_polling_uses_form_data(
+        self, multipart_transport, multipart_request_info
+    ):
+        """Test end-to-end workflow passes use_form_data to _submit_video_job."""
+        with (
+            patch.object(multipart_transport, "_submit_video_job") as mock_submit,
+            patch.object(multipart_transport, "_poll_video_job") as mock_poll,
+        ):
+            import time
+
+            submit_response = TextResponse(
+                perf_ns=time.perf_counter_ns(),
+                text='{"id":"video-123","status":"queued"}',
+            )
+            mock_submit.return_value = ("video-123", submit_response)
+            mock_poll.return_value = (
+                {"id": "video-123", "status": "completed"},
+                3.5,
+            )
+
+            await multipart_transport._send_video_request_with_polling(
+                multipart_request_info, {"prompt": "A cat"}
+            )
+
+            mock_submit.assert_called_once()
+            _, kwargs = mock_submit.call_args
+            assert kwargs.get("use_form_data") is True

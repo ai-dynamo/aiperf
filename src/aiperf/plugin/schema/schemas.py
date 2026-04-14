@@ -278,6 +278,10 @@ class EndpointMetadata(BaseModel):
         default=False,
         description="Whether endpoint uses async job polling (submit job, poll for status, retrieve result).",
     )
+    requires_form_data: bool = Field(
+        default=False,
+        description="Whether endpoint supports multipart/form-data request encoding.",
+    )
     requires_inline_media: bool = Field(
         default=False,
         description="Whether endpoint requires media URLs to be downloaded and inlined as base64 data URLs.",
@@ -393,6 +397,14 @@ class PublicDatasetLoaderMetadata(BaseModel):
             "Use true for large datasets (>10 GB) to avoid downloading the full dataset. "
             "Use false (default) for small datasets to leverage HF caching and len() support."
         ),
+    )
+    category: str | None = Field(
+        default=None,
+        description="Filter dataset rows to a specific category value. Used by loaders that support per-category subsets (e.g. SPEED-Bench).",
+    )
+    prompt_template: str | None = Field(
+        default=None,
+        description="Python str.format() template for constructing the prompt from multiple columns (e.g. '{code}\\n\\n{change_request}'). When set, overrides prompt_column. All referenced column names must exist in the dataset.",
     )
 
 

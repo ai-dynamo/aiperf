@@ -717,6 +717,32 @@
               "description": "Whether to load the HuggingFace dataset in streaming mode. Use true for large datasets (>10 GB) to avoid downloading the full dataset. Use false (default) for small datasets to leverage HF caching and len() support.",
               "title": "Streaming",
               "type": "boolean"
+            },
+            "category": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Filter dataset rows to a specific category value. Used by loaders that support per-category subsets (e.g. SPEED-Bench).",
+              "title": "Category"
+            },
+            "prompt_template": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Python str.format() template for constructing the prompt from multiple columns (e.g. '{code}\\n\\n{change_request}'). When set, overrides prompt_column. All referenced column names must exist in the dataset.",
+              "title": "Prompt Template"
             }
           },
           "title": "PublicDatasetLoaderMetadata",
@@ -850,6 +876,12 @@
               "default": false,
               "description": "Whether endpoint uses async job polling (submit job, poll for status, retrieve result).",
               "title": "Requires Polling",
+              "type": "boolean"
+            },
+            "requires_form_data": {
+              "default": false,
+              "description": "Whether endpoint supports multipart/form-data request encoding.",
+              "title": "Requires Form Data",
               "type": "boolean"
             },
             "requires_inline_media": {
