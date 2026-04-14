@@ -633,6 +633,187 @@ class TestMooncakeTraceDatasetLoader:
 
         assert conversations[0].turns[0].raw_tools is None
 
+    def test_convert_to_conversations_payload_sets_raw_payload(
+        self, mock_prompt_generator, default_user_config
+    ):
+        """Test that payload traces produce Turn.raw_payload."""
+        payload = {
+            "messages": [{"role": "user", "content": "Hi"}],
+            "model": "gpt-4",
+            "stream": True,
+        }
+        trace_data = {
+            "session1": [
+                MooncakeTrace(payload=payload, timestamp=1000, output_length=50),
+            ]
+        }
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        conversations = loader.convert_to_conversations(trace_data)
+
+        assert len(conversations) == 1
+        turn = conversations[0].turns[0]
+        assert turn.raw_payload == payload
+        assert turn.timestamp == 1000
+        assert turn.max_tokens == 50
+        assert turn.raw_messages is None
+        assert turn.texts == []
+
+    def test_convert_to_conversations_payload_multi_turn(
+        self, mock_prompt_generator, default_user_config
+    ):
+        """Test multi-turn payload traces carry correct fields per turn."""
+        payload1 = {
+            "messages": [{"role": "user", "content": "Hello"}],
+            "model": "gpt-4",
+        }
+        payload2 = {"prompt": "Tell me a joke", "max_tokens": 20}
+        trace_data = {
+            "session1": [
+                MooncakeTrace(payload=payload1, timestamp=1000, output_length=10),
+                MooncakeTrace(payload=payload2, delay=500, output_length=20),
+            ]
+        }
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        conversations = loader.convert_to_conversations(trace_data)
+
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 2
+
+        t0 = conversations[0].turns[0]
+        assert t0.raw_payload == payload1
+        assert t0.timestamp == 1000
+        assert t0.max_tokens == 10
+
+        t1 = conversations[0].turns[1]
+        assert t1.raw_payload == payload2
+        assert t1.delay == 500
+        assert t1.max_tokens == 20
+
+    def test_infer_context_mode_all_payloads_returns_message_array(
+        self, mock_prompt_generator, default_user_config
+    ) -> None:
+        """All traces with payload infer MESSAGE_ARRAY_WITH_RESPONSES."""
+        traces = [
+            MooncakeTrace(
+                payload={"prompt": "Hello"},
+                output_length=10,
+                timestamp=1000,
+            ),
+            MooncakeTrace(
+                payload={"prompt": "Hi"},
+                output_length=20,
+                timestamp=2000,
+            ),
+        ]
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        assert (
+            loader._infer_context_mode(traces)
+            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
+
+    def test_infer_context_mode_mixed_payload_and_input_length_raises(
+        self, mock_prompt_generator, default_user_config
+    ):
+        """Mixing payload with input_length in the same session is rejected."""
+        traces = [
+            MooncakeTrace(payload={"prompt": "Hello"}, timestamp=1000),
+            MooncakeTrace(input_length=100, hash_ids=[1, 2], timestamp=2000),
+        ]
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        with pytest.raises(ValueError, match="Mixed Mooncake sessions"):
+            loader._infer_context_mode(traces)
+
+    def test_infer_context_mode_mixed_payload_and_messages_raises(
+        self, mock_prompt_generator, default_user_config
+    ):
+        """Test that mixing payload and messages traces in a session raises."""
+        traces = [
+            MooncakeTrace(payload={"prompt": "Hello"}, timestamp=1000),
+            MooncakeTrace(
+                messages=[{"role": "user", "content": "Hi"}],
+                output_length=10,
+                timestamp=2000,
+            ),
+        ]
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        with pytest.raises(ValueError, match="Mixed Mooncake sessions"):
+            loader._infer_context_mode(traces)
+
+    def test_convert_to_conversations_payload_sets_context_mode(
+        self, mock_prompt_generator, default_user_config
+    ) -> None:
+        """Conversations built from payload traces have context_mode set."""
+        trace_data = {
+            "session1": [
+                MooncakeTrace(
+                    payload={"prompt": "Hello"},
+                    output_length=10,
+                    timestamp=1000,
+                ),
+            ]
+        }
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        conversations = loader.convert_to_conversations(trace_data)
+        assert (
+            conversations[0].context_mode
+            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
+
+    def test_load_dataset_with_payload(
+        self, create_jsonl_file, mock_prompt_generator, default_user_config
+    ):
+        """Test loading JSONL file with payload entries."""
+        content = [
+            '{"payload": {"messages": [{"role": "user", "content": "Hello"}], "model": "gpt-4"}, "timestamp": 1000}',
+            '{"payload": {"prompt": "Tell me a joke", "max_tokens": 50}, "timestamp": 2000}',
+        ]
+        filename = create_jsonl_file(content)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename=filename,
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        dataset = loader.load_dataset()
+
+        assert len(dataset) == 2
+        sessions = list(dataset.values())
+        assert sessions[0][0].payload == {
+            "messages": [{"role": "user", "content": "Hello"}],
+            "model": "gpt-4",
+        }
+        assert sessions[0][0].timestamp == 1000
+        assert sessions[1][0].payload == {"prompt": "Tell me a joke", "max_tokens": 50}
+        assert sessions[1][0].timestamp == 2000
+
     def test_load_dataset_with_session_ids(
         self, create_jsonl_file, mock_prompt_generator, default_user_config
     ):
@@ -1590,3 +1771,29 @@ class TestMooncakeTraceSynthesisIntegration:
         trace = result["session-1"][0]
         assert trace.messages == messages
         assert trace.timestamp == 250
+
+    def test_synthesis_preserves_payload_traces(self, mock_prompt_generator):
+        """Synthesis passes payload traces through unchanged (no input_length to modify)."""
+        payload = {"messages": [{"role": "user", "content": "Hello"}], "model": "gpt-4"}
+        data = {
+            "session-1": [
+                MooncakeTrace(payload=payload, timestamp=1000, output_length=50),
+                MooncakeTrace(payload=payload, timestamp=2000, output_length=100),
+            ],
+        }
+        user_config = make_synthesis_config(speedup_ratio=2.0)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        result = loader._apply_synthesis(data)
+
+        assert len(result["session-1"]) == 2
+        for i, trace in enumerate(result["session-1"]):
+            assert isinstance(trace, MooncakeTrace)
+            assert trace.payload == payload
+            assert trace.output_length == data["session-1"][i].output_length
+            # speedup_ratio=2.0 halves timestamps
+            assert trace.timestamp == data["session-1"][i].timestamp / 2.0

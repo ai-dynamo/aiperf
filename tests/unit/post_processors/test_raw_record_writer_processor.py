@@ -6,9 +6,22 @@ import pytest
 
 from aiperf.common.config import UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
-from aiperf.common.enums import CreditPhase
-from aiperf.common.models import ParsedResponseRecord
-from aiperf.common.models.record_models import RawRecordInfo
+from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
+from aiperf.common.models import (
+    ParsedResponse,
+    ParsedResponseRecord,
+    RequestInfo,
+    RequestRecord,
+    TextResponse,
+)
+from aiperf.common.models.model_endpoint_info import (
+    EndpointInfo,
+    ModelEndpointInfo,
+    ModelInfo,
+    ModelListInfo,
+)
+from aiperf.common.models.record_models import RawRecordInfo, TokenCounts
+from aiperf.plugin.enums import EndpointType
 from aiperf.post_processors.raw_record_writer_processor import (
     RawRecordAggregator,
     RawRecordWriterProcessor,
@@ -165,6 +178,84 @@ class TestRawRecordWriterProcessorProcessRecord:
             assert record.metadata.session_num == i
             assert record.metadata.conversation_id == f"conv-{i}"
             assert record.metadata.x_request_id == f"req-{i}"
+
+
+class TestRawRecordWriterProcessorRawPayload:
+    """Test that payload_bytes bypasses endpoint.format_payload."""
+
+    @pytest.mark.asyncio
+    async def test_payload_bytes_used_directly(
+        self,
+        user_config_raw: UserConfig,
+    ):
+        """When request_info has payload_bytes, it should be deserialized as the payload."""
+        from aiperf.common.models import TextResponseData
+
+        raw_payload = {"model": "m", "messages": [{"role": "user", "content": "raw"}]}
+
+        request_info = RequestInfo(
+            model_endpoint=ModelEndpointInfo(
+                models=ModelListInfo(
+                    models=[ModelInfo(name="test-model")],
+                    model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+                ),
+                endpoint=EndpointInfo(
+                    type=EndpointType.RAW,
+                    base_url="http://localhost:8000",
+                ),
+            ),
+            turns=[],
+            payload_bytes=orjson.dumps(raw_payload),
+            turn_index=0,
+            credit_num=0,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="req-1",
+            x_correlation_id="corr-1",
+            conversation_id="conv-raw",
+        )
+
+        raw_responses = [
+            TextResponse(text="ok", perf_ns=2_000_000_000),
+        ]
+
+        request = RequestRecord(
+            request_info=request_info,
+            model_name="test-model",
+            start_perf_ns=1_000_000_000,
+            timestamp_ns=1_000_000_000,
+            end_perf_ns=2_000_000_000,
+            status=200,
+            request_headers={"Content-Type": "application/json"},
+            responses=raw_responses,
+            error=None,
+        )
+
+        parsed_responses = [
+            ParsedResponse(
+                perf_ns=2_000_000_000,
+                data=TextResponseData(text="ok"),
+            ),
+        ]
+
+        record = ParsedResponseRecord(
+            request=request,
+            responses=parsed_responses,
+            token_counts=TokenCounts(input=10, output=5, reasoning=None),
+        )
+
+        async with raw_record_processor("processor-raw", user_config_raw) as processor:
+            metadata = create_metric_metadata(
+                session_num=0,
+                conversation_id="conv-raw",
+                x_request_id="req-1",
+            )
+            await processor.process_record(record, metadata)
+
+        lines = processor.output_file.read_text().splitlines()
+        assert len(lines) == 1
+        record_dict = orjson.loads(lines[0])
+        export_record = RawRecordInfo.model_validate(record_dict)
+        assert export_record.payload == raw_payload
 
 
 class TestRawRecordWriterProcessorFileFormat:

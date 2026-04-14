@@ -144,6 +144,9 @@ class TestMooncakeTraceCanLoad:
             param({"timestamp": 1000, "session_id": "abc"}, False, id="no_required_fields"),
             param({"output_length": 50}, False, id="only_output_length"),
             param(None, False, id="none_data"),
+            param({"payload": {"messages": [{"role": "user", "content": "Hello"}], "model": "gpt-4"}}, True, id="payload_only"),
+            param({"payload": {"messages": [{"role": "user", "content": "Hello"}]}, "timestamp": 1000}, True, id="payload_with_timestamp"),
+            param({"payload": {"prompt": "Hello"}, "session_id": "s1", "delay": 500}, True, id="payload_with_session_and_delay"),
         ],
     )  # fmt: skip
     def test_can_load(self, data, expected):
@@ -170,6 +173,7 @@ class TestCustomDatasetComposerInferType:
             param({"text_input": "Hello"}, None, CustomDatasetType.MOONCAKE_TRACE, id="mooncake_text_input"),
             param({"type": "bailian_trace", "chat_id": 1, "timestamp": 0.0, "input_length": 100, "output_length": 50}, None, CustomDatasetType.BAILIAN_TRACE, id="bailian_explicit"),
             param({"chat_id": 1, "timestamp": 0.0, "input_length": 100, "output_length": 50, "type": "text"}, None, CustomDatasetType.BAILIAN_TRACE, id="bailian_structural_with_request_type"),
+            param({"payload": {"messages": [{"role": "user", "content": "Hello"}], "model": "gpt-4"}, "timestamp": 1000}, None, CustomDatasetType.MOONCAKE_TRACE, id="mooncake_payload"),
         ],
     )  # fmt: skip
     def test_infer_from_data(

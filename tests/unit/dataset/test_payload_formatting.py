@@ -98,6 +98,59 @@ class TestFormatConversationPayloads:
         assert results == []
         mock_endpoint.format_payload.assert_not_called()
 
+    def test_raw_payload_bypasses_format_payload(self, model_endpoint):
+        raw1 = {"model": "m", "messages": [{"role": "user", "content": "hi"}]}
+        raw2 = {"model": "m", "messages": [{"role": "user", "content": "bye"}]}
+        conversations = [
+            Conversation(
+                session_id="s1",
+                turns=[
+                    Turn(role="user", raw_payload=raw1),
+                    Turn(role="user", raw_payload=raw2),
+                ],
+            ),
+        ]
+
+        mock_endpoint = MagicMock()
+        mock_endpoint.get_endpoint_headers.return_value = {}
+        mock_endpoint.get_endpoint_params.return_value = {}
+
+        with patch(
+            "aiperf.dataset.payload_formatting.plugins.get_class",
+            return_value=lambda **kwargs: mock_endpoint,
+        ):
+            results = list(format_conversation_payloads(conversations, model_endpoint))
+
+        assert results == [("s1", 0, raw1), ("s1", 1, raw2)]
+        mock_endpoint.format_payload.assert_not_called()
+
+    def test_mixed_raw_and_normal_turns(self, model_endpoint):
+        raw_payload = {"model": "m", "messages": [{"role": "user", "content": "raw"}]}
+        conversations = [
+            Conversation(
+                session_id="s1",
+                turns=[
+                    Turn(role="user", raw_payload=raw_payload),
+                    Turn(role="user", texts=[Text(contents=["normal"])]),
+                ],
+            ),
+        ]
+
+        mock_endpoint = MagicMock()
+        mock_endpoint.format_payload.return_value = {"formatted": True}
+        mock_endpoint.get_endpoint_headers.return_value = {}
+        mock_endpoint.get_endpoint_params.return_value = {}
+
+        with patch(
+            "aiperf.dataset.payload_formatting.plugins.get_class",
+            return_value=lambda **kwargs: mock_endpoint,
+        ):
+            results = list(format_conversation_payloads(conversations, model_endpoint))
+
+        assert results[0] == ("s1", 0, raw_payload)
+        assert results[1] == ("s1", 1, {"formatted": True})
+        assert mock_endpoint.format_payload.call_count == 1
+
     def test_propagates_not_implemented(self, conversations, model_endpoint):
         mock_endpoint = MagicMock()
         mock_endpoint.format_payload.side_effect = NotImplementedError

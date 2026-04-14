@@ -47,6 +47,7 @@ from aiperf.dataset.utils import encode_image
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     ComposerType,
+    CustomDatasetType,
     DatasetBackingStoreType,
     PluginType,
     ServiceRunType,
@@ -132,7 +133,13 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self.info(lambda: f"Configuring dataset for {self.service_id}")
         begin = time.perf_counter()
         await self._configure_dataset()
-        await self._generate_inputs_json_file()
+        if self.user_config.input.custom_dataset_type in (
+            CustomDatasetType.RAW_PAYLOAD,
+            CustomDatasetType.INPUTS_JSON,
+        ):
+            self.info("Skipping inputs.json generation (payloads are pre-built)")
+        else:
+            await self._generate_inputs_json_file()
         await self._configure_dataset_client_and_free_memory()
 
         duration = time.perf_counter() - begin
@@ -427,6 +434,15 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             for conv in conversations
             for turn in conv.turns
         )
+        if has_payload_bytes and not all(
+            turn.raw_payload is not None
+            for conv in conversations
+            for turn in conv.turns
+        ):
+            raise ValueError(
+                "Mixed raw_payload state: all turns must have raw_payload "
+                "when any turn does (PAYLOAD_BYTES format requires uniformity)"
+            )
         mmap_format = (
             MemoryMapFormat.PAYLOAD_BYTES
             if has_payload_bytes

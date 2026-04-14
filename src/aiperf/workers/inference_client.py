@@ -174,7 +174,7 @@ class InferenceClient(AIPerfLifecycleMixin):
                 f"RequestInfo has no turns (credit_num={request_info.credit_num}, "
                 f"conversation_id={request_info.conversation_id})"
             )
-        if self.is_trace_enabled:
+        if self.is_trace_enabled and request_info.turns:
             self.trace(f"Calling inference API for turn: {request_info.turns[-1]}")
         record = await self._send_request_internal(request_info, first_token_callback)
         # Redact sensitive headers on the request_info now that the transport has

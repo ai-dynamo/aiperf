@@ -5,6 +5,7 @@
 import contextlib
 
 import aiofiles
+import orjson
 
 from aiperf.common.config import UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
@@ -101,7 +102,14 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
                 conversation_id=metadata.conversation_id or "",
             )
 
-        payload = self._endpoint.format_payload(request_info)
+        if request_info.payload_bytes is not None:
+            payload = orjson.loads(request_info.payload_bytes)
+        else:
+            current_turn = request_info.turns[-1] if request_info.turns else None
+            if current_turn and current_turn.raw_payload is not None:
+                payload = current_turn.raw_payload
+            else:
+                payload = self._endpoint.format_payload(request_info)
         return RawRecordInfo(
             metadata=metadata,
             start_perf_ns=record.request.start_perf_ns,

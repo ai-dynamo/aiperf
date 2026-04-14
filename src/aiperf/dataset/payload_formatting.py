@@ -44,6 +44,9 @@ def format_conversation_payloads(
 
     for conversation in conversations:
         for i, turn in enumerate(conversation.turns):
+            if turn.raw_payload is not None:
+                yield conversation.session_id, i, turn.raw_payload
+                continue
             request_info = RequestInfo(
                 model_endpoint=model_endpoint,
                 turns=[turn],

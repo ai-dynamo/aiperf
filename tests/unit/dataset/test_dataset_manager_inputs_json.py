@@ -8,10 +8,11 @@ import json
 import logging
 from pathlib import Path
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from aiperf.common.config import EndpointConfig, InputConfig, OutputConfig, UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models import Conversation, InputsFile, SessionPayloads, Turn
@@ -305,3 +306,96 @@ class TestGenerateInputPayloadsRawEndpoint:
 
         assert len(inputs.data) == 1
         assert inputs.data[0].payloads == [{"formatted": True}]
+
+
+class TestSkipInputsJsonForPreBuiltPayloads:
+    """inputs.json generation should be skipped for raw_payload and inputs_json datasets."""
+
+    @staticmethod
+    def _make_dataset_manager(
+        tmp_path: Path,
+        custom_dataset_type: str | None,
+    ) -> Any:
+        from aiperf.common.config import ServiceConfig
+        from aiperf.dataset.dataset_manager import DatasetManager
+
+        input_file = None
+        if custom_dataset_type is not None:
+            input_file = tmp_path / "fake_input.jsonl"
+            input_file.touch()
+
+        user_config = UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type=EndpointType.RAW,
+                streaming=False,
+                url="http://localhost:8000",
+            ),
+            input=InputConfig(
+                custom_dataset_type=custom_dataset_type,
+                file=str(input_file) if input_file else None,
+            ),
+            output=OutputConfig(artifact_directory=tmp_path),
+        )
+        mgr = DatasetManager(
+            service_config=ServiceConfig(),
+            user_config=user_config,
+            service_id="test_dm",
+        )
+        mgr.dataset = {
+            "s1": Conversation(
+                session_id="s1",
+                turns=[
+                    Turn(
+                        role="user",
+                        raw_payload={
+                            "model": "m",
+                            "messages": [{"role": "user", "content": "hi"}],
+                        },
+                    ),
+                ],
+            ),
+        }
+        return mgr
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("dataset_type", ["raw_payload", "inputs_json"])
+    async def test_skips_inputs_json_for_prebuilt_types(
+        self, tmp_path: Path, dataset_type: str
+    ):
+        mgr = self._make_dataset_manager(tmp_path, dataset_type)
+        mgr._configure_dataset = AsyncMock()
+        mgr._configure_tokenizer = AsyncMock()
+        mgr._configure_dataset_client_and_free_memory = AsyncMock()
+
+        with patch.object(
+            mgr, "_generate_inputs_json_file", new_callable=AsyncMock
+        ) as mock_gen:
+            await mgr._profile_configure_command(Mock())
+            mock_gen.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_still_generates_inputs_json_for_single_turn(self, tmp_path: Path):
+        mgr = self._make_dataset_manager(tmp_path, "single_turn")
+        mgr._configure_dataset = AsyncMock()
+        mgr._configure_tokenizer = AsyncMock()
+        mgr._configure_dataset_client_and_free_memory = AsyncMock()
+
+        with patch.object(
+            mgr, "_generate_inputs_json_file", new_callable=AsyncMock
+        ) as mock_gen:
+            await mgr._profile_configure_command(Mock())
+            mock_gen.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_still_generates_inputs_json_for_none_type(self, tmp_path: Path):
+        mgr = self._make_dataset_manager(tmp_path, None)
+        mgr._configure_dataset = AsyncMock()
+        mgr._configure_tokenizer = AsyncMock()
+        mgr._configure_dataset_client_and_free_memory = AsyncMock()
+
+        with patch.object(
+            mgr, "_generate_inputs_json_file", new_callable=AsyncMock
+        ) as mock_gen:
+            await mgr._profile_configure_command(Mock())
+            mock_gen.assert_called_once()

@@ -190,16 +190,18 @@ class MooncakeTrace(AIPerfBaseModel):
 
     See https://github.com/kvcache-ai/Mooncake for more details.
 
-    Supports three input modes (exactly one required):
+    Supports four input modes (exactly one required):
     - input_length: Synthetic text generated from token count (optionally with hash_ids)
     - text_input: Literal text string sent as the prompt
     - messages: List of OpenAI-compatible message dicts sent directly to the API
+    - payload: Complete pre-built API request dict sent verbatim to the transport
 
     Examples:
     - Minimal: {"input_length": 10, "hash_ids": [123]}
     - With input_length: {"input_length": 10, "output_length": 4}
     - With text_input: {"text_input": "Hello world", "output_length": 4}
     - With messages: {"messages": [{"role": "user", "content": "Hello"}], "output_length": 4}
+    - With payload: {"payload": {"prompt": "Hello", "max_tokens": 50}}
     - With timestamp and hash ID: {"timestamp": 1000, "input_length": 10, "hash_ids": [123]}
     """
 
@@ -219,6 +221,11 @@ class MooncakeTrace(AIPerfBaseModel):
     tools: list[dict[str, Any]] | None = Field(
         None,
         description="List of OpenAI-compatible tool definitions. Only allowed when 'messages' is provided.",
+    )
+    payload: dict[str, Any] | None = Field(
+        None,
+        description="Complete pre-built API request payload sent verbatim to the transport. "
+        "Bypasses all endpoint formatting. Cannot be combined with other input modes.",
     )
 
     # Optional fields
@@ -245,20 +252,21 @@ class MooncakeTrace(AIPerfBaseModel):
             self.input_length is not None,
             self.text_input is not None,
             self.messages is not None,
+            self.payload is not None,
         ]
         input_mode_count = sum(input_modes)
         if input_mode_count == 0:
             raise ValueError(
-                "Exactly one of 'input_length', 'text_input', or 'messages' must be provided"
+                "Exactly one of 'input_length', 'text_input', 'messages', or 'payload' must be provided"
             )
         if input_mode_count > 1:
             raise ValueError(
-                "'input_length', 'text_input', and 'messages' are mutually exclusive. Use only one of them."
+                "'input_length', 'text_input', 'messages', and 'payload' are mutually exclusive. Use only one of them."
             )
 
         if self.hash_ids is not None and self.input_length is None:
             raise ValueError(
-                "'hash_ids' is only allowed when 'input_length' is provided, not when 'text_input' or 'messages' are provided"
+                "'hash_ids' is only allowed when 'input_length' is provided, not when 'text_input', 'messages', or 'payload' are provided"
             )
 
         return self
@@ -284,6 +292,13 @@ class MooncakeTrace(AIPerfBaseModel):
                     f"Each message must have a 'role' key, but message at index {i} does not"
                 )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> "MooncakeTrace":
+        """Validate the payload field."""
+        if self.payload is not None and not self.payload:
+            raise ValueError("'payload' must be a non-empty dict")
         return self
 
 

@@ -101,9 +101,8 @@ aiperf profile \
     --input-file payloads.jsonl \
     --model Qwen/Qwen3-0.6B \
     --custom-dataset-type raw_payload \
-    --endpoint-type raw \
     --streaming \
-    --url localhost:8000/v1/chat/completions \
+    --url localhost:8000 \
     --concurrency 2
 ```
 
@@ -113,9 +112,8 @@ Since auto-detection recognizes files with `messages` arrays, you can omit `--cu
 aiperf profile \
     --input-file payloads.jsonl \
     --model Qwen/Qwen3-0.6B \
-    --endpoint-type raw \
     --streaming \
-    --url localhost:8000/v1/chat/completions \
+    --url localhost:8000 \
     --concurrency 2
 ```
 
@@ -138,22 +136,20 @@ aiperf profile \
     --input-file conversations/ \
     --model Qwen/Qwen3-0.6B \
     --custom-dataset-type raw_payload \
-    --endpoint-type raw \
     --streaming \
-    --url localhost:8000/v1/chat/completions \
+    --url localhost:8000 \
     --concurrency 2
 ```
 
 ---
 
-## The Raw Endpoint
+## Endpoint Type
 
-The `raw` endpoint type (`--endpoint-type raw`) is designed for verbatim replay. It differs from other endpoint types in two ways:
+Raw payloads work with any endpoint type. The endpoint controls only **response parsing** and **URL path** -- payload formatting is always bypassed when raw payloads are present.
 
-1. **No payload formatting**: Payloads from the dataset are sent directly to the server without modification.
-2. **No endpoint path**: The URL you provide via `--url` is used as-is. You must include the full API path (e.g., `--url localhost:8000/v1/chat/completions`).
+Using a regular endpoint type (e.g., the default `chat`) is recommended because it provides structured response parsing (token counts, finish reasons, choices) instead of generic auto-detection.
 
-Response parsing uses auto-detection (works with OpenAI-compatible and other common formats). For non-standard response formats, you can specify a [JMESPath](https://jmespath.org/) expression via `--extra-inputs response_field:<expression>` to extract the relevant field.
+For non-standard APIs where no built-in endpoint matches, use `--endpoint-type raw`. The raw endpoint does not append a URL path (you must include the full path in `--url`) and parses responses using auto-detection. For non-standard response formats, you can specify a [JMESPath](https://jmespath.org/) expression via `--extra-inputs response_field:<expression>` to extract the relevant field.
 
 ---
 
@@ -163,10 +159,10 @@ Response parsing uses auto-detection (works with OpenAI-compatible and other com
 |--------|----------|---------|-------------|
 | `--input-file` | Yes | -- | Path to a JSONL file or directory of JSONL files |
 | `--model` | Yes | -- | Model name (e.g., `Qwen/Qwen3-0.6B`) |
-| `--endpoint-type` | No | `chat` | Set to `raw` for verbatim replay (no formatting, no path appended) |
+| `--endpoint-type` | No | `chat` | Any endpoint type works; `raw` available for non-standard APIs |
 | `--custom-dataset-type` | No | Auto-detected | Set to `raw_payload` to force this loader |
 | `--streaming` | No | `false` | Enable streaming responses |
-| `--url` | No | `localhost:8000` | Server URL including the full API path |
+| `--url` | No | `localhost:8000` | Server base URL (endpoint type appends the API path) |
 | `--concurrency` | No | -- | Number of concurrent users |
 | `--dataset-sampling-strategy` | No | `sequential` | `sequential`, `random`, or `shuffle` |
 
@@ -182,7 +178,7 @@ This is the correct behavior because raw payloads already contain the complete m
 
 ## Tips
 
-- **Include the full API path in `--url`** when using `--endpoint-type raw`. No path is appended automatically.
+- **Include the full API path in `--url`** only when using `--endpoint-type raw`. Other endpoint types append the path automatically.
 - **Every line must have a `messages` key** with a list value.
 - **Empty lines are skipped** in both modes.
 - **Directory files are sorted alphabetically**. Name files with zero-padded numbers (e.g., `session_001.jsonl`) for predictable ordering.

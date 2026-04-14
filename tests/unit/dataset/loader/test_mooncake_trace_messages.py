@@ -114,3 +114,107 @@ class TestMooncakeMessagesValidation:
         messages = [{"role": "user", "content": "Hello"}]
         with pytest.raises(ValidationError, match="tools.*non-empty"):
             MooncakeTrace(messages=messages, tools=[])
+
+
+class TestMooncakePayloadValidation:
+    """Test MooncakeTrace model validation for the payload field."""
+
+    def test_valid_payload_simple(self):
+        """Test that a valid payload dict is accepted."""
+        payload = {
+            "messages": [{"role": "user", "content": "Hi"}],
+            "model": "gpt-4",
+            "stream": True,
+        }
+        trace = MooncakeTrace(payload=payload)
+        assert trace.type == CustomDatasetType.MOONCAKE_TRACE
+        assert trace.payload == payload
+        assert trace.input_length is None
+        assert trace.text_input is None
+        assert trace.messages is None
+
+    def test_valid_payload_with_timestamp(self):
+        """Test payload with timestamp."""
+        payload = {
+            "messages": [{"role": "user", "content": "Hi"}],
+            "model": "gpt-4",
+            "stream": True,
+        }
+        trace = MooncakeTrace(payload=payload, timestamp=1000)
+        assert trace.timestamp == 1000
+
+    def test_valid_payload_with_delay(self):
+        """Test payload with delay."""
+        payload = {
+            "messages": [{"role": "user", "content": "Hi"}],
+            "model": "gpt-4",
+            "stream": True,
+        }
+        trace = MooncakeTrace(payload=payload, delay=500)
+        assert trace.delay == 500
+
+    def test_valid_payload_with_output_length(self):
+        """Test payload with output_length."""
+        payload = {
+            "messages": [{"role": "user", "content": "Hi"}],
+            "model": "gpt-4",
+            "stream": True,
+        }
+        trace = MooncakeTrace(payload=payload, output_length=100)
+        assert trace.output_length == 100
+
+    def test_valid_payload_with_session_id(self):
+        """Test payload with session_id and timestamp."""
+        payload = {
+            "messages": [{"role": "user", "content": "Hi"}],
+            "model": "gpt-4",
+            "stream": True,
+        }
+        trace = MooncakeTrace(payload=payload, session_id="sess-1", timestamp=1000)
+        assert trace.session_id == "sess-1"
+        assert trace.timestamp == 1000
+
+    def test_valid_payload_arbitrary_structure(self):
+        """Test that payload accepts non-chat structures."""
+        payload = {"prompt": "Hello", "max_tokens": 50, "custom_field": [1, 2, 3]}
+        trace = MooncakeTrace(payload=payload)
+        assert trace.payload == payload
+
+    def test_invalid_payload_with_input_length(self):
+        """Test that payload + input_length is rejected."""
+        payload = {"prompt": "Hello"}
+        with pytest.raises(ValidationError, match="mutually exclusive"):
+            MooncakeTrace(payload=payload, input_length=100)
+
+    def test_invalid_payload_with_text_input(self):
+        """Test that payload + text_input is rejected."""
+        payload = {"prompt": "Hello"}
+        with pytest.raises(ValidationError, match="mutually exclusive"):
+            MooncakeTrace(payload=payload, text_input="Hello")
+
+    def test_invalid_payload_with_messages(self):
+        """Test that payload + messages is rejected."""
+        payload = {"prompt": "Hello"}
+        messages = [{"role": "user", "content": "Hello"}]
+        with pytest.raises(ValidationError, match="mutually exclusive"):
+            MooncakeTrace(payload=payload, messages=messages)
+
+    def test_invalid_payload_with_hash_ids(self):
+        """Test that payload + hash_ids is rejected."""
+        payload = {"prompt": "Hello"}
+        with pytest.raises(
+            ValidationError, match=r"hash_ids.*(not allowed|only allowed)"
+        ):
+            MooncakeTrace(payload=payload, hash_ids=[1, 2, 3])
+
+    def test_invalid_payload_with_tools(self):
+        """Test that payload + tools is rejected."""
+        payload = {"prompt": "Hello"}
+        tools = [{"type": "function", "function": {"name": "fn", "parameters": {}}}]
+        with pytest.raises(ValidationError, match="tools.*only allowed when.*messages"):
+            MooncakeTrace(payload=payload, tools=tools)
+
+    def test_invalid_payload_empty_dict(self):
+        """Test that an empty payload dict is rejected."""
+        with pytest.raises(ValidationError, match="payload.*non-empty"):
+            MooncakeTrace(payload={})

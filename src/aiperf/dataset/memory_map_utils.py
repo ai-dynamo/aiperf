@@ -412,9 +412,7 @@ class ConversationOffset(AIPerfBaseModel):
 class PayloadOffset(AIPerfBaseModel):
     """Offset information for a single turn's payload in the data file."""
 
-    offset: int = Field(
-        description="Byte offset where payload data starts (-1 if no payload)"
-    )
+    offset: int = Field(ge=0, description="Byte offset where payload data starts")
     size: int = Field(ge=0, description="Size of the payload data in bytes")
 
 
@@ -648,8 +646,6 @@ class MemoryMapDatasetClient:
         if turn_offsets is None or turn_index >= len(turn_offsets):
             return None
         offset_info = turn_offsets[turn_index]
-        if offset_info.offset < 0:
-            return None
         return bytes(
             self.data_mmap[offset_info.offset : offset_info.offset + offset_info.size]
         )

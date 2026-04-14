@@ -10,11 +10,13 @@ from aiperf.endpoints.response_mixin import JMESPathResponseMixin
 
 
 class RawEndpoint(JMESPathResponseMixin, BaseEndpoint):
-    """Raw payload endpoint for verbatim API replay.
+    """Fallback endpoint for non-standard APIs.
 
-    Does not format payloads -- use with raw_payload or inputs_json dataset
-    types.  Parses responses using auto-detection with optional JMESPath
-    extraction via ``response_field`` in endpoint.extra.
+    Does not format payloads or append a URL path.  Parses responses using
+    auto-detection with optional JMESPath extraction via ``response_field``
+    in endpoint.extra.  Prefer a regular endpoint type (e.g. chat) when the
+    target API is supported -- raw payloads bypass formatting regardless of
+    endpoint type, and regular endpoints provide structured response parsing.
     """
 
     def __init__(self, *args, **kwargs):

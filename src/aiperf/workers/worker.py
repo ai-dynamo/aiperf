@@ -593,6 +593,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             RequestInfo with all data needed to send inference request
         """
         credit = credit_context.credit
+        turns = session.turn_list if session else []
         return RequestInfo(
             model_endpoint=self.model_endpoint,
             credit_num=credit.id,
@@ -606,7 +607,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             if session
             else credit.conversation_id,
             turn_index=session.turn_index if session else credit.turn_index,
-            turns=session.turn_list if session else [],
+            turns=turns,
             drop_perf_ns=credit_context.drop_perf_ns,
             credit_issued_ns=credit.issued_at_ns,
             system_message=system_message,

@@ -70,13 +70,12 @@ aiperf profile \
     --input-file artifacts/my-benchmark/inputs.json \
     --model Qwen/Qwen3-0.6B \
     --custom-dataset-type inputs_json \
-    --endpoint-type raw \
     --streaming \
     --url localhost:8000 \
     --concurrency 4
 ```
 
-`--endpoint-type raw` is required because `inputs_json` payloads are already complete API requests. The raw endpoint sends them verbatim and parses responses using auto-detection.
+Raw payloads work with any endpoint type. The default `chat` endpoint provides structured response parsing (token counts, finish reasons). Use `--endpoint-type raw` only for non-standard APIs where no built-in endpoint matches.
 
 `--custom-dataset-type inputs_json` is required when replaying AIPerf-generated `inputs.json` files because AIPerf writes them with pretty-printed formatting (multi-line JSON), which the line-based auto-detection cannot parse. Always specify the dataset type explicitly for reliability.
 
@@ -88,7 +87,7 @@ aiperf profile \
 |--------|----------|---------|-------------|
 | `--input-file` | Yes | -- | Path to the inputs JSON file |
 | `--model` | Yes | -- | Model name (e.g., `Qwen/Qwen3-0.6B`) |
-| `--endpoint-type` | No | `chat` | Set to `raw` for verbatim payload replay |
+| `--endpoint-type` | No | `chat` | Any endpoint type works; `raw` available for non-standard APIs |
 | `--custom-dataset-type` | No | Auto-detected | Set to `inputs_json` to force this loader |
 | `--dataset-sampling-strategy` | No | `sequential` | `sequential`, `shuffle`, or `random` |
 | `--concurrency` | No | -- | Number of concurrent users |
@@ -113,7 +112,6 @@ aiperf profile \
     --input-file artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/inputs.json \
     --model Qwen/Qwen3-0.6B \
     --custom-dataset-type inputs_json \
-    --endpoint-type raw \
     --url server-b:8000 \
     --concurrency 4
 ```

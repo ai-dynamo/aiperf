@@ -50,12 +50,12 @@ This document describes datasets that AIPerf can use to generate stimulus. Addit
     <tr>
       <td><strong>Raw Payload Replay</strong></td>
       <td style="text-align: center;">✅</td>
-      <td>Verbatim API request replay <a href="tutorials/raw-payload-replay.md"><code>--input-file payloads.jsonl --custom-dataset-type raw_payload --endpoint-type raw</code></a></td>
+      <td>Verbatim API request replay <a href="tutorials/raw-payload-replay.md"><code>--input-file payloads.jsonl --custom-dataset-type raw_payload</code></a></td>
     </tr>
     <tr>
       <td><strong>Inputs JSON Replay</strong></td>
       <td style="text-align: center;">✅</td>
-      <td>Pre-formatted multi-turn payloads <a href="tutorials/inputs-json-replay.md"><code>--input-file inputs.json --custom-dataset-type inputs_json --endpoint-type raw</code></a></td>
+      <td>Pre-formatted multi-turn payloads <a href="tutorials/inputs-json-replay.md"><code>--input-file inputs.json --custom-dataset-type inputs_json</code></a></td>
     </tr>
     <tr>
       <td><strong>ShareGPT</strong></td>
