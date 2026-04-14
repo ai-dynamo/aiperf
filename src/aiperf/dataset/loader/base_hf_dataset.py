@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import base64
+import mimetypes
 from abc import abstractmethod
 from typing import Any
 
@@ -84,9 +86,6 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         Handles URL strings and dicts with raw bytes (HF video format).
         URL strings are passed through directly; bytes are base64-encoded.
         """
-        import base64
-        import mimetypes
-
         value = row.get(video_column)
         if isinstance(value, str) and value:
             # Pass through any valid URI scheme; only prepend file:// for bare paths

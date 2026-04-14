@@ -142,6 +142,21 @@ class TestMMVUConvertToConversations:
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations) == 1
 
+    async def test_skips_rows_with_missing_video(self, loader):
+        data = {
+            "dataset": [
+                {"question": "Q1?", "choices": {}, "video": None},
+                {
+                    "question": "Q2?",
+                    "choices": {},
+                    "video": "https://example.com/1.mp4",
+                },
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].texts[0].contents[0] == "Q2?"
+
     async def test_empty_dataset_returns_empty_list(self, loader):
         data = {"dataset": []}
         conversations = await loader.convert_to_conversations(data)
@@ -172,9 +187,8 @@ class TestMMVUConvertToConversations:
         assert len(conversations[0].turns) == 1
 
 
-@pytest.mark.asyncio
 class TestExtractVideos:
-    async def test_url_string_stored_as_is(self, loader):
+    def test_url_string_stored_as_is(self, loader):
         row = {"video": "https://huggingface.co/datasets/yale-nlp/MMVU/0.mp4"}
         videos = loader._extract_videos(row, "video")
         assert len(videos) == 1
@@ -183,51 +197,51 @@ class TestExtractVideos:
             == "https://huggingface.co/datasets/yale-nlp/MMVU/0.mp4"
         )
 
-    async def test_local_path_prefixed_with_file_scheme(self, loader):
+    def test_local_path_prefixed_with_file_scheme(self, loader):
         row = {"video": "/tmp/video.mp4"}
         videos = loader._extract_videos(row, "video")
         assert videos[0].contents[0] == "file:///tmp/video.mp4"
 
-    async def test_file_url_passed_through(self, loader):
+    def test_file_url_passed_through(self, loader):
         row = {"video": "file:///tmp/video.mp4"}
         videos = loader._extract_videos(row, "video")
         assert videos[0].contents[0] == "file:///tmp/video.mp4"
 
-    async def test_data_uri_passed_through(self, loader):
+    def test_data_uri_passed_through(self, loader):
         data_uri = "data:video/mp4;base64,abc123"
         row = {"video": data_uri}
         videos = loader._extract_videos(row, "video")
         assert videos[0].contents[0] == data_uri
 
-    async def test_bytes_dict_defaults_to_mp4_mime(self, loader):
+    def test_bytes_dict_defaults_to_mp4_mime(self, loader):
         raw = b"fake-video-bytes"
         row = {"video": {"bytes": raw}}
         videos = loader._extract_videos(row, "video")
         expected = f"data:video/mp4;base64,{base64.b64encode(raw).decode()}"
         assert videos[0].contents[0] == expected
 
-    async def test_bytes_dict_infers_mime_from_path(self, loader):
+    def test_bytes_dict_infers_mime_from_path(self, loader):
         raw = b"fake-video-bytes"
         row = {"video": {"bytes": raw, "path": "clip.webm"}}
         videos = loader._extract_videos(row, "video")
         assert videos[0].contents[0].startswith("data:video/webm;base64,")
 
-    async def test_missing_column_returns_empty(self, loader):
+    def test_missing_column_returns_empty(self, loader):
         row = {"other": "value"}
         videos = loader._extract_videos(row, "video")
         assert videos == []
 
-    async def test_none_value_returns_empty(self, loader):
+    def test_none_value_returns_empty(self, loader):
         row = {"video": None}
         videos = loader._extract_videos(row, "video")
         assert videos == []
 
-    async def test_empty_string_returns_empty(self, loader):
+    def test_empty_string_returns_empty(self, loader):
         row = {"video": ""}
         videos = loader._extract_videos(row, "video")
         assert videos == []
 
-    async def test_bytes_dict_with_none_bytes_returns_empty(self, loader):
+    def test_bytes_dict_with_none_bytes_returns_empty(self, loader):
         row = {"video": {"bytes": None}}
         videos = loader._extract_videos(row, "video")
         assert videos == []

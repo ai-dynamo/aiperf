@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c)2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Any
@@ -67,6 +67,12 @@ class MMVUDatasetLoader(BaseHFDatasetLoader):
                 continue
 
             videos = self._extract_videos(row, self.video_column)
+            if not videos:
+                self.warning(
+                    f"Row has no video in column '{self.video_column}' — skipping."
+                )
+                skipped += 1
+                continue
 
             conversations.append(
                 Conversation(
