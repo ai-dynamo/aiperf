@@ -88,6 +88,32 @@ class TestShareGPTLoader:
         assert turn.max_tokens == len(["This", "is", "test", "output"])
         assert turn.model == "test-model"
 
+    async def test_convert_multi_turn_sharegpt_roles(
+        self, sharegpt_loader: ShareGPTLoader
+    ):
+        """Entries with human/gpt roles beyond the first pair become extra turns."""
+        dataset = [
+            {
+                "conversations": [
+                    {"from": "human", "value": "Hello how are you"},
+                    {"from": "gpt", "value": "This is test output"},
+                    {"from": "human", "value": "Follow up question here"},
+                    {"from": "gpt", "value": "Second assistant reply text"},
+                ]
+            }
+        ]
+        conversations = await sharegpt_loader.convert_to_conversations(dataset)
+
+        assert len(conversations) == 1
+        conv = conversations[0]
+        assert len(conv.turns) == 2
+        assert conv.turns[0].texts[0].contents[0] == "Hello how are you"
+        assert conv.turns[0].max_tokens == len(["This", "is", "test", "output"])
+        assert conv.turns[1].texts[0].contents[0] == "Follow up question here"
+        assert conv.turns[1].max_tokens == len(
+            ["Second", "assistant", "reply", "text"]
+        )
+
     async def test_get_preferred_sampling_strategy(
         self, sharegpt_loader: ShareGPTLoader
     ):
