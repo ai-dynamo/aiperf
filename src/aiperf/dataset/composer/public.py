@@ -98,6 +98,9 @@ class PublicDatasetComposer(BaseDatasetComposer):
             kwargs["conversation_column"] = loader_metadata.conversation_column
             kwargs["message_content_key"] = loader_metadata.message_content_key
 
+        if loader_metadata.multi_turn:
+            kwargs["multi_turn"] = True
+
         if loader_metadata.streaming:
             kwargs["streaming"] = loader_metadata.streaming
 

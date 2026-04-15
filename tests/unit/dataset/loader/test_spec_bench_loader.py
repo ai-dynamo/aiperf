@@ -119,3 +119,43 @@ class TestSpecBenchLoader:
         conversations = await loader.convert_to_conversations(data)
         session_ids = [c.session_id for c in conversations]
         assert len(set(session_ids)) == 5
+
+
+@pytest.mark.asyncio
+class TestSpecBenchLoaderMultiTurn:
+    async def test_multi_turn_produces_all_turns(self, user_config):
+        loader = SpecBenchLoader(user_config=user_config, multi_turn=True)
+        data = {
+            "dataset": [{"turns": ["First turn prompt.", "Second follow-up turn."]}]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 2
+        assert conversations[0].turns[0].texts[0].contents[0] == "First turn prompt."
+        assert (
+            conversations[0].turns[1].texts[0].contents[0] == "Second follow-up turn."
+        )
+
+    async def test_default_single_turn_unchanged(self, loader):
+        data = {
+            "dataset": [{"turns": ["First turn prompt.", "Second follow-up turn."]}]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 1
+        assert conversations[0].turns[0].texts[0].contents[0] == "First turn prompt."
+
+    async def test_multi_turn_skips_empty_entries(self, user_config):
+        loader = SpecBenchLoader(user_config=user_config, multi_turn=True)
+        data = {"dataset": [{"turns": ["Valid", "", "Also valid"]}]}
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 2
+        assert conversations[0].turns[0].texts[0].contents[0] == "Valid"
+        assert conversations[0].turns[1].texts[0].contents[0] == "Also valid"
+
+    async def test_multi_turn_empty_turns_skipped(self, user_config):
+        loader = SpecBenchLoader(user_config=user_config, multi_turn=True)
+        data = {"dataset": [{"turns": [""]}]}
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 0

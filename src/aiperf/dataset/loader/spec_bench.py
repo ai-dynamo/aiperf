@@ -5,6 +5,7 @@ from typing import Any
 
 import orjson
 
+from aiperf.common.config.user_config import UserConfig
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
@@ -15,11 +16,22 @@ class SpecBenchLoader(BasePublicDatasetLoader):
 
     Downloads the SpecBench JSONL file from GitHub and converts each entry
     into a single-turn AIPerf Conversation using the first turn of each question.
+    With ``multi_turn=True``, all turns in each entry are used.
     """
 
     tag = "SpecBench"
     url = "https://raw.githubusercontent.com/hemingkx/Spec-Bench/fd2c1cd7d2201ef71db4c5f4e455008f017967bf/data/spec_bench/question.jsonl"
     filename = "spec_bench.jsonl"
+
+    def __init__(
+        self,
+        user_config: UserConfig,
+        *,
+        multi_turn: bool = False,
+        **kwargs,
+    ) -> None:
+        self.multi_turn = multi_turn
+        super().__init__(user_config=user_config, **kwargs)
 
     async def load_dataset(self) -> dict[str, Any]:
         """Load the SpecBench JSONL file from cache or download it."""
@@ -30,27 +42,41 @@ class SpecBenchLoader(BasePublicDatasetLoader):
     async def convert_to_conversations(
         self, data: dict[str, Any]
     ) -> list[Conversation]:
-        """Convert each SpecBench entry into a single-turn Conversation."""
+        """Convert each SpecBench entry into a Conversation (single- or multi-turn)."""
         dataset = data["dataset"]
         conversations = []
         skipped = 0
 
         for row in dataset:
-            turns = row.get("turns", [])
-            if not turns or not str(turns[0]).strip():
+            turns_raw = row.get("turns", [])
+            if not turns_raw or not str(turns_raw[0]).strip():
                 skipped += 1
                 continue
 
-            conversations.append(
-                Conversation(
-                    session_id=self.session_id_generator.next(),
-                    turns=[
-                        Turn(
-                            texts=[Text(contents=[str(turns[0])])],
-                        )
-                    ],
+            if self.multi_turn:
+                conv_turns: list[Turn] = []
+                for t in turns_raw:
+                    text = str(t).strip() if t else ""
+                    if text:
+                        conv_turns.append(Turn(texts=[Text(contents=[text])]))
+                if not conv_turns:
+                    skipped += 1
+                    continue
+                conversations.append(
+                    Conversation(
+                        session_id=self.session_id_generator.next(),
+                        turns=conv_turns,
+                    )
                 )
-            )
+            else:
+                conversations.append(
+                    Conversation(
+                        session_id=self.session_id_generator.next(),
+                        turns=[
+                            Turn(texts=[Text(contents=[str(turns_raw[0])])]),
+                        ],
+                    )
+                )
 
         self.debug(
             lambda: f"Converted {len(conversations)} rows (skipped {skipped} empty)"
