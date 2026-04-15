@@ -3,16 +3,18 @@
 
 import asyncio
 import base64
+import io
 import mimetypes
 from abc import abstractmethod
 from typing import Any
 
+import soundfile as sf
 from datasets import load_dataset as hf_load_dataset
 from PIL import Image as PILImage
 
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.exceptions import DatasetLoaderError
-from aiperf.common.models import Conversation, Image, Video
+from aiperf.common.models import Audio, Conversation, Image, Video
 from aiperf.dataset import utils
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
@@ -102,6 +104,25 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
             b64 = base64.b64encode(value["bytes"]).decode("utf-8")
             return [Video(name="", contents=[f"data:{mime_type};base64,{b64}"])]
         return []
+
+    def _extract_audio(self, row: dict[str, Any], audio_column: str) -> list[Audio]:
+        """Extract audio from a dataset row column.
+
+        Handles HF Audio dicts with array/sampling_rate fields.
+        Encodes the numpy array as WAV and returns base64 in the format
+        expected by the chat endpoint: 'wav,<base64>'.
+        """
+        value = row.get(audio_column)
+        if not isinstance(value, dict):
+            return []
+        array = value.get("array")
+        sr = value.get("sampling_rate")
+        if array is None or sr is None:
+            return []
+        buf = io.BytesIO()
+        sf.write(buf, array, sr, format="WAV")
+        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        return [Audio(name="", contents=[f"wav,{b64}"])]
 
     def _max_conversations(self) -> int | None:
         """Return the maximum number of conversations to build from the dataset.
