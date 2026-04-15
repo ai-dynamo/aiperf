@@ -10,7 +10,7 @@ from aiperf.plugin.enums import CustomDatasetType
 
 
 def _coalesce_input_to_text(data: Any) -> Any:
-    """Map JSONL ``input`` onto ``text`` when ``text`` is unset (OpenAI-style exports)."""
+    """Map JSONL ``input`` onto ``text`` when ``text`` is absent or identical (OpenAI-style exports)."""
     if not isinstance(data, dict):
         return data
     raw_input = data.get("input")
@@ -18,9 +18,7 @@ def _coalesce_input_to_text(data: Any) -> Any:
     if raw_input is None:
         return data
     if text is not None and text != raw_input:
-        raise ValueError(
-            "Cannot specify both 'input' and 'text' with different values"
-        )
+        raise ValueError("Cannot specify both 'input' and 'text' with different values")
     out = dict(data)
     if text is None:
         out["text"] = raw_input

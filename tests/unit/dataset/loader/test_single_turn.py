@@ -23,6 +23,7 @@ class TestSingleTurn:
         assert data.text == "What is deep learning?"
 
     def test_input_and_text_conflict_raises(self):
+        """Providing 'input' and 'text' with different values must raise a ValidationError."""
         with pytest.raises(ValueError, match="input.*text"):
             SingleTurn.model_validate(
                 {
@@ -31,6 +32,13 @@ class TestSingleTurn:
                     "text": "b",
                 }
             )
+
+    def test_input_and_text_same_value_accepted(self):
+        """When input and text carry the same value, coalescing should succeed silently."""
+        data = SingleTurn.model_validate(
+            {"type": "single_turn", "input": "hello", "text": "hello"}
+        )
+        assert data.text == "hello"
 
     def test_create_with_text_only(self):
         """Test creating SingleTurn with text."""
@@ -152,6 +160,26 @@ class TestSingleTurn:
 
 class TestSingleTurnDatasetLoader:
     """Basic functionality tests for SingleTurnDatasetLoader."""
+
+    def test_load_dataset_with_input_alias(
+        self, create_jsonl_file, default_user_config
+    ):
+        """The 'input' key in JSONL must be respected end-to-end through load_dataset()."""
+        content = [
+            '{"input": "What is deep learning?"}',
+            '{"input": "Explain neural networks"}',
+        ]
+        filename = create_jsonl_file(content)
+
+        loader = SingleTurnDatasetLoader(
+            filename=filename, user_config=default_user_config
+        )
+        dataset = loader.load_dataset()
+
+        assert len(dataset) == 2
+        turn1, turn2 = list(dataset.values())
+        assert turn1[0].text == "What is deep learning?"
+        assert turn2[0].text == "Explain neural networks"
 
     def test_load_dataset_basic_functionality(
         self, create_jsonl_file, default_user_config
