@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-import soundfile as sf
 from PIL import Image as PILImage
 
 from aiperf.common.config import EndpointConfig, UserConfig
@@ -359,7 +358,10 @@ def _make_audio_row(duration_seconds: float = 1.0, sr: int = 16000) -> dict:
     num_samples = int(duration_seconds * sr)
     return {
         "problem": "test",
-        "audio": {"array": np.zeros(num_samples, dtype=np.float32), "sampling_rate": sr},
+        "audio": {
+            "array": np.zeros(num_samples, dtype=np.float32),
+            "sampling_rate": sr,
+        },
     }
 
 

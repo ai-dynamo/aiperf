@@ -10,7 +10,11 @@ import soundfile as sf
 
 from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.models import Conversation
-from aiperf.dataset.loader.hf_asr import HFASRDatasetLoader, _ASR_PROMPT, _MAX_DURATION_SECONDS
+from aiperf.dataset.loader.hf_asr import (
+    _ASR_PROMPT,
+    _MAX_DURATION_SECONDS,
+    HFASRDatasetLoader,
+)
 
 
 @pytest.fixture
@@ -40,7 +44,9 @@ def _make_audio_bytes(duration_seconds: float, sr: int = 16000) -> bytes:
 
 def _make_audio_row(duration_seconds: float, sr: int = 16000) -> dict:
     """Build a synthetic HF undecoded audio row (bytes + path)."""
-    return {"audio": {"bytes": _make_audio_bytes(duration_seconds, sr), "path": "audio.wav"}}
+    return {
+        "audio": {"bytes": _make_audio_bytes(duration_seconds, sr), "path": "audio.wav"}
+    }
 
 
 class TestAudioFromBytes:
@@ -57,7 +63,7 @@ class TestAudioFromBytes:
     def test_content_decodes_to_valid_wav(self, loader):
         audio_value = {"bytes": _make_audio_bytes(0.5, sr=16000), "path": "audio.wav"}
         audios = loader._audio_from_bytes(audio_value)
-        b64 = audios[0].contents[0][len("wav,"):]
+        b64 = audios[0].contents[0][len("wav,") :]
         array, sr = sf.read(io.BytesIO(base64.b64decode(b64)))
         assert sr == 16000
         assert len(array) == pytest.approx(8000, rel=0.01)
