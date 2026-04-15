@@ -18,7 +18,7 @@ class SingleTurn(AIPerfBaseModel):
     The single turn type
       - supports multi-modal (e.g. text, image, audio, video)
       - supports client-side batching for each data (e.g. batch_size > 1)
-      - DOES NOT support multi-turn features (e.g. session_id)
+      - supports optional session_id for causal ordering across entries
     """
 
     type: Literal[CustomDatasetType.SINGLE_TURN] = CustomDatasetType.SINGLE_TURN
@@ -56,6 +56,11 @@ class SingleTurn(AIPerfBaseModel):
         description="Amount of milliseconds to wait before sending the turn. Supports floating point, but scheduling accuracy is at the millisecond level.",
     )
     role: str | None = Field(default=None, description="Role of the turn.")
+    session_id: str | None = Field(
+        default=None,
+        description="Session ID for causal ordering. Entries sharing a session_id "
+        "are sent sequentially. Each entry is self-contained (no history accumulation).",
+    )
 
     @model_validator(mode="after")
     def validate_mutually_exclusive_fields(self) -> "SingleTurn":

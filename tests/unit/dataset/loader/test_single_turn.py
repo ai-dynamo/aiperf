@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Image, Text
 from aiperf.dataset.loader.models import SingleTurn
 from aiperf.dataset.loader.single_turn import SingleTurnDatasetLoader
@@ -749,3 +750,82 @@ class TestSingleTurnMediaEncoding:
 
         # Data URL should remain unchanged
         assert turn.videos[0].contents[0] == data_url
+
+
+class TestSingleTurnSessionId:
+    """Tests for session_id grouping in single-turn datasets."""
+
+    def test_session_id_field_accepted(self):
+        data = SingleTurn(text="hello", session_id="s1")
+        assert data.session_id == "s1"
+
+    def test_load_dataset_groups_by_session_id(
+        self, create_jsonl_file, default_user_config
+    ):
+        content = [
+            '{"session_id": "s0", "text": "turn 0a"}',
+            '{"session_id": "s1", "text": "turn 1a"}',
+            '{"session_id": "s0", "text": "turn 0b"}',
+            '{"session_id": "s1", "text": "turn 1b"}',
+        ]
+        filename = create_jsonl_file(content)
+        loader = SingleTurnDatasetLoader(
+            filename=filename, user_config=default_user_config
+        )
+        data = loader.load_dataset()
+
+        assert len(data) == 2
+        assert all(len(turns) == 2 for turns in data.values())
+
+    def test_load_dataset_mixed_session_and_no_session(
+        self, create_jsonl_file, default_user_config
+    ):
+        content = [
+            '{"session_id": "s0", "text": "grouped a"}',
+            '{"text": "standalone"}',
+            '{"session_id": "s0", "text": "grouped b"}',
+        ]
+        filename = create_jsonl_file(content)
+        loader = SingleTurnDatasetLoader(
+            filename=filename, user_config=default_user_config
+        )
+        data = loader.load_dataset()
+
+        assert len(data) == 2
+        session_sizes = sorted(len(v) for v in data.values())
+        assert session_sizes == [1, 2]
+
+    def test_convert_grouped_session_sets_message_array_context_mode(
+        self, create_jsonl_file, default_user_config
+    ):
+        content = [
+            '{"session_id": "s0", "text": "turn a"}',
+            '{"session_id": "s0", "text": "turn b"}',
+        ]
+        filename = create_jsonl_file(content)
+        loader = SingleTurnDatasetLoader(
+            filename=filename, user_config=default_user_config
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        assert (
+            conversations[0].context_mode
+            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
+        assert len(conversations[0].turns) == 2
+
+    def test_convert_single_entry_session_has_no_context_mode(
+        self, create_jsonl_file, default_user_config
+    ):
+        content = ['{"text": "standalone request"}']
+        filename = create_jsonl_file(content)
+        loader = SingleTurnDatasetLoader(
+            filename=filename, user_config=default_user_config
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        assert conversations[0].context_mode is None
