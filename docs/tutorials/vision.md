@@ -87,11 +87,11 @@ Create a JSONL file with text prompts and image URLs:
 {/* aiperf-run-vllm-vision-openai-endpoint-server */}
 ```bash
 cat <<EOF > inputs.jsonl
-{"texts": ["Describe this image in detail."], "images": ["https://picsum.photos/512/512?random=1"]}
+{"texts": ["Describe this image in detail."], "images": ["https://picsum.photos/512/512?random=1"], "output_length": 200}
 {"texts": ["What objects are visible in this image?"], "images": ["https://picsum.photos/512/512?random=2"]}
-{"texts": ["Analyze the composition of this photo."], "images": ["https://picsum.photos/512/512?random=3"]}
+{"texts": ["Analyze the composition of this photo."], "images": ["https://picsum.photos/512/512?random=3"], "output_length": 300}
 {"texts": ["What is the main subject of this image?"], "images": ["https://picsum.photos/512/512?random=4"]}
-{"texts": ["Provide a caption for this image."], "images": ["https://picsum.photos/512/512?random=5"]}
+{"texts": ["Provide a caption for this image."], "images": ["https://picsum.photos/512/512?random=5"], "output_length": 50}
 EOF
 ```
 {/* /aiperf-run-vllm-vision-openai-endpoint-server */}

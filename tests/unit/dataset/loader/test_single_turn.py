@@ -61,6 +61,29 @@ class TestSingleTurn:
         assert data.timestamp == 1000
         assert data.delay is None
 
+    def test_create_with_output_length(self):
+        """Test creating SingleTurn with output_length."""
+        data = SingleTurn(text="Write a haiku.", output_length=50)
+
+        assert data.text == "Write a haiku."
+        assert data.output_length == 50
+
+    def test_create_with_output_length_default_is_none(self):
+        """Test that output_length defaults to None."""
+        data = SingleTurn(text="Hello")
+
+        assert data.output_length is None
+
+    def test_create_with_output_length_zero_raises(self):
+        """Test that output_length=0 raises validation error."""
+        with pytest.raises(ValueError):
+            SingleTurn(text="Hello", output_length=0)
+
+    def test_create_with_output_length_negative_raises(self):
+        """Test that negative output_length raises validation error."""
+        with pytest.raises(ValueError):
+            SingleTurn(text="Hello", output_length=-1)
+
     def test_create_with_delay(self):
         """Test creating SingleTurn with delay."""
         data = SingleTurn(text="Who are you?", delay=1234)
@@ -267,6 +290,27 @@ class TestSingleTurnDatasetLoader:
         assert turn2[0].delay == 1234
         assert turn2[0].timestamp is None
 
+    def test_load_dataset_with_output_length(
+        self, create_jsonl_file, default_user_config
+    ):
+        """Test loading dataset with output_length field."""
+        content = [
+            '{"text": "Write a haiku.", "output_length": 50}',
+            '{"text": "Explain quantum computing.", "output_length": 500}',
+        ]
+        filename = create_jsonl_file(content)
+
+        loader = SingleTurnDatasetLoader(
+            filename=filename, user_config=default_user_config
+        )
+        dataset = loader.load_dataset()
+
+        assert len(dataset) == 2
+
+        turn1, turn2 = list(dataset.values())
+        assert turn1[0].output_length == 50
+        assert turn2[0].output_length == 500
+
     def test_load_dataset_with_full_featured_version(
         self, create_jsonl_file, default_user_config
     ):
@@ -424,6 +468,56 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
         assert second_turn.timestamp is None
         assert second_turn.delay == 500
         assert second_turn.role == "user"
+
+    def test_convert_with_output_length(self, default_user_config):
+        """Test converting data with output_length sets Turn.max_tokens."""
+        loader = SingleTurnDatasetLoader(
+            filename="dummy.jsonl", user_config=default_user_config
+        )
+        data = {
+            "session_1": [SingleTurn(text="Write a haiku.", output_length=50)],
+        }
+
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].max_tokens == 50
+
+    def test_convert_without_output_length_is_none(self, default_user_config):
+        """Test converting data without output_length leaves Turn.max_tokens as None."""
+        loader = SingleTurnDatasetLoader(
+            filename="dummy.jsonl", user_config=default_user_config
+        )
+        data = {
+            "session_1": [SingleTurn(text="Hello")],
+        }
+
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].max_tokens is None
+
+    def test_convert_multimodal_with_output_length(self, default_user_config):
+        """Test converting multimodal data with output_length sets Turn.max_tokens."""
+        loader = SingleTurnDatasetLoader(
+            filename="dummy.jsonl", user_config=default_user_config
+        )
+        data = {
+            "session_1": [
+                SingleTurn(
+                    text="Describe this image.",
+                    image="https://example.com/image.png",
+                    output_length=200,
+                )
+            ],
+        }
+
+        conversations = loader.convert_to_conversations(data)
+
+        turn = conversations[0].turns[0]
+        assert turn.max_tokens == 200
+        assert len(turn.texts) == 1
+        assert len(turn.images) == 1
 
     def test_convert_structured_text_objects(self, default_user_config):
         """Test converting data with structured Text objects."""

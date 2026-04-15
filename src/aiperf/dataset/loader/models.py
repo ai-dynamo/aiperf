@@ -61,6 +61,11 @@ class SingleTurn(AIPerfBaseModel):
         description="Session ID for causal ordering. Entries sharing a session_id "
         "are sent sequentially. Each entry is self-contained (no history accumulation).",
     )
+    output_length: int | None = Field(
+        default=None,
+        gt=0,
+        description="Maximum number of output tokens to generate for this request. Overrides the global --osl setting when specified.",
+    )
 
     @model_validator(mode="after")
     def validate_mutually_exclusive_fields(self) -> "SingleTurn":
