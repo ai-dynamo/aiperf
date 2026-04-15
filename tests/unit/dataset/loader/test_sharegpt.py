@@ -110,9 +110,7 @@ class TestShareGPTLoader:
         assert conv.turns[0].texts[0].contents[0] == "Hello how are you"
         assert conv.turns[0].max_tokens == len(["This", "is", "test", "output"])
         assert conv.turns[1].texts[0].contents[0] == "Follow up question here"
-        assert conv.turns[1].max_tokens == len(
-            ["Second", "assistant", "reply", "text"]
-        )
+        assert conv.turns[1].max_tokens == len(["Second", "assistant", "reply", "text"])
 
     async def test_get_preferred_sampling_strategy(
         self, sharegpt_loader: ShareGPTLoader

@@ -85,7 +85,7 @@ class SpeedBenchLoader(BaseHFDatasetLoader):
                 continue
 
             turns_raw = row.get("turns")
-            if not turns_raw or not isinstance(turns_raw, list) or not turns_raw[0]:
+            if not turns_raw or not isinstance(turns_raw, list):
                 skipped += 1
                 continue
 
@@ -105,6 +105,9 @@ class SpeedBenchLoader(BaseHFDatasetLoader):
                     )
                 )
             else:
+                if not turns_raw[0]:
+                    skipped += 1
+                    continue
                 prompt = str(turns_raw[0]).strip()
                 if not prompt:
                     skipped += 1

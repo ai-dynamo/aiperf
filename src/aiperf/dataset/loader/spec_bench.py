@@ -49,7 +49,7 @@ class SpecBenchLoader(BasePublicDatasetLoader):
 
         for row in dataset:
             turns_raw = row.get("turns", [])
-            if not turns_raw or not str(turns_raw[0]).strip():
+            if not turns_raw:
                 skipped += 1
                 continue
 
@@ -69,11 +69,15 @@ class SpecBenchLoader(BasePublicDatasetLoader):
                     )
                 )
             else:
+                prompt = str(turns_raw[0]).strip()
+                if not prompt:
+                    skipped += 1
+                    continue
                 conversations.append(
                     Conversation(
                         session_id=self.session_id_generator.next(),
                         turns=[
-                            Turn(texts=[Text(contents=[str(turns_raw[0])])]),
+                            Turn(texts=[Text(contents=[prompt])]),
                         ],
                     )
                 )

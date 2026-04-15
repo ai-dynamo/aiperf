@@ -163,18 +163,24 @@ class ShareGPTLoader(BasePublicDatasetLoader):
         """
         uses_roles = any(c.get("from") in ("human", "gpt") for c in conversations)
         if not uses_roles:
-            return [
-                (conversations[0]["value"], conversations[1]["value"]),
-            ]
+            prompt = conversations[0].get("value")
+            completion = conversations[1].get("value")
+            if not prompt or not completion:
+                return []
+            return [(prompt, completion)]
 
         role_msgs = [c for c in conversations if c.get("from") in ("human", "gpt")]
         pairs: list[tuple[str, str]] = []
         i = 0
         while i < len(role_msgs) - 1:
-            if role_msgs[i].get("from") == "human" and role_msgs[i + 1].get(
-                "from"
-            ) == "gpt":
-                pairs.append((role_msgs[i]["value"], role_msgs[i + 1]["value"]))
+            if (
+                role_msgs[i].get("from") == "human"
+                and role_msgs[i + 1].get("from") == "gpt"
+            ):
+                prompt = role_msgs[i].get("value")
+                completion = role_msgs[i + 1].get("value")
+                if prompt and completion:
+                    pairs.append((prompt, completion))
                 i += 2
             else:
                 i += 1

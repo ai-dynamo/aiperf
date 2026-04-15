@@ -186,9 +186,11 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
             return sg
         return self._openai_style_pairs(normalized)
 
-    def _pairs_pass_validation(self, pairs: list[tuple[str, str]]) -> bool:
+    def _pairs_pass_validation(self, pairs: list[tuple[str, str]]) -> list[int] | None:
+        """Validate pairs and return completion token lengths, or None if invalid."""
         if self.tokenizer is None:
-            return True
+            return [0] * len(pairs)
+        completion_lengths: list[int] = []
         for prompt, completion in pairs:
             prompt_length = len(self.tokenizer.encode(prompt))
             completion_length = len(self.tokenizer.encode(completion))
@@ -197,8 +199,9 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
                 output_len=completion_length,
                 skip_min_output_len_check=self.output_tokens_mean is not None,
             ):
-                return False
-        return True
+                return None
+            completion_lengths.append(completion_length)
+        return completion_lengths
 
     async def convert_to_conversations(
         self, data: dict[str, Any]
@@ -226,18 +229,20 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
 
             if self.multi_turn:
                 pairs = self._prompt_completion_pairs(messages)
-                if not pairs or not self._pairs_pass_validation(pairs):
+                if not pairs:
+                    skipped += 1
+                    continue
+                completion_lengths = self._pairs_pass_validation(pairs)
+                if completion_lengths is None:
                     skipped += 1
                     continue
                 turns = [
                     Turn(
                         texts=[Text(contents=[prompt])],
                         images=images if idx == 0 else [],
-                        max_tokens=len(self.tokenizer.encode(completion))
-                        if self.tokenizer
-                        else None,
+                        max_tokens=completion_lengths[idx] if self.tokenizer else None,
                     )
-                    for idx, (prompt, completion) in enumerate(pairs)
+                    for idx, (prompt, _) in enumerate(pairs)
                 ]
                 conversations.append(
                     Conversation(
