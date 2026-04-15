@@ -36,11 +36,13 @@ class HFInstructionResponseDatasetLoader(BaseHFDatasetLoader):
         user_config: UserConfig,
         prompt_column: str,
         image_column: str | None = None,
+        video_column: str | None = None,
         prompt_template: str | None = None,
         **kwargs,
     ) -> None:
         self.prompt_column = prompt_column
         self.image_column = image_column
+        self.video_column = video_column
         self.prompt_template = prompt_template
         super().__init__(user_config=user_config, **kwargs)
 
@@ -82,6 +84,11 @@ class HFInstructionResponseDatasetLoader(BaseHFDatasetLoader):
                 if self.image_column
                 else []
             )
+            videos = (
+                self._extract_videos(row, self.video_column)
+                if self.video_column
+                else []
+            )
 
             conversations.append(
                 Conversation(
@@ -90,6 +97,7 @@ class HFInstructionResponseDatasetLoader(BaseHFDatasetLoader):
                         Turn(
                             texts=[Text(contents=[str(prompt)])],
                             images=images,
+                            videos=videos,
                         )
                     ],
                 )

@@ -382,6 +382,10 @@ class PublicDatasetLoaderMetadata(BaseModel):
         default=None,
         description="Column name containing the image data (PIL Image). Used for multimodal datasets.",
     )
+    video_column: str | None = Field(
+        default=None,
+        description="Column name containing the video data (URL string or bytes dict). Used for video multimodal datasets.",
+    )
     conversation_column: str | None = Field(
         default=None,
         description="Column name containing the conversation messages array. Required for HFConversationDatasetLoader.",

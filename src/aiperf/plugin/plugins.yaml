@@ -1226,6 +1226,17 @@ public_dataset_loader:
       prompt_column: question
       image_column: image
 
+  mmvu:
+    class: aiperf.dataset.loader.mmvu:MMVUDatasetLoader
+    description: |
+      MMVU expert-level video understanding benchmark from HuggingFace (yale-nlp).
+      Loads video questions with video URLs as single-turn multimodal requests.
+      Prompt combines the question with multiple-choice options (matching vLLM benchmark format).
+    metadata:
+      hf_dataset_name: yale-nlp/MMVU
+      hf_split: validation
+      video_column: video
+
   vision_arena:
     class: aiperf.dataset.loader.hf_conversation:HFConversationDatasetLoader
     description: |
