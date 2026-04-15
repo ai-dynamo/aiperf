@@ -119,10 +119,13 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         sr = value.get("sampling_rate")
         if array is None or sr is None:
             return []
-        buf = io.BytesIO()
-        sf.write(buf, array, sr, format="WAV")
-        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-        return [Audio(name="", contents=[f"wav,{b64}"])]
+        try:
+            buf = io.BytesIO()
+            sf.write(buf, array, sr, format="WAV")
+            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+            return [Audio(name="", contents=[f"wav,{b64}"])]
+        except Exception:
+            return []
 
     def _max_conversations(self) -> int | None:
         """Return the maximum number of conversations to build from the dataset.
