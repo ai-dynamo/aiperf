@@ -215,9 +215,11 @@ def main() -> None:
 
     allow: set[str] = set(config["licenses"]["allow"])
     deny: set[str] = set(config["licenses"]["deny"])
-    # Build exception lookup keyed by (name, version)
+    # Build exception lookup keyed by (name, version) — python-typed entries only
     exceptions: dict[tuple[str, str], dict] = {
-        (e["name"], e["version"]): e for e in config.get("exceptions", [])
+        (e["name"], e["version"]): e
+        for e in config.get("exceptions", [])
+        if e.get("type") == "python"
     }
 
     data = json.loads(input_path.read_text())

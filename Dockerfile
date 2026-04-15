@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-FROM python:3.13-slim-bookworm AS base
+FROM python:3.13-slim-bookworm@sha256:061b6e52a07ab675f0e4a9428c5a8ee6bed996983427f4691f6bebf29c56d9dc AS base
 
 ENV USERNAME=appuser
 ENV APP_NAME=aiperf
@@ -82,8 +82,9 @@ FROM base AS env-builder
 
 WORKDIR /workspace
 
-# Install build dependencies and collect copyright files for newly installed packages
-RUN dpkg-query -W -f='${Package}\n' | sort > /tmp/dpkg-before.txt \
+# Install build dependencies; record which packages are new vs the base image
+RUN mkdir -p /opt/licenses/dpkg \
+    && dpkg-query -W -f='${Package}\n' | sort > /tmp/dpkg-before.txt \
     && apt-get update -y \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential \
@@ -94,15 +95,8 @@ RUN dpkg-query -W -f='${Package}\n' | sort > /tmp/dpkg-before.txt \
         libvpx-dev \
         zlib1g-dev \
     && dpkg-query -W -f='${Package}\n' | sort \
-    | comm -13 /tmp/dpkg-before.txt - > /tmp/dpkg-new.txt \
-    && mkdir -p /opt/licenses/dpkg \
-    && while read pkg; do \
-        if [ -f "/usr/share/doc/${pkg}/copyright" ]; then \
-            cp "/usr/share/doc/${pkg}/copyright" "/opt/licenses/dpkg/${pkg}.copyright"; \
-        fi; \
-    done < /tmp/dpkg-new.txt \
-    && cp /usr/share/doc/bash/copyright /opt/licenses/dpkg/bash.copyright 2>/dev/null || true \
-    && rm -f /tmp/dpkg-before.txt /tmp/dpkg-new.txt \
+    | comm -13 /tmp/dpkg-before.txt - > /opt/licenses/dpkg/dpkg-installed.txt \
+    && rm /tmp/dpkg-before.txt \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and build ffmpeg with libvpx (VP9 codec)
@@ -131,6 +125,17 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && rm -rf ffmpeg-${FFMPEG_VERSION} ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && cp -P /usr/lib/*/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || \
        cp -P /usr/lib/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libvpx.so not found"; exit 1; }
+
+# Collect copyright files for packages whose files we explicitly copy into the runtime.
+# Scoped to /bin/bash and /opt/ffmpeg/lib/*.so* — the only dpkg-owned files we distribute.
+# libz and other distroless-base libraries are excluded because we never copy them.
+RUN dpkg -S /bin/bash $(find /opt/ffmpeg/lib -name "*.so*" -type f) 2>/dev/null \
+    | awk -F: '{print $1}' \
+    | sort -u > /opt/licenses/dpkg/runtime-pkgs.txt \
+    && while read pkg; do \
+        [ -f "/usr/share/doc/${pkg}/copyright" ] && \
+          cp "/usr/share/doc/${pkg}/copyright" "/opt/licenses/dpkg/${pkg}.copyright"; \
+      done < /opt/licenses/dpkg/runtime-pkgs.txt
 
 ENV PATH="/opt/ffmpeg/bin${PATH:+:${PATH}}" \
     LD_LIBRARY_PATH="/opt/ffmpeg/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
@@ -187,6 +192,13 @@ RUN uv pip list --format=freeze | awk -F== '{print $1}' | sort > /tmp/venv-befor
 RUN uvx --from cyclonedx-bom cyclonedx-py environment /opt/aiperf/venv/bin/python \
     --output-format JSON \
     --output-file /opt/licenses/python/sbom.cdx.json
+
+# Layer 3: dpkg attribution CSV for runtime-distributed system packages
+COPY tools/generate_dpkg_attributions.py /tmp/generate_dpkg_attributions.py
+RUN python3 /tmp/generate_dpkg_attributions.py \
+    /opt/licenses/dpkg/runtime-pkgs.txt \
+    /opt/licenses/dpkg/dpkg-deps.csv \
+    /tmp/licenses.toml
 
 ############################################
 ############### Test Image #################
