@@ -99,6 +99,9 @@ class PublicDatasetComposer(BaseDatasetComposer):
         if loader_metadata.image_column is not None:
             kwargs["image_column"] = loader_metadata.image_column
 
+        if loader_metadata.video_column is not None:
+            kwargs["video_column"] = loader_metadata.video_column
+
         if loader_metadata.conversation_column is not None:
             kwargs["conversation_column"] = loader_metadata.conversation_column
             kwargs["message_content_key"] = loader_metadata.message_content_key

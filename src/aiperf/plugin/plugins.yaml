@@ -229,6 +229,21 @@ endpoint:
       tokenizes_input: true
       metrics_title: LLM Metrics
 
+  responses:
+    class: aiperf.endpoints.openai_responses:ResponsesEndpoint
+    description: |
+      OpenAI Responses API endpoint. Supports multi-modal inputs (text, images,
+      audio) and both streaming and non-streaming responses. Uses
+      /v1/responses path.
+    metadata:
+      endpoint_path: /v1/responses
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      supports_images: true
+      supports_audio: true
+      metrics_title: LLM Metrics
+
   chat_embeddings:
     class: aiperf.endpoints.chat_embeddings:ChatEmbeddingsEndpoint
     description: |
@@ -1210,6 +1225,17 @@ public_dataset_loader:
       hf_split: val
       prompt_column: question
       image_column: image
+
+  mmvu:
+    class: aiperf.dataset.loader.mmvu:MMVUDatasetLoader
+    description: |
+      MMVU expert-level video understanding benchmark from HuggingFace (yale-nlp).
+      Loads video questions with video URLs as single-turn multimodal requests.
+      Prompt combines the question with multiple-choice options (matching vLLM benchmark format).
+    metadata:
+      hf_dataset_name: yale-nlp/MMVU
+      hf_split: validation
+      video_column: video
 
   vision_arena:
     class: aiperf.dataset.loader.hf_conversation:HFConversationDatasetLoader

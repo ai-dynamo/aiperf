@@ -113,6 +113,19 @@ class TestMultiTurn:
         assert data.turns[0].texts[0].name == "question"
         assert data.turns[0].images[0].name == "main_image"
 
+    def test_create_with_per_turn_output_length(self):
+        """Test creating conversation with per-turn output_length."""
+        data = MultiTurn(
+            session_id="test_session",
+            turns=[
+                SingleTurn(text="Write briefly.", output_length=50),
+                SingleTurn(text="Explain in detail.", output_length=500),
+            ],
+        )
+
+        assert data.turns[0].output_length == 50
+        assert data.turns[1].output_length == 500
+
     def test_validation_empty_turns_raises_error(self):
         """Test that empty turns list raises validation error."""
         with pytest.raises(ValueError, match="At least one turn must be provided"):
@@ -552,6 +565,52 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
         assert turn.texts[0].contents == ["What is this?"]
         assert turn.texts[1].name == "context"
         assert turn.texts[1].contents == ["Some context"]
+
+    def test_convert_with_per_turn_output_length(self, default_user_config):
+        """Test converting multi-turn data with output_length sets Turn.max_tokens."""
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[
+                        SingleTurn(text="Write briefly.", output_length=50),
+                        SingleTurn(text="Explain in detail.", output_length=500),
+                    ],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader(
+            filename="dummy.jsonl", user_config=default_user_config
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].max_tokens == 50
+        assert conversations[0].turns[1].max_tokens == 500
+
+    def test_convert_mixed_output_length(self, default_user_config):
+        """Test converting data where some turns have output_length and others do not."""
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[
+                        SingleTurn(text="Specific length.", output_length=100),
+                        SingleTurn(text="No length specified."),
+                    ],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader(
+            filename="dummy.jsonl", user_config=default_user_config
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].max_tokens == 100
+        assert conversations[0].turns[1].max_tokens is None
 
     def test_convert_multiple_sessions(self, default_user_config):
         """Test converting multiple sessions."""
