@@ -475,3 +475,92 @@ class TestAnonymizeTrace:
         finally:
             input_path.unlink(missing_ok=True)
             output_path.unlink(missing_ok=True)
+
+
+class TestAnonymizeTraceCLI:
+    """Tests for the anonymize-trace CLI command wrapper."""
+
+    @pytest.fixture
+    def mock_tokenizer(self) -> MagicMock:
+        tokenizer = MagicMock()
+        tokenizer.apply_chat_template.return_value = "template"
+        tokenizer.encode.return_value = list(range(10))
+        return tokenizer
+
+    def test_cli_input_file_not_found_exits(self) -> None:
+        """Missing input file triggers SystemExit with code 1."""
+        from aiperf.cli_commands.anonymize_trace import anonymize_trace as cli_cmd
+
+        with pytest.raises(SystemExit) as excinfo:
+            cli_cmd(input_file=Path("/nonexistent/does-not-exist.jsonl"), model="m")
+        assert excinfo.value.code == 1
+
+    def test_cli_default_output_path_derivation(
+        self, mock_tokenizer: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When output_file is None, CLI derives <input>_anonymized.jsonl."""
+        import aiperf.cli_commands.anonymize_trace as anon_cli
+
+        monkeypatch.setattr(
+            "aiperf.common.tokenizer.Tokenizer.from_pretrained",
+            lambda model: mock_tokenizer,
+        )
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".jsonl", delete=False
+        ) as input_f:
+            input_f.write(
+                '{"messages": [{"role": "user", "content": "Hi"}], "output": "Hey"}\n'
+            )
+            input_path = Path(input_f.name)
+
+        expected_output = input_path.with_name(f"{input_path.stem}_anonymized.jsonl")
+
+        try:
+            anon_cli.anonymize_trace(input_file=input_path, model="test-model")
+            assert expected_output.exists()
+        finally:
+            input_path.unlink(missing_ok=True)
+            expected_output.unlink(missing_ok=True)
+
+    def test_cli_explicit_output_and_warning(
+        self,
+        mock_tokenizer: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Explicit output_file is used; no-timestamps warning is printed."""
+        import aiperf.cli_commands.anonymize_trace as anon_cli
+
+        monkeypatch.setattr(
+            "aiperf.common.tokenizer.Tokenizer.from_pretrained",
+            lambda model: mock_tokenizer,
+        )
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".jsonl", delete=False
+        ) as input_f:
+            # No timestamp -> should trigger warning
+            input_f.write(
+                '{"messages": [{"role": "user", "content": "Hi"}], "output": "Hey"}\n'
+            )
+            input_path = Path(input_f.name)
+
+        output_path = input_path.with_name("custom_output.jsonl")
+
+        try:
+            anon_cli.anonymize_trace(
+                input_file=input_path,
+                model="test-model",
+                output_file=output_path,
+                block_size=4,
+            )
+            assert output_path.exists()
+
+            captured = capsys.readouterr()
+            combined = captured.out + captured.err
+            assert "No timestamps found" in combined
+            assert "Requests processed" in combined
+        finally:
+            input_path.unlink(missing_ok=True)
+            output_path.unlink(missing_ok=True)

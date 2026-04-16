@@ -141,37 +141,37 @@ def anonymize_trace(
         raise ValueError("block_size must be greater than 0")
 
     hasher = RollingHasher(block_size=block_size)
-    records: list[RawConversationRecord] = []
+    session_history: dict[str, list[dict]] = defaultdict(list)
+    session_ids_seen: set[str] = set()
+    has_timestamps = False
+    total_processed = 0
     total_skipped = 0
 
-    with open(input_file, encoding="utf-8") as f:
-        for line_num, line in enumerate(f, 1):
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Single-pass stream: read each input line, process in original order, write
+    # output immediately. Preserves global request sequence; multi-turn sessions
+    # accumulate per-session context via session_history.
+    with (
+        open(input_file, encoding="utf-8") as in_f,
+        open(output_file, "w", encoding="utf-8") as out_f,
+    ):
+        for line_num, line in enumerate(in_f, 1):
             line = line.strip()
             if not line:
                 continue
             try:
                 data = orjson.loads(line)
                 record = RawConversationRecord.model_validate(data)
-                records.append(record)
             except Exception as e:
                 _logger.warning("Skipping line %d: %s", line_num, e)
                 total_skipped += 1
+                continue
 
-    has_timestamps = any(r.timestamp is not None for r in records)
+            if record.timestamp is not None:
+                has_timestamps = True
 
-    # Per-session accumulated message history for multi-turn conversations
-    session_history: dict[str, list[dict]] = defaultdict(list)
-    session_ids_seen: set[str] = set()
-
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-    total_processed = 0
-
-    # Process records in original order to preserve global request sequence.
-    # Multi-turn sessions maintain per-session accumulated context.
-    with open(output_file, "w", encoding="utf-8") as f:
-        for record in records:
             if record.session_id is None:
-                # Independent request: no message accumulation
                 total_processed += _process_record(
                     record,
                     list(record.messages),
@@ -179,10 +179,9 @@ def anonymize_trace(
                     tokenizer,
                     hasher,
                     block_size,
-                    f,
+                    out_f,
                 )
             else:
-                # Multi-turn session: accumulate messages across turns
                 sid = record.session_id
                 session_ids_seen.add(sid)
                 session_history[sid].extend(record.messages)
@@ -193,19 +192,18 @@ def anonymize_trace(
                     tokenizer,
                     hasher,
                     block_size,
-                    f,
+                    out_f,
                 )
                 session_history[sid].append(
                     {"role": "assistant", "content": record.output}
                 )
 
     stats = hasher.get_stats()
-    sessions_detected = len(session_ids_seen)
 
     return AnonymizeResult(
         total_processed=total_processed,
         total_skipped=total_skipped,
-        sessions_detected=sessions_detected,
+        sessions_detected=len(session_ids_seen),
         unique_hash_ids=stats["total_hashes"],
         no_timestamps_warning=not has_timestamps,
         output_file=output_file,
