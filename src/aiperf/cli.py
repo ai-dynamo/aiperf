@@ -34,3 +34,7 @@ app.command("aiperf.cli_commands.profile:app", name="profile")
 app.command("aiperf.cli_commands.plot:app", name="plot")
 app.command("aiperf.cli_commands.plugins:app", name="plugins")
 app.command("aiperf.cli_commands.service:app", name="service")
+app.command(
+    "aiperf.dataset.agentic_code_gen.cli:agentic_code_gen_app",
+    name="agentic-code-gen",
+)
