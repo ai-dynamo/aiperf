@@ -56,8 +56,7 @@ Once a request receives its first token, it releases its prefill slot and moves 
 
 > [!WARNING]
 > Requires `--streaming` to be enabled. Without streaming, AIPerf can't detect when the first token arrives.
-
-> [!WARNING]
+>
 > **Coordinated omission trade-off:** When requests wait for prefill slots, the benchmark operates as a closed loop, throttling itself to match server capacity. This is [coordinated omission](https://www.scylladb.com/2021/04/22/on-coordinated-omission/)—your measured latencies will be **lower** than what users would experience if traffic kept arriving at the original rate. For accurate latency measurement, use open-loop benchmarking (request rate without prefill limits).
 
 ## Two Concurrency Limits
