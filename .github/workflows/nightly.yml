@@ -275,17 +275,22 @@ jobs:
         if: ${{ inputs.publish_only != 'true' }}
         run: |
           set -euo pipefail
-          # License content (Python packages, dpkg attribution) is arch-independent —
-          # build amd64 only and reuse the local BuildKit cache from the main build.
-          docker buildx build \
-            --progress=plain \
-            --platform linux/amd64 \
-            --target python-licenses \
-            --cache-from "type=local,src=/tmp/buildkit-cache" \
-            --output "type=local,dest=./license-raw" \
-            .
-          mkdir -p ./license-artifacts
-          cp -r ./license-raw/opt/licenses/python/. ./license-artifacts/
+          for ARCH in amd64 arm64; do
+            docker buildx build \
+              --progress=plain \
+              --platform "linux/${ARCH}" \
+              --target python-licenses \
+              --cache-from "type=local,src=/tmp/buildkit-cache" \
+              --output "type=local,dest=./license-raw-${ARCH}" \
+              .
+            mkdir -p "./license-artifacts/${ARCH}"
+            cp -r "./license-raw-${ARCH}/opt/licenses/." "./license-artifacts/${ARCH}/"
+            # Merge python and dpkg CSVs into a single deps.csv (shared schema)
+            {
+              cat "./license-artifacts/${ARCH}/python/python-deps.csv"
+              tail -n +2 "./license-artifacts/${ARCH}/dpkg/dpkg-deps.csv"
+            } > "./license-artifacts/${ARCH}/deps.csv"
+          done
 
       - name: Upload license artifacts
         if: ${{ inputs.publish_only != 'true' }}

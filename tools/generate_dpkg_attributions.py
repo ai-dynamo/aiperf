@@ -151,14 +151,14 @@ def main() -> None:
                         f"  UNKNOWN  {pkg} ({version}): {spdx_id!r} not in allow list"
                     )
 
-        rows.append({"package": pkg, "version": version, "license": license_spdx})
+        rows.append({"dependency_type": "dpkg", "name": pkg, "version": version, "spdx_license": license_spdx})
 
     if failures:
         print("License validation failed:\n" + "\n".join(failures), file=sys.stderr)
         sys.exit(1)
 
     with output_csv.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["package", "version", "license"])
+        writer = csv.DictWriter(f, fieldnames=["dependency_type", "name", "version", "spdx_license"])
         writer.writeheader()
         writer.writerows(rows)
 
