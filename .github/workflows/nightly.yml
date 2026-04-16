@@ -6,9 +6,9 @@
 # Phases:
 #   1. Init     — compute version strings and effective release mode (rerun-stable via artifact)
 #   2. Validate — pre-commit + test placeholders
-#   3. Build    — wheel (→ S3) + multi-arch containers (→ ECR)
+#   3. Build    — wheel (→ Artifactory) + multi-arch containers (→ ECR)
 #   4. Tag      — create nightly git tag
-#   5. Stage    — [automated-release approval] ECR → NGC staging; S3 → Artifactory
+#   5. Stage    — [automated-release approval] ECR → NGC staging
 #   6. Scan     — trigger GitLab security scan (fire-and-forget)
 #   7. Summary  — always runs
 #
@@ -49,7 +49,7 @@ on:
         default: ''
         required: false
 
-# Prevent overlapping nightly runs from corrupting shared ECR tags and S3 prefixes.
+# Prevent overlapping nightly runs from corrupting shared ECR tags and Artifactory packages.
 # cancel-in-progress: false — never cancel a run that may be pending human approval.
 concurrency:
   group: nightly-pipeline
@@ -183,7 +183,7 @@ jobs:
   # ============================================================================
   # PHASE 3: BUILD
   # No environment: declaration — builder runners carry AWS credentials via IAM
-  # instance profile. The automated-release gate is enforced at staging only.
+  # instance profile. The automated-release gate is enforced at container staging only.
   # ============================================================================
 
   build-artifacts:
@@ -324,15 +324,27 @@ jobs:
           fi
           .venv-check/bin/aiperf --help
 
-      - name: Upload wheel to S3
+      - name: Set up JFrog CLI
+        if: ${{ inputs.publish_only != 'true' }}
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL:      ${{ secrets.ARTIFACTORY_BASE_URL }}
+          JF_USER:     ${{ secrets.ARTIFACTORY_USER }}
+          JF_PASSWORD: ${{ secrets.ARTIFACTORY_TOKEN }}
+
+      - name: Upload wheel to Artifactory
         if: ${{ inputs.publish_only != 'true' }}
         env:
-          S3_BUCKET:      ${{ secrets.S3_CI_WHEELS_BUCKET }}
-          PEP440_VERSION: ${{ steps.version.outputs.pep440_version }}
+          ARTIFACTORY_REPO_NAME: ${{ secrets.ARTIFACTORY_REPO_NAME }}
+          PEP440_VERSION:        ${{ steps.version.outputs.pep440_version }}
         run: |
           set -euo pipefail
+          RAW_DATE="${{ needs.prepare-nightly.outputs.date }}"
+          FORMATTED_DATE="${RAW_DATE:0:4}.${RAW_DATE:4:2}.${RAW_DATE:6:2}"
           WHEEL=$(find wheel-out/dist/ -name "aiperf-*.whl" | head -1)
-          aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/aiperf/nightly/${PEP440_VERSION}/" --sse AES256
+          TARGET="${ARTIFACTORY_REPO_NAME}/nightly/${FORMATTED_DATE}/${{ github.workflow_id }}-${{ github.run_id }}/"
+          jf rt upload "${WHEEL}" "${TARGET}" --flat
+          echo "Wheel uploaded to Artifactory: ${TARGET}"
 
   # ============================================================================
   # PHASE 3b: CLEANUP
@@ -463,46 +475,6 @@ jobs:
             "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${NIGHTLY_TAG}"
           echo "Container staged: ${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${NIGHTLY_TAG}"
 
-  stage-nightly-wheel:
-    name: Stage Wheel (S3 → Artifactory)
-    needs: [prepare-nightly, build-artifacts, create-nightly-tag]
-    runs-on: prod-aiperf-default-v1
-    environment: automated-release
-    if: ${{ inputs.publish_only != 'true' && needs.prepare-nightly.outputs.release == 'true' }}
-    steps:
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.0.0
-
-      - name: Upload wheel from S3 to Artifactory
-        env:
-          S3_BUCKET:         ${{ secrets.S3_CI_WHEELS_BUCKET }}
-          ARTIFACTORY_URL:   ${{ secrets.ARTIFACTORY_URL }}
-          ARTIFACTORY_USER:  ${{ secrets.ARTIFACTORY_USER }}
-          ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
-          PEP440_VERSION:    ${{ needs.build-artifacts.outputs.pep440_version }}
-        run: |
-          set -euo pipefail
-          TMPDIR=$(mktemp -d)
-          trap 'rm -rf "${TMPDIR}"' EXIT
-
-          aws s3 cp \
-            "s3://${S3_BUCKET}/aiperf/nightly/${PEP440_VERSION}/" \
-            "${TMPDIR}/" --recursive --include "*.whl"
-
-          mapfile -t WHEELS < <(find "${TMPDIR}" -name "*.whl" -type f)
-          if [ "${#WHEELS[@]}" -ne 1 ]; then
-            echo "::error::Expected exactly one wheel from S3, found ${#WHEELS[@]}"
-            exit 1
-          fi
-
-          TWINE_NON_INTERACTIVE=1 uvx twine upload \
-            --repository-url "${ARTIFACTORY_URL}" \
-            --username        "${ARTIFACTORY_USER}" \
-            --password        "${ARTIFACTORY_TOKEN}" \
-            --disable-progress-bar \
-            "${WHEELS[0]}"
-          echo "Wheel staged to Artifactory: ${PEP440_VERSION}"
-
   # ============================================================================
   # PHASE 6: TRIGGER GITLAB SECURITY SCAN
   # Fire-and-forget. Passes full artifact locations so GitLab can pull containers
@@ -511,7 +483,7 @@ jobs:
 
   trigger-gitlab-security-scan:
     name: Trigger GitLab Security Scan
-    needs: [prepare-nightly, build-artifacts, stage-nightly-container, stage-nightly-wheel]
+    needs: [prepare-nightly, build-artifacts, stage-nightly-container]
     runs-on:
       group: gitlab_ci_runners
     environment: automated-release
@@ -582,7 +554,6 @@ jobs:
       - clean-k8s-builder
       - create-nightly-tag
       - stage-nightly-container
-      - stage-nightly-wheel
       - trigger-gitlab-security-scan
     if: always()
     runs-on: ubuntu-latest
@@ -616,14 +587,13 @@ jobs:
             echo "### Build + Upload"
             echo "| Job | Result |"
             echo "|-----|--------|"
-            echo "| build-artifacts (→ ECR + S3) | ${{ needs.build-artifacts.result }} |"
+            echo "| build-artifacts (→ ECR + Artifactory) | ${{ needs.build-artifacts.result }} |"
             echo "| create-nightly-tag | ${{ needs.create-nightly-tag.result }} |"
             echo ""
             echo "### Stage + Scan"
             echo "| Job | Result |"
             echo "|-----|--------|"
             echo "| stage-nightly-container (→ NGC staging) | ${{ needs.stage-nightly-container.result }} |"
-            echo "| stage-nightly-wheel (→ Artifactory) | ${{ needs.stage-nightly-wheel.result }} |"
             echo "| trigger-gitlab-security-scan | ${{ needs.trigger-gitlab-security-scan.result }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
