@@ -41,7 +41,7 @@ AIPerf loads the MMVU dataset from HuggingFace, combines each question with its
 multiple-choice options, attaches the video URL, and sends each pair as a single-turn
 video request. The prompt format matches vLLM's own MMVU benchmark format.
 
-{/* aiperf-run-vllm-video-openai-endpoint-server */}
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -53,7 +53,7 @@ aiperf profile \
     --concurrency 2 \
     --output-tokens-mean 128
 ```
-{/* /aiperf-run-vllm-video-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-video-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 

@@ -68,7 +68,8 @@ jobs:
 
   fern-check:
     name: Fern Configuration Check
-    if: github.event_name == 'pull_request'
+    # TODO(AIP-855): Re-enable once convert_mdx_comments.py is wired into the sync pipeline (PR 2)
+    if: false
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -87,7 +88,8 @@ jobs:
 
   fern-broken-links:
     name: Fern Broken Links Check
-    if: github.event_name == 'pull_request'
+    # TODO(AIP-855): Re-enable once convert_mdx_comments.py is wired into the sync pipeline (PR 2)
+    if: false
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -299,17 +301,18 @@ jobs:
 
       ##########################################################################
       # PUSH AND PUBLISH - push changes to docs-website branch and publish docs
+      # TODO(AIP-855): Re-enable once convert_mdx_comments.py transform is wired in (PR 2)
       ##########################################################################
 
       - name: Setup Git
-        if: steps.ctx.outputs.is_main == 'true' && steps.changes.outputs.has_changes == 'true'
+        if: false
         run: |
           cd docs-checkout
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Commit and push changes
-        if: steps.ctx.outputs.is_main == 'true' && steps.changes.outputs.has_changes == 'true'
+        if: false
         run: |
           cd docs-checkout
 
@@ -326,7 +329,7 @@ jobs:
           echo "Successfully synced dev docs to docs-website branch"
 
       - name: Publish Docs
-        if: steps.ctx.outputs.is_main == 'true' && steps.changes.outputs.has_changes == 'true'
+        if: false
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
         working-directory: docs-checkout/fern
