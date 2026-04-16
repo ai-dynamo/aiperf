@@ -262,7 +262,7 @@ jobs:
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --target   runtime \
-            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache" \
+            --cache-to "type=local,dest=/tmp/buildkit-cache,mode=max" \
             --push \
             --tag "${REGISTRY}/aiperf:${NIGHTLY_TAG}" \
             .
@@ -275,16 +275,17 @@ jobs:
         if: ${{ inputs.publish_only != 'true' }}
         run: |
           set -euo pipefail
-          for ARCH in amd64 arm64; do
-            docker buildx build \
-              --progress=plain \
-              --platform "linux/${ARCH}" \
-              --target python-licenses \
-              --output "type=local,dest=./license-raw-${ARCH}" \
-              .
-            mkdir -p "./license-artifacts/${ARCH}"
-            cp -r "./license-raw-${ARCH}/opt/licenses/python/." "./license-artifacts/${ARCH}/"
-          done
+          # License content (Python packages, dpkg attribution) is arch-independent —
+          # build amd64 only and reuse the local BuildKit cache from the main build.
+          docker buildx build \
+            --progress=plain \
+            --platform linux/amd64 \
+            --target python-licenses \
+            --cache-from "type=local,src=/tmp/buildkit-cache" \
+            --output "type=local,dest=./license-raw" \
+            .
+          mkdir -p ./license-artifacts
+          cp -r ./license-raw/opt/licenses/python/. ./license-artifacts/
 
       - name: Upload license artifacts
         if: ${{ inputs.publish_only != 'true' }}
@@ -292,6 +293,7 @@ jobs:
         with:
           name: license-artifacts-${{ steps.version.outputs.nightly_tag }}
           path: license-artifacts/
+          if-no-files-found: error
 
       - name: Extract wheel
         if: ${{ inputs.publish_only != 'true' }}
@@ -299,6 +301,7 @@ jobs:
           docker buildx build \
             --platform linux/amd64 \
             --target wheel-builder \
+            --cache-from "type=local,src=/tmp/buildkit-cache" \
             --output "type=local,dest=./wheel-out" \
             .
 
