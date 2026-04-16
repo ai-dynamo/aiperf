@@ -114,9 +114,8 @@ jobs:
 
   preview-or-publish-docs:
     name: Preview or publish docs
-    if: |
-      github.ref_type != 'tag' &&
-      (github.event.inputs.tag == '' || github.event.inputs.tag == null)
+    # TODO(AIP-855): Re-enable once convert_mdx_comments.py is wired into the sync pipeline (PR 2)
+    if: false
     runs-on: ubuntu-latest
     steps:
       - name: Determine context
