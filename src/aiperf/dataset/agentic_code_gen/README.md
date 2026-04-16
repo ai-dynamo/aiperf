@@ -1,0 +1,108 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# Agentic Code Dataset Generator
+
+This generator creates synthetic multi-turn coding-agent traces for replaying
+long-context KV-cache workloads. It models shared prompt layers, session-specific
+repo context, incremental conversation growth, inter-turn delays, resets, and
+optional restart continuations. The output is Mooncake-trace compatible, so the
+same `dataset.jsonl` can be generated once and replayed with `aiperf profile`.
+
+Generate a dataset:
+
+```bash
+aiperf agentic-code-gen synthesize --num-sessions 1000 --output .test/
+```
+
+Use a config JSON or a prior run manifest:
+
+```bash
+aiperf agentic-code-gen synthesize --config my-config.json --num-sessions 500
+```
+
+Validate a generated dataset:
+
+```bash
+aiperf agentic-code-gen validate --input dataset.jsonl
+```
+
+If `--config` is omitted, the generator uses [default.json](configs/default.json).
+You can reference the bundled config by name with `--config default`.
+[spec.json](configs/spec.json) is a generated JSON Schema reference for the config
+fields; it documents the API shape but is not a runnable config. Regenerate it
+after model changes with:
+
+```bash
+uv run python -m aiperf.dataset.agentic_code_gen.config
+```
+
+Each run writes a timestamped directory with `dataset.jsonl`, `manifest.json`, `quality.json`, `report.html`, `cache_explorer.html`, and `simulation.html`.
+
+## Dataset Format
+
+`dataset.jsonl` contains one JSON object per request turn. Example rows:
+
+```jsonl
+{"session_id":"sess-a1b2c3d4e5f6","input_length":1536,"output_length":320,"hash_ids":[0,1,2],"timestamp":0.0,"group_id":4}
+{"session_id":"sess-a1b2c3d4e5f6","input_length":768,"output_length":180,"hash_ids":[1000,1001],"delay":2450.3}
+{"session_id":"sess-f0e9d8c7b6a5","input_length":1024,"output_length":256,"hash_ids":[0,1],"timestamp":0.0,"group_id":4,"is_restart":true}
+```
+
+Fields:
+
+- `session_id`: logical conversation/session identifier.
+- `input_length`: new input tokens for this turn. Turn 0 includes the initial
+  cached prefix; later turns contain only incremental tokens since the prior turn.
+- `output_length`: generated output tokens for the turn.
+- `hash_ids`: KV-cache block IDs for the new input tokens. Shared IDs model cache
+  reuse across sessions or restart continuations.
+- `timestamp`: absolute start time in milliseconds for turn 0.
+- `delay`: delay in milliseconds before a later turn in the same session.
+- `group_id`: shared-prefix group, emitted on turn 0.
+- `is_restart`: present on turn 0 when the session continues from an earlier split.
+
+## Run With `aiperf profile`
+
+Generated `dataset.jsonl` files are Mooncake-trace compatible, so you can replay them directly with `aiperf profile`:
+
+```bash
+aiperf profile \
+  --model YOUR_MODEL \
+  --tokenizer YOUR_MODEL \
+  --url http://localhost:8000 \
+  --endpoint-type chat \
+  --input-file .test/default_1000s_seed42_YYYYMMDD-HHMMSS/dataset.jsonl \
+  --custom-dataset-type mooncake_trace \
+  --concurrency 50 \
+  --workers-max 200 \
+  --streaming \
+  --ui dashboard
+```
+
+For larger trace-replay jobs, use the same dataset with the usual Mooncake trace flags:
+
+```bash
+aiperf profile \
+  -m nvidia/Kimi-K2.5-NVFP4 \
+  --tokenizer nvidia/Kimi-K2.5-NVFP4 \
+  --tokenizer-trust-remote-code \
+  --url http://__DGD_NAME__-frontend:8000 \
+  --input-file /model-cache/traces/agentic-code-run/dataset.jsonl \
+  --artifact-dir /model-cache/perf/${EPOCH}_${JOB_NAME}/synth_mt_qps10 \
+  --custom-dataset-type mooncake_trace \
+  --prompt-corpus coding \
+  --concurrency 50 \
+  --concurrency-ramp-duration 300 \
+  --benchmark-duration 2400 \
+  --benchmark-grace-period 120 \
+  --workers-max 200 \
+  --request-timeout-seconds 1200 \
+  --profile-export-level records \
+  --streaming \
+  --extra-inputs "ignore_eos:true" \
+  --record-processors 8 \
+  --goodput "time_to_first_token:8000 inter_token_latency:50"
+```
