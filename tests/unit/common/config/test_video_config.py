@@ -44,17 +44,29 @@ class TestVideoAudioConfigValidation:
         with pytest.raises(ValidationError):
             VideoAudioConfig(channels=channels)
 
-    @pytest.mark.parametrize("sample_rate", [8000, 44100, 96000])
+    @pytest.mark.parametrize("sample_rate", [8.0, 16.0, 44.1, 48.0, 96.0])
     def test_video_audio_config_valid_sample_rate(self, sample_rate):
-        """Sample rates within 8000-96000 are valid."""
+        """Sample rates within 8-96 kHz are valid."""
         config = VideoAudioConfig(sample_rate=sample_rate)
         assert config.sample_rate == sample_rate
 
-    @pytest.mark.parametrize("sample_rate", [7999, 96001, 0, -1])
+    @pytest.mark.parametrize("sample_rate", [7.999, 96.001, 0, -1])
     def test_video_audio_config_invalid_sample_rate(self, sample_rate):
-        """Sample rates outside 8000-96000 raise ValidationError."""
+        """Sample rates outside 8-96 kHz raise ValidationError."""
         with pytest.raises(ValidationError):
             VideoAudioConfig(sample_rate=sample_rate)
+
+    @pytest.mark.parametrize("depth", [8, 16, 24, 32, "8", "16", "24", "32"])
+    def test_video_audio_config_depth_coerces_string(self, depth):
+        """Depth accepts int or numeric string (from YAML/JSON configs)."""
+        config = VideoAudioConfig(depth=depth)
+        assert config.depth == int(depth)
+
+    @pytest.mark.parametrize("depth", [0, 12, "12", "abc"])
+    def test_video_audio_config_invalid_depth(self, depth):
+        """Non-supported depth values raise ValidationError."""
+        with pytest.raises(ValidationError):
+            VideoAudioConfig(depth=depth)
 
     @pytest.mark.parametrize(
         "codec",
@@ -92,9 +104,9 @@ class TestVideoConfigWithAudio:
 
     def test_video_config_with_custom_audio(self):
         """VideoConfig accepts custom VideoAudioConfig."""
-        audio = VideoAudioConfig(sample_rate=48000, channels=2)
+        audio = VideoAudioConfig(sample_rate=48.0, channels=2)
         config = VideoConfig(audio=audio)
-        assert config.audio.sample_rate == 48000
+        assert config.audio.sample_rate == 48.0
         assert config.audio.channels == 2
 
     def test_video_config_preserves_existing_defaults(self):

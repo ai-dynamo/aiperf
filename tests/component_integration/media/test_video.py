@@ -121,7 +121,7 @@ class TestVideoAudio:
                 --video-fps 4 \
                 --video-format {video_format} \
                 --video-codec {video_codec} \
-                --video-audio-sample-rate 44100 \
+                --video-audio-sample-rate 44.1 \
                 --video-audio-num-channels 1 \
                 --prompt-input-tokens-mean 50 \
                 --num-dataset-entries 4 \

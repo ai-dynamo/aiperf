@@ -113,7 +113,7 @@ class VideoDefaults:
 
 @dataclass(frozen=True)
 class VideoAudioDefaults:
-    SAMPLE_RATE = 44100
+    SAMPLE_RATE = 44.1
     CHANNELS = 0
     CODEC = None
     DEPTH = 16
