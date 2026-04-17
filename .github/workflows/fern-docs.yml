@@ -172,6 +172,25 @@ jobs:
           python3 docs-checkout/fern/md_to_mdx.py --dir docs-checkout/fern/pages-dev
           echo "Conversion complete."
 
+      - name: Update docs.yml preserving products
+        run: |
+          cd docs-checkout/fern
+
+          # Save the full products[0] block from docs-website (versions, path, etc.)
+          yq '.products[0]' docs.yml > /tmp/preserved_product.yml
+
+          echo "Preserved products[0] block:"
+          cat /tmp/preserved_product.yml
+
+          # Copy docs.yml from source to get config updates (redirects, layout, etc.)
+          cp ../../source-checkout/fern/docs.yml docs.yml
+
+          # Restore the preserved products[0] block
+          yq -i '.products[0] = load("/tmp/preserved_product.yml")' docs.yml
+
+          echo "Updated docs.yml:"
+          cat docs.yml
+
       - name: Setup Node.js for Fern validation
         uses: actions/setup-node@v4
         with:
@@ -191,25 +210,6 @@ jobs:
       - name: Check for broken links in transformed content
         working-directory: docs-checkout
         run: fern docs broken-links
-
-      - name: Update docs.yml preserving products
-        run: |
-          cd docs-checkout/fern
-
-          # Save the full products[0] block from docs-website (versions, path, etc.)
-          yq '.products[0]' docs.yml > /tmp/preserved_product.yml
-
-          echo "Preserved products[0] block:"
-          cat /tmp/preserved_product.yml
-
-          # Copy docs.yml from source to get config updates (redirects, layout, etc.)
-          cp ../../source-checkout/fern/docs.yml docs.yml
-
-          # Restore the preserved products[0] block
-          yq -i '.products[0] = load("/tmp/preserved_product.yml")' docs.yml
-
-          echo "Updated docs.yml:"
-          cat docs.yml
 
       - name: Check for changes
         id: changes
