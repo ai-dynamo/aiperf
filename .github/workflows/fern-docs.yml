@@ -142,10 +142,8 @@ jobs:
             cp source-checkout/fern/.gitignore docs-checkout/fern/.gitignore
           fi
 
-          # Sync md_to_mdx.py script
-          if [ -f source-checkout/fern/md_to_mdx.py ]; then
-            cp source-checkout/fern/md_to_mdx.py docs-checkout/fern/md_to_mdx.py
-          fi
+          # Sync md_to_mdx.py script (required — fail fast if missing)
+          cp source-checkout/fern/md_to_mdx.py docs-checkout/fern/md_to_mdx.py
 
           # Sync components/ directory (e.g., CustomFooter.tsx)
           if [ -d source-checkout/fern/components ]; then
