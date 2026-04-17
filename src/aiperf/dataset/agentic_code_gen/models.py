@@ -306,6 +306,25 @@ class SessionDistributionConfig(BaseConfig):
         max_length=2,
         description="[min, max) turn index range for restart split point",
     )
+    max_restart_depth: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Maximum depth of a restart chain. 1 = current behavior (primary → "
+            "one continuation). N > 1 allows a continuation to itself restart, "
+            "producing chain A → B → ... up to depth N."
+        ),
+    )
+    restart_depth_decay: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Probability multiplier applied per depth when deciding whether a "
+            "continuation itself restarts. P(continuation splits) = "
+            "restart_initial_probability * restart_depth_decay^depth."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -414,7 +433,15 @@ class SynthesizedSession(AIPerfBaseModel):
     end_reason: SessionEndReason = Field(description="Why the session ended")
     is_restart_continuation: bool = Field(
         default=False,
-        description="True for Session B's created from restart splits",
+        description="True for continuations (any depth) created from restart splits",
+    )
+    restart_depth: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Depth within the restart chain. 0 = primary session, 1 = first "
+            "continuation (Session B), 2 = second continuation (Session C), etc."
+        ),
     )
 
     @model_validator(mode="after")
