@@ -558,17 +558,18 @@ class SessionSynthesizer:
         if not chain_parents:
             return primary
 
-        # Scatter each chain into the back portion of the queue while
-        # preserving intra-chain ordering (primary before every continuation,
-        # and earlier continuations before later ones). The tail reserved for
-        # scattering starts at restart_decay_end, i.e. the first position
-        # where no new primaries would have been injected.
-        min_offset = max(1, int(num_sessions * decay_end))
+        # Scatter each chain uniformly into the region behind its parent.
+        # Only a small gap from the parent is required to keep Session A and
+        # Session B out of the same concurrency window; anything larger
+        # pushes continuations into a cold-cache region where their carried-
+        # forward hash_ids miss on eviction. Intra-chain ordering (earlier
+        # continuations before later ones) is preserved via last_pos + 1.
+        min_gap = max(1, int(num_sessions * 0.02))
         for parent, chain in chain_parents:
             parent_pos = primary.index(parent)
-            last_pos = max(parent_pos, min_offset - 1)
+            last_pos = parent_pos + min_gap - 1
             for session in chain:
-                lo = max(min_offset, last_pos + 1)
+                lo = last_pos + 1
                 pos = int(self._rng.integers(lo, len(primary) + 1))
                 primary.insert(pos, session)
                 last_pos = pos
