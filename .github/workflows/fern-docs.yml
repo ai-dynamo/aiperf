@@ -82,45 +82,6 @@ jobs:
       - name: Check all docs are listed in index.yml
         run: python tools/check_docs_index.py
 
-  fern-check:
-    name: Fern Configuration Check
-    # TODO(AIP-855): Re-enable once convert_mdx_comments.py is wired into the sync pipeline (PR 2)
-    if: false
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install Fern CLI
-        run: npm install -g fern-api@$(jq -r '.version' fern/fern.config.json)
-
-      - name: Validate Fern configuration
-        run: fern check
-
-  fern-broken-links:
-    name: Fern Broken Links Check
-    # TODO(AIP-855): Re-enable once convert_mdx_comments.py is wired into the sync pipeline (PR 2)
-    if: false
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install Fern CLI
-        run: npm install -g fern-api@$(jq -r '.version' fern/fern.config.json)
-
-      - name: Check for broken links
-        run: fern docs broken-links
 
   #############################################################################
   # SYNC & PUBLISH/PREVIEW - Syncs docs content to docs-website structure
@@ -130,8 +91,9 @@ jobs:
 
   preview-or-publish-docs:
     name: Preview or publish docs
-    # TODO(AIP-855): Re-enable once convert_mdx_comments.py is wired into the sync pipeline (PR 2)
-    if: false
+    if: |
+      github.ref_type != 'tag' &&
+      (github.event.inputs.tag == '' || github.event.inputs.tag == null)
     runs-on: ubuntu-latest
     steps:
       - name: Determine context
@@ -209,6 +171,26 @@ jobs:
           echo "Converting GitHub Markdown to Fern MDX format in pages-dev/..."
           python3 docs-checkout/fern/md_to_mdx.py --dir docs-checkout/fern/pages-dev
           echo "Conversion complete."
+
+      - name: Setup Node.js for Fern validation
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Fern CLI for validation
+        run: npm install -g fern-api@$(jq -r '.version' docs-checkout/fern/fern.config.json)
+
+      - name: Validate transformed Fern content
+        working-directory: docs-checkout
+        run: fern check
+
+      - name: Validate transformed Fern content (strict)
+        working-directory: docs-checkout
+        run: fern check --warnings --strict-broken-links
+
+      - name: Check for broken links in transformed content
+        working-directory: docs-checkout
+        run: fern docs broken-links
 
       - name: Update docs.yml preserving products
         run: |
@@ -320,14 +302,14 @@ jobs:
       ##########################################################################
 
       - name: Setup Git
-        if: false
+        if: steps.ctx.outputs.is_main == 'true' && steps.changes.outputs.has_changes == 'true'
         run: |
           cd docs-checkout
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Commit and push changes
-        if: false
+        if: steps.ctx.outputs.is_main == 'true' && steps.changes.outputs.has_changes == 'true'
         run: |
           cd docs-checkout
 
@@ -344,7 +326,7 @@ jobs:
           echo "Successfully synced dev docs to docs-website branch"
 
       - name: Publish Docs
-        if: false
+        if: steps.ctx.outputs.is_main == 'true' && steps.changes.outputs.has_changes == 'true'
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
         working-directory: docs-checkout/fern
