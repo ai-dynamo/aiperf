@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
@@ -550,3 +552,153 @@ class TestDistributionFidelity:
         assert pct_error < 15, (
             f"Generation length mean {observed_mean:.0f} vs target {target_mean:.0f} ({pct_error:.1f}%)"
         )
+
+
+class TestRestartContinuation:
+    """Coverage for Session B produced by a restart split.
+
+    Regression surface: Session B turn 0 previously reused Session A's last
+    hash_ids, which were sized for prev_input. Session B's turn 0 input is
+    prev_input + prev_output, so the array was undersized and tripped the
+    final-block-size check in generator/prompt.py with errors like
+    'final hash block size: 972 must be <= 512'.
+    """
+
+    def _assert_block_size_invariant(self, turn, block_size: int, context: str) -> None:
+        expected_blocks = (
+            math.ceil(turn.input_length / block_size) if turn.input_length > 0 else 0
+        )
+        assert len(turn.hash_ids) == expected_blocks, (
+            f"{context}: hash_ids count {len(turn.hash_ids)} != "
+            f"ceil({turn.input_length}/{block_size}) = {expected_blocks}"
+        )
+        final_block_size = turn.input_length - (len(turn.hash_ids) - 1) * block_size
+        assert 0 < final_block_size <= block_size, (
+            f"{context}: final block size {final_block_size} violates "
+            f"0 < x <= {block_size} (prompt.py sanity check)"
+        )
+
+    def test_inject_restart_produces_session_a_and_b(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        synth = SessionSynthesizer(coding_config, seed=42)
+        sessions = synth.synthesize_session(inject_restart=True)
+        assert len(sessions) == 2
+        session_a, session_b = sessions
+        assert session_a.end_reason == SessionEndReason.RESTART_SPLIT
+        assert not session_a.is_restart_continuation
+        assert session_b.is_restart_continuation
+        assert session_a.group_id == session_b.group_id
+
+    def test_continuation_turn0_hash_ids_sized_for_initial_input(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        synth = SessionSynthesizer(coding_config, seed=42)
+        _, session_b = synth.synthesize_session(inject_restart=True)
+        turn0 = session_b.turns[0]
+        self._assert_block_size_invariant(
+            turn0, coding_config.block_size, "Session B turn 0"
+        )
+
+    def test_continuation_all_turns_pass_prompt_sanity_check(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        synth = SessionSynthesizer(coding_config, seed=42)
+        _, session_b = synth.synthesize_session(inject_restart=True)
+        for turn in session_b.turns:
+            self._assert_block_size_invariant(
+                turn,
+                coding_config.block_size,
+                f"Session B turn {turn.turn_index}",
+            )
+
+    def test_continuation_initial_input_equals_prev_input_plus_output(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        synth = SessionSynthesizer(coding_config, seed=42)
+        session_a, session_b = synth.synthesize_session(inject_restart=True)
+        a_last = session_a.turns[-1]
+        expected = min(
+            a_last.input_length + a_last.output_length,
+            coding_config.max_prompt_tokens,
+        )
+        assert session_b.turns[0].input_length == expected
+
+    def test_continuation_preserves_session_id_continuity(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """Session B turn 0's session IDs must extend Session A's last turn
+        session IDs, so the KV cache blocks from A are still referenced."""
+        synth = SessionSynthesizer(coding_config, seed=42)
+        session_a, session_b = synth.synthesize_session(inject_restart=True)
+        alloc = synth.allocator
+        a_last_session_ids = alloc.extract_session_ids(session_a.turns[-1].hash_ids)
+        b_turn0_session_ids = alloc.extract_session_ids(session_b.turns[0].hash_ids)
+        assert len(b_turn0_session_ids) >= len(a_last_session_ids)
+        assert b_turn0_session_ids[: len(a_last_session_ids)] == a_last_session_ids
+
+    def test_continuation_preserves_shared_prefix_across_a_and_b(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """L1 + L1.5 must be identical between Session A's last turn and B's turn 0."""
+        synth = SessionSynthesizer(coding_config, seed=42)
+        session_a, session_b = synth.synthesize_session(inject_restart=True)
+        alloc = synth.allocator
+        prefix_blocks = alloc.prefix_blocks
+        a_prefix = session_a.turns[-1].hash_ids[:prefix_blocks]
+        b_prefix = session_b.turns[0].hash_ids[:prefix_blocks]
+        assert a_prefix == b_prefix
+
+    @pytest.mark.parametrize("seed", [0, 1, 7, 42, 99, 2026])
+    def test_continuation_block_size_invariant_across_seeds(
+        self, coding_config: SessionDistributionConfig, seed: int
+    ) -> None:
+        """Across many seeds the restart continuation must never produce
+        an undersized or oversized hash_ids array."""
+        synth = SessionSynthesizer(coding_config, seed=seed)
+        sessions = synth.synthesize_session(inject_restart=True)
+        if len(sessions) < 2:
+            pytest.skip("Restart did not split for this seed")
+        _, session_b = sessions
+        block_size = coding_config.block_size
+        for turn in session_b.turns:
+            self._assert_block_size_invariant(
+                turn,
+                block_size,
+                f"seed={seed} turn {turn.turn_index}",
+            )
+
+    def test_bulk_restart_sessions_all_valid(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """Simulate the kv-reuse-difficult failure mode: many sessions with
+        a high restart probability, every is_restart_continuation turn must
+        satisfy the block size invariant."""
+        config = coding_config.model_copy(update={"restart_initial_probability": 1.0})
+        synth = SessionSynthesizer(config, seed=42)
+        sessions = synth.synthesize_sessions(40)
+        restart_sessions = [s for s in sessions if s.is_restart_continuation]
+        assert restart_sessions, "Expected at least one restart continuation"
+        for session in restart_sessions:
+            for turn in session.turns:
+                self._assert_block_size_invariant(
+                    turn,
+                    config.block_size,
+                    f"session {session.session_id} turn {turn.turn_index}",
+                )
+
+    def test_continuation_turn0_has_zero_delay_and_timestamp(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """Session B is queued independently; its turn 0 anchors a new timeline."""
+        synth = SessionSynthesizer(coding_config, seed=42)
+        _, session_b = synth.synthesize_session(inject_restart=True)
+        assert session_b.turns[0].delay_ms == 0.0
+        assert session_b.turns[0].timestamp_ms == 0.0
+
+    def test_continuation_has_fresh_session_id(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        synth = SessionSynthesizer(coding_config, seed=42)
+        session_a, session_b = synth.synthesize_session(inject_restart=True)
+        assert session_a.session_id != session_b.session_id
