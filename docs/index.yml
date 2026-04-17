@@ -35,6 +35,8 @@ navigation:
       path: tutorials/embeddings.md
     - page: Profile Ranking Models with AIPerf
       path: tutorials/rankings.md
+    - page: Profile NIM Image Retrieval with AIPerf
+      path: tutorials/nim-image-retrieval.md
     - page: SGLang Image Generation
       path: tutorials/image-generation.md
     - page: SGLang Video Generation
@@ -52,6 +54,30 @@ navigation:
       path: tutorials/custom-prompt-benchmarking.md
     - page: Profile with ShareGPT Dataset
       path: tutorials/sharegpt.md
+    - page: Synthetic Dataset Generation
+      path: tutorials/synthetic-dataset.md
+    - page: Profile with InstructCoder Dataset
+      path: tutorials/instruct-coder.md
+    - page: Profile with AIMO Dataset
+      path: tutorials/aimo.md
+    - page: Profile with MMStar Dataset
+      path: tutorials/mmstar.md
+    - page: Profile with MMVU Dataset
+      path: tutorials/mmvu.md
+    - page: Profile with LLaVA-OneVision Dataset
+      path: tutorials/llava-onevision.md
+    - page: Profile with VisionArena Dataset
+      path: tutorials/vision-arena.md
+    - page: Profile with Blazedit Dataset
+      path: tutorials/blazedit.md
+    - page: Profile with SpecBench Dataset
+      path: tutorials/spec-bench.md
+    - page: Profile with SPEED-Bench Dataset
+      path: tutorials/speed-bench.md
+    - page: Profile with Bailian Traces
+      path: tutorials/bailian-trace.md
+    - page: Profile with BurstGPT Traces
+      path: tutorials/burst-gpt-trace.md
     - page: Multi-Turn Conversations
       path: tutorials/multi-turn.md
     - page: Sequence Length Distributions for Advanced Benchmarking
@@ -129,6 +155,8 @@ navigation:
     path: benchmark-datasets.md
   - page: Pre-Flight Tokenizer Auto Detection
     path: reference/tokenizer-auto-detection.md
+  - page: Conversation Context Mode
+    path: reference/conversation-context-mode.md
 
 - section: Server Metrics
   collapsed: true
