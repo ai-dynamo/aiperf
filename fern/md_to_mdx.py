@@ -55,14 +55,31 @@ import re
 import sys
 from pathlib import Path
 
+# ── Code fence awareness ─────────────────────────────────────────────────────
+
+# Splits text into alternating non-fence / fence segments.
+# Odd-indexed segments are inside fenced code blocks and must not be transformed.
+_FENCE_SPLIT = re.compile(r"(^```.*?^```)", re.MULTILINE | re.DOTALL)
+
+
+def _apply_outside_fences(text: str, fn) -> str:
+    """Apply fn only to text outside fenced code blocks."""
+    parts = _FENCE_SPLIT.split(text)
+    return "".join(fn(p) if i % 2 == 0 else p for i, p in enumerate(parts))
+
+
 # ── HTML comment -> MDX comment ──────────────────────────────────────────────
 
-HTML_COMMENT_PATTERN = re.compile(r"<!--\s*(.*?)\s*-->")
+# re.DOTALL so . matches newlines, handling multiline HTML comments
+HTML_COMMENT_PATTERN = re.compile(r"<!--\s*(.*?)\s*-->", re.DOTALL)
 
 
 def _convert_comments(text: str) -> str:
-    """Replace <!-- ... --> with {/* ... */}."""
-    return HTML_COMMENT_PATTERN.sub(lambda m: f"{{/* {m.group(1)} */}}", text)
+    """Replace <!-- ... --> with {/* ... */}, skipping fenced code blocks."""
+    return _apply_outside_fences(
+        text,
+        lambda s: HTML_COMMENT_PATTERN.sub(lambda m: f"{{/* {m.group(1)} */}}", s),
+    )
 
 
 # ── GitHub callouts -> Fern admonitions ──────────────────────────────────────
@@ -111,8 +128,11 @@ def _convert_admonition(match: re.Match) -> str:
 
 
 def _convert_admonitions(text: str) -> str:
-    """Replace GitHub > [!TYPE] callouts with Fern <Tag> admonitions."""
-    return GITHUB_ADMONITION_PATTERN.sub(_convert_admonition, text)
+    """Replace GitHub > [!TYPE] callouts with Fern <Tag> admonitions, skipping fenced code blocks."""
+    return _apply_outside_fences(
+        text,
+        lambda s: GITHUB_ADMONITION_PATTERN.sub(_convert_admonition, s),
+    )
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -185,6 +205,11 @@ def run_tests() -> bool:
         "Some text\n<!-- my-tag -->\n```bash\necho hi\n```\n<!-- /my-tag -->\nMore text\n",
         "Some text\n{/* my-tag */}\n```bash\necho hi\n```\n{/* /my-tag */}\nMore text\n",
     )
+    test(
+        "Multiline HTML comment",
+        "<!--\nCopyright 2026 NVIDIA\n-->\n\n# Title\n",
+        "{/* Copyright 2026 NVIDIA */}\n\n# Title\n",
+    )
 
     # GitHub callouts -> Fern admonitions
     test(
@@ -221,6 +246,23 @@ def run_tests() -> bool:
         "Admonition in document",
         "# Header\n\n> [!WARNING]\n> Be careful.\n\nMore text.\n",
         "# Header\n\n<Warning>Be careful.</Warning>\n\nMore text.\n",
+    )
+
+    # Code-fence awareness — content inside fences must not be transformed
+    test(
+        "HTML comment inside code fence unchanged",
+        "```bash\n<!-- tag-name -->\n```\n",
+        "```bash\n<!-- tag-name -->\n```\n",
+    )
+    test(
+        "Callout inside code fence unchanged",
+        "```\n> [!NOTE]\n> This is inside a fence.\n```\n",
+        "```\n> [!NOTE]\n> This is inside a fence.\n```\n",
+    )
+    test(
+        "Comment outside fence converted, inside unchanged",
+        "<!-- before -->\n```bash\n<!-- inside -->\n```\n<!-- after -->\n",
+        "{/* before */}\n```bash\n<!-- inside -->\n```\n{/* after */}\n",
     )
 
     # No change
