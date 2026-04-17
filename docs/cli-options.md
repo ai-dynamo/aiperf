@@ -795,6 +795,10 @@ The number of initial users to use for --user-centric-rate mode.
 Duration in seconds to ramp session concurrency from 1 to target. Useful for gradual warm-up of the target system.
 <br/>_Constraints: > 0_
 
+#### `--concurrency-schedule-file` `<str>`
+
+Path to a schedule.jsonl (emitted by agentic_code_gen synthesize) that drives session concurrency over wall-clock time. Each line is {"time_sec": float, "concurrency": int}. Mutually exclusive with --concurrency-ramp-duration.
+
 #### `--prefill-concurrency-ramp-duration` `<float>`
 
 Duration in seconds to ramp prefill concurrency from 1 to target.

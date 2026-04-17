@@ -313,8 +313,29 @@ class PhaseRunner(TaskManagerMixin):
         self._rampers = []
         config = self._config
 
-        # Session concurrency ramper (stepped mode)
-        if config.concurrency_ramp_duration_sec and config.concurrency:
+        # Session concurrency: either a pre-computed schedule or a linear
+        # warm-up ramp. Validated as mutually exclusive at config load time.
+        if config.concurrency_schedule_ticks:
+            ticks = config.concurrency_schedule_ticks
+            self.info(
+                f"Starting concurrency schedule: {len(ticks)} ticks over "
+                f"{ticks[-1][0]:.1f}s (first={ticks[0][1]}, last={ticks[-1][1]})"
+            )
+            ramp_config = RampConfig(
+                ramp_type=RampType.SCHEDULE_FOLLOWER,
+                start=float(ticks[0][1]),
+                target=float(ticks[-1][1]),
+                duration_sec=max(ticks[-1][0], 1e-6),
+                schedule_ticks=ticks,
+            )
+
+            def schedule_setter(limit: float) -> None:
+                return self._concurrency_manager.set_session_limit(
+                    config.phase, int(limit)
+                )
+
+            self._rampers.append(Ramper(setter=schedule_setter, config=ramp_config))
+        elif config.concurrency_ramp_duration_sec and config.concurrency:
             self.info(
                 f"Starting session concurrency ramp: 1 → {config.concurrency} "
                 f"over {config.concurrency_ramp_duration_sec}s"
