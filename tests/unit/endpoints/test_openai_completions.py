@@ -69,12 +69,16 @@ class TestCompletionsEndpoint:
         }
         assert payload == expected_payload
 
-    def test_format_payload_uses_latest_turn_for_multi_turn_sessions(self, model_endpoint):
+    def test_format_payload_uses_latest_turn_for_multi_turn_sessions(
+        self, model_endpoint
+    ):
         endpoint = CompletionsEndpoint(model_endpoint)
         request_info = create_request_info(
             model_endpoint=model_endpoint,
             turns=[
-                create_request_info(model_endpoint=model_endpoint, texts=["first"]).turns[0],
+                create_request_info(
+                    model_endpoint=model_endpoint, texts=["first"]
+                ).turns[0],
                 create_request_info(
                     model_endpoint=model_endpoint,
                     texts=["second"],

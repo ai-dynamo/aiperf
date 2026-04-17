@@ -161,9 +161,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         for row in metadata_rows:
             timestamp = int(row[_METADATA_COLUMNS_TIME])
             min_timestamp = (
-                timestamp
-                if min_timestamp is None
-                else min(min_timestamp, timestamp)
+                timestamp if min_timestamp is None else min(min_timestamp, timestamp)
             )
 
             if session_key is None:
@@ -190,7 +188,10 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             return min_timestamp, None, None
 
         session_entries = sorted(
-            ((first_ts, session_id) for session_id, first_ts in session_first_ts.items()),
+            (
+                (first_ts, session_id)
+                for session_id, first_ts in session_first_ts.items()
+            ),
             key=lambda item: (item[0], item[1]),
         )
         original_count = len(session_entries)
@@ -208,9 +209,11 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             f"{session_key} "
             f"with trace_session_sample_ratio={self._session_sample_ratio}"
         )
-        return min_timestamp, session_key, {
-            session_id for _, session_id in sampled_entries
-        }
+        return (
+            min_timestamp,
+            session_key,
+            {session_id for _, session_id in sampled_entries},
+        )
 
     def load_dataset(self) -> dict[str, list[BasetenTrace]]:
         self._skipped_traces = 0

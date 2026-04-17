@@ -182,9 +182,7 @@ class TestBasetenTraceDatasetLoader:
 
         assert list(dataset.keys()) == ["999", "1"]
 
-    def test_trace_session_sample_ratio_samples_whole_sessions(
-        self, tmp_path: Path
-    ):
+    def test_trace_session_sample_ratio_samples_whole_sessions(self, tmp_path: Path):
         path = _write_parquet(
             tmp_path / "trace.parquet",
             [

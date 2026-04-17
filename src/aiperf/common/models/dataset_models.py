@@ -197,7 +197,9 @@ class Turn(AIPerfBaseModel):
             timestamp=self.timestamp,
             delay=self.delay,
             max_tokens=self.max_tokens,
-            request_body=dict(self.request_body) if self.request_body is not None else None,
+            request_body=dict(self.request_body)
+            if self.request_body is not None
+            else None,
             raw_messages=list(self.raw_messages)
             if self.raw_messages is not None
             else None,
