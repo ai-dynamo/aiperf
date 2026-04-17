@@ -53,11 +53,9 @@ class MarkdownParser:
         while i < len(lines):
             line = lines[i].strip()
 
-            # Look for MDX comment tags: {/* tag-name */}
-            if line.startswith("{/*") and line.endswith("*/}"):
-                # Use [^*\s]\S* instead of [^*\s]+.*? to avoid ReDoS
-                # (both quantifiers can match the same chars, causing O(n²) backtracking)
-                tag_match = re.match(r"\{/\*\s*([^*\s]\S*)\s*\*/\}", line)
+            # Look for HTML comment tags: <!-- tag-name -->
+            if line.startswith("<!--") and line.endswith("-->"):
+                tag_match = re.match(r"<!--\s*(\S+)\s*-->", line)
                 if tag_match:
                     tag_name = tag_match.group(1).strip()
 

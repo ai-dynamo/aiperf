@@ -85,7 +85,7 @@ aiperf profile \
 
 ## Related Tutorials
 
-- [Trace Benchmarking with Mooncake](../benchmark_modes/trace_replay.md) - Mooncake FAST'25 trace replay
+- [Trace Benchmarking with Mooncake](../benchmark-modes/trace-replay.md) - Mooncake FAST'25 trace replay
 - [Fixed Schedule](fixed-schedule.md) - Precise timestamp-based execution for any dataset
 - [Prefix Synthesis](prefix-synthesis.md) - KV cache testing with hash-based prefix data
 - [Multi-Turn Conversations](multi-turn.md) - Multi-turn conversation benchmarking
