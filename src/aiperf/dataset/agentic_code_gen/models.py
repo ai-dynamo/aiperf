@@ -350,10 +350,33 @@ class SessionDistributionConfig(BaseConfig):
         ge=0.0,
         le=1.0,
         description=(
-            "Initial probability that a primary session is split into a restart "
-            "continuation. The probability decays linearly to zero across the first "
-            "75% of generated primary sessions, so the observed continuation count "
-            "is lower than this value."
+            "Probability that a primary session is split into a restart "
+            "continuation. Held flat for the first restart_decay_start fraction "
+            "of primaries, then linearly decayed to zero by restart_decay_end so "
+            "the tail of the queue has room to accept continuations behind their "
+            "primaries."
+        ),
+    )
+    restart_decay_start: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Progress fraction [0, 1] at which the restart probability starts "
+            "decaying. 0.0 matches the historical behavior (decay starts at the "
+            "beginning of the queue). 0.5 holds full probability for the first "
+            "half, then decays."
+        ),
+    )
+    restart_decay_end: float = Field(
+        default=0.75,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Progress fraction at which the restart probability reaches zero. "
+            "Must be strictly greater than restart_decay_start. The region "
+            "beyond this point never injects restarts, preserving tail queue "
+            "slots for the continuations from earlier primaries."
         ),
     )
     restart_turn_range: list[int] = Field(
@@ -416,6 +439,15 @@ class SessionDistributionConfig(BaseConfig):
             if isinstance(ntp, LognormalParams):
                 data["new_tokens_per_turn"] = ntp.model_dump()
         return data
+
+    @model_validator(mode="after")
+    def validate_restart_decay_window(self) -> SessionDistributionConfig:
+        if self.restart_decay_start >= self.restart_decay_end:
+            raise ValueError(
+                f"restart_decay_start ({self.restart_decay_start}) must be "
+                f"strictly less than restart_decay_end ({self.restart_decay_end})"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_turn_mode(self) -> SessionDistributionConfig:

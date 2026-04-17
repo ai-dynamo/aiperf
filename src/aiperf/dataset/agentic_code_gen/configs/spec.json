@@ -470,6 +470,22 @@
       ],
       "description": "Reset probability config"
     },
+    "restart_decay_end": {
+      "default": 0.75,
+      "description": "Progress fraction at which the restart probability reaches zero. Must be strictly greater than restart_decay_start. The region beyond this point never injects restarts, preserving tail queue slots for the continuations from earlier primaries.",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Restart Decay End",
+      "type": "number"
+    },
+    "restart_decay_start": {
+      "default": 0.0,
+      "description": "Progress fraction [0, 1] at which the restart probability starts decaying. 0.0 matches the historical behavior (decay starts at the beginning of the queue). 0.5 holds full probability for the first half, then decays.",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Restart Decay Start",
+      "type": "number"
+    },
     "restart_depth_decay": {
       "default": 0.5,
       "description": "Probability multiplier applied per depth when deciding whether a continuation itself restarts. P(continuation splits) = restart_initial_probability * restart_depth_decay^depth.",
@@ -480,7 +496,7 @@
     },
     "restart_initial_probability": {
       "default": 0.0,
-      "description": "Initial probability that a primary session is split into a restart continuation. The probability decays linearly to zero across the first 75% of generated primary sessions, so the observed continuation count is lower than this value.",
+      "description": "Probability that a primary session is split into a restart continuation. Held flat for the first restart_decay_start fraction of primaries, then linearly decayed to zero by restart_decay_end so the tail of the queue has room to accept continuations behind their primaries.",
       "maximum": 1.0,
       "minimum": 0.0,
       "title": "Restart Initial Probability",

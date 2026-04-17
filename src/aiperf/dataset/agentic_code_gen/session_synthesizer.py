@@ -521,12 +521,13 @@ class SessionSynthesizer:
     def synthesize_sessions(self, num_sessions: int) -> list[SynthesizedSession]:
         """Generate multiple sessions with optional restart splits.
 
-        Restart probability decreases linearly from restart_initial_probability
-        to 0 over the first 75% of sessions. Continuations (any chain depth)
-        are scattered into the back portion of the queue, starting after 25%
-        of primary sessions to ensure they never overlap with their primary
-        in the concurrency window. Within a single chain the intra-chain
-        ordering is preserved (B before C before D).
+        Restart probability stays flat at restart_initial_probability until
+        progress reaches restart_decay_start, then linearly decays to zero by
+        restart_decay_end, and is zero afterward. Continuations (any chain
+        depth) are scattered into the back portion of the queue, starting
+        after 25% of primary sessions so they never overlap with their
+        primary in the concurrency window. Within a single chain the intra-
+        chain ordering is preserved (B before C before D).
         """
         if self._config.turns is not None:
             return [
@@ -535,15 +536,19 @@ class SessionSynthesizer:
             ]
 
         restart_probability = self._config.restart_initial_probability
-        cutoff = 0.75
+        decay_start = self._config.restart_decay_start
+        decay_end = self._config.restart_decay_end
         primary: list[SynthesizedSession] = []
         chain_parents: list[tuple[SynthesizedSession, list[SynthesizedSession]]] = []
         for i in range(num_sessions):
             progress = i / max(1, num_sessions - 1)
-            if progress >= cutoff:
+            if progress <= decay_start:
+                p_restart = restart_probability
+            elif progress >= decay_end:
                 p_restart = 0.0
             else:
-                p_restart = restart_probability * (1.0 - progress / cutoff)
+                decay_progress = (progress - decay_start) / (decay_end - decay_start)
+                p_restart = restart_probability * (1.0 - decay_progress)
             inject = float(self._rng.random()) < p_restart
             result = self.synthesize_session(inject_restart=inject)
             primary.append(result[0])
@@ -555,8 +560,10 @@ class SessionSynthesizer:
 
         # Scatter each chain into the back portion of the queue while
         # preserving intra-chain ordering (primary before every continuation,
-        # and earlier continuations before later ones).
-        min_offset = max(1, int(num_sessions * 0.25))
+        # and earlier continuations before later ones). The tail reserved for
+        # scattering starts at restart_decay_end, i.e. the first position
+        # where no new primaries would have been injected.
+        min_offset = max(1, int(num_sessions * decay_end))
         for parent, chain in chain_parents:
             parent_pos = primary.index(parent)
             last_pos = max(parent_pos, min_offset - 1)
