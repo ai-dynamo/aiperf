@@ -315,14 +315,15 @@ class SessionSynthesizer:
                     turns=turns,
                     end_reason=SessionEndReason.RESTART_SPLIT,
                 )
-                session_b = self._synthesize_continuation(
+                chain = self._synthesize_continuation(
                     session_index=session_index,
                     group_id=group_id,
                     prev_input=prev_input,
                     prev_output=prev_output,
                     prev_hash_ids=turns[-1].hash_ids,
+                    depth=1,
                 )
-                return [session_a, session_b]
+                return [session_a, *chain]
 
             # 1. Sample delay
             delay_ms = self._sample_delay_ms(prev_input)
@@ -388,11 +389,18 @@ class SessionSynthesizer:
         prev_input: int,
         prev_output: int,
         prev_hash_ids: list[int],
-    ) -> SynthesizedSession:
-        """Create Session B: a continuation after a restart split.
+        depth: int = 1,
+    ) -> list[SynthesizedSession]:
+        """Create a restart continuation chain starting at the given depth.
 
-        Turn 0 carries all accumulated tokens from Session A's last turn
-        and extends A's hash_ids to cover the full initial context.
+        Turn 0 carries all accumulated tokens from the previous session's
+        last turn and extends its hash_ids to cover the full initial context.
+
+        If propagation is enabled (max_restart_depth > 1), this continuation
+        may itself split at a sampled restart turn, recursing to produce
+        further continuations. The returned list is flat: [session_at_depth,
+        *further_continuations]. Propagation probability per depth is
+        restart_initial_probability * restart_depth_decay^depth.
         """
         rand_bytes = self._rng.bytes(16)
         session_id = f"sess-{uuid.UUID(bytes=rand_bytes).hex[:12]}"
@@ -422,12 +430,42 @@ class SessionSynthesizer:
             )
         ]
 
+        # Decide whether this continuation itself restarts.
+        if depth < self._config.max_restart_depth:
+            p_next = self._config.restart_initial_probability * (
+                self._config.restart_depth_decay**depth
+            )
+            inject_next = float(self._rng.random()) < p_next
+        else:
+            inject_next = False
+        lo, hi = self._config.restart_turn_range
+        restart_at_turn = int(self._rng.integers(lo, hi)) if inject_next else -1
+
         prev_input_b = initial_input
         prev_output_b = output_len
         turn_idx = 1
         end_reason = SessionEndReason.FORCED_RETIRE
 
         while True:
+            if turn_idx == restart_at_turn:
+                this_session = SynthesizedSession(
+                    session_id=session_id,
+                    group_id=group_id,
+                    turns=turns,
+                    end_reason=SessionEndReason.RESTART_SPLIT,
+                    is_restart_continuation=True,
+                    restart_depth=depth,
+                )
+                next_chain = self._synthesize_continuation(
+                    session_index=session_index,
+                    group_id=group_id,
+                    prev_input=prev_input_b,
+                    prev_output=prev_output_b,
+                    prev_hash_ids=turns[-1].hash_ids,
+                    depth=depth + 1,
+                )
+                return [this_session, *next_chain]
+
             delay_ms = self._sample_delay_ms(prev_input_b)
             timestamp_ms = turns[-1].timestamp_ms + delay_ms
 
@@ -469,22 +507,26 @@ class SessionSynthesizer:
             prev_output_b = output_len
             turn_idx += 1
 
-        return SynthesizedSession(
-            session_id=session_id,
-            group_id=group_id,
-            turns=turns,
-            end_reason=end_reason,
-            is_restart_continuation=True,
-        )
+        return [
+            SynthesizedSession(
+                session_id=session_id,
+                group_id=group_id,
+                turns=turns,
+                end_reason=end_reason,
+                is_restart_continuation=True,
+                restart_depth=depth,
+            )
+        ]
 
     def synthesize_sessions(self, num_sessions: int) -> list[SynthesizedSession]:
         """Generate multiple sessions with optional restart splits.
 
         Restart probability decreases linearly from restart_initial_probability
-        to 0 over the first 75% of sessions. Session B's (restart continuations)
-        are scattered randomly into the back portion of the queue, starting after
-        25% of primary sessions to ensure they never overlap with their Session A
-        in the concurrency window.
+        to 0 over the first 75% of sessions. Continuations (any chain depth)
+        are scattered into the back portion of the queue, starting after 25%
+        of primary sessions to ensure they never overlap with their primary
+        in the concurrency window. Within a single chain the intra-chain
+        ordering is preserved (B before C before D).
         """
         if self._config.turns is not None:
             return [
@@ -495,7 +537,7 @@ class SessionSynthesizer:
         restart_probability = self._config.restart_initial_probability
         cutoff = 0.75
         primary: list[SynthesizedSession] = []
-        deferred: list[tuple[SynthesizedSession, int]] = []
+        chain_parents: list[tuple[SynthesizedSession, list[SynthesizedSession]]] = []
         for i in range(num_sessions):
             progress = i / max(1, num_sessions - 1)
             if progress >= cutoff:
@@ -504,25 +546,24 @@ class SessionSynthesizer:
                 p_restart = restart_probability * (1.0 - progress / cutoff)
             inject = float(self._rng.random()) < p_restart
             result = self.synthesize_session(inject_restart=inject)
-            origin_index = len(primary)
             primary.append(result[0])
             if len(result) > 1:
-                deferred.extend((session, origin_index) for session in result[1:])
+                chain_parents.append((result[0], list(result[1:])))
 
-        if not deferred:
+        if not chain_parents:
             return primary
 
-        # Scatter deferred sessions into the back portion of the queue.
-        # min_offset ensures Session B never shares a concurrency window
-        # with its Session A (restarts only fire in first 75%).
+        # Scatter each chain into the back portion of the queue while
+        # preserving intra-chain ordering (primary before every continuation,
+        # and earlier continuations before later ones).
         min_offset = max(1, int(num_sessions * 0.25))
-        for session_b, origin_index in deferred:
-            low = min(origin_index + min_offset, len(primary))
-            pos = (
-                len(primary)
-                if low >= len(primary)
-                else int(self._rng.integers(low, len(primary) + 1))
-            )
-            primary.insert(pos, session_b)
+        for parent, chain in chain_parents:
+            parent_pos = primary.index(parent)
+            last_pos = max(parent_pos, min_offset - 1)
+            for session in chain:
+                lo = max(min_offset, last_pos + 1)
+                pos = int(self._rng.integers(lo, len(primary) + 1))
+                primary.insert(pos, session)
+                last_pos = pos
 
         return primary

@@ -19,6 +19,7 @@ from aiperf.dataset.agentic_code_gen.models import (
     ResetConfig,
     SessionDistributionConfig,
     SessionEndReason,
+    SynthesizedSession,
     TurnCountConfig,
 )
 from aiperf.dataset.agentic_code_gen.session_synthesizer import SessionSynthesizer
@@ -702,3 +703,265 @@ class TestRestartContinuation:
         synth = SessionSynthesizer(coding_config, seed=42)
         session_a, session_b = synth.synthesize_session(inject_restart=True)
         assert session_a.session_id != session_b.session_id
+
+
+class TestRestartPropagation:
+    """Coverage for multi-depth restart chains (Session A -> B -> C -> ...)."""
+
+    def _propagating_config(
+        self,
+        coding_config: SessionDistributionConfig,
+        *,
+        max_restart_depth: int,
+        restart_depth_decay: float = 1.0,
+        restart_initial_probability: float = 1.0,
+    ) -> SessionDistributionConfig:
+        return coding_config.model_copy(
+            update={
+                "max_restart_depth": max_restart_depth,
+                "restart_depth_decay": restart_depth_decay,
+                "restart_initial_probability": restart_initial_probability,
+            }
+        )
+
+    def test_default_max_depth_is_one(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """Default config preserves single-level restart behavior."""
+        assert coding_config.max_restart_depth == 1
+
+    def test_max_depth_one_produces_at_most_two_sessions(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        synth = SessionSynthesizer(coding_config, seed=42)
+        result = synth.synthesize_session(inject_restart=True)
+        assert len(result) == 2
+        assert result[0].restart_depth == 0
+        assert result[1].restart_depth == 1
+
+    def test_max_depth_caps_chain_length(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """max_restart_depth=N => chain can have at most N+1 sessions (primary + N)."""
+        for depth in (1, 2, 3, 5):
+            config = self._propagating_config(coding_config, max_restart_depth=depth)
+            synth = SessionSynthesizer(config, seed=42)
+            chains_observed = []
+            for _ in range(30):
+                result = synth.synthesize_session(inject_restart=True)
+                chains_observed.append(len(result))
+            assert max(chains_observed) <= depth + 1, (
+                f"depth={depth}: saw chain of {max(chains_observed)}"
+            )
+
+    def test_full_propagation_produces_deep_chain(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """With decay=1, probability=1, max_depth=5 -> every chain is full depth
+        unless a continuation hits forced retire / probabilistic reset before
+        its restart turn. At least one run in 30 attempts should reach depth 5."""
+        config = self._propagating_config(
+            coding_config,
+            max_restart_depth=5,
+            restart_depth_decay=1.0,
+            restart_initial_probability=1.0,
+        )
+        synth = SessionSynthesizer(config, seed=42)
+        max_depth_seen = 0
+        for _ in range(30):
+            result = synth.synthesize_session(inject_restart=True)
+            max_depth_seen = max(max_depth_seen, result[-1].restart_depth)
+        assert max_depth_seen == 5, f"only reached depth {max_depth_seen}"
+
+    def test_decay_reduces_chain_length(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """Higher decay -> shorter chains on average."""
+        config_full = self._propagating_config(
+            coding_config,
+            max_restart_depth=5,
+            restart_depth_decay=1.0,
+            restart_initial_probability=1.0,
+        )
+        config_decayed = self._propagating_config(
+            coding_config,
+            max_restart_depth=5,
+            restart_depth_decay=0.3,
+            restart_initial_probability=1.0,
+        )
+        synth_full = SessionSynthesizer(config_full, seed=42)
+        synth_decayed = SessionSynthesizer(config_decayed, seed=42)
+        total_full = sum(
+            len(synth_full.synthesize_session(inject_restart=True)) for _ in range(50)
+        )
+        total_decayed = sum(
+            len(synth_decayed.synthesize_session(inject_restart=True))
+            for _ in range(50)
+        )
+        assert total_full > total_decayed
+
+    def test_chain_has_monotonic_restart_depth(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        config = self._propagating_config(
+            coding_config,
+            max_restart_depth=5,
+            restart_depth_decay=1.0,
+            restart_initial_probability=1.0,
+        )
+        synth = SessionSynthesizer(config, seed=42)
+        result = synth.synthesize_session(inject_restart=True)
+        depths = [s.restart_depth for s in result]
+        assert depths == list(range(len(result)))
+
+    def test_chain_preserves_session_id_continuity_at_all_depths(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """Every continuation's turn 0 session IDs must extend the previous
+        session's last-turn session IDs, all the way down the chain."""
+        config = self._propagating_config(
+            coding_config,
+            max_restart_depth=4,
+            restart_depth_decay=1.0,
+            restart_initial_probability=1.0,
+        )
+        synth = SessionSynthesizer(config, seed=42)
+        result = synth.synthesize_session(inject_restart=True)
+        assert len(result) >= 2
+        alloc = synth.allocator
+        for parent, child in zip(result, result[1:], strict=False):
+            parent_session_ids = alloc.extract_session_ids(parent.turns[-1].hash_ids)
+            child_session_ids = alloc.extract_session_ids(child.turns[0].hash_ids)
+            assert child_session_ids[: len(parent_session_ids)] == parent_session_ids
+
+    def test_chain_all_turns_pass_block_size_invariant(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """Every turn in every chain member must satisfy the final-block-size
+        check from generator/prompt.py, regardless of depth."""
+        config = self._propagating_config(
+            coding_config,
+            max_restart_depth=5,
+            restart_depth_decay=1.0,
+            restart_initial_probability=1.0,
+        )
+        synth = SessionSynthesizer(config, seed=42)
+        block_size = config.block_size
+        for _ in range(20):
+            result = synth.synthesize_session(inject_restart=True)
+            for session in result:
+                for turn in session.turns:
+                    expected = math.ceil(turn.input_length / block_size)
+                    assert len(turn.hash_ids) == expected
+                    final_block = (
+                        turn.input_length - (len(turn.hash_ids) - 1) * block_size
+                    )
+                    assert 0 < final_block <= block_size
+
+    def test_chain_session_ids_are_unique(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        config = self._propagating_config(
+            coding_config,
+            max_restart_depth=4,
+            restart_depth_decay=1.0,
+            restart_initial_probability=1.0,
+        )
+        synth = SessionSynthesizer(config, seed=42)
+        result = synth.synthesize_session(inject_restart=True)
+        session_ids = [s.session_id for s in result]
+        assert len(session_ids) == len(set(session_ids))
+
+    def test_all_chain_members_share_group_id(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """A chain represents one user's sequence of sessions on the same repo,
+        so every session in the chain must share the primary's group_id."""
+        config = self._propagating_config(
+            coding_config,
+            max_restart_depth=4,
+            restart_depth_decay=1.0,
+            restart_initial_probability=1.0,
+        )
+        synth = SessionSynthesizer(config, seed=42)
+        result = synth.synthesize_session(inject_restart=True)
+        group_ids = {s.group_id for s in result}
+        assert len(group_ids) == 1
+
+    def test_only_chain_terminus_has_non_restart_end_reason(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """Intermediate chain members end with RESTART_SPLIT; only the last
+        session has FORCED_RETIRE or PROBABILISTIC_RESET."""
+        config = self._propagating_config(
+            coding_config,
+            max_restart_depth=5,
+            restart_depth_decay=1.0,
+            restart_initial_probability=1.0,
+        )
+        synth = SessionSynthesizer(config, seed=42)
+        result = synth.synthesize_session(inject_restart=True)
+        for intermediate in result[:-1]:
+            assert intermediate.end_reason == SessionEndReason.RESTART_SPLIT
+        assert result[-1].end_reason in (
+            SessionEndReason.FORCED_RETIRE,
+            SessionEndReason.PROBABILISTIC_RESET,
+        )
+
+    def test_is_restart_continuation_tracks_restart_depth(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """is_restart_continuation must be True iff restart_depth > 0, so
+        downstream writer code remains correct."""
+        config = self._propagating_config(
+            coding_config,
+            max_restart_depth=4,
+            restart_depth_decay=1.0,
+            restart_initial_probability=1.0,
+        )
+        synth = SessionSynthesizer(config, seed=42)
+        result = synth.synthesize_session(inject_restart=True)
+        for session in result:
+            assert session.is_restart_continuation == (session.restart_depth > 0)
+
+    def test_bulk_generation_preserves_chain_ordering(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """In the synthesize_sessions output, sessions within a single chain
+        (identified by shared session_index via the allocator's session_base)
+        must appear in increasing restart_depth order."""
+        config = self._propagating_config(
+            coding_config,
+            max_restart_depth=4,
+            restart_depth_decay=1.0,
+            restart_initial_probability=1.0,
+        )
+        synth = SessionSynthesizer(config, seed=42)
+        sessions = synth.synthesize_sessions(40)
+
+        # Group chain members by the session_index implied by their L2+L3
+        # session_ids (first session block ID is monotonic per session_index).
+        alloc = synth.allocator
+        prefix_blocks = alloc.prefix_blocks
+
+        def first_session_block(s: SynthesizedSession) -> int | None:
+            ids = s.turns[0].hash_ids
+            return ids[prefix_blocks] if len(ids) > prefix_blocks else None
+
+        chains: dict[int, list[tuple[int, int]]] = {}
+        for pos, s in enumerate(sessions):
+            base = first_session_block(s)
+            if base is None:
+                continue
+            # Round to session_base (blocks are contiguous per session_index).
+            session_base_key = (base - alloc.session_base(0)) // 4000
+            chains.setdefault(session_base_key, []).append((pos, s.restart_depth))
+
+        chains_with_multiple = [c for c in chains.values() if len(c) >= 2]
+        assert chains_with_multiple, "Expected at least one multi-session chain"
+        for chain in chains_with_multiple:
+            chain.sort()
+            depths_in_position_order = [depth for _, depth in chain]
+            assert depths_in_position_order == sorted(depths_in_position_order), (
+                f"chain depths out of order: {depths_in_position_order}"
+            )

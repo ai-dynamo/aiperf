@@ -368,6 +368,13 @@
       "title": "Max Prompt Tokens",
       "type": "integer"
     },
+    "max_restart_depth": {
+      "default": 1,
+      "description": "Maximum depth of a restart chain. 1 = current behavior (primary → one continuation). N > 1 allows a continuation to itself restart, producing chain A → B → ... up to depth N.",
+      "minimum": 1,
+      "title": "Max Restart Depth",
+      "type": "integer"
+    },
     "new_tokens_per_turn": {
       "$ref": "#/$defs/NewTokensPerTurnConfig",
       "description": "New tokens added per turn"
@@ -382,6 +389,14 @@
         }
       ],
       "description": "Reset probability config"
+    },
+    "restart_depth_decay": {
+      "default": 0.5,
+      "description": "Probability multiplier applied per depth when deciding whether a continuation itself restarts. P(continuation splits) = restart_initial_probability * restart_depth_decay^depth.",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Restart Depth Decay",
+      "type": "number"
     },
     "restart_initial_probability": {
       "default": 0.0,
