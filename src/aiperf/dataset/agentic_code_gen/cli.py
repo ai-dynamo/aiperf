@@ -68,7 +68,7 @@ def synthesize(
     console.print(f"Generating {num_sessions} sessions (seed={seed})...")
     sessions = synth.synthesize_sessions(num_sessions)
 
-    jsonl_path, manifest_path, quality_path = write_dataset(
+    jsonl_path, manifest_path, quality_path, schedule_path = write_dataset(
         sessions, run_dir, dist_config, seed=seed, config_name=config_name
     )
     validated_rows = _validate_mooncake_or_exit(jsonl_path, console)
@@ -92,6 +92,8 @@ def synthesize(
     console.print(f"  Dashboard:       {run_dir / 'report.html'}")
     console.print(f"  Cache explorer:  {run_dir / 'cache_explorer.html'}")
     console.print(f"  Simulation:      {sim_path}")
+    if schedule_path is not None:
+        console.print(f"  Schedule:        {schedule_path}")
     console.print()
 
     comparison_path = run_dir / "comparison.txt"

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 from enum import Enum
+from typing import Literal
 
 import numpy as np
 from pydantic import ConfigDict, Field, model_validator
@@ -254,6 +255,61 @@ def _default_generation_length() -> LognormalParams:
     return LognormalParams(mean=500, median=300)
 
 
+class ConcurrencyScheduleAnchor(AIPerfBaseModel):
+    """A single anchor point in the concurrency schedule."""
+
+    time_sec: float = Field(
+        ge=0.0, description="Wall-clock seconds from benchmark start."
+    )
+    concurrency: int = Field(
+        ge=1, description="Target session concurrency at this anchor."
+    )
+
+
+class ConcurrencyScheduleConfig(AIPerfBaseModel):
+    """High-level concurrency schedule spec.
+
+    Expanded at write time into a dense tick stream (schedule.jsonl) that
+    aiperf follows literally: one record per ``tick_sec``, interpolation and
+    gaussian noise baked in. aiperf's runtime sees only the tick stream and
+    has no knowledge of interpolation mode or noise_sigma.
+    """
+
+    interpolation: Literal["linear", "step"] = Field(
+        default="linear",
+        description=(
+            "How to interpolate between anchors when expanding to ticks. "
+            "'linear' walks the straight line between adjacent anchors. 'step' "
+            "holds each anchor's value until the next anchor."
+        ),
+    )
+    tick_sec: float = Field(
+        default=1.0,
+        gt=0.0,
+        description="Emission granularity for the expanded tick stream.",
+    )
+    noise_sigma: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Gaussian multiplicative jitter baked into each tick. 0 disables noise."
+        ),
+    )
+    anchors: list[ConcurrencyScheduleAnchor] = Field(
+        min_length=2,
+        description="Ordered schedule anchors. First anchor must be at time_sec=0.",
+    )
+
+    @model_validator(mode="after")
+    def validate_anchors(self) -> ConcurrencyScheduleConfig:
+        if self.anchors[0].time_sec != 0:
+            raise ValueError("first anchor must be at time_sec=0")
+        times = [a.time_sec for a in self.anchors]
+        if times != sorted(times) or len(set(times)) != len(times):
+            raise ValueError("anchors must be strictly monotonic in time_sec")
+        return self
+
+
 class SessionDistributionConfig(BaseConfig):
     """Full configuration for synthesizing Agentic Code sessions.
 
@@ -305,6 +361,15 @@ class SessionDistributionConfig(BaseConfig):
         min_length=2,
         max_length=2,
         description="[min, max) turn index range for restart split point",
+    )
+    concurrency_schedule: ConcurrencyScheduleConfig | None = Field(
+        default=None,
+        description=(
+            "Optional concurrency schedule. When set, synthesize emits "
+            "schedule.jsonl alongside dataset.jsonl; aiperf consumes it via "
+            "--concurrency-schedule-file to drive session concurrency over "
+            "wall-clock time."
+        ),
     )
 
     @model_validator(mode="before")
