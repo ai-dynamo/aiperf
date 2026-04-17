@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+import numpy as np
 import orjson
 
 from aiperf.dataset.agentic_code_gen.models import (
@@ -19,6 +20,7 @@ from aiperf.dataset.agentic_code_gen.reporting.metrics import (
     compute_quality_report,
 )
 from aiperf.dataset.agentic_code_gen.reporting.report import write_generated_reports
+from aiperf.dataset.agentic_code_gen.schedule import expand_schedule
 
 
 def write_dataset(
@@ -27,11 +29,13 @@ def write_dataset(
     config: SessionDistributionConfig,
     seed: int,
     config_name: str | None = None,
-) -> tuple[Path, Path, Path]:
-    """Write JSONL dataset, manifest, quality report, and cache explorer into *output_dir*.
+) -> tuple[Path, Path, Path, Path | None]:
+    """Write JSONL dataset, manifest, quality report, cache explorer, and
+    (optionally) a concurrency schedule into *output_dir*.
 
     Returns:
-        Tuple of (jsonl_path, manifest_path, quality_path).
+        Tuple of (jsonl_path, manifest_path, quality_path, schedule_path).
+        schedule_path is None when config.concurrency_schedule is not set.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -60,7 +64,25 @@ def write_dataset(
 
     write_generated_reports(sessions, manifest, quality_dict, output_dir)
 
-    return jsonl_path, manifest_path, quality_path
+    schedule_path: Path | None = None
+    if config.concurrency_schedule is not None:
+        schedule_path = output_dir / "schedule.jsonl"
+        # Dedicated RNG so schedule reproducibility doesn't perturb session
+        # sampling or vice-versa.
+        schedule_rng = np.random.default_rng(seed)
+        ticks = expand_schedule(config.concurrency_schedule, schedule_rng)
+        _write_schedule_jsonl(ticks, schedule_path)
+
+    return jsonl_path, manifest_path, quality_path, schedule_path
+
+
+def _write_schedule_jsonl(ticks: list[tuple[float, int]], path: Path) -> None:
+    """Write the dense tick stream as one JSON object per line."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(
+        b"\n".join(orjson.dumps({"time_sec": t, "concurrency": c}) for t, c in ticks)
+        + b"\n"
+    )
 
 
 def _write_jsonl(
