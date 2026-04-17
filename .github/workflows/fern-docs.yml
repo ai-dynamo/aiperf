@@ -66,6 +66,22 @@ jobs:
   # LINT JOBS - Run on PRs when docs/** or fern/** files change
   #############################################################################
 
+  docs-index-check:
+    name: Docs Index Completeness Check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check all docs are listed in index.yml
+        run: python tools/check_docs_index.py
+
   fern-check:
     name: Fern Configuration Check
     # TODO(AIP-855): Re-enable once convert_mdx_comments.py is wired into the sync pipeline (PR 2)
@@ -164,9 +180,9 @@ jobs:
             cp source-checkout/fern/.gitignore docs-checkout/fern/.gitignore
           fi
 
-          # Sync convert_callouts.py script
-          if [ -f source-checkout/fern/convert_callouts.py ]; then
-            cp source-checkout/fern/convert_callouts.py docs-checkout/fern/convert_callouts.py
+          # Sync md_to_mdx.py script
+          if [ -f source-checkout/fern/md_to_mdx.py ]; then
+            cp source-checkout/fern/md_to_mdx.py docs-checkout/fern/md_to_mdx.py
           fi
 
           # Sync components/ directory (e.g., CustomFooter.tsx)
@@ -188,11 +204,11 @@ jobs:
           # On docs-website, fern/versions/dev.yml needs ../pages-dev/ prefix.
           yq -i '(.. | select(has("path")).path) |= sub("^([a-zA-Z])", "../pages-dev/${1}")' docs-checkout/fern/versions/dev.yml
 
-      - name: Convert GitHub callouts to Fern format
+      - name: Convert Markdown to Fern MDX format
         run: |
-          echo "Converting GitHub-style callouts to Fern format in pages-dev/..."
-          python3 docs-checkout/fern/convert_callouts.py --dir docs-checkout/fern/pages-dev
-          echo "Callout conversion complete."
+          echo "Converting GitHub Markdown to Fern MDX format in pages-dev/..."
+          python3 docs-checkout/fern/md_to_mdx.py --dir docs-checkout/fern/pages-dev
+          echo "Conversion complete."
 
       - name: Update docs.yml preserving products
         run: |
@@ -431,13 +447,13 @@ jobs:
 
           echo "GitHub link update complete."
 
-      - name: Convert GitHub callouts to Fern format
+      - name: Convert Markdown to Fern MDX format
         run: |
           TAG="${{ steps.version.outputs.tag }}"
 
-          echo "Converting GitHub-style callouts to Fern format in pages-$TAG/..."
-          python3 fern/convert_callouts.py --dir "fern/pages-$TAG"
-          echo "Callout conversion complete."
+          echo "Converting GitHub Markdown to Fern MDX format in pages-$TAG/..."
+          python3 fern/md_to_mdx.py --dir "fern/pages-$TAG"
+          echo "Conversion complete."
 
       - name: Create version config file
         run: |

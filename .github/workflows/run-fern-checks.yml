@@ -16,8 +16,6 @@ on:
 
 jobs:
   fern-checks:
-    # TODO(AIP-855): Re-enable once convert_mdx_comments.py is wired into the sync pipeline (PR 2)
-    if: false
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
