@@ -62,6 +62,7 @@ def make_user_config(**overrides) -> UserConfig:
     )
     loadgen.request_rate_ramp_duration = overrides.get("request_rate_ramp_duration")
     loadgen.arrival_smoothness = overrides.get("arrival_smoothness")
+    loadgen.concurrency_schedule_file = overrides.get("concurrency_schedule_file")
     input_config = MagicMock()
     input_config.random_seed = overrides.get("random_seed")
     input_config.fixed_schedule_auto_offset = overrides.get(

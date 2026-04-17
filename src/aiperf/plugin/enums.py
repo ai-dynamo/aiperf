@@ -39,7 +39,7 @@ ArrivalPattern = plugins.create_enum(PluginType.ARRIVAL_PATTERN, "ArrivalPattern
 
 RampTypeStr: TypeAlias = str
 RampType = plugins.create_enum(PluginType.RAMP, "RampType", module=__name__)
-"""Dynamic enum for ramp. Example: RampType.EXPONENTIAL, RampType.LINEAR, RampType.POISSON"""
+"""Dynamic enum for ramp. Example: RampType.EXPONENTIAL, RampType.POISSON, RampType.SCHEDULE_FOLLOWER"""
 
 DatasetBackingStoreTypeStr: TypeAlias = str
 DatasetBackingStoreType = plugins.create_enum(PluginType.DATASET_BACKING_STORE, "DatasetBackingStoreType", module=__name__)
