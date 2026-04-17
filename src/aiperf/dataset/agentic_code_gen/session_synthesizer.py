@@ -392,7 +392,7 @@ class SessionSynthesizer:
         """Create Session B: a continuation after a restart split.
 
         Turn 0 carries all accumulated tokens from Session A's last turn
-        and reuses A's hash_ids (same KV cache blocks).
+        and extends A's hash_ids to cover the full initial context.
         """
         rand_bytes = self._rng.bytes(16)
         session_id = f"sess-{uuid.UUID(bytes=rand_bytes).hex[:12]}"
@@ -402,6 +402,14 @@ class SessionSynthesizer:
 
         output_len = self._sample_output_length()
 
+        prev_session_ids = self._allocator.extract_session_ids(prev_hash_ids)
+        hash_ids = self._allocator.turn_hash_ids(
+            session_index,
+            group_id=group_id,
+            input_length=initial_input,
+            prev_session_ids=prev_session_ids,
+        )
+
         turns: list[SynthesizedTurn] = [
             SynthesizedTurn(
                 turn_index=0,
@@ -410,7 +418,7 @@ class SessionSynthesizer:
                 new_tokens=initial_input,
                 delay_ms=0.0,
                 timestamp_ms=0.0,
-                hash_ids=prev_hash_ids,
+                hash_ids=hash_ids,
             )
         ]
 
