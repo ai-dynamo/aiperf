@@ -949,9 +949,7 @@ total_error_isl = sum(r.input_sequence_length for r in records if not r.valid)
 
 ## General Metrics
 
-<Note>
-Metrics in this section are available for all benchmark runs with no special requirements.
-</Note>
+<Note>Metrics in this section are available for all benchmark runs with no special requirements.</Note>
 
 ### Request Latency
 
@@ -1315,9 +1313,7 @@ http_req_chunks_received = trace.response_chunks_count
 
 ## Multi-Run Aggregate Metrics
 
-<Note>
-These metrics are only available when using `--num-profile-runs > 1` for confidence reporting.
-</Note>
+<Note>These metrics are only available when using `--num-profile-runs > 1` for confidence reporting.</Note>
 
 When running multiple profile iterations with `--num-profile-runs`, AIPerf computes aggregate statistics across all runs to quantify measurement variance and repeatability. These statistics are written to `aggregate/profile_export_aiperf_aggregate.json` and `aggregate/profile_export_aiperf_aggregate.csv`.
 

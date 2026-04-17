@@ -38,9 +38,7 @@ Requests are sent continuously until the duration expires. AIPerf then waits for
 - **Grace period default**: 30 seconds (use `inf` to wait forever, `0` for immediate completion)
 - Responses received within grace period are included in metrics; responses still pending when grace expires are not
 
-<Warning>
-`--benchmark-grace-period` requires `--benchmark-duration` to be set.
-</Warning>
+<Warning>`--benchmark-grace-period` requires `--benchmark-duration` to be set.</Warning>
 
 ## Combining with Request Count
 

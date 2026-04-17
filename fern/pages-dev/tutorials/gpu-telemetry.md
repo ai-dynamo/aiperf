@@ -402,9 +402,7 @@ aiperf profile \
     --gpu-telemetry pynvml
 ```
 
-<Tip>
-Add `dashboard` after `pynvml` for the real-time terminal UI: `--gpu-telemetry pynvml dashboard`
-</Tip>
+<Tip>Add `dashboard` after `pynvml` for the real-time terminal UI: `--gpu-telemetry pynvml dashboard`</Tip>
 
 ## Metrics Collected via pynvml
 

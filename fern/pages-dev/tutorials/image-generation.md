@@ -42,9 +42,7 @@ docker run --gpus all \
     lmsysorg/sglang:dev
 ```
 
-<Note>
-> The following steps are to be performed _inside_ the Docker container.
-</Note>
+<Note>> The following steps are to be performed _inside_ the Docker container.</Note>
 **Install the dependencies:**
 ```bash
 pip install yunchang remote_pdb imageio diffusers diffusion
@@ -72,9 +70,7 @@ Uvicorn running on http://0.0.0.0:30000 (Press CTRL+C to quit)
 
 ## Running the benchmark (basic usage)
 
-<Note>
-> The following steps are to be performed on your local machine. (_outside_ the Docker container.)
-</Note>
+<Note>> The following steps are to be performed on your local machine. (_outside_ the Docker container.)</Note>
 
 ### Text-to-Image Generation Using Input File
 **Create an input file:**
@@ -177,9 +173,7 @@ EOF
 
 **Run the benchmark:**
 
-<Warning>
-Use `--export-level raw` to get the raw input/output payloads.
-</Warning>
+<Warning>Use `--export-level raw` to get the raw input/output payloads.</Warning>
 
 ```bash
 aiperf profile \

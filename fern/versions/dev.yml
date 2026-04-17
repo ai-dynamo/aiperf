@@ -33,6 +33,8 @@ navigation:
             path: ../pages-dev/tutorials/embeddings.md
           - page: Profile Ranking Models with AIPerf
             path: ../pages-dev/tutorials/rankings.md
+          - page: Profile NIM Image Retrieval with AIPerf
+            path: ../pages-dev/tutorials/nim-image-retrieval.md
           - page: SGLang Image Generation
             path: ../pages-dev/tutorials/image-generation.md
           - page: SGLang Video Generation
@@ -50,6 +52,30 @@ navigation:
             path: ../pages-dev/tutorials/custom-prompt-benchmarking.md
           - page: Profile with ShareGPT Dataset
             path: ../pages-dev/tutorials/sharegpt.md
+          - page: Synthetic Dataset Generation
+            path: ../pages-dev/tutorials/synthetic-dataset.md
+          - page: Profile with InstructCoder Dataset
+            path: ../pages-dev/tutorials/instruct-coder.md
+          - page: Profile with AIMO Dataset
+            path: ../pages-dev/tutorials/aimo.md
+          - page: Profile with MMStar Dataset
+            path: ../pages-dev/tutorials/mmstar.md
+          - page: Profile with MMVU Dataset
+            path: ../pages-dev/tutorials/mmvu.md
+          - page: Profile with LLaVA-OneVision Dataset
+            path: ../pages-dev/tutorials/llava-onevision.md
+          - page: Profile with VisionArena Dataset
+            path: ../pages-dev/tutorials/vision-arena.md
+          - page: Profile with Blazedit Dataset
+            path: ../pages-dev/tutorials/blazedit.md
+          - page: Profile with SpecBench Dataset
+            path: ../pages-dev/tutorials/spec-bench.md
+          - page: Profile with SPEED-Bench Dataset
+            path: ../pages-dev/tutorials/speed-bench.md
+          - page: Profile with Bailian Traces
+            path: ../pages-dev/tutorials/bailian-trace.md
+          - page: Profile with BurstGPT Traces
+            path: ../pages-dev/tutorials/burst-gpt-trace.md
           - page: Multi-Turn Conversations
             path: ../pages-dev/tutorials/multi-turn.md
           - page: Sequence Length Distributions for Advanced Benchmarking
@@ -125,6 +151,8 @@ navigation:
         path: ../pages-dev/benchmark-datasets.md
       - page: Pre-Flight Tokenizer Auto Detection
         path: ../pages-dev/reference/tokenizer-auto-detection.md
+      - page: Conversation Context Mode
+        path: ../pages-dev/reference/conversation-context-mode.md
   - section: Server Metrics
     collapsed: true
     contents:

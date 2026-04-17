@@ -7,9 +7,7 @@ sidebar-title: GenAI-Perf vs AIPerf CLI Feature Comparison Matrix
 
 This comparison matrix shows the supported CLI options between GenAI-Perf and AIPerf.
 
-<Note>
-This is a living document and will be updated as new features are added to AIPerf.
-</Note>
+<Note>This is a living document and will be updated as new features are added to AIPerf.</Note>
 
 
 **Legend:**

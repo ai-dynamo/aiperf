@@ -313,9 +313,7 @@ artifacts/
 group_extraction_pattern: "^(treatment_\d+)"  # Groups treatment_1_varA + treatment_1_varB → "treatment_1"
 ```
 
-<Tip>
-See `src/aiperf/plot/default_plot_config.yaml` for all configuration options.
-</Tip>
+<Tip>See `src/aiperf/plot/default_plot_config.yaml` for all configuration options.</Tip>
 
 ![Pareto Curve with Experiment Classification](../diagrams/plot-examples/multi-run/config-experiment-classification/pareto-curve-throughput-per-gpu-vs-interactivity.png)
 
@@ -404,9 +402,7 @@ Dashboard mode and PNG mode are separate. To generate both static PNGs and launc
 
 **Correlates compute resources with token generation performance**. High GPU utilization with low throughput may suggest compute-bound workloads (consider optimizing model/batch size). Low utilization with low throughput can indicate bottlenecks elsewhere (KV cache, memory bandwidth, CPU scheduling). Potentially useful for targeting >80% GPU utilization for efficient hardware usage.
 
-<Tip>
-See the [GPU Telemetry Tutorial](gpu-telemetry.md) for setup and detailed analysis.
-</Tip>
+<Tip>See the [GPU Telemetry Tutorial](gpu-telemetry.md) for setup and detailed analysis.</Tip>
 
 ### Timeslice Integration
 
@@ -428,9 +424,7 @@ When timeslice data is available (via `--slice-duration` during profiling), plot
 
 ![Latency Across Timeslices](../diagrams/plot-examples/single-run/timeslices/timeslices-latency.png)
 
-<Tip>
-See the [Timeslices Tutorial](timeslices.md) for configuration and analysis.
-</Tip>
+<Tip>See the [Timeslices Tutorial](timeslices.md) for configuration and analysis.</Tip>
 
 ## Output Files
 

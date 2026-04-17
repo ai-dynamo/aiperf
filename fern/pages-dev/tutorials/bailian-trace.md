@@ -1,7 +1,5 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+{/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0 */}
 
 # Profile with Bailian Traces
 
@@ -60,7 +58,7 @@ Download a trace file from the public Bailian dataset:
 
 The repository includes four traces representing different workload types: `qwen_traceA_blksz_16.jsonl`, `qwen_traceB_blksz_16.jsonl`, `qwen_coder_blksz_16.jsonl`, and `qwen_thinking_blksz_16.jsonl`. Substitute any of them in the command below.
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 # Download a trace file
 curl -Lo qwen_traceA_blksz_16.jsonl \
@@ -79,13 +77,13 @@ aiperf profile \
     --custom-dataset-type bailian_trace \
     --fixed-schedule
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 ---
 
 ## Related Tutorials
 
-- [Trace Benchmarking with Mooncake](../benchmark_modes/trace_replay.md) - Mooncake FAST'25 trace replay
+- [Trace Benchmarking with Mooncake](../benchmark-modes/trace-replay.md) - Mooncake FAST'25 trace replay
 - [Fixed Schedule](fixed-schedule.md) - Precise timestamp-based execution for any dataset
 - [Prefix Synthesis](prefix-synthesis.md) - KV cache testing with hash-based prefix data
 - [Multi-Turn Conversations](multi-turn.md) - Multi-turn conversation benchmarking

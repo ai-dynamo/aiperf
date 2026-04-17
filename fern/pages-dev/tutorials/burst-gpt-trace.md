@@ -1,7 +1,5 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+{/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0 */}
 
 # Profile with BurstGPT Traces
 
@@ -60,7 +58,7 @@ Each row is treated as an independent single-turn request. AIPerf synthesizes pr
 
 Download a trace file from the BurstGPT repository and run a benchmark:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
 ```bash
 # Download a trace file
 curl -Lo burst_gpt.csv \
@@ -79,7 +77,7 @@ aiperf profile \
     --custom-dataset-type burst_gpt_trace \
     --fixed-schedule
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Sample Output (Successful Run):**
 

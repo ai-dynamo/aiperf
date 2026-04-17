@@ -57,9 +57,7 @@ docker run --gpus all \
     lmsysorg/sglang:dev
 ```
 
-<Note>
-The following steps are to be performed _inside_ the SGLang Docker container.
-</Note>
+<Note>The following steps are to be performed _inside_ the SGLang Docker container.</Note>
 
 **Install the diffusion dependencies:**
 ```bash
