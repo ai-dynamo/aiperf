@@ -58,21 +58,12 @@ class HFInstructionResponseDatasetLoader(BaseHFDatasetLoader):
         skipped = 0
         max_conversations = self._max_conversations()
 
-        column_validated = False
         for row in dataset:
             if (
                 max_conversations is not None
                 and len(conversations) >= max_conversations
             ):
                 break
-
-            if not column_validated:
-                column_validated = True
-                if self.prompt_template is None and self.prompt_column not in row:
-                    raise ValueError(
-                        f"Column '{self.prompt_column}' not found in dataset. "
-                        f"Available columns: {list(row.keys())}"
-                    )
 
             if self.prompt_template is not None:
                 prompt = self.prompt_template.format(**row)

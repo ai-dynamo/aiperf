@@ -114,6 +114,7 @@ class TestBaseHFDatasetLoader:
             name="my-subset",
             split="test",
             trust_remote_code=False,
+            streaming=False,
         )
 
 

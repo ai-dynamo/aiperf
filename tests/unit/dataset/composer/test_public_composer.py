@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import PublicDatasetType
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.dataset.composer.public import PublicDatasetComposer
+from aiperf.plugin.enums import PublicDatasetType  # dynamic enum (has AIMO etc.)
 
 _MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
     "models": ["test-model"],
@@ -99,10 +99,10 @@ class TestBuildLoaderKwargs:
             kwargs = composer._build_loader_kwargs("aimo")
         assert kwargs == {}
 
-    def test_category_forwarded_when_set(self, aimo_config):
+    def test_category_forwarded_when_set(self, aimo_run):
         from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
 
-        composer = PublicDatasetComposer(aimo_config, None)
+        composer = PublicDatasetComposer(aimo_run, None)
         with patch(
             "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
             return_value=PublicDatasetLoaderMetadata(
@@ -115,10 +115,10 @@ class TestBuildLoaderKwargs:
             kwargs = composer._build_loader_kwargs(PublicDatasetType.AIMO)
         assert kwargs["category"] == "coding"
 
-    def test_no_category_in_kwargs_when_none(self, aimo_config):
+    def test_no_category_in_kwargs_when_none(self, aimo_run):
         from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
 
-        composer = PublicDatasetComposer(aimo_config, None)
+        composer = PublicDatasetComposer(aimo_run, None)
         with patch(
             "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
             return_value=PublicDatasetLoaderMetadata(
