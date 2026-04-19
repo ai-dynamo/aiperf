@@ -199,7 +199,7 @@ Strategy for distributing requests across multiple URLs. round_robin cycles thro
 #### `--endpoint-type` `<str>`
 
 API endpoint type determining request/response format. chat: OpenAI chat completions, completions: OpenAI completions, embeddings: vector embeddings, rankings: reranking, template: custom format.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
+<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
 <br/>_Default: `chat`_
 
 #### `--streaming`
@@ -1300,7 +1300,7 @@ Strategy for distributing requests across multiple URLs. round_robin cycles thro
 #### `--endpoint-type` `<str>`
 
 API endpoint type determining request/response format. chat: OpenAI chat completions, completions: OpenAI completions, embeddings: vector embeddings, rankings: reranking, template: custom format.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
+<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
 <br/>_Default: `chat`_
 
 #### `--streaming`
@@ -2131,7 +2131,7 @@ Strategy for distributing requests across multiple URLs. round_robin cycles thro
 #### `--endpoint-type` `<str>`
 
 API endpoint type determining request/response format. chat: OpenAI chat completions, completions: OpenAI completions, embeddings: vector embeddings, rankings: reranking, template: custom format.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
+<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
 <br/>_Default: `chat`_
 
 #### `--streaming`
@@ -3057,7 +3057,7 @@ Strategy for distributing requests across multiple URLs. round_robin cycles thro
 #### `--endpoint-type` `<str>`
 
 API endpoint type determining request/response format. chat: OpenAI chat completions, completions: OpenAI completions, embeddings: vector embeddings, rankings: reranking, template: custom format.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
+<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
 <br/>_Default: `chat`_
 
 #### `--streaming`

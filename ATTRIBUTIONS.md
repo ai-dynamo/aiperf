@@ -194,9 +194,9 @@ This document provides attribution information for public domain assets used in 
 
 ## Usage Summary
 
-- **All assets are public domain** - no legal restrictions on use
-- **No attribution legally required** but recommended as good practice
-- **Compatible with Apache 2.0** license used by this project
+- **Public domain assets** (ShareGPT conversation data) - no legal restrictions on use
+- **MIT-licensed assets** (tiktoken encoding data) - permissive, requires copyright notice retention
+- **All assets compatible with Apache 2.0** license used by this project
 - **No endorsement implied** by original sources
 
 ---

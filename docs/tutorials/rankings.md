@@ -71,9 +71,8 @@ INFO     Results saved to: artifacts/BAAI_bge-reranker-base-rankings/
 JSON Export: artifacts/BAAI_bge-reranker-base-rankings/profile_export_aiperf.json
 ```
 
-<Note>
-The rankings-specific token options cannot be used together with `--prompt-input-tokens-mean` or `--prompt-input-tokens-stddev`. Use the rankings-specific options for controlling token counts in rankings queries and passages.
-</Note>
+> [!NOTE]
+> The rankings-specific token options cannot be used together with `--prompt-input-tokens-mean` or `--prompt-input-tokens-stddev`. Use the rankings-specific options for controlling token counts in rankings queries and passages.
 
 ### Profile using Custom Inputs
 

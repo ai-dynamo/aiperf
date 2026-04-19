@@ -63,6 +63,8 @@ Dataset loading and configuration. Controls timeouts and behavior for dataset lo
 | `AIPERF_DATASET_DOWNLOAD_MAX_RETRIES` | `3` | ≥ 0, ≤ 20 | Maximum number of retries for dataset download in Kubernetes worker pods |
 | `AIPERF_DATASET_DOWNLOAD_RETRY_DELAY` | `2.0` | ≥ 0.1, ≤ 60.0 | Initial delay in seconds between dataset download retries (doubles each retry) |
 | `AIPERF_DATASET_PUBLIC_DATASET_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for public dataset loading operations |
+| `AIPERF_DATASET_MEDIA_DOWNLOAD_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds per media URL download when inline encoding is required |
+| `AIPERF_DATASET_MEDIA_DOWNLOAD_MAX_CONCURRENCY` | `10` | ≥ 1, ≤ 100 | Maximum number of concurrent media URL downloads |
 
 ## GPU
 

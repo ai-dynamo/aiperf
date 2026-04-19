@@ -2,10 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
+from unittest.mock import patch
+
 import pytest
 
-from aiperf.common.exceptions import NotInitializedError
-from aiperf.common.tokenizer import BUILTIN_TOKENIZER_NAME, Tokenizer
+from aiperf.common.exceptions import NotInitializedError, TokenizerError
+from aiperf.common.tokenizer import (
+    BUILTIN_TOKENIZER_NAME,
+    TIKTOKEN_ENCODING_NAMES,
+    Tokenizer,
+)
 
 
 class TestTokenizer:
@@ -77,3 +83,27 @@ class TestBuiltinTokenizer:
         }
         assert new_hf_modules == hf_modules
         assert tokenizer.encode("test") is not None
+
+
+class TestTiktokenEncodingNames:
+    @pytest.mark.parametrize("encoding_name", sorted(TIKTOKEN_ENCODING_NAMES))
+    def test_from_pretrained_with_encoding_name(self, encoding_name: str) -> None:
+        tokenizer = Tokenizer.from_pretrained(encoding_name)
+        assert tokenizer.resolved_name == encoding_name
+        assert tokenizer.encode("hello") is not None
+
+    def test_o200k_base_direct(self) -> None:
+        tokenizer = Tokenizer.from_pretrained("o200k_base")
+        assert tokenizer.resolved_name == "o200k_base"
+        assert tokenizer.encode("test") == Tokenizer.from_pretrained("builtin").encode(
+            "test"
+        )
+
+
+class TestTiktokenImportError:
+    def test_raises_tokenizer_error_when_tiktoken_missing(self) -> None:
+        with (
+            patch.dict("sys.modules", {"tiktoken": None}),
+            pytest.raises(TokenizerError, match="tiktoken is required"),
+        ):
+            Tokenizer.from_pretrained(BUILTIN_TOKENIZER_NAME)

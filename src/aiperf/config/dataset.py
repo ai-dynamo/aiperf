@@ -953,6 +953,16 @@ class PublicDataset(BaseConfig):
         ),
     ]
 
+    hf_subset: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="HuggingFace dataset subset/config name override (e.g. 'sharegpt4o'). "
+            "Only applies for HuggingFace-backed public dataset loaders. "
+            "Takes priority over the subset defined in the plugin registry.",
+        ),
+    ]
+
 
 class FileSourceConfig(BaseConfig):
     """

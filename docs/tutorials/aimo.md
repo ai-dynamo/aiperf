@@ -6,12 +6,21 @@ sidebar-title: Profile with AIMO Dataset
 
 # Profile with AIMO Dataset
 
-AIPerf supports benchmarking using the AIMO NuminaMath-TIR dataset, which contains competition
-mathematics problems requiring chain-of-thought reasoning. This dataset is useful for measuring
+AIPerf supports benchmarking using AIMO math reasoning datasets, which contain competition
+mathematics problems requiring chain-of-thought reasoning. These datasets are useful for measuring
 model throughput and latency under long-context, reasoning-heavy workloads.
 
+Four variants are available:
+
+| Dataset | `--public-dataset` | Description |
+|---|---|---|
+| NuminaMath-TIR | `aimo` | Tool-integrated reasoning problems |
+| NuminaMath-CoT | `aimo_numina_cot` | Chain-of-thought reasoning problems (~859k) |
+| NuminaMath-1.5 | `aimo_numina_1_5` | Latest NuminaMath release |
+| AIME Validation | `aimo_aime` | 90 AIME competition problems |
+
 This guide covers profiling OpenAI-compatible chat completions endpoints using the AIMO public
-dataset.
+datasets.
 
 ---
 
@@ -41,7 +50,7 @@ AIPerf loads the AIMO dataset from HuggingFace and uses each problem as a single
 AIMO problems elicit long chain-of-thought responses. Use `--prompt-output-tokens-mean` to cap
 output length and reduce benchmark duration:
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -53,7 +62,7 @@ aiperf profile \
     --concurrency 4 \
     --prompt-output-tokens-mean 512
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 

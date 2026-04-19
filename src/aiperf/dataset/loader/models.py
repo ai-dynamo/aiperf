@@ -18,7 +18,7 @@ class SingleTurn(AIPerfBaseModel):
     The single turn type
       - supports multi-modal (e.g. text, image, audio, video)
       - supports client-side batching for each data (e.g. batch_size > 1)
-      - DOES NOT support multi-turn features (e.g. session_id)
+      - supports optional session_id for causal ordering across entries
     """
 
     type: Literal[CustomDatasetType.SINGLE_TURN] = CustomDatasetType.SINGLE_TURN
@@ -56,6 +56,16 @@ class SingleTurn(AIPerfBaseModel):
         description="Amount of milliseconds to wait before sending the turn. Supports floating point, but scheduling accuracy is at the millisecond level.",
     )
     role: str | None = Field(default=None, description="Role of the turn.")
+    session_id: str | None = Field(
+        default=None,
+        description="Session ID for causal ordering. Entries sharing a session_id "
+        "are sent sequentially. Each entry is self-contained (no history accumulation).",
+    )
+    output_length: int | None = Field(
+        default=None,
+        gt=0,
+        description="Maximum number of output tokens to generate for this request. Overrides the global --osl setting when specified.",
+    )
 
     @model_validator(mode="after")
     def validate_mutually_exclusive_fields(self) -> "SingleTurn":
@@ -336,8 +346,33 @@ class BailianTrace(AIPerfBaseModel):
     )
 
 
+class BurstGPTTrace(AIPerfBaseModel):
+    """Defines the schema for BurstGPT real-world LLM traffic trace data.
+
+    See https://github.com/HPMLL/BurstGPT for the upstream dataset.
+
+    Each row prescribes request/response token counts; no prompt text is stored —
+    AIPerf synthesizes prompts of the prescribed length. Each row is treated as
+    an independent single-turn request; session IDs are assigned automatically.
+
+    Timestamps are seconds since the start of the trace and are converted to
+    milliseconds internally.
+    """
+
+    timestamp: float = Field(
+        description="Seconds since the start of the trace. Converted to milliseconds internally.",
+    )
+    input_length: int = Field(description="Input token count (Request tokens)")
+    output_length: int = Field(description="Output token count (Response tokens)")
+
+
 CustomDatasetT = TypeVar(
     "CustomDatasetT",
-    bound=SingleTurn | MultiTurn | RandomPool | MooncakeTrace | BailianTrace,
+    bound=SingleTurn
+    | MultiTurn
+    | RandomPool
+    | MooncakeTrace
+    | BailianTrace
+    | BurstGPTTrace,
 )
 """A union type of all custom data types."""

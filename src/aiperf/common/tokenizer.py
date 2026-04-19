@@ -25,7 +25,7 @@ BUILTIN_TOKENIZER_NAME = "builtin"
 _BUILTIN_ENCODING = "o200k_base"
 # tiktoken encoding names that should be routed through tiktoken, not HF.
 # "gpt2" is excluded because it's also a valid HF model name.
-_TIKTOKEN_ENCODING_NAMES = frozenset(
+TIKTOKEN_ENCODING_NAMES = frozenset(
     {
         "cl100k_base",
         "o200k_base",
@@ -112,12 +112,37 @@ def _is_offline_mode() -> bool:
     )
 
 
+def _find_hf_cache_aliases(name: str) -> list[Path]:
+    """Find HF cache directories matching a model name alias.
+
+    Scans the HF hub cache for ``models--*--<name>`` directories
+    (case-insensitive suffix match).
+
+    Returns:
+        List of matching cache directory paths.
+    """
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    cache_dir = Path(HF_HUB_CACHE)
+    if not cache_dir.is_dir():
+        return []
+
+    suffix = f"--{name.lower()}"
+    return [
+        entry
+        for entry in cache_dir.iterdir()
+        if entry.is_dir()
+        and entry.name.startswith("models--")
+        and entry.name.lower().endswith(suffix)
+    ]
+
+
 def _is_hf_cached(name: str) -> bool:
     """Check if a HuggingFace model is available in the local cache.
 
     Looks for ``models--<name>/`` (with ``/`` replaced by ``--``) inside the
-    HF hub cache directory.  Also handles alias-style short names by scanning
-    for directories whose suffix matches ``--<name>``.
+    HF hub cache directory.  Also handles alias-style short names, returning
+    True only when a single unambiguous match exists.
     """
     from huggingface_hub.constants import HF_HUB_CACHE
 
@@ -130,14 +155,7 @@ def _is_hf_cached(name: str) -> bool:
     if exact.is_dir():
         return True
 
-    # Alias match: "gpt2" -> any "models--*--gpt2"
-    suffix = f"--{name.lower()}"
-    return any(
-        entry.is_dir()
-        and entry.name.startswith("models--")
-        and entry.name.lower().endswith(suffix)
-        for entry in cache_dir.iterdir()
-    )
+    return len(_find_hf_cache_aliases(name)) == 1
 
 
 def resolve_alias(name: str) -> AliasResolutionResult:
@@ -282,7 +300,7 @@ class Tokenizer:
             AmbiguousTokenizerNameError: If the name is ambiguous.
             TokenizerError: If the tokenizer cannot be loaded.
         """
-        if name == BUILTIN_TOKENIZER_NAME or name in _TIKTOKEN_ENCODING_NAMES:
+        if name == BUILTIN_TOKENIZER_NAME or name in TIKTOKEN_ENCODING_NAMES:
             return cls._from_tiktoken(
                 _BUILTIN_ENCODING if name == BUILTIN_TOKENIZER_NAME else name
             )
@@ -340,24 +358,12 @@ class Tokenizer:
         Returns:
             The full model ID (e.g. "openai-community/gpt2") or None.
         """
-        from huggingface_hub.constants import HF_HUB_CACHE
-
-        cache_dir = Path(HF_HUB_CACHE)
-        if not cache_dir.is_dir():
+        matches = _find_hf_cache_aliases(name)
+        if len(matches) != 1:
             return None
-
-        suffix = f"--{name.lower()}"
-        for entry in cache_dir.iterdir():
-            if (
-                entry.is_dir()
-                and entry.name.startswith("models--")
-                and entry.name.lower().endswith(suffix)
-            ):
-                # Convert "models--openai-community--gpt2" -> "openai-community/gpt2"
-                model_id = entry.name[len("models--") :].replace("--", "/")
-                _logger.debug(f"Found cached model for alias '{name}': {model_id}")
-                return model_id
-        return None
+        model_id = matches[0].name[len("models--") :].replace("--", "/")
+        _logger.debug(f"Found cached model for alias '{name}': {model_id}")
+        return model_id
 
     @classmethod
     def _from_pretrained_local(

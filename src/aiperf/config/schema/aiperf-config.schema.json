@@ -1600,6 +1600,18 @@
           "title": "Downloadvideocontent",
           "type": "boolean"
         },
+        "requestContentType": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RequestContentType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Content type for request body serialization. Default is 'application/json'. Set to 'multipart/form-data' for servers that require form-encoded requests (e.g. vLLM video generation)."
+        },
         "url": {
           "description": "Shorthand for 'urls'. Accepts a single value which will be converted to a list/dict. List of server URLs to benchmark. Requests distributed according to url_strategy. Example: ['http://localhost:8000/v1/chat/completions']",
           "oneOf": [
@@ -1640,6 +1652,7 @@
         "chat",
         "cohere_rankings",
         "completions",
+        "responses",
         "chat_embeddings",
         "embeddings",
         "hf_tei_rankings",
@@ -3837,6 +3850,19 @@
           "$ref": "#/$defs/DatasetSamplingStrategy",
           "default": "sequential",
           "description": "Strategy for selecting entries from dataset during benchmarking. sequential: iterate in order, wrapping to start after end. random: randomly sample with replacement (entries may repeat). shuffle: random permutation without replacement, re-shuffling after exhaustion."
+        },
+        "hfSubset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "HuggingFace dataset subset/config name override (e.g. 'sharegpt4o'). Only applies for HuggingFace-backed public dataset loaders. Takes priority over the subset defined in the plugin registry.",
+          "title": "Hfsubset"
         }
       },
       "required": [
@@ -4003,6 +4029,15 @@
       },
       "title": "RankingsConfig",
       "type": "object"
+    },
+    "RequestContentType": {
+      "description": "Content type for HTTP request body serialization.",
+      "enum": [
+        "application/json",
+        "multipart/form-data"
+      ],
+      "title": "RequestContentType",
+      "type": "string"
     },
     "RuntimeConfig": {
       "additionalProperties": false,
@@ -5146,7 +5181,7 @@
             }
           ],
           "default": null,
-          "description": "HuggingFace tokenizer identifier or local filesystem path. Should match the model's tokenizer for accurate token counts. Example: 'meta-llama/Llama-3.1-8B-Instruct'",
+          "description": "HuggingFace tokenizer identifier, local filesystem path, or `builtin` for a zero-network-access tokenizer backed by tiktoken (o200k_base encoding). Should match the model's tokenizer for accurate token counts. Example: 'meta-llama/Llama-3.1-8B-Instruct'",
           "title": "Name"
         },
         "revision": {

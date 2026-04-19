@@ -1,15 +1,27 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# yaml-language-server: $schema=https://schema.buildwithfern.dev/docs-yml.json
+
 instances:
   - url: aiperf.docs.buildwithfern.com/aiperf
-    custom-domain: https://docs.nvidia.com/aiperf # specify your custom domain when you are ready to go live
+    custom-domain: https://docs.nvidia.com/aiperf
 
 title: NVIDIA AIPerf Documentation
 
-versions:
-  - display-name: Next
-    path: ./versions/dev.yml
+products:
+  - display-name: AIPerf
+    slug: /
+    path: ../docs/index.yml
+    versions:
+      - display-name: dev
+        path: ../docs/index.yml
+
+redirects:
+  - source: "/aiperf/index.html"
+    destination: "/aiperf/"
+  - source: "/aiperf/dev/index.html"
+    destination: "/aiperf/dev/"
 
 navbar-links:
   - type: github
@@ -23,6 +35,10 @@ layout:
   content-width: 812px
   tabs-placement: header
   hide-feedback: true
+
+metadata:
+  canonical-host: "docs.nvidia.com/aiperf"
+
 experimental:
   mdx-components:
     - ./components

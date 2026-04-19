@@ -16,21 +16,21 @@ This guide covers profiling vision models using OpenAI-compatible chat completio
 
 Launch a vLLM server with a vision language model:
 
-{/* setup-vllm-vision-openai-endpoint-server */}
+<!-- setup-vllm-vision-openai-endpoint-server -->
 ```bash
 docker pull vllm/vllm-openai:latest
 docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
   --model Qwen/Qwen2-VL-2B-Instruct
 ```
-{/* /setup-vllm-vision-openai-endpoint-server */}
+<!-- /setup-vllm-vision-openai-endpoint-server -->
 
 Verify the server is ready:
 
-{/* health-check-vllm-vision-openai-endpoint-server */}
+<!-- health-check-vllm-vision-openai-endpoint-server -->
 ```bash
 timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen2-VL-2B-Instruct\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
 ```
-{/* /health-check-vllm-vision-openai-endpoint-server */}
+<!-- /health-check-vllm-vision-openai-endpoint-server -->
 
 ---
 
@@ -38,7 +38,7 @@ timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost
 
 AIPerf can generate synthetic images for benchmarking.
 
-{/* aiperf-run-vllm-vision-openai-endpoint-server */}
+<!-- aiperf-run-vllm-vision-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -51,7 +51,7 @@ aiperf profile \
     --request-count 20 \
     --concurrency 4
 ```
-{/* /aiperf-run-vllm-vision-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-vision-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 ```
@@ -84,21 +84,21 @@ JSON Export: artifacts/Qwen_Qwen2-VL-2B-Instruct-chat-concurrency4/profile_expor
 
 Create a JSONL file with text prompts and image URLs:
 
-{/* aiperf-run-vllm-vision-openai-endpoint-server */}
+<!-- aiperf-run-vllm-vision-openai-endpoint-server -->
 ```bash
 cat <<EOF > inputs.jsonl
-{"texts": ["Describe this image in detail."], "images": ["https://picsum.photos/512/512?random=1"]}
+{"texts": ["Describe this image in detail."], "images": ["https://picsum.photos/512/512?random=1"], "output_length": 200}
 {"texts": ["What objects are visible in this image?"], "images": ["https://picsum.photos/512/512?random=2"]}
-{"texts": ["Analyze the composition of this photo."], "images": ["https://picsum.photos/512/512?random=3"]}
+{"texts": ["Analyze the composition of this photo."], "images": ["https://picsum.photos/512/512?random=3"], "output_length": 300}
 {"texts": ["What is the main subject of this image?"], "images": ["https://picsum.photos/512/512?random=4"]}
-{"texts": ["Provide a caption for this image."], "images": ["https://picsum.photos/512/512?random=5"]}
+{"texts": ["Provide a caption for this image."], "images": ["https://picsum.photos/512/512?random=5"], "output_length": 50}
 EOF
 ```
-{/* /aiperf-run-vllm-vision-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-vision-openai-endpoint-server -->
 
 Run AIPerf using the custom input file:
 
-{/* aiperf-run-vllm-vision-openai-endpoint-server */}
+<!-- aiperf-run-vllm-vision-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -109,7 +109,7 @@ aiperf profile \
     --url localhost:8000 \
     --request-count 5
 ```
-{/* /aiperf-run-vllm-vision-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-vision-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 ```

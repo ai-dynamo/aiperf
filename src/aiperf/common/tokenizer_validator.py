@@ -130,7 +130,9 @@ def _resolve_aliases(
     Returns:
         Mapping of ``{original_name: resolved_name}``.
     """
-    from aiperf.common.tokenizer import Tokenizer
+    from aiperf.common.tokenizer import (
+        Tokenizer,
+    )
     from aiperf.common.tokenizer_display import (
         TokenizerDisplayEntry,
         display_tokenizer_ambiguous_name,
@@ -186,8 +188,8 @@ def validate_tokenizer_early(
 
     from aiperf.common.enums import DatasetType
     from aiperf.common.tokenizer import (
-        _TIKTOKEN_ENCODING_NAMES,
         BUILTIN_TOKENIZER_NAME,
+        TIKTOKEN_ENCODING_NAMES,
     )
     from aiperf.plugin import plugins
 
@@ -214,7 +216,7 @@ def validate_tokenizer_early(
 
     if tokenizer_cfg and (
         tokenizer_cfg.name == BUILTIN_TOKENIZER_NAME
-        or tokenizer_cfg.name in _TIKTOKEN_ENCODING_NAMES
+        or tokenizer_cfg.name in TIKTOKEN_ENCODING_NAMES
     ):
         logger.debug("Using tiktoken tokenizer, skipping HF alias resolution")
         return {model: tokenizer_cfg.name for model in model_names}

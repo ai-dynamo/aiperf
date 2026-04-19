@@ -224,7 +224,8 @@ class TokenizerConfig(BaseConfig):
         str | None,
         Field(
             default=None,
-            description="HuggingFace tokenizer identifier or local filesystem path. "
+            description="HuggingFace tokenizer identifier, local filesystem path, or `builtin` "
+            "for a zero-network-access tokenizer backed by tiktoken (o200k_base encoding). "
             "Should match the model's tokenizer for accurate token counts. "
             "Example: 'meta-llama/Llama-3.1-8B-Instruct'",
         ),

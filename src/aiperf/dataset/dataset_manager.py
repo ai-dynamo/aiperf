@@ -5,9 +5,13 @@ from __future__ import annotations
 import asyncio
 import gc
 import time
+from io import BytesIO
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
+import aiohttp
 import orjson
+from PIL import Image as PILImage
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.control_structs import Command
@@ -15,6 +19,7 @@ from aiperf.common.enums import (
     CommAddress,
     CommandType,
     ConversationContextMode,
+    ImageFormat,
     MessageType,
 )
 from aiperf.common.environment import Environment
@@ -37,6 +42,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config import OutputDefaults
+from aiperf.dataset.utils import encode_image
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     ComposerType,
@@ -44,6 +50,8 @@ from aiperf.plugin.enums import (
     PluginType,
     ServiceRunType,
 )
+from aiperf.transports.aiohttp_client import create_tcp_connector
+from aiperf.transports.http_defaults import AioHttpDefaults
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
@@ -213,6 +221,82 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             resolve_alias=resolve_alias,
         )
 
+    async def _convert_media_urls_to_inline(self) -> None:
+        """Download HTTP(S) image URLs and replace them with base64 data URLs.
+
+        Collects unique URLs across all conversations/turns, downloads each once,
+        and replaces all occurrences in-place. This is needed for endpoints that
+        require inline media (e.g., NIM Image Retrieval).
+        """
+        url_to_locations: dict[str, list[tuple[list[str], int]]] = {}
+
+        for conversation in self.dataset.values():
+            for turn in conversation.turns:
+                for image in turn.images:
+                    for i, content in enumerate(image.contents):
+                        parsed = urlparse(content)
+                        if parsed.scheme in ("http", "https") and parsed.netloc:
+                            url_to_locations.setdefault(content, []).append(
+                                (image.contents, i)
+                            )
+
+        if not url_to_locations:
+            return
+
+        dataset_env = Environment.DATASET
+        timeout = aiohttp.ClientTimeout(total=dataset_env.MEDIA_DOWNLOAD_TIMEOUT)
+        max_concurrency = dataset_env.MEDIA_DOWNLOAD_MAX_CONCURRENCY
+
+        self.info(
+            f"Downloading {len(url_to_locations)} unique media URL(s) "
+            f"for inline encoding (concurrency={max_concurrency})"
+        )
+
+        semaphore = asyncio.Semaphore(max_concurrency)
+        url_to_data_url: dict[str, str] = {}
+
+        async def _download_and_encode(
+            session: aiohttp.ClientSession, url: str
+        ) -> None:
+            async with semaphore:
+                async with session.get(url, timeout=timeout) as resp:
+                    if resp.status != 200:
+                        raise RuntimeError(
+                            f"Failed to download media URL '{url}': HTTP {resp.status}"
+                        )
+                    data = await resp.read()
+
+                img = PILImage.open(BytesIO(data))
+                if img.format is None:
+                    raise RuntimeError(
+                        f"Failed to determine image format for URL '{url}'"
+                    )
+                if img.format.upper() not in list(ImageFormat):
+                    raise RuntimeError(
+                        f"'{img.format}' from URL '{url}' is not a supported "
+                        f"image format: {', '.join(ImageFormat)}"
+                    )
+                url_to_data_url[url] = (
+                    f"data:image/{img.format.lower()};base64,"
+                    f"{encode_image(img, img.format)}"
+                )
+
+        connector = create_tcp_connector()
+        async with aiohttp.ClientSession(
+            connector=connector,
+            trust_env=AioHttpDefaults.TRUST_ENV,
+        ) as session:
+            await asyncio.gather(
+                *[_download_and_encode(session, url) for url in url_to_locations]
+            )
+
+        for url, locations in url_to_locations.items():
+            data_url = url_to_data_url[url]
+            for contents_list, index in locations:
+                contents_list[index] = data_url
+
+        self.info("Media URL download and inline encoding complete")
+
     def _generate_input_payloads(self) -> InputsFile:
         """Generate input payloads from the dataset for use in the inputs.json file."""
         config = self.run.cfg
@@ -240,6 +324,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                     x_request_id="",
                     x_correlation_id="",
                     conversation_id=conversation.session_id,
+                    system_message=conversation.system_message,
+                    user_context_message=conversation.user_context_message,
                 )
                 request_info.endpoint_headers = endpoint.get_endpoint_headers(
                     request_info
@@ -351,6 +437,12 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._conversation_ids_cache = [
             conversation.session_id for conversation in conversations
         ]
+
+        endpoint_meta: EndpointMetadata = plugins.get_endpoint_metadata(
+            self.user_config.endpoint.type
+        )
+        if endpoint_meta.requires_inline_media:
+            await self._convert_media_urls_to_inline()
 
         # Initialize backing store and stream conversations to mmap files
         # Workers read directly from these files

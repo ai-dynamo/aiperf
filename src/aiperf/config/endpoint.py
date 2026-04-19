@@ -20,6 +20,7 @@ from typing_extensions import Self
 
 from aiperf.common.enums import (
     ConnectionReuseStrategy,
+    RequestContentType,
 )
 from aiperf.config._base import BaseConfig
 from aiperf.plugin.enums import (
@@ -235,6 +236,18 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
+    request_content_type: Annotated[
+        RequestContentType | None,
+        Field(
+            default=None,
+            description=(
+                "Content type for request body serialization. Default is "
+                "'application/json'. Set to 'multipart/form-data' for servers that "
+                "require form-encoded requests (e.g. vLLM video generation)."
+            ),
+        ),
+    ]
+
     @model_validator(mode="before")
     @classmethod
     def normalize_before_validation(cls, data: Any) -> Any:
@@ -283,4 +296,24 @@ class EndpointConfig(BaseConfig):
     def _validate_template_required(self) -> Self:
         if self.type == EndpointType.TEMPLATE and self.template is None:
             raise ValueError("template is required when endpoint type is 'template'")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_request_content_type(self) -> Self:
+        """multipart/form-data only on endpoints that declare requires_form_data."""
+        if (
+            self.request_content_type is None
+            or self.request_content_type == RequestContentType.APPLICATION_JSON
+        ):
+            return self
+
+        from aiperf.plugin import plugins
+
+        metadata = plugins.get_endpoint_metadata(self.type)
+        if not getattr(metadata, "requires_form_data", False):
+            raise ValueError(
+                f"request_content_type={self.request_content_type} is only supported for "
+                f"endpoint types that accept form-data (e.g. video_generation); "
+                f"endpoint type {self.type} does not."
+            )
         return self

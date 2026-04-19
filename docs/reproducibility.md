@@ -16,13 +16,11 @@ sidebar-title: Random Number Generation & Reproducibility
 
 AIPerf provides **deterministic reproducibility** for all seed-controlled randomness using hash-based RNG derivation. This enables reproducible dataset generation while maintaining realistic load testing performance.
 
-<Warning>
-**Default behavior:** Without `--random-seed`, AIPerf produces **non-deterministic** results. Set `--random-seed <integer>` for reproducibility.
-</Warning>
+> [!WARNING]
+> **Default behavior:** Without `--random-seed`, AIPerf produces **non-deterministic** results. Set `--random-seed <integer>` for reproducibility.
 
-<Warning>
-**Distributed System Constraints:** Even with `--random-seed`, **performance metrics and worker assignment are NOT reproducible** due to system non-determinism (network timing, async I/O, ZMQ load balancing).
-</Warning>
+> [!WARNING]
+> **Distributed System Constraints:** Even with `--random-seed`, **performance metrics and worker assignment are NOT reproducible** due to system non-determinism (network timing, async I/O, ZMQ load balancing).
 
 **Reproducible (with `--random-seed`):**
 - ✅ Dataset content (prompts, images, audio)
@@ -143,9 +141,8 @@ done
 
 ### How to Use RNGs in Your Code
 
-<Warning>
-Workers do NOT use RNGs. Only use RNGs in **DatasetManager** (content generation) or **TimingManager** (request timing) components.
-</Warning>
+> [!WARNING]
+> Workers do NOT use RNGs. Only use RNGs in **DatasetManager** (content generation) or **TimingManager** (request timing) components.
 
 ```python
 from aiperf.common import random_generator as rng

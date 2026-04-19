@@ -57,9 +57,8 @@ docker run --gpus all \
     lmsysorg/sglang:dev
 ```
 
-<Note>
-The following steps are to be performed _inside_ the SGLang Docker container.
-</Note>
+> [!NOTE]
+> The following steps are to be performed _inside_ the SGLang Docker container.
 
 **Install the diffusion dependencies:**
 ```bash
@@ -68,10 +67,9 @@ uv pip install "sglang[diffusion]" --prerelease=allow --system
 
 **Set the server arguments:**
 
-<Warning>
-The following arguments set up the SGLang server to use Wan2.1-T2V-1.3B on port 30010.
-Adjust `--num-gpus`, `--ulysses-degree`, and `--ring-degree` based on your GPU configuration.
-</Warning>
+> [!WARNING]
+> The following arguments set up the SGLang server to use Wan2.1-T2V-1.3B on port 30010.
+> Adjust `--num-gpus`, `--ulysses-degree`, and `--ring-degree` based on your GPU configuration.
 
 **Single GPU setup:**
 ```bash
@@ -131,9 +129,8 @@ sglang serve \
 
 ## Running the Benchmark
 
-<Note>
-The following steps are to be performed on your local machine (_outside_ the SGLang Docker container).
-</Note>
+> [!NOTE]
+> The following steps are to be performed on your local machine (_outside_ the SGLang Docker container).
 
 ### Basic Usage: Text-to-Video with Input File
 
