@@ -31,6 +31,7 @@ src/aiperf/plugin/enums.pyi
 # Claude Code - ignore user settings, keep agent configs
 .claude/*
 !.claude/agents/
+!.claude/skills/
 
 # Cursor - ignore user settings
 .cursor/*
