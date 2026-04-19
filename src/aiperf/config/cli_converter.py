@@ -507,6 +507,8 @@ def _build_dataset(cli: BaseModel, s: set[str]) -> dict[str, Any]:
         d["path"] = cli.input_file
     if "public_dataset" in s:
         d["name"] = cli.public_dataset
+    if "hf_subset" in s:
+        d["hf_subset"] = cli.hf_subset
     if "custom_dataset_type" in s:
         d["format"] = cli.custom_dataset_type
     if "dataset_sampling_strategy" in s:

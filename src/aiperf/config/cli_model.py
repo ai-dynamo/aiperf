@@ -270,6 +270,17 @@ class CLIModel(BaseModel):
             "AIPerf automatically downloads and parses these datasets."
         ),
     )
+    hf_subset: annotated_type(
+        str | None,
+        "--hf-subset",
+        Groups.INPUT,
+        (
+            "HuggingFace dataset subset/config name to override the plugin default "
+            "(e.g. 'sharegpt4o'). Only applies when --public-dataset uses a "
+            "HuggingFace-backed loader. Takes priority over the subset defined in "
+            "the plugin registry."
+        ),
+    )
     custom_dataset_type: annotated_type(
         DatasetFormat,
         "--custom-dataset-type",

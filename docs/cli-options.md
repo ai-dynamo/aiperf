@@ -276,6 +276,10 @@ Pre-configured public dataset to download and use for benchmarking. AIPerf autom
 |-------|:-------:|-------------|
 | `sharegpt` |  | ShareGPT dataset from HuggingFace. Multi-turn conversational dataset with user/assistant exchanges. |
 
+#### `--hf-subset` `<str>`
+
+HuggingFace dataset subset/config name to override the plugin default (e.g. 'sharegpt4o'). Only applies when --public-dataset uses a HuggingFace-backed loader. Takes priority over the subset defined in the plugin registry.
+
 #### `--custom-dataset-type` `<str>`
 
 Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace: timestamped trace files for replay. random_pool: directory of reusable prompts.
@@ -1377,6 +1381,10 @@ Pre-configured public dataset to download and use for benchmarking. AIPerf autom
 |-------|:-------:|-------------|
 | `sharegpt` |  | ShareGPT dataset from HuggingFace. Multi-turn conversational dataset with user/assistant exchanges. |
 
+#### `--hf-subset` `<str>`
+
+HuggingFace dataset subset/config name to override the plugin default (e.g. 'sharegpt4o'). Only applies when --public-dataset uses a HuggingFace-backed loader. Takes priority over the subset defined in the plugin registry.
+
 #### `--custom-dataset-type` `<str>`
 
 Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace: timestamped trace files for replay. random_pool: directory of reusable prompts.
@@ -2207,6 +2215,10 @@ Pre-configured public dataset to download and use for benchmarking. AIPerf autom
 | | | |
 |-------|:-------:|-------------|
 | `sharegpt` |  | ShareGPT dataset from HuggingFace. Multi-turn conversational dataset with user/assistant exchanges. |
+
+#### `--hf-subset` `<str>`
+
+HuggingFace dataset subset/config name to override the plugin default (e.g. 'sharegpt4o'). Only applies when --public-dataset uses a HuggingFace-backed loader. Takes priority over the subset defined in the plugin registry.
 
 #### `--custom-dataset-type` `<str>`
 
@@ -3133,6 +3145,10 @@ Pre-configured public dataset to download and use for benchmarking. AIPerf autom
 | | | |
 |-------|:-------:|-------------|
 | `sharegpt` |  | ShareGPT dataset from HuggingFace. Multi-turn conversational dataset with user/assistant exchanges. |
+
+#### `--hf-subset` `<str>`
+
+HuggingFace dataset subset/config name to override the plugin default (e.g. 'sharegpt4o'). Only applies when --public-dataset uses a HuggingFace-backed loader. Takes priority over the subset defined in the plugin registry.
 
 #### `--custom-dataset-type` `<str>`
 
