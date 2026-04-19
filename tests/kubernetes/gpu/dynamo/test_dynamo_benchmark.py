@@ -155,7 +155,6 @@ class TestDynamoBenchmarkCompletion:
         """
         result = deployed_dynamo_benchmark
         assert result.metrics is not None
-        expected = result.config.request_count
         assert result.metrics.request_count >= 1, (
             f"Expected >= 1 completed request, got {result.metrics.request_count}"
         )
