@@ -590,7 +590,13 @@ class JobSetSpec(AIPerfBaseModel):
         has_hf_home = any(
             (item or {}).get("name") == "HF_HOME" for item in self.pod_template.env
         )
-        registration_timeout = max(Environment.SERVICE.REGISTRATION_TIMEOUT, 120.0)
+        # Floor at 600s so the controller waits long enough for all workers to
+        # complete their PUB/SUB connection probes (up to 300s per attempt ×
+        # backoff retries) before giving up on configuration.
+        registration_timeout = max(
+            Environment.SERVICE.REGISTRATION_TIMEOUT,
+            K8sEnvironment.JOBSET.WORKER_CONNECTION_PROBE_TIMEOUT * 2,
+        )
         env: list[dict[str, Any]] = [
             # Shared dataset path: dataset-manager writes mmap files here,
             # API service serves them to workers via HTTP
@@ -879,6 +885,16 @@ class JobSetSpec(AIPerfBaseModel):
             worker_count, record_processor_count
         )
 
+        # Worker pods connect to the controller event bus via TCP. On first
+        # deployment some pods experience slow PUB/SUB subscription propagation
+        # — give them enough time to succeed rather than failing at 90s.
+        worker_probe_env = [
+            {
+                "name": "AIPERF_SERVICE_CONNECTION_PROBE_TIMEOUT",
+                "value": str(K8sEnvironment.JOBSET.WORKER_CONNECTION_PROBE_TIMEOUT),
+            }
+        ]
+
         containers: list[ContainerSpec] = [
             self._create_container(
                 name="worker-group-manager",
@@ -889,6 +905,7 @@ class JobSetSpec(AIPerfBaseModel):
                 skip_readiness_probe=True,
                 skip_startup_probe=True,
                 skip_liveness_probe=True,
+                extra_env=worker_probe_env,
             )
         ]
 
@@ -904,6 +921,7 @@ class JobSetSpec(AIPerfBaseModel):
                     skip_readiness_probe=True,
                     skip_startup_probe=True,
                     skip_liveness_probe=True,
+                    extra_env=worker_probe_env,
                 )
             )
 
@@ -965,9 +983,7 @@ class JobSetSpec(AIPerfBaseModel):
             containers=self._create_worker_containers(controller_dns),
             volumes=volumes,
             restart_policy=RestartPolicy.ON_FAILURE,
-            backoff_limit=(
-                0 if self.keep_failed_pods else jobset_config.WORKER_BACKOFF_LIMIT
-            ),
+            backoff_limit=jobset_config.WORKER_BACKOFF_LIMIT,
             job_ttl_seconds=None if self.keep_failed_pods else self.ttl_seconds,
             pod_template=self.pod_template,
             job_id=self.job_id,

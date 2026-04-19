@@ -46,7 +46,7 @@ spec:
       records:
         - jsonl
 
-  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260328-164302-4fe6e4f0a
+  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260402-230516-c7be239b1
   connectionsPerWorker: 1000
   resourceMode: none
   ttlSecondsAfterFinished: 600

@@ -277,6 +277,19 @@ class TestJobSetSpec:
             "controller"
         ]
 
+    def test_to_k8s_manifest_no_failure_policy(
+        self, basic_jobset_spec: JobSetSpec
+    ) -> None:
+        """Test JobSet has no explicit failurePolicy (default fast-fail behavior).
+
+        The operator's _classify_jobset_failure logic relies on replicatedJobsStatus
+        being populated by the default JobSet failure path. An explicit failurePolicy
+        triggers via rule name rather than incrementing replicatedJobsStatus.failed,
+        which breaks the non-fatal worker failure classification.
+        """
+        manifest = basic_jobset_spec.to_k8s_manifest()
+        assert "failurePolicy" not in manifest["spec"]
+
     def test_to_k8s_manifest_ttl(self, basic_jobset_spec: JobSetSpec) -> None:
         """Test JobSet TTL is set from environment default."""
         manifest = basic_jobset_spec.to_k8s_manifest()
@@ -309,10 +322,15 @@ class TestJobSetSpec:
         manifest = spec.to_k8s_manifest()
         assert manifest["spec"]["ttlSecondsAfterFinished"] == 600
 
-    def test_jobset_manifest_keep_failed_pods_disables_worker_retries_and_ttls(
+    def test_jobset_manifest_keep_failed_pods_preserves_retries_disables_ttls(
         self,
     ) -> None:
-        """Debug retention mode should disable worker retries and TTL cleanup."""
+        """Debug retention mode disables TTL cleanup but keeps worker retries.
+
+        keepFailedPods and backoffLimit are independent: workers should still
+        retry on transient startup failures (e.g., ConfigMap mount races) even
+        when pods are being retained for debugging.
+        """
         spec = JobSetSpec(
             name="aiperf-test",
             namespace="default",
@@ -326,7 +344,7 @@ class TestJobSetSpec:
         controller_job, worker_job = manifest["spec"]["replicatedJobs"]
 
         assert controller_job["template"]["spec"]["backoffLimit"] == 0
-        assert worker_job["template"]["spec"]["backoffLimit"] == 0
+        assert worker_job["template"]["spec"]["backoffLimit"] == 3
         assert "ttlSecondsAfterFinished" not in worker_job["template"]["spec"]
         assert "ttlSecondsAfterFinished" not in manifest["spec"]
 
@@ -1741,7 +1759,10 @@ class TestJobSetSpecPrivateMethods:
         assert "AIPERF_NAMESPACE" in env_names
         assert "AIPERF_K8S_ZMQ_CONTROLLER_HOST" not in env_names
         assert env_dict["AIPERF_SERVICE_REGISTRATION_TIMEOUT"] == str(
-            max(Environment.SERVICE.REGISTRATION_TIMEOUT, 120.0)
+            max(
+                Environment.SERVICE.REGISTRATION_TIMEOUT,
+                K8sEnvironment.JOBSET.WORKER_CONNECTION_PROBE_TIMEOUT * 2,
+            )
         )
 
     def test_create_env_vars_with_controller_host(
@@ -1752,7 +1773,10 @@ class TestJobSetSpecPrivateMethods:
         env_dict = {e["name"]: e.get("value") for e in env}
         assert env_dict["AIPERF_K8S_ZMQ_CONTROLLER_HOST"] == "controller.default.svc"
         assert env_dict["AIPERF_SERVICE_REGISTRATION_TIMEOUT"] == str(
-            max(Environment.SERVICE.REGISTRATION_TIMEOUT, 120.0)
+            max(
+                Environment.SERVICE.REGISTRATION_TIMEOUT,
+                K8sEnvironment.JOBSET.WORKER_CONNECTION_PROBE_TIMEOUT * 2,
+            )
         )
 
     def test_create_env_vars_with_pod_customization(self) -> None:

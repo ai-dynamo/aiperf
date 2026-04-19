@@ -79,11 +79,12 @@ class DatasetRouter(MessageBusClientMixin, BaseRouter):
             self._dataset_client_metadata = message.client_metadata
             self._benchmark_generation = message.benchmark_generation
             self._dataset_generation = message.dataset_generation
+            if not self._dataset_configured.is_set():
+                self.info(
+                    f"Dataset configured: {message.client_metadata.conversation_count} conversations, "
+                    f"compressed={message.client_metadata.compressed}"
+                )
             self._dataset_configured.set()
-            self.info(
-                f"Dataset configured: {message.client_metadata.conversation_count} conversations, "
-                f"compressed={message.client_metadata.compressed}"
-            )
         else:
             self.warning(
                 f"Received dataset metadata with unsupported type: {type(message.client_metadata)}"

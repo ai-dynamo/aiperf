@@ -113,6 +113,15 @@ class _OperatorEnvironment(BaseSettings):
         le=120,
         description="Seconds to wait for all pre-flight checks to complete",
     )
+    CONFIGMAP_PROPAGATION_DELAY_SECONDS: float = Field(
+        default=10.0,
+        ge=0,
+        le=60,
+        description="Seconds to wait after creating the benchmark ConfigMap before creating "
+        "the JobSet. Allows kubelet caches on worker nodes to sync the ConfigMap before "
+        "pods start mounting it, preventing FailedMount races on first deployment with "
+        "a freshly pulled image.",
+    )
 
     MONITOR: _MonitorSettings = Field(
         default_factory=_MonitorSettings,

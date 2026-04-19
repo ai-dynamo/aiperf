@@ -25,13 +25,12 @@ operator:
   replicas: 1
 
   # operator.resources is the CPU and memory requests and limits
+  # No limits set (burstable) so the operator can use as much memory/CPU
+  # as the node provides — needed for high-concurrency runs with many jobs.
   resources:
     requests:
       cpu: 250m
       memory: 256Mi
-    limits:
-      cpu: 500m
-      memory: 512Mi
 
   # operator.podAnnotations is a map of additional pod annotations
   podAnnotations: {}
@@ -153,7 +152,7 @@ kueue:
 # defaults contains default settings for AIPerfJob resources
 defaults:
   # defaults.image is the default container image for benchmark jobs
-  image: "nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260328-164302-4fe6e4f0a"
+  image: "nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260402-230516-c7be239b1"
 
   # defaults.imagePullPolicy is the default image pull policy for benchmark jobs
   imagePullPolicy: "IfNotPresent"

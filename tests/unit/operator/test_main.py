@@ -1143,7 +1143,7 @@ class TestMonitorProgressAdvanced:
                 ],
                 "replicatedJobsStatus": [
                     {"name": "workers", "failed": 2, "ready": 248, "active": 0},
-                    {"name": "controller", "failed": 0, "ready": 1, "active": 0},
+                    {"name": "controller", "failed": 0, "ready": 1, "active": 1},
                 ],
             }
         }

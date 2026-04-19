@@ -250,6 +250,36 @@ async def monitor_progress(
                     condition.get("message", "JobSet failed"),
                 )
 
+                # The JobSet default cascade kills the controller pod even when
+                # only workers failed. If the controller pod is gone, the
+                # benchmark is unrecoverable regardless of the failure scope.
+                ctrl_replicated = {
+                    rj.get("name"): rj
+                    for rj in jobset_status.get("replicatedJobsStatus", [])
+                }
+                ctrl_active = ctrl_replicated.get("controller", {}).get("active", 0)
+                ctrl_succeeded = ctrl_replicated.get("controller", {}).get(
+                    "succeeded", 0
+                )
+                if ctrl_active == 0 and ctrl_succeeded == 0:
+                    error_msg = (
+                        f"Controller terminated after worker failure "
+                        f"(JobSet cascade): {condition.get('message', '')}"
+                    )
+                    logger.error(
+                        "Escalating non-fatal failure to fatal for %s: "
+                        "controller pod is gone (active=%s, succeeded=%s)",
+                        job_id,
+                        ctrl_active,
+                        ctrl_succeeded,
+                    )
+                    sb.set_phase(Phase.FAILED)
+                    sb.set_error(error_msg)
+                    sb.finalize()
+                    events.failed(body, job_id, error_msg)
+                    await close_progress_client(key)
+                    return
+
         # Update worker count and phase
         total_workers = status.get("workers", {}).get("total", 0)
         workers_ready = 0

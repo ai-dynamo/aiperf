@@ -12,6 +12,7 @@ import zmq
 from msgspec import Struct
 
 from aiperf.common.environment import Environment
+from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.hooks import background_task, on_stop
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.zmq.zmq_base_client import BaseZMQClient
@@ -136,6 +137,9 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         """
         Send struct to specific DEALER client by identity.
 
+        Skips the async _check_initialized guard, checking socket state inline
+        instead to avoid an unnecessary coroutine switch.
+
         Args:
             identity: The DEALER client's identity (routing key)
             struct: The msgspec Struct to send
@@ -144,7 +148,10 @@ class ZMQStreamingRouterClient(BaseZMQClient):
             NotInitializedError: If socket not initialized
             CommunicationError: If send fails
         """
-        await self._check_initialized()
+        if not self.socket:
+            raise NotInitializedError("Socket not initialized or closed")
+        if self.stop_requested:
+            raise asyncio.CancelledError("Socket was stopped")
 
         try:
             await self.socket.send_multipart(

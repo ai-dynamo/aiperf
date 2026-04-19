@@ -8,6 +8,7 @@ Decorators live in ``aiperf.operator.main``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -195,6 +196,12 @@ async def on_create(
         await create_idempotent(ConfigMap, configmap, api)
         configmap_name = configmap["metadata"]["name"]
         logger.info(f"Created ConfigMap {configmap_name}")
+
+        # Brief pause to allow kubelet ConfigMap cache to sync before pods try to
+        # mount the volume. Without this, the first attempt after a fresh image
+        # deploy fails with "FailedMount: failed to sync configmap cache" because
+        # 100 pods race to mount the ConfigMap before kubelets have cached it.
+        await asyncio.sleep(OperatorEnvironment.CONFIGMAP_PROPAGATION_DELAY_SECONDS)
 
         # Step 7: Create JobSet
         jobset = deployment.get_jobset_spec().to_k8s_manifest()
