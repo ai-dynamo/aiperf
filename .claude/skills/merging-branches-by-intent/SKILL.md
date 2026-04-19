@@ -120,6 +120,9 @@ Risk classes to tag explicitly:
 - **Parallel extension** — both sides added to the same list/map/enum
 - **Semantic drift** — same function name, different contract on each side
 - **Cross-cutting convention** — one side changed a convention (logging, error handling, naming); the other added new code in the old style
+- **Signature rename under new files** — one side renamed a base-class signature (e.g. `user_config: UserConfig` → `run: BenchmarkRun`); the other side added *new* subclasses/callers using the OLD signature. Git auto-merges because the files don't overlap textually. Every new file on one branch must be audited against signature changes on the other branch — this is invisible to `git status` but guarantees runtime breakage.
+
+When one branch does a large rename/move (e.g. `aiperf.common.config.*` → `aiperf.config.*`), the fast-pass refactor scan should explicitly enumerate *every new file added on the other branch* and verify each one's imports and constructor calls resolve in the post-merge tree. Auto-merge will cheerfully leave these files importing the deleted package.
 
 ### Step 4 — Start the merge, classify each conflict
 
