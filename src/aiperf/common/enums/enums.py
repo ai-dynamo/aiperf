@@ -472,13 +472,6 @@ class PromptSource(CaseInsensitiveStrEnum):
     PAYLOAD = "payload"
 
 
-class PublicDatasetType(CaseInsensitiveStrEnum):
-    """Public datasets available for benchmarking."""
-
-    SHAREGPT = "sharegpt"
-    """ShareGPT dataset from HuggingFace. Multi-turn conversational dataset with user/assistant exchanges."""
-
-
 class ServerMetricsDiscoveryMode(CaseInsensitiveStrEnum):
     """Mode for discovering server metrics endpoints in distributed environments.
 

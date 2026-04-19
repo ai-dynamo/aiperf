@@ -10,11 +10,11 @@ from typing import Any
 
 import pytest
 
-from aiperf.common.enums import AIPerfLogLevel, PublicDatasetType
+from aiperf.common.enums import AIPerfLogLevel
 from aiperf.config.cli_converter import build_aiperf_config
 from aiperf.config.cli_model import CLIModel
 from aiperf.config.config import AIPerfConfig
-from aiperf.plugin.enums import ArrivalPattern, UIType
+from aiperf.plugin.enums import ArrivalPattern, PublicDatasetType, UIType
 
 
 @pytest.fixture()

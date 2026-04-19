@@ -21,16 +21,17 @@ app.command("aiperf.cli_commands.profile:app", name="profile")
 ```python
 # aiperf/cli_commands/profile.py — thin command definition
 from cyclopts import App
-from aiperf.common.config import ServiceConfig, UserConfig
+
+from aiperf.config.cli_model import CLIModel
 
 app = App(name="profile")
 
 @app.default
-def profile(user_config: UserConfig, service_config: ServiceConfig | None = None) -> None:
+def profile(*, cli_model: CLIModel) -> None:
     """Run the Profile subcommand."""
     from aiperf.cli_runner import run_system_controller  # heavy import deferred
 
-    run_system_controller(user_config, service_config)
+    run_system_controller(cli_model)
 ```
 
 **Conventions:**
@@ -138,8 +139,11 @@ service:
 ```
 
 **Config types:**
-- `ServiceConfig`: infrastructure (ZMQ ports, logging level)
-- `UserConfig`: benchmark params (endpoints, loadgen settings)
+- `CLIModel` (`aiperf.config.cli_model`): raw CLI input parsed from argv.
+- `BenchmarkConfig` (`aiperf.config`): the resolved, validated benchmark spec
+  (endpoint, datasets, phases, runtime, artifacts) — v3 YAML-first schema.
+- `BenchmarkRun` (`aiperf.config`): a single run wrapping `BenchmarkConfig` with
+  benchmark-id, artifact-dir, and resolver state; what services receive.
 
 ## Model Pattern
 

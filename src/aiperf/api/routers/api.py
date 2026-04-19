@@ -75,7 +75,7 @@ async def json_metrics(svc: ServiceDep) -> dict[str, Any]:
     return format_metrics_json(
         metrics=list(svc._metrics),
         info_labels=svc.get_info_labels(),
-        benchmark_id=svc.user_config.benchmark_id,
+        benchmark_id=svc.run.benchmark_id,
     )
 
 
@@ -99,6 +99,4 @@ async def get_workers(svc: ServiceDep) -> WorkersResponse:
 @api_router.get("/api/config", tags=["API"])
 async def get_config(svc: ServiceDep) -> dict[str, Any]:
     """Get benchmark configuration."""
-    return svc.user_config.model_dump(
-        mode="json", exclude_unset=True, exclude_none=True
-    )
+    return svc.run.cfg.model_dump(mode="json", exclude_unset=True, exclude_none=True)

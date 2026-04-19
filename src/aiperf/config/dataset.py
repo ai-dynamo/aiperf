@@ -27,7 +27,6 @@ from aiperf.common.enums import (
     DatasetType,
     ImageFormat,
     OslMode,
-    PublicDatasetType,
     VideoAudioCodec,
     VideoFormat,
     VideoSynthType,
@@ -39,7 +38,7 @@ from aiperf.config.types import (
     SequenceDistributionEntry,
     validate_probability_distribution,
 )
-from aiperf.plugin.enums import DatasetSamplingStrategy
+from aiperf.plugin.enums import DatasetSamplingStrategy, PublicDatasetType
 
 
 class PromptConfig(BaseConfig):

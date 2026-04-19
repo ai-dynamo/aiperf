@@ -99,7 +99,7 @@ class BenchmarkProblem(AIPerfBaseModel):
 ```python
 @runtime_checkable
 class AccuracyGraderProtocol(Protocol):
-    def __init__(self, user_config: UserConfig, **kwargs) -> None: ...
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None: ...
     async def grade(self, response_text: str, ground_truth: str, **kwargs) -> GradingResult: ...
     def extract_answer(self, response_text: str, **kwargs) -> str: ...
 ```
@@ -109,7 +109,7 @@ class AccuracyGraderProtocol(Protocol):
 ```python
 @runtime_checkable
 class AccuracyBenchmarkProtocol(Protocol):
-    def __init__(self, user_config: UserConfig, **kwargs) -> None: ...
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None: ...
     async def load_problems(self, tasks: list[str] | None, n_shots: int, enable_cot: bool) -> list[BenchmarkProblem]: ...
 ```
 
@@ -147,7 +147,7 @@ All graders inherit from `BaseGrader(AIPerfLoggerMixin)` and must implement 2 me
 
 ```python
 class BaseGrader(AIPerfLoggerMixin):
-    def __init__(self, user_config: UserConfig, **kwargs) -> None
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None
     async def grade(self, response_text: str, ground_truth: str, **kwargs) -> GradingResult     # raises NotImplementedError
     def extract_answer(self, response_text: str, **kwargs) -> str                               # raises NotImplementedError
 ```

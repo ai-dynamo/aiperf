@@ -193,7 +193,7 @@ async def upload_result_file(
             detail="Only raw_records_*.jsonl files are accepted",
         )
 
-    artifact_dir = component.user_config.output.artifact_directory
+    artifact_dir = component.run.cfg.artifacts.artifact_directory
     raw_records_dir = artifact_dir / OutputDefaults.RAW_RECORDS_FOLDER
     dest_path = (raw_records_dir / filename).resolve()
 

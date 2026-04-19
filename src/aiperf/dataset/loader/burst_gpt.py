@@ -109,7 +109,13 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
             )
         )
 
-        if self.user_config.input.synthesis.should_synthesize():
+        dataset = self.run.cfg.get_default_dataset()
+        synthesis = getattr(dataset, "synthesis", None)
+        if synthesis is not None and (
+            synthesis.speedup_ratio != 1.0
+            or synthesis.prefix_len_multiplier != 1.0
+            or synthesis.prefix_root_multiplier != 1
+        ):
             data = self._apply_synthesis(data)
 
         return data
