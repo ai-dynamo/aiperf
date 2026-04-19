@@ -439,7 +439,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         ]
 
         endpoint_meta: EndpointMetadata = plugins.get_endpoint_metadata(
-            self.user_config.endpoint.type
+            self.run.cfg.endpoint.type
         )
         if endpoint_meta.requires_inline_media:
             await self._convert_media_urls_to_inline()
