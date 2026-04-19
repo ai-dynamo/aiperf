@@ -10,9 +10,10 @@ import time
 from abc import abstractmethod
 from typing import Any, Protocol, runtime_checkable
 
+import aiohttp
 import orjson
 
-from aiperf.common.enums import VideoJobStatus
+from aiperf.common.enums import RequestContentType, VideoJobStatus
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.models import (
@@ -75,18 +76,33 @@ class BaseHTTPTransport(BaseTransport):
     def get_transport_headers(self, request_info: RequestInfo) -> dict[str, str]:
         """Build HTTP-specific headers based on streaming mode.
 
-        Args:
-            request_info: Request context with endpoint configuration
-
-        Returns:
-            HTTP headers (Content-Type and Accept)
+        When request_content_type is multipart/form-data, Content-Type is
+        omitted so aiohttp can auto-set it with the correct boundary.
         """
         accept = (
             "text/event-stream"
             if request_info.config.endpoint.streaming
             else "application/json"
         )
-        return {"Content-Type": "application/json", "Accept": accept}
+        headers: dict[str, str] = {"Accept": accept}
+        content_type = request_info.config.endpoint.request_content_type
+        if content_type != RequestContentType.MULTIPART_FORM_DATA:
+            headers["Content-Type"] = (
+                content_type or RequestContentType.APPLICATION_JSON
+            )
+        return headers
+
+    @staticmethod
+    def _build_form_data(payload: dict[str, Any]) -> aiohttp.FormData:
+        """Build multipart form data from a payload dict."""
+        form_data = aiohttp.FormData()
+        for key, value in payload.items():
+            if value is not None:
+                str_value = (
+                    str(value).lower() if isinstance(value, bool) else str(value)
+                )
+                form_data.add_field(key, str_value)
+        return form_data
 
     def get_url(self, request_info: RequestInfo) -> str:
         """Build HTTP URL from base_url and endpoint path.
@@ -177,6 +193,8 @@ class BaseHTTPTransport(BaseTransport):
         url: str,
         payload: dict[str, Any],
         headers: dict[str, str],
+        *,
+        use_form_data: bool = False,
     ) -> tuple[str, TextResponse] | ErrorDetails:
         """Submit video generation job via POST /v1/videos.
 
@@ -184,9 +202,10 @@ class BaseHTTPTransport(BaseTransport):
         """
         if self.http_client is None:
             raise NotInitializedError("HTTP client not initialized")
-        record = await self.http_client.post_request(
-            url, orjson.dumps(payload), headers
+        body: bytes | aiohttp.FormData = (
+            self._build_form_data(payload) if use_form_data else orjson.dumps(payload)
         )
+        record = await self.http_client.post_request(url, body, headers)
         result = self._parse_video_response(record, "submit")
         if isinstance(result, ErrorDetails):
             return result
@@ -323,10 +342,16 @@ class BaseHTTPTransport(BaseTransport):
 
         # Check if video download is enabled via --download-video-content
         download_content = request_info.config.endpoint.download_video_content
+        use_form_data = (
+            request_info.config.endpoint.request_content_type
+            == RequestContentType.MULTIPART_FORM_DATA
+        )
 
         try:
             # Submit job
-            result = await self._submit_video_job(submit_url, payload, headers)
+            result = await self._submit_video_job(
+                submit_url, payload, headers, use_form_data=use_form_data
+            )
             if isinstance(result, ErrorDetails):
                 return make_record(error=result)
             job_id, submit_response = result
