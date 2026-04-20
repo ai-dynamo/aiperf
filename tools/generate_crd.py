@@ -567,6 +567,12 @@ def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
         "kind": "CustomResourceDefinition",
         "metadata": {
             "name": "aiperfjobs.aiperf.nvidia.com",
+            "annotations": {
+                # Keep the CRD when the helm release is uninstalled so other
+                # test modules (which share the package-scoped cluster) don't
+                # see a Terminating CRD.
+                "helm.sh/resource-policy": "keep",
+            },
         },
         "spec": {
             "group": "aiperf.nvidia.com",

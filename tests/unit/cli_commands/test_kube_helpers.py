@@ -363,6 +363,7 @@ class TestStartPortForward:
         mock_proc = MagicMock()
         mock_proc.returncode = None
         mock_proc.terminate = MagicMock()
+        mock_proc.wait = AsyncMock(return_value=0)
         mock_proc.stderr = MagicMock()
         mock_proc.stderr.read = AsyncMock(return_value=b"some kubectl error")
 
@@ -536,12 +537,13 @@ class TestStartPortForward:
             mock_api_ready.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_api_check_timeout_only_warns(self, capsys) -> None:
-        """Test API check timeout only prints warning, doesn't raise."""
+    async def test_api_check_timeout_retries_then_raises(self, capsys) -> None:
+        """API check that never succeeds exhausts retries and raises RuntimeError."""
         from aiperf.kubernetes.port_forward import start_port_forward
 
         mock_proc = MagicMock()
         mock_proc.returncode = None
+        mock_proc.wait = AsyncMock(return_value=0)
         mock_proc.stdout = MagicMock()
         mock_proc.stdout.readline = AsyncMock(
             return_value=b"Forwarding from 127.0.0.1:9090 -> 9090\n"
@@ -559,16 +561,14 @@ class TestStartPortForward:
                 "aiperf.kubernetes.port_forward._wait_for_api_ready",
                 api_timeout,
             ),
+            pytest.raises(RuntimeError, match="Port-forward failed after"),
         ):
-            proc, port = await start_port_forward(
+            await start_port_forward(
                 "default", "my-pod", 9090, timeout=10, verify_api=True
             )
 
-            assert proc is mock_proc
-            assert port == 9090
-
         captured = capsys.readouterr()
-        assert "API health check timed out" in captured.out
+        assert "API not ready, restarting port-forward" in captured.out
 
     @pytest.mark.asyncio
     async def test_api_check_runtime_error_retries_then_succeeds(self, capsys) -> None:

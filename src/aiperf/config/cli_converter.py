@@ -275,13 +275,37 @@ def build_aiperf_config(cli: BaseModel) -> AIPerfConfig:
         rng.init(cli.random_seed)
 
     args = [coerce_value(x) for x in sys.argv[1:]]
+    # Redact values that follow any argument containing these tokens so the
+    # reconstructed command preserved in exported artifacts never carries
+    # secrets like API keys or auth headers.
+    from aiperf.common.redact import REDACTED_VALUE
+
+    _sensitive_tokens = ("api-key", "api_key", "authorization", "token")
+    _redacted_args: list[Any] = []
+    _redact_next = False
+    for arg in args:
+        if _redact_next:
+            _redacted_args.append(REDACTED_VALUE)
+            _redact_next = False
+            continue
+        if isinstance(arg, str) and arg.startswith("-"):
+            name = arg.lstrip("-").lower()
+            key, _, inline = name.partition("=")
+            if any(tok in key for tok in _sensitive_tokens):
+                if inline:
+                    _redacted_args.append(f"{arg.split('=', 1)[0]}={REDACTED_VALUE}")
+                else:
+                    _redacted_args.append(arg)
+                    _redact_next = True
+                continue
+        _redacted_args.append(arg)
     cli_command = " ".join(
         ["aiperf"]
         + [
             f"'{x}'"
             if isinstance(x, str) and not x.startswith("-") and x != "profile"
             else str(x)
-            for x in args
+            for x in _redacted_args
         ]
     )
     artifacts: dict[str, Any] = {"cli_command": cli_command}
