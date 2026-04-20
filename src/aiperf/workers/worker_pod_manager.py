@@ -295,15 +295,12 @@ class WorkerGroupManagerBase(BaseComponentService):
             await self._dataset_download_task
             return
 
-        # Take the local fast-path whenever we either have a runtime adapter
-        # (local multiprocessing / K8s with declared capacity) or no control
-        # plane is configured to download from (in-process fake service
-        # manager). In those cases the dataset files are already on the same
-        # machine and can be attached directly from the notification.
-        local_fast_path = (
-            self._runtime_registration is not None
-            or not self.run.cfg.runtime.dataset_api_base_url
-        )
+        # Take the local fast-path when a runtime adapter is attached or
+        # when running in the fake in-process component-integration mode,
+        # where dataset files already live on the same filesystem and can
+        # be attached directly from the notification.
+        fake_mode = os.environ.get("AIPERF_FAKE_IN_PROCESS_MODE") == "1"
+        local_fast_path = self._runtime_registration is not None or fake_mode
         if local_fast_path:
             self.info("Received dataset configuration, attaching local dataset state")
             self._dataset_client_metadata = message.client_metadata
@@ -907,10 +904,10 @@ class WorkerGroupManagerBase(BaseComponentService):
     async def _stop_worker_group_manager(self) -> None:
         """Stop group-local infrastructure, then upload raw records to controller."""
         self._stopping = True
-        # No runtime adapter means this WGM never owned group-local peers
-        # (e.g. FakeServiceManager in-process mode): skip shutdown coordination
-        # that would otherwise wait forever for peers that never registered.
-        if self._runtime_registration is None:
+        # In the fake in-process component-integration mode this WGM never
+        # owned group-local peers, so skip shutdown coordination that would
+        # otherwise wait forever for peers that never registered.
+        if os.environ.get("AIPERF_FAKE_IN_PROCESS_MODE") == "1":
             await self._proxy_manager.stop()
             return
         await self._shutdown_local_peers()

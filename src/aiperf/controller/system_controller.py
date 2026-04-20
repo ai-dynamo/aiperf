@@ -223,6 +223,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._declared_group_capacities: dict[str, tuple[int, int]] = {}
 
         self.required_services: dict[ServiceTypeT, int] = {
+            ServiceType.DATASET_MANAGER: 1,
             ServiceType.TIMING_MANAGER: 1,
             ServiceType.RECORDS_MANAGER: 1,
             ServiceType.WORKER_GROUP_MANAGER: self.run.cfg.worker_group_service_count,
@@ -471,10 +472,8 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.info(f"Starting AIPerf API server at http://{api_host}:{api_port}/")
             optional_services.append(ServiceType.API)
 
-        total_services = (
-            1 + sum(self.required_services.values()) + len(optional_services)
-        )
-        types_summary = f"{ServiceType.DATASET_MANAGER}: 1, " + ", ".join(
+        total_services = sum(self.required_services.values()) + len(optional_services)
+        types_summary = ", ".join(
             f"{st}: {n}" for st, n in self.required_services.items()
         )
         if optional_services:
@@ -494,12 +493,6 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         async with self.try_operation_or_stop("Start Service Manager"):
             await self.service_manager.start()
-
-        # Spawn the dataset_manager subprocess. It was accidentally dropped
-        # from `required_services` in an earlier K8s refactor; without it,
-        # worker_group_manager and timing_manager block forever waiting for
-        # `DATASET_CONFIGURED_NOTIFICATION`.
-        await self.service_manager.run_service(ServiceType.DATASET_MANAGER)
 
         startup_tasks = [
             self.service_manager.run_service(st) for st in optional_services
