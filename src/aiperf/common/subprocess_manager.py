@@ -264,11 +264,16 @@ class SubprocessManager:
         if process_kwargs:
             kwargs.update(process_kwargs)
 
+        # WorkerGroupManager spawns Worker/RecordProcessor subprocesses of its
+        # own, and Python's multiprocessing disallows daemonic processes from
+        # having children (AssertionError at spawn time). Keep every other
+        # service daemonic so a controller crash takes its children with it.
+        _spawns_children = service_type == ServiceType.WORKER_GROUP_MANAGER
         process = get_mp_context().Process(
             target=bootstrap_and_run_service,
             name=f"{service_type}_process",
             kwargs=kwargs,
-            daemon=True,
+            daemon=not _spawns_children,
         )
 
         try:

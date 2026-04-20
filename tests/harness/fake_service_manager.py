@@ -7,6 +7,7 @@ subprocesses, enabling fast isolated testing of the full service mesh.
 """
 
 import asyncio
+import os
 import sys
 import uuid
 
@@ -17,7 +18,7 @@ from aiperf.common.types import ServiceTypeT
 from aiperf.config import BenchmarkRun
 from aiperf.controller.base_service_manager import BaseServiceManager
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType, ServiceRunType
+from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType
 from tests.harness.fake_communication import FakeCommunication
 
 
@@ -41,6 +42,12 @@ class FakeServiceManager(BaseServiceManager):
         # Disable health server for in-process services to prevent port conflicts.
         # Multiple services in the same process would all try to bind the same port.
         Environment.SERVICE.HEALTH_ENABLED = False
+
+        # Signal to workers and other services that the WorkerGroupManager
+        # boundary is simulated (all services share one process and one
+        # FakeCommunication bus), so they should use the direct control path
+        # instead of waiting on pod-lifecycle channels that are never wired.
+        os.environ["AIPERF_FAKE_IN_PROCESS_MODE"] = "1"
 
         self.warning(
             "*** Using FakeServiceManager in-process mode to bypass multiprocessing. This is for component integration testing only. ***"
@@ -78,6 +85,18 @@ class FakeServiceManager(BaseServiceManager):
             self.services[service.service_id] = service
 
             self.debug(f"Service {service_type} started in-process (id: {service_id})")
+
+        # In real multiprocessing mode, WorkerGroupManager spawns Worker and
+        # RecordProcessor subprocesses under itself. The in-process fake
+        # service manager bypasses that boundary: spawn them directly as peer
+        # services so the controller can drive them over FakeCommunication.
+        if service_type == ServiceType.WORKER_GROUP_MANAGER:
+            worker_count = self.run.cfg.worker_group_declared_worker_capacity
+            rp_count = self.run.cfg.worker_group_declared_record_processor_capacity
+            if worker_count > 0:
+                await self.run_service(ServiceType.WORKER, worker_count)
+            if rp_count > 0:
+                await self.run_service(ServiceType.RECORD_PROCESSOR, rp_count)
 
     async def stop_service(
         self, service_type: ServiceTypeT, service_id: str | None = None

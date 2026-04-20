@@ -295,7 +295,16 @@ class WorkerGroupManagerBase(BaseComponentService):
             await self._dataset_download_task
             return
 
-        if self._runtime_registration is not None:
+        # Take the local fast-path whenever we either have a runtime adapter
+        # (local multiprocessing / K8s with declared capacity) or no control
+        # plane is configured to download from (in-process fake service
+        # manager). In those cases the dataset files are already on the same
+        # machine and can be attached directly from the notification.
+        local_fast_path = (
+            self._runtime_registration is not None
+            or not self.run.cfg.runtime.dataset_api_base_url
+        )
+        if local_fast_path:
             self.info("Received dataset configuration, attaching local dataset state")
             self._dataset_client_metadata = message.client_metadata
             self._dataset_downloaded = True
@@ -805,6 +814,13 @@ class WorkerGroupManagerBase(BaseComponentService):
         if self._configure_started:
             return
         self._configure_started = True
+        # When no runtime adapter is attached, this WGM owns no group-local
+        # peers (in-process fake service manager): workers and record
+        # processors run as independent services addressed directly by the
+        # SystemController, so there is nothing to wait for or fan out to.
+        if self._runtime_registration is None:
+            await self._publish_worker_summary()
+            return
         await self._wait_for_local_startup_convergence()
         await self._configure_local_peers()
         await self._publish_worker_summary()

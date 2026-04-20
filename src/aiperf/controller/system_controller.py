@@ -495,6 +495,12 @@ class SystemController(SignalHandlerMixin, BaseService):
         async with self.try_operation_or_stop("Start Service Manager"):
             await self.service_manager.start()
 
+        # Spawn the dataset_manager subprocess. It was accidentally dropped
+        # from `required_services` in an earlier K8s refactor; without it,
+        # worker_group_manager and timing_manager block forever waiting for
+        # `DATASET_CONFIGURED_NOTIFICATION`.
+        await self.service_manager.run_service(ServiceType.DATASET_MANAGER)
+
         startup_tasks = [
             self.service_manager.run_service(st) for st in optional_services
         ]

@@ -459,25 +459,44 @@ def _build_dataset(cli: BaseModel, s: set[str]) -> dict[str, Any]:
         needs_text = meta.tokenizes_input or meta.produces_tokens
         if not needs_text:
             _TEXT = {
-                "isl_mean": "--isl",
-                "isl_stddev": "--isl-stddev",
-                "isl_block_size": "--isl-block-size",
-                "prompt_batch_size": "--batch-size-text",
-                "sequence_distribution": "--seq-dist",
-                "prefix_prompt_length": "--prefix-prompt-length",
-                "num_prefix_prompts": "--prefix-prompt-pool-size",
+                "isl_mean": (
+                    "--isl",
+                    "--synthetic-input-tokens-mean",
+                    "--prompt-input-tokens-mean",
+                ),
+                "isl_stddev": (
+                    "--isl-stddev",
+                    "--synthetic-input-tokens-stddev",
+                    "--prompt-input-tokens-stddev",
+                ),
+                "isl_block_size": (
+                    "--isl-block-size",
+                    "--synthetic-input-tokens-block-size",
+                    "--prompt-input-tokens-block-size",
+                ),
+                "prompt_batch_size": ("--batch-size-text", "--prompt-batch-size"),
+                "sequence_distribution": ("--seq-dist", "--sequence-distribution"),
+                "prefix_prompt_length": (
+                    "--prefix-prompt-length",
+                    "--prompt-prefix-length",
+                ),
+                "num_prefix_prompts": (
+                    "--prefix-prompt-pool-size",
+                    "--prompt-prefix-pool-size",
+                    "--num-prefix-prompts",
+                ),
             }
-            bad = [f for field, f in _TEXT.items() if field in s]
+            bad = ["/".join(flags) for field, flags in _TEXT.items() if field in s]
             if bad:
                 raise ValueError(
                     f"{', '.join(bad)} cannot be used with "
                     f"--endpoint-type {endpoint_type}."
                 )
             _TOK = {
-                "tokenizer_name": "--tokenizer",
-                "tokenizer_trust_remote_code": "--tokenizer-trust-remote-code",
+                "tokenizer_name": ("--tokenizer",),
+                "tokenizer_trust_remote_code": ("--tokenizer-trust-remote-code",),
             }
-            bad = [f for field, f in _TOK.items() if field in s]
+            bad = ["/".join(flags) for field, flags in _TOK.items() if field in s]
             if bad:
                 raise ValueError(
                     f"Tokenizer options ({', '.join(bad)}) cannot be used with "
