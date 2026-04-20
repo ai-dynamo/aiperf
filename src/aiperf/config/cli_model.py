@@ -426,6 +426,17 @@ class CLIModel(BaseModel):
         "Export HTTP trace data for debugging.",
         default=False,
     )
+    export_per_chunk_data: annotated_type(
+        bool,
+        "--export-per-chunk-data",
+        Groups.OUTPUT,
+        (
+            "Include per-chunk list data (e.g., inter_chunk_latency arrays) in "
+            "per-record exports. These arrays contain one timing value per SSE "
+            "chunk and can be very large for long responses."
+        ),
+        default=False,
+    )
     show_trace_timing: annotated_type(
         bool,
         "--show-trace-timing",

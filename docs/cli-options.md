@@ -355,6 +355,11 @@ Controls which output files are generated. summary: Only aggregate metrics files
 
 Time slice duration in seconds for trend analysis (must be > 0). Divides benchmark into windows for per-window statistics. Supports: 30, '30s', '5m', '2h'.
 
+#### `--export-per-chunk-data`
+
+Include per-chunk list data (e.g., inter_chunk_latency arrays) in per-record exports. These arrays contain one timing value per SSE chunk and can be very large for long responses.
+<br/>_Flag (no value required)_
+
 ### HTTP Trace
 
 #### `--export-http-trace`
@@ -1455,6 +1460,11 @@ Controls which output files are generated. summary: Only aggregate metrics files
 
 Time slice duration in seconds for trend analysis (must be > 0). Divides benchmark into windows for per-window statistics. Supports: 30, '30s', '5m', '2h'.
 
+#### `--export-per-chunk-data`
+
+Include per-chunk list data (e.g., inter_chunk_latency arrays) in per-record exports. These arrays contain one timing value per SSE chunk and can be very large for long responses.
+<br/>_Flag (no value required)_
+
 ### HTTP Trace
 
 #### `--export-http-trace`
@@ -2284,6 +2294,11 @@ Controls which output files are generated. summary: Only aggregate metrics files
 #### `--slice-duration` `<float>`
 
 Time slice duration in seconds for trend analysis (must be > 0). Divides benchmark into windows for per-window statistics. Supports: 30, '30s', '5m', '2h'.
+
+#### `--export-per-chunk-data`
+
+Include per-chunk list data (e.g., inter_chunk_latency arrays) in per-record exports. These arrays contain one timing value per SSE chunk and can be very large for long responses.
+<br/>_Flag (no value required)_
 
 ### HTTP Trace
 
@@ -3209,6 +3224,11 @@ Controls which output files are generated. summary: Only aggregate metrics files
 #### `--slice-duration` `<float>`
 
 Time slice duration in seconds for trend analysis (must be > 0). Divides benchmark into windows for per-window statistics. Supports: 30, '30s', '5m', '2h'.
+
+#### `--export-per-chunk-data`
+
+Include per-chunk list data (e.g., inter_chunk_latency arrays) in per-record exports. These arrays contain one timing value per SSE chunk and can be very large for long responses.
+<br/>_Flag (no value required)_
 
 ### HTTP Trace
 

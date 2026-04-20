@@ -291,10 +291,12 @@ def build_aiperf_config(cli: BaseModel) -> AIPerfConfig:
         artifacts["slice_duration"] = cli.slice_duration
     if "export_http_trace" in s:
         artifacts["trace"] = cli.export_http_trace
+    if "export_per_chunk_data" in s:
+        artifacts["per_chunk_data"] = cli.export_per_chunk_data
     if "show_trace_timing" in s:
         artifacts["show_trace_timing"] = cli.show_trace_timing
     if cli.export_level in (ExportLevel.RECORDS, ExportLevel.RAW):
-        artifacts["records"] = [ExportFormat.JSONL]
+        artifacts["records"] = [ExportFormat.JSONL, "csv"]
     artifacts["raw"] = cli.export_level == ExportLevel.RAW
     if cli.profile_export_prefix:
         artifacts["prefix"] = Path(cli.profile_export_prefix).stem
