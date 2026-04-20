@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.base_component_service import BaseComponentService
+from aiperf.common.control_structs import RegistrationAck
 from aiperf.common.environment import Environment
 
 SERVICE_ID = "test-service-1"
@@ -217,3 +218,141 @@ class TestRunConnectionProbes:
         await svc._run_connection_probes()
 
         assert call_order == ["phase1", "phase2"]
+
+
+# ---------------------------------------------------------------------------
+# Tests: RegistrationAck rid correlation (C1 regression)
+# ---------------------------------------------------------------------------
+
+
+class TestRegistrationAckCorrelation:
+    """The ack handler must only unblock the in-flight attempt.
+
+    Registration messages carry a fresh ``rid`` per attempt; without matching
+    it, a late ack for attempt N-1 unblocks ``wait_for`` on attempt N, which
+    is not a real acknowledgment of the current registration.
+    """
+
+    @pytest.fixture
+    def handler_svc(self):
+        """Service-shaped object with just enough surface to dispatch an ack."""
+        mock = MagicMock(spec=BaseComponentService)
+        mock._registration_ack_event = None
+        mock._pending_registration_rid = None
+        mock.warning = MagicMock()
+        mock.debug = MagicMock()
+        mock.control_client = MagicMock()
+        mock.control_client.send = AsyncMock()
+        mock._handle_control_command = (
+            BaseComponentService._handle_control_command.__get__(mock)
+        )
+        mock.get_hooks = MagicMock(return_value=[])
+        return mock
+
+    @pytest.mark.asyncio
+    async def test_ack_with_matching_rid_sets_event(self, handler_svc) -> None:
+        import asyncio
+
+        handler_svc._registration_ack_event = asyncio.Event()
+        handler_svc._pending_registration_rid = "rid-current"
+
+        await handler_svc._handle_control_command(RegistrationAck(rid="rid-current"))
+
+        assert handler_svc._registration_ack_event.is_set()
+
+    @pytest.mark.asyncio
+    async def test_ack_with_mismatched_rid_does_not_set_event(
+        self, handler_svc
+    ) -> None:
+        import asyncio
+
+        handler_svc._registration_ack_event = asyncio.Event()
+        handler_svc._pending_registration_rid = "rid-current"
+
+        await handler_svc._handle_control_command(RegistrationAck(rid="rid-stale"))
+
+        assert not handler_svc._registration_ack_event.is_set()
+
+    @pytest.mark.asyncio
+    async def test_ack_when_no_attempt_in_flight_is_ignored(self, handler_svc) -> None:
+        # Event/rid nulled by the ``finally`` of _register_until_ack.
+        handler_svc._registration_ack_event = None
+        handler_svc._pending_registration_rid = None
+
+        # Must not raise.
+        await handler_svc._handle_control_command(RegistrationAck(rid="rid-any"))
+
+
+# ---------------------------------------------------------------------------
+# Tests: _stop_control_client ordering (C4 regression)
+# ---------------------------------------------------------------------------
+
+
+class TestStopControlClientOrdering:
+    """Background tasks (heartbeat, early-heartbeat) send on the control DEALER.
+
+    They must be cancelled before the control_client socket is closed, or they
+    will attempt a send on a closed socket during shutdown — logged as an
+    exception by the background_task_loop and visible to the controller as a
+    missed heartbeat.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cancels_tasks_and_early_heartbeat_before_closing_client(
+        self,
+    ) -> None:
+        import asyncio
+
+        call_order: list[str] = []
+
+        # Use a real asyncio.Task so the method's `await early_task` path is
+        # exercised, but park it on a future we control so we can observe the
+        # cancellation timing.
+        park = asyncio.Future()
+
+        async def early_loop() -> None:
+            try:
+                await park
+            except asyncio.CancelledError:
+                call_order.append("early_heartbeat_cancel")
+                raise
+
+        # Let the task start running and block on `park` before we call stop.
+        early_task = asyncio.create_task(early_loop())
+        await asyncio.sleep(0)
+
+        mock = MagicMock(spec=BaseComponentService)
+        mock._uses_controller_control_channel = MagicMock(return_value=True)
+        mock._early_heartbeat_task = early_task
+
+        async def _cancel_all_tasks() -> None:
+            call_order.append("cancel_all_tasks")
+
+        async def _control_stop() -> None:
+            call_order.append("control_client.stop")
+
+        mock.cancel_all_tasks = _cancel_all_tasks
+        mock.control_client = MagicMock()
+        mock.control_client.stop = _control_stop
+
+        await BaseComponentService._stop_control_client(mock)
+
+        assert call_order == [
+            "early_heartbeat_cancel",
+            "cancel_all_tasks",
+            "control_client.stop",
+        ]
+        assert early_task.done()
+
+    @pytest.mark.asyncio
+    async def test_no_ops_when_control_channel_disabled(self) -> None:
+        mock = MagicMock(spec=BaseComponentService)
+        mock._uses_controller_control_channel = MagicMock(return_value=False)
+        mock.control_client = MagicMock()
+        mock.control_client.stop = AsyncMock()
+        mock.cancel_all_tasks = AsyncMock()
+
+        await BaseComponentService._stop_control_client(mock)
+
+        mock.control_client.stop.assert_not_awaited()
+        mock.cancel_all_tasks.assert_not_awaited()

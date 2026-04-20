@@ -203,6 +203,10 @@ class SubprocessManager:
         self.subprocesses: list[SubprocessInfo] = []
         self._logger = logger
         self._local_worker_group_manager: SubprocessInfo | None = None
+        # Serializes _ensure_local_worker_group_manager across concurrent
+        # spawn_service calls (e.g. BaseServiceManager.start_services gathers
+        # run_service coroutines for multiple service types in parallel).
+        self._local_wgm_lock = asyncio.Lock()
 
     @property
     def local_worker_group_runtime_adapter(
@@ -311,16 +315,17 @@ class SubprocessManager:
         adapter = self._build_local_worker_group_manager_adapter(service_type)
         if adapter is None:
             return None
-        if self._local_worker_group_manager is None:
-            self._local_worker_group_manager = await self._start_process(
-                service_type=ServiceType.WORKER_GROUP_MANAGER,
-                service_id=adapter.service_id,
-                process_kwargs={"runtime_adapter": adapter},
-                launch_adapter=adapter,
-            )
-            self._debug(
-                "Started local worker-group manager boundary before child launch"
-            )
+        async with self._local_wgm_lock:
+            if self._local_worker_group_manager is None:
+                self._local_worker_group_manager = await self._start_process(
+                    service_type=ServiceType.WORKER_GROUP_MANAGER,
+                    service_id=adapter.service_id,
+                    process_kwargs={"runtime_adapter": adapter},
+                    launch_adapter=adapter,
+                )
+                self._debug(
+                    "Started local worker-group manager boundary before child launch"
+                )
         return adapter
 
     async def spawn_service(

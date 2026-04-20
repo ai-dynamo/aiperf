@@ -11,6 +11,7 @@ Tests cover:
 - Logger integration
 """
 
+import asyncio
 from contextlib import contextmanager
 from multiprocessing import Process
 from unittest.mock import MagicMock, patch
@@ -18,7 +19,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pytest import param
 
-from aiperf.common.subprocess_manager import SubprocessInfo, SubprocessManager
+from aiperf.common.subprocess_manager import (
+    LocalWorkerGroupManagerAdapter,
+    SubprocessInfo,
+    SubprocessManager,
+)
 from aiperf.plugin.enums import ServiceRunType, ServiceType
 
 # Import helper from conftest
@@ -809,3 +814,85 @@ class TestSubprocessManagerEdgeCases:
 
         assert len(workers) == expected_workers
         assert len(rps) == expected_rps
+
+
+# =============================================================================
+# Concurrent local worker-group manager spawn (C5 regression)
+# =============================================================================
+
+
+class TestEnsureLocalWorkerGroupManagerRace:
+    """Multiple run_service coroutines launched via asyncio.gather will race
+    through _ensure_local_worker_group_manager. Without serialization the None
+    check passes twice, two WGM subprocesses are spawned, and the second one
+    overwrites the manager slot — leaving the first WGM dangling.
+    """
+
+    @pytest.mark.asyncio
+    async def test_concurrent_calls_spawn_exactly_one_wgm(
+        self, subprocess_manager: SubprocessManager
+    ) -> None:
+        fake_adapter = LocalWorkerGroupManagerAdapter(
+            service_id="worker_group_manager_local",
+            declared_worker_capacity=1,
+            declared_record_processor_capacity=1,
+        )
+
+        # Simulate concurrent callers: the first entering _start_process must
+        # yield (await) before assigning self._local_worker_group_manager so
+        # the second caller can race in. Without the lock, the check-then-set
+        # interleaves and both sides spawn.
+        spawn_call_count = 0
+        release_first_spawn = asyncio.Event()
+
+        async def fake_start_process(**kwargs):
+            nonlocal spawn_call_count
+            idx = spawn_call_count
+            spawn_call_count += 1
+            if idx == 0:
+                # Hold the first spawn open until the second caller has had a
+                # chance to enter _ensure_local_worker_group_manager.
+                await release_first_spawn.wait()
+            return SubprocessInfo(
+                process=MagicMock(spec=Process),
+                service_type=kwargs["service_type"],
+                service_id=kwargs["service_id"],
+                launch_adapter=kwargs.get("launch_adapter"),
+            )
+
+        with (
+            patch.object(
+                SubprocessManager,
+                "_build_local_worker_group_manager_adapter",
+                return_value=fake_adapter,
+            ),
+            patch.object(
+                SubprocessManager,
+                "_start_process",
+                side_effect=fake_start_process,
+            ),
+        ):
+            task_a = asyncio.create_task(
+                subprocess_manager._ensure_local_worker_group_manager(
+                    ServiceType.WORKER
+                )
+            )
+            # Yield so task A enters fake_start_process and is parked on
+            # release_first_spawn.wait().
+            await asyncio.sleep(0)
+            task_b = asyncio.create_task(
+                subprocess_manager._ensure_local_worker_group_manager(
+                    ServiceType.RECORD_PROCESSOR
+                )
+            )
+            # Let task B run up to the lock acquisition.
+            await asyncio.sleep(0)
+
+            release_first_spawn.set()
+            await asyncio.gather(task_a, task_b)
+
+        assert spawn_call_count == 1, (
+            "Concurrent _ensure_local_worker_group_manager calls must "
+            "serialize; only one WGM subprocess should be spawned"
+        )
+        assert subprocess_manager._local_worker_group_manager is not None

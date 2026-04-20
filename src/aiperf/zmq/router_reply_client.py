@@ -146,6 +146,22 @@ class ZMQRouterReplyClient(BaseZMQClient):
                 f"Exception calling fire-and-forget handler for {message_type}: {e}"
             )
 
+    async def _send_duplicate_request_error(
+        self, request_id: str, routing_envelope: tuple[bytes, ...]
+    ) -> None:
+        """Send an ErrorMessage back for a request_id that is already in flight."""
+        error = ErrorMessage(
+            request_id=request_id,
+            error=ErrorDetails(
+                type="DUPLICATE_REQUEST_ID",
+                message=f"request_id {request_id} is already in flight",
+            ),
+        )
+        try:
+            await self.socket.send_multipart([*routing_envelope, error.to_json_bytes()])
+        except Exception as e:
+            self.exception(f"Failed to send duplicate-request error: {e}")
+
     async def _wait_for_response(
         self, request_id: str, routing_envelope: tuple[bytes, ...]
     ) -> None:
@@ -212,13 +228,28 @@ class ZMQRouterReplyClient(BaseZMQClient):
                 if fire_and_forget:
                     self.execute_async(self._handle_fire_and_forget(request))
                 else:
-                    self._response_futures[request.request_id] = asyncio.Future()
-                    self.execute_async(
-                        self._handle_request(request.request_id, request)
-                    )
-                    self.execute_async(
-                        self._wait_for_response(request.request_id, routing_envelope)
-                    )
+                    if request.request_id in self._response_futures:
+                        # Reject duplicate request_id to avoid overwriting the
+                        # in-flight Future, which would cause responses to be
+                        # routed to the wrong envelope.
+                        self.warning(
+                            lambda req_id=request.request_id: f"Duplicate request_id {req_id}, rejecting"
+                        )
+                        self.execute_async(
+                            self._send_duplicate_request_error(
+                                request.request_id, routing_envelope
+                            )
+                        )
+                    else:
+                        self._response_futures[request.request_id] = asyncio.Future()
+                        self.execute_async(
+                            self._handle_request(request.request_id, request)
+                        )
+                        self.execute_async(
+                            self._wait_for_response(
+                                request.request_id, routing_envelope
+                            )
+                        )
 
                 self._msg_count += 1
                 if (

@@ -263,3 +263,57 @@ class TestZMQRouterReplyClientBackgroundTask:
             await wait_for_background_task()
 
             mock_socket.send_multipart.assert_not_called()
+
+
+class TestZMQRouterReplyClientDuplicateRequestId:
+    """A duplicate request_id arriving while one is in flight would, without
+    a collision check, overwrite the pending Future — and _wait_for_response
+    coroutines for the earlier envelope would then await the wrong future and
+    route their response to the wrong caller. The router must reject the
+    duplicate instead.
+    """
+
+    @pytest.mark.asyncio
+    async def test_duplicate_request_id_sends_error_and_preserves_first_future(
+        self, router_test_helper, sample_message
+    ):
+        request_json = sample_message.model_dump_json().encode()
+        duplicate_request_data = [b"client_id_2", request_json]
+        # Feed exactly one duplicate through recv_multipart.
+        mock_socket = router_test_helper.setup_mock_socket(
+            recv_multipart_side_effect=[duplicate_request_data, zmq.Again()]
+        )
+
+        async def handler(msg: Message) -> Message:
+            return Message(
+                message_type=MessageType.HEARTBEAT,
+                request_id=msg.request_id,
+            )
+
+        async with router_test_helper.create_client(auto_start=True) as client:
+            client.register_request_handler(
+                service_id="test-service",
+                message_type=sample_message.message_type,
+                handler=handler,
+            )
+            # Pre-register a pending future under the same id to simulate the
+            # original request still being in flight.
+            client._response_futures[sample_message.request_id] = asyncio.Future()
+
+            for _ in range(50):
+                await asyncio.sleep(0)
+                if mock_socket.send_multipart.called:
+                    break
+
+            # Pre-existing future must not be replaced.
+            assert not client._response_futures[sample_message.request_id].done()
+
+            # The router must have sent an ErrorMessage back to the duplicate
+            # caller's envelope.
+            assert mock_socket.send_multipart.called
+            sent = mock_socket.send_multipart.call_args[0][0]
+            assert sent[0] == b"client_id_2"
+            error_msg = Message.from_json(sent[-1])
+            assert isinstance(error_msg, ErrorMessage)
+            assert error_msg.error is not None
+            assert error_msg.error.type == "DUPLICATE_REQUEST_ID"

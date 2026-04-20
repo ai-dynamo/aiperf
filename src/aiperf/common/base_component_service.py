@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import traceback
 import uuid
@@ -72,6 +73,7 @@ class BaseComponentService(BaseService):
         )
         self._api_port = api_port
         self._registration_ack_event: asyncio.Event | None = None
+        self._pending_registration_rid: str | None = None
 
         from aiperf.zmq.streaming_dealer_client import ZMQStreamingDealerClient
 
@@ -98,9 +100,20 @@ class BaseComponentService(BaseService):
 
     @on_stop
     async def _stop_control_client(self) -> None:
-        """Stop the DEALER control client."""
+        """Stop the DEALER control client.
+
+        Cancels background tasks that use the control channel (heartbeats,
+        early-heartbeat) before closing the socket so they don't attempt to
+        send on a closed client. Idempotent with _stop_all_tasks.
+        """
         if not self._uses_controller_control_channel():
             return
+        early_task = getattr(self, "_early_heartbeat_task", None)
+        if early_task is not None and not early_task.done():
+            early_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await early_task
+        await self.cancel_all_tasks()
         await self.control_client.stop()
 
     # -------------------------------------------------------------------------
@@ -181,7 +194,14 @@ class BaseComponentService(BaseService):
         try:
             while not self.stop_requested:
                 attempt_count += 1
-                await self.control_client.send(self._make_registration())
+                registration = self._make_registration()
+                # Track the rid of the in-flight attempt so the ack handler can
+                # ignore stale acks from prior attempts (which would otherwise
+                # unblock wait_for on the current attempt without it actually
+                # being acknowledged).
+                self._pending_registration_rid = registration.rid
+                self._registration_ack_event.clear()
+                await self.control_client.send(registration)
 
                 try:
                     await asyncio.wait_for(
@@ -211,6 +231,7 @@ class BaseComponentService(BaseService):
                         ) from None
         finally:
             self._registration_ack_event = None
+            self._pending_registration_rid = None
 
     # -------------------------------------------------------------------------
     # Heartbeat & status
@@ -333,7 +354,11 @@ class BaseComponentService(BaseService):
         _pending_requests matching in the DEALER receive loop.
         """
         if isinstance(message, RegistrationAck):
-            if self._registration_ack_event is not None:
+            if (
+                self._registration_ack_event is not None
+                and self._pending_registration_rid is not None
+                and message.rid == self._pending_registration_rid
+            ):
                 self._registration_ack_event.set()
             return
         if not isinstance(message, Command):
