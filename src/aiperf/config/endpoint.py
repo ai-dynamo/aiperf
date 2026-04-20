@@ -14,6 +14,7 @@ from typing import Annotated, Any
 from pydantic import (
     ConfigDict,
     Field,
+    field_serializer,
     model_validator,
 )
 from typing_extensions import Self
@@ -123,6 +124,15 @@ class EndpointConfig(BaseConfig):
             "Can also use ${VAR:default} syntax for defaults.",
         ),
     ]
+
+    @field_serializer("api_key", when_used="json")
+    def _redact_api_key(self, value: str | None) -> str | None:
+        """Never serialize the raw API key into exported JSON artifacts."""
+        from aiperf.common.redact import REDACTED_VALUE
+
+        if value is None:
+            return None
+        return REDACTED_VALUE
 
     timeout: Annotated[
         float,

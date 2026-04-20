@@ -1799,6 +1799,14 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         Sets ``_results_exported`` to True so ``@on_stop`` skips re-export.
         """
+        # Stop record processors first so their buffered per-record writers
+        # (raw_record_writer, record_export_csv, ...) flush to disk before
+        # the aggregator/exporter reads those files. In real K8s mode, the
+        # WGM/record-processor pods flush as part of their shutdown before
+        # uploading; in local/fake mode, the aggregator otherwise races
+        # against the RP's on_stop flush and sees an empty file.
+        await self.service_manager.stop_service(ServiceType.RECORD_PROCESSOR)
+
         self._exporter_manager = ExporterManager(
             results=self._profile_results.results,
             config=self.run.cfg,

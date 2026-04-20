@@ -1479,7 +1479,6 @@
               "type": "null"
             }
           ],
-          "default": null,
           "description": "API authentication key. Supports environment variable substitution: ${OPENAI_API_KEY}. Can also use ${VAR:default} syntax for defaults.",
           "title": "Apikey"
         },
