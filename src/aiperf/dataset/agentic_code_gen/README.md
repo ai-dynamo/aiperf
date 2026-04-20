@@ -11,6 +11,22 @@ repo context, incremental conversation growth, inter-turn delays, resets, and
 optional restart continuations. The output is Mooncake-trace compatible, so the
 same `dataset.jsonl` can be generated once and replayed with `aiperf profile`.
 
+## Prefix Layers
+
+The generator divides each session's prompt into cache-reuse layers:
+
+- **L1**: global tools and system prompt. These blocks are identical across all
+  sessions and model globally reusable KV cache.
+- **L1.5**: group-shared repository instructions and context. These blocks are
+  shared by sessions in the same group, but differ across groups.
+- **L2**: session-specific starting context, such as initially opened files.
+  These blocks are unique to a session at turn 0.
+- **L3**: conversation history added after turn 0. This grows as the session
+  continues and is unique to that session.
+
+Restart continuations preserve L1 and L1.5 reuse, but get fresh L2 and L3
+blocks.
+
 Generate a dataset:
 
 ```bash

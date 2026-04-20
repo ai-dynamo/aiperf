@@ -13,6 +13,23 @@ inter-turn delays, resets, and restart continuations.
 The generator writes Mooncake trace JSONL, so the output can be replayed with
 the existing `mooncake_trace` custom dataset loader.
 
+## Prefix Layers
+
+Agentic Code traces divide each session's prompt into cache-reuse layers:
+
+- **L1**: global tools and system prompt. These blocks are identical across all
+  sessions and model globally reusable KV cache.
+- **L1.5**: group-shared repository instructions and context. These blocks are
+  shared by sessions in the same group, but differ across groups.
+- **L2**: session-specific starting context, such as initially opened files.
+  These blocks are unique to a session at turn 0.
+- **L3**: conversation history added after turn 0. This grows as the session
+  continues and is unique to that session.
+
+Restart continuations preserve L1 and L1.5 reuse, but get fresh L2 and L3
+blocks. That models a coding agent restarting in the same repository context
+without reusing the prior session's private conversation state.
+
 ## Generate a Dataset
 
 Create a dataset with the built-in default configuration:
