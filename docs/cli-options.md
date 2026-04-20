@@ -16,14 +16,6 @@ Install shell completion for this application.
 
 Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
 
-### [`agentic-code-gen-synthesize`](#aiperf-agentic-code-gen-synthesize)
-
-Synthesize multi-turn Agentic Code session dataset into a unique run directory.
-
-### [`agentic-code-gen-validate`](#aiperf-agentic-code-gen-validate)
-
-Validate a generated Agentic Code JSONL dataset.
-
 ### [`profile`](#aiperf-profile)
 
 Run the Profile subcommand.
@@ -41,6 +33,14 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 ### [`service`](#aiperf-service)
 
 Run an AIPerf service in a single process.
+
+### [`synthesize`](#aiperf-synthesize)
+
+Synthesize a dataset workload.
+
+### [`validate`](#aiperf-validate)
+
+Validate a benchmark artifact.
 
 <hr/>
 
@@ -76,49 +76,6 @@ KV cache block size for analysis (default: 512).
 #### `--output-file` `<str>`
 
 Optional output path for analysis report (JSON).
-
-<hr/>
-
-## `aiperf agentic-code-gen-synthesize`
-
-Synthesize multi-turn Agentic Code session dataset into a unique run directory.
-
-#### `--num-sessions` `<int>`
-
-Number of sessions to generate.
-<br/>_Default: `1000`_
-
-#### `--output` `<str>`
-
-Parent directory for the run directory.
-<br/>_Default: `.`_
-
-#### `--config` `<str>`
-
-Path to config/manifest JSON.
-
-#### `--seed` `<int>`
-
-Random seed for reproducibility.
-<br/>_Default: `42`_
-
-#### `--max-isl` `<int>`
-
-Maximum input sequence length.
-
-#### `--max-osl` `<int>`
-
-Maximum output sequence length.
-
-<hr/>
-
-## `aiperf agentic-code-gen-validate`
-
-Validate a generated Agentic Code JSONL dataset.
-
-#### `--input` `<str>` _(Required)_
-
-Path to JSONL dataset file.
 
 <hr/>
 
@@ -1173,3 +1130,54 @@ Host to bind the health server to. Falls back to AIPERF_SERVICE_HEALTH_HOST envi
 #### `--health-port` `<int>`
 
 HTTP port for health endpoints (/healthz, /readyz). Required for Kubernetes liveness and readiness probes. Falls back to AIPERF_SERVICE_HEALTH_PORT environment variable.
+
+<hr/>
+
+## `aiperf synthesize`
+
+Synthesize a dataset workload.
+
+#### `--target` `<str>` _(Required)_
+
+Dataset workload to synthesize.
+
+#### `--num-sessions` `<int>`
+
+Number of sessions to generate.
+<br/>_Default: `1000`_
+
+#### `--output` `<str>`
+
+Parent directory for the run directory.
+<br/>_Default: `.`_
+
+#### `--config` `<str>`
+
+Path to config/manifest JSON.
+
+#### `--seed` `<int>`
+
+Random seed for reproducibility.
+<br/>_Default: `42`_
+
+#### `--max-isl` `<int>`
+
+Maximum input sequence length.
+
+#### `--max-osl` `<int>`
+
+Maximum output sequence length.
+
+<hr/>
+
+## `aiperf validate`
+
+Validate a benchmark artifact.
+
+#### `--target` `<str>` _(Required)_
+
+Artifact format to validate.
+
+#### `--input` `<str>` _(Required)_
+
+Path to the artifact file.

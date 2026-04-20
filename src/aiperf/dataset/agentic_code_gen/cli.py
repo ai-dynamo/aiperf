@@ -35,11 +35,11 @@ def synthesize(
     If omitted, built-in defaults are used.
 
     Examples:
-        aiperf agentic-code-gen-synthesize --num-sessions 1000 --output .test/
-        aiperf agentic-code-gen-synthesize --config custom.json --num-sessions 500
-        aiperf agentic-code-gen-synthesize --config .test/prev_run/manifest.json --num-sessions 1000
-        aiperf agentic-code-gen-synthesize --max-isl 262144 --num-sessions 1000
-        aiperf agentic-code-gen-synthesize --max-osl 10000 --num-sessions 1000
+        aiperf synthesize agentic-code --num-sessions 1000 --output .test/
+        aiperf synthesize agentic-code --config custom.json --num-sessions 500
+        aiperf synthesize agentic-code --config .test/prev_run/manifest.json --num-sessions 1000
+        aiperf synthesize agentic-code --max-isl 262144 --num-sessions 1000
+        aiperf synthesize agentic-code --max-osl 10000 --num-sessions 1000
 
     Args:
         num_sessions: Number of sessions to generate.
@@ -76,6 +76,7 @@ def synthesize(
     jsonl_path, manifest_path, quality_path = write_dataset(
         sessions, run_dir, dist_config, seed=seed, config_name=config_name
     )
+    validated_rows = _validate_mooncake_or_exit(jsonl_path, console)
 
     sim_sessions = load_sessions(jsonl_path)
     sim_path = run_dir / "simulation.html"
@@ -92,6 +93,7 @@ def synthesize(
     console.print(f"  JSONL:           {jsonl_path} ({total_turns} turns)")
     console.print(f"  Manifest:        {manifest_path}")
     console.print(f"  Quality:         {quality_path}")
+    console.print(f"  Validation:      Mooncake trace ({validated_rows} rows)")
     console.print(f"  Dashboard:       {run_dir / 'report.html'}")
     console.print(f"  Cache explorer:  {run_dir / 'cache_explorer.html'}")
     console.print(f"  Simulation:      {sim_path}")
@@ -110,12 +112,19 @@ def validate(
     """Validate a generated JSONL dataset for Mooncake compatibility.
 
     Examples:
-        aiperf agentic-code-gen-validate --input dataset.jsonl
+        aiperf validate mooncake-trace --input dataset.jsonl
 
     Args:
         input: Path to JSONL dataset file.
     """
     console = Console()
+    line_count = _validate_mooncake_or_exit(input, console)
+    console.print(
+        f"[green]Validation passed: {line_count} rows are Mooncake-compatible.[/green]"
+    )
+
+
+def _validate_mooncake_or_exit(input: Path, console: Console) -> int:
     line_count, errors = validate_mooncake_trace(input)
 
     if errors:
@@ -123,7 +132,4 @@ def validate(
         for err in errors:
             console.print(f"  {err}")
         raise SystemExit(1)
-    else:
-        console.print(
-            f"[green]Validation passed: {line_count} rows are Mooncake-compatible.[/green]"
-        )
+    return line_count
