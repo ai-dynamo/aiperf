@@ -16,6 +16,14 @@ Install shell completion for this application.
 
 Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
 
+### [`agentic-code-gen-synthesize`](#aiperf-agentic-code-gen-synthesize)
+
+Synthesize multi-turn Agentic Code session dataset into a unique run directory.
+
+### [`agentic-code-gen-validate`](#aiperf-agentic-code-gen-validate)
+
+Validate a generated Agentic Code JSONL dataset.
+
 ### [`profile`](#aiperf-profile)
 
 Run the Profile subcommand.
@@ -68,6 +76,49 @@ KV cache block size for analysis (default: 512).
 #### `--output-file` `<str>`
 
 Optional output path for analysis report (JSON).
+
+<hr/>
+
+## `aiperf agentic-code-gen-synthesize`
+
+Synthesize multi-turn Agentic Code session dataset into a unique run directory.
+
+#### `--num-sessions` `<int>`
+
+Number of sessions to generate.
+<br/>_Default: `1000`_
+
+#### `--output` `<str>`
+
+Parent directory for the run directory.
+<br/>_Default: `.`_
+
+#### `--config` `<str>`
+
+Path to config/manifest JSON.
+
+#### `--seed` `<int>`
+
+Random seed for reproducibility.
+<br/>_Default: `42`_
+
+#### `--max-isl` `<int>`
+
+Maximum input sequence length.
+
+#### `--max-osl` `<int>`
+
+Maximum output sequence length.
+
+<hr/>
+
+## `aiperf agentic-code-gen-validate`
+
+Validate a generated Agentic Code JSONL dataset.
+
+#### `--input` `<str>` _(Required)_
+
+Path to JSONL dataset file.
 
 <hr/>
 

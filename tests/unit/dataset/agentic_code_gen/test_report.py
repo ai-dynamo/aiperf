@@ -210,7 +210,8 @@ class TestGenerateReport:
             generate_report(tmp_path)
 
     def test_report_matches_quality_metrics_from_generated_dataset(
-        self, run_dir: Path,
+        self,
+        run_dir: Path,
     ) -> None:
         quality = orjson.loads((run_dir / "quality.json").read_bytes())
         report = generate_report(run_dir, fmt="text")

@@ -8,7 +8,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from cyclopts import App
 from rich.console import Console
 
 from aiperf.dataset.agentic_code_gen.config import load_config
@@ -21,13 +20,7 @@ from aiperf.dataset.agentic_code_gen.reporting.trace import validate_mooncake_tr
 from aiperf.dataset.agentic_code_gen.session_synthesizer import SessionSynthesizer
 from aiperf.dataset.agentic_code_gen.writer import write_dataset
 
-agentic_code_gen_app = App(
-    name="agentic-code-gen",
-    help="Synthesize Agentic Code single-thread session datasets for AIPerf load generation.",
-)
 
-
-@agentic_code_gen_app.command(name="synthesize")
 def synthesize(
     num_sessions: int = 1000,
     output: Path = Path("."),
@@ -42,11 +35,11 @@ def synthesize(
     If omitted, built-in defaults are used.
 
     Examples:
-        aiperf agentic-code-gen synthesize --num-sessions 1000 --output .test/
-        aiperf agentic-code-gen synthesize --config custom.json --num-sessions 500
-        aiperf agentic-code-gen synthesize --config .test/prev_run/manifest.json --num-sessions 1000
-        aiperf agentic-code-gen synthesize --max-isl 262144 --num-sessions 1000
-        aiperf agentic-code-gen synthesize --max-osl 10000 --num-sessions 1000
+        aiperf agentic-code-gen-synthesize --num-sessions 1000 --output .test/
+        aiperf agentic-code-gen-synthesize --config custom.json --num-sessions 500
+        aiperf agentic-code-gen-synthesize --config .test/prev_run/manifest.json --num-sessions 1000
+        aiperf agentic-code-gen-synthesize --max-isl 262144 --num-sessions 1000
+        aiperf agentic-code-gen-synthesize --max-osl 10000 --num-sessions 1000
 
     Args:
         num_sessions: Number of sessions to generate.
@@ -111,14 +104,13 @@ def synthesize(
     console.print(f"[dim]View: open {run_dir / 'report.html'} in a browser[/dim]")
 
 
-@agentic_code_gen_app.command(name="validate")
 def validate(
     input: Path,
 ) -> None:
     """Validate a generated JSONL dataset for Mooncake compatibility.
 
     Examples:
-        aiperf agentic-code-gen validate --input dataset.jsonl
+        aiperf agentic-code-gen-validate --input dataset.jsonl
 
     Args:
         input: Path to JSONL dataset file.

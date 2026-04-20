@@ -30,11 +30,15 @@ app.register_install_completion_command()
 # Register all CLI commands (lazily loaded at invocation time)
 # NOTE: The order here determines the order they will appear in docs/cli_options.md
 app.command("aiperf.cli_commands.analyze_trace:app", name="analyze-trace")
+app.command(
+    "aiperf.cli_commands.agentic_code_gen_synthesize:app",
+    name="agentic-code-gen-synthesize",
+)
+app.command(
+    "aiperf.cli_commands.agentic_code_gen_validate:app",
+    name="agentic-code-gen-validate",
+)
 app.command("aiperf.cli_commands.profile:app", name="profile")
 app.command("aiperf.cli_commands.plot:app", name="plot")
 app.command("aiperf.cli_commands.plugins:app", name="plugins")
 app.command("aiperf.cli_commands.service:app", name="service")
-app.command(
-    "aiperf.dataset.agentic_code_gen.cli:agentic_code_gen_app",
-    name="agentic-code-gen",
-)

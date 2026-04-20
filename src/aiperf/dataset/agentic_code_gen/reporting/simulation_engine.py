@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from aiperf.dataset.agentic_code_gen.prefix_model import MAX_GROUP_BLOCKS, MAX_GROUPS
 
 
-@dataclass
+@dataclass(slots=True)
 class SimulationConfig:
     """Parameters for running the simulation."""
 
@@ -63,7 +63,7 @@ class SimulationConfig:
     )
 
 
-@dataclass
+@dataclass(slots=True)
 class TimeSeriesPoint:
     """A single observation in the simulation time series."""
 
@@ -85,7 +85,7 @@ class TimeSeriesPoint:
     cumulative_miss_tokens: int
 
 
-@dataclass
+@dataclass(slots=True)
 class TurnEvent:
     """Timing data for a single turn within a session."""
 
@@ -100,7 +100,7 @@ class TurnEvent:
     miss_tokens: int
 
 
-@dataclass
+@dataclass(slots=True)
 class SessionState:
     """Per-session tracking during simulation."""
 
@@ -111,7 +111,7 @@ class SessionState:
     is_restart: bool = False
 
 
-@dataclass
+@dataclass(slots=True)
 class SimulationResult:
     """Complete output from a simulation run."""
 

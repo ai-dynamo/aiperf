@@ -90,6 +90,8 @@ def _write_jsonl(
                 else:
                     hash_ids = list(range(next_hash_id, next_hash_id + n_blocks))
                     next_hash_id += n_blocks
+                # Mooncake uses input_length for per-row incremental tokens;
+                # SynthesizedTurn.input_length remains cumulative in memory.
                 row: dict = {
                     "session_id": session.session_id,
                     "input_length": turn.new_tokens,

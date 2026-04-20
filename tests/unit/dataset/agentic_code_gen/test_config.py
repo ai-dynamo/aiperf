@@ -25,7 +25,9 @@ class TestLoadConfig:
 
     def test_list_bundled_configs(self) -> None:
         names = list_bundled_configs()
-        assert names == ["default"]
+        assert "default" in names
+        assert "spec" not in names
+        assert names == sorted(names)
 
     def test_spec_json_matches_generated_schema(self) -> None:
         path = Path(config.__file__).parent / "configs" / "spec.json"

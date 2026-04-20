@@ -131,6 +131,47 @@ class TestPrefixAllocator:
         base_1 = allocator.session_base(1)
         assert base_1 - base_0 == MAX_SESSION_BLOCKS
 
+    def test_max_session_blocks_boundary_allowed(
+        self, allocator: PrefixAllocator
+    ) -> None:
+        input_length = (
+            allocator.l1_blocks + allocator.l15_blocks + MAX_SESSION_BLOCKS
+        ) * allocator.block_size
+
+        ids = allocator.turn_hash_ids(
+            session_index=0, group_id=0, input_length=input_length
+        )
+        session_ids = allocator.extract_session_ids(ids)
+
+        assert len(session_ids) == MAX_SESSION_BLOCKS
+        assert session_ids[-1] == allocator.session_base(1) - 1
+
+    def test_max_session_blocks_overflow_raises(
+        self, allocator: PrefixAllocator
+    ) -> None:
+        input_length = (
+            allocator.l1_blocks + allocator.l15_blocks + MAX_SESSION_BLOCKS + 1
+        ) * allocator.block_size
+
+        with pytest.raises(ValueError, match="MAX_SESSION_BLOCKS"):
+            allocator.turn_hash_ids(
+                session_index=0, group_id=0, input_length=input_length
+            )
+
+    def test_build_hash_ids_rejects_missing_session_ids(
+        self, allocator: PrefixAllocator
+    ) -> None:
+        input_length = (
+            allocator.l1_blocks + allocator.l15_blocks + 2
+        ) * allocator.block_size
+
+        with pytest.raises(ValueError, match="needs 2 session IDs"):
+            allocator.build_hash_ids(
+                group_id=0,
+                input_length=input_length,
+                session_ids=[allocator.session_base(0)],
+            )
+
     def test_no_hash_id_collisions_across_sessions(
         self, small_allocator: PrefixAllocator
     ) -> None:

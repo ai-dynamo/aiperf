@@ -14,19 +14,19 @@ same `dataset.jsonl` can be generated once and replayed with `aiperf profile`.
 Generate a dataset:
 
 ```bash
-aiperf agentic-code-gen synthesize --num-sessions 1000 --output .test/
+aiperf agentic-code-gen-synthesize --num-sessions 1000 --output .test/
 ```
 
 Use a config JSON or a prior run manifest:
 
 ```bash
-aiperf agentic-code-gen synthesize --config my-config.json --num-sessions 500
+aiperf agentic-code-gen-synthesize --config my-config.json --num-sessions 500
 ```
 
 Validate a generated dataset:
 
 ```bash
-aiperf agentic-code-gen validate --input dataset.jsonl
+aiperf agentic-code-gen-validate --input dataset.jsonl
 ```
 
 If `--config` is omitted, the generator uses [default.json](configs/default.json).

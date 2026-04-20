@@ -64,6 +64,15 @@ class PrefixAllocator:
         """Compute the base hash ID offset for a session's L2+L3 blocks."""
         return self._session_region_base + session_index * MAX_SESSION_BLOCKS
 
+    def _ensure_session_block_budget(
+        self, session_needed: int, input_length: int
+    ) -> None:
+        if session_needed > MAX_SESSION_BLOCKS:
+            raise ValueError(
+                f"input_length={input_length} needs {session_needed} session blocks, "
+                f"exceeding MAX_SESSION_BLOCKS={MAX_SESSION_BLOCKS}"
+            )
+
     def _l15_ids(self, group_id: int) -> list[int]:
         """Get the L1.5 block IDs for a group."""
         base = self.group_base(group_id)
@@ -100,6 +109,7 @@ class PrefixAllocator:
         if session_needed == 0:
             return l1 + l15
 
+        self._ensure_session_block_budget(session_needed, input_length)
         base = self.session_base(session_index)
 
         if prev_session_ids is None:
@@ -147,6 +157,13 @@ class PrefixAllocator:
         session_needed = max(0, remaining - l15_used)
         if session_needed == 0:
             return l1 + l15
+
+        self._ensure_session_block_budget(session_needed, input_length)
+        if len(session_ids) < session_needed:
+            raise ValueError(
+                f"input_length={input_length} needs {session_needed} session IDs, "
+                f"got {len(session_ids)}"
+            )
 
         return l1 + l15 + session_ids[:session_needed]
 
