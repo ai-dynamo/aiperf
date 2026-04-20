@@ -46,7 +46,6 @@ from aiperf.common.messages import (
     ProcessTelemetryResultMessage,
     RealtimeMetricsMessage,
     RecordsProcessingStatsMessage,
-    ServerMetricsRecordMessage,
 )
 from aiperf.common.metric_records_wire import (
     MetricRecordsBatchWireMessage,
@@ -67,6 +66,11 @@ from aiperf.common.models import (
     ServerMetricsRecord,
     TelemetryRecord,
     WorkerProcessingStats,
+)
+from aiperf.common.server_metrics_records_wire import (
+    ServerMetricsRecordWireMessage,
+    server_metrics_error_from_wire,
+    server_metrics_record_from_wire,
 )
 from aiperf.common.telemetry_records_wire import (
     TelemetryRecordsWireMessage,
@@ -271,21 +275,24 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     @on_pull_message(MessageType.SERVER_METRICS_RECORD)
     async def _on_server_metrics_records(
-        self, message: ServerMetricsRecordMessage
+        self, message: ServerMetricsRecordWireMessage
     ) -> None:
         """Handle server metrics record message from Server Metrics Manager.
 
         Forwards full record to results processors.
 
         Args:
-            message: Server metrics record from a Prometheus collector
+            message: Server metrics record from a Prometheus collector, sent as
+                a msgspec wire envelope on the shared RECORDS channel.
         """
         if message.valid:
-            # Forward full records to results processors
-            await self._send_server_metrics_to_results_processors(message.record)
+            record = server_metrics_record_from_wire(message)
+            if record is not None:
+                await self._send_server_metrics_to_results_processors(record)
         else:
-            if message.error:
-                self._server_metrics_state.error_counts[message.error] += 1
+            wire_error = server_metrics_error_from_wire(message)
+            if wire_error is not None:
+                self._server_metrics_state.error_counts[wire_error] += 1
 
     async def _handle_all_records_received(self, phase: CreditPhase) -> None:
         """Handle the case where all records have been received for a phase."""

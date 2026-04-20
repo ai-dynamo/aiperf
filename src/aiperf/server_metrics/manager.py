@@ -17,10 +17,12 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_message, on_stop
-from aiperf.common.messages import ServerMetricsRecordMessage
 from aiperf.common.metric_utils import normalize_metrics_endpoint_url
 from aiperf.common.models import ErrorDetails, ServerMetricsRecord
 from aiperf.common.protocols import PushClientProtocol
+from aiperf.common.server_metrics_records_wire import (
+    build_server_metrics_record_wire_message,
+)
 from aiperf.credit.messages import CreditPhaseStartMessage
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
 from aiperf.server_metrics.discovery.kubernetes import (
@@ -405,7 +407,7 @@ class ServerMetricsManager(BaseComponentService):
 
         for record in records:
             try:
-                message = ServerMetricsRecordMessage(
+                message = build_server_metrics_record_wire_message(
                     service_id=self.service_id,
                     collector_id=collector_id,
                     record=record,
@@ -420,7 +422,7 @@ class ServerMetricsManager(BaseComponentService):
                 )
                 # Send error message to RecordsManager to track the failure
                 try:
-                    error_message = ServerMetricsRecordMessage(
+                    error_message = build_server_metrics_record_wire_message(
                         service_id=self.service_id,
                         collector_id=collector_id,
                         record=None,
@@ -450,7 +452,7 @@ class ServerMetricsManager(BaseComponentService):
             collector_id: Unique identifier of the collector (typically endpoint URL)
         """
         try:
-            error_message = ServerMetricsRecordMessage(
+            error_message = build_server_metrics_record_wire_message(
                 service_id=self.service_id,
                 collector_id=collector_id,
                 record=None,

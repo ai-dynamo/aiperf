@@ -7,9 +7,9 @@ import pytest
 
 from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommandType, CreditPhase
-from aiperf.common.messages.server_metrics_messages import ServerMetricsRecordMessage
 from aiperf.common.models import CreditPhaseStats, ErrorDetails
 from aiperf.common.models.server_metrics_models import ServerMetricsRecord
+from aiperf.common.server_metrics_records_wire import ServerMetricsRecordWireMessage
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.credit.messages import CreditPhaseStartMessage
 from aiperf.plugin.enums import TimingMode
@@ -340,8 +340,10 @@ class TestManagerCallbackFunctionality:
 
         manager.records_push_client.push.assert_called_once()
         call_args = manager.records_push_client.push.call_args[0][0]
-        assert isinstance(call_args, ServerMetricsRecordMessage)
-        assert call_args.record == test_record
+        assert isinstance(call_args, ServerMetricsRecordWireMessage)
+        assert call_args.record is not None
+        assert call_args.record["endpoint_url"] == test_record.endpoint_url
+        assert call_args.record["timestamp_ns"] == test_record.timestamp_ns
 
     @pytest.mark.asyncio
     async def test_error_callback_logs_error(
