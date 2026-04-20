@@ -21,11 +21,41 @@ The generator divides each session's prompt into cache-reuse layers:
   shared by sessions in the same group, but differ across groups.
 - **L2**: session-specific starting context, such as initially opened files.
   These blocks are unique to a session at turn 0.
-- **L3**: conversation history added after turn 0. This grows as the session
+- **L3**: conversation history added after turn 0. This layer grows as the session
   continues and is unique to that session.
 
-Restart continuations preserve L1 and L1.5 reuse, but get fresh L2 and L3
-blocks.
+Probabilistic resets and forced retires end a session; the next primary session
+gets fresh L2 and L3 blocks while still reusing any shared L1 and L1.5 blocks.
+Restart continuations are different: they split one logical run into Session A
+and Session B, and Session B carries the accumulated context and hash IDs from
+Session A so cache reuse is preserved across the split.
+
+## Turn and Session Lifecycle
+
+There are two turn-management modes:
+
+- **Reset-driven mode** is the default. Turn 0 is `L1 + L1.5 + sampled L2`.
+  Later turns sample a delay, sample `new_tokens_per_turn`, compute cumulative
+  input as `previous_input + previous_output + new_tokens`, then sample output
+  tokens and extend L3 hash IDs. Sessions end by forced retire
+  (`max_prompt_tokens`), probabilistic reset, or optional restart split.
+- **Explicit turn-count mode** is enabled by setting `turns`. The generator
+  samples a target turn count and tries to build exactly that many turns. This
+  mode cannot be combined with `reset` or `restart_initial_probability`. If the
+  target cannot fit before `max_prompt_tokens`, `allow_truncation` controls
+  whether the generator returns a partial forced-retire session or retries up to
+  `max_session_attempts`.
+
+In reset-driven mode, probabilistic reset uses:
+
+```text
+p = base_probability * (1 + (context_scaling - 1) * input_length / max_prompt_tokens)
+```
+
+Restart splits use `restart_initial_probability` and `restart_turn_range`.
+Session A ends with `restart_split`; Session B gets a new `session_id`, keeps
+the same `group_id`, carries Session A's accumulated context/hash IDs, and is
+marked with `is_restart` on its first JSONL row.
 
 Generate a dataset:
 
