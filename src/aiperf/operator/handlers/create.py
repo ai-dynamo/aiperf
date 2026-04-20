@@ -226,7 +226,7 @@ async def on_create(
         # Recursively convert all Mapping subclasses to plain dicts.
         try:
             plain_spec = _to_plain(spec)
-            save_job_spec_file(namespace, job_id, plain_spec)
+            await save_job_spec_file(namespace, job_id, plain_spec)
             await index_job_created(namespace, job_id, plain_spec)
         except Exception as e:
             logger.warning(f"Failed to save job spec/index for {namespace}/{name}: {e}")
@@ -236,7 +236,7 @@ async def on_create(
         patch.status["startTime"] = format_timestamp()
         patch.status["jobId"] = job_id
         patch.status["jobSetName"] = deployment.jobset_name
-        status.set_workers(0, num_pods)
+        status.set_workers(0, total_workers)
 
         # Store results TTL if configured
         if deploy_config.results_ttl_days:

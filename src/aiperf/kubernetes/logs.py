@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -59,4 +60,4 @@ async def save_pod_logs(
         result = await run_command(cmd)
         if result.returncode == 0 and result.stdout:
             log_file = logs_dir / f"{pod.name}.log"
-            log_file.write_text(result.stdout)
+            await asyncio.to_thread(log_file.write_text, result.stdout)

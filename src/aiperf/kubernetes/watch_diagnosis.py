@@ -73,7 +73,7 @@ def diagnose(snapshot: WatchSnapshot) -> DiagnosisResult:
                     title="Pod in crash loop",
                     detail=f"Pod {pod.name} has {pod.restarts} restarts",
                     impact="Benchmark cannot make progress while pod keeps crashing",
-                    suggested_fix="Check pod logs: kubectl logs {pod.name} --previous",
+                    suggested_fix=f"Check pod logs: kubectl logs {pod.name} --previous",
                 )
             )
 

@@ -97,7 +97,7 @@ class TestWorkerPodScaling:
             workers=workers,
         )
 
-        result = await benchmark_deployer.deploy(config, timeout=300)
+        result = await benchmark_deployer.deploy(config, timeout=90)
 
         assert result.success, f"Benchmark failed: {result.error_message}"
         assert result.metrics is not None

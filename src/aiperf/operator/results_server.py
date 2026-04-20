@@ -494,10 +494,14 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
                 has_value = False
                 for row in rows:
                     job_id = row.get("job_id", "")
+                    namespace = row.get("namespace", "")
+                    # Include namespace in key to disambiguate identical
+                    # job_ids from different namespaces.
+                    key = f"{namespace}/{job_id}" if namespace else job_id
                     val = row.get(col)
                     if val is not None:
                         has_value = True
-                    values[job_id] = val
+                    values[key] = val
                     if unit is None and row.get(unit_col):
                         unit = row[unit_col]
                 if has_value:

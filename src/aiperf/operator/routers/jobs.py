@@ -7,7 +7,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-import kr8s
 from fastapi import APIRouter, HTTPException
 from pydantic import Field
 
@@ -124,7 +123,8 @@ def create_jobs_router(
             k8s_version = "unknown"
 
         try:
-            nodes = [n async for n in client.api.get("nodes", namespace=kr8s.ALL)]
+            # Node is cluster-scoped; do not pass a namespace kwarg.
+            nodes = [n async for n in client.api.get("nodes")]
             node_count = len(nodes)
             gpu_count = sum(
                 int(

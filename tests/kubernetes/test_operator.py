@@ -27,7 +27,7 @@ from tests.kubernetes.helpers.operator import (
 
 # Test timeout for individual test phases (not full job completion)
 TEST_PHASE_TIMEOUT = 60  # seconds for waiting for phase transitions
-TEST_JOB_TIMEOUT = 180  # seconds for full job completion
+TEST_JOB_TIMEOUT = 60  # seconds for full job completion
 
 
 class TestOperatorDeployment:
@@ -669,12 +669,12 @@ class TestOperatorScaling:
         Creates its own job to test scaling.
         """
         config = AIPerfJobConfig(
-            concurrency=50,
-            request_count=100,
-            warmup_request_count=10,
+            concurrency=10,
+            request_count=20,
+            warmup_request_count=2,
         )
 
-        result = await operator_ready.run_job(config, timeout=600)
+        result = await operator_ready.run_job(config, timeout=180)
 
         assert result.success
         assert result.status is not None

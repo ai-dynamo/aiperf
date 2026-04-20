@@ -27,6 +27,13 @@ logger = logging.getLogger(__name__)
 
 INDEX_FILENAME = "jobs_index.json"
 
+# Serializes concurrent read-modify-write access to jobs_index.json. kopf
+# dispatches handlers for different AIPerfJob CRs concurrently; without this
+# lock, two handlers can read the same snapshot and the later writer silently
+# clobbers the earlier writer's update. Operator runs single-replica, so an
+# in-process asyncio.Lock is sufficient.
+_index_lock = asyncio.Lock()
+
 
 def _index_path() -> Path:
     return OperatorEnvironment.RESULTS.DIR / INDEX_FILENAME
@@ -112,7 +119,8 @@ async def index_job_created(
         _write_index(index)
         logger.info(f"Indexed job {key} at creation (model={model_name})")
 
-    await asyncio.to_thread(_do)
+    async with _index_lock:
+        await asyncio.to_thread(_do)
 
 
 async def index_job_completed(
@@ -150,7 +158,8 @@ async def index_job_completed(
         _write_index(index)
         logger.info(f"Indexed job {key} completion (phase={phase})")
 
-    await asyncio.to_thread(_do)
+    async with _index_lock:
+        await asyncio.to_thread(_do)
 
 
 async def index_job_failed(
@@ -177,15 +186,21 @@ async def get_job_spec(namespace: str, job_id: str) -> dict[str, Any] | None:
     return entry.get("spec")
 
 
-def save_job_spec_file(namespace: str, job_id: str, spec: dict[str, Any]) -> None:
+async def save_job_spec_file(namespace: str, job_id: str, spec: dict[str, Any]) -> None:
     """Save the CR spec as a standalone JSON file in the job's results directory.
 
     This is a belt-and-suspenders approach: the spec is also in the index,
     but having it as a standalone file makes it available even if the index
-    is regenerated.
+    is regenerated. Disk I/O is offloaded to a worker thread so we don't block
+    the kopf event loop under reconcile load.
     """
     dest_dir = OperatorEnvironment.RESULTS.DIR / namespace / job_id
-    dest_dir.mkdir(parents=True, exist_ok=True)
     path = dest_dir / "job_spec.json"
-    path.write_bytes(orjson.dumps(spec, option=orjson.OPT_INDENT_2))
+    payload = orjson.dumps(spec, option=orjson.OPT_INDENT_2)
+
+    def _write() -> None:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+
+    await asyncio.to_thread(_write)
     logger.info(f"Saved CR spec to {path}")

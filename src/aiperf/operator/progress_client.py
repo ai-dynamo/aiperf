@@ -449,7 +449,19 @@ class ProgressClient:
         if self._session is None:
             raise RuntimeError("ProgressClient must be used as async context manager")
 
-        url = f"http://{controller_host}:{self._port}/api/results/files/{filename}"
+        from urllib.parse import quote
+
+        # Allow nested subpaths (e.g. checkpoints/...) but reject any segment
+        # that would escape the results dir on the server side.
+        parts = [p for p in filename.replace("\\", "/").split("/") if p]
+        if any(p in ("", ".", "..") for p in parts) or not parts:
+            logger.warning(f"Refusing unsafe filename: {filename!r}")
+            return False
+        safe_path = "/".join(parts)
+        url = (
+            f"http://{controller_host}:{self._port}"
+            f"/api/results/files/{quote(safe_path, safe='/')}"
+        )
         headers = {"Accept-Encoding": "zstd, gzip, identity"}
 
         try:

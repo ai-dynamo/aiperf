@@ -240,7 +240,7 @@ class TestKubeCleanup:
         )
 
         result = await benchmark_deployer.deploy(
-            config, wait_for_completion=True, timeout=300
+            config, wait_for_completion=True, timeout=90
         )
         namespace = result.namespace
 

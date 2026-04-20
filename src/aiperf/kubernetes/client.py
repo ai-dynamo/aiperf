@@ -392,7 +392,7 @@ class AIPerfKubeClient:
         for pod in pods:
             raw = pod.raw
             statuses = raw.get("status", {}).get("containerStatuses", [])
-            pod_ready = all(s.get("ready") for s in statuses) and statuses
+            pod_ready = bool(statuses) and all(s.get("ready") for s in statuses)
             if pod_ready and raw.get("status", {}).get("phase") == PodPhase.RUNNING:
                 ready += 1
             restarts += sum(s.get("restartCount", 0) for s in statuses)
@@ -578,8 +578,10 @@ class AIPerfKubeClient:
                 pass
             except kr8s.ServerError as e:
                 status = e.response.status_code if e.response else 0
-                if status != 404:
-                    print_warning(f"Failed to delete {kind_name}: {e}")
+                if status in (404, 409):
+                    # 404 = already gone; 409 = namespace terminating — both benign.
+                    continue
+                print_warning(f"Failed to delete {kind_name}: {e}")
 
     async def delete_namespace(self, namespace: str) -> None:
         """Delete a Kubernetes namespace.

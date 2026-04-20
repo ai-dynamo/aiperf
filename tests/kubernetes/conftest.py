@@ -591,6 +591,128 @@ def kubectl(local_cluster: LocalCluster) -> KubectlClient:
     return KubectlClient(context=local_cluster.context)
 
 
+@pytest_asyncio.fixture(scope="package", loop_scope="package", autouse=True)
+async def _purge_stale_aiperf_resources(
+    kubectl: KubectlClient,
+    k8s_settings: K8sTestSettings,
+    worker_namespace_suffix: str,
+) -> AsyncGenerator[None, None]:
+    """Aggressively purge any stale AIPerf resources from prior aborted runs.
+
+    When pytest is killed mid-run, finalizers pin AIPerfJob CRs, JobSets, and
+    their pods. Those zombies then starve subsequent runs of scheduling
+    capacity and cause mysterious 120s kubectl timeouts. We clear them before
+    anything else touches the cluster.
+    """
+    if not k8s_settings.reuse_cluster:
+        yield
+        return
+
+    async def _purge_ns(ns: str) -> None:
+        # Strip operator finalizer first so the CR delete actually completes.
+        jobs = await kubectl.run(
+            "get",
+            "aiperfjobs",
+            "-n",
+            ns,
+            "-o",
+            "jsonpath={.items[*].metadata.name}",
+            check=False,
+        )
+        if jobs.returncode == 0 and jobs.stdout.strip():
+            for name in jobs.stdout.strip().split():
+                await kubectl.run(
+                    "patch",
+                    "aiperfjob",
+                    name,
+                    "-n",
+                    ns,
+                    "--type=json",
+                    '-p=[{"op":"remove","path":"/metadata/finalizers"}]',
+                    check=False,
+                )
+        await kubectl.run(
+            "delete",
+            "aiperfjobs,jobsets",
+            "--all",
+            "-n",
+            ns,
+            "--ignore-not-found",
+            check=False,
+        )
+        pods = await kubectl.run(
+            "get",
+            "pods",
+            "-n",
+            ns,
+            "-o",
+            "jsonpath={.items[*].metadata.name}",
+            check=False,
+        )
+        if pods.returncode == 0 and pods.stdout.strip():
+            for name in pods.stdout.strip().split():
+                if name.startswith(
+                    ("aiperf-bench", "aiperf-benchmark", "aiperf-unreachable")
+                ):
+                    await kubectl.run(
+                        "patch",
+                        "pod",
+                        name,
+                        "-n",
+                        ns,
+                        "--type=json",
+                        '-p=[{"op":"remove","path":"/metadata/finalizers"}]',
+                        check=False,
+                    )
+            await kubectl.run(
+                "delete",
+                "pods",
+                "-l",
+                "jobset.sigs.k8s.io/jobset-name",
+                "-n",
+                ns,
+                "--force",
+                "--grace-period=0",
+                "--ignore-not-found",
+                check=False,
+            )
+
+    # Namespaces that are known to accumulate zombies
+    for ns in ("default", "aiperf-benchmarks"):
+        await _purge_ns(ns)
+
+    # Also purge any aiperf-bench-* / aiperf-jobs-* namespaces (xdist workers)
+    ns_list = await kubectl.run(
+        "get",
+        "namespaces",
+        "-o",
+        "jsonpath={.items[*].metadata.name}",
+        check=False,
+    )
+    # Protect this worker's own namespaces from the wildcard purge so
+    # parallel xdist workers don't nuke each other mid-flight.
+    own_namespaces = {
+        f"aiperf-bench-{worker_namespace_suffix}",
+        f"aiperf-jobs-{worker_namespace_suffix}",
+    }
+    if ns_list.returncode == 0:
+        for ns in ns_list.stdout.split():
+            if ns in own_namespaces:
+                continue
+            if ns.startswith(("aiperf-bench-", "aiperf-jobs-")):
+                await _purge_ns(ns)
+                await kubectl.run(
+                    "delete",
+                    "namespace",
+                    ns,
+                    "--ignore-not-found",
+                    "--wait=false",
+                    check=False,
+                )
+
+    yield
+
+
 @pytest.fixture(scope="package")
 def image_manager(project_root: Path) -> ImageManager:
     """Create image manager with default images."""
@@ -712,29 +834,48 @@ async def mock_server(
 
     This fixture is package-scoped and deploys the mock server once per package.
     """
-    async with timed_operation("Deploying mock LLM server"):
-        # Read and apply mock server manifest
-        manifest_path = project_root / "dev" / "deploy" / "mock-server.yaml"
-        with open(manifest_path) as f:
-            manifest = f.read()
-
-        await kubectl.apply(manifest)
-
-        # Wait for rollout
-        success = await kubectl.wait_for_rollout(
+    already_healthy = False
+    if k8s_settings.reuse_cluster:
+        ready = await kubectl.run(
+            "get",
             "deployment",
             "aiperf-mock-server",
-            namespace="default",
-            timeout=120,
+            "-n",
+            "default",
+            "-o",
+            "jsonpath={.status.availableReplicas}",
+            check=False,
+        )
+        already_healthy = ready.returncode == 0 and ready.stdout.strip() not in (
+            "",
+            "0",
         )
 
-        if not success:
-            raise RuntimeError("Mock server deployment failed")
+    if already_healthy:
+        logger.info("Reusing existing healthy mock server deployment")
+    else:
+        async with timed_operation("Deploying mock LLM server"):
+            manifest_path = project_root / "dev" / "deploy" / "mock-server.yaml"
+            with open(manifest_path) as f:
+                manifest = f.read()
+
+            await kubectl.apply(manifest)
+
+            success = await kubectl.wait_for_rollout(
+                "deployment",
+                "aiperf-mock-server",
+                namespace="default",
+                timeout=120,
+            )
+
+            if not success:
+                raise RuntimeError("Mock server deployment failed")
 
     yield
 
-    # Cleanup mock server
-    if not k8s_settings.skip_cleanup:
+    # Cleanup mock server (skip when reusing cluster so subsequent pytest
+    # invocations avoid the ~30s redeploy cost).
+    if not k8s_settings.skip_cleanup and not k8s_settings.reuse_cluster:
         async with timed_operation("Cleaning up mock server"):
             await kubectl.delete(
                 "deployment", "aiperf-mock-server", namespace="default"
@@ -764,12 +905,31 @@ def k8s_ready(
     return local_cluster
 
 
+@pytest.fixture(scope="session")
+def worker_namespace_suffix(worker_id: str) -> str:
+    """Per-xdist-worker suffix used to build isolated namespaces."""
+    return worker_id.replace("_", "-").lower()
+
+
+@pytest.fixture(scope="session")
+def benchmark_namespace(worker_namespace_suffix: str) -> str:
+    """Per-worker namespace used by BenchmarkDeployer (xdist isolation)."""
+    return f"aiperf-bench-{worker_namespace_suffix}"
+
+
+@pytest.fixture(scope="session")
+def operator_job_namespace(worker_namespace_suffix: str) -> str:
+    """Per-worker namespace used for AIPerfJob CRs (xdist isolation)."""
+    return f"aiperf-jobs-{worker_namespace_suffix}"
+
+
 @pytest_asyncio.fixture(scope="package", loop_scope="package")
 async def benchmark_deployer(
     kubectl: KubectlClient,
     project_root: Path,
     k8s_ready: LocalCluster,
     k8s_settings: K8sTestSettings,
+    benchmark_namespace: str,
 ) -> AsyncGenerator[BenchmarkDeployer, None]:
     """Create a benchmark deployer.
 
@@ -779,6 +939,7 @@ async def benchmark_deployer(
         kubectl=kubectl,
         project_root=project_root,
         default_image=k8s_settings.aiperf_image,
+        default_namespace=benchmark_namespace,
     )
 
     yield deployer
@@ -1003,6 +1164,7 @@ async def operator_deployer(
     loaded_images: ImageManager,
     jobset_controller: None,
     k8s_settings: K8sTestSettings,
+    operator_job_namespace: str,
 ) -> AsyncGenerator[OperatorDeployer, None]:
     """Create an operator deployer (package-scoped).
 
@@ -1013,11 +1175,15 @@ async def operator_deployer(
         kubectl=kubectl,
         project_root=project_root,
         operator_image=k8s_settings.aiperf_image,
+        default_job_namespace=operator_job_namespace,
     )
 
     # Install CRD (always needed)
     async with timed_operation("Installing AIPerfJob CRD"):
         await deployer.install_crd()
+
+    # Ensure per-worker job namespace exists for xdist isolation.
+    await kubectl.run("create", "namespace", operator_job_namespace, check=False)
 
     yield deployer
 
@@ -1035,13 +1201,20 @@ async def operator_ready(
 
     Use this fixture for tests that need the operator running.
     """
-    async with timed_operation("Deploying AIPerf operator"):
-        await operator_deployer.deploy_operator()
+    # Skip redeploy when reusing cluster and an operator is already healthy;
+    # also skip the teardown uninstall so next session starts warm.
+    already_healthy = (
+        k8s_settings.reuse_cluster and await operator_deployer.is_operator_healthy()
+    )
+    if already_healthy:
+        logger.info("Reusing existing healthy operator deployment")
+    else:
+        async with timed_operation("Deploying AIPerf operator"):
+            await operator_deployer.deploy_operator()
 
     yield operator_deployer
 
-    # Cleanup operator
-    if not k8s_settings.skip_cleanup:
+    if not k8s_settings.skip_cleanup and not k8s_settings.reuse_cluster:
         async with timed_operation("Uninstalling operator"):
             await operator_deployer.uninstall_operator()
 
@@ -1155,6 +1328,7 @@ async def helm_deployer(
     loaded_images: ImageManager,
     jobset_controller: None,
     helm_values: HelmValues,
+    operator_job_namespace: str,
 ) -> AsyncGenerator[HelmDeployer, None]:
     """Create a Helm deployer (module-scoped).
 
@@ -1168,7 +1342,9 @@ async def helm_deployer(
         helm=helm_client,
         project_root=project_root,
         values=helm_values,
+        default_job_namespace=operator_job_namespace,
     )
+    await kubectl.run("create", "namespace", operator_job_namespace, check=False)
 
     yield deployer
 

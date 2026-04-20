@@ -29,7 +29,7 @@ class TestMinimalConfigurations:
             warmup_request_count=1,
         )
 
-        result = await benchmark_deployer.deploy(config, timeout=300)
+        result = await benchmark_deployer.deploy(config, timeout=90)
 
         assert result.success
         assert result.metrics is not None
@@ -47,7 +47,7 @@ class TestMinimalConfigurations:
             warmup_request_count=2,
         )
 
-        result = await benchmark_deployer.deploy(config, timeout=300)
+        result = await benchmark_deployer.deploy(config, timeout=90)
 
         assert result.success
         assert result.metrics is not None
@@ -65,7 +65,7 @@ class TestMinimalConfigurations:
             warmup_request_count=1,
         )
 
-        result = await benchmark_deployer.deploy(config, timeout=300)
+        result = await benchmark_deployer.deploy(config, timeout=90)
 
         assert result.success
         assert result.metrics is not None
@@ -86,7 +86,7 @@ class TestMinimalConfigurations:
             output_tokens_max=10,
         )
 
-        result = await benchmark_deployer.deploy(config, timeout=300)
+        result = await benchmark_deployer.deploy(config, timeout=90)
 
         assert result.success
 
@@ -176,7 +176,7 @@ class TestResourceCleanup:
             warmup_request_count=2,
         )
 
-        result = await benchmark_deployer.deploy(config, timeout=300)
+        result = await benchmark_deployer.deploy(config, timeout=90)
         namespace = result.namespace
 
         # Namespace should exist
@@ -202,10 +202,10 @@ class TestResourceCleanup:
 
         initial_count = benchmark_deployer.get_deployment_count()
 
-        await benchmark_deployer.deploy(config, timeout=300)
+        await benchmark_deployer.deploy(config, timeout=90)
         assert benchmark_deployer.get_deployment_count() == initial_count + 1
 
-        await benchmark_deployer.deploy(config, timeout=300)
+        await benchmark_deployer.deploy(config, timeout=90)
         assert benchmark_deployer.get_deployment_count() == initial_count + 2
 
 

@@ -18,6 +18,10 @@ def parse_cpu(value: str) -> float:
     """
     if not value or value == "0":
         return 0.0
+    if value.endswith("n"):
+        return float(value[:-1]) / 1_000_000_000
+    if value.endswith("u"):
+        return float(value[:-1]) / 1_000_000
     if value.endswith("m"):
         return float(value[:-1]) / 1000
     return float(value)

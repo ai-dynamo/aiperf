@@ -32,21 +32,37 @@ class CommandResult:
         return self.returncode == 0
 
 
-async def run_command(cmd: list[str]) -> CommandResult:
+async def run_command(
+    cmd: list[str],
+    *,
+    timeout: float | None = 60.0,
+) -> CommandResult:
     """Run a command asynchronously and capture output.
 
     Args:
         cmd: Command and arguments to execute.
+        timeout: Seconds to wait for the command to exit. Defaults to 60s to
+            prevent callers (kubectl/helm probes, log dumps, preflight checks)
+            from hanging on an unreachable apiserver. Pass None to disable.
 
     Returns:
         CommandResult with returncode, stdout, and stderr.
+
+    Raises:
+        asyncio.TimeoutError: If the command does not exit within ``timeout``.
     """
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    raw_stdout, raw_stderr = await proc.communicate()
+    try:
+        raw_stdout, raw_stderr = await asyncio.wait_for(
+            proc.communicate(), timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        await terminate_process(proc)
+        raise
     if proc.returncode is None:
         raise RuntimeError("Process exited without a return code after communicate()")
     return CommandResult(
@@ -56,16 +72,20 @@ async def run_command(cmd: list[str]) -> CommandResult:
     )
 
 
-async def check_command(cmd: list[str]) -> bool:
+async def check_command(cmd: list[str], *, timeout: float | None = 60.0) -> bool:
     """Run a command and return True if it exits with code 0.
 
     Args:
         cmd: Command and arguments to execute.
+        timeout: Seconds to wait for the command to exit. Defaults to 60s.
 
     Returns:
-        True if the command succeeded.
+        True if the command succeeded. Returns False on timeout.
     """
-    result = await run_command(cmd)
+    try:
+        result = await run_command(cmd, timeout=timeout)
+    except asyncio.TimeoutError:
+        return False
     return result.ok
 
 

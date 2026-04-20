@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 import aiofiles
 import aiohttp
@@ -154,19 +155,27 @@ async def retrieve_results_from_operator(
 
                 for file_info in available:
                     display_name = file_info["name"]
+                    # Defend against a compromised/buggy controller returning
+                    # a traversal path like ``../../etc/foo``. Strip to the
+                    # basename and skip empty / dotfile results.
+                    safe_name = Path(display_name).name
+                    if not safe_name or safe_name.startswith("."):
+                        print_warning(f"Refusing unsafe filename: {display_name!r}")
+                        continue
+                    quoted_name = quote(safe_name, safe="")
                     download_url = (
-                        f"{api_base}/api/v1/results/{namespace}/{job_id}/{display_name}"
+                        f"{api_base}/api/v1/results/{namespace}/{job_id}/{quoted_name}"
                     )
                     headers = {"Accept-Encoding": "zstd, gzip, identity"}
 
                     try:
                         async with session.get(download_url, headers=headers) as resp:
                             if resp.status == 404:
-                                print_warning(f"File not found: {display_name}")
+                                print_warning(f"File not found: {safe_name}")
                                 continue
                             resp.raise_for_status()
 
-                            dest_path = output_dir / display_name
+                            dest_path = output_dir / safe_name
                             content_encoding = resp.headers.get(
                                 "Content-Encoding", "identity"
                             )
@@ -177,12 +186,12 @@ async def retrieve_results_from_operator(
                             )
 
                             file_size = dest_path.stat().st_size
-                            downloaded_files.append((display_name, file_size))
+                            downloaded_files.append((safe_name, file_size))
                             print_success(
-                                f"Downloaded: {display_name} ({_human_size(file_size)})"
+                                f"Downloaded: {safe_name} ({_human_size(file_size)})"
                             )
                     except aiohttp.ClientError as e:
-                        print_warning(f"Failed to download {display_name}: {e}")
+                        print_warning(f"Failed to download {safe_name}: {e}")
 
             if downloaded_files:
                 print_file_table(downloaded_files)
@@ -289,8 +298,14 @@ async def retrieve_results_from_api(
                                         )
                                         if attempt < max_retries:
                                             continue
+                                        print_warning(
+                                            f"Skipping {filename}: incomplete download after retries"
+                                        )
+                                        break
                                     output_file = output_dir / filename
-                                    output_file.write_bytes(content)
+                                    await asyncio.to_thread(
+                                        output_file.write_bytes, content
+                                    )
                                     print_success(f"Downloaded: {filename}")
                                     downloaded_any = True
 
@@ -557,15 +572,22 @@ async def retrieve_all_artifacts(
                 files_base = f"{api_base}{API_RESULTS_FILES_PATH}"
                 max_retries = 2
                 for filename in available_files:
+                    # Sanitize server-provided filename to block path traversal
+                    safe_filename = Path(filename).name
+                    if not safe_filename or safe_filename.startswith("."):
+                        print_warning(f"Refusing unsafe filename: {filename!r}")
+                        continue
+                    quoted = quote(safe_filename, safe="")
                     for attempt in range(1 + max_retries):
                         try:
-                            async with session.get(f"{files_base}/{filename}") as resp:
+                            async with session.get(f"{files_base}/{quoted}") as resp:
                                 if resp.status == 404:
                                     break
                                 resp.raise_for_status()
 
                                 x_filename = resp.headers.get("x-filename")
-                                dest_name = x_filename or filename
+                                raw_dest = x_filename or safe_filename
+                                dest_name = Path(raw_dest).name or safe_filename
                                 dest_path = output_dir / dest_name
 
                                 content = await resp.read()
@@ -577,8 +599,12 @@ async def retrieve_all_artifacts(
                                     )
                                     if attempt < max_retries:
                                         continue
+                                    print_warning(
+                                        f"Skipping {dest_name}: incomplete download after retries"
+                                    )
+                                    break
 
-                                dest_path.write_bytes(content)
+                                await asyncio.to_thread(dest_path.write_bytes, content)
 
                                 file_size = len(content)
                                 downloaded_files.append((dest_name, file_size))

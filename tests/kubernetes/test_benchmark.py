@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pytest
 
+from aiperf.kubernetes.constants import Containers
 from tests.kubernetes.helpers.benchmark import (
     BenchmarkConfig,
     BenchmarkDeployer,
@@ -118,7 +119,7 @@ class TestBenchmarkLifecycle:
 
         results = []
         for _ in range(3):
-            result = await benchmark_deployer.deploy(config, timeout=300)
+            result = await benchmark_deployer.deploy(config, timeout=90)
             results.append(result)
 
         for i, result in enumerate(results):
@@ -139,7 +140,7 @@ class TestBenchmarkLifecycle:
             warmup_request_count=2,
         )
 
-        result = await benchmark_deployer.deploy(config, timeout=300)
+        result = await benchmark_deployer.deploy(config, timeout=90)
         namespace = result.namespace
 
         assert await kubectl.namespace_exists(namespace)
@@ -159,13 +160,14 @@ class TestBenchmarkLifecycle:
 class TestBenchmarkPods:
     """Tests for benchmark pod configuration (module-scoped for speed)."""
 
-    def test_controller_pod_has_single_container(
+    def test_controller_pod_has_expected_containers(
         self,
         deployed_small_benchmark_module: BenchmarkResult,
     ) -> None:
-        """Verify controller pod has single control-plane container.
+        """Verify controller pod has one container per control-plane service.
 
-        New architecture: SystemController spawns all services as subprocesses.
+        gpu_telemetry and server_metrics default to enabled in the generated
+        manifest, so their sidecars are part of the expected set.
         """
         controller = deployed_small_benchmark_module.controller_pod
 
@@ -176,8 +178,16 @@ class TestBenchmarkPods:
             )
             return
 
-        # New architecture: single control-plane container
-        expected_containers = {"control-plane"}
+        expected_containers = {
+            Containers.CONTROL_PLANE,
+            Containers.DATASET_MANAGER,
+            Containers.TIMING_MANAGER,
+            Containers.RECORDS_MANAGER,
+            Containers.API,
+            Containers.GPU_TELEMETRY_MANAGER,
+            Containers.SERVER_METRICS_MANAGER,
+            Containers.RESULTS_SIDECAR,
+        }
         actual_containers = set(controller.containers.keys())
         assert expected_containers == actual_containers
 
@@ -227,7 +237,7 @@ class TestBenchmarkWithDifferentEndpoints:
             warmup_request_count=2,
         )
 
-        result = await benchmark_deployer.deploy(config, timeout=300)
+        result = await benchmark_deployer.deploy(config, timeout=90)
 
         assert result.success
         assert result.metrics is not None
@@ -245,7 +255,7 @@ class TestBenchmarkWithDifferentEndpoints:
             warmup_request_count=2,
         )
 
-        result = await benchmark_deployer.deploy(config, timeout=300)
+        result = await benchmark_deployer.deploy(config, timeout=90)
 
         # Completions might work or fail depending on mock server
         # Just verify it doesn't crash

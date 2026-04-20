@@ -324,6 +324,7 @@ class OperatorDeployer:
         kubectl: KubectlClient,
         project_root: Path,
         operator_image: str = "aiperf:local",
+        default_job_namespace: str = "default",
     ) -> None:
         """Initialize operator deployer.
 
@@ -335,6 +336,7 @@ class OperatorDeployer:
         self.kubectl = kubectl
         self.project_root = project_root
         self.operator_image = operator_image
+        self.default_job_namespace = default_job_namespace
         self._deployed_jobs: list[OperatorJobResult] = []
 
     async def install_crd(self) -> None:
@@ -376,6 +378,23 @@ class OperatorDeployer:
                 return
             await asyncio.sleep(1)
         raise TimeoutError(f"CRD {self.CRD_NAME} not established within {timeout}s")
+
+    async def is_operator_healthy(self) -> bool:
+        """Return True if the operator Deployment already has ready replicas."""
+        result = await self.kubectl.run(
+            "get",
+            "deployment",
+            "aiperf-operator",
+            "-n",
+            self.OPERATOR_NAMESPACE,
+            "-o",
+            "jsonpath={.status.readyReplicas}",
+            check=False,
+        )
+        if result.returncode != 0:
+            return False
+        ready = result.stdout.strip()
+        return bool(ready) and ready != "0"
 
     async def deploy_operator(self) -> None:
         """Deploy the operator to the cluster.
@@ -475,7 +494,7 @@ class OperatorDeployer:
             "deployment",
             "aiperf-operator",
             namespace=self.OPERATOR_NAMESPACE,
-            timeout=300,
+            timeout=90,
         )
 
         if not success:
@@ -615,7 +634,7 @@ class OperatorDeployer:
         self,
         config: AIPerfJobConfig,
         name: str | None = None,
-        namespace: str = "default",
+        namespace: str | None = None,
     ) -> OperatorJobResult:
         """Create an AIPerfJob CR.
 
@@ -631,6 +650,8 @@ class OperatorDeployer:
 
         if name is None:
             name = f"benchmark-{uuid.uuid4().hex[:8]}"
+        if namespace is None:
+            namespace = self.default_job_namespace
 
         manifest = config.to_cr_manifest(name, namespace)
         logger.info(f"Creating AIPerfJob {namespace}/{name}")
@@ -787,7 +808,7 @@ class OperatorDeployer:
         self,
         config: AIPerfJobConfig,
         name: str | None = None,
-        namespace: str = "default",
+        namespace: str | None = None,
         timeout: int = 300,
         stream_logs: bool = False,
     ) -> OperatorJobResult:
@@ -877,13 +898,77 @@ class OperatorDeployer:
     async def cleanup_job(self, result: OperatorJobResult) -> None:
         """Clean up a job and its resources.
 
-        Args:
-            result: Job result to clean up.
+        Removes the AIPerfJob finalizer, the JobSet, and force-deletes any
+        zombie benchmark pods so the next session starts on a clean cluster.
         """
+        ns = result.namespace
+        name = result.job_name
         try:
-            await self.delete_job(result.job_name, result.namespace)
+            await self.kubectl.run(
+                "patch",
+                "aiperfjob",
+                name,
+                "-n",
+                ns,
+                "--type=json",
+                '-p=[{"op":"remove","path":"/metadata/finalizers"}]',
+                check=False,
+            )
+            await self.kubectl.run(
+                "delete",
+                "aiperfjob",
+                name,
+                "-n",
+                ns,
+                "--ignore-not-found",
+                check=False,
+            )
+            await self.kubectl.run(
+                "delete",
+                "jobsets",
+                "--all",
+                "-n",
+                ns,
+                "--ignore-not-found",
+                check=False,
+            )
+            pods = await self.kubectl.run(
+                "get",
+                "pods",
+                "-n",
+                ns,
+                "-l",
+                "jobset.sigs.k8s.io/jobset-name",
+                "-o",
+                "jsonpath={.items[*].metadata.name}",
+                check=False,
+            )
+            if pods.returncode == 0 and pods.stdout.strip():
+                for pod in pods.stdout.strip().split():
+                    await self.kubectl.run(
+                        "patch",
+                        "pod",
+                        pod,
+                        "-n",
+                        ns,
+                        "--type=json",
+                        '-p=[{"op":"remove","path":"/metadata/finalizers"}]',
+                        check=False,
+                    )
+                await self.kubectl.run(
+                    "delete",
+                    "pods",
+                    "-l",
+                    "jobset.sigs.k8s.io/jobset-name",
+                    "-n",
+                    ns,
+                    "--force",
+                    "--grace-period=0",
+                    "--ignore-not-found",
+                    check=False,
+                )
         except Exception as e:
-            logger.warning(f"Failed to delete job {result.job_name}: {e}")
+            logger.warning(f"Failed to delete job {name}: {e}")
 
     async def cleanup_all(self) -> None:
         """Clean up all deployed jobs in parallel."""

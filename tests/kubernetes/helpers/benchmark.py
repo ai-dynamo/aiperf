@@ -469,6 +469,7 @@ class BenchmarkDeployer:
         kubectl: KubectlClient,
         project_root: Path,
         default_image: str = "aiperf:local",
+        default_namespace: str | None = None,
     ) -> None:
         """Initialize benchmark deployer.
 
@@ -476,10 +477,14 @@ class BenchmarkDeployer:
             kubectl: Kubectl client.
             project_root: Path to project root.
             default_image: Default image to use for benchmarks.
+            default_namespace: If set, overrides the ``--namespace`` passed to
+                ``aiperf kube generate`` so each xdist worker gets an isolated
+                namespace and tests can run in parallel.
         """
         self.kubectl = kubectl
         self.project_root = project_root
         self.default_image = default_image
+        self.default_namespace = default_namespace
         self._deployments: list[BenchmarkResult] = []
 
     async def deploy(
@@ -687,6 +692,9 @@ class BenchmarkDeployer:
             str((config.output_tokens_min + config.output_tokens_max) // 2),
             "--operator",
         ]
+
+        if self.default_namespace is not None:
+            cmd.extend(["--namespace", self.default_namespace])
 
         if config.concurrency_ramp_duration is not None:
             cmd.extend(
@@ -1012,14 +1020,16 @@ class BenchmarkDeployer:
     async def cleanup(self, result: BenchmarkResult) -> None:
         """Clean up a benchmark deployment.
 
-        Strips finalizers from AIPerfJob CRs before deleting the namespace
-        to prevent namespace stuck in Terminating state.
+        Strips finalizers from AIPerfJobs and pods and force-deletes pods
+        before deleting the namespace, so teardown doesn't wait for Job
+        controllers or graceful pod shutdown.
 
         Args:
             result: Benchmark result to clean up.
         """
         logger.info(f"Cleaning up namespace: {result.namespace}")
         await self._strip_aiperfjob_finalizers(result.namespace)
+        await self.kubectl.force_cleanup_namespace_pods(result.namespace)
         await self.kubectl.delete_namespace(result.namespace, wait=True)
 
     async def _strip_aiperfjob_finalizers(self, namespace: str) -> None:

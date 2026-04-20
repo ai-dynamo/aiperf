@@ -14,6 +14,7 @@ from pydantic import Field, field_validator
 
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.config import AIPerfConfig
+from aiperf.config.benchmark import BenchmarkRun
 from aiperf.config.deployment import DeploymentConfig
 from aiperf.kubernetes.constants import (
     AIPERF_GROUP,
@@ -293,7 +294,7 @@ class KubernetesDeployment(AIPerfBaseModel):
         description="Actual workers per pod for resource calculation",
     )
     config: AIPerfConfig = Field(description="AIPerf configuration")
-    run: Any = Field(
+    run: BenchmarkRun | None = Field(
         default=None,
         description="BenchmarkRun instance for this deployment. "
         "Auto-built from config if not provided.",
@@ -317,8 +318,6 @@ class KubernetesDeployment(AIPerfBaseModel):
         """Auto-build a BenchmarkRun from config if not provided."""
         if self.run is None:
             from pathlib import Path
-
-            from aiperf.config.benchmark import BenchmarkRun
 
             self.run = BenchmarkRun(
                 benchmark_id=self.job_id,

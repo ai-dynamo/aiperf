@@ -8,6 +8,7 @@ import asyncio
 
 import pytest
 
+from aiperf.kubernetes.constants import Containers
 from tests.kubernetes.helpers.benchmark import (
     BenchmarkConfig,
     BenchmarkDeployer,
@@ -128,11 +129,11 @@ class TestBenchmarkDeployment:
         small_benchmark_config: BenchmarkConfig,
         kubectl: KubectlClient,
     ) -> None:
-        """Verify deployment creates controller pod with single control-plane container.
+        """Verify deployment creates controller pod with the expected service containers.
 
-        The control-plane container runs SystemController which spawns all other
-        control-plane services as subprocesses (worker_manager, timing_manager,
-        dataset_manager, records_manager, api, gpu_telemetry_manager, server_metrics_manager).
+        The controller pod runs one container per control-plane service plus a
+        results sidecar. GPU telemetry and server metrics sidecars are included
+        because both default to enabled in the generated manifest.
         """
         result = await benchmark_deployer.deploy(
             config=small_benchmark_config,
@@ -156,8 +157,19 @@ class TestBenchmarkDeployment:
         assert len(controller_pods) == 1
 
         controller = controller_pods[0]
-        # New architecture: single control-plane container spawns all services as subprocesses
-        expected_containers = {"control-plane"}
+        # Multi-container controller pod: one container per control-plane
+        # service plus the results sidecar. gpu_telemetry and server_metrics
+        # default to enabled in the generated manifest, so include them.
+        expected_containers = {
+            Containers.CONTROL_PLANE,
+            Containers.DATASET_MANAGER,
+            Containers.TIMING_MANAGER,
+            Containers.RECORDS_MANAGER,
+            Containers.API,
+            Containers.GPU_TELEMETRY_MANAGER,
+            Containers.SERVER_METRICS_MANAGER,
+            Containers.RESULTS_SIDECAR,
+        }
 
         actual_containers = set(controller.containers.keys())
 
@@ -165,11 +177,11 @@ class TestBenchmarkDeployment:
         print(f"  Pod phase: {controller.phase}")
         print(f"  Containers: {sorted(actual_containers)}")
         print(f"  Expected: {sorted(expected_containers)}")
-        print("  ✓ Single control-plane container verified!")
         print(f"{'=' * 60}\n")
 
         assert expected_containers == actual_containers, (
-            f"Expected single control-plane container, got: {actual_containers}"
+            f"Expected controller containers {sorted(expected_containers)}, "
+            f"got: {sorted(actual_containers)}"
         )
 
         # Cleanup
@@ -184,7 +196,7 @@ class TestBenchmarkDeployment:
     ) -> None:
         """Verify deployment creates worker pod with per-service containers.
 
-        The worker pod keeps a worker-pod-manager container for shared pod
+        The worker pod keeps a worker-group-manager container for shared pod
         infrastructure, while workers and record processors run in their own
         sibling containers.
         """
@@ -224,12 +236,12 @@ class TestBenchmarkDeployment:
         print(f"  Pod phase: {worker.phase}")
         print(f"  Containers: {sorted(actual_containers)}")
         print(
-            "  Expected: worker-pod-manager + worker-* + record-processor-* containers"
+            "  Expected: worker-group-manager + worker-* + record-processor-* containers"
         )
         print("  ✓ Multi-container worker pod verified!")
         print(f"{'=' * 60}\n")
 
-        assert "worker-pod-manager" in actual_containers
+        assert "worker-group-manager" in actual_containers
         assert worker_containers, (
             f"Expected at least one worker-* container, got: {actual_containers}"
         )
@@ -258,7 +270,7 @@ class TestConfigVariations:
             warmup_request_count=2,
         )
 
-        result = await benchmark_deployer.deploy(config, timeout=300)
+        result = await benchmark_deployer.deploy(config, timeout=90)
 
         assert result.success, (
             f"Benchmark failed with concurrency={concurrency}: {result.error_message}"
@@ -280,7 +292,7 @@ class TestConfigVariations:
             warmup_request_count=2,
         )
 
-        result = await benchmark_deployer.deploy(config, timeout=300)
+        result = await benchmark_deployer.deploy(config, timeout=90)
 
         assert result.success
         assert result.metrics is not None
@@ -302,7 +314,7 @@ class TestConfigVariations:
             output_tokens_max=100,
         )
 
-        result = await benchmark_deployer.deploy(config, timeout=300)
+        result = await benchmark_deployer.deploy(config, timeout=90)
 
         assert result.success
         assert result.metrics is not None

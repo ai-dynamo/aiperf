@@ -58,7 +58,7 @@ class TestMetricsCollection:
             warmup_request_count=2,
         )
 
-        result = await benchmark_deployer.deploy(config, timeout=300)
+        result = await benchmark_deployer.deploy(config, timeout=90)
 
         assert result.success
         assert result.metrics is not None
@@ -124,7 +124,7 @@ class TestMetricsValidation:
             warmup_request_count=5,
         )
 
-        result = await benchmark_deployer.deploy(config, timeout=300)
+        result = await benchmark_deployer.deploy(config, timeout=90)
 
         assert_metrics(
             result,
@@ -150,7 +150,7 @@ class TestMetricsConsistency:
 
         throughputs = []
         for _ in range(3):
-            result = await benchmark_deployer.deploy(config, timeout=300)
+            result = await benchmark_deployer.deploy(config, timeout=90)
             assert result.success
             assert result.metrics is not None
             throughputs.append(result.metrics.request_throughput)
@@ -175,7 +175,7 @@ class TestMetricsConsistency:
                 warmup_request_count=2,
             )
 
-            result = await benchmark_deployer.deploy(config, timeout=300)
+            result = await benchmark_deployer.deploy(config, timeout=90)
 
             assert result.success
             assert result.metrics is not None

@@ -146,11 +146,11 @@ class ResultsDB:
         where_clauses = [f"t.{metric}.{stat} IS NOT NULL"]
         if model:
             where_clauses.append(
-                f"t.input_config.models.items[1].name ILIKE '%{_escape_like(model)}%'"
+                f"t.input_config.models.items[1].name ILIKE '%{_escape_like(model)}%' ESCAPE '\\'"
             )
         if endpoint:
             where_clauses.append(
-                f"t.input_config.endpoint.urls[1] ILIKE '%{_escape_like(endpoint)}%'"
+                f"t.input_config.endpoint.urls[1] ILIKE '%{_escape_like(endpoint)}%' ESCAPE '\\'"
             )
 
         where = " AND ".join(where_clauses)
@@ -200,8 +200,9 @@ class ResultsDB:
         for m in metrics:
             _validate_identifier(m)
 
-        # Build job ID filter
-        job_id_list = ", ".join(f"'{_escape_like(j)}'" for j in job_ids)
+        # Build job ID filter. IN uses literal equality, so only escape quotes
+        # (LIKE-style %/_ escaping would corrupt job_ids containing underscores).
+        job_id_list = ", ".join("'" + j.replace("'", "''") + "'" for j in job_ids)
 
         # First, query just the base job info to avoid missing-column errors
         # when some jobs don't have certain metrics (e.g., non-streaming has no TTFT).
@@ -225,11 +226,12 @@ class ResultsDB:
         if not base_rows:
             return []
 
-        # Build a dict of job_id -> base info
-        job_data: dict[str, dict[str, Any]] = {}
+        # Key by (namespace, job_id) — two jobs with the same job_id in
+        # different namespaces must not overwrite each other.
+        job_data: dict[tuple[str, str], dict[str, Any]] = {}
         for row in base_rows:
-            jid = row.get("job_id", "")
-            job_data[jid] = row
+            key = (row.get("namespace", ""), row.get("job_id", ""))
+            job_data[key] = row
 
         # Query each metric separately to handle missing columns gracefully
         for m in metrics:
@@ -237,6 +239,7 @@ class ResultsDB:
             json_expr = f"to_json(t.{m})"
             metric_sql = f"""
                 SELECT
+                    string_split(filename, '/')[-3] AS namespace,
                     string_split(filename, '/')[-2] AS job_id,
                     TRY_CAST({json_expr}->>'avg' AS DOUBLE) AS {m}_avg,
                     TRY_CAST({json_expr}->>'p50' AS DOUBLE) AS {m}_p50,
@@ -253,10 +256,14 @@ class ResultsDB:
 
             metric_rows = await self._query(metric_sql)
             for row in metric_rows:
-                jid = row.get("job_id", "")
-                if jid in job_data:
-                    job_data[jid].update(
-                        {k: v for k, v in row.items() if k != "job_id"}
+                key = (row.get("namespace", ""), row.get("job_id", ""))
+                if key in job_data:
+                    job_data[key].update(
+                        {
+                            k: v
+                            for k, v in row.items()
+                            if k not in ("job_id", "namespace")
+                        }
                     )
 
         return list(job_data.values())
@@ -295,8 +302,11 @@ class ResultsDB:
         """Execute a SQL query in a thread and return results as dicts."""
 
         def _run() -> list[dict[str, Any]]:
+            # duckdb connections are not safe for concurrent execute() from
+            # multiple threads — take an independent cursor per query.
+            cur = self._conn.cursor()
             try:
-                result = self._conn.execute(sql)
+                result = cur.execute(sql)
                 columns = [desc[0] for desc in result.description]
                 return [
                     dict(zip(columns, row, strict=True)) for row in result.fetchall()
@@ -304,6 +314,8 @@ class ResultsDB:
             except duckdb.Error as e:
                 logger.warning(f"DuckDB query failed: {e}")
                 return []
+            finally:
+                cur.close()
 
         return await asyncio.to_thread(_run)
 

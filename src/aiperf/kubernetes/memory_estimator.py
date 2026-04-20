@@ -871,12 +871,17 @@ def _estimate_fixed_service(
 # =============================================================================
 
 
+def _memory_from_resources(resources: dict[str, dict[str, str]]) -> str:
+    """Return the memory string from limits if present, otherwise requests."""
+    return resources.get("limits", resources["requests"])["memory"]
+
+
 def _get_controller_limit_mib() -> float:
     """Get controller pod memory limit from K8sEnvironment."""
     total = 0
     for key in CONTROLLER_RESOURCE_KEYS:
         total += parse_memory_mib(
-            getattr(K8sEnvironment, key).to_k8s_resources()["limits"]["memory"]
+            _memory_from_resources(getattr(K8sEnvironment, key).to_k8s_resources())
         )
     return float(total)
 
@@ -885,7 +890,7 @@ def _get_worker_pod_limit_mib(workers_per_pod: int, rp_per_pod: int) -> float:
     """Get worker pod memory limit from K8sEnvironment."""
     return float(
         parse_memory_mib(
-            K8sEnvironment.WORKER_POD.to_k8s_resources()["limits"]["memory"]
+            _memory_from_resources(K8sEnvironment.WORKER_POD.to_k8s_resources())
         )
     )
 
@@ -916,7 +921,6 @@ class MemoryEstimator:
         p = self.params
         components = [
             _estimate_fixed_service("system_controller"),
-            _estimate_fixed_service("worker_manager"),
             _estimate_fixed_service("timing_manager"),
             _estimate_dataset_manager(
                 p.dataset_count, p.avg_isl_tokens, p.avg_osl_tokens, p.max_turns

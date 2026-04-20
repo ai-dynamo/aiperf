@@ -397,6 +397,7 @@ class HelmDeployer:
         project_root: Path,
         values: HelmValues | None = None,
         operator_namespace: str | None = None,
+        default_job_namespace: str = "default",
     ) -> None:
         """Initialize Helm deployer.
 
@@ -416,6 +417,7 @@ class HelmDeployer:
         self.values = values or HelmValues()
         self._deployed_jobs: list[OperatorJobResult] = []
         self._release_installed = False
+        self.default_job_namespace = default_job_namespace
         if operator_namespace:
             self.OPERATOR_NAMESPACE = operator_namespace
 
@@ -434,7 +436,7 @@ class HelmDeployer:
         # Clean up any existing release for idempotent install
         if await self.is_installed():
             logger.info("Existing helm release found, uninstalling for clean install")
-            await self.uninstall_chart()
+            await self.uninstall_chart(wait=False)
             await asyncio.sleep(3)
 
         # Clean up any non-helm resources that could conflict (PVCs, deployments, etc.)
@@ -602,14 +604,15 @@ class HelmDeployer:
         self,
         config: AIPerfJobConfig,
         name: str | None = None,
-        namespace: str = "default",
+        namespace: str | None = None,
     ) -> OperatorJobResult:
         """Create an AIPerfJob CR.
 
         Args:
             config: Job configuration.
             name: Job name (auto-generated if not provided).
-            namespace: Target namespace.
+            namespace: Target namespace. Defaults to the deployer's
+                ``default_job_namespace`` so xdist workers stay isolated.
 
         Returns:
             OperatorJobResult with initial state.
@@ -618,6 +621,8 @@ class HelmDeployer:
 
         if name is None:
             name = f"benchmark-{uuid.uuid4().hex[:8]}"
+        if namespace is None:
+            namespace = self.default_job_namespace
 
         manifest = config.to_cr_manifest(name, namespace)
         logger.info(f"Creating AIPerfJob {namespace}/{name}")
@@ -706,7 +711,7 @@ class HelmDeployer:
         self,
         config: AIPerfJobConfig,
         name: str | None = None,
-        namespace: str = "default",
+        namespace: str | None = None,
         timeout: int = 300,
         stream_logs: bool = False,
     ) -> OperatorJobResult:
@@ -762,13 +767,77 @@ class HelmDeployer:
     async def cleanup_job(self, result: OperatorJobResult) -> None:
         """Clean up a job and its resources.
 
-        Args:
-            result: Job result to clean up.
+        Removes the AIPerfJob finalizer, the JobSet, and force-deletes any
+        zombie benchmark pods so the next session starts on a clean cluster.
         """
+        ns = result.namespace
+        name = result.job_name
         try:
-            await self.delete_job(result.job_name, result.namespace)
+            await self.kubectl.run(
+                "patch",
+                "aiperfjob",
+                name,
+                "-n",
+                ns,
+                "--type=json",
+                '-p=[{"op":"remove","path":"/metadata/finalizers"}]',
+                check=False,
+            )
+            await self.kubectl.run(
+                "delete",
+                "aiperfjob",
+                name,
+                "-n",
+                ns,
+                "--ignore-not-found",
+                check=False,
+            )
+            await self.kubectl.run(
+                "delete",
+                "jobsets",
+                "--all",
+                "-n",
+                ns,
+                "--ignore-not-found",
+                check=False,
+            )
+            pods = await self.kubectl.run(
+                "get",
+                "pods",
+                "-n",
+                ns,
+                "-l",
+                "jobset.sigs.k8s.io/jobset-name",
+                "-o",
+                "jsonpath={.items[*].metadata.name}",
+                check=False,
+            )
+            if pods.returncode == 0 and pods.stdout.strip():
+                for pod in pods.stdout.strip().split():
+                    await self.kubectl.run(
+                        "patch",
+                        "pod",
+                        pod,
+                        "-n",
+                        ns,
+                        "--type=json",
+                        '-p=[{"op":"remove","path":"/metadata/finalizers"}]',
+                        check=False,
+                    )
+                await self.kubectl.run(
+                    "delete",
+                    "pods",
+                    "-l",
+                    "jobset.sigs.k8s.io/jobset-name",
+                    "-n",
+                    ns,
+                    "--force",
+                    "--grace-period=0",
+                    "--ignore-not-found",
+                    check=False,
+                )
         except Exception as e:
-            logger.warning(f"Failed to delete job {result.job_name}: {e}")
+            logger.warning(f"Failed to delete job {name}: {e}")
 
     async def cleanup_all(self) -> None:
         """Clean up all deployed jobs in parallel."""

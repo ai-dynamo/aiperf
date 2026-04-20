@@ -609,6 +609,50 @@ class KubectlClient:
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 2.0)
 
+    async def force_cleanup_namespace_pods(self, namespace: str) -> None:
+        """Force-delete all pods in a namespace with finalizers stripped.
+
+        Pods created by Jobs carry a `batch.kubernetes.io/job-tracking`
+        finalizer held by the Job controller until the pod terminates
+        gracefully. In tests we don't care about graceful shutdown, so we
+        strip all pod finalizers and force-delete to unblock namespace
+        termination immediately.
+        """
+        result = await self.run(
+            "get",
+            "pods",
+            "-n",
+            namespace,
+            "-o",
+            "jsonpath={.items[*].metadata.name}",
+            check=False,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return
+        pod_names = result.stdout.strip().split()
+        for name in pod_names:
+            await self.run(
+                "patch",
+                "pod",
+                name,
+                "-n",
+                namespace,
+                "--type=json",
+                '-p=[{"op":"remove","path":"/metadata/finalizers"}]',
+                check=False,
+            )
+        await self.run(
+            "delete",
+            "pods",
+            "--all",
+            "-n",
+            namespace,
+            "--force",
+            "--grace-period=0",
+            "--ignore-not-found",
+            check=False,
+        )
+
     async def _force_remove_finalizers(self, namespace: str) -> None:
         """Remove finalizers from all resources in a namespace to unblock deletion."""
         for resource_type in (

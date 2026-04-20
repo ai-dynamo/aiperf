@@ -40,6 +40,8 @@ async def _monitor_pod_liveness(
     if kube_context:
         cmd_base.extend(["--context", kube_context])
 
+    from aiperf.kubernetes.subproc import terminate_process
+
     try:
         while proc.returncode is None:
             await asyncio.sleep(check_interval)
@@ -49,7 +51,13 @@ async def _monitor_pod_liveness(
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
-                await check.wait()
+                try:
+                    # Bound the probe so a stuck kubectl (network partition,
+                    # throttled apiserver) cannot pin the liveness monitor.
+                    await asyncio.wait_for(check.wait(), timeout=check_interval)
+                except asyncio.TimeoutError:
+                    await terminate_process(check)
+                    continue
                 if check.returncode != 0:
                     print_warning(
                         f"Pod {pod_name} no longer exists, closing port-forward"
@@ -162,7 +170,6 @@ async def _start_port_forward_process(
                 f"Port-forward exited unexpectedly: {stderr.strip() or 'no error output'}"
             )
     except asyncio.TimeoutError:
-        proc.terminate()
         stderr = ""
         if proc.stderr:
             try:
@@ -170,6 +177,9 @@ async def _start_port_forward_process(
                 stderr = raw.decode().strip()
             except asyncio.TimeoutError:
                 pass
+        from aiperf.kubernetes.subproc import terminate_process
+
+        await terminate_process(proc)
         detail = f" kubectl stderr: {stderr}" if stderr else ""
         raise RuntimeError(
             f"Port-forward did not become ready within {timeout}s.{detail}\n"
@@ -229,26 +239,38 @@ async def start_port_forward(
     if verify_api:
         for attempt in range(_API_MAX_RETRIES + 1):
             elapsed = asyncio.get_running_loop().time() - start_time
-            remaining_timeout = max(timeout - elapsed, 10.0)
+            remaining_timeout = max(timeout - elapsed, 0.0)
+            if remaining_timeout <= 0:
+                await cleanup_port_forward(proc)
+                raise RuntimeError(
+                    f"Port-forward API verification exceeded budget ({timeout}s) "
+                    f"after {attempt} attempts."
+                )
             try:
                 await asyncio.wait_for(
                     _wait_for_api_ready(actual_port, proc),
                     timeout=remaining_timeout,
                 )
                 break
-            except RuntimeError:
-                # Port-forward process died (API not listening yet), restart it
+            except (RuntimeError, asyncio.TimeoutError) as err:
+                # Port-forward died or API did not respond; restart port-forward.
                 await cleanup_port_forward(proc)
                 if attempt >= _API_MAX_RETRIES:
                     raise RuntimeError(
                         f"Port-forward failed after {_API_MAX_RETRIES} retries. "
-                        f"The API service may not be starting on port {remote_port}."
-                    ) from None
+                        f"The API service may not be listening on port {remote_port}."
+                    ) from err
                 print_info(
                     f"API not ready, restarting port-forward... "
                     f"({attempt + 1}/{_API_MAX_RETRIES})"
                 )
                 await asyncio.sleep(_API_RETRY_DELAY)
+                elapsed = asyncio.get_running_loop().time() - start_time
+                remaining_timeout = max(timeout - elapsed, 0.0)
+                if remaining_timeout <= 0:
+                    raise RuntimeError(
+                        f"Port-forward API verification exceeded budget ({timeout}s)."
+                    ) from err
                 proc, actual_port = await _start_port_forward_process(
                     namespace,
                     pod_name,
@@ -258,9 +280,6 @@ async def start_port_forward(
                     kubeconfig=kubeconfig,
                     kube_context=kube_context,
                 )
-            except asyncio.TimeoutError:
-                print_warning("API health check timed out, continuing anyway...")
-                break
 
     return proc, actual_port
 

@@ -161,11 +161,28 @@ class CRPoller:
             snake = _camel_to_snake(cond_type)
             self.conditions[snake] = cond.get("status") == "True"
 
-        # Metadata (from spec or status)
+        # Metadata (from spec or status). models/endpoint accept multiple
+        # shorthand forms per the CRD; normalize before indexing to avoid
+        # KeyError/TypeError when the user supplies a dict or scalar string.
         benchmark = spec.get("benchmark", {})
-        models = benchmark.get("models", [])
-        self.model = models[0] if models else status.get("model")
+        models_cfg = benchmark.get("models", [])
+        if isinstance(models_cfg, list):
+            model_items = models_cfg
+        elif isinstance(models_cfg, dict):
+            model_items = models_cfg.get("items") or models_cfg.get("modelNames") or []
+        else:
+            model_items = []
+        if model_items:
+            first = model_items[0]
+            self.model = (
+                first.get("name", first) if isinstance(first, dict) else str(first)
+            )
+        else:
+            self.model = status.get("model")
+
         urls = benchmark.get("endpoint", {}).get("urls", [])
+        if isinstance(urls, str):
+            urls = [urls]
         self.endpoint = urls[0] if urls else status.get("endpoint")
         self.image = spec.get("image")
 
@@ -228,29 +245,22 @@ class EventPoller:
 
     async def poll(self) -> None:
         """Fetch latest events."""
-        try:
-            raw_events = await self._client.get_events(self._namespace)
-        except Exception:
-            return
+        events = await self._client.get_events(self._namespace)
 
         filtered = []
-        for evt in raw_events:
-            raw = evt.raw if hasattr(evt, "raw") else evt
-            metadata = raw.get("metadata", {})
-            involved = raw.get("involvedObject", {})
-            obj_name = involved.get("name", "")
-
-            if self._job_id not in obj_name:
+        for ev in events:
+            if self._job_id not in ev.involved_object:
                 continue
-
             filtered.append(
                 EventSnapshot(
-                    timestamp=metadata.get("creationTimestamp", ""),
-                    type=raw.get("type", "Normal"),
-                    reason=raw.get("reason", ""),
-                    object=f"{involved.get('kind', '')}/{obj_name}",
-                    message=raw.get("message", ""),
-                    count=raw.get("count", 1),
+                    timestamp=ev.last_timestamp.isoformat()
+                    if ev.last_timestamp
+                    else "",
+                    type=ev.type,
+                    reason=ev.reason,
+                    object=ev.involved_object,
+                    message=ev.message,
+                    count=1,
                 )
             )
 

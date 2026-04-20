@@ -36,6 +36,23 @@ rules:
   resources: ["jobs"]
   verbs: ["get", "list", "watch"]
 
+# Deployments - preflight checks for JobSet controller and other operators
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch"]
+
+# ServiceAccounts - preflight verifies custom SA existence
+# ResourceQuotas - preflight inspects quotas before scheduling
+# Secrets - preflight verifies referenced imagePullSecrets / env secrets
+- apiGroups: [""]
+  resources: ["serviceaccounts", "resourcequotas", "secrets"]
+  verbs: ["get", "list", "watch"]
+
+# NetworkPolicies - preflight checks benchmark-namespace network policies
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["get", "list", "watch"]
+
 # ConfigMaps - store benchmark configuration
 - apiGroups: [""]
   resources: ["configmaps"]
