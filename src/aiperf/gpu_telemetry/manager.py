@@ -14,9 +14,9 @@ if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_init, on_message, on_stop
-from aiperf.common.messages import TelemetryRecordsMessage
 from aiperf.common.models import ErrorDetails, TelemetryRecord
 from aiperf.common.protocols import PushClientProtocol
+from aiperf.common.telemetry_records_wire import build_telemetry_records_wire_message
 from aiperf.credit.messages import CreditPhaseStartMessage
 from aiperf.gpu_telemetry.constants import PYNVML_SOURCE_IDENTIFIER
 from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
@@ -457,7 +457,7 @@ class GPUTelemetryManager(BaseComponentService):
 
         try:
             dcgm_url = self._collector_id_to_url.get(collector_id, "")
-            message = TelemetryRecordsMessage(
+            wire_message = build_telemetry_records_wire_message(
                 service_id=self.service_id,
                 collector_id=collector_id,
                 dcgm_url=dcgm_url,
@@ -465,7 +465,7 @@ class GPUTelemetryManager(BaseComponentService):
                 error=None,
             )
 
-            await self.records_push_client.push(message)
+            await self.records_push_client.push(wire_message)
 
         except Exception as e:
             self.error(f"Failed to send telemetry records: {e}")
@@ -483,7 +483,7 @@ class GPUTelemetryManager(BaseComponentService):
 
         try:
             dcgm_url = self._collector_id_to_url.get(collector_id, "")
-            error_message = TelemetryRecordsMessage(
+            error_message = build_telemetry_records_wire_message(
                 service_id=self.service_id,
                 collector_id=collector_id,
                 dcgm_url=dcgm_url,

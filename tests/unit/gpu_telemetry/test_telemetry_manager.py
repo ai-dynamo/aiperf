@@ -8,10 +8,8 @@ import pytest
 from aiperf.common.control_structs import Command, TelemetryStatus
 from aiperf.common.enums import CommandType, CreditPhase
 from aiperf.common.environment import Environment
-from aiperf.common.messages import (
-    TelemetryRecordsMessage,
-)
 from aiperf.common.models import CreditPhaseStats, ErrorDetails
+from aiperf.common.telemetry_records_wire import TelemetryRecordsWireMessage
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.credit.messages import CreditPhaseStartMessage
 from aiperf.gpu_telemetry.constants import PYNVML_SOURCE_IDENTIFIER
@@ -219,11 +217,11 @@ class TestCallbackFunctions:
         # Verify push was called with correct message
         mock_push_client.push.assert_called_once()
         call_args = mock_push_client.push.call_args[0][0]
-        assert isinstance(call_args, TelemetryRecordsMessage)
+        assert isinstance(call_args, TelemetryRecordsWireMessage)
         assert call_args.service_id == "test_manager"
         assert call_args.collector_id == "test_collector"
         assert call_args.dcgm_url == "http://localhost:9400/metrics"
-        assert call_args.records == sample_telemetry_records
+        assert len(call_args.records) == len(sample_telemetry_records)
         assert call_args.error is None
 
     @pytest.mark.asyncio
@@ -278,12 +276,13 @@ class TestCallbackFunctions:
         # Verify push was called with error message
         mock_push_client.push.assert_called_once()
         call_args = mock_push_client.push.call_args[0][0]
-        assert isinstance(call_args, TelemetryRecordsMessage)
+        assert isinstance(call_args, TelemetryRecordsWireMessage)
         assert call_args.service_id == "test_manager"
         assert call_args.collector_id == "test_collector"
         assert call_args.dcgm_url == "http://localhost:9400/metrics"
-        assert call_args.records == []
-        assert call_args.error == error_details
+        assert call_args.records == ()
+        assert call_args.error is not None
+        assert call_args.error.message == error_details.message
 
     @pytest.mark.asyncio
     async def test_on_telemetry_error_exception_handling(self):

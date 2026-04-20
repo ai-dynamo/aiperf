@@ -47,7 +47,6 @@ from aiperf.common.messages import (
     RealtimeMetricsMessage,
     RecordsProcessingStatsMessage,
     ServerMetricsRecordMessage,
-    TelemetryRecordsMessage,
 )
 from aiperf.common.metric_records_wire import (
     MetricRecordsBatchWireMessage,
@@ -68,6 +67,11 @@ from aiperf.common.models import (
     ServerMetricsRecord,
     TelemetryRecord,
     WorkerProcessingStats,
+)
+from aiperf.common.telemetry_records_wire import (
+    TelemetryRecordsWireMessage,
+    telemetry_error_from_wire,
+    telemetry_records_from_wire,
 )
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.credit.messages import (
@@ -241,17 +245,19 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         await self._process_metric_record_data(wire_message_to_record_data(message))
 
     @on_pull_message(MessageType.TELEMETRY_RECORDS)
-    async def _on_telemetry_records(self, message: TelemetryRecordsMessage) -> None:
+    async def _on_telemetry_records(self, message: TelemetryRecordsWireMessage) -> None:
         """Handle telemetry records message from Telemetry Manager.
         The RecordsManager acts as the central hub for all record processing,
         whether inference metrics or GPU telemetry.
 
         Args:
-            message: Batch of telemetry records from a DCGM collector
+            message: Batch of telemetry records from a DCGM collector, sent as
+                a msgspec wire envelope on the shared RECORDS channel.
         """
         if message.valid:
             try:
-                await self._send_telemetry_to_results_processors(message.records)
+                records = telemetry_records_from_wire(message)
+                await self._send_telemetry_to_results_processors(records)
             except Exception as e:
                 error_details = ErrorDetails(
                     message=f"Telemetry processor error: {str(e)}"
@@ -259,8 +265,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 self._telemetry_state.error_counts[error_details] += 1
                 self.debug(f"Failed to process telemetry batch: {e}")
         else:
-            if message.error:
-                self._telemetry_state.error_counts[message.error] += 1
+            wire_error = telemetry_error_from_wire(message)
+            if wire_error is not None:
+                self._telemetry_state.error_counts[wire_error] += 1
 
     @on_pull_message(MessageType.SERVER_METRICS_RECORD)
     async def _on_server_metrics_records(
