@@ -249,9 +249,6 @@ async def on_create(
         raise
     except (kr8s.ServerError, aiohttp.ClientError, ConnectionError, TimeoutError) as e:
         logger.warning(f"Transient error creating AIPerfJob {namespace}/{name}: {e}")
-        status.set_phase(Phase.FAILED).set_error(str(e))
-        status.finalize()
-        events.failed(body, job_id, str(e))
         raise kopf.TemporaryError(f"Transient error: {e}", delay=30) from e
     except Exception as e:
         logger.exception(f"Failed to create AIPerfJob {namespace}/{name}")
