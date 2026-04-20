@@ -102,7 +102,20 @@ Important fields:
 
 ## Configuration
 
-Pass a bundled config name, a config JSON path, or a prior run manifest:
+Pass a bundled config name, a config JSON path, or a prior run manifest.
+Currently, the only bundled runnable config is `default`.
+
+The default config models long coding-agent sessions with:
+
+- `max_prompt_tokens`: `167000`.
+- `block_size`: `512` tokens.
+- A `32000` token global L1 prefix shared by all sessions.
+- No L1.5 group-shared prefix by default (`layer1_5_tokens: 0`,
+  `num_groups: 1`).
+- Session-specific initial context sampled around a `15000` token mean.
+- New turn input sampled around a `6000` token mean, capped at `10000`.
+- Output length sampled around a `1000` token mean, capped at `1500`.
+- A small reset probability that grows with context utilization.
 
 ```bash
 aiperf synthesize agentic-code \
