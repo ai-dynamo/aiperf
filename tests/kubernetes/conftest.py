@@ -689,26 +689,11 @@ async def _purge_stale_aiperf_resources(
         "jsonpath={.items[*].metadata.name}",
         check=False,
     )
-    # Protect this worker's own namespaces from the wildcard purge so
-    # parallel xdist workers don't nuke each other mid-flight.
-    own_namespaces = {
-        f"aiperf-bench-{worker_namespace_suffix}",
-        f"aiperf-jobs-{worker_namespace_suffix}",
-    }
-    if ns_list.returncode == 0:
-        for ns in ns_list.stdout.split():
-            if ns in own_namespaces:
-                continue
-            if ns.startswith(("aiperf-bench-", "aiperf-jobs-")):
-                await _purge_ns(ns)
-                await kubectl.run(
-                    "delete",
-                    "namespace",
-                    ns,
-                    "--ignore-not-found",
-                    "--wait=false",
-                    check=False,
-                )
+    # Under xdist, do NOT nuke other workers' aiperf-bench-*/aiperf-jobs-*
+    # namespaces — they may be mid-flight on another worker. Leave them for
+    # session-end cleanup to handle. We only purged `default` and the legacy
+    # `aiperf-benchmarks` above, which is enough to clear stale state.
+    _ = ns_list
 
     yield
 
@@ -1338,6 +1323,7 @@ async def helm_deployer(
     jobset_controller: None,
     helm_values: HelmValues,
     operator_job_namespace: str,
+    worker_namespace_suffix: str,
 ) -> AsyncGenerator[HelmDeployer, None]:
     """Create a Helm deployer (module-scoped).
 
@@ -1346,11 +1332,16 @@ async def helm_deployer(
     """
     from tests.kubernetes.helpers.helm import HelmDeployer
 
+    # Install the helm-deployed operator into its OWN namespace so it does not
+    # fight with the kubectl-deployed operator in aiperf-system (the
+    # operator_ready fixture) and so xdist workers do not step on each other.
+    helm_operator_namespace = f"aiperf-helm-{worker_namespace_suffix}"
     deployer = HelmDeployer(
         kubectl=kubectl,
         helm=helm_client,
         project_root=project_root,
         values=helm_values,
+        operator_namespace=helm_operator_namespace,
         default_job_namespace=operator_job_namespace,
     )
     await kubectl.run("create", "namespace", operator_job_namespace, check=False)
