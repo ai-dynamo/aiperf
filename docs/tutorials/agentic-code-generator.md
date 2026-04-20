@@ -61,9 +61,8 @@ aiperf profile \
   --ui dashboard
 ```
 
-For coding-agent workloads, `--prompt-corpus coding` is a useful pairing because
-Mooncake trace rows specify token counts and cache block IDs, not literal prompt
-text:
+For longer runs, use the same generated trace with the usual Mooncake replay
+controls:
 
 ```bash
 aiperf profile \
@@ -73,7 +72,6 @@ aiperf profile \
   --endpoint-type chat \
   --input-file .test/default_1000s_seed42_YYYYMMDD-HHMMSS/dataset.jsonl \
   --custom-dataset-type mooncake_trace \
-  --prompt-corpus coding \
   --concurrency 50 \
   --benchmark-duration 2400 \
   --workers-max 200 \

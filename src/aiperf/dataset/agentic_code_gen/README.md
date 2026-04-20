@@ -93,7 +93,6 @@ aiperf profile \
   --input-file /model-cache/traces/agentic-code-run/dataset.jsonl \
   --artifact-dir /model-cache/perf/${EPOCH}_${JOB_NAME}/synth_mt_qps10 \
   --custom-dataset-type mooncake_trace \
-  --prompt-corpus coding \
   --concurrency 50 \
   --concurrency-ramp-duration 300 \
   --benchmark-duration 2400 \
