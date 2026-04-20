@@ -1196,21 +1196,30 @@ async def operator_ready(
     operator_deployer: OperatorDeployer,
     mock_server: None,
     k8s_settings: K8sTestSettings,
+    tmp_path_factory: pytest.TempPathFactory,
+    worker_id: str,
 ) -> AsyncGenerator[OperatorDeployer, None]:
     """Ensure operator is deployed and ready (package-scoped).
 
-    Use this fixture for tests that need the operator running.
+    Under pytest-xdist, serialize deployment with a file lock so only one
+    worker installs the operator; the rest wait for it to become healthy.
     """
-    # Skip redeploy when reusing cluster and an operator is already healthy;
-    # also skip the teardown uninstall so next session starts warm.
-    already_healthy = (
-        k8s_settings.reuse_cluster and await operator_deployer.is_operator_healthy()
-    )
-    if already_healthy:
-        logger.info("Reusing existing healthy operator deployment")
-    else:
-        async with timed_operation("Deploying AIPerf operator"):
-            await operator_deployer.deploy_operator()
+    from filelock import FileLock
+
+    root_tmp = tmp_path_factory.getbasetemp().parent
+    lock_path = root_tmp / ".aiperf_operator_install.lock"
+    flag_path = root_tmp / ".aiperf_operator_ready"
+
+    with FileLock(str(lock_path)):
+        already_healthy = flag_path.exists() or (
+            k8s_settings.reuse_cluster and await operator_deployer.is_operator_healthy()
+        )
+        if already_healthy:
+            logger.info(f"[{worker_id}] Reusing existing healthy operator deployment")
+        else:
+            async with timed_operation("Deploying AIPerf operator"):
+                await operator_deployer.deploy_operator()
+            flag_path.touch()
 
     yield operator_deployer
 
