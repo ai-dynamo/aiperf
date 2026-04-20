@@ -907,6 +907,12 @@ class WorkerGroupManagerBase(BaseComponentService):
     async def _stop_worker_group_manager(self) -> None:
         """Stop group-local infrastructure, then upload raw records to controller."""
         self._stopping = True
+        # No runtime adapter means this WGM never owned group-local peers
+        # (e.g. FakeServiceManager in-process mode): skip shutdown coordination
+        # that would otherwise wait forever for peers that never registered.
+        if self._runtime_registration is None:
+            await self._proxy_manager.stop()
+            return
         await self._shutdown_local_peers()
         await self._wait_for_record_processor_shutdowns()
         if self._local_subprocess_manager is not None:

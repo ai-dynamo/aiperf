@@ -383,7 +383,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
             return
 
-        if self._dataset_configured_event.is_set() or self._worker_ready_event.is_set():
+        if self._dataset_configured_event.is_set():
             self.debug("Dataset already initialized, ignoring rebroadcast")
             return
 
