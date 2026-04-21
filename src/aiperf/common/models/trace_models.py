@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from time import perf_counter_ns, time_ns
-from typing import Any, ClassVar, Literal
+from typing import Any, Literal
 
 import msgspec
 from msgspec import Struct, field
@@ -21,9 +21,6 @@ class TraceDataExport(AIPerfBaseModel):
 
     Create from BaseTraceData using trace_data.to_export() method.
     """
-
-    # For auto-routed-model serialization and deserialization
-    discriminator_field: ClassVar[str] = "trace_type"
 
     trace_type: str = Field(
         ...,

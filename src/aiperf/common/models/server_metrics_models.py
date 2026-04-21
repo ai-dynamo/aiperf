@@ -518,8 +518,6 @@ class BaseServerMetricData(AIPerfBaseModel):
     but stats within each series are flattened for easy access.
     """
 
-    discriminator_field: ClassVar[str] = "type"
-
     type: PrometheusMetricType = Field(description="Metric type")
 
     description: str = Field(description="Metric description from HELP text")

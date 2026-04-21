@@ -235,3 +235,27 @@ class TestServerMetricsResults:
 
         assert len(results.error_summary) == 1
         assert results.error_summary[0].count == 5
+
+
+def test_base_server_metric_data_has_no_autoroutedmodel_registry():
+    """BaseServerMetricData no longer populates AutoRoutedModel's lookup table."""
+    from aiperf.common.models import BaseServerMetricData
+
+    assert "discriminator_field" not in BaseServerMetricData.__dict__
+
+
+def test_gauge_counter_histogram_unions_still_deserialize():
+    """Pydantic's native Union discriminates on `type` field."""
+    from pydantic import TypeAdapter
+
+    from aiperf.common.models.server_metrics_models import (
+        CounterMetricData,
+        GaugeMetricData,
+        HistogramMetricData,
+    )
+
+    payload = {"type": "gauge", "description": "d", "series": []}
+    union_adapter = TypeAdapter(
+        GaugeMetricData | CounterMetricData | HistogramMetricData
+    )
+    assert isinstance(union_adapter.validate_python(payload), GaugeMetricData)
