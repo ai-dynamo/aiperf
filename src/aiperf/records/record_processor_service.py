@@ -148,9 +148,14 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         else:
             self.warning(f"Unknown group-local command: {message.command}")
             return
-        await self.pod_lifecycle_dealer_client.send(
-            GroupPeerCommandAck(cid=message.cid, service_id=self.service_id)
-        )
+        try:
+            await self.pod_lifecycle_dealer_client.send(
+                GroupPeerCommandAck(cid=message.cid, service_id=self.service_id)
+            )
+        except Exception as e:
+            self.debug(
+                f"Failed to ack group-local command (peer already disconnected?): {e!r}"
+            )
 
     @on_start
     async def _register_with_worker_group_manager(self) -> None:
@@ -171,12 +176,17 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         await self._flush_pending_metric_records()
         if self.pod_lifecycle_dealer_client is None:
             return
-        await self.pod_lifecycle_dealer_client.send(
-            GroupPeerShutdown(
-                service_id=self.service_id,
-                service_type=str(self.service_type),
+        try:
+            await self.pod_lifecycle_dealer_client.send(
+                GroupPeerShutdown(
+                    service_id=self.service_id,
+                    service_type=str(self.service_type),
+                )
             )
-        )
+        except Exception as e:
+            self.warning(
+                f"Failed to send GroupPeerShutdown (peer already disconnected?): {e!r}"
+            )
 
     @background_task(
         interval=Environment.RECORD.INGEST_BATCH_FLUSH_INTERVAL, immediate=False

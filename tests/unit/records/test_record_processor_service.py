@@ -33,8 +33,8 @@ class TestRecordProcessorCreateMetricRecordMetadata:
         """Test creating metadata when RequestRecord has no end_perf_ns and no responses."""
         sample_request_record.end_perf_ns = None
         sample_request_record.responses = []
-        sample_request_record.credit_num = 1
-        sample_request_record.credit_phase = "profiling"
+        sample_request_record.request_info.credit_num = 1
+        sample_request_record.request_info.credit_phase = "profiling"
         sample_request_record.recv_start_perf_ns = (
             sample_request_record.start_perf_ns + 10_000
         )
@@ -60,7 +60,7 @@ class TestRecordProcessorCreateMetricRecordMetadata:
         sample_request_record.end_perf_ns = (
             sample_request_record.start_perf_ns + 200_000
         )
-        sample_request_record.credit_num = 2
+        sample_request_record.request_info.credit_num = 2
 
         worker_id = "worker-2"
 
@@ -89,7 +89,7 @@ class TestRecordProcessorCreateMetricRecordMetadata:
             sample_request_record.start_perf_ns + 100_000
         )
         sample_request_record.cancellation_perf_ns = cancellation_perf_ns
-        sample_request_record.credit_num = 3
+        sample_request_record.request_info.credit_num = 3
 
         worker_id = "worker-3"
 
@@ -170,7 +170,7 @@ class TestRecordProcessorCreateMetricRecordMetadata:
     ):
         """Test creating metadata when optional fields are None."""
         setattr(sample_request_record, field_name, field_value)
-        sample_request_record.credit_num = 4
+        sample_request_record.request_info.credit_num = 4
 
         worker_id = "worker-4"
 
@@ -287,3 +287,112 @@ class TestRecordProcessorWireMessages:
         assert isinstance(pushed_message, MetricRecordsBatchWireMessage)
         assert len(pushed_message.records) == 2
         assert processor._pending_metric_records == []
+
+
+class TestRecordProcessorShutdownResilience:
+    """RecordProcessor must tolerate a disconnected WorkerGroupManager during teardown.
+
+    In k8s JobSet teardown, the WorkerGroupManager DEALER peer can be torn down
+    before this record-processor finishes its @on_stop hook. When that race hits,
+    the ZMQ send raises. Before the fix, the exception propagated out of the
+    on_stop hook, tripped the service lifecycle's _fail path, and caused the
+    container to exit non-zero — which tripped the Job's backoffLimit and
+    cascaded the whole JobSet to Failed. The fix swallows the send error on
+    shutdown paths only, matching worker.py's existing pattern.
+    """
+
+    @pytest.fixture
+    def processor(self):
+        instance = MagicMock(spec=RecordProcessor)
+        instance.service_id = "record-processor-1"
+        instance.service_type = "record_processor"
+        instance.pod_lifecycle_dealer_client = AsyncMock()
+        instance._flush_pending_metric_records = AsyncMock()
+        instance.stop = AsyncMock()
+        instance.warning = MagicMock()
+        instance.debug = MagicMock()
+        return instance
+
+    @pytest.mark.asyncio
+    async def test_on_stop_swallows_dealer_send_failure(self, processor):
+        """If the group manager DEALER peer has already exited, send raises —
+        the on_stop hook must log and return, never propagate."""
+        processor.pod_lifecycle_dealer_client.send = AsyncMock(
+            side_effect=ConnectionError("peer gone")
+        )
+
+        await RecordProcessor._notify_worker_group_manager_shutdown(processor)
+
+        processor._flush_pending_metric_records.assert_awaited_once()
+        processor.pod_lifecycle_dealer_client.send.assert_awaited_once()
+        processor.warning.assert_called_once()
+        assert "peer already disconnected" in processor.warning.call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_on_stop_sends_group_peer_shutdown_when_peer_up(self, processor):
+        """Happy path: dealer up → GroupPeerShutdown is sent, no warning."""
+        await RecordProcessor._notify_worker_group_manager_shutdown(processor)
+
+        sent = processor.pod_lifecycle_dealer_client.send.await_args.args[0]
+        from aiperf.common.pod_lifecycle_structs import GroupPeerShutdown
+
+        assert isinstance(sent, GroupPeerShutdown)
+        assert sent.service_id == "record-processor-1"
+        processor.warning.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_stop_skips_send_when_dealer_client_absent(self, processor):
+        """No dealer client (non-k8s mode) → flush only, no send, no error."""
+        processor.pod_lifecycle_dealer_client = None
+
+        await RecordProcessor._notify_worker_group_manager_shutdown(processor)
+
+        processor._flush_pending_metric_records.assert_awaited_once()
+        processor.warning.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_pod_lifecycle_ack_swallows_send_failure(self, processor):
+        """The SHUTDOWN command's ack send races the same peer teardown —
+        a dealer failure here must not propagate either, otherwise the
+        awaited stop() completes but the hook itself raises."""
+        from aiperf.common.enums import CommandType
+        from aiperf.common.pod_lifecycle_structs import GroupPeerCommand
+
+        processor.pod_lifecycle_dealer_client.send = AsyncMock(
+            side_effect=ConnectionError("peer gone")
+        )
+        message = GroupPeerCommand(
+            cid="cmd-1",
+            service_id="record-processor-1",
+            command=str(CommandType.SHUTDOWN),
+        )
+
+        await RecordProcessor._on_pod_lifecycle_message(processor, message)
+
+        processor.stop.assert_awaited_once()
+        processor.pod_lifecycle_dealer_client.send.assert_awaited_once()
+        # Debug log, not a warning — ack failures during SHUTDOWN are expected.
+        processor.debug.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_pod_lifecycle_ack_sent_when_peer_up(self, processor):
+        """Happy path: SHUTDOWN command → stop() awaited, ack sent."""
+        from aiperf.common.enums import CommandType
+        from aiperf.common.pod_lifecycle_structs import (
+            GroupPeerCommand,
+            GroupPeerCommandAck,
+        )
+
+        message = GroupPeerCommand(
+            cid="cmd-2",
+            service_id="record-processor-1",
+            command=str(CommandType.SHUTDOWN),
+        )
+
+        await RecordProcessor._on_pod_lifecycle_message(processor, message)
+
+        processor.stop.assert_awaited_once()
+        sent = processor.pod_lifecycle_dealer_client.send.await_args.args[0]
+        assert isinstance(sent, GroupPeerCommandAck)
+        assert sent.cid == "cmd-2"
+        processor.debug.assert_not_called()
