@@ -27,6 +27,7 @@ from aiperf.operator.client_cache import (
     _warned_pod_restarts,
     close_progress_client,
     get_or_create_progress_client,
+    is_cancellation_requested,
     is_completion_claimed,
     job_key,
     try_claim_completion,
@@ -136,6 +137,16 @@ async def monitor_progress(
 
     try:
         key = job_key(namespace, job_id)
+
+        # Short-circuit if on_delete has signaled cancellation for this job.
+        # Without this, a delete has to wait for the entire monitor tick
+        # (including handle_completion's fetch backoff) to complete before
+        # kopf's per-object serialization lets the delete handler run.
+        if is_cancellation_requested(key):
+            logger.debug(
+                f"Cancellation requested for {namespace}/{name}, skipping monitor tick"
+            )
+            return
 
         # Check job timeout
         timeout_sec = _get_job_timeout(spec)

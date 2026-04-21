@@ -22,6 +22,7 @@ from aiperf.operator.client_cache import (
     close_progress_client,
     get_or_create_progress_client,
     job_key,
+    request_cancellation,
     try_claim_completion,
 )
 from aiperf.operator.handlers.completion import handle_completion
@@ -35,7 +36,12 @@ async def on_delete(
 ) -> None:
     """Handle deletion - clean up cached ProgressClient and let K8s GC handle resources."""
     job_id = status.get("jobId", name)
-    await close_progress_client(job_key(namespace, job_id))
+    key = job_key(namespace, job_id)
+    # Request cancellation FIRST so any concurrent monitor/completion work
+    # sees the flag before we free the client. close_progress_client also
+    # clears the cancellation event, so the request must be made first.
+    request_cancellation(key)
+    await close_progress_client(key)
     logger.info(f"Deleting AIPerfJob {namespace}/{name}")
 
 

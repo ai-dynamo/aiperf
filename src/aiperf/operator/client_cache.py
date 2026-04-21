@@ -38,6 +38,33 @@ _warned_pod_restarts: dict[str, set[tuple[str, int]]] = {}
 # check for claims made by this same process.
 _shutdown_sent: set[str] = set()
 
+# Per-job cancellation events set by on_delete. Long-running handler
+# paths (monitor_progress, handle_completion, fetch retries) check
+# is_cancellation_requested() at await boundaries and short-circuit so
+# CR deletion doesn't have to wait for fetch backoff + JobSet delete.
+_cancellation_events: dict[str, asyncio.Event] = {}
+
+
+def request_cancellation(key: str) -> None:
+    """Signal that any in-flight handler work for this job should abort.
+
+    Called from on_delete. Long-running paths check
+    ``is_cancellation_requested`` at each await boundary and exit early
+    (skipping remaining retries, JobSet delete, status patches) so the
+    CR deletion doesn't block on tens-of-seconds of fetch backoff.
+    """
+    event = _cancellation_events.get(key)
+    if event is None:
+        event = asyncio.Event()
+        _cancellation_events[key] = event
+    event.set()
+
+
+def is_cancellation_requested(key: str) -> bool:
+    """Return True if cancellation was requested for this job key."""
+    event = _cancellation_events.get(key)
+    return event is not None and event.is_set()
+
 
 def job_key(namespace: str, job_id: str) -> str:
     """Create a unique cache key scoped to namespace.
@@ -79,6 +106,11 @@ async def _close_unlocked(key: str) -> None:
         await client.__aexit__(None, None, None)
     _warned_pod_restarts.pop(key, None)
     _shutdown_sent.discard(key)
+    # Intentionally DO NOT clear _cancellation_events here: observers may
+    # still need to see the cancel flag after the client is freed (the
+    # fetch-retry loop, for instance, yields between the close and the
+    # next iteration). Once set, the flag stays set until
+    # _reset_for_testing is called or the process exits.
 
 
 def is_completion_claimed(body: dict[str, Any]) -> bool:
@@ -196,3 +228,4 @@ def _reset_for_testing() -> None:
     _progress_clients.clear()
     _warned_pod_restarts.clear()
     _shutdown_sent.clear()
+    _cancellation_events.clear()

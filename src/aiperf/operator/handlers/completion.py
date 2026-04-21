@@ -18,7 +18,11 @@ from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.kubernetes.kr8s_resources import AsyncJobSet
 from aiperf.kubernetes.results_sidecar import CHECKPOINTS_DIR_NAME
 from aiperf.operator import events
-from aiperf.operator.client_cache import get_or_create_progress_client, job_key
+from aiperf.operator.client_cache import (
+    get_or_create_progress_client,
+    is_cancellation_requested,
+    job_key,
+)
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.job_index import index_job_completed
 from aiperf.operator.k8s_helpers import retry_with_backoff
@@ -39,6 +43,16 @@ async def handle_completion(
     result: FetchResult | None = None,
 ) -> None:
     """Handle job completion: fetch results and update status."""
+    # Short-circuit if on_delete has signaled cancellation. The CR is
+    # about to disappear; skipping fetch/JobSet-delete/status patches
+    # keeps the delete from blocking on retry backoff.
+    if is_cancellation_requested(job_key(namespace, job_id)):
+        logger.info(
+            f"Cancellation requested for {namespace}/{job_id}, "
+            "skipping completion handling"
+        )
+        return
+
     # Backfill conditions for fast-completing jobs that skipped RUNNING phase
     total_workers = status.get("workers", {}).get("total", 1)
     if not sb.conditions.is_condition_true(ConditionType.WORKERS_READY):
@@ -184,7 +198,9 @@ async def handle_completion(
     # Delete the JobSet to free cluster resources after complete result files are stored.
     # Keep pods alive for retry on the next monitor tick if fetch failed or only
     # partial/non-authoritative artifacts were available.
-    if success:
+    # Skip the delete entirely if cancellation was requested — K8s GC via
+    # ownerReferences will reap the JobSet once the CR is gone.
+    if success and not is_cancellation_requested(job_key(namespace, job_id)):
         try:
             api = await get_api()
             js = await AsyncJobSet.get(jobset_name, namespace=namespace, api=api)
@@ -278,6 +294,17 @@ async def fetch_results_with_retry(
         return sorted(set(current) | set(new))
 
     async def _fetch_once() -> FetchResult:
+        # Short-circuit on cancellation so the outer retry_with_backoff
+        # stops immediately (returning this FetchResult is success from
+        # the retry wrapper's perspective, so no further attempts fire).
+        if is_cancellation_requested(key):
+            return FetchResult(
+                metrics=state["metrics"],
+                downloaded=state["downloaded"] or [],
+                checkpoints=state["checkpoints"] or [],
+                error="Cancelled by CR deletion",
+            )
+
         if state["metrics"] is None:
             state["metrics"] = await client.get_metrics(controller_host)
 
