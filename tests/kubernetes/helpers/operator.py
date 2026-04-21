@@ -380,8 +380,14 @@ class OperatorDeployer:
         raise TimeoutError(f"CRD {self.CRD_NAME} not established within {timeout}s")
 
     async def is_operator_healthy(self) -> bool:
-        """Return True if the operator Deployment already has ready replicas."""
-        result = await self.kubectl.run(
+        """Return True if the operator Deployment + RBAC are fully present.
+
+        Checks both the Deployment's ready replicas AND the cluster-scoped
+        RBAC resources (ClusterRole + ClusterRoleBinding). A fresh helm
+        release or manual cleanup can leave the Deployment ready while
+        wiping RBAC out from under it, so we need the full picture.
+        """
+        dep = await self.kubectl.run(
             "get",
             "deployment",
             "aiperf-operator",
@@ -391,10 +397,18 @@ class OperatorDeployer:
             "jsonpath={.status.readyReplicas}",
             check=False,
         )
-        if result.returncode != 0:
+        if dep.returncode != 0:
             return False
-        ready = result.stdout.strip()
-        return bool(ready) and ready != "0"
+        ready = dep.stdout.strip()
+        if not (bool(ready) and ready != "0"):
+            return False
+        for resource in ("clusterrole", "clusterrolebinding"):
+            result = await self.kubectl.run(
+                "get", resource, "aiperf-operator", check=False
+            )
+            if result.returncode != 0:
+                return False
+        return True
 
     async def deploy_operator(self) -> None:
         """Deploy the operator to the cluster.
