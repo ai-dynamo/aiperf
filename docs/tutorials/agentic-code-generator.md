@@ -11,7 +11,8 @@ layers, session-specific repository context, incremental conversation growth,
 inter-turn delays, resets, and restart continuations.
 
 The generator writes Mooncake trace JSONL, so the output can be replayed with
-the existing `mooncake_trace` custom dataset loader.
+the existing `mooncake_trace` custom dataset loader. Configs can also emit a
+`schedule.jsonl` file that drives replay concurrency over wall-clock time.
 
 ## Prefix Layers
 
@@ -113,6 +114,8 @@ Each run creates a timestamped directory:
 The directory contains:
 
 - `dataset.jsonl`: Mooncake-compatible trace rows.
+- `schedule.jsonl`: optional replay concurrency schedule, emitted only when
+  `concurrency_schedule` is set in the generator config.
 - `manifest.json`: seed, session count, config name, and generation parameters.
 - `quality.json`: target-vs-observed distribution statistics.
 - `report.html`: summary dashboard for generated sessions.
@@ -145,7 +148,9 @@ aiperf profile \
 ```
 
 For longer runs, use the same generated trace with the usual Mooncake replay
-controls:
+controls. If the generator emitted `schedule.jsonl`, pass it with
+`--concurrency-schedule-file`; otherwise use the usual static concurrency or
+ramp options.
 
 ```bash
 aiperf profile \
@@ -154,6 +159,7 @@ aiperf profile \
   --url http://localhost:8000 \
   --endpoint-type chat \
   --input-file .test/default_1000s_seed42_YYYYMMDD-HHMMSS/dataset.jsonl \
+  --concurrency-schedule-file .test/default_1000s_seed42_YYYYMMDD-HHMMSS/schedule.jsonl \
   --custom-dataset-type mooncake_trace \
   --concurrency 50 \
   --benchmark-duration 2400 \
@@ -225,6 +231,37 @@ aiperf synthesize agentic-code \
 
 The config schema is generated at
 `src/aiperf/dataset/agentic_code_gen/configs/spec.json`.
+
+### Concurrency Schedule
+
+Add `concurrency_schedule` to a generator config to write `schedule.jsonl`
+beside `dataset.jsonl`. The generator expands sparse anchors into one JSONL row
+per tick, so replay follows the baked schedule literally:
+
+```json
+{
+  "concurrency_schedule": {
+    "interpolation": "linear",
+    "tick_sec": 1.0,
+    "noise_sigma": 0.0,
+    "anchors": [
+      {"time_sec": 0, "concurrency": 1},
+      {"time_sec": 300, "concurrency": 50},
+      {"time_sec": 2400, "concurrency": 50}
+    ]
+  }
+}
+```
+
+Replay the trace with:
+
+```bash
+aiperf profile \
+  --input-file .test/default_1000s_seed42_YYYYMMDD-HHMMSS/dataset.jsonl \
+  --concurrency-schedule-file .test/default_1000s_seed42_YYYYMMDD-HHMMSS/schedule.jsonl \
+  --custom-dataset-type mooncake_trace \
+  --concurrency 50
+```
 
 ## Related Tutorials
 

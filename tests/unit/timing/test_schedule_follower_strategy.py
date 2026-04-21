@@ -34,30 +34,30 @@ class TestScheduleFollowerStrategy:
 
     def test_next_step_walks_ticks_in_order(self) -> None:
         ticks = ((0.0, 10), (5.0, 15), (10.0, 20))
-        strat = ScheduleFollowerStrategy(_config(ticks))
-        assert strat.next_step(0.0, 0.0) == (0.0, 10.0)
-        assert strat.next_step(10.0, 0.0) == (5.0, 15.0)
-        assert strat.next_step(15.0, 5.0) == (5.0, 20.0)
-        assert strat.next_step(20.0, 10.0) is None
+        strategy = ScheduleFollowerStrategy(_config(ticks))
+        assert strategy.next_step(0.0, 0.0) == (0.0, 10.0)
+        assert strategy.next_step(10.0, 0.0) == (5.0, 15.0)
+        assert strategy.next_step(15.0, 5.0) == (5.0, 20.0)
+        assert strategy.next_step(20.0, 10.0) is None
 
     def test_next_step_clamps_negative_delay_to_zero(self) -> None:
         """If the runner is running behind schedule, delays clamp to 0."""
         ticks = ((0.0, 10), (5.0, 15))
-        strat = ScheduleFollowerStrategy(_config(ticks))
-        delay, _ = strat.next_step(0.0, 100.0)
+        strategy = ScheduleFollowerStrategy(_config(ticks))
+        delay, _ = strategy.next_step(0.0, 100.0)
         assert delay == 0.0
 
     def test_value_at_returns_step_function(self) -> None:
         ticks = ((0.0, 10), (5.0, 15), (10.0, 20))
-        strat = ScheduleFollowerStrategy(_config(ticks))
-        assert strat.value_at(0.0) == 10.0
-        assert strat.value_at(3.0) == 10.0
-        assert strat.value_at(5.0) == 15.0
-        assert strat.value_at(7.5) == 15.0
-        assert strat.value_at(10.0) is None
+        strategy = ScheduleFollowerStrategy(_config(ticks))
+        assert strategy.value_at(0.0) == 10.0
+        assert strategy.value_at(3.0) == 10.0
+        assert strategy.value_at(5.0) == 15.0
+        assert strategy.value_at(7.5) == 15.0
+        assert strategy.value_at(10.0) is None
 
     def test_start_and_target_reflect_tick_endpoints(self) -> None:
         ticks = ((0.0, 10), (100.0, 200))
-        strat = ScheduleFollowerStrategy(_config(ticks))
-        assert strat.start == 10.0
-        assert strat.target == 200.0
+        strategy = ScheduleFollowerStrategy(_config(ticks))
+        assert strategy.start == 10.0
+        assert strategy.target == 200.0
