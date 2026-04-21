@@ -136,17 +136,32 @@ def _run_single_benchmark(run: BenchmarkRun) -> None:
             title="Configuration Error",
         )
 
+    exit_code = 0
     try:
         bootstrap_and_run_service(
             service_type=ServiceType.SYSTEM_CONTROLLER,
             run=run,
             log_queue=log_queue,
         )
+    except SystemExit as e:
+        exit_code = int(e.code) if e.code is not None else 0
     except Exception:
         logger.exception("Error running AIPerf System")
-        raise
+        exit_code = 1
     finally:
         logger.debug("AIPerf System exited")
+
+    # Bypass Python's normal teardown: multiprocessing atexit handlers,
+    # leftover ZMQ contexts, and daemon threads can otherwise block the
+    # interpreter from exiting — which is fatal under pytest-xdist where
+    # the parent waits on communicate(). The controller already flushed
+    # logs and wrote artifacts; killing the interpreter here is safe.
+    import os as _os
+    import sys as _sys
+
+    _sys.stdout.flush()
+    _sys.stderr.flush()
+    _os._exit(exit_code)
 
 
 def _run_multi_benchmark(plan: BenchmarkPlan) -> None:

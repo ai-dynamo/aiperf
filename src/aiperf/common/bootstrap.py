@@ -7,7 +7,6 @@ import asyncio
 import contextlib
 import multiprocessing
 import os
-import platform
 import signal
 import sys
 import uuid
@@ -174,12 +173,14 @@ def bootstrap_and_run_service(
 
         setup_child_process_logging(log_queue, service.service_id, run.cfg)
 
-        # NOTE: Prevent child processes from accessing parent's terminal on macOS.
-        # This solves the macOS terminal corruption issue with Textual UI where child
-        # processes inherit terminal file descriptors and interfere with Textual's
-        # terminal management, causing ASCII garbage and freezing when mouse events occur.
-        # Only apply this in spawned child processes, NOT in the main process where Textual runs.
-        if platform.system() == "Darwin" and is_child_process:
+        # Redirect child process stdio to /dev/null unconditionally.
+        # - On macOS this fixes Textual UI terminal corruption.
+        # - On Linux this is required so that when the parent aiperf
+        #   process exits (e.g. after a startup failure) the inherited
+        #   stdout/stderr pipes close promptly; otherwise a harness doing
+        #   process.communicate() waits until every child also exits,
+        #   which can hang indefinitely if a grandchild is stuck.
+        if is_child_process:
             _redirect_stdio_to_devnull()
 
         # Initialize global RandomGenerator for reproducible random number generation
