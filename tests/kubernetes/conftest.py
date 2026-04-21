@@ -851,11 +851,13 @@ async def mock_server(
         return ready.returncode == 0 and ready.stdout.strip() not in ("", "0")
 
     with FileLock(str(lock_path)):
-        already_healthy = flag_path.exists() or (
-            k8s_settings.reuse_cluster and await _is_healthy()
-        )
+        cluster_has_mock = await _is_healthy()
+        if flag_path.exists() and not cluster_has_mock:
+            flag_path.unlink(missing_ok=True)
+        already_healthy = cluster_has_mock
         if already_healthy:
             logger.info(f"[{worker_id}] Reusing existing healthy mock server")
+            flag_path.touch()
         else:
             async with timed_operation("Deploying mock LLM server"):
                 manifest_path = project_root / "dev" / "deploy" / "mock-server.yaml"
@@ -1232,11 +1234,16 @@ async def operator_ready(
     flag_path = root_tmp / ".aiperf_operator_ready"
 
     with FileLock(str(lock_path)):
-        already_healthy = flag_path.exists() or (
-            k8s_settings.reuse_cluster and await operator_deployer.is_operator_healthy()
-        )
+        # Always verify against the live cluster — a stale flag file from a
+        # previous session whose cluster was torn down must not trick us into
+        # skipping deploy.
+        cluster_has_operator = await operator_deployer.is_operator_healthy()
+        if flag_path.exists() and not cluster_has_operator:
+            flag_path.unlink(missing_ok=True)
+        already_healthy = cluster_has_operator
         if already_healthy:
             logger.info(f"[{worker_id}] Reusing existing healthy operator deployment")
+            flag_path.touch()
         else:
             async with timed_operation("Deploying AIPerf operator"):
                 await operator_deployer.deploy_operator()
