@@ -219,12 +219,14 @@ Load and analyze the `inputs.json` file to understand what data was sent during 
 
 ```python
 from pathlib import Path
+
+import msgspec
+
 from aiperf.common.models import InputsFile
 
 def load_inputs_file(file_path: Path) -> InputsFile:
-    """Load inputs.json file into structured Pydantic model."""
-    with open(file_path, encoding="utf-8") as f:
-        return InputsFile.model_validate_json(f.read())
+    """Load inputs.json file into a structured msgspec Struct."""
+    return msgspec.json.decode(file_path.read_bytes(), type=InputsFile)
 
 inputs = load_inputs_file(Path("artifacts/my-run/inputs.json"))
 ```
@@ -235,13 +237,15 @@ Combine `artifacts/my-run/inputs.json` with `artifacts/my-run/profile_export.jso
 
 ```python
 from pathlib import Path
+
+import msgspec
+
 from aiperf.common.models import InputsFile, MetricRecordInfo
 
 def correlate_inputs_and_results(inputs_path: Path, results_path: Path):
     """Correlate input prompts with performance metrics."""
     # Load inputs
-    with open(inputs_path, encoding="utf-8") as f:
-        inputs = InputsFile.model_validate_json(f.read())
+    inputs = msgspec.json.decode(inputs_path.read_bytes(), type=InputsFile)
 
     # Create session lookup
     session_inputs = {session.session_id: session for session in inputs.data}

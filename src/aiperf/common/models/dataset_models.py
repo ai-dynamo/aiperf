@@ -5,10 +5,9 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import msgspec
-from pydantic import Field
 
 from aiperf.common.enums import ConversationContextMode, MediaType
-from aiperf.common.models.base_models import AIPerfBaseModel, PydanticStructMixin
+from aiperf.common.models.base_models import PydanticStructMixin
 from aiperf.common.types import MediaTypeT
 from aiperf.plugin.enums import DatasetClientStoreType, DatasetSamplingStrategy
 
@@ -344,23 +343,33 @@ class Conversation(
         )
 
 
-class SessionPayloads(AIPerfBaseModel):
+class SessionPayloads(
+    PydanticStructMixin,
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+):
     """A single session, with its session ID and a list of formatted payloads (one per turn)."""
 
-    session_id: str | None = Field(
-        default=None, description="Session ID of the conversation."
-    )
-    payloads: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="List of formatted payloads in the session (one per turn). These have been formatted for the model and endpoint.",
-    )
+    session_id: str | None = None
+    # Formatted payloads in the session (one per turn), already prepared for
+    # the model and endpoint.
+    payloads: list[dict[str, Any]] = msgspec.field(default_factory=list)
 
 
-class InputsFile(AIPerfBaseModel):
+class InputsFile(
+    PydanticStructMixin,
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+):
     """A list of all dataset sessions. Each session contains a list of formatted payloads (one per turn).
     This is similar to the format used by GenAI-Perf for the inputs.json file.
+
+    Intentionally does not set ``omit_defaults=True``: the on-disk inputs.json
+    schema contract always includes ``"data": [...]`` (the tutorials and
+    downstream tools expect it), and SessionPayloads always includes
+    ``session_id`` and ``payloads``.
     """
 
-    data: list[SessionPayloads] = Field(
-        default_factory=list, description="List of all dataset sessions."
-    )
+    data: list[SessionPayloads] = msgspec.field(default_factory=list)

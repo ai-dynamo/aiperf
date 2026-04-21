@@ -8,6 +8,7 @@ from multiprocessing.context import ForkProcess, SpawnProcess
 from pathlib import Path
 from typing import Any, TypeAlias
 
+import msgspec
 import pytest
 
 from aiperf.common.constants import NANOS_PER_SECOND
@@ -187,11 +188,11 @@ class AIPerfResults:
         return JsonExportData.model_validate_json(file_path.read_text())
 
     def _load_inputs(self) -> InputsFile | None:
-        """Load inputs file as Pydantic model."""
+        """Load inputs file as a msgspec Struct."""
         file_path = self._find_file("**/inputs.json")
-        return (
-            InputsFile.model_validate_json(file_path.read_text()) if file_path else None
-        )
+        if not file_path:
+            return None
+        return msgspec.json.decode(file_path.read_bytes(), type=InputsFile)
 
     def _load_jsonl_records(self) -> list[MetricRecordInfo] | None:
         """Load JSONL records as Pydantic models."""

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import aiohttp
+import msgspec
 import orjson
 from PIL import Image as PILImage
 
@@ -40,6 +41,7 @@ from aiperf.common.models import (
     RequestInfo,
     SessionPayloads,
 )
+from aiperf.common.models.base_models import _msgspec_enc_hook
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config import OutputDefaults
 from aiperf.dataset.utils import encode_image
@@ -356,7 +358,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
             temp_file_path.write_bytes(
                 orjson.dumps(
-                    inputs.model_dump(exclude_none=True, mode="json"),
+                    msgspec.to_builtins(inputs, enc_hook=_msgspec_enc_hook),
                     option=orjson.OPT_INDENT_2,
                 )
             )
