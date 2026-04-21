@@ -232,6 +232,11 @@ class ChatEndpoint(BaseEndpoint):
 
             choices = json_obj.get("choices")
             if not choices:
+                # Final usage-only chunk (stream_options.include_usage=true)
+                # has empty choices but carries the cumulative usage totals.
+                usage = json_obj.get("usage") or None
+                if usage is not None:
+                    return ParsedResponse(perf_ns=perf_ns, data=None, usage=usage)
                 return None
             first_choice = choices[0]
             if not isinstance(first_choice, dict):
