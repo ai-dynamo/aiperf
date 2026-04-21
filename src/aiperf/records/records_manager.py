@@ -51,6 +51,7 @@ from aiperf.common.metric_records_wire import (
     MetricRecordsBatchWireMessage,
     MetricRecordsData,
     MetricRecordsWireMessage,
+    wire_error_to_domain_error,
     wire_message_to_record_data,
 )
 from aiperf.common.mixins import PullClientMixin
@@ -222,9 +223,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         ):
             await self._send_results_to_results_processors(record_data)
         if record_data.error:
-            self._error_tracker.increment_error_count_for_phase(
-                record_data.metadata.benchmark_phase, record_data.error
-            )
+            domain_error = wire_error_to_domain_error(record_data.error)
+            if domain_error is not None:
+                self._error_tracker.increment_error_count_for_phase(
+                    record_data.metadata.benchmark_phase, domain_error
+                )
 
         if self._records_tracker.check_and_set_all_records_received_for_phase(
             record_data.metadata.benchmark_phase
@@ -286,9 +289,16 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 a msgspec wire envelope on the shared RECORDS channel.
         """
         if message.valid:
-            record = server_metrics_record_from_wire(message)
-            if record is not None:
-                await self._send_server_metrics_to_results_processors(record)
+            try:
+                record = server_metrics_record_from_wire(message)
+                if record is not None:
+                    await self._send_server_metrics_to_results_processors(record)
+            except Exception as e:
+                error_details = ErrorDetails(
+                    message=f"Server metrics processor error: {str(e)}"
+                )
+                self._server_metrics_state.error_counts[error_details] += 1
+                self.debug(f"Failed to process server metrics record: {e}")
         else:
             wire_error = server_metrics_error_from_wire(message)
             if wire_error is not None:

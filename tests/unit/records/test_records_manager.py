@@ -287,3 +287,54 @@ class TestRecordsManagerTimeslice:
         assert result_dict["timeslice_metric_results"] is not None
         assert 0 in result_dict["timeslice_metric_results"]
         assert 1 in result_dict["timeslice_metric_results"]
+
+
+class TestRecordsManagerServerMetricsErrorHandling:
+    """T1 regression: server-metrics wire deserialization errors must be
+    caught and counted, matching the telemetry path. Before the fix the
+    ValidationError from a malformed record dict propagated out of the
+    PULL handler and was silently swallowed by the dispatcher, losing
+    the error signal entirely.
+    """
+
+    @pytest.mark.asyncio
+    async def test_deserialization_exception_is_counted_not_propagated(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from collections import defaultdict
+
+        from aiperf.common.server_metrics_records_wire import (
+            ServerMetricsRecordWireMessage,
+        )
+
+        manager = SimpleNamespace(
+            _send_server_metrics_to_results_processors=AsyncMock(),
+            _server_metrics_state=SimpleNamespace(
+                error_counts=defaultdict(int),
+            ),
+            debug=MagicMock(),
+        )
+
+        def explode(_message):
+            raise ValueError("malformed server-metrics record")
+
+        monkeypatch.setattr(
+            "aiperf.records.records_manager.server_metrics_record_from_wire",
+            explode,
+        )
+
+        # Minimal valid envelope so the `if message.valid` branch fires.
+        message = ServerMetricsRecordWireMessage(
+            service_id="server-metrics-manager",
+            collector_id="col-1",
+            record={"bogus": True},
+        )
+
+        # Must NOT raise — the asymmetry with the telemetry handler is the bug.
+        await RecordsManager._on_server_metrics_records(manager, message)
+
+        # Exactly one error recorded; no record forwarded to processors.
+        assert sum(manager._server_metrics_state.error_counts.values()) == 1, (
+            "ValidationError from malformed record should have been counted"
+        )
+        manager._send_server_metrics_to_results_processors.assert_not_awaited()
