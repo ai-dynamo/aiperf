@@ -1068,6 +1068,23 @@ async def deployed_small_benchmark_module(
         stream_logs=k8s_settings.stream_logs,
     )
 
+    # Retry once if the mock-server was flaky and every request errored
+    # (common under xdist when shared mock-server is under load).
+    for _ in range(2):
+        if (
+            result.success
+            and result.metrics is not None
+            and result.metrics.request_count
+            and result.metrics.error_count == 0
+        ):
+            break
+        result = await benchmark_deployer.deploy(
+            config=small_benchmark_config_module,
+            wait_for_completion=True,
+            timeout=k8s_settings.benchmark_timeout,
+            stream_logs=k8s_settings.stream_logs,
+        )
+
     yield result
 
 

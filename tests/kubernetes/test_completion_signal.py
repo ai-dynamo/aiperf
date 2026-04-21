@@ -234,10 +234,15 @@ class TestWorkerCleanup:
         """Verify worker Jobs are created with ttlSecondsAfterFinished=0."""
         job = await operator_ready.create_job(small_operator_config)
 
-        # Wait for the JobSet to be created
-        await asyncio.sleep(5)
+        # Wait for the JobSet to be created (poll up to ~30s)
         status = await operator_ready.get_job_status(job.job_name, job.namespace)
         jobset_name = status.jobset_name
+        for _ in range(30):
+            if jobset_name is not None or status.is_completed:
+                break
+            await asyncio.sleep(1)
+            status = await operator_ready.get_job_status(job.job_name, job.namespace)
+            jobset_name = status.jobset_name
         if jobset_name is None:
             # Operator may have already cleaned up if job completed fast
             if status.is_completed:

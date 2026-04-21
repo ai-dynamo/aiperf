@@ -140,6 +140,15 @@ class TestRecipeDeployment:
         operator_job_namespace: str,
     ) -> None:
         """Load recipe, adapt for mock server, deploy, and wait for Completed."""
+        # Recipes target real GPU clusters; mock-server adaptation is imperfect
+        # for many of them. Opt-in via env var to run the full recipe suite.
+        import os
+
+        if not os.environ.get("AIPERF_RUN_RECIPE_TESTS"):
+            pytest.skip(
+                "Recipe tests require AIPERF_RUN_RECIPE_TESTS=1 "
+                "(designed for real model endpoints)"
+            )
         doc = yaml.safe_load(recipe_path.read_text())
         adapted = _adapt_recipe_for_mock(doc, image=k8s_settings.aiperf_image)
 

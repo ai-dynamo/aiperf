@@ -56,10 +56,17 @@ class TestOperatorDeployment:
         kubectl: KubectlClient,
     ) -> None:
         """Verify operator pod is running."""
-        pods = await kubectl.get_pods(OperatorDeployer.OPERATOR_NAMESPACE)
-        operator_pods = [
-            p for p in pods if "aiperf-operator" in p.name and "-test-" not in p.name
-        ]
+        operator_pods: list = []
+        for _ in range(15):
+            pods = await kubectl.get_pods(OperatorDeployer.OPERATOR_NAMESPACE)
+            operator_pods = [
+                p
+                for p in pods
+                if "aiperf-operator" in p.name and "-test-" not in p.name
+            ]
+            if len(operator_pods) >= 1 and operator_pods[0].phase == "Running":
+                break
+            await asyncio.sleep(1)
 
         assert len(operator_pods) == 1
         assert operator_pods[0].phase == "Running"
@@ -71,15 +78,21 @@ class TestOperatorDeployment:
         kubectl: KubectlClient,
     ) -> None:
         """Verify operator has necessary RBAC permissions."""
-        result = await kubectl.run(
-            "auth",
-            "can-i",
-            "create",
-            "jobsets.jobset.x-k8s.io",
-            "--as=system:serviceaccount:aiperf-system:aiperf-operator",
-            check=False,
-        )
-        assert result.stdout.strip() == "yes"
+        stdout = ""
+        for _ in range(15):
+            result = await kubectl.run(
+                "auth",
+                "can-i",
+                "create",
+                "jobsets.jobset.x-k8s.io",
+                "--as=system:serviceaccount:aiperf-system:aiperf-operator",
+                check=False,
+            )
+            stdout = result.stdout.strip()
+            if stdout == "yes":
+                break
+            await asyncio.sleep(1)
+        assert stdout == "yes"
 
 
 class TestOperatorJobLifecycle:
@@ -98,10 +111,15 @@ class TestOperatorJobLifecycle:
         """
         result = await operator_ready.create_job(small_operator_config)
 
-        # Give operator a moment to process
-        await asyncio.sleep(2)
-
+        # Poll for the operator to set phase (up to ~15s)
         status = await operator_ready.get_job_status(result.job_name, result.namespace)
+        for _ in range(15):
+            if status.phase in ("Pending", "Initializing", "Running"):
+                break
+            await asyncio.sleep(1)
+            status = await operator_ready.get_job_status(
+                result.job_name, result.namespace
+            )
 
         print(f"\n{'=' * 60}")
         print("JOB CREATION STATUS")
