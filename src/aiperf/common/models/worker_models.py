@@ -2,26 +2,26 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-from pydantic import Field
+import msgspec
 
-from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.base_models import PydanticStructMixin
 
 
-class WorkerTaskStats(AIPerfBaseModel):
-    """Stats for the tasks that have been sent to the worker."""
+class WorkerTaskStats(
+    PydanticStructMixin,
+    msgspec.Struct,
+    kw_only=True,
+    omit_defaults=True,
+):
+    """Stats for the tasks that have been sent to the worker.
 
-    total: int = Field(
-        default=0,
-        description="The total number of tasks that have been sent to the worker (not all tasks will be completed)",
-    )
-    failed: int = Field(
-        default=0,
-        description="The number of tasks that returned an error",
-    )
-    completed: int = Field(
-        default=0,
-        description="The number of tasks that were completed successfully",
-    )
+    Mutable accumulator: ``task_finished`` increments ``failed`` or
+    ``completed`` in place, so the struct intentionally omits ``frozen``.
+    """
+
+    total: int = 0
+    failed: int = 0
+    completed: int = 0
 
     def task_finished(self, valid: bool) -> None:
         """Increment the task stats based on success or failure."""
