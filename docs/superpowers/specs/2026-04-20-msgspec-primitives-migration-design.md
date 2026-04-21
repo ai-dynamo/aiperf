@@ -1,12 +1,12 @@
 # Msgspec Conversion: Primitives (Terminal)
 
-**Status:** Partial (P1+P2 landed, P3 pending)
+**Status:** Complete (P1+P2+P3 landed)
 **Owner:** Anthony Casagrande (acasagrande@nvidia.com)
 **Date:** 2026-04-20
-**Commits so far:** `41e53697e` (P1), `33c149e6b`+`f05c0abcb`+`8899602cf`+`409538d27`+`26fadd851` (P2)
+**Commits so far:** `41e53697e` (P1), `33c149e6b`+`f05c0abcb`+`8899602cf`+`409538d27`+`26fadd851` (P2), `<P3>` (P3)
 **Part of:** [msgspec-zmq-migration-overview.md](./2026-04-20-msgspec-zmq-migration-overview.md)
 
-## Remaining work
+## Completed work
 
 - **P2 (landed)** — `Message` base class is now `msgspec.Struct(tag_field="message_type")`;
   every envelope across `base_messages`, `service_messages`, `worker_messages`,
@@ -19,17 +19,19 @@
   `Media` hierarchy, `Turn`/`Conversation`). `JsonMessageCodec` and
   `PydanticMsgpackCodec` rewritten on top of msgspec but kept API-compatible;
   P3 collapses them.
-- **P3** — Codec collapse + invariant assertion. Deletes
+- **P3 (landed)** — Codec collapse + invariant assertion. Deleted
   `JsonMessageCodec`, `PydanticMsgpackCodec`, the codec `_enc_hook` /
-  `_dec_hook`, and the `MsgspecField` shim. Adds
+  `_dec_hook`. `MsgspecStructCodec` is the only codec; `get_message_codec()`
+  (a lazy singleton parameterized by `Message._union_type()`) replaces
+  `JSON_MESSAGE_CODEC` as the default for push/pull transport. Wire format
+  changed from JSON to msgpack on the Message bus. Added
   `tests/unit/test_no_pydantic_on_wire.py` that greps
   `src/aiperf/common/messages/` for `pydantic` imports and
-  `model_dump`/`model_validate` usage.
+  `model_dump`/`model_validate` usage to lock in the invariant.
 
-> **Start here next session:** P3 deletes `JsonMessageCodec` and
-> `PydanticMsgpackCodec`, removes `_enc_hook` / `_dec_hook`, and adds
-> `tests/unit/test_no_pydantic_on_wire.py` grep assertions. No dedicated
-> branch required — the surface is small.
+> **P3 landed:** every ZMQ channel now uses msgpack-over-msgspec. Live
+> deployments must roll all services together — mixed-version clusters will
+> not interoperate during the cutover.
 
 ## Goal
 
@@ -255,18 +257,18 @@ inheritance. Audit `from_json` call sites; migrate dict-accepting call sites
 to `msgspec.convert`. Delete every `MsgspecField` shim annotation and its
 supporting code in `common/models/base_models.py`. Full test suite green.
 
-**P3 — Codec collapse + invariant assertion.** Delete `JsonMessageCodec`,
-`PydanticMsgpackCodec`, `_enc_hook`, `_dec_hook`. Simplify
-`MsgspecStructCodec` to the minimal form. Switch every transport client to
-the single codec. Add a CI check that asserts:
+**P3 — Codec collapse + invariant assertion (landed).** Deleted `JsonMessageCodec`,
+`PydanticMsgpackCodec`, `_enc_hook`, `_dec_hook`. Collapsed `message_codecs.py`
+to `MsgspecStructCodec` only, with a lazy `get_message_codec()` singleton
+parameterized by `Message._union_type()`. Every transport client (push/pull/fake)
+uses `get_message_codec()` as the default. CI checks added in
+`tests/unit/test_no_pydantic_on_wire.py` assert:
 
 - No file under `src/aiperf/common/messages/` imports from `pydantic`.
 - `message_codecs.py` imports neither `pydantic` nor `BaseModel`.
-- `grep -rn 'model_dump\|model_validate' src/aiperf/common/messages/`
-  returns zero hits.
-
-Full `tests/unit/ -n auto` + `-m component_integration -n auto` +
-`-m integration -n auto` green.
+- No `model_dump`/`model_validate` calls in message modules.
+- `JsonMessageCodec`, `JSON_MESSAGE_CODEC`, `PydanticMsgpackCodec` are absent
+  from `message_codecs.py`.
 
 ## Testing
 

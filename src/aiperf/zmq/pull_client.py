@@ -8,7 +8,7 @@ import zmq.asyncio
 
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_stop
-from aiperf.common.message_codecs import JSON_MESSAGE_CODEC, MessageCodecProtocol
+from aiperf.common.message_codecs import MessageCodecProtocol, get_message_codec
 from aiperf.common.types import MessageTypeT
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.timing.concurrency import DynamicConcurrencyLimit
@@ -79,7 +79,7 @@ class ZMQPullClient(BaseZMQClient):
         self._pull_callbacks: dict[
             MessageTypeT, Callable[[Any], Coroutine[Any, Any, None]]
         ] = {}
-        self._codec = codec or JSON_MESSAGE_CODEC
+        self._codec = codec or get_message_codec()
 
         self.semaphore = DynamicConcurrencyLimit(
             max_pull_concurrency or Environment.ZMQ.PULL_MAX_CONCURRENCY

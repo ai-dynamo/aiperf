@@ -14,6 +14,7 @@ from aiperf.common.channel_codecs import RECORDS_CODEC
 from aiperf.common.enums import MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import CommunicationError, NotInitializedError
+from aiperf.common.message_codecs import get_message_codec
 from aiperf.common.messages import ConnectionProbeMessage
 from aiperf.common.metric_records_wire import (
     MetricRecordMetadata,
@@ -63,7 +64,7 @@ class TestZMQPushClientPush:
     async def test_push_serializes_message_correctly(
         self, mock_zmq_socket, mock_zmq_context
     ):
-        """Test that push serializes message as JSON."""
+        """Test that push serializes through the default msgpack codec."""
         client = ZMQPushClient(address="tcp://127.0.0.1:5555", bind=True)
         await client.initialize()
 
@@ -72,13 +73,10 @@ class TestZMQPushClientPush:
         await client.push(message)
 
         sent_data = mock_zmq_socket.send.call_args[0][0]
-        # Verify it's valid JSON containing our data (sent_data is bytes)
-        sent_str = sent_data.decode()
-        assert (
-            '"message_type":"connection_probe"' in sent_str
-            or '"message_type": "connection_probe"' in sent_str
-        )
-        assert "test-123" in sent_str
+        decoded = get_message_codec().decode(sent_data)
+        assert isinstance(decoded, ConnectionProbeMessage)
+        assert decoded.service_id == "test"
+        assert decoded.request_id == "test-123"
 
     @pytest.mark.asyncio
     async def test_push_uses_custom_codec(self, mock_zmq_socket, mock_zmq_context):

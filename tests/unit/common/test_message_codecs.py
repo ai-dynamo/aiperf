@@ -2,7 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.channel_codecs import RECORDS_CODEC
-from aiperf.common.message_codecs import JSON_MESSAGE_CODEC, codec_cache_key
+from aiperf.common.message_codecs import (
+    MsgspecStructCodec,
+    codec_cache_key,
+    get_message_codec,
+)
 from aiperf.common.metric_records_wire import (
     MetricRecordMetadata,
     MetricRecordsBatchWireMessage,
@@ -90,7 +94,17 @@ class TestMessageCodecs:
         assert decoded.records[0].metrics == {"request_latency": 12.5}
         assert decoded.records[1].metrics == {"request_latency": 9.5}
 
-    def test_codec_cache_key_uses_json_default_and_custom_cache_keys(self) -> None:
+    def test_codec_cache_key_uses_msgspec_default_and_custom_cache_keys(self) -> None:
         """Codec cache keys should stay stable for client cache partitioning."""
-        assert codec_cache_key(None) == JSON_MESSAGE_CODEC.cache_key
+        assert codec_cache_key(None) == "msgspec-message"
         assert codec_cache_key(RECORDS_CODEC) == "records-msgpack"
+
+    def test_get_message_codec_returns_msgspec_struct_codec(self) -> None:
+        """get_message_codec() must return an MsgspecStructCodec instance."""
+        codec = get_message_codec()
+        assert isinstance(codec, MsgspecStructCodec)
+        assert codec.cache_key == "msgspec-message"
+
+    def test_get_message_codec_is_singleton(self) -> None:
+        """Repeated calls to get_message_codec() return the same object."""
+        assert get_message_codec() is get_message_codec()

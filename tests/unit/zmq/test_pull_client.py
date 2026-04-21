@@ -19,6 +19,7 @@ from aiperf.common.inference_wire import (
     build_inference_results_wire_message,
     encode_inference_results_wire_message,
 )
+from aiperf.common.message_codecs import get_message_codec
 from aiperf.common.messages import ConnectionProbeMessage, HeartbeatMessage, Message
 from aiperf.zmq.pull_client import ZMQPullClient
 
@@ -111,7 +112,7 @@ class TestZMQPullClientBackgroundTask:
 
         async with pull_test_helper.create_client(
             auto_start=False,
-            recv_side_effect=[sample_message.to_json_bytes()],
+            recv_side_effect=[get_message_codec().encode(sample_message)],
         ) as client:
             # Register callback BEFORE starting
             client.register_pull_callback(sample_message.message_type, callback)
@@ -176,7 +177,7 @@ class TestZMQPullClientBackgroundTask:
 
         async with pull_test_helper.create_client(
             auto_start=True,
-            recv_side_effect=[message.to_json_bytes()],
+            recv_side_effect=[get_message_codec().encode(message)],
         ):
             # Don't register any callbacks
             # Should not crash, just continue
@@ -200,7 +201,7 @@ class TestZMQPullClientConcurrency:
         ]
 
         for message in messages:
-            await mock_zmq.recv_queue.put(message.to_json_bytes())
+            await mock_zmq.recv_queue.put(get_message_codec().encode(message))
 
         client = ZMQPullClient(
             address="tcp://127.0.0.1:5555", bind=False, max_pull_concurrency=3
@@ -232,7 +233,7 @@ class TestZMQPullClientConcurrency:
     @pytest.mark.asyncio
     async def test_semaphore_released_after_processing(self, sample_message, mock_zmq):
         """Test that semaphore is released after message processing."""
-        await mock_zmq.recv_queue.put(sample_message.to_json_bytes())
+        await mock_zmq.recv_queue.put(get_message_codec().encode(sample_message))
 
         client = ZMQPullClient(
             address="tcp://127.0.0.1:5555", bind=False, max_pull_concurrency=5

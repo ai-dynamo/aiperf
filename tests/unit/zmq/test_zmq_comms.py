@@ -5,7 +5,7 @@
 from pathlib import Path
 
 from aiperf.common.channel_codecs import RECORDS_CODEC
-from aiperf.common.message_codecs import JSON_MESSAGE_CODEC
+from aiperf.common.message_codecs import MsgspecStructCodec, get_message_codec
 from aiperf.config import ZMQIPCConfig
 from aiperf.zmq.zmq_comms import ZMQIPCCommunication
 
@@ -17,7 +17,7 @@ class TestZMQCommunicationClientCache:
         """Same address with different codecs should not alias the same cached client."""
         comm = ZMQIPCCommunication(config=ZMQIPCConfig(ipc_path=tmp_path / "ipc"))
 
-        json_client = comm.create_push_client("ipc:///tmp/records.ipc")
+        default_client = comm.create_push_client("ipc:///tmp/records.ipc")
         msgpack_client = comm.create_push_client(
             "ipc:///tmp/records.ipc",
             codec=RECORDS_CODEC,
@@ -27,7 +27,8 @@ class TestZMQCommunicationClientCache:
             codec=RECORDS_CODEC,
         )
 
-        assert json_client is not msgpack_client
+        assert default_client is not msgpack_client
         assert msgpack_client is msgpack_client_again
-        assert json_client._codec is JSON_MESSAGE_CODEC
+        assert isinstance(default_client._codec, MsgspecStructCodec)
+        assert default_client._codec is get_message_codec()
         assert msgpack_client._codec is RECORDS_CODEC

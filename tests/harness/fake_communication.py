@@ -24,9 +24,9 @@ from aiperf.common.base_comms import BaseCommunication
 from aiperf.common.enums import CommAddress
 from aiperf.common.hooks import on_stop
 from aiperf.common.message_codecs import (
-    JSON_MESSAGE_CODEC,
     MessageCodecProtocol,
     codec_cache_key,
+    get_message_codec,
 )
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.types import CommAddressType, MessageCallbackMapT, MessageTypeT
@@ -116,7 +116,7 @@ class FakeCommunicationClient(AIPerfLifecycleMixin):
         self.address = address
         self.identity = identity
         self.additional_bind_address = additional_bind_address
-        self.codec = codec or JSON_MESSAGE_CODEC
+        self.codec = codec or get_message_codec()
 
     def capture_sent_payload(
         self,

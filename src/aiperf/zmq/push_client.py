@@ -8,7 +8,7 @@ import zmq.asyncio
 
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import CommunicationError
-from aiperf.common.message_codecs import JSON_MESSAGE_CODEC, MessageCodecProtocol
+from aiperf.common.message_codecs import MessageCodecProtocol, get_message_codec
 from aiperf.zmq.zmq_base_client import BaseZMQClient
 
 
@@ -61,7 +61,7 @@ class ZMQPushClient(BaseZMQClient):
             socket_ops (dict, optional): Additional socket options to set.
         """
         super().__init__(zmq.SocketType.PUSH, address, bind, socket_ops, **kwargs)
-        self._codec = codec or JSON_MESSAGE_CODEC
+        self._codec = codec or get_message_codec()
 
     async def _push_message(
         self,
