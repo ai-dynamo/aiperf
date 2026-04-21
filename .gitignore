@@ -38,3 +38,4 @@ src/aiperf/plugin/enums.pyi
 !.cursor/rules/
 .superpowers/
 .worktrees/
+.loop_integration_state/
