@@ -11,8 +11,11 @@ from __future__ import annotations
 from importlib.metadata import version
 from typing import Any
 
+import msgspec
+
 from aiperf.api.prometheus_formatter import InfoLabels
 from aiperf.common.models import MetricResult
+from aiperf.common.models.base_models import _msgspec_enc_hook
 from aiperf.config import AIPerfConfig
 from aiperf.config.parsing import coerce_value
 
@@ -77,9 +80,12 @@ def format_metrics_json(
 
     metrics_dict = {}
     for metric in metrics:
-        metrics_dict[metric.tag] = metric.model_dump(
-            mode="json", exclude_none=True, exclude={"tag"}
-        )
+        payload = msgspec.to_builtins(metric, enc_hook=_msgspec_enc_hook)
+        # Mirror the previous Pydantic `exclude_none=True, exclude={"tag"}`
+        # semantics: drop the tag (used as the dict key) and any None values.
+        metrics_dict[metric.tag] = {
+            k: v for k, v in payload.items() if v is not None and k != "tag"
+        }
 
     result["metrics"] = metrics_dict
     return result

@@ -13,7 +13,6 @@ import msgspec
 import orjson
 from pydantic import (
     ConfigDict,
-    Field,
     PlainSerializer,
     RootModel,
     SerializeAsAny,
@@ -32,7 +31,7 @@ from aiperf.common.exceptions import InvalidInferenceResultError
 # annotations below reference MetricRecordMetadata as a string thanks to
 # `from __future__ import annotations`; the only runtime use is inside
 # decode_metric_record_info_json, which does a local import.
-from aiperf.common.models.base_models import AIPerfBaseModel, PydanticStructMixin
+from aiperf.common.models.base_models import PydanticStructMixin
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.export_models import JsonMetricResult
@@ -48,27 +47,48 @@ if TYPE_CHECKING:
 _logger = AIPerfLogger(__name__)
 
 
-class MetricResult(JsonMetricResult):
-    """The result values of a single metric."""
+class MetricResult(
+    PydanticStructMixin,
+    msgspec.Struct,
+    kw_only=True,
+    omit_defaults=True,
+):
+    """The result values of a single metric.
 
-    tag: MetricTagT = Field(description="The unique identifier of the metric")
-    # NOTE: We do not use a MetricUnitT here, as that is harder to de-serialize from JSON strings with pydantic.
-    #       If we need an instance of a MetricUnitT, lookup the unit based on the tag in the MetricRegistry.
-    header: str = Field(
-        description="The user friendly name of the metric (e.g. 'Inter Token Latency')"
-    )
-    count: int | None = Field(
-        default=None,
-        description="The total number of records used to calculate the metric",
-    )
-    current: float | int | None = Field(
-        default=None,
-        description="The most recent value of the metric (used for realtime dashboard display only)",
-    )
-    sum: int | float | None = Field(
-        default=None,
-        description="The sum of all the metric values across all records",
-    )
+    Carries every JsonMetricResult percentile/stat directly — historically
+    inherited, but a msgspec.Struct cannot subclass Pydantic BaseModel, so the
+    fields are duplicated here (see ``to_json_result`` for the conversion
+    back to the Pydantic JSON-export shape).
+    """
+
+    tag: MetricTagT
+    header: str
+    unit: str
+    count: int | None = None
+    # The most recent value of the metric (realtime dashboard display only).
+    current: float | int | None = None
+    sum: int | float | None = None
+    avg: float | None = None
+    p1: float | None = None
+    p5: float | None = None
+    p10: float | None = None
+    p25: float | None = None
+    p50: float | None = None
+    p75: float | None = None
+    p90: float | None = None
+    p95: float | None = None
+    p99: float | None = None
+    min: int | float | None = None
+    max: int | float | None = None
+    std: float | None = None
+
+    def __post_init__(self) -> None:
+        # Callers sometimes pass a BaseMetricUnit enum (str-backed but with a
+        # custom __hash__) where a plain str is expected. Pydantic used to
+        # coerce this on validation; msgspec does not. Collapse to str so
+        # downstream set/dict comparisons keyed on the unit continue to work.
+        if type(self.unit) is not str and isinstance(self.unit, str):
+            self.unit = str.__str__(self.unit)
 
     def to_display_unit(self) -> MetricResult:
         """Convert the metric result to its display unit."""
@@ -98,37 +118,27 @@ class MetricValue:
     """The display unit label (e.g. 'ms', 'tokens/s')."""
 
 
-class ProfileResults(AIPerfBaseModel):
-    """The results of a profile run."""
+class ProfileResults(
+    PydanticStructMixin,
+    msgspec.Struct,
+    kw_only=True,
+):
+    """The results of a profile run.
 
-    records: list[MetricResult] | None = Field(
-        ..., description="The records of the profile results"
-    )
-    timeslice_metric_results: dict[TimeSliceT, list[MetricResult]] | None = Field(
-        default=None,
-        description="The timeslice metric results of the profile (if using timeslice mode)",
-    )
-    total_expected: int | None = Field(
-        default=None,
-        description="The total number of inference requests expected to be made (if known)",
-    )
-    completed: int = Field(
-        ..., description="The number of inference requests completed"
-    )
-    start_ns: int = Field(
-        ..., description="The start time of the profile run in nanoseconds"
-    )
-    end_ns: int = Field(
-        ..., description="The end time of the profile run in nanoseconds"
-    )
-    was_cancelled: bool = Field(
-        default=False,
-        description="Whether the profile run was cancelled early",
-    )
-    error_summary: list[ErrorDetailsCount] = Field(
-        default_factory=list,
-        description="A list of the unique error details and their counts",
-    )
+    Intentionally does not set ``omit_defaults=True``: ProfileResults rides
+    on the /api/results HTTP endpoint and downstream consumers expect every
+    field (including ``was_cancelled=False`` and ``error_summary=[]``) to be
+    present on the wire.
+    """
+
+    completed: int
+    start_ns: int
+    end_ns: int
+    records: list[MetricResult] | None = None
+    timeslice_metric_results: dict[TimeSliceT, list[MetricResult]] | None = None
+    total_expected: int | None = None
+    was_cancelled: bool = False
+    error_summary: list[ErrorDetailsCount] = msgspec.field(default_factory=list)
 
     def get(self, tag: MetricTagT) -> MetricResult | None:
         """Get a metric result by tag, if it exists."""
@@ -138,14 +148,15 @@ class ProfileResults(AIPerfBaseModel):
         return None
 
 
-class ProcessRecordsResult(AIPerfBaseModel):
+class ProcessRecordsResult(
+    PydanticStructMixin,
+    msgspec.Struct,
+    kw_only=True,
+):
     """Result of the process records command."""
 
-    results: ProfileResults = Field(..., description="The profile results")
-    errors: list[ErrorDetails] = Field(
-        default_factory=list,
-        description="Any error that occurred while processing the profile results",
-    )
+    results: ProfileResults
+    errors: list[ErrorDetails] = msgspec.field(default_factory=list)
 
     def get(self, tag: MetricTagT) -> MetricResult | None:
         """Get a metric result by tag, if it exists."""

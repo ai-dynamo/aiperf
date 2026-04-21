@@ -4,6 +4,7 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
+import msgspec
 import pytest
 
 from aiperf.common.metric_records_wire import (
@@ -283,7 +284,7 @@ class TestRecordsManagerTimeslice:
         )
 
         # Test that it can be converted to dict (for JSON serialization)
-        result_dict = profile_results.model_dump()
+        result_dict = msgspec.to_builtins(profile_results)
 
         assert "records" in result_dict
         assert "timeslice_metric_results" in result_dict

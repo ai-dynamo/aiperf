@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated, Any
 
+import msgspec
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 from pydantic import Field
@@ -15,7 +16,7 @@ from aiperf import __version__ as aiperf_version
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
 from aiperf.common.mixins.realtime_metrics_mixin import RealtimeMetricsMixin
 from aiperf.common.models import MetricResult
-from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.base_models import AIPerfBaseModel, _msgspec_enc_hook
 from aiperf.config.parsing import coerce_value
 from aiperf.metrics.prometheus_formatter import InfoLabels, format_as_prometheus
 
@@ -144,9 +145,12 @@ def format_metrics_json(
 
     metrics_dict = {}
     for metric in metrics:
-        metrics_dict[metric.tag] = metric.model_dump(
-            mode="json", exclude_none=True, exclude={"tag"}
-        )
+        payload = msgspec.to_builtins(metric, enc_hook=_msgspec_enc_hook)
+        # Mirror the previous Pydantic ``exclude_none=True, exclude={"tag"}``:
+        # drop tag (used as the dict key) and any None values.
+        metrics_dict[metric.tag] = {
+            k: v for k, v in payload.items() if v is not None and k != "tag"
+        }
 
     return MetricsResponse(
         aiperf_version=aiperf_version,

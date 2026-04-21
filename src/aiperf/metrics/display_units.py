@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import copy
+
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import STAT_KEYS
 from aiperf.common.exceptions import MetricUnitError
@@ -26,7 +28,7 @@ def to_display_unit(result: MetricResult, registry: MetricRegistry) -> MetricRes
     if display_unit == metric_cls.unit:
         return result
 
-    record = result.model_copy(deep=True)
+    record = copy.deepcopy(result)
     record.unit = display_unit.value
 
     for stat in STAT_KEYS:
