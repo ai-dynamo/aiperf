@@ -107,3 +107,73 @@ def validate_tokenizer_early(
     if tokenizer_cfg.name:
         return {model: resolved[tokenizer_cfg.name] for model in model_names}
     return resolved
+
+
+def preload_tokenizers(
+    resolved_names: dict[str, str] | None,
+    trust_remote_code: bool = False,
+    revision: str = "main",
+    logger: AIPerfLogger | None = None,
+) -> None:
+    """Preload tokenizer files into HF disk cache before spawning child processes.
+
+    Child processes call _is_hf_cached() inside Tokenizer.from_pretrained().
+    When True, they use local_files_only=True and make zero HF network calls.
+
+    Args:
+        resolved_names: Mapping of model names to resolved tokenizer names.
+                        If None or empty (validation was skipped), this is a no-op.
+        trust_remote_code: Whether to trust remote code when loading.
+        revision: The specific model version to use.
+        logger: Optional logger for progress output.
+    """
+    from pathlib import Path
+
+    from aiperf.common.tokenizer import (
+        BUILTIN_TOKENIZER_NAME,
+        TIKTOKEN_ENCODING_NAMES,
+        Tokenizer,
+        _is_hf_cached,
+    )
+
+    if not resolved_names:
+        return
+
+    names_to_load: list[str] = []
+    for name in set(resolved_names.values()):
+        # tiktoken/builtin: no HF download needed
+        if name == BUILTIN_TOKENIZER_NAME or name in TIKTOKEN_ENCODING_NAMES:
+            continue
+        # Local path: files already on disk
+        p = Path(name)
+        if p.is_absolute() or name.startswith(("./", "../")) or p.is_dir():
+            continue
+        # Already in HF disk cache
+        if _is_hf_cached(name):
+            continue
+        names_to_load.append(name)
+
+    if not names_to_load:
+        return
+
+    if logger:
+        logger.info(f"Preloading {len(names_to_load)} tokenizer(s) into local cache...")
+
+    for name in names_to_load:
+        if logger:
+            logger.info(f"  Caching tokenizer: {name}")
+        try:
+            # Discard result — side effect is populating the HF disk cache so
+            # child processes find it cached and skip all network calls.
+            Tokenizer.from_pretrained(
+                name,
+                trust_remote_code=trust_remote_code,
+                revision=revision,
+                resolve_alias=False,  # already resolved by validate_tokenizer_early
+            )
+        except Exception as e:
+            if logger:
+                logger.warning(
+                    f"  Failed to preload tokenizer '{name}': {e}. "
+                    "Child processes will attempt to load it themselves."
+                )

@@ -59,7 +59,10 @@ def _run_single_benchmark(
 
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.common.bootstrap import bootstrap_and_run_service
-    from aiperf.common.tokenizer_validator import validate_tokenizer_early
+    from aiperf.common.tokenizer_validator import (
+        preload_tokenizers,
+        validate_tokenizer_early,
+    )
 
     logger = AIPerfLogger(__name__)
 
@@ -98,6 +101,15 @@ def _run_single_benchmark(
 
     # Validate tokenizer early (before spawning services) to fail fast.
     user_config.tokenizer.resolved_names = validate_tokenizer_early(user_config, logger)
+
+    # Preload tokenizer files into HF disk cache so child processes use
+    # local_files_only=True and make zero HF network calls.
+    preload_tokenizers(
+        user_config.tokenizer.resolved_names,
+        trust_remote_code=user_config.tokenizer.trust_remote_code,
+        revision=user_config.tokenizer.revision,
+        logger=logger,
+    )
 
     # Validate custom GPU metrics CSV file
     if user_config.gpu_telemetry_metrics_file:
@@ -175,6 +187,22 @@ def _run_multi_benchmark(
     setup_rich_logging(user_config, service_config)
 
     logger = AIPerfLogger(__name__)
+
+    # Resolve tokenizer aliases and preload files into HF disk cache once,
+    # before any subprocesses spawn. Each subprocess then finds the tokenizer
+    # cached on disk and makes zero HF network calls.
+    from aiperf.common.tokenizer_validator import (
+        preload_tokenizers,
+        validate_tokenizer_early,
+    )
+
+    user_config.tokenizer.resolved_names = validate_tokenizer_early(user_config, logger)
+    preload_tokenizers(
+        user_config.tokenizer.resolved_names,
+        trust_remote_code=user_config.tokenizer.trust_remote_code,
+        revision=user_config.tokenizer.revision,
+        logger=logger,
+    )
 
     # Inform user about UI mode (now that logging is set up)
     if "ui_type" not in service_config.model_fields_set:

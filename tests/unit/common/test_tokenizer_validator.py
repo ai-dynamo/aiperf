@@ -13,7 +13,10 @@ from aiperf.common.tokenizer import (
     TIKTOKEN_ENCODING_NAMES,
     Tokenizer,
 )
-from aiperf.common.tokenizer_validator import validate_tokenizer_early
+from aiperf.common.tokenizer_validator import (
+    preload_tokenizers,
+    validate_tokenizer_early,
+)
 
 
 @pytest.fixture
@@ -48,6 +51,106 @@ def _mock_endpoint_meta() -> Iterator[None]:
         return_value=meta,
     ):
         yield
+
+
+class TestPreloadTokenizers:
+    """Tests for preload_tokenizers() — cache-warming step before child processes spawn."""
+
+    def test_skips_when_resolved_names_none(self) -> None:
+        with patch.object(Tokenizer, "from_pretrained") as mock_load:
+            preload_tokenizers(None)
+        mock_load.assert_not_called()
+
+    def test_skips_when_resolved_names_empty(self) -> None:
+        with patch.object(Tokenizer, "from_pretrained") as mock_load:
+            preload_tokenizers({})
+        mock_load.assert_not_called()
+
+    def test_skips_builtin_name(self) -> None:
+        with patch.object(Tokenizer, "from_pretrained") as mock_load:
+            preload_tokenizers({"model": BUILTIN_TOKENIZER_NAME})
+        mock_load.assert_not_called()
+
+    @pytest.mark.parametrize("encoding_name", sorted(TIKTOKEN_ENCODING_NAMES))
+    def test_skips_tiktoken_encoding_names(self, encoding_name: str) -> None:
+        with patch.object(Tokenizer, "from_pretrained") as mock_load:
+            preload_tokenizers({"model": encoding_name})
+        mock_load.assert_not_called()
+
+    def test_skips_already_cached(self) -> None:
+        with (
+            patch("aiperf.common.tokenizer._is_hf_cached", return_value=True),
+            patch.object(Tokenizer, "from_pretrained") as mock_load,
+        ):
+            preload_tokenizers({"model": "meta-llama/Llama-2-7b-hf"})
+        mock_load.assert_not_called()
+
+    def test_skips_local_absolute_path(self, tmp_path) -> None:
+        local_path = str(tmp_path)
+        with patch.object(Tokenizer, "from_pretrained") as mock_load:
+            preload_tokenizers({"model": local_path})
+        mock_load.assert_not_called()
+
+    @pytest.mark.parametrize("local_name", ["./my-tokenizer", "../my-tokenizer"])
+    def test_skips_local_relative_path(self, local_name: str) -> None:
+        with patch.object(Tokenizer, "from_pretrained") as mock_load:
+            preload_tokenizers({"model": local_name})
+        mock_load.assert_not_called()
+
+    def test_deduplicates_same_tokenizer_across_models(self) -> None:
+        resolved = {
+            "model-a": "meta-llama/Llama-2-7b-hf",
+            "model-b": "meta-llama/Llama-2-7b-hf",
+        }
+        with (
+            patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
+            patch.object(Tokenizer, "from_pretrained") as mock_load,
+        ):
+            preload_tokenizers(resolved)
+        mock_load.assert_called_once()
+
+    def test_calls_from_pretrained_with_correct_params(self) -> None:
+        resolved = {"model": "meta-llama/Llama-2-7b-hf"}
+        with (
+            patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
+            patch.object(Tokenizer, "from_pretrained") as mock_load,
+        ):
+            preload_tokenizers(
+                resolved,
+                trust_remote_code=True,
+                revision="v1.0",
+            )
+        mock_load.assert_called_once_with(
+            "meta-llama/Llama-2-7b-hf",
+            trust_remote_code=True,
+            revision="v1.0",
+            resolve_alias=False,
+        )
+
+    def test_swallows_exception_and_warns(self, mock_logger: MagicMock) -> None:
+        resolved = {"model": "meta-llama/Llama-2-7b-hf"}
+        with (
+            patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
+            patch.object(
+                Tokenizer, "from_pretrained", side_effect=RuntimeError("network error")
+            ),
+        ):
+            preload_tokenizers(resolved, logger=mock_logger)  # must not raise
+
+        mock_logger.warning.assert_called_once()
+        assert "meta-llama/Llama-2-7b-hf" in mock_logger.warning.call_args[0][0]
+
+    def test_loads_multiple_distinct_tokenizers(self) -> None:
+        resolved = {
+            "model-a": "meta-llama/Llama-2-7b-hf",
+            "model-b": "mistralai/Mistral-7B-v0.1",
+        }
+        with (
+            patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
+            patch.object(Tokenizer, "from_pretrained") as mock_load,
+        ):
+            preload_tokenizers(resolved)
+        assert mock_load.call_count == 2
 
 
 @pytest.mark.usefixtures("_mock_endpoint_meta")
