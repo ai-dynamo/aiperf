@@ -161,6 +161,46 @@ JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency50-rate50/profile_export_
 
 With constant mode, requests arrive at precisely 20ms intervals (1 / 50 req/s = 20ms). This creates predictable, reproducible load patterns ideal for regression testing. The system reaches max concurrency of 50 after exactly 1 second (50 requests / 50 req/s).
 
+## Scheduled Concurrency
+
+Use `--concurrency-schedule-file` when the concurrency ceiling itself should
+change over time. The schedule file is JSONL with one target per line:
+
+```jsonl
+{"time_sec": 0, "concurrency": 1}
+{"time_sec": 60, "concurrency": 25}
+{"time_sec": 300, "concurrency": 100}
+{"time_sec": 900, "concurrency": 100}
+```
+
+`time_sec` is seconds from the benchmark start. The first row must start at
+`0`, later rows must be strictly increasing, and `concurrency` must be a
+positive integer. AIPerf follows the rows as a step schedule. If you need
+linear interpolation or jitter, generate a dense schedule first; for example,
+`aiperf synthesize agentic-code` can emit `schedule.jsonl` from a
+`concurrency_schedule` config.
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --streaming \
+    --url localhost:8000 \
+    --concurrency-schedule-file concurrency_schedule.jsonl \
+    --request-rate 200 \
+    --request-rate-mode poisson \
+    --synthetic-input-tokens-mean 800 \
+    --output-tokens-mean 400
+```
+
+The schedule controls the session concurrency limit; request rate still controls
+when requests attempt to launch. If `--benchmark-duration` is omitted, AIPerf
+uses the final `time_sec` as the profiling duration. `--concurrency` is optional
+with a schedule; when omitted or lower than the schedule peak, AIPerf sizes the
+internal limiter to the peak schedule value. `--concurrency-schedule-file` is
+mutually exclusive with `--concurrency-ramp-duration` because the file already
+describes the ramp.
+
 ## Common Use Cases
 
 Here are practical scenarios where combining request rate with max concurrency is particularly valuable:
@@ -188,6 +228,8 @@ Simulate organic user behavior with natural variance in request timing. The Pois
 **Key Parameters:**
 - `--request-rate <number>` — Target requests per second
 - `--concurrency <number>` — Maximum concurrent requests (acts as ceiling)
+- `--concurrency-schedule-file <path>` — Step schedule for changing the
+  concurrency ceiling over wall-clock time
 - `--arrival-pattern <pattern>` — Request timing distribution (default: `poisson`)
   - Options: `poisson`, `constant`, `gamma`, `concurrency_burst`
 - `--arrival-smoothness <number>` — Smoothness for gamma distribution (default: 1.0)
@@ -198,6 +240,8 @@ Simulate organic user behavior with natural variance in request timing. The Pois
 - Continuation turns block on concurrency; new sessions skip if no slot available
 - No catch-up: the schedule continues at the configured rate regardless of blocking
 - Sustained concurrency: achieved when request rate exceeds server response time
+- Scheduled concurrency: `--concurrency-schedule-file` updates the semaphore
+  ceiling at each `time_sec` tick
 
 **Choosing a pattern:**
 - Use `poisson` for realistic traffic simulation with natural variance
