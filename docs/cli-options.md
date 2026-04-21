@@ -34,6 +34,10 @@ Explore and validate AIPerf plugins
 
 Run an individual AIPerf service in a single process
 
+### [`proxy`](#aiperf-proxy)
+
+Run a standalone ZMQ proxy (for Kubernetes sidecar deployments)
+
 ### [`config init`](#aiperf-config-init)
 
 Generate a starter configuration from bundled templates.
@@ -1077,6 +1081,25 @@ HTTP port for health endpoints (/healthz, /readyz). Required for Kubernetes live
 #### `--api-port` `<int>`
 
 HTTP port for API endpoints (e.g., /api/dataset, /api/progress). Only used by services that expose HTTP APIs.
+
+<hr/>
+
+## `aiperf proxy`
+
+Run a standalone ZMQ proxy (for Kubernetes sidecar deployments)
+
+#### `--benchmark-run` `<str>` _(Required)_
+
+Path to the BenchmarkRun JSON file. Used to resolve the proxy's bind addresses from the resolved communication config.
+
+#### `--kind` `<str>`
+
+Which proxy to run. Currently only 'event_bus' is supported.
+<br/>_Default: `event_bus`_
+
+#### `--health-port` `<int>`
+
+HTTP port for /healthz and /readyz. Falls back to AIPERF_SERVICE_HEALTH_PORT.
 
 <hr/>
 

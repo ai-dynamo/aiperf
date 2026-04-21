@@ -36,6 +36,7 @@ CONTROLLER_REQUIRED_RESOURCE_KEYS = (
 CONTROLLER_OPTIONAL_RESOURCE_KEYS = (
     "GPU_TELEMETRY_MANAGER",
     "SERVER_METRICS_MANAGER",
+    "EVENT_BUS_PROXY",
 )
 """Controller containers that depend on benchmark config flags."""
 
@@ -216,6 +217,9 @@ class _PortSettings(BaseSettings):
     SERVER_METRICS_MANAGER_HEALTH: int = Field(
         default=8087, ge=1, le=65535, description="Server metrics manager health port"
     )
+    EVENT_BUS_PROXY_HEALTH: int = Field(
+        default=8088, ge=1, le=65535, description="Event-bus proxy sidecar health port"
+    )
 
     # Worker pod ports
     WORKER_HEALTH: int = Field(
@@ -325,6 +329,7 @@ class _K8sEnvironment(BaseSettings):
     GPU_TELEMETRY_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("GPU_TELEMETRY_MANAGER_", "250m", "512Mi"), description="GPU telemetry container resources")
     SERVER_METRICS_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("SERVER_METRICS_MANAGER_", "250m", "512Mi"), description="Server metrics container resources")
     RESULTS_SIDECAR: ResourceSettings = Field(default_factory=lambda: _resource_settings("RESULTS_SIDECAR_", "250m", "512Mi"), description="Results sidecar resources for serving exported files")
+    EVENT_BUS_PROXY: ResourceSettings = Field(default_factory=lambda: _resource_settings("EVENT_BUS_PROXY_", "2000m", "1Gi"), description="Event-bus XPUB/XSUB proxy sidecar resources; isolates pub/sub socket I/O from control-plane")
     WORKER_POD: ResourceSettings = Field(default_factory=lambda: _resource_settings("WORKER_POD_", "4000m", "12Gi"), description="Worker pod container resources (workers + record processors + WPM)")
     # fmt: on
     RECORD_PROCESSOR_CPU_REQUEST: str | None = Field(
@@ -337,6 +342,16 @@ class _K8sEnvironment(BaseSettings):
         le=100,
         description="Kubernetes-only default scale factor for record processors per worker pod. "
         "Formula: 1 record processor for every X workers. Default: 1 record processor per worker.",
+    )
+
+    EVENT_BUS_SIDECAR_ENABLED: bool = Field(
+        default=True,
+        description="Run the XPUB/XSUB event-bus proxy as a dedicated sidecar container "
+        "in the controller pod rather than inside the control-plane (SystemController) "
+        "container. Isolates pub/sub socket accept/forward from the control plane's "
+        "event loop so large fan-ins (hundreds of simultaneous RP/worker connections) "
+        "at startup don't starve the SystemController. Set to false to revert to the "
+        "pre-sidecar behavior where SystemController owns the event-bus proxy.",
     )
 
     # Non-resource settings

@@ -134,6 +134,12 @@ class Containers:
     RESULTS_SIDECAR: str = "results-sidecar"
     """Lightweight sidecar serving exported result artifacts."""
 
+    EVENT_BUS_PROXY: str = "event-bus-proxy"
+    """Dedicated XPUB/XSUB event-bus proxy sidecar in the controller pod.
+    Isolates pub/sub forwarding from the SystemController event loop so that
+    hundreds of simultaneous RP/worker connections at startup don't starve
+    the control plane's CPU."""
+
     WORKER_GROUP_MANAGER: str = "worker-group-manager"
     """Per-pod worker group lifecycle and dataset coordination."""
 

@@ -237,9 +237,15 @@ class SystemController(SignalHandlerMixin, BaseService):
                 self._k8s_topology.num_worker_pods
             )
 
+        event_bus_sidecar_enabled = False
+        if is_k8s_mode:
+            from aiperf.kubernetes.environment import K8sEnvironment
+
+            event_bus_sidecar_enabled = K8sEnvironment.EVENT_BUS_SIDECAR_ENABLED
+
         self.proxy_manager: ProxyManager = ProxyManager(
             run=self.run,
-            enable_event_bus=True,
+            enable_event_bus=not event_bus_sidecar_enabled,
             enable_dataset_manager=True,
             enable_raw_inference=False,
         )

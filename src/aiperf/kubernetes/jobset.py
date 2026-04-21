@@ -751,6 +751,55 @@ class JobSetSpec(AIPerfBaseModel):
             security_context=self._create_security_context(),
         )
 
+    def _create_event_bus_proxy_container(self) -> ContainerSpec:
+        """Sidecar that runs the XPUB/XSUB event-bus proxy.
+
+        Placed first in the controller pod's container list so the kubelet
+        begins pulling and starting it before control-plane. The bind sockets
+        come up in tens of milliseconds once the container starts — well
+        inside the 90s client connection-probe timeout.
+
+        Isolates pub/sub socket accept/forward from the SystemController
+        event loop, so large fan-ins of record processors and workers at
+        startup don't starve the control plane's CPU.
+        """
+        jobset_config = K8sEnvironment.JOBSET
+        ports = K8sEnvironment.PORTS
+        run_file = f"{jobset_config.CONFIG_MOUNT_PATH}/run_config.json"
+        health_port = ports.EVENT_BUS_PROXY_HEALTH
+
+        args = [
+            "proxy",
+            "--kind",
+            "event_bus",
+            "--benchmark-run",
+            run_file,
+            "--health-port",
+            str(health_port),
+        ]
+
+        container_ports: list[dict[str, Any]] = [
+            {"containerPort": health_port, "name": "health"},
+            {"containerPort": 5663, "name": "pub-frontend"},
+            {"containerPort": 5664, "name": "sub-backend"},
+        ]
+
+        return ContainerSpec(
+            name=Containers.EVENT_BUS_PROXY,
+            image=self.image,
+            image_pull_policy=self.image_pull_policy,
+            command=["aiperf"],
+            args=args,
+            env=self._create_env_vars(include_pod_index=False),
+            resources=self._resolve_pod_resources("EVENT_BUS_PROXY"),
+            volume_mounts=self._get_volume_mounts(),
+            ports=container_ports,
+            startup_probe=self._create_startup_probe(health_port),
+            liveness_probe=self._create_health_probe(health_port),
+            readiness_probe=self._create_health_probe(health_port, path="/readyz"),
+            security_context=self._create_security_context(),
+        )
+
     def _create_controller_containers(self) -> list[ContainerSpec]:
         """Create one container per control-plane service in the controller pod.
 
@@ -866,6 +915,12 @@ class JobSetSpec(AIPerfBaseModel):
             )
 
         containers.append(results_sidecar)
+
+        if K8sEnvironment.EVENT_BUS_SIDECAR_ENABLED:
+            # Prepend so the kubelet begins pulling/starting the proxy before
+            # the control-plane container races to publish on it.
+            containers.insert(0, self._create_event_bus_proxy_container())
+
         return containers
 
     def _create_worker_containers(self, controller_dns: str) -> list[ContainerSpec]:

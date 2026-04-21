@@ -637,13 +637,32 @@ class TestKubernetesMode:
         config: AIPerfConfig,
         mock_service_manager: AsyncMock,
     ) -> None:
-        """In K8s mode, raw inference proxy is disabled (worker pods run it locally)."""
+        """In K8s mode, raw inference proxy is disabled (worker pods run it locally).
+
+        Event-bus proxy is also off by default because the dedicated event-bus-proxy
+        sidecar container owns it (see ``AIPERF_K8S_EVENT_BUS_SIDECAR_ENABLED``).
+        """
         config.runtime.service_run_type = ServiceRunType.KUBERNETES
         _, mock_proxy_cls = self._create_system_controller(config, mock_service_manager)
         call_kwargs = mock_proxy_cls.call_args[1]
-        assert call_kwargs["enable_event_bus"] is True
+        assert call_kwargs["enable_event_bus"] is False
         assert call_kwargs["enable_dataset_manager"] is True
         assert call_kwargs["enable_raw_inference"] is False
+
+    def test_kubernetes_mode_with_sidecar_disabled_hosts_event_bus(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """With the sidecar flag off, SystemController hosts the event-bus proxy itself."""
+        from aiperf.kubernetes.environment import K8sEnvironment
+
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        monkeypatch.setattr(K8sEnvironment, "EVENT_BUS_SIDECAR_ENABLED", False)
+        _, mock_proxy_cls = self._create_system_controller(config, mock_service_manager)
+        call_kwargs = mock_proxy_cls.call_args[1]
+        assert call_kwargs["enable_event_bus"] is True
 
     def test_multiprocessing_mode_disables_controller_raw_inference_proxy(
         self,

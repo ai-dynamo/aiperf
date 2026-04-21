@@ -55,6 +55,11 @@ app.command(
     help="Run an individual AIPerf service in a single process",
 )
 app.command(
+    "aiperf.cli_commands.proxy:app",
+    name="proxy",
+    help="Run a standalone ZMQ proxy (for Kubernetes sidecar deployments)",
+)
+app.command(
     "aiperf.cli_commands.config_cli:config_app",
     name="config",
     help="Manage AIPerf YAML configurations",

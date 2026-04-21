@@ -421,6 +421,7 @@ class TestJobSetSpec:
         ]
         container_names = [c["name"] for c in containers]
         assert set(container_names) == {
+            "event-bus-proxy",
             "control-plane",
             "dataset-manager",
             "timing-manager",
@@ -430,6 +431,9 @@ class TestJobSetSpec:
             "server-metrics-manager",
             "results-sidecar",
         }
+        # Event-bus proxy sidecar must be first so the kubelet begins pulling
+        # and starting it before anything publishes on its pub/sub sockets.
+        assert container_names[0] == "event-bus-proxy"
 
     def test_to_k8s_manifest_worker_containers(
         self, basic_jobset_spec: JobSetSpec
