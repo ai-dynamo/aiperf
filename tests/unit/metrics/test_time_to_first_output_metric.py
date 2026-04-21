@@ -32,8 +32,6 @@ def create_response_record(
         responses: List of (timestamp, reasoning, content) tuples
     """
     request = RequestRecord(
-        conversation_id="test-conversation",
-        turn_index=0,
         model_name="test-model",
         start_perf_ns=start_ns,
         timestamp_ns=start_ns,

@@ -17,8 +17,6 @@ from pydantic import (
     PlainSerializer,
     RootModel,
     SerializeAsAny,
-    field_serializer,
-    field_validator,
 )
 from pydantic.functional_validators import AfterValidator
 
@@ -413,200 +411,89 @@ class SSEMessage(
             return None
 
 
-class RequestInfo(AIPerfBaseModel):
-    """Info about a request."""
+class RequestInfo(
+    PydanticStructMixin,
+    msgspec.Struct,
+    kw_only=True,
+    omit_defaults=True,
+):
+    """Info about a request.
 
-    config: BenchmarkConfig = Field(
-        ...,
-        description="The benchmark config for the request.",
-    )
-    turns: list[Turn] = Field(
-        default_factory=list,
-        description="The actual turns of the request. This will include assistant turns as well as user turns in multi-turn conversations.",
-    )
-    turn_index: int = Field(
-        ...,
-        description="The index of the turn in the conversation (if applicable).",
-    )
-    endpoint_headers: dict[str, str] = Field(
-        default_factory=dict,
-        description="Endpoint-specific headers (auth, API keys, custom headers).",
-    )
-    endpoint_params: dict[str, str] = Field(
-        default_factory=dict,
-        description="Endpoint-specific URL query parameters.",
-    )
-    credit_num: int = Field(
-        ...,
-        ge=0,
-        description="The sequential number of the credit in the credit phase. This is used to track the progress of the credit phase,"
-        " as well as the order that requests are sent in.",
-    )
-    session_num: int | None = Field(
-        default=None,
-        ge=0,
-        description="The sequential number of the session/conversation (0-based). All turns within the same conversation"
-        " share the same session_num.",
-    )
-    credit_phase: CreditPhase = Field(
-        ...,
-        description="The name of the credit phase (e.g. 'warmup', 'main', 'cooldown').",
-    )
-    cancel_after_ns: int | None = Field(
-        default=None,
-        ge=0,
-        description="The delay in nanoseconds after which the request should be cancelled, or None if the request should not be cancelled.",
-    )
-    x_request_id: str = Field(
-        ...,
-        description="The X-Request-ID header of the request. This is a unique ID for the request.",
-    )
-    x_correlation_id: str = Field(
-        ...,
-        description="The X-Correlation-ID header of the request. This is the ID of the credit drop.",
-    )
-    conversation_id: str = Field(
-        ...,
-        description="The ID of the conversation (if applicable).",
-    )
-    system_message: str | None = Field(
-        default=None,
-        description="Optional shared system message to prepend to the first turn. "
-        "Extracted from conversation.system_message at request time.",
-    )
-    user_context_message: str | None = Field(
-        default=None,
-        description="Optional per-conversation user context message to prepend to the first turn. "
-        "Extracted from conversation.user_context_message at request time.",
-    )
-    drop_perf_ns: int | None = Field(
-        default=None,
-        ge=0,
-        description="The time in nanoseconds (perf_counter_ns) when the credit was dropped by the timing manager. "
-        "This is used to calculate the credit drop latency.",
-    )
-    credit_issued_ns: int | None = Field(
-        default=None,
-        ge=0,
-        description="MonotonicClock timestamp when the credit was issued by the controller. "
-        "This is the control point for accurate rate measurement, before ZeroMQ transit to workers.",
-    )
-    credit_received_ns: int | None = Field(
-        default=None,
-        ge=0,
-        description="MonotonicClock timestamp when the worker received the credit. "
-        "credit_received_ns - credit_issued_ns = ZMQ transit time (same clock domain).",
-    )
-    is_final_turn: bool = Field(
-        default=True,
-        description="Whether this is the final turn in the conversation. "
-        "Used by per-conversation connection strategy to release the connection lease.",
-    )
-    url_index: int | None = Field(
-        default=None,
-        ge=0,
-        description="Index of the URL to use when multiple --url values are configured. "
-        "None means use the default (first) URL. Used for round-robin load balancing.",
-    )
+    Mutable msgspec struct: the worker populates many fields
+    incrementally after construction. ``config`` is a nested Pydantic
+    BenchmarkConfig that msgspec serialises via the enc/dec hooks in
+    ``PydanticStructMixin``. It stays local to the worker /
+    records-manager processes — the wire projection in
+    ``inference_wire.py`` strips it.
+    """
+
+    config: BenchmarkConfig
+    turn_index: int
+    credit_num: int
+    credit_phase: CreditPhase
+    x_request_id: str
+    x_correlation_id: str
+    conversation_id: str
+    turns: list[Turn] = msgspec.field(default_factory=list)
+    endpoint_headers: dict[str, str] = msgspec.field(default_factory=dict)
+    endpoint_params: dict[str, str] = msgspec.field(default_factory=dict)
+    session_num: int | None = None
+    cancel_after_ns: int | None = None
+    system_message: str | None = None
+    user_context_message: str | None = None
+    drop_perf_ns: int | None = None
+    credit_issued_ns: int | None = None
+    credit_received_ns: int | None = None
+    is_final_turn: bool = True
+    url_index: int | None = None
 
 
-class RequestRecord(AIPerfBaseModel):
-    """Record of a request with its associated responses."""
+class RequestRecord(
+    PydanticStructMixin,
+    msgspec.Struct,
+    kw_only=True,
+    omit_defaults=True,
+):
+    """Record of a request with its associated responses.
 
-    request_info: RequestInfo | None = Field(
-        default=None,
-        description="The original request info.",
-    )
-    request_headers: dict[str, str] | None = Field(
-        default=None,
-        description="The headers of the request.",
-    )
-    model_name: str | None = Field(
-        default=None,
-        description="The name of the model targeted by the request.",
-    )
-    timestamp_ns: int = Field(
-        default_factory=time.time_ns,
-        description="Monotonic wall-clock timestamp of the request in nanoseconds. "
-        "Overwritten by Worker with MonotonicClock.now_ns() for clock-offset consistency. "
-        "DO NOT USE FOR LATENCY CALCULATIONS.",
-    )
-    start_perf_ns: int = Field(
-        default_factory=time.perf_counter_ns,
-        description="The start reference time of the request in nanoseconds used for latency calculations (perf_counter_ns).",
-    )
-    end_perf_ns: int | None = Field(
-        default=None,
-        description="The end time of the request in nanoseconds (perf_counter_ns).",
-    )
-    recv_start_perf_ns: int | None = Field(
-        default=None,
-        description="The start time of the streaming response in nanoseconds (perf_counter_ns).",
-    )
-    status: int | None = Field(
-        default=None,
-        description="The HTTP status code of the response.",
-    )
+    Mutable msgspec struct: transport code sets fields (``end_perf_ns``,
+    ``status``, ``error``, ``cancellation_perf_ns`` etc.) on the record
+    as the request progresses. The records-manager later drops
+    ``responses`` / ``turns`` to None to free memory.
+    """
+
+    request_info: RequestInfo | None = None
+    request_headers: dict[str, str] | None = None
+    model_name: str | None = None
+    timestamp_ns: int = msgspec.field(default_factory=time.time_ns)
+    start_perf_ns: int = msgspec.field(default_factory=time.perf_counter_ns)
+    end_perf_ns: int | None = None
+    recv_start_perf_ns: int | None = None
+    status: int | None = None
     # Msgspec-tagged union (tag_field="response_type") — each leaf is a
-    # msgspec.Struct with PydanticStructMixin, so Pydantic routes dicts to
-    # the correct variant via each variant's __get_pydantic_core_schema__.
-    # SerializeAsAny is no longer needed: the mixin's serializer runs on the
-    # concrete runtime type without us asking.
-    responses: list[SSEMessage | TextResponse | BinaryResponse] = Field(
-        default_factory=list,
-        description="The raw responses received from the request.",
+    # msgspec.Struct with PydanticStructMixin. The records-manager nulls
+    # the field after parsing, so it must accept None.
+    responses: list[SSEMessage | TextResponse | BinaryResponse] | None = msgspec.field(
+        default_factory=list
     )
-    error: ErrorDetails | None = Field(
-        default=None,
-        description="The error details if the request failed.",
-    )
-    credit_drop_latency: int | None = Field(
-        default=None,
-        description="The latency of the credit drop in nanoseconds from when it was first received by a Worker to when the inference request was actually sent. "
-        "This can be used to trace internal latency in order to identify bottlenecks or other issues.",
-        ge=0,
-    )
-    cancellation_perf_ns: int | None = Field(
-        default=None,
-        ge=0,
-        description="The time in nanoseconds (perf_counter_ns) when the request was actually cancelled, if applicable.",
-    )
-    clock_offset_ns: int | None = Field(
-        default=None,
-        description="Clock offset between worker and controller in nanoseconds, estimated via minimum offset filtering (worker_clock - controller_clock + transit). "
-        "Used for cross-machine timestamp alignment in Kubernetes deployments. "
-        "To convert worker timestamp to controller time: controller_time = timestamp_ns - clock_offset_ns.",
-    )
-    trace_data: BaseTraceData | None = Field(
-        default=None,
-        description="Comprehensive trace data captured via a trace config. "
-        "Includes detailed timing for connection establishment, DNS resolution, request/response events, etc. "
-        "The type of the trace data is determined by the transport and library used.",
-    )
-    turns: list[Turn] = Field(
-        default_factory=list,
-        description="Deep copy of the request turns. This is a copy of the turns from request_info, "
-        "made to avoid mutating the original session data when stripping multimodal content.",
-    )
+    error: ErrorDetails | None = None
+    credit_drop_latency: int | None = None
+    cancellation_perf_ns: int | None = None
+    clock_offset_ns: int | None = None
+    trace_data: BaseTraceData | None = None
+    # Records-manager nulls this to free memory after parsing.
+    turns: list[Turn] | None = msgspec.field(default_factory=list)
+    # Populated by the inference_wire rehydration path when raw-export is
+    # enabled; stored here temporarily before the raw-record writer moves it
+    # to RawRecordInfo. Omitted from the wire by default.
+    raw_payload: dict[str, Any] | None = None
 
-    @field_validator("trace_data", mode="before")
-    @classmethod
-    def route_trace_data(cls, v: Any) -> BaseTraceData | None:
-        """Route nested trace_data (dict form) to correct subclass based on trace_type discriminator."""
-        if v is None or isinstance(v, BaseTraceData):
-            return v
-        if isinstance(v, dict):
-            return BaseTraceData.from_json(v)
-        return v
-
-    @field_serializer("trace_data")
-    def _serialize_trace_data(
-        self, value: BaseTraceData | None
-    ) -> dict[str, Any] | None:
-        """Serialize msgspec trace data Struct to a plain dict for Pydantic output."""
-        if value is None:
-            return None
-        return value.model_dump(exclude_none=True)
+    def __post_init__(self) -> None:
+        # Parity with the former Pydantic field_validator on trace_data:
+        # route dict payloads to the correct BaseTraceData subclass via
+        # AutoRoutedModel discrimination.
+        if isinstance(self.trace_data, dict):
+            self.trace_data = BaseTraceData.from_json(self.trace_data)
 
     @property
     def was_cancelled(self) -> bool:
@@ -630,6 +517,7 @@ class RequestRecord(AIPerfBaseModel):
         """
         return not self.has_error and (
             0 <= self.start_perf_ns < sys.maxsize
+            and self.responses is not None
             and len(self.responses) > 0
             and all(0 < response.perf_ns < sys.maxsize for response in self.responses)
         )
@@ -641,13 +529,13 @@ class RequestRecord(AIPerfBaseModel):
                 lambda: f"Converting invalid request record to error record: {self}"
             )
             err = InvalidInferenceResultError("Invalid inference result")
-            if len(self.responses) == 0:
+            if not self.responses:
                 err.add_note("No responses were received")
             if self.start_perf_ns <= 0 or self.start_perf_ns >= sys.maxsize:
                 err.add_note(
                     f"Start perf ns timestamp is invalid: {self.start_perf_ns}"
                 )
-            for i, response in enumerate(self.responses):
+            for i, response in enumerate(self.responses or ()):
                 if response.perf_ns <= 0 or response.perf_ns >= sys.maxsize:
                     err.add_note(
                         f"Response {i} perf ns timestamp is invalid: {response.perf_ns}"

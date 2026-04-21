@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import copy
+
 import orjson
 
 from aiperf.common.inference_wire import (
@@ -27,7 +29,7 @@ class TestInferenceWire:
         sample_request_info,
     ) -> None:
         """The alternate msgspec wire model should rehydrate into the current record shape."""
-        request_info = sample_request_info.model_copy(deep=True)
+        request_info = copy.deepcopy(sample_request_info)
         turn = Turn(
             texts=[Text(contents=["hello", " world"])],
             images=[Image(contents=["img-0", "img-1"])],
@@ -137,7 +139,7 @@ class TestInferenceWire:
         sample_request_info,
     ) -> None:
         """The alternate wire model should still project prompt data from request_info."""
-        request_info = sample_request_info.model_copy(deep=True)
+        request_info = copy.deepcopy(sample_request_info)
         request_info.turns = [
             Turn(
                 texts=[Text(contents=["fallback prompt"])],
@@ -173,7 +175,7 @@ class TestInferenceWire:
         sample_request_info,
     ) -> None:
         """Trace payload should survive the msgspec wire path when explicitly included."""
-        request_info = sample_request_info.model_copy(deep=True)
+        request_info = copy.deepcopy(sample_request_info)
         record = RequestRecord(
             request_info=request_info,
             model_name="test-model",
@@ -214,7 +216,7 @@ class TestInferenceWire:
         sample_request_info,
     ) -> None:
         """Raw-export-only baggage should stay off the wire unless explicitly requested."""
-        request_info = sample_request_info.model_copy(deep=True)
+        request_info = copy.deepcopy(sample_request_info)
         record = RequestRecord(
             request_info=request_info,
             request_headers={"Authorization": "Bearer secret"},
@@ -247,4 +249,7 @@ class TestInferenceWire:
         assert rebuilt_record.request_headers is None
         assert rebuilt_record.status is None
         assert rebuilt_record.trace_data is None
-        assert not hasattr(rebuilt_record, "raw_payload")
+        assert (
+            not hasattr(rebuilt_record, "raw_payload")
+            or rebuilt_record.raw_payload is None
+        )

@@ -65,8 +65,6 @@ def create_request_record(status: int = 200, body: str | bytes = "") -> RequestR
         start_perf_ns=perf_ns,
         end_perf_ns=perf_ns + 1000000,  # Add 1ms
         status=status,
-        body=body,
-        response_headers={},
         responses=[response] if status < 400 else [],  # No responses for error status
         error=error,
     )

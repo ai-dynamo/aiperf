@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import copy
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -221,7 +222,7 @@ class TestRecordProcessorWireMessages:
         processor.records_push_client = MagicMock()
         processor.records_push_client.push = AsyncMock()
 
-        record = sample_request_record.model_copy(deep=True)
+        record = copy.deepcopy(sample_request_record)
         record.responses = []
         record.turns = record.request_info.turns
         wire_message = build_inference_results_wire_message(

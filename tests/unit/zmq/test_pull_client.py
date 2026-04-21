@@ -5,6 +5,7 @@ Tests for pull_client.py - ZMQPullClient class.
 """
 
 import asyncio
+import copy
 from unittest.mock import Mock, patch
 
 import pytest
@@ -274,7 +275,7 @@ class TestZMQPullClientCodecs:
         sample_request_record,
     ):
         """The pull client should dispatch msgspec-struct messages by message_type."""
-        record = sample_request_record.model_copy(deep=True)
+        record = copy.deepcopy(sample_request_record)
         record.responses = []
         record.turns = record.request_info.turns
         wire_bytes = encode_inference_results_wire_message(

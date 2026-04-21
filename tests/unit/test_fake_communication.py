@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import copy
+
 import pytest
 
 from aiperf.common.channel_codecs import RAW_INFERENCE_CODEC, RECORDS_CODEC
@@ -96,7 +98,7 @@ class TestFakeCommunication:
 
         pull_client.register_pull_callback(MessageType.INFERENCE_RESULTS, callback)
 
-        record = sample_request_record.model_copy(deep=True)
+        record = copy.deepcopy(sample_request_record)
         record.responses = []
         record.turns = record.request_info.turns
         data = encode_inference_results_wire_message(

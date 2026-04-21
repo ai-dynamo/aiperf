@@ -32,6 +32,10 @@ def _msgspec_enc_hook(obj: Any) -> Any:
     - AIPerf's plugin-backed enums (``ExtensibleStrEnum``) use a custom
       metaclass so they fall through to ``isinstance(obj, Enum)``.
     - ``pathlib.PurePath`` / ``Path`` render to their string form.
+    - Pydantic ``BaseModel`` subclasses fall back to ``model_dump(mode="json")``
+      so nested Pydantic types (e.g. BenchmarkConfig on RequestInfo,
+      BaseTraceData on RequestRecord) can ride inside a msgspec struct
+      until those types themselves become msgspec in a later spec.
 
     Everything else raises ``NotImplementedError`` and lets msgspec emit
     its standard unsupported-type error.
@@ -40,6 +44,11 @@ def _msgspec_enc_hook(obj: Any) -> Any:
         return obj.value
     if isinstance(obj, PurePath):
         return str(obj)
+    # Import lazily to avoid a circular at module-load time.
+    from pydantic import BaseModel
+
+    if isinstance(obj, BaseModel):
+        return obj.model_dump(mode="json", exclude_none=True)
     raise NotImplementedError(f"Objects of type {type(obj).__name__} are not supported")
 
 
@@ -49,6 +58,11 @@ def _msgspec_dec_hook(target_type: type, obj: Any) -> Any:
         return target_type(obj)
     if isinstance(target_type, type) and issubclass(target_type, PurePath):
         return target_type(obj)
+    # Lazy import to avoid module-load circulars.
+    from pydantic import BaseModel
+
+    if isinstance(target_type, type) and issubclass(target_type, BaseModel):
+        return target_type.model_validate(obj)
     raise NotImplementedError(f"Cannot decode {type(obj).__name__} as {target_type!r}")
 
 
