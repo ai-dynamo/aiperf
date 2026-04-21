@@ -828,6 +828,7 @@ class OperatorDeployer:
 
         result = await self.create_job(config, name, namespace)
         name = result.job_name
+        namespace = result.namespace
 
         async with (
             BenchmarkWatchdog(

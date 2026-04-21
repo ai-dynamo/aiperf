@@ -560,21 +560,30 @@ def cluster_config(k8s_settings: K8sTestSettings) -> ClusterConfig:
 async def local_cluster(
     cluster_config: ClusterConfig,
     k8s_settings: K8sTestSettings,
+    tmp_path_factory: pytest.TempPathFactory,
 ) -> AsyncGenerator[LocalCluster, None]:
     """Create and manage a local K8s cluster for the test package.
 
     Uses Kind by default (faster) or Minikube via --k8s-runtime=minikube.
     Package-scoped so the cluster is shared across all tests in the package.
     Use --k8s-reuse-cluster to keep an existing cluster.
+
+    Under pytest-xdist, serialize creation with a file lock so only one worker
+    creates the cluster; others reuse it.
     """
+    from filelock import FileLock
+
     s = k8s_settings
     cluster = LocalCluster(config=cluster_config)
 
-    # Create cluster (or reuse existing)
-    if s.reuse_cluster and await cluster.exists():
-        logger.info(f"Reusing existing cluster: {cluster.name}")
-    else:
-        await cluster.create(force=not s.reuse_cluster)
+    root_tmp = tmp_path_factory.getbasetemp().parent
+    lock_path = root_tmp / f".aiperf_cluster_{cluster.name}.lock"
+
+    with FileLock(str(lock_path)):
+        if await cluster.exists():
+            logger.info(f"Reusing existing cluster: {cluster.name}")
+        else:
+            await cluster.create(force=not s.reuse_cluster)
 
     yield cluster
 
@@ -814,13 +823,21 @@ async def mock_server(
     loaded_images: ImageManager,
     project_root: Path,
     k8s_settings: K8sTestSettings,
+    tmp_path_factory: pytest.TempPathFactory,
+    worker_id: str,
 ) -> AsyncGenerator[None, None]:
     """Deploy the mock LLM server.
 
-    This fixture is package-scoped and deploys the mock server once per package.
+    Package-scoped; under xdist, serialize deployment via filelock so only
+    one worker deploys while the rest wait for readiness.
     """
-    already_healthy = False
-    if k8s_settings.reuse_cluster:
+    from filelock import FileLock
+
+    root_tmp = tmp_path_factory.getbasetemp().parent
+    lock_path = root_tmp / ".aiperf_mock_server_install.lock"
+    flag_path = root_tmp / ".aiperf_mock_server_ready"
+
+    async def _is_healthy() -> bool:
         ready = await kubectl.run(
             "get",
             "deployment",
@@ -831,30 +848,32 @@ async def mock_server(
             "jsonpath={.status.availableReplicas}",
             check=False,
         )
-        already_healthy = ready.returncode == 0 and ready.stdout.strip() not in (
-            "",
-            "0",
+        return ready.returncode == 0 and ready.stdout.strip() not in ("", "0")
+
+    with FileLock(str(lock_path)):
+        already_healthy = flag_path.exists() or (
+            k8s_settings.reuse_cluster and await _is_healthy()
         )
+        if already_healthy:
+            logger.info(f"[{worker_id}] Reusing existing healthy mock server")
+        else:
+            async with timed_operation("Deploying mock LLM server"):
+                manifest_path = project_root / "dev" / "deploy" / "mock-server.yaml"
+                with open(manifest_path) as f:
+                    manifest = f.read()
 
-    if already_healthy:
-        logger.info("Reusing existing healthy mock server deployment")
-    else:
-        async with timed_operation("Deploying mock LLM server"):
-            manifest_path = project_root / "dev" / "deploy" / "mock-server.yaml"
-            with open(manifest_path) as f:
-                manifest = f.read()
+                await kubectl.apply(manifest)
 
-            await kubectl.apply(manifest)
+                success = await kubectl.wait_for_rollout(
+                    "deployment",
+                    "aiperf-mock-server",
+                    namespace="default",
+                    timeout=120,
+                )
 
-            success = await kubectl.wait_for_rollout(
-                "deployment",
-                "aiperf-mock-server",
-                namespace="default",
-                timeout=120,
-            )
-
-            if not success:
-                raise RuntimeError("Mock server deployment failed")
+                if not success:
+                    raise RuntimeError("Mock server deployment failed")
+            flag_path.touch()
 
     yield
 

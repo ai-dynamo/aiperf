@@ -731,6 +731,7 @@ class HelmDeployer:
 
         result = await self.create_job(config, name, namespace)
         name = result.job_name
+        namespace = result.namespace
 
         async with (
             PodLogStreamer(self.kubectl, namespace, prefix="HELM") as streamer,

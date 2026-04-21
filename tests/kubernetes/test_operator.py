@@ -57,7 +57,9 @@ class TestOperatorDeployment:
     ) -> None:
         """Verify operator pod is running."""
         pods = await kubectl.get_pods(OperatorDeployer.OPERATOR_NAMESPACE)
-        operator_pods = [p for p in pods if "aiperf-operator" in p.name]
+        operator_pods = [
+            p for p in pods if "aiperf-operator" in p.name and "-test-" not in p.name
+        ]
 
         assert len(operator_pods) == 1
         assert operator_pods[0].phase == "Running"
@@ -75,6 +77,7 @@ class TestOperatorDeployment:
             "create",
             "jobsets.jobset.x-k8s.io",
             "--as=system:serviceaccount:aiperf-system:aiperf-operator",
+            check=False,
         )
         assert result.stdout.strip() == "yes"
 

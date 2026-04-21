@@ -137,13 +137,15 @@ class TestRecipeDeployment:
         operator_ready: OperatorDeployer,
         kubectl: KubectlClient,
         k8s_settings: Any,
+        operator_job_namespace: str,
     ) -> None:
         """Load recipe, adapt for mock server, deploy, and wait for Completed."""
         doc = yaml.safe_load(recipe_path.read_text())
         adapted = _adapt_recipe_for_mock(doc, image=k8s_settings.aiperf_image)
 
         name = adapted["metadata"]["name"]
-        namespace = "default"
+        namespace = operator_job_namespace
+        adapted.setdefault("metadata", {})["namespace"] = namespace
         manifest = yaml.dump(adapted, default_flow_style=False)
 
         await kubectl.apply(manifest)

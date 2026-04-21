@@ -60,8 +60,10 @@ class TestHelmChartDeployment:
         kubectl: KubectlClient,
     ) -> None:
         """Verify operator pod is running."""
-        pods = await kubectl.get_pods(HelmDeployer.OPERATOR_NAMESPACE)
-        operator_pods = [p for p in pods if "aiperf-operator" in p.name]
+        pods = await kubectl.get_pods(helm_deployed.OPERATOR_NAMESPACE)
+        operator_pods = [
+            p for p in pods if "aiperf-operator" in p.name and "-test-" not in p.name
+        ]
 
         assert len(operator_pods) == 1
         assert operator_pods[0].phase == "Running"
@@ -77,7 +79,7 @@ class TestHelmChartDeployment:
             "get",
             "serviceaccount",
             "-n",
-            HelmDeployer.OPERATOR_NAMESPACE,
+            helm_deployed.OPERATOR_NAMESPACE,
             "-o",
             "jsonpath={.items[*].metadata.name}",
         )
@@ -112,7 +114,7 @@ class TestHelmChartDeployment:
             "get",
             "deployment",
             "-n",
-            HelmDeployer.OPERATOR_NAMESPACE,
+            helm_deployed.OPERATOR_NAMESPACE,
             "-o",
             "jsonpath={.items[0].spec.template.spec.serviceAccountName}",
         )
@@ -124,7 +126,8 @@ class TestHelmChartDeployment:
             "can-i",
             "create",
             "jobsets.jobset.x-k8s.io",
-            f"--as=system:serviceaccount:{HelmDeployer.OPERATOR_NAMESPACE}:{sa_name}",
+            f"--as=system:serviceaccount:{helm_deployed.OPERATOR_NAMESPACE}:{sa_name}",
+            check=False,
         )
         assert result.stdout.strip() == "yes"
 
@@ -159,7 +162,7 @@ class TestHelmChartUpgrade:
             "deployment",
             helm_deployed.RELEASE_NAME,
             "-n",
-            HelmDeployer.OPERATOR_NAMESPACE,
+            helm_deployed.OPERATOR_NAMESPACE,
             "-o",
             "jsonpath={.spec.template.spec.containers[0].resources.limits.memory}",
         )
@@ -615,13 +618,13 @@ class TestHelmUninstall:
         await helm_deployed.uninstall_chart(wait=False)
 
         for _ in range(30):
-            pods = await kubectl.get_pods(HelmDeployer.OPERATOR_NAMESPACE)
+            pods = await kubectl.get_pods(helm_deployed.OPERATOR_NAMESPACE)
             operator_pods = [p for p in pods if "aiperf-operator" in p.name]
             if not operator_pods:
                 break
             await asyncio.sleep(2)
 
-        pods = await kubectl.get_pods(HelmDeployer.OPERATOR_NAMESPACE)
+        pods = await kubectl.get_pods(helm_deployed.OPERATOR_NAMESPACE)
         operator_pods = [p for p in pods if "aiperf-operator" in p.name]
         assert len(operator_pods) == 0, (
             f"Expected no operator pods after uninstall, found: {operator_pods}"
