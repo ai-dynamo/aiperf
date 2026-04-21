@@ -111,11 +111,11 @@ def _client_metadata() -> MemoryMapClientMetadata:
     ],
 )
 def test_dataset_envelope_roundtrips(message_factory) -> None:
-    """Envelope with msgspec payload must round-trip through Pydantic JSON."""
+    """Envelope with msgspec payload must round-trip through JSON."""
     message = message_factory()
 
     payload = message.model_dump_json()
-    decoded = type(message).model_validate_json(payload)
+    decoded = type(message).from_json(payload.encode())
 
     assert decoded == message
 
@@ -146,7 +146,7 @@ def test_dataset_configured_routes_tagged_union_from_dict() -> None:
         "dataset_generation": "d1",
     }
 
-    msg = DatasetConfiguredNotification.model_validate(payload)
+    msg = DatasetConfiguredNotification.from_json(payload)
 
     assert isinstance(msg.client_metadata, MemoryMapClientMetadata)
     assert msg.client_metadata.client_type == "memory_map"

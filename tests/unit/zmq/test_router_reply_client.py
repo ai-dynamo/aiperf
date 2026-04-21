@@ -11,7 +11,7 @@ import zmq
 import zmq.asyncio
 
 from aiperf.common.enums import MessageType
-from aiperf.common.messages import ErrorMessage, Message
+from aiperf.common.messages import ConnectionProbeMessage, ErrorMessage, Message
 from aiperf.zmq.router_reply_client import ZMQRouterReplyClient
 
 
@@ -99,8 +99,8 @@ class TestZMQRouterReplyClientRequestHandling:
         self, router_test_helper, sample_message
     ):
         """Test that _handle_request calls the registered handler."""
-        response = Message(
-            message_type=MessageType.HEARTBEAT, request_id=sample_message.request_id
+        response = ConnectionProbeMessage(
+            service_id="test", request_id=sample_message.request_id
         )
 
         async def handler(msg: Message) -> Message:
@@ -155,8 +155,8 @@ class TestZMQRouterReplyClientRequestHandling:
         self, router_test_helper, sample_message
     ):
         """Test that _wait_for_response sends the response back."""
-        response = Message(
-            message_type=MessageType.HEARTBEAT, request_id=sample_message.request_id
+        response = ConnectionProbeMessage(
+            service_id="test", request_id=sample_message.request_id
         )
 
         mock_socket = router_test_helper.setup_mock_socket()
@@ -205,8 +205,8 @@ class TestZMQRouterReplyClientBackgroundTask:
         """Test that background task receives and processes requests."""
         request_data = [b"client_id", sample_message.model_dump_json().encode()]
 
-        response = Message(
-            message_type=MessageType.HEARTBEAT, request_id=sample_message.request_id
+        response = ConnectionProbeMessage(
+            service_id="test", request_id=sample_message.request_id
         )
 
         handler_called = asyncio.Event()
@@ -250,7 +250,7 @@ class TestZMQRouterReplyClientBackgroundTask:
         self, router_test_helper, wait_for_background_task
     ):
         """Test that background task ignores requests without request_id."""
-        message_no_id = Message(message_type=MessageType.HEARTBEAT)
+        message_no_id = ConnectionProbeMessage(service_id="test")
         message_no_id.request_id = None
         request_data = [b"client_id", message_no_id.model_dump_json().encode()]
 

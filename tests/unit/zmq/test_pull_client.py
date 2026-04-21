@@ -19,7 +19,7 @@ from aiperf.common.inference_wire import (
     build_inference_results_wire_message,
     encode_inference_results_wire_message,
 )
-from aiperf.common.messages import HeartbeatMessage, Message
+from aiperf.common.messages import ConnectionProbeMessage, HeartbeatMessage, Message
 from aiperf.zmq.pull_client import ZMQPullClient
 
 
@@ -172,7 +172,7 @@ class TestZMQPullClientBackgroundTask:
         self, pull_test_helper, wait_for_background_task
     ):
         """Test that background task logs warning for messages without callbacks."""
-        message = Message(message_type=MessageType.HEARTBEAT)
+        message = ConnectionProbeMessage(service_id="test")
 
         async with pull_test_helper.create_client(
             auto_start=True,

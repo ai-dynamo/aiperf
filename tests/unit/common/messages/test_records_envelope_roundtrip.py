@@ -105,11 +105,11 @@ def _request_record() -> RequestRecord:
     ],
 )
 def test_records_envelope_roundtrips(message_factory) -> None:
-    """Envelope with msgspec payload must round-trip through Pydantic JSON."""
+    """Envelope with msgspec payload must round-trip through JSON."""
     message = message_factory()
 
     payload = message.model_dump_json()
-    decoded = type(message).model_validate_json(payload)
+    decoded = type(message).from_json(payload.encode())
 
     assert decoded == message
 
@@ -141,7 +141,7 @@ def test_inference_results_discriminates_response_union_from_dict() -> None:
         },
     }
 
-    msg = InferenceResultsMessage.model_validate(payload)
+    msg = InferenceResultsMessage.from_json(payload)
 
     from aiperf.common.models import SSEMessage
     from aiperf.common.models import TextResponse as _TR

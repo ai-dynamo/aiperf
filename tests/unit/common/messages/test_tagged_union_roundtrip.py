@@ -11,6 +11,7 @@ from aiperf.common.messages import (
     Message,
     StatusMessage,
 )
+from aiperf.common.models.base_models import _msgspec_dec_hook, _msgspec_enc_hook
 from aiperf.plugin.enums import ServiceType
 
 
@@ -21,8 +22,10 @@ def test_heartbeat_message_msgpack_roundtrip_via_base_decoder():
         service_type=ServiceType.WORKER,
         state=LifecycleState.RUNNING,
     )
-    encoder = msgspec.msgpack.Encoder()
-    decoder = msgspec.msgpack.Decoder(type=Message)
+    encoder = msgspec.msgpack.Encoder(enc_hook=_msgspec_enc_hook)
+    decoder = msgspec.msgpack.Decoder(
+        type=Message._union_type(), dec_hook=_msgspec_dec_hook
+    )
 
     restored = decoder.decode(encoder.encode(msg))
 
@@ -39,8 +42,8 @@ def test_json_roundtrip_preserves_tag_field_name():
         service_type=ServiceType.TIMING_MANAGER,
         state=LifecycleState.STOPPED,
     )
-    encoded = msgspec.json.encode(msg)
-    as_dict = msgspec.json.decode(encoded)
+    encoded = msg.to_json_bytes()
+    as_dict = orjson.loads(encoded)
     assert as_dict["message_type"] == MessageType.STATUS
 
 

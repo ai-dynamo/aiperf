@@ -98,11 +98,11 @@ def _task_stats() -> WorkerTaskStats:
     ],
 )
 def test_lifecycle_envelope_roundtrips(message_factory) -> None:
-    """Envelope with msgspec payload must round-trip through Pydantic JSON."""
+    """Envelope with msgspec payload must round-trip through JSON."""
     message = message_factory()
 
     payload = message.model_dump_json()
-    decoded = type(message).model_validate_json(payload)
+    decoded = type(message).from_json(payload.encode())
 
     assert decoded == message
 
@@ -134,7 +134,7 @@ def test_process_health_decodes_from_dict_payload() -> None:
         "task_stats": {"total": 100, "failed": 3, "completed": 80},
     }
 
-    msg = WorkerHealthMessage.model_validate(payload)
+    msg = WorkerHealthMessage.from_json(payload)
 
     assert msg.health.io_counters.read_bytes == 3
     assert msg.health.cpu_times.iowait == 0.1

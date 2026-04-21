@@ -1275,16 +1275,17 @@ class TestWebSocketBroadcast:
         self, mock_fastapi_service: FastAPIService
     ) -> None:
         """Test that messages are broadcast to subscribed WebSocket clients."""
-        from aiperf.common.enums import MessageType
-        from aiperf.common.messages import Message
+        from aiperf.common.enums import LifecycleState
+        from aiperf.common.messages import HeartbeatMessage
 
         mock_ws = AsyncMock()
         mock_fastapi_service.ws_manager.add("client-1", mock_ws)
         mock_fastapi_service.ws_manager.subscribe("client-1", ["heartbeat"])
 
-        message = Message(
+        message = HeartbeatMessage(
             service_id="test",
-            message_type=MessageType.HEARTBEAT,
+            service_type="worker",
+            state=LifecycleState.RUNNING,
         )
 
         await mock_fastapi_service.ws_manager.broadcast(message)
@@ -1296,12 +1297,13 @@ class TestWebSocketBroadcast:
         self, mock_fastapi_service: FastAPIService
     ) -> None:
         """Test broadcast with no subscribers does not raise."""
-        from aiperf.common.enums import MessageType
-        from aiperf.common.messages import Message
+        from aiperf.common.enums import LifecycleState
+        from aiperf.common.messages import HeartbeatMessage
 
-        message = Message(
+        message = HeartbeatMessage(
             service_id="test",
-            message_type=MessageType.HEARTBEAT,
+            service_type="worker",
+            state=LifecycleState.RUNNING,
         )
 
         sent = await mock_fastapi_service.ws_manager.broadcast(message)

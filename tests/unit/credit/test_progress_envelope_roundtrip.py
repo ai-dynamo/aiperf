@@ -107,11 +107,11 @@ def _config() -> CreditPhaseConfig:
     ],
 )  # fmt: skip
 def test_envelope_roundtrips_via_pydantic_json(message_factory) -> None:
-    """Pydantic envelope with msgspec payload must round-trip through JSON."""
+    """Envelope with msgspec payload must round-trip through JSON."""
     message = message_factory()
 
     payload = message.model_dump_json()
-    decoded = type(message).model_validate_json(payload)
+    decoded = type(message).from_json(payload.encode())
 
     assert decoded == message
     # The structs are frozen / kw-only, so equality suffices. Sanity-check
@@ -121,7 +121,7 @@ def test_envelope_roundtrips_via_pydantic_json(message_factory) -> None:
 
 
 def test_progress_message_decodes_from_dict() -> None:
-    """`model_validate` with a dict payload mirrors a re-delivered queue record."""
+    """``from_json`` with a dict payload mirrors a re-delivered queue record."""
     payload = {
         "service_id": "timing-manager",
         "request_ns": 1,
@@ -136,7 +136,7 @@ def test_progress_message_decodes_from_dict() -> None:
         },
     }
 
-    msg = CreditPhaseProgressMessage.model_validate(payload)
+    msg = CreditPhaseProgressMessage.from_json(payload)
 
     assert msg.stats.phase == "profiling"
     assert msg.stats.requests_completed == 40
@@ -159,7 +159,7 @@ def test_phases_configured_message_decodes_timing_mode_enum() -> None:
         ],
     }
 
-    msg = CreditPhasesConfiguredMessage.model_validate(payload)
+    msg = CreditPhasesConfiguredMessage.from_json(payload)
 
     assert len(msg.configs) == 1
     cfg = msg.configs[0]

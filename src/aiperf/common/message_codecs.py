@@ -1,11 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Reusable message codecs for transport clients.
-
-PUSH/PULL historically assumed JSON bytes carrying Pydantic ``Message`` models.
-This module adds a small codec abstraction so individual channels can opt into
-MessagePack/msgspec without forking the transport client implementations.
-"""
+"""Reusable message codecs for transport clients."""
 
 from __future__ import annotations
 
@@ -15,16 +10,14 @@ import msgspec
 from pydantic import BaseModel
 
 from aiperf.common.messages import Message
+from aiperf.common.models.base_models import _msgspec_dec_hook, _msgspec_enc_hook
 
 
 def _enc_hook(obj: Any) -> Any:
-    """Encoder fallback for types msgspec doesn't know natively.
+    """Encoder fallback for legacy Pydantic fields embedded in msgspec structs.
 
-    Pydantic `AIPerfBaseModel` subclasses (e.g. `ErrorDetails`, nested stats)
-    leak into the push/pull records path when a worker attaches them to a
-    msgspec-struct payload. Without a hook, msgspec raises `Encoding objects
-    of type ErrorDetails is unsupported`. `model_dump(mode="json")` converts
-    the model to plain JSON-compatible primitives that msgspec can encode.
+    After P2 this hook is unreachable for the records path — kept for channels
+    still passing Pydantic export models. P3 deletes this.
     """
     if isinstance(obj, BaseModel):
         return obj.model_dump(mode="json", exclude_none=True)
@@ -32,17 +25,7 @@ def _enc_hook(obj: Any) -> Any:
 
 
 def _dec_hook(t: type, obj: Any) -> Any:
-    """Decoder fallback that rehydrates Pydantic fields inside typed
-    msgspec-Struct wire messages.
-
-    ``_enc_hook`` turns embedded Pydantic models (e.g. ``ErrorDetails`` on
-    ``MetricRecordsData.error``) into plain dicts at encode-time. The
-    msgspec decoder can't reverse this without help — it sees the target
-    annotation ``ErrorDetails`` and a ``dict`` payload and raises
-    ``Expected <model>, got dict``. Only fires when an errored record flows
-    through the RP→records channel, so the decode path is latent until
-    inference errors occur under sustained concurrency.
-    """
+    """Decoder fallback symmetric to ``_enc_hook`` — retired in P3."""
     if isinstance(obj, dict) and isinstance(t, type) and issubclass(t, BaseModel):
         return t.model_validate(obj)
     raise NotImplementedError(
@@ -56,27 +39,40 @@ class MessageCodecProtocol(Protocol):
 
     cache_key: str
 
-    def encode(self, message: Any) -> bytes:
-        """Serialize a message to bytes."""
-
-    def decode(self, data: bytes) -> Any:
-        """Deserialize bytes into a message object."""
+    def encode(self, message: Any) -> bytes: ...
+    def decode(self, data: bytes) -> Any: ...
 
 
 class JsonMessageCodec:
-    """Default JSON codec using the existing Pydantic message path."""
+    """JSON codec (msgspec-backed). Wire-equivalent to the prior Pydantic path."""
 
     cache_key = "json-message"
 
+    def __init__(self) -> None:
+        self._encoder = msgspec.json.Encoder(enc_hook=_msgspec_enc_hook)
+        self._decoder: msgspec.json.Decoder | None = None
+
+    def _get_decoder(self) -> msgspec.json.Decoder:
+        if self._decoder is None:
+            self._decoder = msgspec.json.Decoder(
+                type=Message._union_type(), dec_hook=_msgspec_dec_hook
+            )
+        return self._decoder
+
     def encode(self, message: Message) -> bytes:
-        return message.to_json_bytes()
+        return self._encoder.encode(message)
 
     def decode(self, data: bytes) -> Message:
-        return Message.from_json(data)
+        return self._get_decoder().decode(data)
 
 
 class PydanticMsgpackCodec:
-    """MessagePack codec that still rehydrates into routed Pydantic messages."""
+    """Transitional: msgpack encode of the tagged ``Message`` union.
+
+    Kept alive through P2 so channels that explicitly opted into this codec
+    don't need a simultaneous rewrite. P3 deletes this and collapses all
+    traffic onto ``MsgspecStructCodec(decode_type=Message)``.
+    """
 
     def __init__(
         self,
@@ -86,27 +82,28 @@ class PydanticMsgpackCodec:
     ) -> None:
         self.cache_key = cache_key
         self._message_base_type = message_base_type
-        self._encoder = msgspec.msgpack.Encoder()
-        self._decoder = msgspec.msgpack.Decoder()
+        self._encoder = msgspec.msgpack.Encoder(enc_hook=_msgspec_enc_hook)
+        self._decoder: msgspec.msgpack.Decoder | None = None
+
+    def _get_decoder(self) -> msgspec.msgpack.Decoder:
+        if self._decoder is None:
+            self._decoder = msgspec.msgpack.Decoder(
+                type=self._message_base_type._union_type(),
+                dec_hook=_msgspec_dec_hook,
+            )
+        return self._decoder
 
     def encode(self, message: Message) -> bytes:
-        payload = message.model_dump(exclude_none=True, mode="json")
-        return self._encoder.encode(payload)
+        return self._encoder.encode(message)
 
     def decode(self, data: bytes) -> Message:
-        payload = self._decoder.decode(data)
-        return self._message_base_type.from_json(payload)
+        return self._get_decoder().decode(data)
 
 
 class MsgspecStructCodec:
-    """Typed MessagePack codec for msgspec struct messages."""
+    """Typed msgpack codec — primary codec for records/raw-inference channels."""
 
-    def __init__(
-        self,
-        *,
-        decode_type: Any,
-        cache_key: str,
-    ) -> None:
+    def __init__(self, *, decode_type: Any, cache_key: str) -> None:
         self.cache_key = cache_key
         self._encoder = msgspec.msgpack.Encoder(enc_hook=_enc_hook)
         self._decoder = msgspec.msgpack.Decoder(type=decode_type, dec_hook=_dec_hook)
@@ -123,5 +120,4 @@ JSON_MESSAGE_CODEC = JsonMessageCodec()
 
 def codec_cache_key(codec: MessageCodecProtocol | None) -> str:
     """Return a stable cache token for a codec."""
-
     return codec.cache_key if codec is not None else JSON_MESSAGE_CODEC.cache_key

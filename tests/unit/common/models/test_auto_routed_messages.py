@@ -4,6 +4,7 @@
 
 import json
 
+import msgspec
 import pytest
 
 from aiperf.common.enums import (
@@ -62,25 +63,26 @@ class TestAutoRoutedModel:
     @pytest.mark.parametrize(
         "data,match",
         [
-            ({"service_id": "test"}, "Missing discriminator 'message_type'"),
+            ({"service_id": "test"}, "missing required field `message_type`"),
         ],
     )  # fmt: skip
     def test_missing_discriminator_error(self, data, match):
-        """Test that missing discriminators raise ValueError."""
-        with pytest.raises(ValueError, match=match):
+        """Test that missing discriminators raise ValidationError."""
+        with pytest.raises(msgspec.ValidationError, match=match):
             Message.from_json(data)
 
-    def test_unknown_discriminator_value_falls_back_to_base_class(self):
-        """Test that unknown discriminator values fall back to base class validation."""
-        # Unknown message type should still work with base Message class
+    def test_unknown_discriminator_value_raises(self):
+        """Test that unknown discriminator values raise ValidationError.
+
+        Prior AutoRoutedModel behavior silently fell back to the base Message
+        class for unknown tags; msgspec is stricter — decode fails fast.
+        """
         data = {
             "message_type": "unknown_type",
             "service_id": "test",
         }
-        msg = Message.from_json(data)
-        # Should be validated as base Message class
-        assert msg.message_type == "unknown_type"
-        assert msg.service_id == "test"
+        with pytest.raises(msgspec.ValidationError):
+            Message.from_json(data)
 
     @pytest.mark.parametrize(
         "input_transform,description",

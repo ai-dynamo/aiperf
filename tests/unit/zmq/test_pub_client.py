@@ -10,7 +10,7 @@ import zmq.asyncio
 
 from aiperf.common.enums import MessageType
 from aiperf.common.exceptions import CommunicationError
-from aiperf.common.messages import Message
+from aiperf.common.messages import ConnectionProbeMessage
 from aiperf.zmq.pub_client import ZMQPubClient
 from aiperf.zmq.zmq_defaults import TOPIC_END
 
@@ -57,14 +57,14 @@ class TestZMQPubClientPublish:
         client = ZMQPubClient(address="tcp://127.0.0.1:5555", bind=True)
         await client.initialize()
 
-        message = Message(message_type=MessageType.HEARTBEAT)
+        message = ConnectionProbeMessage(service_id="test")
 
         await client.publish(message)
 
         sent_parts = mock_zmq_socket.send_multipart.call_args[0][0]
         topic = sent_parts[0].decode()
 
-        assert topic == f"{MessageType.HEARTBEAT}{TOPIC_END}"
+        assert topic == f"{MessageType.CONNECTION_PROBE}{TOPIC_END}"
 
     @pytest.mark.asyncio
     async def test_publish_handles_graceful_errors(
@@ -74,7 +74,7 @@ class TestZMQPubClientPublish:
         async with pub_test_helper.create_client(
             send_multipart_side_effect=graceful_error
         ) as client:
-            message = Message(message_type=MessageType.HEARTBEAT)
+            message = ConnectionProbeMessage(service_id="test")
 
             # Should not raise, just return
             await client.publish(message)
@@ -87,7 +87,7 @@ class TestZMQPubClientPublish:
         async with pub_test_helper.create_client(
             send_multipart_side_effect=non_graceful_error
         ) as client:
-            message = Message(message_type=MessageType.HEARTBEAT)
+            message = ConnectionProbeMessage(service_id="test")
 
             with pytest.raises(CommunicationError, match="Failed to publish message"):
                 await client.publish(message)
@@ -113,7 +113,28 @@ class TestZMQPubClientTopicDetermination:
         client = ZMQPubClient(address="tcp://127.0.0.1:5555", bind=True)
         await client.initialize()
 
-        message = Message(message_type=message_type)
+        # Need a concrete message for each tag; use a helper
+        from aiperf.common.enums import LifecycleState
+        from aiperf.common.messages import (
+            ConnectionProbeMessage,
+            ErrorMessage,
+            HeartbeatMessage,
+            StatusMessage,
+        )
+        from aiperf.common.models import ErrorDetails
+
+        if message_type == MessageType.HEARTBEAT:
+            message = HeartbeatMessage(
+                service_id="s", service_type="worker", state=LifecycleState.RUNNING
+            )
+        elif message_type == MessageType.STATUS:
+            message = StatusMessage(
+                service_id="s", service_type="worker", state=LifecycleState.RUNNING
+            )
+        elif message_type == MessageType.CONNECTION_PROBE:
+            message = ConnectionProbeMessage(service_id="s")
+        else:
+            message = ErrorMessage(error=ErrorDetails(type="x", message="m"))
         await client.publish(message)
 
         sent_parts = mock_zmq_socket.send_multipart.call_args[0][0]
@@ -133,7 +154,7 @@ class TestZMQPubClientEdgeCases:
         await client.initialize()
 
         messages = [
-            Message(message_type=MessageType.HEARTBEAT, request_id=f"req-{i}")
+            ConnectionProbeMessage(service_id="test", request_id=f"req-{i}")
             for i in range(5)
         ]
 

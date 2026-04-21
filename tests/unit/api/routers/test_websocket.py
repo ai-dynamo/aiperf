@@ -12,8 +12,8 @@ from starlette.websockets import WebSocketState
 
 from aiperf.api.api_service import FastAPIService
 from aiperf.api.routers.websocket import WebSocketManager, WebSocketRouter
-from aiperf.common.enums import MessageType
-from aiperf.common.messages import Message
+from aiperf.common.enums import LifecycleState, MessageType
+from aiperf.common.messages import HeartbeatMessage, RealtimeMetricsMessage
 
 
 def make_mock_websocket(
@@ -132,7 +132,7 @@ class TestWebSocketManager:
         manager.subscribe("client-1", [MessageType.REALTIME_METRICS])
         manager.subscribe("client-2", ["other"])
 
-        msg = Message(service_id="test", message_type=MessageType.REALTIME_METRICS)
+        msg = RealtimeMetricsMessage(service_id="test", metrics=[])
         sent = await manager.broadcast(msg)
         assert sent == 1
         ws1.send_text.assert_called_once()
@@ -147,7 +147,9 @@ class TestWebSocketManager:
         manager.add("client-1", ws)
         manager.subscribe("client-1", ["*"])
 
-        msg = Message(service_id="test", message_type=MessageType.HEARTBEAT)
+        msg = HeartbeatMessage(
+            service_id="test", service_type="worker", state=LifecycleState.RUNNING
+        )
         sent = await manager.broadcast(msg)
         assert sent == 1
         ws.send_text.assert_called_once()
@@ -156,7 +158,9 @@ class TestWebSocketManager:
     async def test_broadcast_empty_snapshot(self) -> None:
         """Test broadcast with no clients returns 0."""
         manager = WebSocketManager()
-        msg = Message(service_id="test", message_type=MessageType.HEARTBEAT)
+        msg = HeartbeatMessage(
+            service_id="test", service_type="worker", state=LifecycleState.RUNNING
+        )
         sent = await manager.broadcast(msg)
         assert sent == 0
 
@@ -169,7 +173,9 @@ class TestWebSocketManager:
         manager.add("client-1", ws)
         manager.subscribe("client-1", ["other_topic"])
 
-        msg = Message(service_id="test", message_type=MessageType.HEARTBEAT)
+        msg = HeartbeatMessage(
+            service_id="test", service_type="worker", state=LifecycleState.RUNNING
+        )
         sent = await manager.broadcast(msg)
         assert sent == 0
         ws.send_text.assert_not_called()
@@ -183,7 +189,9 @@ class TestWebSocketManager:
         manager.add("client-1", ws)
         manager.subscribe("client-1", [MessageType.HEARTBEAT])
 
-        msg = Message(service_id="test", message_type=MessageType.HEARTBEAT)
+        msg = HeartbeatMessage(
+            service_id="test", service_type="worker", state=LifecycleState.RUNNING
+        )
         sent = await manager.broadcast(msg)
         assert sent == 0
         assert manager.client_count == 0
@@ -437,7 +445,9 @@ class TestWebSocketRouterLifecycle:
         ws_router.ws_manager.broadcast = AsyncMock(return_value=2)
         ws_router.debug = MagicMock()
 
-        msg = Message(service_id="test", message_type=MessageType.HEARTBEAT)
+        msg = HeartbeatMessage(
+            service_id="test", service_type="worker", state=LifecycleState.RUNNING
+        )
         await ws_router._forward_message(msg)
 
         ws_router.ws_manager.broadcast.assert_called_once_with(msg)

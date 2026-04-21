@@ -1,71 +1,52 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import time
 
-from pydantic import Field
+import msgspec
 
 from aiperf.common.enums import MessageType
-from aiperf.common.messages.base_messages import RequiresRequestNSMixin
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.models import (
-    PhaseRecordsStats,
-    WorkerProcessingStats,
-)
+from aiperf.common.models import PhaseRecordsStats, WorkerProcessingStats
 from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
-from aiperf.common.types import MessageTypeT
 
 
-class RecordsProcessingStatsMessage(BaseServiceMessage):
-    """Message for processing stats. Sent by the RecordsManager to report the stats of the profile run.
-    This contains the stats for a single credit phase only."""
+class RecordsProcessingStatsMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.PROCESSING_STATS.value
+):
+    """Per-phase processing stats from the RecordsManager."""
 
-    message_type: MessageTypeT = MessageType.PROCESSING_STATS
-
-    processing_stats: PhaseRecordsStats = Field(
-        ..., description="The stats for the credit phase"
-    )
-    worker_stats: dict[str, WorkerProcessingStats] = Field(
-        default_factory=dict,
-        description="The stats for each worker how many requests were processed and how many errors were "
-        "encountered, keyed by worker service_id",
-    )
+    processing_stats: PhaseRecordsStats
+    worker_stats: dict[str, WorkerProcessingStats] = msgspec.field(default_factory=dict)
 
 
-class ProfileResultsMessage(BaseServiceMessage):
-    """Message for profile results."""
+class ProfileResultsMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.PROFILE_RESULTS.value
+):
+    """Final profile results."""
 
-    message_type: MessageTypeT = MessageType.PROFILE_RESULTS
-
-    profile_results: ProfileResults = Field(..., description="The profile results")
-
-
-class AllRecordsReceivedMessage(BaseServiceMessage, RequiresRequestNSMixin):
-    """This is sent by the RecordsManager to signal that all parsed records have been received, and the final processing stats are available."""
-
-    message_type: MessageTypeT = MessageType.ALL_RECORDS_RECEIVED
-    final_processing_stats: PhaseRecordsStats = Field(
-        ..., description="The final processing stats for the profile run"
-    )
+    profile_results: ProfileResults
 
 
-class ProcessRecordsResultMessage(BaseServiceMessage):
-    """Message for process records result."""
+class AllRecordsReceivedMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.ALL_RECORDS_RECEIVED.value
+):
+    """All parsed records received; final stats available."""
 
-    message_type: MessageTypeT = MessageType.PROCESS_RECORDS_RESULT
+    final_processing_stats: PhaseRecordsStats
+    request_ns: int = msgspec.field(default_factory=time.time_ns)  # type: ignore[assignment]
 
-    results: ProcessRecordsResult = Field(..., description="The process records result")
+
+class ProcessRecordsResultMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.PROCESS_RECORDS_RESULT.value
+):
+    """Record-processor batch result."""
+
+    results: ProcessRecordsResult
 
 
-class BenchmarkCompleteMessage(BaseServiceMessage):
-    """Signals that the benchmark has completed and results are available.
+class BenchmarkCompleteMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.BENCHMARK_COMPLETE.value
+):
+    """Benchmark completion signal."""
 
-    This message is sent by the SystemController to notify services (especially
-    the API service) that the benchmark is complete, without requesting shutdown.
-    The API service uses this to know it should continue serving results.
-    """
-
-    message_type: MessageTypeT = MessageType.BENCHMARK_COMPLETE
-
-    was_cancelled: bool = Field(
-        default=False,
-        description="Whether the benchmark was cancelled before completion",
-    )
+    was_cancelled: bool = False

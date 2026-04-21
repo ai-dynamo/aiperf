@@ -14,7 +14,7 @@ from aiperf.common.channel_codecs import RECORDS_CODEC
 from aiperf.common.enums import MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import CommunicationError, NotInitializedError
-from aiperf.common.messages import Message
+from aiperf.common.messages import ConnectionProbeMessage
 from aiperf.common.metric_records_wire import (
     MetricRecordMetadata,
     MetricRecordsWireMessage,
@@ -57,7 +57,7 @@ class TestZMQPushClientPush:
         mock_zmq_socket.send.assert_called_once()
         sent_data = mock_zmq_socket.send.call_args[0][0]
         # sent_data is bytes, so decode to string for comparison
-        assert sample_message.message_type.value.encode() in sent_data
+        assert str(sample_message.message_type).encode() in sent_data
 
     @pytest.mark.asyncio
     async def test_push_serializes_message_correctly(
@@ -67,7 +67,7 @@ class TestZMQPushClientPush:
         client = ZMQPushClient(address="tcp://127.0.0.1:5555", bind=True)
         await client.initialize()
 
-        message = Message(message_type=MessageType.HEARTBEAT, request_id="test-123")
+        message = ConnectionProbeMessage(service_id="test", request_id="test-123")
 
         await client.push(message)
 
@@ -75,8 +75,8 @@ class TestZMQPushClientPush:
         # Verify it's valid JSON containing our data (sent_data is bytes)
         sent_str = sent_data.decode()
         assert (
-            '"message_type":"heartbeat"' in sent_str
-            or '"message_type": "heartbeat"' in sent_str
+            '"message_type":"connection_probe"' in sent_str
+            or '"message_type": "connection_probe"' in sent_str
         )
         assert "test-123" in sent_str
 
@@ -149,7 +149,7 @@ class TestZMQPushClientPush:
             client = ZMQPushClient(address="tcp://127.0.0.1:5555", bind=True)
             await client.initialize()
 
-            message = Message(message_type=MessageType.HEARTBEAT)
+            message = ConnectionProbeMessage(service_id="test")
 
             # Should succeed after retry
             await client.push(message)
@@ -176,7 +176,7 @@ class TestZMQPushClientPush:
             client = ZMQPushClient(address="tcp://127.0.0.1:5555", bind=True)
             await client.initialize()
 
-            message = Message(message_type=MessageType.HEARTBEAT)
+            message = ConnectionProbeMessage(service_id="test")
 
             with pytest.raises(CommunicationError, match="Failed to push data after"):
                 await client.push(message)
@@ -187,7 +187,7 @@ class TestZMQPushClientPush:
         async with push_test_helper.create_client(
             send_side_effect=graceful_error
         ) as client:
-            message = Message(message_type=MessageType.HEARTBEAT)
+            message = ConnectionProbeMessage(service_id="test")
 
             # Should not raise, just return
             await client.push(message)
@@ -200,7 +200,7 @@ class TestZMQPushClientPush:
         async with push_test_helper.create_client(
             send_side_effect=non_graceful_error
         ) as client:
-            message = Message(message_type=MessageType.HEARTBEAT)
+            message = ConnectionProbeMessage(service_id="test")
 
             with pytest.raises(CommunicationError, match="Failed to push data"):
                 await client.push(message)
@@ -228,7 +228,7 @@ class TestZMQPushClientEdgeCases:
         await client.initialize()
 
         messages = [
-            Message(message_type=MessageType.HEARTBEAT, request_id=f"req-{i}")
+            ConnectionProbeMessage(service_id="test", request_id=f"req-{i}")
             for i in range(5)
         ]
 

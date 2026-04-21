@@ -419,7 +419,7 @@ class TestMemoryReportMessage:
             shared_bytes=150,
         )
         data = orjson.loads(orjson.dumps(msg.model_dump()))
-        restored = MemoryReportMessage(**data)
+        restored = MemoryReportMessage.from_json(data)
         assert restored.phase == MemoryPhase.POST_CONFIG
         assert restored.pss_bytes == 100
         assert restored.rss_bytes == 200

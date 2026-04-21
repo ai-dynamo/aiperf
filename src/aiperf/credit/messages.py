@@ -6,59 +6,61 @@ from __future__ import annotations
 from typing import TypeAlias
 
 from msgspec import Struct
-from pydantic import Field
 
 from aiperf.common.enums import CreditPhase, MessageType
 from aiperf.common.messages import BaseServiceMessage
 from aiperf.common.models import CreditPhaseStats
-from aiperf.common.types import MessageTypeT
 from aiperf.credit.structs import Credit
 from aiperf.timing.config import CreditPhaseConfig
 
 
-class CreditPhasesConfiguredMessage(BaseServiceMessage):
-    """Message for credit phases configured. Sent by the TimingManager to report that the credit phases have been configured."""
+class CreditPhasesConfiguredMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.CREDIT_PHASES_CONFIGURED.value
+):
+    """Credit phase configuration announcement."""
 
-    message_type: MessageTypeT = MessageType.CREDIT_PHASES_CONFIGURED
-    configs: list[CreditPhaseConfig] = Field(
-        ..., description="The credit phase configs in order of execution"
-    )
-
-
-class CreditPhaseStartMessage(BaseServiceMessage):
-    """Message for credit phase start. Sent by the TimingManager to report that a credit phase has started."""
-
-    message_type: MessageTypeT = MessageType.CREDIT_PHASE_START
-    stats: CreditPhaseStats = Field(..., description="The credit phase stats")
-    config: CreditPhaseConfig = Field(..., description="The credit phase config")
+    configs: list[CreditPhaseConfig]
 
 
-class CreditPhaseProgressMessage(BaseServiceMessage):
-    """Sent by the TimingManager to report the progress of a credit phase."""
+class CreditPhaseStartMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.CREDIT_PHASE_START.value
+):
+    """Credit phase start announcement."""
 
-    message_type: MessageTypeT = MessageType.CREDIT_PHASE_PROGRESS
-    stats: CreditPhaseStats = Field(..., description="The credit phase stats")
-
-
-class CreditPhaseSendingCompleteMessage(BaseServiceMessage):
-    """Message for credit phase sending complete. Sent by the TimingManager to report that a credit phase has completed sending."""
-
-    message_type: MessageTypeT = MessageType.CREDIT_PHASE_SENDING_COMPLETE
-    stats: CreditPhaseStats = Field(..., description="The credit phase stats")
+    stats: CreditPhaseStats
+    config: CreditPhaseConfig
 
 
-class CreditPhaseCompleteMessage(BaseServiceMessage):
-    """Message for credit phase complete. Sent by the TimingManager to report that a credit phase has completed."""
+class CreditPhaseProgressMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.CREDIT_PHASE_PROGRESS.value
+):
+    """Credit phase progress update."""
 
-    message_type: MessageTypeT = MessageType.CREDIT_PHASE_COMPLETE
-    stats: CreditPhaseStats = Field(..., description="The credit phase stats")
+    stats: CreditPhaseStats
 
 
-class CreditsCompleteMessage(BaseServiceMessage):
-    """Credits complete message sent by the TimingManager to the System controller to signify all Credit Phases
-    have been completed."""
+class CreditPhaseSendingCompleteMessage(
+    BaseServiceMessage,
+    kw_only=True,
+    tag=MessageType.CREDIT_PHASE_SENDING_COMPLETE.value,
+):
+    """Credit phase has finished sending (but may still be awaiting returns)."""
 
-    message_type: MessageTypeT = MessageType.CREDITS_COMPLETE
+    stats: CreditPhaseStats
+
+
+class CreditPhaseCompleteMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.CREDIT_PHASE_COMPLETE.value
+):
+    """Credit phase is fully complete."""
+
+    stats: CreditPhaseStats
+
+
+class CreditsCompleteMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.CREDITS_COMPLETE.value
+):
+    """All credit phases complete."""
 
 
 # =============================================================================

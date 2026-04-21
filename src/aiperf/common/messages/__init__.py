@@ -4,7 +4,6 @@
 from aiperf.common.messages.base_messages import (
     ErrorMessage,
     Message,
-    RequiresRequestNSMixin,
 )
 from aiperf.common.messages.dataset_messages import (
     ConversationRequestMessage,
@@ -79,7 +78,6 @@ __all__ = [
     "RealtimeTelemetryMetricsMessage",
     "RecordsProcessingStatsMessage",
     "RegistrationMessage",
-    "RequiresRequestNSMixin",
     "ServerMetricsStatusMessage",
     "StatusMessage",
     "TelemetryStatusMessage",
