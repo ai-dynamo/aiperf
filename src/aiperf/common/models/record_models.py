@@ -25,10 +25,15 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import STAT_KEYS
 from aiperf.common.enums import CreditPhase, MetricValueTypeT, SSEFieldType
 from aiperf.common.exceptions import InvalidInferenceResultError
-from aiperf.common.metric_records_wire import (
-    MetricRecordMetadata,
-    metric_record_metadata_from_model,
-)
+
+# NOTE: MetricRecordMetadata and metric_record_metadata_from_model live in
+# aiperf.common.metric_records_wire, which imports aiperf.common.models at
+# module load time. A top-level import here forms a circular that fails when
+# metric_records_wire is the first-entry module in a load chain. Type
+# annotations below reference MetricRecordMetadata as a string thanks to
+# `from __future__ import annotations`; the only runtime use is inside
+# decode_metric_record_info_json / decode_raw_record_info_json, which do a
+# local import.
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
@@ -1012,6 +1017,8 @@ _RAW_RECORD_INFO_ENCODER = msgspec.json.Encoder(enc_hook=_record_info_enc_hook)
 
 
 def decode_metric_record_info_json(data: str | bytes) -> MetricRecordInfo:
+    from aiperf.common.metric_records_wire import metric_record_metadata_from_model
+
     payload = orjson.loads(data)
     trace_data = payload.get("trace_data")
     return MetricRecordInfo(
@@ -1027,6 +1034,8 @@ def decode_metric_record_info_json(data: str | bytes) -> MetricRecordInfo:
 
 
 def decode_raw_record_info_json(data: str | bytes) -> RawRecordInfo:
+    from aiperf.common.metric_records_wire import metric_record_metadata_from_model
+
     payload = orjson.loads(data)
     return RawRecordInfo(
         metadata=metric_record_metadata_from_model(payload["metadata"]),

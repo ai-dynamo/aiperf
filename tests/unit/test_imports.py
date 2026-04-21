@@ -227,3 +227,61 @@ class TestImportOrder:
         for modules in [_AIPERF_MODULES_WITH_DEPTH, _TEST_MODULES_WITH_DEPTH]:
             for module, _ in modules:
                 assert "__pycache__" not in module, f"Found pycache in: {module}"
+
+
+class TestMetricRecordsWireImportOrder:
+    """Regression: aiperf.common.metric_records_wire must be importable as a
+    first-entry module, even though it depends on aiperf.common.models which
+    also has a back-reference to MetricRecordMetadata. A naive top-level
+    re-export in models/__init__.py and a direct MetricRecordMetadata import
+    in models/record_models.py both broke this ordering; verify the lazy
+    re-export + deferred import fix holds.
+    """
+
+    def test_first_entry_import_succeeds(self) -> None:
+        """Run the import in a fresh subinterpreter state so it actually
+        exercises the cold-path load order."""
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "from aiperf.common.metric_records_wire import "
+                    "wire_error_to_domain_error, MetricRecordMetadata, "
+                    "metric_record_metadata_from_model; "
+                    "print('OK')"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, (
+            "metric_records_wire failed to import as first-entry module:\n"
+            f"stdout={result.stdout}\nstderr={result.stderr}"
+        )
+        assert result.stdout.strip() == "OK"
+
+    def test_models_package_reexport_works(self) -> None:
+        """The public re-export via aiperf.common.models should still work."""
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "from aiperf.common.models import MetricRecordMetadata; "
+                    "print(MetricRecordMetadata.__name__)"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "MetricRecordMetadata"
