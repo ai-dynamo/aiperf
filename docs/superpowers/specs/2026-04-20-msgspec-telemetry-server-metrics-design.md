@@ -38,11 +38,17 @@ on the hottest control-plane path.
 - `MetricSample` — single prometheus sample (with histogram buckets)
 - `MetricFamily` — group of samples for one metric
 - `ServerMetricsRecord` — on-wire record
-- `SlimRecord` — accumulator's compressed record form
-- `BaseSeries`, `GaugeSeries`, `CounterSeries`, `HistogramSeries` — time-series
-  accumulator state
-- `GaugeStats`, `CounterStats`, `HistogramStats` — computed statistics
-- `BaseTimeslice`, `GaugeTimeslice`, `CounterTimeslice`, `HistogramTimeslice`
+- `SlimRecord` — JSONL-export form, also emitted by the record processor
+
+Note: the actual accumulator state (`ServerMetricsHierarchy`,
+`ServerMetricsTimeSeries`, `ScalarTimeSeries`, `HistogramTimeSeries`) is
+already plain Python classes backed by numpy — not Pydantic — and does not
+need conversion. The `*Series`, `*Stats`, `*Timeslice` classes originally
+listed in the "accumulator state" bucket are actually building blocks of the
+final Pydantic export models (`GaugeMetricData.series: list[GaugeSeries]`,
+etc.), so keeping them Pydantic preserves the JSON-schema seam cleanly;
+msgspec-ifying them would force the enclosing export models to become
+msgspec as well, which is out of scope per the middle-ground decision.
 
 ### Stays Pydantic (final-export shape)
 
