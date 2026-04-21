@@ -3,6 +3,7 @@
 """Tagged-union round-trip tests for Message after P2 msgspec flip."""
 
 import msgspec
+import orjson
 
 from aiperf.common.enums import LifecycleState, MessageType
 from aiperf.common.messages import (
@@ -52,8 +53,6 @@ def test_from_json_compat_wrapper_accepts_bytes_and_dict():
         "state": LifecycleState.RUNNING,
     }
     from_dict = Message.from_json(heartbeat_dict)
-    import orjson
-
     from_bytes = Message.from_json(orjson.dumps(heartbeat_dict))
     assert isinstance(from_dict, HeartbeatMessage)
     assert isinstance(from_bytes, HeartbeatMessage)
@@ -66,8 +65,6 @@ def test_to_json_bytes_shim_emits_message_type_tag():
         service_type=ServiceType.WORKER,
         state=LifecycleState.RUNNING,
     )
-    import orjson
-
     decoded = orjson.loads(msg.to_json_bytes())
     assert decoded["message_type"] == MessageType.HEARTBEAT
     assert decoded["service_id"] == "svc-4"
