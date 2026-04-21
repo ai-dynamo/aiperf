@@ -28,8 +28,7 @@ class HistogramData:
     """Temporary histogram data accumulator during parsing.
 
     Lightweight dataclass for accumulating histogram bucket, sum, and count
-    data during Prometheus metric parsing. Avoids pydantic validation overhead
-    during intermediate processing.
+    data during Prometheus metric parsing.
     """
 
     buckets: dict[str, float] = field(default_factory=dict)
@@ -56,8 +55,8 @@ class HistogramData:
     ) -> MetricSample:
         """Convert to MetricSample for final record.
 
-        Transforms the accumulated histogram data into a validated MetricSample
-        with proper Pydantic models. Converts label tuple to dict format.
+        Transforms the accumulated histogram data into a ``MetricSample`` and
+        converts label tuple to dict format.
 
         Args:
             labels: Optional tuple of (key, value) pairs for metric labels

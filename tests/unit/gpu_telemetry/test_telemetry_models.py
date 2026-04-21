@@ -69,9 +69,9 @@ def counter_time_series() -> GpuMetricTimeSeries:
 
 
 class TestTelemetryRecord:
-    """Test TelemetryRecord model validation and data structure integrity.
+    """Test TelemetryRecord construction and data structure integrity.
 
-    This test class focuses on Pydantic model validation, field requirements,
+    This test class focuses on msgspec.Struct construction, field requirements,
     and data structure correctness. It does NOT test parsing logic or metric
     extraction - those belong in other test files.
     """

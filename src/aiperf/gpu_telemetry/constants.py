@@ -34,7 +34,7 @@ DCGM_TO_FIELD_MAPPING = {
 # GPU Telemetry Metrics Configuration
 # Format: (display_name, field_name, unit_enum)
 # - display_name: Human-readable metric name shown in outputs
-# - field_name: Corresponds to TelemetryMetrics model field name
+# - field_name: Key used in TelemetryRecord.telemetry_data dict
 # - unit_enum: MetricUnitT enum (use .value in exporters to get string)
 GPU_TELEMETRY_METRICS_CONFIG: list[tuple[str, str, MetricUnitT]] = [
     ("GPU Power Usage", "gpu_power_usage", PowerMetricUnit.WATT),

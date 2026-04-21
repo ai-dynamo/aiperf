@@ -216,7 +216,7 @@ class TestDCGMFakerTelemetryCollector:
             assert record.pci_bus_id == gpu.pci_bus_id
             assert record.device == gpu.device
 
-            # Verify TelemetryMetrics are correctly scaled
+            # Verify telemetry metrics are correctly scaled
             telemetry = record.telemetry_data
             assert telemetry is not None
             assert telemetry.get("gpu_power_usage") == approx(gpu.power, abs=0.01)
