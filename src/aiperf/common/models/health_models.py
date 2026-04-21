@@ -1,19 +1,27 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from collections import namedtuple
 
-from pydantic import Field
+import msgspec
 
-from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.base_models import PydanticStructMixin
 
 
-class NumericAggregate(AIPerfBaseModel):
-    """Aggregates for a single numeric value over time."""
+class NumericAggregate(
+    PydanticStructMixin,
+    msgspec.Struct,
+    kw_only=True,
+    omit_defaults=True,
+):
+    """Aggregates for a single numeric value over time.
 
-    min: float | None = Field(default=None, description="Minimum observed value")
-    max: float | None = Field(default=None, description="Maximum observed value")
-    sum: float = Field(default=0.0, description="Sum of all observed values")
-    count: int = Field(default=0, description="Number of observations")
+    Mutable accumulator: ``update()`` rewrites ``min``/``max``/``sum``/``count``
+    in place, so this struct intentionally omits ``frozen``.
+    """
+
+    min: float | None = None
+    max: float | None = None
+    sum: float = 0.0
+    count: int = 0
 
     @property
     def avg(self) -> float | None:
@@ -31,106 +39,87 @@ class NumericAggregate(AIPerfBaseModel):
         self.count += 1
 
 
-class ProcessHealthAggregates(AIPerfBaseModel):
-    """Aggregated statistics for process health metrics over time."""
+class ProcessHealthAggregates(
+    PydanticStructMixin,
+    msgspec.Struct,
+    kw_only=True,
+    omit_defaults=True,
+):
+    """Aggregated statistics for process health metrics over time.
 
-    memory_usage: NumericAggregate = Field(
-        default_factory=NumericAggregate,
-        description="Memory usage (RSS) aggregates in bytes",
+    Holds mutable ``NumericAggregate`` sub-fields updated in place each tick.
+    """
+
+    memory_usage: NumericAggregate = msgspec.field(default_factory=NumericAggregate)
+    cpu_usage: NumericAggregate = msgspec.field(default_factory=NumericAggregate)
+    num_threads: NumericAggregate = msgspec.field(default_factory=NumericAggregate)
+    voluntary_ctx_switches: NumericAggregate = msgspec.field(
+        default_factory=NumericAggregate
     )
-    cpu_usage: NumericAggregate = Field(
-        default_factory=NumericAggregate,
-        description="CPU usage percentage aggregates",
+    involuntary_ctx_switches: NumericAggregate = msgspec.field(
+        default_factory=NumericAggregate
     )
-    num_threads: NumericAggregate = Field(
-        default_factory=NumericAggregate,
-        description="Number of threads aggregates",
-    )
-    voluntary_ctx_switches: NumericAggregate = Field(
-        default_factory=NumericAggregate,
-        description="Voluntary context switches aggregates",
-    )
-    involuntary_ctx_switches: NumericAggregate = Field(
-        default_factory=NumericAggregate,
-        description="Involuntary context switches aggregates",
-    )
-    io_read_bytes: NumericAggregate = Field(
-        default_factory=NumericAggregate,
-        description="Disk read bytes aggregates",
-    )
-    io_write_bytes: NumericAggregate = Field(
-        default_factory=NumericAggregate,
-        description="Disk write bytes aggregates",
-    )
-    cpu_time_user: NumericAggregate = Field(
-        default_factory=NumericAggregate,
-        description="User CPU time aggregates in seconds",
-    )
-    cpu_time_system: NumericAggregate = Field(
-        default_factory=NumericAggregate,
-        description="System CPU time aggregates in seconds",
-    )
-    cpu_time_iowait: NumericAggregate = Field(
-        default_factory=NumericAggregate,
-        description="IO wait time aggregates in seconds",
-    )
+    io_read_bytes: NumericAggregate = msgspec.field(default_factory=NumericAggregate)
+    io_write_bytes: NumericAggregate = msgspec.field(default_factory=NumericAggregate)
+    cpu_time_user: NumericAggregate = msgspec.field(default_factory=NumericAggregate)
+    cpu_time_system: NumericAggregate = msgspec.field(default_factory=NumericAggregate)
+    cpu_time_iowait: NumericAggregate = msgspec.field(default_factory=NumericAggregate)
 
 
-# TODO: These can be potentially different for each platform. (below is linux)
-IOCounters = namedtuple(
-    "IOCounters",
-    [
-        "read_count",  # system calls io read
-        "write_count",  # system calls io write
-        "read_bytes",  # bytes read (disk io)
-        "write_bytes",  # bytes written (disk io)
-        "read_chars",  # io read bytes (system calls)
-        "write_chars",  # io write bytes (system calls)
-    ],
-)
-
-CPUTimes = namedtuple(
-    "CPUTimes",
-    ["user", "system", "iowait"],
-)
-
-CtxSwitches = namedtuple("CtxSwitches", ["voluntary", "involuntary"])
+# IO / CPU / ctx-switch tuples: msgspec.Struct frozen replacements for the
+# prior ``collections.namedtuple`` types. Named attribute access (e.g.
+# ``io_counters.read_bytes``) matches the namedtuple surface that downstream
+# consumers (UI, tests) depend on. Constructed via positional splat from the
+# psutil namedtuples — see ``ProcessHealthMixin.get_process_health``.
+class IOCounters(
+    PydanticStructMixin,
+    msgspec.Struct,
+    frozen=True,
+):
+    read_count: int
+    write_count: int
+    read_bytes: int
+    write_bytes: int
+    read_chars: int
+    write_chars: int
 
 
-class ProcessHealth(AIPerfBaseModel):
-    """Model for process health data."""
+class CPUTimes(
+    PydanticStructMixin,
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+):
+    user: float
+    system: float
+    iowait: float
 
-    pid: int | None = Field(
-        default=None,
-        description="The PID of the process",
-    )
-    create_time: float = Field(
-        ..., description="The creation time of the process in seconds"
-    )
-    uptime: float = Field(..., description="The uptime of the process in seconds")
-    cpu_usage: float = Field(
-        ..., description="The current CPU usage of the process in %"
-    )
-    memory_usage: int = Field(
-        ..., description="The current memory usage of the process in bytes (rss)"
-    )
-    pss_memory: int | None = Field(
-        default=None,
-        description="Proportional set size in bytes (excludes shared mmap pages). Only captured at start/end.",
-    )
-    io_counters: IOCounters | tuple | None = Field(
-        default=None,
-        description="The current I/O counters of the process (read_count, write_count, read_bytes, write_bytes, read_chars, write_chars)",
-    )
-    cpu_times: CPUTimes | tuple | None = Field(
-        default=None,
-        description="The current CPU times of the process (user, system, iowait)",
-    )
-    num_ctx_switches: CtxSwitches | tuple | None = Field(
-        default=None,
-        description="The current number of context switches (voluntary, involuntary)",
-    )
-    num_threads: int | None = Field(
-        default=None,
-        description="The current number of threads",
-    )
+
+class CtxSwitches(
+    PydanticStructMixin,
+    msgspec.Struct,
+    frozen=True,
+):
+    voluntary: int
+    involuntary: int
+
+
+class ProcessHealth(
+    PydanticStructMixin,
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
+    """Immutable snapshot of process health for a single tick."""
+
+    pid: int | None = None
+    create_time: float
+    uptime: float
+    cpu_usage: float
+    memory_usage: int
+    pss_memory: int | None = None
+    io_counters: IOCounters | None = None
+    cpu_times: CPUTimes | None = None
+    num_ctx_switches: CtxSwitches | None = None
+    num_threads: int | None = None
