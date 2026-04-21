@@ -225,6 +225,20 @@ class FakeStreamingDealerClient(FakeCommunicationClient):
                     )
                     await router_client.handler(self.identity, message)
 
+    async def request(self, message: Any, timeout: float = 30.0) -> Any:  # noqa: ARG002
+        """Send and synchronously return the handler's reply (if any)."""
+        self.capture_sent_payload(message)
+        for comm in self.bus.communications:
+            for router_client in comm.router_clients.get(self.address, []):
+                if router_client.handler:
+                    router_client.capture_received_payload(
+                        message, sender_identity=self.identity
+                    )
+                    reply = await router_client.handler(self.identity, message)
+                    if reply is not None:
+                        return reply
+        return None
+
 
 class FakePubClient(FakeCommunicationClient):
     """Fake PUB - publishes to all subscribers at same address."""

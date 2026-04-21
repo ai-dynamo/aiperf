@@ -612,6 +612,7 @@ class TestHealthMonitoring:
         ack = await worker_group_manager._on_pod_lifecycle_message(
             "worker-identity",
             GroupPeerHello(
+                rid="rid-1",
                 service_id="worker_0",
                 service_type=str(ServiceType.WORKER),
                 pod_index="0",
