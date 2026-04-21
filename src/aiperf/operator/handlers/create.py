@@ -168,6 +168,23 @@ async def on_create(
         )
         events.preflight_passed(body, len(preflight_results.checks))
 
+        warnings = [c for c in preflight_results.checks if c.status == CheckStatus.WARN]
+        if warnings:
+            warning_summary = "; ".join(f"{c.name}: {c.message}" for c in warnings)
+            if len(warning_summary) > 512:
+                warning_summary = warning_summary[:509] + "..."
+            status.conditions.set_true(
+                ConditionType.PREFLIGHT_HAS_WARNINGS,
+                "PreflightWarnings",
+                f"{len(warnings)} check(s) produced warnings: {warning_summary}",
+            )
+        else:
+            status.conditions.set_false(
+                ConditionType.PREFLIGHT_HAS_WARNINGS,
+                "NoWarnings",
+                "No preflight warnings",
+            )
+
         for check in preflight_results.checks:
             if check.status == CheckStatus.WARN:
                 events.preflight_warning(body, check.name, check.message)

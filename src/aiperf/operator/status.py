@@ -79,6 +79,12 @@ class ConditionType(CaseInsensitiveStrEnum):
     INDEX_UPDATED = "IndexUpdated"
     """Set to False when the job index write fails; results remain on disk."""
 
+    PREFLIGHT_HAS_WARNINGS = "PreflightHasWarnings"
+    """Set to True when preflight succeeded but one or more checks produced
+    warnings. Observable via `kubectl get aiperfjob -o jsonpath` so admins
+    can alert on degraded-but-passing cluster conditions without scraping
+    kubectl events."""
+
 
 class ConditionManager:
     """Manages the conditions list for AIPerfJob status.
