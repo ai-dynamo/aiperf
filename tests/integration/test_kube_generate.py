@@ -64,8 +64,11 @@ class TestGenerateOperatorMode:
         doc = yaml.safe_load(result.stdout)
         spec = doc["spec"]
 
-        assert "models" in spec
-        assert "endpoint" in spec
+        # AIPerfConfig fields live under spec.benchmark; deployment fields
+        # (image, podTemplate, scheduling) live at spec top level.
+        assert "benchmark" in spec
+        assert "models" in spec["benchmark"]
+        assert "endpoint" in spec["benchmark"]
         assert "image" in spec
         assert spec["image"] == "aiperf:latest"
 
