@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from pydantic import Field, SerializeAsAny
+from pydantic import Field
 
 from aiperf.common.enums import MessageType
 from aiperf.common.messages.service_messages import BaseServiceMessage
@@ -15,9 +15,9 @@ class InferenceResultsMessage(BaseServiceMessage):
 
     message_type: MessageTypeT = MessageType.INFERENCE_RESULTS
 
-    record: SerializeAsAny[RequestRecord] = Field(
-        ..., description="The inference results record"
-    )
+    # RequestRecord is a msgspec.Struct with PydanticStructMixin — the mixin's
+    # serializer runs on the concrete runtime type without SerializeAsAny.
+    record: RequestRecord = Field(..., description="The inference results record")
 
 
 class RealtimeMetricsMessage(BaseServiceMessage):
