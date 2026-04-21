@@ -2,26 +2,26 @@
 # SPDX-License-Identifier: Apache-2.0
 """Models for tracking the progress of the benchmark suite."""
 
-import msgspec
+from dataclasses import dataclass, field
+from typing import ClassVar
+
+from pydantic import ConfigDict
 
 from aiperf.common.enums import WorkerStartupState, WorkerStatus
-from aiperf.common.models.base_models import PydanticStructMixin
 from aiperf.common.models.credit_models import ProcessingStats
 from aiperf.common.models.health_models import ProcessHealth, ProcessHealthAggregates
 from aiperf.common.models.worker_models import WorkerTaskStats
 
 
-class WorkerProcessingStats(
-    msgspec.Struct,
-    kw_only=True,
-    omit_defaults=True,
-):
+@dataclass(slots=True, kw_only=True)
+class WorkerProcessingStats:
     """Tracks a worker's record-processing progress.
 
-    Mutable accumulator: ``success_records`` / ``error_records`` are
-    incremented in place by the records tracker, so the struct intentionally
-    omits ``frozen``.
+    Mutable slotted dataclass: ``success_records`` / ``error_records`` are
+    incremented in place by the records tracker, so not ``frozen``.
     """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     success_records: int = 0
     error_records: int = 0
@@ -32,27 +32,24 @@ class WorkerProcessingStats(
         return self.success_records + self.error_records
 
 
-class WorkerStats(
-    PydanticStructMixin,
-    msgspec.Struct,
-    kw_only=True,
-):
+@dataclass(slots=True, kw_only=True)
+class WorkerStats:
     """Stats for a worker.
 
-    Mutable: the worker tracker rewrites ``health``, ``task_stats``,
-    ``status``, ``startup_state``, etc. as messages arrive. Not frozen.
-
-    Intentionally does not set ``omit_defaults``: WorkerStats is serialized
-    over the /api/workers HTTP endpoint, and downstream consumers (TUI,
-    operator) rely on every field (including ``status=idle`` and empty
-    defaults) being present on the wire.
+    Mutable slotted dataclass — shared type usable natively in msgspec
+    contexts (the ``/api/workers`` HTTP payload encoded via msgspec) and
+    Pydantic contexts (``WorkersResponse``). The worker tracker rewrites
+    ``health``, ``task_stats``, ``status``, ``startup_state``, etc. as
+    messages arrive; not ``frozen``.
     """
 
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
     worker_id: str
-    task_stats: WorkerTaskStats = msgspec.field(default_factory=WorkerTaskStats)
-    processing_stats: ProcessingStats = msgspec.field(default_factory=ProcessingStats)
+    task_stats: WorkerTaskStats = field(default_factory=WorkerTaskStats)
+    processing_stats: ProcessingStats = field(default_factory=ProcessingStats)
     health: ProcessHealth | None = None
-    health_aggregates: ProcessHealthAggregates = msgspec.field(
+    health_aggregates: ProcessHealthAggregates = field(
         default_factory=ProcessHealthAggregates
     )
     status: WorkerStatus = WorkerStatus.IDLE

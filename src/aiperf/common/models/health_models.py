@@ -1,21 +1,21 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import NamedTuple
+from dataclasses import dataclass, field
+from typing import ClassVar, NamedTuple
 
-import msgspec
+from pydantic import ConfigDict
 
 
-class NumericAggregate(
-    msgspec.Struct,
-    kw_only=True,
-    omit_defaults=True,
-):
+@dataclass(slots=True, kw_only=True)
+class NumericAggregate:
     """Aggregates for a single numeric value over time.
 
-    Mutable accumulator: ``update()`` rewrites ``min``/``max``/``sum``/``count``
-    in place, so this struct intentionally omits ``frozen``.
+    Mutable slotted dataclass: ``update()`` rewrites ``min``/``max``/``sum``/``count``
+    in place, so this type intentionally is not frozen.
     """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     min: float | None = None
     max: float | None = None
@@ -38,30 +38,25 @@ class NumericAggregate(
         self.count += 1
 
 
-class ProcessHealthAggregates(
-    msgspec.Struct,
-    kw_only=True,
-    omit_defaults=True,
-):
+@dataclass(slots=True, kw_only=True)
+class ProcessHealthAggregates:
     """Aggregated statistics for process health metrics over time.
 
     Holds mutable ``NumericAggregate`` sub-fields updated in place each tick.
     """
 
-    memory_usage: NumericAggregate = msgspec.field(default_factory=NumericAggregate)
-    cpu_usage: NumericAggregate = msgspec.field(default_factory=NumericAggregate)
-    num_threads: NumericAggregate = msgspec.field(default_factory=NumericAggregate)
-    voluntary_ctx_switches: NumericAggregate = msgspec.field(
-        default_factory=NumericAggregate
-    )
-    involuntary_ctx_switches: NumericAggregate = msgspec.field(
-        default_factory=NumericAggregate
-    )
-    io_read_bytes: NumericAggregate = msgspec.field(default_factory=NumericAggregate)
-    io_write_bytes: NumericAggregate = msgspec.field(default_factory=NumericAggregate)
-    cpu_time_user: NumericAggregate = msgspec.field(default_factory=NumericAggregate)
-    cpu_time_system: NumericAggregate = msgspec.field(default_factory=NumericAggregate)
-    cpu_time_iowait: NumericAggregate = msgspec.field(default_factory=NumericAggregate)
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    memory_usage: NumericAggregate = field(default_factory=NumericAggregate)
+    cpu_usage: NumericAggregate = field(default_factory=NumericAggregate)
+    num_threads: NumericAggregate = field(default_factory=NumericAggregate)
+    voluntary_ctx_switches: NumericAggregate = field(default_factory=NumericAggregate)
+    involuntary_ctx_switches: NumericAggregate = field(default_factory=NumericAggregate)
+    io_read_bytes: NumericAggregate = field(default_factory=NumericAggregate)
+    io_write_bytes: NumericAggregate = field(default_factory=NumericAggregate)
+    cpu_time_user: NumericAggregate = field(default_factory=NumericAggregate)
+    cpu_time_system: NumericAggregate = field(default_factory=NumericAggregate)
+    cpu_time_iowait: NumericAggregate = field(default_factory=NumericAggregate)
 
 
 # IO / CPU / ctx-switch tuples mirror the psutil namedtuple surface so both
@@ -88,13 +83,11 @@ class CtxSwitches(NamedTuple):
     involuntary: int
 
 
-class ProcessHealth(
-    msgspec.Struct,
-    frozen=True,
-    kw_only=True,
-    omit_defaults=True,
-):
+@dataclass(slots=True, kw_only=True, frozen=True)
+class ProcessHealth:
     """Immutable snapshot of process health for a single tick."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     pid: int | None = None
     create_time: float

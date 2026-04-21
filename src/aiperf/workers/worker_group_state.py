@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Protocol
 
 from aiperf.common.constants import NANOS_PER_SECOND
@@ -23,7 +24,8 @@ class WorkerStatusSnapshot(Protocol):
     startup_state: WorkerStartupState | None
 
 
-class WorkerStatusInfo(WorkerStats, kw_only=True):
+@dataclass(slots=True, kw_only=True)
+class WorkerStatusInfo(WorkerStats):
     """Shared worker-status state used by WorkerManager compatibility paths."""
 
     last_error_ns: int | None = None

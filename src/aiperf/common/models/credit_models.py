@@ -4,7 +4,6 @@ import time
 from dataclasses import dataclass
 from typing import ClassVar
 
-import msgspec
 from pydantic import ConfigDict
 
 from aiperf.common.constants import NANOS_PER_SECOND
@@ -196,18 +195,15 @@ class PhaseRecordsStats(BasePhaseStats):
         return self.records_end_ns is not None
 
 
-class ProcessingStats(
-    msgspec.Struct,
-    kw_only=True,
-    omit_defaults=True,
-):
+@dataclass(slots=True, kw_only=True)
+class ProcessingStats:
     """Per-worker record-processing counters.
 
-    Mutable accumulator used by the RecordsTracker to tally success/error
-    counts in place — hence no ``frozen=True``. Stays ``msgspec.Struct``
-    because it's nested in ``WorkerStats`` (which is still
-    ``msgspec.Struct`` + mixin pending a broader cascade).
+    Mutable slotted dataclass used by the RecordsTracker to tally success/error
+    counts in place — hence not ``frozen``.
     """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     processed: int = 0
     errors: int = 0

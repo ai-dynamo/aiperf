@@ -2,19 +2,23 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-import msgspec
+from dataclasses import dataclass
+from typing import ClassVar
+
+from pydantic import ConfigDict
 
 
-class WorkerTaskStats(
-    msgspec.Struct,
-    kw_only=True,
-    omit_defaults=True,
-):
+@dataclass(slots=True, kw_only=True)
+class WorkerTaskStats:
     """Stats for the tasks that have been sent to the worker.
 
-    Mutable accumulator: ``task_finished`` increments ``failed`` or
-    ``completed`` in place, so the struct intentionally omits ``frozen``.
+    Mutable slotted dataclass — shared type for msgspec envelopes
+    (``WorkerHealthMessage.task_stats``) and Pydantic
+    (``WorkerStats.task_stats`` via ``WorkersResponse``). ``task_finished``
+    mutates in place, so the dataclass is not frozen.
     """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     total: int = 0
     failed: int = 0
