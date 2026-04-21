@@ -9,10 +9,9 @@ Owns the LoopScheduler and all per-phase components (lifecycle, progress, stop_c
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import Callable
 from typing import TYPE_CHECKING
-
-import msgspec
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.environment import Environment
@@ -105,7 +104,7 @@ class PhaseRunner(TaskManagerMixin):
         # reflects the actual filtered dataset after start/end offset filtering.
         metadata = conversation_source.dataset_metadata
         if config.timing_mode == TimingMode.FIXED_SCHEDULE and metadata:
-            self._config = msgspec.structs.replace(
+            self._config = dataclasses.replace(
                 config,
                 total_expected_requests=metadata.total_turn_count,
                 expected_num_sessions=len(metadata.conversations),

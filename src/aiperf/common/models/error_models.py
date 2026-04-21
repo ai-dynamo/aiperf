@@ -1,27 +1,30 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, ClassVar
 
-import msgspec
+from pydantic import ConfigDict
 
 from aiperf.common.exceptions import LifecycleOperationError
-from aiperf.common.models.base_models import PydanticStructMixin
 from aiperf.common.redact import redact_string
 
 
-class ErrorDetails(
-    msgspec.Struct,
-    frozen=True,
-    kw_only=True,
-    omit_defaults=True,
-):
+@dataclass(slots=True, kw_only=True, eq=False)
+class ErrorDetails:
     """Encapsulates details about an error.
 
-    Frozen msgspec.Struct — equality and hash are defined over
-    ``(code, type, message)`` to match the prior Pydantic behaviour where two
-    errors with different stack traces but the same class/code were deduped
-    by ``ErrorDetailsCount``.
+    Slotted dataclass — shared type usable natively in both msgspec contexts
+    (``ExitErrorInfo``, ``RequestRecord.error``, ``ErrorMessage.error``) and
+    Pydantic contexts (transitively via ``ErrorDetailsCount`` in
+    ``JsonExportData.error_summary``). ``__pydantic_config__`` lets Pydantic
+    validate/serialize it natively without a compat shim.
+
+    Equality and hash are defined over ``(code, type, message)`` so two
+    errors with different stack traces but the same class/code dedup
+    correctly inside ``ErrorDetailsCount``.
     """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     message: str
     code: int | None = None
@@ -98,13 +101,11 @@ class ErrorDetails(
         )
 
 
-class ExitErrorInfo(
-    msgspec.Struct,
-    frozen=True,
-    kw_only=True,
-    omit_defaults=True,
-):
+@dataclass(slots=True, kw_only=True, frozen=True)
+class ExitErrorInfo:
     """Information about an error that should cause the process to exit."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     error_details: ErrorDetails
     operation: str
@@ -121,14 +122,14 @@ class ExitErrorInfo(
         )
 
 
-class ErrorDetailsCount(
-    PydanticStructMixin,
-    msgspec.Struct,
-    frozen=True,
-    kw_only=True,
-    omit_defaults=True,
-):
-    """Count of error details."""
+@dataclass(slots=True, kw_only=True, frozen=True)
+class ErrorDetailsCount:
+    """Count of error details. Shared type: lives in both msgspec contexts
+    (``ProfileResults.error_summary``) and Pydantic export models
+    (``JsonExportData.error_summary`` etc.) without a compat shim.
+    """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     error_details: ErrorDetails
     count: int

@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import dataclasses
 import time
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, ClassVar
 
-import msgspec
+from pydantic import ConfigDict
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import NANOS_PER_SECOND
@@ -18,7 +20,6 @@ from aiperf.common.messages import (
 )
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 from aiperf.common.models import CreditPhaseStats, PhaseRecordsStats
-from aiperf.common.models.base_models import PydanticStructMixin
 from aiperf.common.models.credit_models import BasePhaseStats
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
@@ -33,22 +34,36 @@ if TYPE_CHECKING:
 _logger = AIPerfLogger(__name__)
 
 
-class CombinedPhaseStats(
-    PydanticStructMixin,
-    BasePhaseStats,
-    frozen=True,
-    kw_only=True,
-    omit_defaults=True,
-):
+@dataclass(slots=True, kw_only=True, frozen=True)
+class CombinedPhaseStats(BasePhaseStats):
     """Combined progress for a single phase: requests + records + computed rates.
 
-    msgspec.Struct forbids multiple-inheritance of structs, so the request and
-    records fields are flattened here rather than inherited from both
-    CreditPhaseStats and PhaseRecordsStats.
-
-    Retains ``PydanticStructMixin`` because ``JobProgress.phases`` (Pydantic,
-    a FastAPI operator API response) embeds this struct.
+    Slotted dataclass — the flattened shape is a shared type usable in both
+    msgspec contexts (if ever embedded in a Message) and Pydantic
+    (``JobProgress.phases`` — FastAPI operator API response) without a
+    compat shim.
     """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    # Credit progress fields (mirror CreditPhaseStats)
+    requests_sent: int = 0
+    requests_completed: int = 0
+    requests_cancelled: int = 0
+    request_errors: int = 0
+    sent_sessions: int = 0
+    completed_sessions: int = 0
+    cancelled_sessions: int = 0
+    total_session_turns: int = 0
+
+    # Records progress fields (mirror PhaseRecordsStats)
+    records_end_ns: int | None = None
+    success_records: int = 0
+    error_records: int = 0
+
+    # Computed fields
+    requests_per_second: float | None = None
+    records_per_second: float | None = None
 
     # Credit progress fields (mirror CreditPhaseStats)
     requests_sent: int = 0
@@ -215,13 +230,13 @@ class ProgressTracker:
             # (progress % remaining) / (progress % per second)
             eta_sec = (100 - pct) / (pct / dur_sec)
 
-        updates = msgspec.structs.asdict(stats)
+        updates = dataclasses.asdict(stats)
         updates["last_update_ns"] = last_update_ns
         updates[f"{prefix}_per_second"] = per_second
         updates[f"{prefix}_eta_sec"] = eta_sec
 
         current = self._get_phase_progress(stats.phase)
-        self._phases[stats.phase] = msgspec.structs.replace(current, **updates)
+        self._phases[stats.phase] = dataclasses.replace(current, **updates)
         return self._phases[stats.phase]
 
     def update_requests_stats(self, stats: CreditPhaseStats) -> CombinedPhaseStats:

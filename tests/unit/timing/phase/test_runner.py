@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import dataclasses
 from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import msgspec
 import pytest
 
 from aiperf.common.enums import CreditPhase
@@ -675,7 +675,7 @@ class TestFixedScheduleConfigCorrection:
         """FIXED_SCHEDULE should use dataset metadata size, not config values."""
         # Config says 100 requests/sessions, but dataset only has 2 conversations
         config = cfg(mode=TimingMode.FIXED_SCHEDULE, reqs=100)
-        config = msgspec.structs.replace(config, expected_num_sessions=100)
+        config = dataclasses.replace(config, expected_num_sessions=100)
 
         conv_src = MagicMock()
         conv_src.dataset_metadata = make_dataset_metadata([("c1", 3), ("c2", 2)])
@@ -754,7 +754,7 @@ class TestFixedScheduleConfigCorrection:
         """Simulates start/end offset filtering that reduces dataset size."""
         # Original file had 1000 conversations, config reflects that
         config = cfg(mode=TimingMode.FIXED_SCHEDULE, reqs=1000)
-        config = msgspec.structs.replace(config, expected_num_sessions=1000)
+        config = dataclasses.replace(config, expected_num_sessions=1000)
 
         # But filtering reduced to just 2 conversations
         conv_src = MagicMock()

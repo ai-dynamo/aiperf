@@ -1,25 +1,27 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
+from dataclasses import dataclass
+from typing import ClassVar
 
 import msgspec
+from pydantic import ConfigDict
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
 
 
-class BasePhaseStats(
-    msgspec.Struct,
-    frozen=True,
-    kw_only=True,
-    omit_defaults=True,
-):
+@dataclass(slots=True, kw_only=True, frozen=True)
+class BasePhaseStats:
     """Base model for phase stats. Tracks credit-phase progress.
 
-    Fields are computed by timing-manager and records-manager; construction
-    happens only at internal trust boundaries, so numeric bounds (``ge``/``gt``)
-    that used to live on Pydantic ``Field`` are dropped.
+    Slotted dataclass — shared type for msgspec envelopes
+    (``CreditPhaseStartMessage.stats`` etc.) and Pydantic
+    (``JobProgress.phases`` via ``CombinedPhaseStats``). Self-contained,
+    so converting to dataclass needs no further cascade.
     """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     phase: CreditPhase
     exclude_from_results: bool = False
@@ -62,12 +64,8 @@ class BasePhaseStats(
         return self.requests_end_ns is not None
 
 
-class CreditPhaseStats(
-    BasePhaseStats,
-    frozen=True,
-    kw_only=True,
-    omit_defaults=True,
-):
+@dataclass(slots=True, kw_only=True, frozen=True)
+class CreditPhaseStats(BasePhaseStats):
     """Immutable phase-credit progress snapshot published per tick."""
 
     # Credit progress fields
@@ -150,12 +148,8 @@ class CreditPhaseStats(
         return min(max(percentages), 100)
 
 
-class PhaseRecordsStats(
-    BasePhaseStats,
-    frozen=True,
-    kw_only=True,
-    omit_defaults=True,
-):
+@dataclass(slots=True, kw_only=True, frozen=True)
+class PhaseRecordsStats(BasePhaseStats):
     """Immutable phase-records progress snapshot."""
 
     # Timestamp fields
@@ -210,7 +204,9 @@ class ProcessingStats(
     """Per-worker record-processing counters.
 
     Mutable accumulator used by the RecordsTracker to tally success/error
-    counts in place — hence no ``frozen=True``.
+    counts in place — hence no ``frozen=True``. Stays ``msgspec.Struct``
+    because it's nested in ``WorkerStats`` (which is still
+    ``msgspec.Struct`` + mixin pending a broader cascade).
     """
 
     processed: int = 0

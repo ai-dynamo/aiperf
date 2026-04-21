@@ -8,6 +8,7 @@ benchmark result files.
 """
 
 import asyncio
+import dataclasses
 import logging
 from pathlib import Path
 from typing import Any
@@ -267,9 +268,10 @@ class ProgressClient:
         """
         phases: dict[CreditPhase, CombinedPhaseStats] = {}
 
-        # Filter to declared struct fields so older/newer peers adding computed or
-        # auxiliary keys don't break parsing (msgspec rejects unknown kwargs).
-        valid_fields = set(CombinedPhaseStats.__struct_fields__)
+        # Filter to declared dataclass fields so older/newer peers adding computed
+        # or auxiliary keys don't break parsing (dataclass constructor rejects
+        # unknown kwargs).
+        valid_fields = {f.name for f in dataclasses.fields(CombinedPhaseStats)}
         for phase_name, phase_data in data.get("phases", {}).items():
             try:
                 phase = CreditPhase(phase_name)

@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, ClassVar
 
-import msgspec
 from pydantic import ConfigDict, Field
 
 from aiperf.common.enums import CreditPhase
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from aiperf.config import BenchmarkConfig
     from aiperf.config.phases import BasePhaseConfig
 
-from aiperf.common.models.base_models import AIPerfBaseModel, PydanticStructMixin
+from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.plugin.enums import (
     ArrivalPattern,
     PhaseType,
@@ -93,20 +93,22 @@ class TimingConfig(AIPerfBaseModel):
         )
 
 
-class CreditPhaseConfig(
-    PydanticStructMixin,
-    msgspec.Struct,
-    frozen=True,
-    kw_only=True,
-    omit_defaults=True,
-):
+@dataclass(slots=True, kw_only=True, frozen=True)
+class CreditPhaseConfig:
     """Config for a single credit phase.
+
+    Slotted dataclass — shared type for both msgspec envelopes (e.g.
+    ``CreditPhaseStartMessage.config``) and the Pydantic ``TimingConfig``
+    parent that hosts ``list[CreditPhaseConfig]``. Self-contained (all
+    fields are primitives or enums), so no cascade is needed.
 
     Stop conditions (first one reached wins):
     - total_expected_requests: Stop after sending this many total requests
     - expected_num_sessions: Stop starting NEW user sessions after this many (complete ongoing ones)
     - expected_duration_sec: Stop after this time
     """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     phase: CreditPhase
     timing_mode: TimingMode
