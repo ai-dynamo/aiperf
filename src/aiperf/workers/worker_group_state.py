@@ -8,8 +8,6 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Protocol
 
-from pydantic import Field
-
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import WorkerStartupState, WorkerStatus
 from aiperf.common.environment import Environment
@@ -25,18 +23,11 @@ class WorkerStatusSnapshot(Protocol):
     startup_state: WorkerStartupState | None
 
 
-class WorkerStatusInfo(WorkerStats):
+class WorkerStatusInfo(WorkerStats, kw_only=True):
     """Shared worker-status state used by WorkerManager compatibility paths."""
 
-    worker_id: str = Field(..., description="Stable identifier for the worker")
-    last_error_ns: int | None = Field(
-        default=None,
-        description="The last time the worker had an error",
-    )
-    last_high_load_ns: int | None = Field(
-        default=None,
-        description="The last time the worker was in high load",
-    )
+    last_error_ns: int | None = None
+    last_high_load_ns: int | None = None
 
 
 def build_worker_status_summary(
