@@ -53,7 +53,7 @@ def profile(
 
         service_config = service_config or load_service_config()
 
-        if user_config.endpoint.wait_for_model:
+        if user_config.endpoint.wait_for_model_timeout > 0:
             import asyncio
             import logging
 

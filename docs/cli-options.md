@@ -167,26 +167,21 @@ Maximum time in seconds to wait for each HTTP request to complete, including con
 
 API authentication key for the endpoint. When provided, automatically included in request headers as `Authorization: Bearer <api_key>`.
 
-#### `--wait-for-model`
-
-When enabled, aiperf runs a pre-flight readiness probe before profiling starts and waits for the target endpoint to accept requests. The probe strategy is controlled by `--wait-for-model-mode`, which defaults to sending a 1-token inference request (strongest signal). Eliminates the need for external shell-based readiness loops in containers and Kubernetes recipes.
-<br/>_Flag (no value required)_
-
 #### `--wait-for-model-timeout` `<float>`
 
-Maximum time in seconds to wait for the model to become ready before aborting with a non-zero exit. Only applies when `--wait-for-model` is enabled.
-<br/>_Constraints: > 0.0_
-<br/>_Default: `1800.0`_
+Enable a pre-flight readiness probe by setting this to a positive value (seconds). aiperf will then wait up to this long for the target endpoint to accept requests before starting the benchmark, aborting with a non-zero exit on timeout. The probe strategy is controlled by `--wait-for-model-mode`, which defaults to sending a 1-token inference request. 0 (default) disables the probe. Eliminates the need for external shell-based readiness loops in containers and Kubernetes recipes.
+<br/>_Constraints: ≥ 0.0_
+<br/>_Default: `0.0`_
 
 #### `--wait-for-model-interval` `<float>`
 
-Seconds between readiness probe attempts while waiting for the model. Only applies when `--wait-for-model` is enabled.
+Seconds between readiness probe attempts. Only consulted when `--wait-for-model-timeout` is positive.
 <br/>_Constraints: > 0.0_
 <br/>_Default: `5.0`_
 
 #### `--wait-for-model-mode` `<str>`
 
-Strategy for the readiness probe. 'inference' (default): POST a 1-token inference request to the configured endpoint; this is the strongest signal — it proves the full stack (frontend, scheduler, worker, forward pass) is live. Any HTTP status &lt; 500 counts as ready. 'models': GET `/v1/models` and verify the model id appears in `data[]` (cheaper, no tokens consumed; falls back to a plain GET on the base URL on 404). 'both': run 'models' first, then 'inference'. Only applies when `--wait-for-model` is enabled.
+Strategy for the readiness probe. 'inference' (default): POST a 1-token inference request to the configured endpoint; this is the strongest signal — it proves the full stack (frontend, scheduler, worker, forward pass) is live. Any HTTP status &lt; 500 counts as ready. 'models': GET `/v1/models` and verify the model id appears in `data[]` (cheaper, no tokens consumed; falls back to a plain GET on the base URL on 404). 'both': run 'models' first, then 'inference'. Only consulted when `--wait-for-model-timeout` is positive.
 <br/>_Default: `inference`_
 
 #### `--transport`, `--transport-type` `<str>`

@@ -57,6 +57,29 @@ class EndpointConfig(BaseConfig):
             self.streaming = False
         return self
 
+    @model_validator(mode="after")
+    def validate_wait_for_model_coherent(self) -> Self:
+        """Reject configurations where probe sub-options are set without
+        enabling the probe itself (timeout > 0). Catches typos like
+        `--wait-for-model-interval 1` without a timeout value.
+        """
+        if self.wait_for_model_timeout > 0:
+            return self
+        dependent = {"wait_for_model_interval", "wait_for_model_mode"}
+        set_without_enable = sorted(dependent & self.model_fields_set)
+        if set_without_enable:
+            flag_names = {
+                "wait_for_model_interval": "--wait-for-model-interval",
+                "wait_for_model_mode": "--wait-for-model-mode",
+            }
+            shown = ", ".join(flag_names[f] for f in set_without_enable)
+            raise ValueError(
+                f"{shown} has no effect unless --wait-for-model-timeout is set "
+                f"to a positive value. Set --wait-for-model-timeout to enable "
+                f"the readiness probe."
+            )
+        return self
+
     model_names: Annotated[
         list[str],
         Field(
@@ -197,26 +220,16 @@ class EndpointConfig(BaseConfig):
         ),
     ] = EndpointDefaults.API_KEY
 
-    wait_for_model: Annotated[
-        bool,
-        Field(
-            description="When enabled, aiperf runs a pre-flight readiness probe before profiling starts and waits for "
-            "the target endpoint to accept requests. The probe strategy is controlled by `--wait-for-model-mode`, which "
-            "defaults to sending a 1-token inference request (strongest signal). "
-            "Eliminates the need for external shell-based readiness loops in containers and Kubernetes recipes.",
-        ),
-        CLIParameter(
-            name=("--wait-for-model",),
-            group=_CLI_GROUP,
-        ),
-    ] = EndpointDefaults.WAIT_FOR_MODEL
-
     wait_for_model_timeout: Annotated[
         float,
         Field(
-            description="Maximum time in seconds to wait for the model to become ready before aborting with a non-zero exit. "
-            "Only applies when `--wait-for-model` is enabled.",
-            gt=0.0,
+            description="Enable a pre-flight readiness probe by setting this to a positive value (seconds). "
+            "aiperf will then wait up to this long for the target endpoint to accept requests before "
+            "starting the benchmark, aborting with a non-zero exit on timeout. The probe strategy is "
+            "controlled by `--wait-for-model-mode`, which defaults to sending a 1-token inference request. "
+            "0 (default) disables the probe. "
+            "Eliminates the need for external shell-based readiness loops in containers and Kubernetes recipes.",
+            ge=0.0,
         ),
         CLIParameter(
             name=("--wait-for-model-timeout",),
@@ -227,8 +240,8 @@ class EndpointConfig(BaseConfig):
     wait_for_model_interval: Annotated[
         float,
         Field(
-            description="Seconds between readiness probe attempts while waiting for the model. "
-            "Only applies when `--wait-for-model` is enabled.",
+            description="Seconds between readiness probe attempts. "
+            "Only consulted when `--wait-for-model-timeout` is positive.",
             gt=0.0,
         ),
         CLIParameter(
@@ -247,7 +260,7 @@ class EndpointConfig(BaseConfig):
             "'models': GET `/v1/models` and verify the model id appears in `data[]` "
             "(cheaper, no tokens consumed; falls back to a plain GET on the base URL on 404). "
             "'both': run 'models' first, then 'inference'. "
-            "Only applies when `--wait-for-model` is enabled.",
+            "Only consulted when `--wait-for-model-timeout` is positive.",
         ),
         CLIParameter(
             name=("--wait-for-model-mode",),

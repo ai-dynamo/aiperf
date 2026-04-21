@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Integration tests for the `--wait-for-model` readiness probe.
+"""Integration tests for the `--wait-for-model-timeout` readiness probe.
 
 Covers both probe modes:
 
@@ -23,7 +23,7 @@ from tests.harness.utils import AIPerfCLI
 @pytest.mark.integration
 @pytest.mark.asyncio
 class TestWaitForModelModeModels:
-    """Tests for `aiperf profile --wait-for-model --wait-for-model-mode models`.
+    """Tests for `aiperf profile --wait-for-model-timeout N --wait-for-model-mode models`.
 
     Exercises the GET /v1/models probe path and its 404 fallback behavior.
     """
@@ -47,7 +47,6 @@ class TestWaitForModelModeModels:
                     --request-count 1
                     --workers-max 1
                     --ui simple
-                    --wait-for-model
                     --wait-for-model-mode models
                     --wait-for-model-timeout 30
                     --wait-for-model-interval 1
@@ -86,7 +85,6 @@ class TestWaitForModelModeModels:
                     --request-count 1
                     --workers-max 1
                     --ui simple
-                    --wait-for-model
                     --wait-for-model-mode models
                     --wait-for-model-timeout 30
                     --wait-for-model-interval 0.5
@@ -115,7 +113,6 @@ class TestWaitForModelModeModels:
                     --request-count 1
                     --workers-max 1
                     --ui simple
-                    --wait-for-model
                     --wait-for-model-mode models
                     --wait-for-model-timeout 3
                     --wait-for-model-interval 0.5
@@ -149,7 +146,6 @@ class TestWaitForModelModeModels:
                     --request-count 1
                     --workers-max 1
                     --ui simple
-                    --wait-for-model
                     --wait-for-model-mode models
                     --wait-for-model-timeout 15
                     --wait-for-model-interval 1
@@ -164,7 +160,7 @@ class TestWaitForModelModeModels:
 @pytest.mark.integration
 @pytest.mark.asyncio
 class TestWaitForModelModeInference:
-    """Tests for `aiperf profile --wait-for-model --wait-for-model-mode inference`.
+    """Tests for `aiperf profile --wait-for-model-timeout N --wait-for-model-mode inference`.
 
     Exercises the POST {path} probe that submits a canned 1-token request
     and accepts any `status < 500` as ready. `inference` is the default mode,
@@ -188,7 +184,6 @@ class TestWaitForModelModeInference:
                     --request-count 1
                     --workers-max 1
                     --ui simple
-                    --wait-for-model
                     --wait-for-model-mode inference
                     --wait-for-model-timeout 30
                     --wait-for-model-interval 1
@@ -221,7 +216,6 @@ class TestWaitForModelModeInference:
                     --request-count 1
                     --workers-max 1
                     --ui simple
-                    --wait-for-model
                     --wait-for-model-mode inference
                     --wait-for-model-timeout 30
                     --wait-for-model-interval 0.5
