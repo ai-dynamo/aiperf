@@ -13,22 +13,97 @@ from aiperf.common.types import MediaTypeT
 from aiperf.plugin.enums import DatasetClientStoreType, DatasetSamplingStrategy
 
 
-class DatasetClientMetadata(AIPerfBaseModel):
+class DatasetClientMetadata(
+    PydanticStructMixin,
+    msgspec.Struct,
+    tag_field="client_type",
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
     """Base class for dataset client access metadata.
 
-    Uses discriminated union pattern based on client_type for extensibility.
-    Workers receive this metadata to know how to access the dataset backing store.
+    Discriminated union keyed on ``client_type`` — msgspec routes dicts to
+    the correct subclass on decode. Every subclass must declare ``tag=...``
+    or it becomes unreachable via the union decoder.
     """
 
-    discriminator_field: ClassVar[str] = "client_type"
+    @property
+    def client_type(self) -> str:
+        """String tag that identifies the concrete client store type.
 
-    client_type: DatasetClientStoreType = Field(
-        ...,
-        description="The type of client store to use for dataset access.",
-    )
+        Mirrored on the encoded payload by msgspec; exposed as an attribute
+        so existing consumers (plugin lookup, log messages) keep working.
+        """
+        return type(self).__struct_config__.tag
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls,
+        source_type: Any,
+        handler: Any,
+    ) -> Any:
+        # Override the default PydanticStructMixin schema so that validation
+        # against the base class dispatches across every tagged subclass.
+        # msgspec.convert requires a Union type when decoding via tag; the
+        # bare base class does not route.
+        from pydantic_core import core_schema as _core_schema
+
+        from aiperf.common.models.base_models import (
+            _msgspec_dec_hook,
+            _msgspec_enc_hook,
+        )
+
+        def _iter_subclasses() -> list[type]:
+            seen: list[type] = []
+            stack: list[type] = list(cls.__subclasses__())
+            while stack:
+                sub = stack.pop()
+                if sub in seen:
+                    continue
+                seen.append(sub)
+                stack.extend(sub.__subclasses__())
+            return seen
+
+        def _union_target() -> Any:
+            subs = _iter_subclasses()
+            if not subs:
+                return cls
+            if len(subs) == 1:
+                return subs[0]
+            import typing as _typing
+
+            return _typing.Union[tuple(subs)]  # noqa: UP007
+
+        def _validate(value: Any) -> Any:
+            if isinstance(value, cls):
+                return value
+            if not isinstance(value, dict):
+                raise ValueError(
+                    f"Expected dict or {cls.__name__} instance, got {type(value).__name__}"
+                )
+            return msgspec.convert(value, _union_target(), dec_hook=_msgspec_dec_hook)
+
+        def _serialize(value: Any) -> Any:
+            return msgspec.to_builtins(value, enc_hook=_msgspec_enc_hook)
+
+        return _core_schema.no_info_plain_validator_function(
+            _validate,
+            serialization=_core_schema.plain_serializer_function_ser_schema(
+                _serialize,
+                return_schema=_core_schema.any_schema(),
+                when_used="always",
+            ),
+        )
 
 
-class MemoryMapClientMetadata(DatasetClientMetadata):
+class MemoryMapClientMetadata(
+    DatasetClientMetadata,
+    tag=DatasetClientStoreType.MEMORY_MAP.value,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
     """Client metadata for memory-mapped dataset access.
 
     Contains paths to mmap files that workers use for zero-copy,
@@ -36,32 +111,12 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
     paths to pre-compressed files for efficient network transfer.
     """
 
-    client_type: DatasetClientStoreType = DatasetClientStoreType.MEMORY_MAP
-
-    data_file_path: Path = Field(
-        ...,
-        description="Path to the data file. Points to dataset.dat (local) or dataset.dat.zst (k8s).",
-    )
-    index_file_path: Path = Field(
-        ...,
-        description="Path to the index file. Points to index.dat (local) or index.dat.zst (k8s).",
-    )
-    conversation_count: int = Field(
-        default=0,
-        description="Number of conversations stored in the mmap files.",
-    )
-    total_size_bytes: int = Field(
-        default=0,
-        description="Total uncompressed size of the data file in bytes.",
-    )
-    compressed: bool = Field(
-        default=False,
-        description="Whether data/index files are zstd-compressed (k8s compress_only mode).",
-    )
-    compressed_size_bytes: int = Field(
-        default=0,
-        description="Size of the compressed data file in bytes. 0 when not compressed.",
-    )
+    data_file_path: Path
+    index_file_path: Path
+    conversation_count: int = 0
+    total_size_bytes: int = 0
+    compressed: bool = False
+    compressed_size_bytes: int = 0
 
 
 # Hot-path dataset models use msgspec.Struct for ~3-4x faster encode/decode/construct

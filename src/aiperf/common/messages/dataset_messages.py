@@ -1,9 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any
-
-from pydantic import Field, SerializeAsAny, field_validator
+from pydantic import Field
 
 from aiperf.common.enums import CreditPhase, MessageType
 from aiperf.common.messages.service_messages import BaseServiceMessage
@@ -74,9 +72,10 @@ class DatasetConfiguredNotification(BaseServiceMessage):
         ...,
         description="Dataset structure metadata (conversations, timing) for timing strategies.",
     )
-    client_metadata: SerializeAsAny[DatasetClientMetadata] = Field(
+    client_metadata: DatasetClientMetadata = Field(
         ...,
-        description="Client access metadata (e.g., mmap file paths) for workers to read dataset.",
+        description="Client access metadata (e.g., mmap file paths) for workers to read dataset. "
+        "msgspec routes dict inputs to the correct tagged-union subclass via PydanticStructMixin.",
     )
     benchmark_generation: str = Field(
         ...,
@@ -86,18 +85,6 @@ class DatasetConfiguredNotification(BaseServiceMessage):
         ...,
         description="Version token for the configured dataset payload.",
     )
-
-    @field_validator("client_metadata", mode="before")
-    @classmethod
-    def route_client_metadata(cls, v: Any) -> DatasetClientMetadata:
-        """Route nested AutoRoutedModel field to correct subclass.
-
-        Pydantic's nested model validation doesn't use AutoRoutedModel.from_json(),
-        so we manually route dict inputs to the correct subclass based on client_type.
-        """
-        if isinstance(v, dict):
-            return DatasetClientMetadata.from_json(v)
-        return v
 
 
 class DatasetDownloadedNotification(BaseServiceMessage):
