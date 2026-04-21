@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from enum import Enum
 from typing import Any
 
 import msgspec
@@ -21,6 +22,27 @@ class AIPerfBaseModel(AutoRoutedModel):
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
+
+
+def _msgspec_enc_hook(obj: Any) -> Any:
+    """enc_hook for msgspec.to_builtins.
+
+    AIPerf's plugin-backed enums (``ExtensibleStrEnum``) use a custom
+    metaclass that msgspec's native enum detection does not recognise,
+    so values like ``TimingMode.REQUEST_RATE`` fall through to the hook.
+    Everything else raises ``NotImplementedError`` and lets msgspec emit
+    its standard unsupported-type error.
+    """
+    if isinstance(obj, Enum):
+        return obj.value
+    raise NotImplementedError(f"Objects of type {type(obj).__name__} are not supported")
+
+
+def _msgspec_dec_hook(target_type: type, obj: Any) -> Any:
+    """dec_hook for msgspec.convert — symmetric to ``_msgspec_enc_hook``."""
+    if isinstance(target_type, type) and issubclass(target_type, Enum):
+        return target_type(obj)
+    raise NotImplementedError(f"Cannot decode {type(obj).__name__} as {target_type!r}")
 
 
 class PydanticStructMixin:
@@ -70,10 +92,10 @@ class PydanticStructMixin:
                 raise ValueError(
                     f"Expected dict or {cls.__name__} instance, got {type(value).__name__}"
                 )
-            return msgspec.convert(value, cls)
+            return msgspec.convert(value, cls, dec_hook=_msgspec_dec_hook)
 
         def _serialize(value: Any) -> Any:
-            return msgspec.to_builtins(value)
+            return msgspec.to_builtins(value, enc_hook=_msgspec_enc_hook)
 
         return core_schema.no_info_plain_validator_function(
             _validate,
