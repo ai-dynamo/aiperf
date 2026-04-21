@@ -437,13 +437,13 @@ class GpuTelemetryData(msgspec.Struct, kw_only=True):
         Args:
             record: New telemetry data point from DCGM collector
 
-        Note: Groups all metric values from the record into a single snapshot
+        Note: Groups all metric values from the record into a single snapshot.
+        Producers (DCGM + pynvml collectors, test factories) always build
+        dense dicts — missing metrics are absent, not None — so no filtering
+        is needed here.
         """
-        valid_metrics = {
-            k: v for k, v in record.telemetry_data.items() if v is not None
-        }
-        if valid_metrics:
-            self.time_series.append_snapshot(valid_metrics, record.timestamp_ns)
+        if record.telemetry_data:
+            self.time_series.append_snapshot(record.telemetry_data, record.timestamp_ns)
 
     def get_metric_result(
         self,
@@ -519,6 +519,8 @@ class TelemetryHierarchy(msgspec.Struct, kw_only=True):
                     gpu_index=record.gpu_index,
                     gpu_uuid=record.gpu_uuid,
                     gpu_model_name=record.gpu_model_name,
+                    pci_bus_id=record.pci_bus_id,
+                    device=record.device,
                     hostname=record.hostname,
                     namespace=record.namespace,
                     pod_name=record.pod_name,

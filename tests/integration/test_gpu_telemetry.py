@@ -104,8 +104,9 @@ class TestGpuTelemetry:
         timestamps = []
 
         # Validate each line is valid JSON and can be parsed as TelemetryRecord
+        decoder = msgspec.json.Decoder(TelemetryRecord)
         for line in lines:
-            record = msgspec.json.decode(line, type=TelemetryRecord)
+            record = decoder.decode(line)
 
             # Verify required fields are present
             assert record.timestamp_ns > 0

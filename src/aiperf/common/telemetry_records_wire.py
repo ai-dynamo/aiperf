@@ -63,9 +63,9 @@ def build_telemetry_records_wire_message(
 
 def telemetry_records_from_wire(
     wire: TelemetryRecordsWireMessage,
-) -> list[TelemetryRecord]:
-    """Return the native telemetry record list from its wire envelope."""
-    return list(wire.records)
+) -> tuple[TelemetryRecord, ...]:
+    """Return the native telemetry record batch from its wire envelope."""
+    return wire.records
 
 
 def telemetry_error_from_wire(

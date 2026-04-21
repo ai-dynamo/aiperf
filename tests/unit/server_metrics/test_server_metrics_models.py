@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest  # noqa: F401
-
 from aiperf.common.models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.server_metrics_models import (
     MetricFamily,

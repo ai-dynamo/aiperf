@@ -17,16 +17,16 @@ from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.types import BaseModelT
 from aiperf.common.utils import yield_to_event_loop
 
+_MSGSPEC_JSON_ENCODER = msgspec.json.Encoder()
+
 
 class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
     """Mixin for buffered JSONL writing with automatic flushing.
 
-    This mixin provides functionality for efficiently writing Pydantic models to JSONL
-    files with automatic buffering and flushing. It handles file lifecycle management
-    through the AIPerfLifecycleMixin hooks.
-
-    Type Parameters:
-        BaseModelT: A Pydantic BaseModel type that will be serialized to JSON
+    Serializes records to JSONL with automatic buffering and flushing, handling
+    file lifecycle through the ``AIPerfLifecycleMixin`` hooks. Records can be
+    Pydantic models, ``msgspec.Struct`` instances, or any object with a
+    ``to_json_bytes()`` method.
 
     Attributes:
         output_file: Path to the JSONL output file
@@ -96,12 +96,16 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
             self.error(f"Failed to write record: {e!r}")
 
     def _serialize_record(self, record: Any) -> bytes:
+        # Check to_json_bytes first: some msgspec.Struct records (e.g. the
+        # RawRecordInfo / MetricRecordInfo families in record_models.py) carry
+        # a specialized encoder hook via to_json_bytes() that the generic
+        # msgspec.json encoder doesn't know about.
         if hasattr(record, "to_json_bytes"):
             return record.to_json_bytes()
+        if isinstance(record, msgspec.Struct):
+            return _MSGSPEC_JSON_ENCODER.encode(record)
         if hasattr(record, "model_dump"):
             return orjson.dumps(record.model_dump(exclude_none=True, mode="json"))
-        if isinstance(record, msgspec.Struct):
-            return msgspec.json.encode(record)
         raise TypeError(f"Unsupported JSONL record type: {type(record)}")
 
     async def _flush_buffer(self, buffer_to_flush: list[bytes]) -> None:

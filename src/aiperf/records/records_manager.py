@@ -406,7 +406,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
 
     async def _send_telemetry_to_results_processors(
-        self, telemetry_records: list[TelemetryRecord]
+        self, telemetry_records: tuple[TelemetryRecord, ...]
     ) -> None:
         """Send individual telemetry records to telemetry results processors only.
 
