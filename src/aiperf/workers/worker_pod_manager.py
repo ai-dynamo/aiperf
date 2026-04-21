@@ -332,7 +332,7 @@ class WorkerGroupManagerBase(BaseComponentService):
                 self._pod_peer_types[message.service_id] = message.service_type
                 if message.service_type == str(ServiceType.RECORD_PROCESSOR):
                     self._record_processors_shutdown.discard(message.service_id)
-                return GroupPeerAck(service_id=self.service_id)
+                return GroupPeerAck(rid=message.rid, service_id=self.service_id)
             case GroupPeerShutdown():
                 self._pod_peer_types[message.service_id] = message.service_type
                 if message.service_type == str(ServiceType.RECORD_PROCESSOR):

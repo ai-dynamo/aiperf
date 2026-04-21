@@ -399,7 +399,7 @@ class TestGroupLifecycleWireContract:
         ("message", "union_type"),
         [
             pytest.param(
-                GroupPeerAck(service_id="worker-0"),
+                GroupPeerAck(rid="rid-1", service_id="worker-0"),
                 GroupManagerToPeerMessage,
                 id="ack",
             ),
@@ -441,6 +441,7 @@ class TestGroupLifecycleWireContract:
             ),
             pytest.param(
                 GroupPeerHello(
+                    rid="rid-1",
                     service_id="worker-0",
                     service_type="worker",
                     pod_index="0",
@@ -596,7 +597,7 @@ class TestGroupLifecycleWireContract:
             conversation_count=4,
             total_size_bytes=128,
         )
-        hello = GroupPeerHello(service_id="worker-0", service_type="worker")
+        hello = GroupPeerHello(rid="rid-1", service_id="worker-0", service_type="worker")
 
         decoded_ready = peer_decoder.decode(encoder.encode(ready))
         decoded_hello = manager_decoder.decode(encoder.encode(hello))

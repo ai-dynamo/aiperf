@@ -22,8 +22,8 @@ from aiperf.common.pod_lifecycle_structs import (
     GroupManagerToPeerMessage,
     GroupPeerCommand,
     GroupPeerCommandAck,
-    GroupPeerHello,
     GroupPeerShutdown,
+    _send_group_peer_hello_with_retry,
 )
 
 if TYPE_CHECKING:
@@ -157,12 +157,12 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """Register this record processor with the group-local lifecycle router."""
         if self.pod_lifecycle_dealer_client is None:
             return
-        await self.pod_lifecycle_dealer_client.send(
-            GroupPeerHello(
-                service_id=self.service_id,
-                service_type=str(self.service_type),
-                pod_index=self._pod_index,
-            )
+        await _send_group_peer_hello_with_retry(
+            self.pod_lifecycle_dealer_client,
+            service_id=self.service_id,
+            service_type=str(self.service_type),
+            pod_index=self._pod_index,
+            logger=self,
         )
 
     @on_stop

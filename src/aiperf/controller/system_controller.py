@@ -50,6 +50,7 @@ from aiperf.common.enums import (
     CommandType,
     LifecycleState,
     MessageType,
+    ServiceRegistrationStatus,
     WorkerStartupState,
 )
 from aiperf.common.environment import Environment
@@ -450,6 +451,23 @@ class SystemController(SignalHandlerMixin, BaseService):
         # PROFILE_CONFIGURE as soon as it registers.
         self._configure_scheduler = LoopScheduler()
         self._auto_configure = True
+
+        # Flush any services that registered BEFORE auto-configure was
+        # enabled (e.g. k8s worker pods whose Registration arrived during
+        # initialize/control-router bind, before _start_services ran).
+        # Without this flush those services never receive PROFILE_CONFIGURE.
+        for sid, info in list(ServiceRegistry.services.items()):
+            if (
+                info.registration_status == ServiceRegistrationStatus.REGISTERED
+                and sid not in self._configuring_ids
+            ):
+                self.info(
+                    f"Flushing pre-CONFIGURING registration for '{sid}' "
+                    f"({info.service_type})"
+                )
+                self._configure_scheduler.execute_async(
+                    self._configure_single_service(sid)
+                )
 
         # Collect optional services to spawn alongside required services
         optional_services: list[ServiceTypeT] = []
@@ -1376,9 +1394,18 @@ class SystemController(SignalHandlerMixin, BaseService):
         # Drain subprocess errors reported via the error queue backchannel
         self._error_collector.drain_into()
 
-        # Post-benchmark reporting (after services and comms are stopped)
-        await self.ui.stop()
-        await self.ui.wait_for_tasks()
+        # Post-benchmark reporting (after services and comms are stopped).
+        # Bound with a timeout: the Dashboard UI can hang when the parent
+        # process runs under PIPE'd stdio (integration tests under xdist)
+        # because Textual's driver waits on a terminal that never arrives.
+        try:
+            await asyncio.wait_for(self.ui.stop(), timeout=5.0)
+        except (asyncio.TimeoutError, Exception) as e:
+            self.warning(f"UI stop did not complete cleanly: {e!r}")
+        try:
+            await asyncio.wait_for(self.ui.wait_for_tasks(), timeout=5.0)
+        except (asyncio.TimeoutError, Exception) as e:
+            self.warning(f"UI task drain did not complete cleanly: {e!r}")
         await asyncio.sleep(0.1)
 
         if not self._exit_errors:
@@ -1419,9 +1446,18 @@ class SystemController(SignalHandlerMixin, BaseService):
 
             await signal_benchmark_complete()
 
-        # Clean up global queues to prevent semaphore leaks
-        await cleanup_global_log_queue()
-        await cleanup_global_error_queue()
+        # Clean up global queues to prevent semaphore leaks. Bound each
+        # cleanup with a hard timeout: multiprocessing.Queue.join_thread can
+        # block indefinitely when the feeder thread cannot flush pending
+        # items (e.g. pipe buffer contention under heavy xdist load).
+        try:
+            await asyncio.wait_for(cleanup_global_log_queue(), timeout=2.0)
+        except (asyncio.TimeoutError, Exception):
+            pass
+        try:
+            await asyncio.wait_for(cleanup_global_error_queue(), timeout=2.0)
+        except (asyncio.TimeoutError, Exception):
+            pass
 
         is_k8s_mode = self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
         keep_api_running = is_k8s_mode and self.run.cfg.runtime.api_port
@@ -1783,6 +1819,63 @@ class SystemController(SignalHandlerMixin, BaseService):
         console.print()
         console.file.flush()
 
+    async def _shutdown_record_processors_and_wait_for_flush(self) -> None:
+        """Shut down WorkerGroupManager(s) and poll for flushed raw record files.
+
+        In local multiprocessing mode, RPs are WGM subprocesses — outside the
+        controller's service_manager — so stop_service(RECORD_PROCESSOR) on
+        the controller is a no-op. Instead, send SHUTDOWN to each WGM over the
+        control router; each WGM cascades shutdown to its child RPs, whose
+        @on_stop hooks (BufferedJSONLWriterMixin._close_file) flush the
+        raw_records_*.jsonl files before the aggregator reads them.
+        """
+        wgm_services = ServiceRegistry.get_services(ServiceType.WORKER_GROUP_MANAGER)
+        if not wgm_services:
+            return
+
+        for svc in wgm_services:
+            try:
+                await self.control_router.send_to(
+                    svc.service_id,
+                    Command(cid=uuid.uuid4().hex, cmd=CommandType.SHUTDOWN),
+                )
+            except Exception as e:
+                self.debug(f"Failed to send shutdown to {svc.service_id}: {e}")
+
+        raw_records_dir = (
+            self.run.cfg.output.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
+        )
+        expected = len(wgm_services)
+        deadline = time.monotonic() + Environment.SERVICE.RAW_RECORD_UPLOAD_TIMEOUT
+        stable_snapshots: list[tuple[int, int]] = []
+        # Wait until at least `expected` files exist, each with size > 0, and
+        # the (count, total_size) tuple is unchanged across two consecutive
+        # samples ~300ms apart. Mere existence is insufficient: RPs flush in
+        # batches, so the first write of a partial batch can lead the
+        # aggregator to read a truncated file.
+        while time.monotonic() < deadline:
+            if raw_records_dir.exists():
+                files = list(raw_records_dir.glob("raw_records_*.jsonl"))
+                if len(files) >= expected and all(
+                    f.stat().st_size > 0 for f in files
+                ):
+                    snapshot = (len(files), sum(f.stat().st_size for f in files))
+                    stable_snapshots.append(snapshot)
+                    if len(stable_snapshots) >= 2 and stable_snapshots[-1] == stable_snapshots[-2]:
+                        self.debug(
+                            f"Raw record files stable at {raw_records_dir} "
+                            f"(files={snapshot[0]}, bytes={snapshot[1]})"
+                        )
+                        return
+                else:
+                    stable_snapshots.clear()
+            await asyncio.sleep(0.3)
+
+        self.warning(
+            f"Timed out waiting for record processors to flush raw records to "
+            f"{raw_records_dir}; export may be incomplete."
+        )
+
     async def _export_results_data(self) -> None:
         """Write result files (CSV, JSON, Parquet) to the artifacts directory.
 
@@ -1799,6 +1892,17 @@ class SystemController(SignalHandlerMixin, BaseService):
         # uploading; in local/fake mode, the aggregator otherwise races
         # against the RP's on_stop flush and sees an empty file.
         await self.service_manager.stop_service(ServiceType.RECORD_PROCESSOR)
+
+        # In local multiprocessing mode the RPs are subprocesses of the WGM,
+        # so stop_service(RECORD_PROCESSOR) on the controller's manager is a
+        # no-op. Directly send SHUTDOWN to each registered RP over the
+        # control router and poll the raw_records dir until files have been
+        # flushed by RP @on_stop hooks, so the aggregator sees complete data.
+        if (
+            self.run.cfg.runtime.service_run_type == ServiceRunType.MULTIPROCESSING
+            and self._should_wait_for_raw_records()
+        ):
+            await self._shutdown_record_processors_and_wait_for_flush()
 
         self._exporter_manager = ExporterManager(
             results=self._profile_results.results,

@@ -8,15 +8,26 @@ contract inside each worker pod, while local mode uses the same contract for
 its worker group.
 """
 
-from typing import TypeAlias
+from __future__ import annotations
+
+import asyncio
+import uuid
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from msgspec import Struct
 
 from aiperf.common.enums import ConversationContextMode
 
+if TYPE_CHECKING:
+    from aiperf.common.protocols import StreamingDealerClientProtocol
+
 
 class GroupPeerHello(Struct, frozen=True, kw_only=True, tag_field="t", tag="hello"):
     """Initial registration of a group-local peer with WorkerGroupManager."""
+
+    rid: str
+    """Request id used to match the corresponding GroupPeerAck so the peer
+    can retry delivery until the WGM confirms registration."""
 
     service_id: str
     """Unique service identifier for the registering child peer."""
@@ -30,6 +41,9 @@ class GroupPeerHello(Struct, frozen=True, kw_only=True, tag_field="t", tag="hell
 
 class GroupPeerAck(Struct, frozen=True, kw_only=True, tag_field="t", tag="ack"):
     """Acknowledgement of group-local peer registration."""
+
+    rid: str
+    """Echo of the GroupPeerHello.rid this ack responds to."""
 
     service_id: str
     """Service identifier of the peer whose registration was accepted."""
@@ -237,3 +251,53 @@ PeerToGroupManagerMessage: TypeAlias = (
 GroupManagerToPeerMessage: TypeAlias = (
     GroupPeerAck | GroupDatasetReady | GroupDatasetStateSnapshot | GroupPeerCommand
 )
+
+
+async def _send_group_peer_hello_with_retry(
+    dealer_client: StreamingDealerClientProtocol,
+    *,
+    service_id: str,
+    service_type: str,
+    pod_index: str | None,
+    logger: Any,
+    attempt_timeout: float = 2.0,
+    total_timeout: float = 120.0,
+) -> None:
+    """Send GroupPeerHello and retry until the WorkerGroupManager acks.
+
+    In Kubernetes, sibling containers in a worker pod start concurrently,
+    so a worker's first hello can be dropped if WGM's ROUTER isn't bound
+    yet. Retry with a bounded deadline so the pod converges instead of
+    hanging the controller's configure wait.
+    """
+    deadline = asyncio.get_running_loop().time() + total_timeout
+    attempt = 0
+    while True:
+        attempt += 1
+        hello = GroupPeerHello(
+            rid=uuid.uuid4().hex,
+            service_id=service_id,
+            service_type=service_type,
+            pod_index=pod_index,
+        )
+        try:
+            ack = await dealer_client.request(hello, timeout=attempt_timeout)
+        except asyncio.TimeoutError:
+            if asyncio.get_running_loop().time() >= deadline:
+                raise TimeoutError(
+                    f"GroupPeerHello for {service_id} never acked after "
+                    f"{attempt} attempt(s)"
+                ) from None
+            logger.debug(
+                lambda a=attempt: f"GroupPeerHello attempt {a} timed out, retrying"
+            )
+            continue
+        if isinstance(ack, GroupPeerAck) and ack.rid == hello.rid:
+            return
+        logger.warning(
+            f"Unexpected GroupPeerHello reply for {service_id}: {type(ack).__name__}"
+        )
+        if asyncio.get_running_loop().time() >= deadline:
+            raise TimeoutError(
+                f"GroupPeerHello for {service_id} not acked after {attempt} attempt(s)"
+            )

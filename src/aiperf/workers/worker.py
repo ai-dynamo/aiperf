@@ -71,10 +71,10 @@ from aiperf.common.pod_lifecycle_structs import (
     GroupManagerToPeerMessage,
     GroupPeerCommand,
     GroupPeerCommandAck,
-    GroupPeerHello,
     GroupPeerShutdown,
     GroupWorkerHealth,
     GroupWorkerStartupState,
+    _send_group_peer_hello_with_retry,
 )
 from aiperf.common.protocols import (
     PushClientProtocol,
@@ -293,12 +293,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         await self.return_dealer_client.send(WorkerConnected(worker_id=self.service_id))
         if self._is_group_managed_mode():
             if self.pod_lifecycle_dealer_client is not None:
-                await self.pod_lifecycle_dealer_client.send(
-                    GroupPeerHello(
-                        service_id=self.service_id,
-                        service_type=str(self.service_type),
-                        pod_index=self._pod_index,
-                    )
+                await _send_group_peer_hello_with_retry(
+                    self.pod_lifecycle_dealer_client,
+                    service_id=self.service_id,
+                    service_type=str(self.service_type),
+                    pod_index=self._pod_index,
+                    logger=self,
                 )
             await self._publish_startup_state(WorkerStartupState.WAITING_FOR_DATASET)
             self._ensure_group_dataset_state_retry()
