@@ -51,6 +51,7 @@ class EndpointDefaults:
     WAIT_FOR_MODEL = False
     WAIT_FOR_MODEL_TIMEOUT = 1800.0
     WAIT_FOR_MODEL_INTERVAL = 5.0
+    WAIT_FOR_MODEL_MODE = "inference"
 
 
 @dataclass(frozen=True)

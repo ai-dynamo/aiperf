@@ -169,7 +169,7 @@ API authentication key for the endpoint. When provided, automatically included i
 
 #### `--wait-for-model`
 
-When enabled, aiperf polls `{url}/v1/models` before profiling starts and waits for the target `--model` id to appear in the response. Falls back to a single GET on the base URL if `/v1/models` returns 404. Eliminates the need for external shell-based readiness loops in containers and Kubernetes recipes.
+When enabled, aiperf runs a pre-flight readiness probe before profiling starts and waits for the target endpoint to accept requests. The probe strategy is controlled by `--wait-for-model-mode`, which defaults to sending a 1-token inference request (strongest signal). Eliminates the need for external shell-based readiness loops in containers and Kubernetes recipes.
 <br/>_Flag (no value required)_
 
 #### `--wait-for-model-timeout` `<float>`
@@ -183,6 +183,11 @@ Maximum time in seconds to wait for the model to become ready before aborting wi
 Seconds between readiness probe attempts while waiting for the model. Only applies when `--wait-for-model` is enabled.
 <br/>_Constraints: > 0.0_
 <br/>_Default: `5.0`_
+
+#### `--wait-for-model-mode` `<str>`
+
+Strategy for the readiness probe. 'inference' (default): POST a 1-token inference request to the configured endpoint; this is the strongest signal — it proves the full stack (frontend, scheduler, worker, forward pass) is live. Any HTTP status &lt; 500 counts as ready. 'models': GET `/v1/models` and verify the model id appears in `data[]` (cheaper, no tokens consumed; falls back to a plain GET on the base URL on 404). 'both': run 'models' first, then 'inference'. Only applies when `--wait-for-model` is enabled.
+<br/>_Default: `inference`_
 
 #### `--transport`, `--transport-type` `<str>`
 

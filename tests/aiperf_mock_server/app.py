@@ -152,8 +152,48 @@ class TimingMiddleware:
         await self.app(scope, receive, send)
 
 
+_INFERENCE_PATHS: frozenset[str] = frozenset(
+    {"/v1/chat/completions", "/v1/completions", "/v1/embeddings"}
+)
+
+
+class InferenceReadinessMiddleware:
+    """Returns HTTP 503 on inference paths while within the configured
+    startup delay. Used by readiness-probe tests to simulate a server
+    whose frontend is up but whose workers haven't loaded weights yet."""
+
+    def __init__(self, inner_app):
+        self.app = inner_app
+
+    async def __call__(self, scope, receive, send):
+        if (
+            scope["type"] == "http"
+            and server_config.inference_ready_delay_seconds > 0
+            and scope.get("path") in _INFERENCE_PATHS
+            and server_start_time > 0
+            and (time.time() - server_start_time)
+            < server_config.inference_ready_delay_seconds
+        ):
+            body = orjson.dumps(
+                {"error": "Model not ready: workers still loading weights"}
+            )
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 503,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"content-length", str(len(body)).encode()),
+                    ],
+                }
+            )
+            await send({"type": "http.response.body", "body": body})
+            return
+        await self.app(scope, receive, send)
+
+
 # Wrap FastAPI with ASGI middleware for earliest possible timing
-asgi_app = TimingMiddleware(app)
+asgi_app = InferenceReadinessMiddleware(TimingMiddleware(app))
 
 
 # ============================================================================

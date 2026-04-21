@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
     BeforeValidator,
@@ -200,8 +200,9 @@ class EndpointConfig(BaseConfig):
     wait_for_model: Annotated[
         bool,
         Field(
-            description="When enabled, aiperf polls `{url}/v1/models` before profiling starts and waits for the target "
-            "`--model` id to appear in the response. Falls back to a single GET on the base URL if `/v1/models` returns 404. "
+            description="When enabled, aiperf runs a pre-flight readiness probe before profiling starts and waits for "
+            "the target endpoint to accept requests. The probe strategy is controlled by `--wait-for-model-mode`, which "
+            "defaults to sending a 1-token inference request (strongest signal). "
             "Eliminates the need for external shell-based readiness loops in containers and Kubernetes recipes.",
         ),
         CLIParameter(
@@ -235,6 +236,24 @@ class EndpointConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.WAIT_FOR_MODEL_INTERVAL
+
+    wait_for_model_mode: Annotated[
+        Literal["models", "inference", "both"],
+        Field(
+            description="Strategy for the readiness probe. "
+            "'inference' (default): POST a 1-token inference request to the configured endpoint; "
+            "this is the strongest signal — it proves the full stack (frontend, scheduler, worker, "
+            "forward pass) is live. Any HTTP status < 500 counts as ready. "
+            "'models': GET `/v1/models` and verify the model id appears in `data[]` "
+            "(cheaper, no tokens consumed; falls back to a plain GET on the base URL on 404). "
+            "'both': run 'models' first, then 'inference'. "
+            "Only applies when `--wait-for-model` is enabled.",
+        ),
+        CLIParameter(
+            name=("--wait-for-model-mode",),
+            group=_CLI_GROUP,
+        ),
+    ] = EndpointDefaults.WAIT_FOR_MODEL_MODE
 
     transport: Annotated[
         TransportType | None,

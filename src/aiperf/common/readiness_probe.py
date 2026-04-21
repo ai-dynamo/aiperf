@@ -1,19 +1,30 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Pre-flight readiness probe for the target inference server(s).
+"""Pre-flight endpoint readiness probe.
 
-Polls `{url}/v1/models` on each URL until the requested model id appears in
-the response, or raises `TimeoutError` when the deadline elapses. If
-`/v1/models` returns 404, falls back to a single GET on the base URL so
-servers that don't expose a model list (or only expose a healthcheck) still
-pass the probe when they respond at all.
+Probes every configured (URL, model) pair before benchmarking starts. Three
+probe strategies, selected via ``endpoint.wait_for_model_mode``:
+
+- ``inference`` (default) — POST a canned 1-token inference request to the
+  configured endpoint. Strongest signal: proves the full serving stack
+  (frontend, scheduler, worker, forward pass) is live. Any HTTP status
+  below 500 counts as ready — 4xx surfaces the same way on the first real
+  benchmark request and doesn't warrant hanging the probe.
+- ``models`` — GET ``{url}/v1/models`` and verify the model id appears in
+  ``data[]``. Cheap, no tokens consumed. Falls back to a plain GET on the
+  base URL if ``/v1/models`` returns 404 so servers without a model list
+  still pass when they're responsive. Note: some frontends (including
+  Dynamo) can return 200 from ``/v1/models`` before the backend workers
+  are actually able to serve — ``inference`` is the more trustworthy
+  signal there.
+- ``both`` — run ``models`` first on each URL, then ``inference``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import aiohttp
 import orjson
@@ -25,10 +36,37 @@ if TYPE_CHECKING:
 
 _logger = AIPerfLogger(__name__)
 
-# Minimum per-request timeout for the probe. `interval_s` can be very small
-# (e.g. 0.5s for fast-retrying tests); using it directly as a request timeout
-# would cause spurious failures on networks with any real latency.
+# "Lo" — the first message ever sent over a network. On Oct 29, 1969, UCLA
+# tried to transmit "login" over the ARPANET but the system crashed after
+# two characters. A one-byte prompt keeps token cost and KV-cache impact
+# minimal on paid / metered backends.
+_READINESS_PROMPT = "Lo"
+
+_CANNED_PAYLOADS: dict[str, dict] = {
+    "chat": {
+        "messages": [{"role": "user", "content": _READINESS_PROMPT}],
+        "max_tokens": 1,
+    },
+    "completions": {
+        "prompt": _READINESS_PROMPT,
+        "max_tokens": 1,
+    },
+    "embeddings": {
+        "input": _READINESS_PROMPT,
+    },
+}
+
+_DEFAULT_PATHS: dict[str, str] = {
+    "chat": "/v1/chat/completions",
+    "completions": "/v1/completions",
+    "embeddings": "/v1/embeddings",
+}
+
+# Floor on per-request HTTP timeout. Retry interval can be small for tests
+# but network round trips need breathing room.
 _MIN_REQUEST_TIMEOUT_S = 5.0
+
+ReadyCheckMode = Literal["models", "inference", "both"]
 
 
 def _model_in_payload(payload_text: str, model_name: str) -> bool:
@@ -45,7 +83,7 @@ def _model_in_payload(payload_text: str, model_name: str) -> bool:
     )
 
 
-async def _wait_for_single_url(
+async def _wait_models(
     client: AioHttpClient,
     url: str,
     model_name: str,
@@ -53,7 +91,12 @@ async def _wait_for_single_url(
     interval_s: float,
     headers: dict[str, str],
 ) -> None:
-    """Poll one URL until model is ready or deadline elapses."""
+    """Poll ``{url}/v1/models`` until ``model_name`` appears in ``data[]``.
+
+    Falls back to a single GET on the base URL if ``/v1/models`` returns 404
+    on any attempt — so servers that don't expose a model list still pass
+    when they respond at all.
+    """
     deadline = time.monotonic() + timeout_s
     models_url = url.rstrip("/") + "/v1/models"
     request_timeout_base = max(interval_s, _MIN_REQUEST_TIMEOUT_S)
@@ -137,36 +180,150 @@ async def _wait_for_single_url(
         await asyncio.sleep(sleep_for)
 
 
-async def wait_for_models_ready(
-    urls: list[str],
-    model_names: list[str],
+async def _wait_inference(
+    client: AioHttpClient,
+    url: str,
+    model_name: str,
+    endpoint_type: str,
+    custom_endpoint: str | None,
     timeout_s: float,
     interval_s: float,
     headers: dict[str, str],
 ) -> None:
-    """Block until every model in `model_names` is ready on every URL, or raise TimeoutError.
+    """POST a canned 1-token request to the inference endpoint until it works.
 
-    URLs and models are checked sequentially — at typical fleet sizes (1-4 URLs,
-    1-2 models) this keeps log output legible, and the caller's timeout is
-    per-URL-per-model.
+    Any response with ``status < 500`` counts as ready — 4xx means the
+    server is live but our payload was rejected (bad auth / bad model /
+    bad path), which surfaces the same way on the first real benchmark
+    request. Only 5xx and connection errors trigger retries.
+    """
+    from urllib.parse import urlparse
+
+    # Respect a caller-supplied path (e.g. --custom-endpoint), otherwise if
+    # the URL already carries a non-root path use that, otherwise append
+    # the OpenAI default for the endpoint type.
+    parsed = urlparse(url)
+    if custom_endpoint:
+        request_url = url.rstrip("/") + "/" + custom_endpoint.lstrip("/")
+    elif parsed.path and parsed.path != "/":
+        request_url = url.rstrip("/")
+    else:
+        endpoint_path = _DEFAULT_PATHS.get(endpoint_type, _DEFAULT_PATHS["chat"])
+        request_url = url.rstrip("/") + endpoint_path
+
+    payload = dict(_CANNED_PAYLOADS.get(endpoint_type, _CANNED_PAYLOADS["chat"]))
+    payload["model"] = model_name
+    body = orjson.dumps(payload)
+
+    # Inference requests need more breathing room than a trivial models GET:
+    # model load can push even a 1-token forward pass into the seconds range
+    # on first request. Floor higher than the models probe.
+    request_timeout_base = max(interval_s, 30.0)
+    deadline = time.monotonic() + timeout_s
+    attempt = 0
+
+    request_headers = {"Content-Type": "application/json", **headers}
+
+    while True:
+        attempt += 1
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(
+                f"Timed out after {timeout_s:.1f}s probing {request_url} "
+                f"with model '{model_name}' (checked {attempt - 1} time(s))"
+            )
+        request_timeout = aiohttp.ClientTimeout(
+            total=min(request_timeout_base, remaining)
+        )
+        record = await client.post_request(
+            request_url,
+            payload=body,
+            headers=request_headers,
+            timeout=request_timeout,
+        )
+
+        status = record.status
+        if status is not None and status < 500:
+            _logger.info(
+                f"Inference probe ready at {request_url} "
+                f"(status={status}, attempt {attempt})"
+            )
+            return
+
+        status_repr = status if status is not None else "connection error"
+        error_repr = record.error.message if record.error else ""
+        _logger.info(
+            f"Inference probe to {request_url} returned {status_repr} "
+            f"{('(' + error_repr + ') ') if error_repr else ''}"
+            f"(attempt {attempt}), retrying in {interval_s}s"
+        )
+
+        sleep_for = min(interval_s, max(0.0, deadline - time.monotonic()))
+        await asyncio.sleep(sleep_for)
+
+
+async def wait_for_endpoint(
+    urls: list[str],
+    model_names: list[str],
+    mode: ReadyCheckMode,
+    endpoint_type: str,
+    custom_endpoint: str | None,
+    timeout_s: float,
+    interval_s: float,
+    headers: dict[str, str],
+) -> None:
+    """Block until every configured (URL, model) pair passes the probe.
+
+    URLs and models are checked sequentially so log output stays legible at
+    typical fleet sizes (1-4 URLs, 1-2 models). The caller's ``timeout_s``
+    is applied per probe invocation, so the worst-case total wall-clock is
+    roughly ``timeout_s * len(urls) * len(models)`` — pick a generous value.
     """
     # Imported lazily to avoid a circular import: aiperf.common is imported
     # before aiperf.transports, and AioHttpClient pulls in a mixin that
     # back-imports from aiperf.transports.aiohttp_client.
     from aiperf.transports.aiohttp_client import AioHttpClient
 
+    if mode in ("models", "both") and not model_names:
+        raise ValueError(
+            f"wait-for-model mode={mode!r} requires at least one model name"
+        )
+    if not urls:
+        return
+
     _logger.info(
-        f"Waiting for model(s) {model_names} to be ready at: {', '.join(urls)} "
-        f"(timeout={timeout_s}s, interval={interval_s}s)"
+        f"Waiting for endpoint readiness (mode={mode}, timeout={timeout_s}s, "
+        f"interval={interval_s}s) across {len(urls)} URL(s) x "
+        f"{len(model_names)} model(s)"
     )
-    client = AioHttpClient(timeout=max(interval_s, 5.0))
+
+    client = AioHttpClient(timeout=max(interval_s, _MIN_REQUEST_TIMEOUT_S))
     try:
         for url in urls:
-            for model_name in model_names:
-                await _wait_for_single_url(
+            if mode in ("models", "both"):
+                for model_name in model_names:
+                    await _wait_models(
+                        client=client,
+                        url=url,
+                        model_name=model_name,
+                        timeout_s=timeout_s,
+                        interval_s=interval_s,
+                        headers=headers,
+                    )
+            if mode in ("inference", "both"):
+                # For the inference probe, any successful generation proves
+                # the stack is live — we don't need to loop across every
+                # model name. Use the first configured model (or fall back
+                # to "default" so the probe still works when model_names is
+                # empty, which the validator above permits only in pure
+                # inference mode).
+                probe_model = model_names[0] if model_names else "default"
+                await _wait_inference(
                     client=client,
                     url=url,
-                    model_name=model_name,
+                    model_name=probe_model,
+                    endpoint_type=endpoint_type,
+                    custom_endpoint=custom_endpoint,
                     timeout_s=timeout_s,
                     interval_s=interval_s,
                     headers=headers,

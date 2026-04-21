@@ -57,7 +57,7 @@ def profile(
             import asyncio
             import logging
 
-            from aiperf.common.readiness_probe import wait_for_models_ready
+            from aiperf.common.readiness_probe import wait_for_endpoint
 
             # The probe runs before `run_system_controller` (which installs
             # rich logging), so there are no handlers attached yet. Install
@@ -74,9 +74,12 @@ def profile(
                 headers["Authorization"] = f"Bearer {user_config.endpoint.api_key}"
 
             asyncio.run(
-                wait_for_models_ready(
+                wait_for_endpoint(
                     urls=user_config.endpoint.urls,
                     model_names=user_config.endpoint.model_names,
+                    mode=user_config.endpoint.wait_for_model_mode,
+                    endpoint_type=str(user_config.endpoint.type),
+                    custom_endpoint=user_config.endpoint.custom_endpoint,
                     timeout_s=user_config.endpoint.wait_for_model_timeout,
                     interval_s=user_config.endpoint.wait_for_model_interval,
                     headers=headers,

@@ -250,6 +250,19 @@ class MockServerConfig(BaseSettings):
         Parameter(name="--disable-models-endpoint"),
     ] = False
 
+    inference_ready_delay_seconds: Annotated[
+        float,
+        Field(
+            description="Seconds after server start during which the inference "
+            "endpoints (/v1/chat/completions, /v1/completions, /v1/embeddings) "
+            "return HTTP 503. Simulates a stack that's up on the frontend but "
+            "whose workers haven't loaded weights yet. Used to exercise the "
+            "inference-mode readiness probe's retry loop.",
+            ge=0.0,
+        ),
+        Parameter(name="--inference-ready-delay-seconds"),
+    ] = 0.0
+
 
 server_config: MockServerConfig = MockServerConfig()
 
