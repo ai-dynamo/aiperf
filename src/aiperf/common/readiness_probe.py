@@ -311,22 +311,23 @@ async def wait_for_endpoint(
                         headers=headers,
                     )
             if mode in ("inference", "both"):
-                # For the inference probe, any successful generation proves
-                # the stack is live — we don't need to loop across every
-                # model name. Use the first configured model (or fall back
-                # to "default" so the probe still works when model_names is
-                # empty, which the validator above permits only in pure
-                # inference mode).
-                probe_model = model_names[0] if model_names else "default"
-                await _wait_inference(
-                    client=client,
-                    url=url,
-                    model_name=probe_model,
-                    endpoint_type=endpoint_type,
-                    custom_endpoint=custom_endpoint,
-                    timeout_s=timeout_s,
-                    interval_s=interval_s,
-                    headers=headers,
-                )
+                # Probe every configured model. In a multi-model deployment
+                # (e.g. --model foo,bar with round_robin selection), `foo`
+                # being ready tells us nothing about `bar` — different
+                # weights, possibly on different workers. Fall back to
+                # ["default"] when model_names is empty, which the
+                # validator above permits only in pure inference mode.
+                probe_models = model_names if model_names else ["default"]
+                for probe_model in probe_models:
+                    await _wait_inference(
+                        client=client,
+                        url=url,
+                        model_name=probe_model,
+                        endpoint_type=endpoint_type,
+                        custom_endpoint=custom_endpoint,
+                        timeout_s=timeout_s,
+                        interval_s=interval_s,
+                        headers=headers,
+                    )
     finally:
         await client.close()
