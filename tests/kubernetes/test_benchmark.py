@@ -145,7 +145,7 @@ class TestBenchmarkLifecycle:
 
         assert await kubectl.namespace_exists(namespace)
 
-        await benchmark_deployer.cleanup(result)
+        await benchmark_deployer.cleanup(result, delete_namespace=True)
 
         assert not await kubectl.namespace_exists(namespace)
 

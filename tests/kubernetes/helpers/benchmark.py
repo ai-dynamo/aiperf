@@ -1038,20 +1038,37 @@ class BenchmarkDeployer:
         logger.error(f"Controller pod not found in {namespace} within {timeout}s")
         return None
 
-    async def cleanup(self, result: BenchmarkResult) -> None:
+    async def cleanup(
+        self, result: BenchmarkResult, *, delete_namespace: bool = False
+    ) -> None:
         """Clean up a benchmark deployment.
 
-        Strips finalizers from AIPerfJobs and pods and force-deletes pods
-        before deleting the namespace, so teardown doesn't wait for Job
-        controllers or graceful pod shutdown.
+        Strips finalizers from AIPerfJobs and force-deletes pods. By default
+        the namespace is left in place because xdist workers share their
+        per-worker benchmark namespace across sequential tests; tearing it
+        down forces the next test to wait for finalizers to clear. Pass
+        ``delete_namespace=True`` for tests that explicitly verify namespace
+        removal.
 
         Args:
             result: Benchmark result to clean up.
+            delete_namespace: Also delete the benchmark namespace.
         """
-        logger.info(f"Cleaning up namespace: {result.namespace}")
+        logger.info(f"Cleaning up benchmark in namespace: {result.namespace}")
         await self._strip_aiperfjob_finalizers(result.namespace)
+        await self.kubectl.run(
+            "delete",
+            "aiperfjobs,jobsets",
+            "--all",
+            "-n",
+            result.namespace,
+            "--ignore-not-found",
+            "--wait=false",
+            check=False,
+        )
         await self.kubectl.force_cleanup_namespace_pods(result.namespace)
-        await self.kubectl.delete_namespace(result.namespace, wait=True)
+        if delete_namespace:
+            await self.kubectl.delete_namespace(result.namespace, wait=True)
 
     async def _strip_aiperfjob_finalizers(self, namespace: str) -> None:
         """Remove finalizers from all AIPerfJob CRs in a namespace.

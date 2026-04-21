@@ -145,7 +145,11 @@ class TestBenchmarkDeployment:
         await asyncio.sleep(10)
 
         pods = await kubectl.get_pods(result.namespace)
-        controller_pods = [p for p in pods if "controller" in p.name]
+        controller_pods = [
+            p
+            for p in pods
+            if p.name.startswith(result.jobset_name) and "controller" in p.name
+        ]
 
         print(f"\n{'=' * 60}")
         print("CONTROLLER POD VERIFICATION RESULTS")
@@ -211,7 +215,11 @@ class TestBenchmarkDeployment:
 
         pods = await kubectl.get_pods(result.namespace)
         worker_pods = [
-            p for p in pods if "worker" in p.name and "controller" not in p.name
+            p
+            for p in pods
+            if p.name.startswith(result.jobset_name)
+            and "worker" in p.name
+            and "controller" not in p.name
         ]
 
         print(f"\n{'=' * 60}")

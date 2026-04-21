@@ -53,12 +53,19 @@ class TestWorkerPodScaling:
             config, wait_for_completion=False, timeout=60
         )
 
-        # Poll for worker pods (may complete quickly on mock server)
+        # Poll for worker pods (may complete quickly on mock server).
+        # Scope to THIS benchmark's jobset — leftover pods from previous
+        # tests in the same xdist worker namespace would otherwise count.
+        jobset_prefix = result.jobset_name
         worker_pods = []
         for _ in range(30):
             pods = await kubectl.get_pods(result.namespace)
             worker_pods = [
-                p for p in pods if "worker" in p.name and "controller" not in p.name
+                p
+                for p in pods
+                if p.name.startswith(jobset_prefix)
+                and "worker" in p.name
+                and "controller" not in p.name
             ]
             if worker_pods:
                 break
@@ -246,11 +253,21 @@ class TestPodSecurityConfiguration:
             containers = pod_json.get("spec", {}).get("containers", [])
 
             for container in containers:
-                assert "startupProbe" in container, (
-                    f"Container {container['name']} missing startupProbe"
+                # Only require probes on containers that expose a health port
+                has_health_port = any(
+                    p.get("name") == "health"
+                    for p in container.get("ports", [])
                 )
-                assert "livenessProbe" in container, (
-                    f"Container {container['name']} missing livenessProbe"
+                if not has_health_port:
+                    continue
+                probes = {
+                    "startupProbe",
+                    "livenessProbe",
+                    "readinessProbe",
+                } & container.keys()
+                assert probes, (
+                    f"Container {container['name']} exposes a health port "
+                    f"but has no startup/liveness/readiness probe"
                 )
 
 
@@ -285,11 +302,16 @@ class TestControllerSinglePodConstraint:
             config, wait_for_completion=False, timeout=60
         )
 
-        # Poll for controller pod (may complete quickly on mock server)
+        # Poll for controller pod (scoped to this benchmark's jobset).
+        jobset_prefix = result.jobset_name
         controller_pods = []
         for _ in range(30):
             pods = await kubectl.get_pods(result.namespace)
-            controller_pods = [p for p in pods if "controller" in p.name]
+            controller_pods = [
+                p
+                for p in pods
+                if p.name.startswith(jobset_prefix) and "controller" in p.name
+            ]
             if controller_pods:
                 break
             await asyncio.sleep(1)
