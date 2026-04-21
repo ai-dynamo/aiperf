@@ -415,7 +415,9 @@ class TestOperatorResults:
 class TestOperatorCancellation:
     """Tests for job cancellation through the operator."""
 
-    @pytest.mark.timeout(TEST_JOB_TIMEOUT)
+    # benchmark_duration below is 120s; use a longer timeout than TEST_JOB_TIMEOUT
+    # so the test can reach Running, cancel, and observe the terminal phase.
+    @pytest.mark.timeout(300)
     @pytest.mark.asyncio
     async def test_cancel_running_job(
         self,

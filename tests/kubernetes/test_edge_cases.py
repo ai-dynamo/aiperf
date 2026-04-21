@@ -187,8 +187,8 @@ class TestResourceCleanup:
         # Namespace should exist
         assert await kubectl.namespace_exists(namespace)
 
-        # Cleanup
-        await benchmark_deployer.cleanup(result)
+        # Cleanup (explicit namespace delete for this lifecycle test)
+        await benchmark_deployer.cleanup(result, delete_namespace=True)
 
         # Namespace should be gone
         assert not await kubectl.namespace_exists(namespace)

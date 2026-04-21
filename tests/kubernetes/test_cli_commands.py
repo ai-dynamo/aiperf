@@ -247,8 +247,8 @@ class TestKubeCleanup:
         # Verify namespace exists
         assert await kubectl.namespace_exists(namespace)
 
-        # Cleanup via deployer
-        await benchmark_deployer.cleanup(result)
+        # Cleanup via deployer (explicit namespace delete for this test)
+        await benchmark_deployer.cleanup(result, delete_namespace=True)
 
         # Wait for deletion to complete
         await asyncio.sleep(5)
