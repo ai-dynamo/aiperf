@@ -249,19 +249,19 @@ class _JobSetSettings(BaseSettings):
         description="Job backoff limit for controller (0 = no retries)",
     )
     WORKER_BACKOFF_LIMIT: int = Field(
-        default=3,
+        default=20,
         ge=0,
         le=20,
         description="Job backoff limit for workers (allows retries for transient failures)",
     )
     WORKER_CONNECTION_PROBE_TIMEOUT: float = Field(
-        default=300.0,
+        default=60.0,
         ge=30.0,
         le=600.0,
         description="Seconds worker pods wait for the PUB/SUB connection probe to succeed. "
         "Overrides AIPERF_SERVICE_CONNECTION_PROBE_TIMEOUT for k8s worker containers only. "
-        "Some pods intermittently require many reconnect cycles on first deployment; "
-        "a longer timeout ensures they eventually complete rather than failing at 90s.",
+        "Pods that cannot connect exit cleanly so Kubernetes restarts them with a "
+        "fresh ZMQ context; WORKER_BACKOFF_LIMIT absorbs transient first-deploy flakes.",
     )
     CONFIG_MOUNT_PATH: str = Field(
         default="/etc/aiperf", description="Path to mount ConfigMap with configs"

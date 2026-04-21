@@ -590,9 +590,9 @@ class JobSetSpec(AIPerfBaseModel):
         has_hf_home = any(
             (item or {}).get("name") == "HF_HOME" for item in self.pod_template.env
         )
-        # Floor at 600s so the controller waits long enough for all workers to
-        # complete their PUB/SUB connection probes (up to 300s per attempt ×
-        # backoff retries) before giving up on configuration.
+        # Give the controller enough registration headroom for workers to
+        # complete their PUB/SUB connection probes plus one restart cycle if
+        # the first-attempt probe fails (Kubernetes restarts on exit).
         registration_timeout = max(
             Environment.SERVICE.REGISTRATION_TIMEOUT,
             K8sEnvironment.JOBSET.WORKER_CONNECTION_PROBE_TIMEOUT * 2,
@@ -885,16 +885,6 @@ class JobSetSpec(AIPerfBaseModel):
             worker_count, record_processor_count
         )
 
-        # Worker pods connect to the controller event bus via TCP. On first
-        # deployment some pods experience slow PUB/SUB subscription propagation
-        # — give them enough time to succeed rather than failing at 90s.
-        worker_probe_env = [
-            {
-                "name": "AIPERF_SERVICE_CONNECTION_PROBE_TIMEOUT",
-                "value": str(K8sEnvironment.JOBSET.WORKER_CONNECTION_PROBE_TIMEOUT),
-            }
-        ]
-
         containers: list[ContainerSpec] = [
             self._create_container(
                 name="worker-group-manager",
@@ -905,7 +895,6 @@ class JobSetSpec(AIPerfBaseModel):
                 skip_readiness_probe=True,
                 skip_startup_probe=True,
                 skip_liveness_probe=True,
-                extra_env=worker_probe_env,
             )
         ]
 
@@ -921,7 +910,6 @@ class JobSetSpec(AIPerfBaseModel):
                     skip_readiness_probe=True,
                     skip_startup_probe=True,
                     skip_liveness_probe=True,
-                    extra_env=worker_probe_env,
                 )
             )
 

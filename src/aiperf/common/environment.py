@@ -679,12 +679,6 @@ class _ServiceSettings(BaseSettings):
         default=90.0,
         description="Maximum time in seconds to wait for connection probe response while waiting for initial connection to the zmq message bus",
     )
-    CONNECTION_PROBE_RECONNECT_INTERVAL: float = Field(
-        ge=1.0,
-        le=600.0,
-        default=10.0,
-        description="Interval in seconds between PUB/SUB socket recreation attempts during connection probe failures",
-    )
     CREDIT_PROGRESS_REPORT_INTERVAL: float = Field(
         ge=1,
         le=100000.0,

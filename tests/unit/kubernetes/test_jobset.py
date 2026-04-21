@@ -344,7 +344,7 @@ class TestJobSetSpec:
         controller_job, worker_job = manifest["spec"]["replicatedJobs"]
 
         assert controller_job["template"]["spec"]["backoffLimit"] == 0
-        assert worker_job["template"]["spec"]["backoffLimit"] == 3
+        assert worker_job["template"]["spec"]["backoffLimit"] == 20
         assert "ttlSecondsAfterFinished" not in worker_job["template"]["spec"]
         assert "ttlSecondsAfterFinished" not in manifest["spec"]
 
@@ -370,9 +370,40 @@ class TestJobSetSpec:
         controller_job, worker_job = manifest["spec"]["replicatedJobs"]
 
         assert controller_job["template"]["spec"]["backoffLimit"] == 0
-        assert worker_job["template"]["spec"]["backoffLimit"] == 3
+        assert worker_job["template"]["spec"]["backoffLimit"] == 20
         assert worker_job["template"]["spec"]["ttlSecondsAfterFinished"] == 0
         assert manifest["spec"]["ttlSecondsAfterFinished"] == 600
+
+    def test_worker_containers_have_no_probe_timeout_override(self) -> None:
+        """All worker-pod containers honor the default probe timeout uniformly.
+
+        Previously WGM and workers received AIPERF_SERVICE_CONNECTION_PROBE_TIMEOUT
+        via extra_env while record-processor did not — an inconsistency that hid
+        the real strategy (fail fast, let Kubernetes restart). The new strategy
+        drops the override entirely; WORKER_BACKOFF_LIMIT absorbs transient
+        startup failures via container restarts, not in-process retries.
+        """
+        spec = JobSetSpec(
+            name="aiperf-test",
+            namespace="default",
+            job_id="test-123",
+            image="aiperf:latest",
+            worker_replicas=1,
+            workers_per_pod=2,
+            record_processors_per_pod=1,
+        )
+
+        manifest = spec.to_k8s_manifest()
+        worker_job = next(
+            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "workers"
+        )
+        for container in worker_job["template"]["spec"]["template"]["spec"][
+            "containers"
+        ]:
+            env_names = {e["name"] for e in container.get("env", [])}
+            assert "AIPERF_SERVICE_CONNECTION_PROBE_TIMEOUT" not in env_names, (
+                f"container {container['name']} should not override the probe timeout"
+            )
 
     def test_to_k8s_manifest_controller_containers(
         self, basic_jobset_spec: JobSetSpec

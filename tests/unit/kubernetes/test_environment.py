@@ -287,7 +287,8 @@ class TestK8sEnvironmentJobSet:
         jobset = K8sEnvironment.JOBSET
         assert jobset.TTL_SECONDS_AFTER_FINISHED == 300
         assert jobset.CONTROLLER_BACKOFF_LIMIT == 0
-        assert jobset.WORKER_BACKOFF_LIMIT == 3
+        assert jobset.WORKER_BACKOFF_LIMIT == 20
+        assert jobset.WORKER_CONNECTION_PROBE_TIMEOUT == 60.0
         assert jobset.CONFIG_MOUNT_PATH == "/etc/aiperf"
         assert jobset.DATASETS_PATH == "/aiperf/datasets"
 

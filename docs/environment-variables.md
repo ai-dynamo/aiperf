@@ -164,7 +164,6 @@ Service lifecycle and inter-service communication configuration. Controls timeou
 | `AIPERF_SERVICE_COMMS_REQUEST_TIMEOUT` | `90.0` | ≥ 1.0, ≤ 1000.0 | Timeout in seconds for requests from req_clients to rep_clients |
 | `AIPERF_SERVICE_CONNECTION_PROBE_INTERVAL` | `0.01` | ≥ 0.01, ≤ 600.0 | Interval in seconds for connection probes while waiting for initial connection to the zmq message bus |
 | `AIPERF_SERVICE_CONNECTION_PROBE_TIMEOUT` | `90.0` | ≥ 1.0, ≤ 100000.0 | Maximum time in seconds to wait for connection probe response while waiting for initial connection to the zmq message bus |
-| `AIPERF_SERVICE_CONNECTION_PROBE_RECONNECT_INTERVAL` | `10.0` | ≥ 1.0, ≤ 600.0 | Interval in seconds between PUB/SUB socket recreation attempts during connection probe failures |
 | `AIPERF_SERVICE_CREDIT_PROGRESS_REPORT_INTERVAL` | `2.0` | ≥ 1, ≤ 100000.0 | Interval in seconds between credit progress report messages |
 | `AIPERF_SERVICE_DISABLE_UVLOOP` | `False` | — | Disable uvloop and use default asyncio event loop instead |
 | `AIPERF_SERVICE_MULTIPROCESSING_START_METHOD` | `None` | — | Multiprocessing start method. 'spawn' is safest (default on macOS/Windows), 'fork' is faster but unsafe with threads, 'forkserver' is a compromise. None uses the platform default. |

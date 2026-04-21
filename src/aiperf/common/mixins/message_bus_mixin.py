@@ -117,24 +117,21 @@ class MessageBusClientMixin(CommunicationMixin, ABC):
         A successful echo proves that subscriptions are active and the service
         will not miss broadcast messages.
 
-        If probes fail beyond the reconnect threshold, PUB/SUB sockets are
-        recreated to recover from lost subscriptions. Reconnect intervals use
-        exponential backoff (capped at 2x the base interval) to avoid
-        unnecessary disruption under transient load.
+        If the probe fails past the overall timeout we raise TimeoutError so
+        the process exits cleanly and Kubernetes (or the subprocess manager)
+        restarts it; empirically a fresh process recovers in seconds while
+        in-process socket recreation does not, so the backoff budget is spent
+        in the restart loop rather than here.
 
         Subclasses override this to prepend additional probe phases.
         """
         attempt_count = 0
-        reconnect_count = 0
         elapsed_time = 0.0
         initial_warning_threshold = 5.0
         warning_interval = 10.0
         next_warning_time = initial_warning_threshold
         probe_interval = Environment.SERVICE.CONNECTION_PROBE_INTERVAL
         overall_timeout = Environment.SERVICE.CONNECTION_PROBE_TIMEOUT
-        reconnect_base = Environment.SERVICE.CONNECTION_PROBE_RECONNECT_INTERVAL
-        next_reconnect_time = reconnect_base
-        reconnect_backoff = reconnect_base
 
         while not self.stop_requested:
             attempt_count += 1
@@ -146,26 +143,16 @@ class MessageBusClientMixin(CommunicationMixin, ABC):
                 if attempt_count > 2:
                     self.info(
                         f"Connection probe for {self.id} succeeded after {attempt_count} attempts "
-                        f"({elapsed_time:.1f}s, {reconnect_count} reconnect(s))"
+                        f"({elapsed_time:.1f}s)"
                     )
                 return
             except asyncio.TimeoutError:
                 elapsed_time = attempt_count * probe_interval
 
-                if elapsed_time >= next_reconnect_time:
-                    reconnect_count += 1
-                    self.warning(
-                        f"Recreating PUB/SUB sockets for {self.id} after {elapsed_time:.1f}s "
-                        f"of failed probes (reconnect #{reconnect_count})"
-                    )
-                    await self._reconnect_message_bus()
-                    next_reconnect_time += reconnect_backoff
-                    reconnect_backoff = min(reconnect_backoff * 2, reconnect_base * 2)
-
                 if elapsed_time >= next_warning_time:
                     self.warning(
                         f"Connection probe for {self.id} still waiting after {elapsed_time:.1f}s "
-                        f"({attempt_count} attempts, {reconnect_count} reconnect(s)). "
+                        f"({attempt_count} attempts). "
                         f"Check that ZMQ message bus is running "
                         f"and accessible at pub={self.pub_client.address} "
                         f"sub={self.sub_client.address}. Will timeout after {overall_timeout}s."
@@ -175,7 +162,7 @@ class MessageBusClientMixin(CommunicationMixin, ABC):
                 if elapsed_time >= overall_timeout:
                     raise TimeoutError(
                         f"Connection probe for {self.id} timed out after {elapsed_time:.1f}s "
-                        f"({attempt_count} attempts, {reconnect_count} reconnect(s)). "
+                        f"({attempt_count} attempts). "
                         f"Addresses: pub={self.pub_client.address} sub={self.sub_client.address}"
                     ) from None
 
@@ -183,18 +170,6 @@ class MessageBusClientMixin(CommunicationMixin, ABC):
                     "Timeout waiting for connection probe message, sending another probe"
                 )
                 await yield_to_event_loop()
-
-    async def _reconnect_message_bus(self) -> None:
-        """Recreate PUB/SUB sockets and resubscribe to recover from broken connections."""
-        try:
-            await self.pub_client._recreate_socket()
-            await self.sub_client._recreate_socket()
-            await self.sub_client._resubscribe_all()
-        except Exception as e:
-            self.warning(
-                f"Failed to reconnect message bus for {self.id}, "
-                f"will retry on next probe cycle: {e!r}"
-            )
 
     async def _process_connection_probe_message(
         self, message: ConnectionProbeMessage

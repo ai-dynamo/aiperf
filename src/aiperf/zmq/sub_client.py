@@ -171,19 +171,6 @@ class ZMQSubClient(BaseZMQClient):
                 f"Failed to subscribe to wildcard: {e}",
             ) from e
 
-    async def _resubscribe_all(self) -> None:
-        """Reissue all ZMQ SUBSCRIBE calls for stored subscriptions.
-
-        Used after socket recreation to restore subscription state.
-        """
-        for topic in self._subscribers:
-            self.socket.setsockopt(zmq.SUBSCRIBE, topic.encode() + TOPIC_END_ENCODED)
-        if self._wildcard_subscriber is not None:
-            self.socket.setsockopt(zmq.SUBSCRIBE, b"")
-        self.debug(
-            lambda: f"Resubscribed to {len(self._subscribers)} topics after socket recreation"
-        )
-
     async def _handle_message(self, topic_bytes: bytes, message_bytes: bytes) -> None:
         """Handle a message from a subscribed message_type."""
 
