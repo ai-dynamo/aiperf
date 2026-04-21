@@ -3,7 +3,7 @@
 **Status:** Complete (P1+P2+P3 landed)
 **Owner:** Anthony Casagrande (acasagrande@nvidia.com)
 **Date:** 2026-04-20
-**Commits so far:** `41e53697e` (P1), `33c149e6b`+`f05c0abcb`+`8899602cf`+`409538d27`+`26fadd851` (P2), `<P3>` (P3)
+**Commits so far:** `41e53697e` (P1), `33c149e6b`+`f05c0abcb`+`8899602cf`+`409538d27`+`26fadd851` (P2), `d2fb06a60` (P3)
 **Part of:** [msgspec-zmq-migration-overview.md](./2026-04-20-msgspec-zmq-migration-overview.md)
 
 ## Completed work
