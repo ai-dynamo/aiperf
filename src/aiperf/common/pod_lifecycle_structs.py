@@ -154,12 +154,6 @@ class GroupDatasetReady(
     error_message: str | None = None
     """Dataset acquisition error message when success is false."""
 
-    default_context_mode: ConversationContextMode | None = None
-    """Default conversation context mode for workers consuming this dataset.
-    Carried here so workers who come ready via the WGM push path get the
-    same context-mode signal as workers who come ready via the query path
-    (GroupDatasetStateSnapshot.default_context_mode)."""
-
 
 class GroupDatasetStateQuery(
     Struct, frozen=True, kw_only=True, tag_field="t", tag="dq"
