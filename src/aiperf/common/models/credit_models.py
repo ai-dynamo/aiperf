@@ -2,115 +2,55 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 
-from pydantic import ConfigDict, Field
+import msgspec
+from pydantic import Field
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
-from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.base_models import AIPerfBaseModel, PydanticStructMixin
 
 
-class BasePhaseStats(AIPerfBaseModel):
-    """Base model for phase stats. This is used to track the progress of the credit phases."""
+class BasePhaseStats(
+    PydanticStructMixin,
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
+    """Base model for phase stats. Tracks credit-phase progress.
 
-    model_config = ConfigDict(frozen=True)
+    Fields are computed by timing-manager and records-manager; construction
+    happens only at internal trust boundaries, so numeric bounds (``ge``/``gt``)
+    that used to live on Pydantic ``Field`` are dropped.
+    """
 
-    phase: CreditPhase = Field(
-        ...,
-        description="The name of the credit phase (e.g. 'warmup', 'main', 'cooldown').",
-    )
-    exclude_from_results: bool = Field(
-        default=False,
-        description="Whether this phase is excluded from final results (e.g. warmup phases).",
-    )
+    phase: CreditPhase
+    exclude_from_results: bool = False
 
-    # Timestamp fields
-    start_ns: int | None = Field(
-        default=None,
-        ge=0,
-        description="The start time of the credit phase in nanoseconds.",
-    )
-    sent_end_ns: int | None = Field(
-        default=None,
-        ge=0,
-        description="The time of the last sent credit in nanoseconds. If None, the phase has not sent all credits.",
-    )
-    requests_end_ns: int | None = Field(
-        default=None,
-        ge=0,
-        description="The time in which the last credit was returned from the workers in nanoseconds. If None, the phase has not completed.",
-    )
+    # Timestamp fields (None until the phase reaches that state)
+    start_ns: int | None = None
+    sent_end_ns: int | None = None
+    requests_end_ns: int | None = None
 
-    # Expectation / stop condition fields
-    total_expected_requests: int | None = Field(
-        default=None,
-        gt=0,
-        description="The total number of expected requests to send to the workers. If None, the phase is not request count based.",
-    )
-    expected_duration_sec: float | None = Field(
-        default=None,
-        gt=0,
-        description="The expected duration of the credit phase in seconds. If None, the phase is not time based.",
-    )
-    expected_num_sessions: int | None = Field(
-        default=None,
-        gt=0,
-        description="The expected number of user sessions to send to the workers. If None, the phase is not session count based.",
-    )
-    expected_grace_period_sec: float | None = Field(
-        default=None,
-        ge=0,
-        description="The expected grace period duration in seconds. If None, there is no grace period limit.",
-    )
+    # Expectation / stop-condition fields (None when that condition is not used)
+    total_expected_requests: int | None = None
+    expected_duration_sec: float | None = None
+    expected_num_sessions: int | None = None
+    expected_grace_period_sec: float | None = None
 
-    # Final count fields
-    final_requests_sent: int | None = Field(
-        default=None,
-        ge=0,
-        description="The final number of requests sent to the workers. If None, the phase has not completed.",
-    )
-    final_requests_completed: int | None = Field(
-        default=None,
-        ge=0,
-        description="The final number of requests completed by the workers (success OR error, but NOT cancelled). If None, the phase has not completed.",
-    )
-    final_requests_cancelled: int | None = Field(
-        default=None,
-        ge=0,
-        description="The final number of requests cancelled by the workers. If None, the phase has not completed.",
-    )
-    final_request_errors: int | None = Field(
-        default=None,
-        ge=0,
-        description="The final number of requests that returned errors from the workers. If None, the phase has not completed.",
-    )
-    final_sent_sessions: int | None = Field(
-        default=None,
-        ge=0,
-        description="The final number of unique user sessions that have been sent so far. If None, the phase has not completed.",
-    )
-    final_completed_sessions: int | None = Field(
-        default=None,
-        ge=0,
-        description="The final number of unique user sessions that have been completed so far. If None, the phase has not completed.",
-    )
-    final_cancelled_sessions: int | None = Field(
-        default=None,
-        ge=0,
-        description="The final number of unique user sessions that were cancelled (final turn cancelled). If None, the phase has not completed.",
-    )
+    # Final count fields (None until the phase completes)
+    final_requests_sent: int | None = None
+    final_requests_completed: int | None = None
+    final_requests_cancelled: int | None = None
+    final_request_errors: int | None = None
+    final_sent_sessions: int | None = None
+    final_completed_sessions: int | None = None
+    final_cancelled_sessions: int | None = None
 
-    # Timeout/cancellation fields
-    timeout_triggered: bool = Field(
-        default=False,
-        description="Whether the phase timed out (only valid if the phase is time based and has finished sending credits).",
-    )
-    grace_period_timeout_triggered: bool = Field(
-        default=False,
-        description="Whether the phase timed out within the grace period (only valid if the phase is time based and has finished sending credits).",
-    )
-    was_cancelled: bool = Field(
-        default=False, description="Whether the credit phase was cancelled."
-    )
+    # Timeout / cancellation fields
+    timeout_triggered: bool = False
+    grace_period_timeout_triggered: bool = False
+    was_cancelled: bool = False
 
     @property
     def is_started(self) -> bool:
@@ -125,52 +65,23 @@ class BasePhaseStats(AIPerfBaseModel):
         return self.requests_end_ns is not None
 
 
-class CreditPhaseStats(BasePhaseStats):
-    """Immutable model for phase credit stats. This is used to track the progress of the credit phases."""
-
-    model_config = ConfigDict(frozen=True)
+class CreditPhaseStats(
+    BasePhaseStats,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
+    """Immutable phase-credit progress snapshot published per tick."""
 
     # Credit progress fields
-    requests_sent: int = Field(
-        default=0,
-        ge=0,
-        description="The number of requests sent to the workers so far.",
-    )
-    requests_completed: int = Field(
-        default=0,
-        ge=0,
-        description="The number of requests completed by the workers so far.",
-    )
-    requests_cancelled: int = Field(
-        default=0,
-        ge=0,
-        description="The number of requests cancelled by the workers so far.",
-    )
-    request_errors: int = Field(
-        default=0,
-        ge=0,
-        description="The number of requests that returned errors from the workers so far.",
-    )
-    sent_sessions: int = Field(
-        default=0,
-        ge=0,
-        description="The number of unique user sessions that have been sent so far.",
-    )
-    completed_sessions: int = Field(
-        default=0,
-        ge=0,
-        description="The number of unique user sessions that have been completed so far.",
-    )
-    cancelled_sessions: int = Field(
-        default=0,
-        ge=0,
-        description="The number of unique user sessions that were cancelled (final turn cancelled).",
-    )
-    total_session_turns: int = Field(
-        default=0,
-        ge=0,
-        description="The total number of turns in all user sessions so far (not all have been sent or returned yet).",
-    )
+    requests_sent: int = 0
+    requests_completed: int = 0
+    requests_cancelled: int = 0
+    request_errors: int = 0
+    sent_sessions: int = 0
+    completed_sessions: int = 0
+    cancelled_sessions: int = 0
+    total_session_turns: int = 0
 
     @property
     def in_flight_sessions(self) -> int:
@@ -242,25 +153,20 @@ class CreditPhaseStats(BasePhaseStats):
         return min(max(percentages), 100)
 
 
-class PhaseRecordsStats(BasePhaseStats):
-    """Immutable model for phase records stats. This is used to track the progress of the records phases."""
-
-    model_config = ConfigDict(frozen=True)
+class PhaseRecordsStats(
+    BasePhaseStats,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
+    """Immutable phase-records progress snapshot."""
 
     # Timestamp fields
-    records_end_ns: int | None = Field(
-        default=None,
-        ge=0,
-        description="The time at which the phase completed processing all records (time.time_ns()).",
-    )
+    records_end_ns: int | None = None
 
     # Progress fields
-    success_records: int = Field(
-        default=0, ge=0, description="The number of records processed successfully."
-    )
-    error_records: int = Field(
-        default=0, ge=0, description="The number of records processed with errors."
-    )
+    success_records: int = 0
+    error_records: int = 0
 
     @property
     def total_records(self) -> int:

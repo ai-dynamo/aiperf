@@ -267,10 +267,14 @@ class ProgressClient:
         """
         phases: dict[CreditPhase, CombinedPhaseStats] = {}
 
+        # Filter to declared struct fields so older/newer peers adding computed or
+        # auxiliary keys don't break parsing (msgspec rejects unknown kwargs).
+        valid_fields = set(CombinedPhaseStats.__struct_fields__)
         for phase_name, phase_data in data.get("phases", {}).items():
             try:
                 phase = CreditPhase(phase_name)
-                phases[phase] = CombinedPhaseStats(**phase_data)
+                filtered = {k: v for k, v in phase_data.items() if k in valid_fields}
+                phases[phase] = CombinedPhaseStats(**filtered)
             except (ValueError, TypeError) as e:
                 logger.warning(f"Skipping malformed phase '{phase_name}': {e}")
                 continue

@@ -46,7 +46,6 @@ class TestJobProgress:
                     phase="profiling",
                     requests_completed=50,
                     total_expected_requests=100,
-                    is_requests_complete=False,
                 )
             }
         )

@@ -105,44 +105,12 @@ class TestBasePhaseStatsProperties:
 
 
 class TestBasePhaseStatsValidation:
-    """Test BasePhaseStats field validation."""
+    """Test BasePhaseStats construction requirements."""
 
     def test_requires_phase(self) -> None:
-        with pytest.raises(ValueError, match="Field required"):
+        # msgspec raises TypeError when a required field is missing.
+        with pytest.raises(TypeError, match="phase"):
             BasePhaseStats()
-
-    @pytest.mark.parametrize("field", ["start_ns", "sent_end_ns", "requests_end_ns"])
-    def test_timestamp_fields_must_be_non_negative(
-        self, base_phase_stats, field
-    ) -> None:
-        with pytest.raises(ValueError, match="greater than or equal to 0"):
-            base_phase_stats(**{field: -1})
-
-    @pytest.mark.parametrize(
-        "field",
-        ["total_expected_requests", "expected_duration_sec", "expected_num_sessions"],
-    )
-    def test_expected_fields_must_be_positive(self, base_phase_stats, field) -> None:
-        with pytest.raises(ValueError, match="greater than 0"):
-            base_phase_stats(**{field: 0})
-
-    @pytest.mark.parametrize(
-        "field",
-        [
-            "final_requests_sent",
-            "final_requests_completed",
-            "final_requests_cancelled",
-            "final_request_errors",
-            "final_sent_sessions",
-            "final_completed_sessions",
-            "final_cancelled_sessions",
-        ],
-    )
-    def test_final_count_fields_must_be_non_negative(
-        self, base_phase_stats, field
-    ) -> None:
-        with pytest.raises(ValueError, match="greater than or equal to 0"):
-            base_phase_stats(**{field: -1})
 
 
 class TestCreditPhaseStatsProperties:
@@ -321,27 +289,6 @@ class TestCreditPhaseStatsRequestsProgressPercent:
         assert stats.requests_progress_percent == 100.0
 
 
-class TestCreditPhaseStatsValidation:
-    """Test CreditPhaseStats field validation."""
-
-    @pytest.mark.parametrize(
-        "field",
-        [
-            "requests_sent",
-            "requests_completed",
-            "requests_cancelled",
-            "request_errors",
-            "sent_sessions",
-            "completed_sessions",
-            "cancelled_sessions",
-            "total_session_turns",
-        ],
-    )
-    def test_count_fields_must_be_non_negative(self, credit_phase_stats, field) -> None:
-        with pytest.raises(ValueError, match="greater than or equal to 0"):
-            credit_phase_stats(**{field: -1})
-
-
 class TestPhaseRecordsStatsProperties:
     """Test PhaseRecordsStats property methods."""
 
@@ -434,21 +381,6 @@ class TestPhaseRecordsStatsRecordsProgressPercent:
     def test_returns_none_when_no_expectations(self, phase_records_stats) -> None:
         stats = phase_records_stats(success_records=50, error_records=10)
         assert stats.records_progress_percent is None
-
-
-class TestPhaseRecordsStatsValidation:
-    """Test PhaseRecordsStats field validation."""
-
-    @pytest.mark.parametrize("field", ["success_records", "error_records"])
-    def test_record_fields_must_be_non_negative(
-        self, phase_records_stats, field
-    ) -> None:
-        with pytest.raises(ValueError, match="greater than or equal to 0"):
-            phase_records_stats(**{field: -1})
-
-    def test_records_end_ns_must_be_non_negative(self, phase_records_stats) -> None:
-        with pytest.raises(ValueError, match="greater than or equal to 0"):
-            phase_records_stats(records_end_ns=-1)
 
 
 class TestProcessingStatsProperties:
