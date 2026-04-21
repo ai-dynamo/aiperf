@@ -74,6 +74,13 @@ class Annotations:
     BENCHMARK_COMPLETE: str = "aiperf.nvidia.com/benchmark-complete"
     """Marks the benchmark as finished."""
 
+    COMPLETION_CLAIMED: str = "aiperf.nvidia.com/completion-claimed"
+    """Set by the operator when handle_completion begins for a job.
+
+    Durable marker that survives operator pod restart so the completion
+    branch is not re-entered if the previous run crashed before phase
+    reached Completed."""
+
 
 @dataclass(frozen=True)
 class ProgressAnnotations:

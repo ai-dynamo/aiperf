@@ -951,6 +951,10 @@ class TestMonitorCompletedClaimsShutdownKey:
         async def fake_handle_completion(*args, **kwargs) -> None:
             observed_claim.append("default/job-123" in _shutdown_sent)
 
+        async def fake_claim(namespace, name, body):
+            _shutdown_sent.add(f"{namespace}/job-123")
+            return True
+
         mock_jobset = MagicMock()
         mock_jobset.raw = {
             "status": {
@@ -961,6 +965,10 @@ class TestMonitorCompletedClaimsShutdownKey:
         kopf_patch.status = {}
 
         with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.try_claim_completion",
+                side_effect=fake_claim,
+            ),
             mock_patch(
                 "aiperf.operator.handlers.monitor.get_api",
                 new_callable=AsyncMock,
@@ -1031,7 +1039,27 @@ class TestMonitorCompletedClaimsShutdownKey:
         kopf_patch_watch = MagicMock()
         kopf_patch_watch.status = {}
 
+        call_count = {"claim": 0}
+
+        async def fake_claim(namespace, name, body):
+            from aiperf.operator.client_cache import _shutdown_sent
+
+            call_count["claim"] += 1
+            key = f"{namespace}/job-123"
+            if key in _shutdown_sent:
+                return False
+            _shutdown_sent.add(key)
+            return True
+
         with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.try_claim_completion",
+                side_effect=fake_claim,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.try_claim_completion",
+                side_effect=fake_claim,
+            ),
             mock_patch(
                 "aiperf.operator.handlers.monitor.get_api",
                 new_callable=AsyncMock,
@@ -1450,6 +1478,11 @@ class TestMonitorProgressAdvanced:
         }
 
         with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.try_claim_completion",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
             mock_patch(
                 "aiperf.operator.handlers.monitor.get_api",
                 new_callable=AsyncMock,

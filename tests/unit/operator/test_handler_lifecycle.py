@@ -131,13 +131,19 @@ class TestOnBenchmarkComplete:
         patch = MagicMock()
         patch.status = {}
 
-        await on_benchmark_complete(
-            body={},
-            status={"phase": Phase.RUNNING, "jobId": "j", "jobSetName": "js"},
-            name="j",
-            namespace="ns",
-            patch=patch,
-        )
+        with mock_patch(
+            "aiperf.operator.handlers.lifecycle.handle_completion",
+            new_callable=AsyncMock,
+        ) as mock_handle:
+            await on_benchmark_complete(
+                body={},
+                status={"phase": Phase.RUNNING, "jobId": "j", "jobSetName": "js"},
+                name="j",
+                namespace="ns",
+                patch=patch,
+            )
+
+        mock_handle.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_fetches_results_and_shuts_down(self) -> None:
@@ -148,6 +154,11 @@ class TestOnBenchmarkComplete:
         patch.status = {}
 
         with (
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.try_claim_completion",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
             mock_patch(
                 "aiperf.operator.handlers.lifecycle.handle_completion",
                 new_callable=AsyncMock,
@@ -170,7 +181,6 @@ class TestOnBenchmarkComplete:
                 patch=patch,
             )
 
-        assert "ns/j" in _shutdown_sent
         mock_client.send_shutdown.assert_called_once()
 
     @pytest.mark.asyncio
@@ -191,6 +201,11 @@ class TestOnBenchmarkComplete:
         body = {"kind": "AIPerfJob", "metadata": {"name": "j", "namespace": "ns"}}
 
         with (
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.try_claim_completion",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
             mock_patch(
                 "aiperf.operator.handlers.lifecycle.handle_completion",
                 new_callable=AsyncMock,

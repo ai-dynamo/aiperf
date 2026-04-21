@@ -19,10 +19,10 @@ from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.kubernetes.kr8s_resources import AsyncJobSet
 from aiperf.operator import events
 from aiperf.operator.client_cache import (
-    _shutdown_sent,
     close_progress_client,
     get_or_create_progress_client,
     job_key,
+    try_claim_completion,
 )
 from aiperf.operator.handlers.completion import handle_completion
 from aiperf.operator.status import Phase, StatusBuilder
@@ -104,13 +104,12 @@ async def on_benchmark_complete(
         return
 
     key = job_key(namespace, job_id)
-    if key in _shutdown_sent:
+    if not await try_claim_completion(namespace, name, body):
         return
 
     logger.info(
         f"Benchmark completion signal received for {namespace}/{name}, fetching results"
     )
-    _shutdown_sent.add(key)
 
     sb = StatusBuilder(patch, status)
     await handle_completion(body, namespace, jobset_name, job_id, status, sb)

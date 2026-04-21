@@ -27,7 +27,9 @@ from aiperf.operator.client_cache import (
     _warned_pod_restarts,
     close_progress_client,
     get_or_create_progress_client,
+    is_completion_claimed,
     job_key,
+    try_claim_completion,
 )
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.handlers.completion import (
@@ -227,14 +229,14 @@ async def monitor_progress(
             if condition.get("status") != "True":
                 continue
             if condition.get("type") == "Completed":
-                # Claim the key BEFORE awaiting so a concurrent annotation
-                # handler cannot also pass its check and fetch results in
-                # parallel. Without the claim, both handlers race past
-                # their respective `if key not in _shutdown_sent` checks
-                # while the other is mid-await, causing duplicate result
-                # downloads and status-patch clobbering on the same CR.
-                if key not in _shutdown_sent:
-                    _shutdown_sent.add(key)
+                # Only enter handle_completion if we successfully claim the
+                # completion branch via a durable CR annotation. A claim
+                # set by a previous operator run (or by the annotation
+                # handler) causes this to return False and we skip.
+                # try_claim_completion also latches the in-process
+                # _shutdown_sent set, so a second concurrent handler in
+                # the same process short-circuits without hitting the API.
+                if await try_claim_completion(namespace, name, body):
                     await handle_completion(
                         body, namespace, jobset_name, job_id, status, sb
                     )
@@ -343,11 +345,14 @@ async def monitor_progress(
                 client,
                 key,
                 effective_phase,
+                body=body,
             )
 
             # If benchmark is done, fetch results then shutdown controller
             if benchmark_complete:
-                _shutdown_sent.add(key)
+                if not await try_claim_completion(namespace, name, body):
+                    await close_progress_client(key)
+                    return
                 logger.info(
                     f"Benchmark complete for {jobset_name}, "
                     f"fetching results and shutting down controller"
@@ -589,6 +594,8 @@ async def _fetch_progress(
     client: Any,
     key: str,
     current_phase: str = Phase.RUNNING,
+    *,
+    body: dict[str, Any] | None = None,
 ) -> bool:
     """Fetch progress and live metrics from controller pod.
 
@@ -647,8 +654,13 @@ async def _fetch_progress(
                 f"(endpoint may not be ready yet): {e}"
             )
 
-        # Return completion status for caller to handle
+        # Return completion status for caller to handle. Skip signaling
+        # completion if another path (this or a previous operator run)
+        # has already claimed it: in-process set OR durable annotation.
         if progress.is_complete and key not in _shutdown_sent:
+            if body is not None and is_completion_claimed(body):
+                _shutdown_sent.add(key)
+                return False
             return True
 
     except Exception as e:
