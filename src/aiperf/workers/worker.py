@@ -428,6 +428,16 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     total_size_bytes=msg.total_size_bytes,
                 )
             )
+            # The push path does not carry a full DatasetMetadata, so
+            # _initialize_dataset_client cannot propagate default_context_mode.
+            # Apply it here from the GroupDatasetReady envelope — the WGM
+            # populates it from its cached dataset metadata — so workers
+            # that come ready via the push path end up with the same
+            # session-manager default as workers that query the snapshot.
+            if msg.default_context_mode is not None:
+                self.session_manager.set_default_context_mode(
+                    msg.default_context_mode
+                )
             await self._mark_worker_ready_locked()
 
     async def _query_pod_dataset_state(self) -> GroupDatasetStateSnapshot | None:

@@ -613,6 +613,79 @@ class TestKubernetesMode:
         assert worker._worker_ready_event.is_set()
 
     @pytest.mark.asyncio
+    async def test_k8s_worker_on_dataset_ready_applies_default_context_mode(
+        self, config: AIPerfConfig
+    ) -> None:
+        """D2 regression: the WGM push path must propagate
+        default_context_mode to the worker's session_manager. Without this
+        the session manager falls back to DELTAS_WITHOUT_RESPONSES even
+        when the dataset was built with a different default, producing
+        the wrong multi-turn payload shape.
+        """
+        from aiperf.common.enums import ConversationContextMode
+
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        worker = Worker(
+            run=self._make_run(config),
+            service_id="k8s-worker",
+        )
+        worker._pod_index = "0"
+        worker.return_dealer_client.send = AsyncMock()
+        worker._query_pod_dataset_state = AsyncMock(return_value=None)
+        worker._initialize_dataset_client = AsyncMock()
+        worker.session_manager.set_default_context_mode = MagicMock()
+
+        await worker._on_dataset_ready(
+            GroupDatasetReady(
+                service_id="worker-pod-manager",
+                data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat",
+                index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat",
+                conversation_count=4,
+                total_size_bytes=1024,
+                pod_index="0",
+                success=True,
+                default_context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+            )
+        )
+
+        worker.session_manager.set_default_context_mode.assert_called_once_with(
+            ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
+
+    @pytest.mark.asyncio
+    async def test_k8s_worker_on_dataset_ready_no_context_mode_is_noop(
+        self, config: AIPerfConfig
+    ) -> None:
+        """If WGM didn't populate default_context_mode (older build, or
+        dataset metadata not yet present), the worker must NOT clobber
+        the session_manager default with None."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        worker = Worker(
+            run=self._make_run(config),
+            service_id="k8s-worker",
+        )
+        worker._pod_index = "0"
+        worker.return_dealer_client.send = AsyncMock()
+        worker._query_pod_dataset_state = AsyncMock(return_value=None)
+        worker._initialize_dataset_client = AsyncMock()
+        worker.session_manager.set_default_context_mode = MagicMock()
+
+        await worker._on_dataset_ready(
+            GroupDatasetReady(
+                service_id="worker-pod-manager",
+                data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat",
+                index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat",
+                conversation_count=4,
+                total_size_bytes=1024,
+                pod_index="0",
+                success=True,
+                # default_context_mode omitted
+            )
+        )
+
+        worker.session_manager.set_default_context_mode.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_local_worker_suppresses_dataset_broadcast_in_group_managed_mode(
         self, local_worker: Worker
     ) -> None:

@@ -473,6 +473,11 @@ class WorkerGroupManagerBase(BaseComponentService):
             pod_index=self._pod_index,
             success=success,
             error_message=error_message,
+            default_context_mode=(
+                self._dataset_metadata.default_context_mode
+                if self._dataset_metadata is not None
+                else None
+            ),
         )
 
     def _build_pod_dataset_snapshot(self, rid: str) -> GroupDatasetStateSnapshot:
