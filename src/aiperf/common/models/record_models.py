@@ -34,7 +34,7 @@ from aiperf.common.exceptions import InvalidInferenceResultError
 # annotations below reference MetricRecordMetadata as a string thanks to
 # `from __future__ import annotations`; the only runtime use is inside
 # decode_metric_record_info_json, which does a local import.
-from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.base_models import AIPerfBaseModel, PydanticStructMixin
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.export_models import JsonMetricResult
@@ -204,30 +204,40 @@ class InferenceServerResponse(Protocol):
         ...
 
 
-@dataclass(slots=True)
-class SSEField:
+class SSEField(
+    PydanticStructMixin,
+    msgspec.Struct,
+    kw_only=True,
+    omit_defaults=True,
+):
     """Lightweight field in an SSE message.
 
-    Using dataclass(slots=True) instead of Pydantic for memory efficiency during
-    high-throughput streaming. Each SSE message can have multiple fields, and with
-    thousands of concurrent requests each generating hundreds of chunks, Pydantic overhead
-    was the #1 memory allocator.
+    A msgspec.Struct for memory efficiency under streaming load: each SSE
+    message can have multiple fields, and with thousands of concurrent
+    requests each generating hundreds of chunks, any per-field allocation
+    overhead shows up in peak RSS.
     """
 
-    name: SSEFieldType | str
+    name: str
     """The name of the field. e.g. 'data', 'event', 'id', 'retry', 'comment'."""
 
     value: str | None = None
     """The value of the field."""
 
 
-@dataclass(slots=True)
-class TextResponse:
-    """Raw text response from an inference client including an optional content type."""
+class TextResponse(
+    PydanticStructMixin,
+    msgspec.Struct,
+    tag_field="response_type",
+    tag="text",
+    kw_only=True,
+    omit_defaults=True,
+):
+    """Raw text response from an inference client including an optional content type.
 
-    # Reject extra fields so Pydantic's union discrimination (e.g. in
-    # RequestRecord.responses) doesn't match the wrong dataclass type.
-    __pydantic_config__ = ConfigDict(extra="forbid")
+    Carries a ``response_type`` tag so RequestRecord.responses can route
+    dicts to the correct tagged-union variant on decode.
+    """
 
     perf_ns: int
     """The performance timestamp of the response in nanoseconds (perf_counter_ns)."""
@@ -256,13 +266,15 @@ class TextResponse:
             return None
 
 
-@dataclass(slots=True)
-class BinaryResponse:
+class BinaryResponse(
+    PydanticStructMixin,
+    msgspec.Struct,
+    tag_field="response_type",
+    tag="binary",
+    kw_only=True,
+    omit_defaults=True,
+):
     """Raw binary response from an inference client for non-text content types."""
-
-    # Reject extra fields so Pydantic's union discrimination (e.g. in
-    # RequestRecord.responses) doesn't match the wrong dataclass type.
-    __pydantic_config__ = ConfigDict(extra="forbid")
 
     perf_ns: int
     """The performance timestamp of the response in nanoseconds (perf_counter_ns)."""
@@ -286,23 +298,24 @@ class BinaryResponse:
         return None
 
 
-@dataclass(slots=True)
-class SSEMessage:
+class SSEMessage(
+    PydanticStructMixin,
+    msgspec.Struct,
+    tag_field="response_type",
+    tag="sse",
+    kw_only=True,
+    omit_defaults=True,
+):
     """Individual SSE message from an SSE stream. Delimited by \\n\\n.
 
-    Uses dataclass(slots=True) instead of Pydantic for ~6x faster construction
-    and ~10x smaller memory footprint per instance. Pydantic handles serialization
-    and deserialization automatically when this appears inside Pydantic model fields.
+    Uses msgspec.Struct for memory efficiency under streaming load.
+    Pydantic envelopes accept it through PydanticStructMixin.
     """
-
-    # Reject extra fields so Pydantic's union discrimination (e.g. in
-    # RequestRecord.responses) doesn't match the wrong dataclass type.
-    __pydantic_config__ = ConfigDict(extra="forbid")
 
     perf_ns: int
     """The performance timestamp of the message in nanoseconds (perf_counter_ns)."""
 
-    packets: list[SSEField] = field(default_factory=list)
+    packets: list[SSEField] = msgspec.field(default_factory=list)
     """The parsed SSE fields (data, event, id, retry, comment) in this message."""
 
     @classmethod
@@ -353,7 +366,7 @@ class SSEMessage:
             field_name, value = parts
 
             if field_name == "":
-                field_name = SSEFieldType.COMMENT
+                field_name = str(SSEFieldType.COMMENT)
 
             # Spec says strip only one leading space; we strip() all whitespace
             # to normalize inconsistent servers for downstream exact comparisons
@@ -534,10 +547,12 @@ class RequestRecord(AIPerfBaseModel):
         default=None,
         description="The HTTP status code of the response.",
     )
-    # NOTE: We need to use SerializeAsAny to allow for generic subclass support
-    # NOTE: The order of the types is important, as that is the order they are type checked.
-    #       Start with the most specific types and work towards the most general types.
-    responses: SerializeAsAny[list[SSEMessage | TextResponse | BinaryResponse]] = Field(
+    # Msgspec-tagged union (tag_field="response_type") — each leaf is a
+    # msgspec.Struct with PydanticStructMixin, so Pydantic routes dicts to
+    # the correct variant via each variant's __get_pydantic_core_schema__.
+    # SerializeAsAny is no longer needed: the mixin's serializer runs on the
+    # concrete runtime type without us asking.
+    responses: list[SSEMessage | TextResponse | BinaryResponse] = Field(
         default_factory=list,
         description="The raw responses received from the request.",
     )

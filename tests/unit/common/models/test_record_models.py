@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
-from pydantic import BaseModel, Field, SerializeAsAny
+from pydantic import BaseModel, Field
 
 from aiperf.common.enums import SSEFieldType
 from aiperf.common.models import MetricResult, ProfileResults, SSEMessage
@@ -152,7 +152,7 @@ class TestSSEMessageDataclass:
         """SSEMessage roundtrips through Pydantic when inside a model field."""
 
         class Wrapper(BaseModel):
-            responses: SerializeAsAny[list[SSEMessage]] = Field(default_factory=list)
+            responses: list[SSEMessage] = Field(default_factory=list)
 
         msg = SSEMessage.parse("data: roundtrip\nevent: test", perf_ns=123)
         wrapper = Wrapper(responses=[msg])
