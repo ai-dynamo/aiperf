@@ -785,3 +785,60 @@ class TestMonitorWorkerPods:
             side_effect=RuntimeError("k8s unreachable"),
         ):
             await manager._monitor_worker_pods()
+
+
+class TestGetKubeClientConcurrentInit:
+    """K2 regression: `_get_kube_client` must serialize lazy init so two
+    concurrent callers don't both pass the None-check, both call
+    AIPerfKubeClient.create(), and leak the first aiohttp session.
+    """
+
+    @pytest.fixture
+    def manager(self, run: BenchmarkRun) -> KubernetesServiceManager:
+        return KubernetesServiceManager(
+            required_services={ServiceType.DATASET_MANAGER: 1},
+            run=run,
+        )
+
+    @pytest.mark.asyncio
+    async def test_concurrent_calls_create_exactly_one_client(
+        self, manager: KubernetesServiceManager
+    ) -> None:
+        create_call_count = 0
+        release_first_create = asyncio.Event()
+
+        async def fake_create(*args, **kwargs):
+            """First call parks on an event so Task B can race the None
+            check; second concurrent call (without the lock) would also
+            invoke this and increment the count."""
+            nonlocal create_call_count
+            call_idx = create_call_count
+            create_call_count += 1
+            if call_idx == 0:
+                await release_first_create.wait()
+            client = MagicMock()
+            client.close = AsyncMock()
+            return client
+
+        with patch(
+            "aiperf.kubernetes.client.AIPerfKubeClient.create",
+            side_effect=fake_create,
+        ):
+            task_a = asyncio.create_task(manager._get_kube_client())
+            # Let task A enter fake_create and park on the event.
+            await asyncio.sleep(0)
+            task_b = asyncio.create_task(manager._get_kube_client())
+            # Let task B have a chance to pass the None check (under the
+            # lock it must now wait).
+            await asyncio.sleep(0)
+
+            release_first_create.set()
+            client_a, client_b = await asyncio.gather(task_a, task_b)
+
+        assert create_call_count == 1, (
+            "AIPerfKubeClient.create() must be called exactly once even "
+            "under concurrent _get_kube_client; otherwise the first "
+            "aiohttp session is leaked"
+        )
+        assert client_a is client_b, "Both callers must receive the same cached client"
+        assert manager._kube_client is client_a

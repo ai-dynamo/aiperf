@@ -908,6 +908,188 @@ class TestMonitorProgressHandler:
         assert kopf_patch.status["phase"] == Phase.INITIALIZING
 
 
+class TestMonitorCompletedClaimsShutdownKey:
+    """K1 regression: monitor's ``Completed`` condition branch must claim
+    the job key in ``_shutdown_sent`` BEFORE awaiting handle_completion so
+    a concurrent ``on_benchmark_complete`` handler sees the claim and
+    returns early instead of racing into a second results fetch."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_state(self):
+        from aiperf.operator.client_cache import _reset_for_testing
+
+        _reset_for_testing()
+        yield
+        _reset_for_testing()
+
+    @pytest.mark.asyncio
+    async def test_key_is_claimed_before_handle_completion_awaits(self) -> None:
+        from aiperf.operator.client_cache import _shutdown_sent
+        from aiperf.operator.main import monitor_progress
+
+        observed_claim: list[bool] = []
+
+        async def fake_handle_completion(*args, **kwargs) -> None:
+            observed_claim.append("default/job-123" in _shutdown_sent)
+
+        mock_jobset = MagicMock()
+        mock_jobset.raw = {
+            "status": {
+                "conditions": [{"type": "Completed", "status": "True"}],
+            }
+        }
+        kopf_patch = MagicMock()
+        kopf_patch.status = {}
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.get_api",
+                new_callable=AsyncMock,
+                return_value=AsyncMock(),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
+                new_callable=AsyncMock,
+                return_value=mock_jobset,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.handle_completion",
+                side_effect=fake_handle_completion,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.close_progress_client",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await monitor_progress(
+                body={},
+                status={
+                    "phase": Phase.RUNNING,
+                    "jobSetName": "test-jobset",
+                    "jobId": "job-123",
+                },
+                spec={},
+                name="test-job",
+                namespace="default",
+                patch=kopf_patch,
+            )
+
+        assert observed_claim == [True], (
+            "handle_completion must be invoked AFTER the key is added to "
+            "_shutdown_sent; otherwise a concurrent on_benchmark_complete "
+            "watch handler can also pass its check and run in parallel"
+        )
+
+    @pytest.mark.asyncio
+    async def test_concurrent_watch_handler_returns_after_monitor_claims(
+        self,
+    ) -> None:
+        """If monitor claims and is mid-handle_completion, a concurrent
+        on_benchmark_complete for the same key must NOT also call
+        handle_completion."""
+        import asyncio
+
+        from aiperf.operator.handlers.lifecycle import on_benchmark_complete
+        from aiperf.operator.main import monitor_progress
+
+        release_monitor = asyncio.Event()
+        completion_calls: list[str] = []
+
+        async def fake_handle_completion(
+            body, namespace, jobset_name, job_id, status, sb, result=None
+        ) -> None:
+            completion_calls.append(job_id)
+            await release_monitor.wait()
+
+        mock_jobset = MagicMock()
+        mock_jobset.raw = {
+            "status": {
+                "conditions": [{"type": "Completed", "status": "True"}],
+            }
+        }
+        kopf_patch_monitor = MagicMock()
+        kopf_patch_monitor.status = {}
+        kopf_patch_watch = MagicMock()
+        kopf_patch_watch.status = {}
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.get_api",
+                new_callable=AsyncMock,
+                return_value=AsyncMock(),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
+                new_callable=AsyncMock,
+                return_value=mock_jobset,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.handle_completion",
+                side_effect=fake_handle_completion,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.close_progress_client",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.handle_completion",
+                side_effect=fake_handle_completion,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.get_or_create_progress_client",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.close_progress_client",
+                new_callable=AsyncMock,
+            ),
+        ):
+            monitor_task = asyncio.create_task(
+                monitor_progress(
+                    body={},
+                    status={
+                        "phase": Phase.RUNNING,
+                        "jobSetName": "test-jobset",
+                        "jobId": "job-123",
+                    },
+                    spec={},
+                    name="test-job",
+                    namespace="default",
+                    patch=kopf_patch_monitor,
+                )
+            )
+
+            # Let the monitor reach the handle_completion await and block.
+            for _ in range(50):
+                await asyncio.sleep(0)
+                if completion_calls:
+                    break
+            assert completion_calls == ["job-123"]
+
+            # Now fire the watch handler for the same CR. It must see the
+            # claim and return early without invoking handle_completion.
+            await on_benchmark_complete(
+                body={},
+                status={
+                    "phase": Phase.RUNNING,
+                    "jobSetName": "test-jobset",
+                    "jobId": "job-123",
+                },
+                name="test-job",
+                namespace="default",
+                patch=kopf_patch_watch,
+            )
+
+            release_monitor.set()
+            await monitor_task
+
+        assert completion_calls == ["job-123"], (
+            "Only the monitor's handle_completion should have run; the "
+            "concurrent watch handler must have returned early because "
+            "the key was already in _shutdown_sent"
+        )
+
+
 class TestMonitorProgressAdvanced:
     """Additional tests for monitor_progress handler edge cases."""
 

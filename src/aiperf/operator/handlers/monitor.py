@@ -224,8 +224,14 @@ async def monitor_progress(
             if condition.get("status") != "True":
                 continue
             if condition.get("type") == "Completed":
-                # Skip if already handled by the annotation handler
+                # Claim the key BEFORE awaiting so a concurrent annotation
+                # handler cannot also pass its check and fetch results in
+                # parallel. Without the claim, both handlers race past
+                # their respective `if key not in _shutdown_sent` checks
+                # while the other is mid-await, causing duplicate result
+                # downloads and status-patch clobbering on the same CR.
                 if key not in _shutdown_sent:
+                    _shutdown_sent.add(key)
                     await handle_completion(
                         body, namespace, jobset_name, job_id, status, sb
                     )

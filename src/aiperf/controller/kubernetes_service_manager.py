@@ -114,6 +114,11 @@ class KubernetesServiceManager(MultiProcessServiceManager):
     ):
         super().__init__(required_services, run, **kwargs)
         self._kube_client = None
+        # Serializes lazy init of _kube_client. Without it, two concurrent
+        # _get_kube_client callers both pass the None-check, both await
+        # AIPerfKubeClient.create(), and the first assignment is overwritten
+        # and its aiohttp session is leaked.
+        self._kube_client_lock = asyncio.Lock()
         self._pods: dict[str, PodInfo] = {}
         self._restart_warned: set[str] = set()
 
@@ -370,11 +375,12 @@ class KubernetesServiceManager(MultiProcessServiceManager):
 
     async def _get_kube_client(self) -> AIPerfKubeClient:
         """Get or create a cached Kubernetes API client."""
-        if self._kube_client is None:
-            from aiperf.kubernetes.client import AIPerfKubeClient
+        async with self._kube_client_lock:
+            if self._kube_client is None:
+                from aiperf.kubernetes.client import AIPerfKubeClient
 
-            self._kube_client = await AIPerfKubeClient.create()
-        return self._kube_client
+                self._kube_client = await AIPerfKubeClient.create()
+            return self._kube_client
 
     @background_task(
         interval=lambda self: Environment.SERVICE.PROCESS_MONITOR_INTERVAL,
