@@ -35,7 +35,7 @@ curl -s http://localhost:8000/v1/embeddings \
 
 Run AIPerf against the embeddings endpoint using synthetic inputs:
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model BAAI/bge-small-en-v1.5 \
@@ -47,7 +47,7 @@ aiperf profile \
     --request-count 20 \
     --concurrency 4
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 ```
@@ -77,7 +77,7 @@ Embeddings endpoints return metrics focused on request latency and throughput. N
 
 Create a JSONL embeddings input file:
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 cat <<EOF > inputs.jsonl
 {"texts": ["What is artificial intelligence?"]}
@@ -99,7 +99,7 @@ aiperf profile \
     --url localhost:8000 \
     --request-count 5
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 ```

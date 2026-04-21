@@ -119,9 +119,16 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
     def _set_max_tokens(self, turn: Turn) -> None:
         """Set max_tokens for the turn based on the sequence distribution or output configuration.
 
+        If the turn already has max_tokens set (e.g., from per-line input data),
+        the existing value is preserved. Per-line values take precedence over
+        global --osl and --seq-dist settings.
+
         Args:
             turn: The turn object to finalize.
         """
+        if turn.max_tokens is not None:
+            return
+
         if self._seq_distribution is not None:
             # Use cached sequence distribution to get OSL (ensures ISL/OSL pairing consistency)
             turn_id = id(turn)

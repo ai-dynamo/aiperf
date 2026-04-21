@@ -213,6 +213,29 @@ class TestBaseDatasetComposer:
         # max_tokens should remain None when no distribution and no output_tokens.mean
         assert turn.max_tokens is None
 
+    def test_set_max_tokens_preserves_existing_value(self, base_config, mock_tokenizer):
+        """Test that per-line max_tokens is not overwritten by global --osl config."""
+        composer = ConcreteBaseComposer(base_config, mock_tokenizer)
+        turn = Turn(max_tokens=42)
+
+        composer._set_max_tokens(turn)
+
+        assert turn.max_tokens == 42
+
+    def test_set_max_tokens_preserves_existing_with_distribution(
+        self, sequence_dist_config, mock_tokenizer
+    ):
+        """Test that per-line max_tokens is not overwritten by sequence distribution."""
+        composer = ConcreteBaseComposer(sequence_dist_config, mock_tokenizer)
+        turn = Turn(max_tokens=42)
+
+        turn_id = id(turn)
+        composer._turn_sequence_cache[turn_id] = (150, 75)
+
+        composer._set_max_tokens(turn)
+
+        assert turn.max_tokens == 42
+
     def test_finalize_turn(self, sequence_dist_config, mock_tokenizer):
         """Test turn finalization."""
         composer = ConcreteBaseComposer(sequence_dist_config, mock_tokenizer)

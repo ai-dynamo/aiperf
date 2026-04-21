@@ -39,7 +39,7 @@ curl -s localhost:8000/v1/chat/completions \
 AIPerf loads the InstructCoder dataset from HuggingFace and uses each instruction as a
 single-turn prompt.
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -50,7 +50,7 @@ aiperf profile \
     --request-count 10 \
     --concurrency 4
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 

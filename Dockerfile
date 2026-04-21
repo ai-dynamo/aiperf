@@ -145,6 +145,10 @@ RUN uv pip install /dist/aiperf-*.whl \
 # Remove setuptools as it is not needed for the runtime image
 RUN uv pip uninstall setuptools
 
+# Pre-cache tiktoken o200k_base encoding for --tokenizer builtin (MIT license, see ATTRIBUTIONS.md)
+RUN mkdir -p /opt/tiktoken_cache \
+    && TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache python -c "import tiktoken; tiktoken.get_encoding('o200k_base')"
+
 ############################################
 ############### Test Image #################
 ############################################
@@ -156,7 +160,8 @@ RUN apt-get update -y && \
     rm -rf /var/lib/apt/lists/*
 
 ENV VIRTUAL_ENV=/opt/aiperf/venv \
-    PATH="/opt/aiperf/venv/bin:${PATH}"
+    PATH="/opt/aiperf/venv/bin:${PATH}" \
+    TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache
 
 ENTRYPOINT ["/bin/bash", "-c"]
 
@@ -184,8 +189,12 @@ ENV HOME=/app
 # Copy the virtual environment and set up
 COPY --from=env-builder --chown=1000:1000 /opt/aiperf/venv /opt/aiperf/venv
 
+# Copy pre-cached tiktoken encoding for zero-network --tokenizer builtin
+COPY --from=env-builder --chown=1000:1000 /opt/tiktoken_cache /opt/tiktoken_cache
+
 ENV VIRTUAL_ENV=/opt/aiperf/venv \
-    PATH="/opt/aiperf/venv/bin:${PATH}"
+    PATH="/opt/aiperf/venv/bin:${PATH}" \
+    TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache
 
 # Set bash as entrypoint
 ENTRYPOINT ["/bin/bash", "-c"]
