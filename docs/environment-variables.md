@@ -172,6 +172,7 @@ Service lifecycle and inter-service communication configuration. Controls timeou
 | `AIPERF_SERVICE_POD_FAILURE_ABORT_THRESHOLD_PERCENT` | `100` | ≥ 0, ≤ 100 | Percentage of worker pods that must fail before aborting the benchmark. For example, 50 means abort when 50%+ of worker pods have failed. Set to 100 to abort only when all workers are gone. Set to 0 to disable pod failure abort. |
 | `AIPERF_SERVICE_PROCESS_MONITOR_INTERVAL` | `0.5` | ≥ 0.1, ≤ 30.0 | Interval in seconds between process liveness checks in MultiProcessServiceManager |
 | `AIPERF_SERVICE_SHUTDOWN_PROPAGATION_DELAY` | `0.5` | ≥ 0.0, ≤ 10.0 | Delay in seconds after broadcasting shutdown command to allow message propagation before stopping services |
+| `AIPERF_SERVICE_FAILURE_SHUTDOWN_TIMEOUT` | `30.0` | ≥ 1.0, ≤ 300.0 | Wall-clock cap on the shutdown path inside AIPerfLifecycleMixin._fail. If cleanup (on_stop hooks, task cancellation) does not complete within this window after a failed on_init/on_start transition, the process hard-exits via os._exit(1). Prevents silent zombie containers when cleanup blocks on a cancelled C-ext call. |
 | `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile configure command |
 | `AIPERF_SERVICE_PROFILE_START_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for waiting for workers to become ready and for profile start commands |
 | `AIPERF_SERVICE_PROFILE_CANCEL_TIMEOUT` | `10.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile cancel command |

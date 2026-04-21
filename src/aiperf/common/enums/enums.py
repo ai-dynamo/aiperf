@@ -96,6 +96,11 @@ class CommandType(CaseInsensitiveStrEnum):
     SHUTDOWN_WORKERS = "shutdown_workers"
     SPAWN_WORKERS = "spawn_workers"
     START_REALTIME_TELEMETRY = "start_realtime_telemetry"
+    ABORT = "abort"
+    """Signal sibling pod peers (workers/record-processors) to exit the process
+    with a non-zero status so kubelet restarts them. Used by WorkerGroupManager
+    when its own lifecycle failed — a clean SHUTDOWN would let siblings exit 0
+    and leave the pod permanently half-dead at 1/13 Ready."""
 
 
 class CommunicationType(CaseInsensitiveStrEnum):

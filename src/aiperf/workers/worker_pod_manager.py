@@ -439,21 +439,28 @@ class WorkerGroupManagerBase(BaseComponentService):
         )
 
     async def _shutdown_local_peers(self) -> None:
-        """Ask group-local workers and record processors to shut down."""
+        """Ask group-local workers and record processors to shut down.
+
+        When this WGM's lifecycle has already recorded an exit error (i.e. an
+        on_init/on_start hook failed and we are being torn down by ``_fail``),
+        send ``ABORT`` instead of ``SHUTDOWN``. Peers that receive ABORT will
+        ``os._exit(1)`` so kubelet restarts the containers — otherwise they
+        would exit 0 and leave the pod stuck at 1/13 Ready with only a
+        restarted WGM.
+        """
         peer_ids = list(self._pod_peer_identities)
         if not peer_ids:
             return
+        command = CommandType.ABORT if self._exit_errors else CommandType.SHUTDOWN
         results = await asyncio.gather(
-            *(
-                self._send_pod_command(service_id, CommandType.SHUTDOWN)
-                for service_id in peer_ids
-            ),
+            *(self._send_pod_command(service_id, command) for service_id in peer_ids),
             return_exceptions=True,
         )
         for service_id, result in zip(peer_ids, results, strict=False):
             if isinstance(result, Exception):
                 self.warning(
-                    f"Failed to shut down group-local peer {service_id}: {result!r}"
+                    f"Failed to send {command} to group-local peer "
+                    f"{service_id}: {result!r}"
                 )
 
     def _build_pod_dataset_ready(

@@ -219,7 +219,11 @@ def bootstrap_and_run_service(
             asyncio.run(_run_service())
 
     if has_errors and error_queue is None:
-        sys.exit(1)
+        # Hard-exit so a hung cleanup path (e.g. a cancelled background task
+        # blocking on a C-ext call after a failed on_start hook) cannot keep
+        # the container alive as a zombie. SystemExit runs atexit handlers
+        # that can re-hit the same hang; os._exit skips all of that.
+        os._exit(1)
 
 
 def _redirect_stdio_to_devnull() -> None:

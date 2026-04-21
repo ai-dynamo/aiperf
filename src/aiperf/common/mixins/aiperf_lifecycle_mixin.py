@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import os
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from aiperf.common.enums import LifecycleState
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import (
     InvalidStateError,
     LifecycleOperationError,
@@ -122,8 +124,17 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
         """
         await self._set_state(transient_state)
         self.debug(lambda: f"{transient_state.title()} {self}")
+        # Startup transitions must fail-fast: continuing to run later on_start
+        # hooks after an earlier one aborted produces a half-started service
+        # (e.g. tokenizer prefetch + background tasks spawned after PUB/SUB
+        # probe failure) that survives as a silent zombie. Stop transitions
+        # stay best-effort so cleanup errors don't mask each other.
+        fail_fast = transient_state in (
+            LifecycleState.INITIALIZING,
+            LifecycleState.STARTING,
+        )
         try:
-            await self.run_hooks(hook_type, reverse=reverse)
+            await self.run_hooks(hook_type, reverse=reverse, fail_fast=fail_fast)
             await self._set_state(final_state)
             self.debug(lambda: f"{self} is now {final_state.title()}")
             event.set()
@@ -309,7 +320,20 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             )
         if self.state != LifecycleState.STOPPING:
             self.debug(f"Stopping {self} due to failure")
-            await self.stop()
+            # Bound the shutdown so a blocked on_stop hook (e.g. a cancelled
+            # ZMQ client stuck in a C-ext recv) cannot turn a failed service
+            # into a silent zombie. If cleanup exceeds the watchdog, hard-exit
+            # via os._exit — we're already in the failure path and would
+            # rather lose cleanup state than keep the container alive.
+            timeout = Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT
+            try:
+                await asyncio.wait_for(self.stop(), timeout=timeout)
+            except asyncio.TimeoutError:
+                self.error(
+                    f"Shutdown after failure did not complete in {timeout}s; "
+                    f"force-exiting"
+                )
+                os._exit(1)
         await self._set_state(LifecycleState.FAILED)
         raise asyncio.CancelledError(f"Failed for {self}: {e}") from e
 
