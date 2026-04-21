@@ -40,6 +40,7 @@ class Message(
 
     _json_decoder_cache: ClassVar[msgspec.json.Decoder | None] = None
     _msgpack_decoder_cache: ClassVar[msgspec.msgpack.Decoder | None] = None
+    _union_type_cache: ClassVar[Any] = None
 
     @classmethod
     def _all_tagged_subclasses(cls) -> list[type]:
@@ -69,20 +70,26 @@ class Message(
     def _union_type(cls) -> Any:
         """Build a Union type of all concrete tagged Message subclasses.
 
-        For a concrete subclass (i.e. one whose own tag matches a real
-        ``MessageType``), we return the class itself so ``from_json``
-        round-trips a specific envelope without collapsing into a union.
+        Cached per-class. Invalidation isn't wired — callers must ensure all
+        Message subclasses are imported before the first call (the module tree
+        eagerly imports everything via ``common/messages/__init__.py``).
         """
+        cached = cls.__dict__.get("_union_type_cache")
+        if cached is not None:
+            return cached
         known_tags = _known_message_tags()
         cls_tag = getattr(cls.__struct_config__, "tag", None)
         if cls_tag in known_tags:
+            cls._union_type_cache = cls
             return cls
         tagged = cls._all_tagged_subclasses()
         if not tagged:
+            cls._union_type_cache = cls
             return cls
         result: Any = tagged[0]
         for t in tagged[1:]:
             result = result | t
+        cls._union_type_cache = result
         return result
 
     @classmethod
@@ -158,7 +165,12 @@ class Message(
     def model_dump_json(
         self, *, exclude_none: bool = True, indent: int | None = None
     ) -> str:
-        """Pydantic-compat shim returning a JSON string."""
+        """Pydantic-compat shim returning a JSON string.
+
+        ``exclude_none`` is accepted for call-site compatibility but is a
+        no-op: ``omit_defaults=True`` on the Struct already drops ``None``
+        fields that still hold their default.
+        """
         encoded = _JSON_ENCODER.encode(self)
         if indent is not None:
             return orjson.dumps(
