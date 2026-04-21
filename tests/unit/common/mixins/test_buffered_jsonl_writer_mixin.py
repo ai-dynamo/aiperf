@@ -141,3 +141,63 @@ class TestBufferedJSONLWriterMixin:
 
         assert writer.lines_written == 1
         assert temp_output_file.exists(), "File with content should be preserved"
+
+    @pytest.mark.asyncio
+    async def test_late_buffered_write_during_close_is_drained(
+        self, temp_output_file
+    ):
+        """P1 regression: a buffered_write that arrives while _close_file is
+        already awaiting wait_for_tasks schedules a new flush task AFTER
+        the wait's self.tasks snapshot. Without the drain loop the new
+        task runs on a closed file and its record is lost.
+        """
+        writer = BufferedJSONLWriterMixin[SampleRecord](
+            output_file=temp_output_file,
+            batch_size=1,  # every write schedules a flush task
+            flush_interval=1000.0,  # disable periodic flush
+        )
+        await writer.initialize()
+        await writer.start()
+
+        original_flush = writer._flush_buffer
+        first_flush_started = asyncio.Event()
+        release_first_flush = asyncio.Event()
+
+        async def slow_first_flush(buffer_to_flush):
+            """Hold the first flush open so stop() parks in wait_for_tasks."""
+            first_flush_started.set()
+            await release_first_flush.wait()
+            await original_flush(buffer_to_flush)
+
+        writer._flush_buffer = slow_first_flush  # type: ignore[assignment]
+
+        # Schedule flush task #1 and wait until it's parked.
+        await writer.buffered_write(SampleRecord(id=1, value="first"))
+        await first_flush_started.wait()
+
+        # Swap back to real flush so the late write can actually land.
+        writer._flush_buffer = original_flush  # type: ignore[assignment]
+
+        # Start stop() in the background. It enters _close_file and calls
+        # wait_for_tasks, which snapshots self.tasks = {task_1} and awaits.
+        stop_task = asyncio.create_task(writer.stop())
+        for _ in range(10):
+            await asyncio.sleep(0)
+
+        # Late write: lands AFTER wait_for_tasks took its snapshot. Without
+        # the drain loop, task_2 is spawned but never awaited.
+        await writer.buffered_write(SampleRecord(id=2, value="late"))
+
+        # Unblock the first flush so wait_for_tasks can return.
+        release_first_flush.set()
+        await stop_task
+
+        # Both records must be persisted with the drain loop in place.
+        with open(temp_output_file) as f:
+            lines = [line.strip() for line in f.readlines() if line.strip()]
+        ids = sorted(json.loads(line)["id"] for line in lines)
+        assert ids == [1, 2], (
+            f"Expected both records persisted, got ids={ids}. "
+            "The drain loop in _close_file must catch flush tasks "
+            "scheduled after wait_for_tasks' snapshot."
+        )

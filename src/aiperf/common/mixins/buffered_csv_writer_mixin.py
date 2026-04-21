@@ -128,27 +128,38 @@ class BufferedCSVWriterMixin(AIPerfLifecycleMixin):
     @on_stop
     async def _csv_close_file(self) -> None:
         """Flush remaining buffer and close the file handle."""
-        if self.tasks:
-            try:
-                await asyncio.wait_for(
-                    self.wait_for_tasks(),
-                    timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT,
-                )
-            except asyncio.TimeoutError:
-                self.warning(
-                    f"Timeout waiting for {len(self.tasks)} pending CSV flush tasks during shutdown. "
-                    "Cancelling tasks and proceeding with cleanup."
-                )
-                await self.cancel_all_tasks()
-                await yield_to_event_loop()
+        # wait_for_tasks() snapshots self.tasks at entry, so a flush task
+        # created AFTER entry — by a late buffered_csv_write whose upstream
+        # pull hasn't stopped yet — is not awaited. Its rows sit in the
+        # buffer and the task then hits a closed file handle. Drain in a
+        # loop until both self.tasks and self._csv_buffer are stable.
+        for _ in range(3):
+            if not self.tasks and not self._csv_buffer:
+                break
+            if self.tasks:
+                try:
+                    await asyncio.wait_for(
+                        self.wait_for_tasks(),
+                        timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT,
+                    )
+                except asyncio.TimeoutError:
+                    self.warning(
+                        f"Timeout waiting for {len(self.tasks)} pending CSV flush tasks during shutdown. "
+                        "Cancelling tasks and proceeding with cleanup."
+                    )
+                    await self.cancel_all_tasks()
+                    await yield_to_event_loop()
+                    break
 
-        buffer_to_flush = self._csv_buffer
-        self._csv_buffer = []
-
-        try:
-            await self._csv_flush_buffer(buffer_to_flush)
-        except Exception as e:
-            self.error(f"Failed to flush remaining CSV buffer during shutdown: {e}")
+            buffer_to_flush = self._csv_buffer
+            self._csv_buffer = []
+            if buffer_to_flush:
+                try:
+                    await self._csv_flush_buffer(buffer_to_flush)
+                except Exception as e:
+                    self.error(
+                        f"Failed to flush remaining CSV buffer during shutdown: {e}"
+                    )
 
         async with self._csv_file_lock:
             if self._csv_file_handle is not None:
