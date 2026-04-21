@@ -1,8 +1,9 @@
 # Msgspec Conversion: Dataset Path
 
-**Status:** Proposed
+**Status:** Complete (2026-04-21)
 **Owner:** Anthony Casagrande (acasagrande@nvidia.com)
 **Date:** 2026-04-20
+**Commits:** `e1cdd1233` (D1), `a2e8bb599` (D2), `0c767fee4` (D3+D4)
 **Part of:** [msgspec-zmq-migration-overview.md](./2026-04-20-msgspec-zmq-migration-overview.md)
 
 ## Goal

@@ -1,8 +1,9 @@
 # Msgspec Conversion: Service Lifecycle
 
-**Status:** Proposed
+**Status:** Complete (2026-04-21)
 **Owner:** Anthony Casagrande (acasagrande@nvidia.com)
 **Date:** 2026-04-20
+**Commits:** `a02690c8f` (S1), `23ff3e411` (S2), `14180a2bb` (S3)
 **Part of:** [msgspec-zmq-migration-overview.md](./2026-04-20-msgspec-zmq-migration-overview.md)
 
 ## Goal
