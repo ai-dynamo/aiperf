@@ -174,7 +174,6 @@ def _create_test_request_info(
 ) -> RequestInfo:
     """Create a RequestInfo for testing post processors."""
     return RequestInfo(
-        config=_make_config(models=[model_name]),
         turns=turns or [],
         turn_index=turn_index,
         credit_num=0,

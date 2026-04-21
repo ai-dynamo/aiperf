@@ -48,7 +48,6 @@ def _make_config(**overrides: Any) -> BenchmarkConfig:
 def _create_test_request_info(model_name: str = "test-model") -> RequestInfo:
     """Create a RequestInfo for testing metrics."""
     return RequestInfo(
-        config=_make_config(models=[model_name]),
         turns=[],
         turn_index=0,
         credit_num=0,

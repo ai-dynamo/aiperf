@@ -14,9 +14,12 @@ if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_init, on_message, on_stop
+from aiperf.common.metric_records_wire import (
+    TelemetryRecordsWireMessage,
+    _error_to_wire,
+)
 from aiperf.common.models import ErrorDetails, TelemetryRecord
 from aiperf.common.protocols import PushClientProtocol
-from aiperf.common.telemetry_records_wire import build_telemetry_records_wire_message
 from aiperf.credit.messages import CreditPhaseStartMessage
 from aiperf.gpu_telemetry.constants import PYNVML_SOURCE_IDENTIFIER
 from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
@@ -457,12 +460,11 @@ class GPUTelemetryManager(BaseComponentService):
 
         try:
             dcgm_url = self._collector_id_to_url.get(collector_id, "")
-            wire_message = build_telemetry_records_wire_message(
+            wire_message = TelemetryRecordsWireMessage(
                 service_id=self.service_id,
                 collector_id=collector_id,
                 dcgm_url=dcgm_url,
-                records=records,
-                error=None,
+                records=tuple(records),
             )
 
             await self.records_push_client.push(wire_message)
@@ -483,12 +485,11 @@ class GPUTelemetryManager(BaseComponentService):
 
         try:
             dcgm_url = self._collector_id_to_url.get(collector_id, "")
-            error_message = build_telemetry_records_wire_message(
+            error_message = TelemetryRecordsWireMessage(
                 service_id=self.service_id,
                 collector_id=collector_id,
                 dcgm_url=dcgm_url,
-                records=[],
-                error=error,
+                error=_error_to_wire(error),
             )
 
             await self.records_push_client.push(error_message)

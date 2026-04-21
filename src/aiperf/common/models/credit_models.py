@@ -6,11 +6,9 @@ import msgspec
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
-from aiperf.common.models.base_models import PydanticStructMixin
 
 
 class BasePhaseStats(
-    PydanticStructMixin,
     msgspec.Struct,
     frozen=True,
     kw_only=True,

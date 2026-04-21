@@ -1,6 +1,6 @@
 # Msgspec Conversion: GPU Telemetry + Server Metrics
 
-**Status:** Approved, in progress
+**Status:** Complete (M1/M3 helper cleanup landed; M2/M4/M5 already in place ahead of this spec)
 **Owner:** Anthony Casagrande (acasagrande@nvidia.com)
 **Date:** 2026-04-20
 
@@ -128,30 +128,35 @@ appear in many unit tests.
 
 Each milestone ends with a green repo and a commit.
 
-**M1 — Server-metrics records on-wire.** Convert `ServerMetricsRecord`,
-`MetricFamily`, `MetricSample` to msgspec. Rewrite
-`server_metrics_records_wire.py` to carry the native struct. Update the
-server-metrics manager push path and records-manager pull path. Fix unit tests
-(`tests/unit/server_metrics/`) and component-integration (`tests/integration/
-test_server_metrics/`).
+**M1 — Server-metrics records on-wire (complete).** `ServerMetricsRecord`,
+`MetricFamily`, `MetricSample` already msgspec. Helper functions
+`build_server_metrics_record_wire_message`, `server_metrics_record_from_wire`,
+`server_metrics_error_from_wire` removed; call sites inline
+`ServerMetricsRecordWireMessage(...)` directly. `server_metrics_records_wire.py`
+deleted; the envelope lives in `metric_records_wire.py` alongside the other
+RECORDS-channel tagged-union members.
 
-**M2 — Server-metrics accumulator internals.** Convert series/stats/timeslice
-types to msgspec. Update `server_metrics/accumulator.py` and `storage.py`. The
-Pydantic seam lives at `export_results()` → `ServerMetricsExportData`.
+**M2 — Server-metrics accumulator internals (no-op).** Per the spec Note
+above, `ServerMetricsHierarchy` / `ServerMetricsTimeSeries` /
+`ScalarTimeSeries` / `HistogramTimeSeries` are already plain Python +
+numpy; `*Series` / `*Stats` / `*Timeslice` stay Pydantic as export
+building blocks.
 
-**M3 — GPU telemetry records on-wire.** Convert `TelemetryMetrics`,
-`GpuMetadata`, `TelemetryRecord`, `GpuTelemetrySnapshot` to msgspec. Collapse
-`TelemetryRecordWireData`. Update DCGM/pynvml collectors, manager push,
-records-manager pull, JSONL writer. Fix unit and integration telemetry tests.
+**M3 — GPU telemetry records on-wire (complete).** `TelemetryMetrics`,
+`GpuMetadata`, `TelemetryRecord`, `GpuTelemetrySnapshot` already msgspec.
+Helpers `build_telemetry_records_wire_message`,
+`telemetry_records_from_wire`, `telemetry_error_from_wire` removed.
+`telemetry_records_wire.py` deleted; the envelope lives in
+`metric_records_wire.py`.
 
-**M4 — GPU telemetry accumulator internals.** Convert `GpuTelemetryData`,
-`TelemetryHierarchy` to msgspec. Update `gpu_telemetry/accumulator.py`.
-Pydantic seam at `export_results()` → `TelemetryExportData`.
+**M4 — GPU telemetry accumulator internals (complete).**
+`GpuTelemetryData`, `TelemetryHierarchy` already msgspec ahead of this spec.
 
-**M5 — Message envelopes + realtime publishing cleanup.** Convert
-`TelemetryRecordsMessage`, `ServerMetricsRecordMessage` and any remaining
-service-to-service wrappers in these paths to msgspec. Update realtime
-telemetry mixin. Final test-suite green.
+**M5 — Message envelopes + realtime publishing (complete).**
+`ProcessTelemetryResultMessage`, `ProcessServerMetricsResultMessage`,
+`TelemetryStatusMessage`, `ServerMetricsStatusMessage`,
+`RealtimeTelemetryMetricsMessage`, `RealtimeServerMetricsMessage` all
+msgspec via `BaseServiceMessage` (landed in the primitives P2 flip).
 
 ## Testing
 

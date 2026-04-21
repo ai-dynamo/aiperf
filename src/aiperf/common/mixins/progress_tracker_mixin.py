@@ -18,6 +18,7 @@ from aiperf.common.messages import (
 )
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 from aiperf.common.models import CreditPhaseStats, PhaseRecordsStats
+from aiperf.common.models.base_models import PydanticStructMixin
 from aiperf.common.models.credit_models import BasePhaseStats
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
@@ -33,6 +34,7 @@ _logger = AIPerfLogger(__name__)
 
 
 class CombinedPhaseStats(
+    PydanticStructMixin,
     BasePhaseStats,
     frozen=True,
     kw_only=True,
@@ -43,6 +45,9 @@ class CombinedPhaseStats(
     msgspec.Struct forbids multiple-inheritance of structs, so the request and
     records fields are flattened here rather than inherited from both
     CreditPhaseStats and PhaseRecordsStats.
+
+    Retains ``PydanticStructMixin`` because ``JobProgress.phases`` (Pydantic,
+    a FastAPI operator API response) embeds this struct.
     """
 
     # Credit progress fields (mirror CreditPhaseStats)

@@ -43,7 +43,7 @@ class ImageGenerationEndpoint(BaseEndpoint):
             raise ValueError("Image generation endpoint requires at least one turn.")
 
         turn = request_info.turns[0]
-        model_endpoint = request_info.config
+        model_endpoint = self.run.cfg
 
         if not turn.texts or not turn.texts[0].contents:
             raise ValueError(

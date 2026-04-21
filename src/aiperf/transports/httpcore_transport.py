@@ -156,9 +156,7 @@ class HttpCoreTransport(BaseHTTPTransport):
                 "HttpCoreTransport not initialized. Call initialize() before send_request()."
             )
 
-        endpoint_metadata = plugins.get_endpoint_metadata(
-            request_info.config.endpoint.type
-        )
+        endpoint_metadata = plugins.get_endpoint_metadata(self.run.cfg.endpoint.type)
         if endpoint_metadata.requires_polling:
             return await self._send_video_request_with_polling(request_info, payload)
 

@@ -22,7 +22,7 @@ class ImageRetrievalEndpoint(BaseEndpoint):
             raise ValueError("Image Retrieval endpoint only supports one turn.")
 
         turn = request_info.turns[0]
-        model_endpoint = request_info.config
+        model_endpoint = self.run.cfg
 
         if turn.max_tokens:
             self.warning(

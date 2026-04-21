@@ -77,7 +77,6 @@ def run():
 @pytest.fixture
 def request_info(run):
     return RequestInfo(
-        config=run.cfg,
         turns=[],
         turn_index=0,
         credit_num=0,

@@ -16,6 +16,23 @@ from aiperf.common.utils import compute_time_ns
 from aiperf.records.record_processor_service import RecordProcessor
 
 
+def _make_sample_benchmark_config():
+    from aiperf.config import BenchmarkConfig
+
+    return BenchmarkConfig(
+        models=["test-model"],
+        endpoint={"type": "chat", "urls": ["http://localhost:8000/v1/test"]},
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 1,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+    )
+
+
 class TestRecordProcessorCreateMetricRecordMetadata:
     """Test the RecordProcessor._create_metric_record_metadata method."""
 
@@ -192,9 +209,7 @@ class TestRecordProcessorWireMessages:
         """RecordProcessor should consume the msgspec wire envelope and emit MetricRecordsWireMessage."""
         processor = MagicMock(spec=RecordProcessor)
         processor.run = MagicMock()
-        processor.run.cfg = sample_request_record.request_info.config.model_copy(
-            deep=True
-        )
+        processor.run.cfg = _make_sample_benchmark_config()
         processor.run.cfg.output.records = []
         processor.service_id = "record-processor-1"
         processor.inference_result_parser = MagicMock()

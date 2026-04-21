@@ -266,7 +266,6 @@ def _make_request_record(
 ) -> RequestRecord:
     turn = _make_turn(prompt_words, request_index)
     request_info = RequestInfo(
-        config=config,
         turns=[turn],
         turn_index=0,
         credit_num=request_index,
@@ -862,7 +861,7 @@ async def benchmark_core_stages(args: argparse.Namespace) -> list[BenchmarkSampl
     def wire_decode_rehydrate(_: int) -> None:
         for data in encoded_messages:
             message = decode_inference_results_wire_message(data)
-            wire_message_to_request_record(config=config, message=message)
+            wire_message_to_request_record(message=message)
 
     endpoint = _build_chat_endpoint(use_server_token_count=True)
     chunk_records = [
@@ -1694,9 +1693,7 @@ async def benchmark_full_path(args: argparse.Namespace) -> list[BenchmarkSample]
             timings["rp_decode_wire_message"] += time.perf_counter() - started
 
             started = time.perf_counter()
-            _, rehydrated = wire_message_to_request_record(
-                config=config, message=decoded
-            )
+            _, rehydrated = wire_message_to_request_record(message=decoded)
             timings["rp_rehydrate_request_record"] += time.perf_counter() - started
 
             started = time.perf_counter()
@@ -2125,7 +2122,6 @@ async def benchmark_worker_start_path(
 
         credit = credit_context.credit
         return RequestInfo(
-            config=config,
             credit_num=credit.id,
             session_num=credit.session_num,
             credit_phase=credit.phase,

@@ -190,9 +190,7 @@ class AioHttpTransport(BaseHTTPTransport):
         lease_manager = self.lease_manager
 
         # Route polling-based endpoints (e.g., video_generation) to polling implementation
-        endpoint_metadata = plugins.get_endpoint_metadata(
-            request_info.config.endpoint.type
-        )
+        endpoint_metadata = plugins.get_endpoint_metadata(self.run.cfg.endpoint.type)
         if endpoint_metadata.requires_polling:
             return await self._send_video_request_with_polling(request_info, payload)
 

@@ -41,7 +41,7 @@ class ChatEndpoint(BaseEndpoint):
             raise ValueError("Chat endpoint requires at least one turn.")
 
         turns = request_info.turns
-        model_endpoint = request_info.config
+        model_endpoint = self.run.cfg
 
         if turns[-1].raw_messages is not None:
             messages = turns[-1].raw_messages

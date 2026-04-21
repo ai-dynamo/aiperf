@@ -39,7 +39,7 @@ class EmbeddingsEndpoint(BaseEndpoint):
             content for text in turn.texts for content in text.contents if content
         ]
 
-        return self._build_payload(turn, request_info.config, inputs)
+        return self._build_payload(turn, self.run.cfg, inputs)
 
     def _validate_and_get_turn(self, request_info: RequestInfo):
         """Validate request and return the single turn.

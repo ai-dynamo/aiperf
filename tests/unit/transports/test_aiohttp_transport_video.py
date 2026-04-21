@@ -361,7 +361,7 @@ class TestVideoRequestWorkflow:
 
             # Mock download_video_content to be True for this test
             with patch.object(
-                video_request_info.config.endpoint,
+                transport.run.cfg.endpoint,
                 "download_video_content",
                 True,
             ):
@@ -422,7 +422,7 @@ class TestVideoRequestWorkflow:
 
             # Mock download_video_content as False for this test
             with patch.object(
-                video_request_info.config.endpoint,
+                transport.run.cfg.endpoint,
                 "download_video_content",
                 False,
             ):

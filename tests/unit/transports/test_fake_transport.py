@@ -74,7 +74,6 @@ def create_request_info(
 ) -> RequestInfo:
     """Create a RequestInfo for testing."""
     return RequestInfo(
-        config=cfg,
         turns=[],
         endpoint_headers={},
         endpoint_params={},

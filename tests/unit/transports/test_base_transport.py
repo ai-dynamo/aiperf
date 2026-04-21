@@ -65,7 +65,7 @@ class FakeTransport(BaseTransport):
         )
 
     def get_url(self, request_info: RequestInfo) -> str:
-        ep = request_info.config.endpoint
+        ep = self.run.cfg.endpoint
         base_url = _ensure_scheme(ep.urls[0]) if ep.urls else ""
         if ep.path:
             return f"{base_url}{ep.path}"
@@ -80,7 +80,6 @@ class FakeTransport(BaseTransport):
 def _make_request_info(cfg: BenchmarkConfig, **overrides) -> RequestInfo:
     """Create a basic RequestInfo for transport tests."""
     defaults = {
-        "config": cfg,
         "turns": [],
         "endpoint_headers": {},
         "endpoint_params": {},

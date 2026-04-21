@@ -54,4 +54,4 @@ class NIMEmbeddingsEndpoint(EmbeddingsEndpoint):
         else:
             inputs = texts
 
-        return self._build_payload(turn, request_info.config, inputs)
+        return self._build_payload(turn, self.run.cfg, inputs)

@@ -318,7 +318,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
             for i, turn in enumerate(conversation.turns):
                 request_info = RequestInfo(
-                    config=config,
                     turns=[turn],
                     turn_index=i,
                     credit_num=i,

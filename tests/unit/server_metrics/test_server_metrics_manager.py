@@ -7,9 +7,9 @@ import pytest
 
 from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommandType, CreditPhase
+from aiperf.common.metric_records_wire import ServerMetricsRecordWireMessage
 from aiperf.common.models import CreditPhaseStats, ErrorDetails
 from aiperf.common.models.server_metrics_models import ServerMetricsRecord
-from aiperf.common.server_metrics_records_wire import ServerMetricsRecordWireMessage
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.credit.messages import CreditPhaseStartMessage
 from aiperf.plugin.enums import TimingMode

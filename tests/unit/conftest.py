@@ -665,23 +665,7 @@ def sample_conversations() -> dict[str, Conversation]:
 @pytest.fixture
 def sample_request_info() -> RequestInfo:
     """Create a sample RequestInfo for testing."""
-    from aiperf.config import BenchmarkConfig
-
-    config = BenchmarkConfig(
-        models=["test-model"],
-        endpoint={"type": "chat", "urls": ["http://localhost:8000/v1/test"]},
-        datasets={
-            "default": {
-                "type": "synthetic",
-                "entries": 1,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        },
-        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
-    )
-
     return RequestInfo(
-        config=config,
         turns=[
             Turn(
                 texts=[Text(contents=["test prompt"])], role="user", model="test-model"

@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
 import msgspec
+from pydantic import ConfigDict
 
 from aiperf.common.enums import ConversationContextMode, MediaType
-from aiperf.common.models.base_models import PydanticStructMixin
 from aiperf.common.types import MediaTypeT
 from aiperf.plugin.enums import DatasetClientStoreType, DatasetSamplingStrategy
 
@@ -119,41 +120,45 @@ class MemoryMapClientMetadata(
 
 # Hot-path dataset models use msgspec.Struct for ~3-4x faster encode/decode/construct
 # vs Pydantic v2. These are instantiated per-turn per-request at high QPS.
-# Media (and its Text/Image/Audio/Video subclasses), Turn, and Conversation retain
-# PydanticStructMixin — they appear as fields in SingleTurn and UserSession
-# (both AIPerfBaseModel) and need the Pydantic compat shim.
+# Media (and its Text/Image/Audio/Video subclasses) is a slotted dataclass so it
+# works natively with both msgspec (Turn.texts / Turn.images / ...) and Pydantic
+# (SingleTurn / RandomPool / MultiTurn dataset-loader schemas) without a
+# compatibility shim. ``extra="forbid"`` keeps Pydantic's union discrimination
+# honest when the loader unions a Media-subclass variant with another shape.
 
 
-class Media(
-    PydanticStructMixin,
-    msgspec.Struct,
-    kw_only=True,
-    omit_defaults=False,
-):
+@dataclass(slots=True, kw_only=True)
+class Media:
     """Base class for all media fields. Contains name and contents of the media data."""
 
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
     name: str = ""
-    contents: list[str] = msgspec.field(default_factory=list)
+    contents: list[str] = field(default_factory=list)
 
 
+@dataclass(slots=True, kw_only=True)
 class Text(Media):
     """Media that contains text/prompt data."""
 
     media_type: ClassVar[MediaTypeT] = MediaType.TEXT
 
 
+@dataclass(slots=True, kw_only=True)
 class Image(Media):
     """Media that contains image data."""
 
     media_type: ClassVar[MediaTypeT] = MediaType.IMAGE
 
 
+@dataclass(slots=True, kw_only=True)
 class Audio(Media):
     """Media that contains audio data."""
 
     media_type: ClassVar[MediaTypeT] = MediaType.AUDIO
 
 
+@dataclass(slots=True, kw_only=True)
 class Video(Media):
     """Media that contains video data."""
 
@@ -173,7 +178,6 @@ class TurnMetadata(
 
 
 class Turn(
-    PydanticStructMixin,
     msgspec.Struct,
     kw_only=True,
     omit_defaults=False,
@@ -307,7 +311,6 @@ class DatasetMetadata(
 
 
 class Conversation(
-    PydanticStructMixin,
     msgspec.Struct,
     kw_only=True,
     omit_defaults=False,

@@ -81,11 +81,11 @@ class BaseHTTPTransport(BaseTransport):
         """
         accept = (
             "text/event-stream"
-            if request_info.config.endpoint.streaming
+            if self.run.cfg.endpoint.streaming
             else "application/json"
         )
         headers: dict[str, str] = {"Accept": accept}
-        content_type = request_info.config.endpoint.request_content_type
+        content_type = self.run.cfg.endpoint.request_content_type
         if content_type != RequestContentType.MULTIPART_FORM_DATA:
             headers["Content-Type"] = (
                 content_type or RequestContentType.APPLICATION_JSON
@@ -119,7 +119,7 @@ class BaseHTTPTransport(BaseTransport):
         Returns:
             Complete HTTP URL with scheme and endpoint path
         """
-        endpoint_info = request_info.config.endpoint
+        endpoint_info = self.run.cfg.endpoint
 
         # Start with base URL - use url_index for multi-URL load balancing
         url_index = request_info.url_index if request_info.url_index is not None else 0
@@ -341,9 +341,9 @@ class BaseHTTPTransport(BaseTransport):
         submit_url = self.build_url(request_info)
 
         # Check if video download is enabled via --download-video-content
-        download_content = request_info.config.endpoint.download_video_content
+        download_content = self.run.cfg.endpoint.download_video_content
         use_form_data = (
-            request_info.config.endpoint.request_content_type
+            self.run.cfg.endpoint.request_content_type
             == RequestContentType.MULTIPART_FORM_DATA
         )
 
@@ -363,7 +363,7 @@ class BaseHTTPTransport(BaseTransport):
                 job_id,
                 poll_url,
                 headers,
-                timeout=request_info.config.endpoint.timeout,
+                timeout=self.run.cfg.endpoint.timeout,
                 poll_interval=Environment.HTTP.VIDEO_POLL_INTERVAL,
             )
             if isinstance(poll_result, ErrorDetails):

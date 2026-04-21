@@ -90,7 +90,6 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
             # Fallback for records without complete request_info
             # This should rarely happen after proper request_info propagation
             request_info = RequestInfo(
-                model_endpoint=self._model_endpoint,
                 turns=record.request.turns,
                 turn_index=metadata.turn_index or 0,
                 credit_num=metadata.request_num

@@ -34,7 +34,6 @@ def create_request_info(
 ) -> RequestInfo:
     """Create RequestInfo with sensible defaults for transport tests."""
     return RequestInfo(
-        config=model_endpoint,
         turns=[],
         endpoint_headers=endpoint_headers or {},
         endpoint_params=endpoint_params or {},
@@ -131,9 +130,10 @@ class TestAioHttpTransport:
         [(False, "application/json"), (True, "text/event-stream")],
         ids=["non-streaming", "streaming"],
     )
-    def test_get_transport_headers(self, transport, streaming, expected_accept):
+    def test_get_transport_headers(self, streaming, expected_accept):
         """Test transport headers for different streaming modes."""
         model_endpoint = make_run(streaming=streaming)
+        transport = AioHttpTransport(run=model_endpoint)
         request_info = create_request_info(model_endpoint.cfg)
         headers = transport.get_transport_headers(request_info)
 
@@ -469,7 +469,6 @@ class TestAioHttpTransportIntegration:
         await transport.initialize()
 
         request_info = RequestInfo(
-            config=model_endpoint.cfg,
             turns=[],
             endpoint_headers={
                 "Authorization": "Bearer test-key",

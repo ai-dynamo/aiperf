@@ -51,6 +51,8 @@ from aiperf.common.metric_records_wire import (
     MetricRecordsBatchWireMessage,
     MetricRecordsData,
     MetricRecordsWireMessage,
+    ServerMetricsRecordWireMessage,
+    TelemetryRecordsWireMessage,
     wire_error_to_domain_error,
     wire_message_to_record_data,
 )
@@ -67,16 +69,6 @@ from aiperf.common.models import (
     ServerMetricsRecord,
     TelemetryRecord,
     WorkerProcessingStats,
-)
-from aiperf.common.server_metrics_records_wire import (
-    ServerMetricsRecordWireMessage,
-    server_metrics_error_from_wire,
-    server_metrics_record_from_wire,
-)
-from aiperf.common.telemetry_records_wire import (
-    TelemetryRecordsWireMessage,
-    telemetry_error_from_wire,
-    telemetry_records_from_wire,
 )
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.credit.messages import (
@@ -263,8 +255,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """
         if message.valid:
             try:
-                records = telemetry_records_from_wire(message)
-                await self._send_telemetry_to_results_processors(records)
+                await self._send_telemetry_to_results_processors(message.records)
             except Exception as e:
                 error_details = ErrorDetails(
                     message=f"Telemetry processor error: {str(e)}"
@@ -272,7 +263,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 self._telemetry_state.error_counts[error_details] += 1
                 self.debug(f"Failed to process telemetry batch: {e}")
         else:
-            wire_error = telemetry_error_from_wire(message)
+            wire_error = wire_error_to_domain_error(message.error)
             if wire_error is not None:
                 self._telemetry_state.error_counts[wire_error] += 1
 
@@ -290,9 +281,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """
         if message.valid:
             try:
-                record = server_metrics_record_from_wire(message)
-                if record is not None:
-                    await self._send_server_metrics_to_results_processors(record)
+                if message.record is not None:
+                    await self._send_server_metrics_to_results_processors(
+                        message.record
+                    )
             except Exception as e:
                 error_details = ErrorDetails(
                     message=f"Server metrics processor error: {str(e)}"
@@ -300,7 +292,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 self._server_metrics_state.error_counts[error_details] += 1
                 self.debug(f"Failed to process server metrics record: {e}")
         else:
-            wire_error = server_metrics_error_from_wire(message)
+            wire_error = wire_error_to_domain_error(message.error)
             if wire_error is not None:
                 self._server_metrics_state.error_counts[wire_error] += 1
 

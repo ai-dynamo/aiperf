@@ -97,7 +97,6 @@ class TestInferenceWire:
         encoded = encode_inference_results_wire_message(wire_message)
         decoded = decode_inference_results_wire_message(encoded)
         service_id, rebuilt = wire_message_to_request_record(
-            config=request_info.config,
             message=decoded,
         )
 
@@ -197,7 +196,6 @@ class TestInferenceWire:
             include_trace_data=True,
         )
         rebuilt_service_id, rebuilt_record = wire_message_to_request_record(
-            config=request_info.config,
             message=decode_inference_results_wire_message(
                 encode_inference_results_wire_message(wire_message)
             ),
@@ -238,7 +236,6 @@ class TestInferenceWire:
             include_trace_data=False,
         )
         _, rebuilt_record = wire_message_to_request_record(
-            config=request_info.config,
             message=wire_message,
         )
 

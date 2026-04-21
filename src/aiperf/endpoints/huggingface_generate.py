@@ -31,8 +31,8 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
         if turn.max_tokens is not None:
             parameters["max_new_tokens"] = turn.max_tokens
 
-        if request_info.config.endpoint.extra:
-            parameters.update(request_info.config.endpoint.extra)
+        if self.run.cfg.endpoint.extra:
+            parameters.update(self.run.cfg.endpoint.extra)
 
         payload: dict[str, Any] = {
             "inputs": inputs,

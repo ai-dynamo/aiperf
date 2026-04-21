@@ -39,7 +39,7 @@ class ResponsesEndpoint(BaseEndpoint):
             raise ValueError("Responses endpoint requires at least one turn.")
 
         turns = request_info.turns
-        model_endpoint = request_info.config
+        model_endpoint = self.run.cfg
 
         input_items = self._create_input_items(turns, request_info.user_context_message)
 

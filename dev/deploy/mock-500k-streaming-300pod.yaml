@@ -2,7 +2,7 @@
 apiVersion: aiperf.nvidia.com/v1alpha1
 kind: AIPerfJob
 metadata:
-  name: mock-500k-run4
+  name: mock-500k-run6
   namespace: acasagrande-aiperf-bench
 spec:
   benchmark:
@@ -48,7 +48,7 @@ spec:
       records:
         - jsonl
 
-  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260421-064618-0c240cc13
+  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260421-163542-bb62f26b8
   connectionsPerWorker: 1000
   resourceMode: burstable
   ttlSecondsAfterFinished: 3600

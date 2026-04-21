@@ -39,7 +39,6 @@ from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
 from aiperf.common.types import JsonObject, MetricTagT, TimeSliceT
 from aiperf.common.utils import load_json_str
-from aiperf.config.config import BenchmarkConfig
 
 if TYPE_CHECKING:
     from aiperf.common.metric_records_wire import MetricRecordMetadata
@@ -423,14 +422,11 @@ class RequestInfo(
     """Info about a request.
 
     Mutable msgspec struct: the worker populates many fields
-    incrementally after construction. ``config`` is a nested Pydantic
-    BenchmarkConfig that msgspec serialises via the enc/dec hooks in
-    ``_msgspec_enc_hook``/``_msgspec_dec_hook``. It stays local to the worker /
-    records-manager processes — the wire projection in
-    ``inference_wire.py`` strips it.
+    incrementally after construction. Endpoints/transports access the
+    benchmark config via their own ``self.run.cfg`` — it is never
+    embedded here, which keeps the struct msgspec-native.
     """
 
-    config: BenchmarkConfig
     turn_index: int
     credit_num: int
     credit_phase: CreditPhase

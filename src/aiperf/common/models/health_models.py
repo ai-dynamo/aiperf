@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import NamedTuple
+
 import msgspec
 
 
@@ -62,15 +64,11 @@ class ProcessHealthAggregates(
     cpu_time_iowait: NumericAggregate = msgspec.field(default_factory=NumericAggregate)
 
 
-# IO / CPU / ctx-switch tuples: msgspec.Struct frozen replacements for the
-# prior ``collections.namedtuple`` types. Named attribute access (e.g.
-# ``io_counters.read_bytes``) matches the namedtuple surface that downstream
-# consumers (UI, tests) depend on. Constructed via positional splat from the
-# psutil namedtuples — see ``ProcessHealthMixin.get_process_health``.
-class IOCounters(
-    msgspec.Struct,
-    frozen=True,
-):
+# IO / CPU / ctx-switch tuples mirror the psutil namedtuple surface so both
+# indexed (``io_counters[4]``) and attribute (``io_counters.read_chars``)
+# access keep working. msgspec encodes/decodes ``typing.NamedTuple`` as an
+# array natively, so these ride on the wire without custom hooks.
+class IOCounters(NamedTuple):
     read_count: int
     write_count: int
     read_bytes: int
@@ -79,20 +77,13 @@ class IOCounters(
     write_chars: int
 
 
-class CPUTimes(
-    msgspec.Struct,
-    frozen=True,
-    kw_only=True,
-):
+class CPUTimes(NamedTuple):
     user: float
     system: float
     iowait: float
 
 
-class CtxSwitches(
-    msgspec.Struct,
-    frozen=True,
-):
+class CtxSwitches(NamedTuple):
     voluntary: int
     involuntary: int
 

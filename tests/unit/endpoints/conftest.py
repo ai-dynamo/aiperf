@@ -104,7 +104,6 @@ def create_request_info(
         turns = [turn]
 
     return RequestInfo(
-        config=config,
         turns=turns,
         turn_index=turn_index,
         credit_num=credit_num,

@@ -50,7 +50,7 @@ class BaseRankingsEndpoint(BaseEndpoint):
             raise ValueError("Rankings endpoint only supports one turn.")
 
         turn = request_info.turns[0]
-        model_endpoint = request_info.config
+        model_endpoint = self.run.cfg
 
         if turn.max_tokens:
             self.warning("Max_tokens is provided but is not supported for rankings.")

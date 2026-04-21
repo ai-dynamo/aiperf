@@ -8,8 +8,8 @@ import pytest
 from aiperf.common.control_structs import Command, TelemetryStatus
 from aiperf.common.enums import CommandType, CreditPhase
 from aiperf.common.environment import Environment
+from aiperf.common.metric_records_wire import TelemetryRecordsWireMessage
 from aiperf.common.models import CreditPhaseStats, ErrorDetails
-from aiperf.common.telemetry_records_wire import TelemetryRecordsWireMessage
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.credit.messages import CreditPhaseStartMessage
 from aiperf.gpu_telemetry.constants import PYNVML_SOURCE_IDENTIFIER

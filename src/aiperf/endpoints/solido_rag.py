@@ -37,7 +37,7 @@ class SolidoEndpoint(BaseEndpoint):
             raise ValueError("SOLIDO endpoint requires at least one turn.")
 
         turn = request_info.turns[-1]
-        model_endpoint = request_info.config
+        model_endpoint = self.run.cfg
 
         # Extract query text from turn
         query = [content for text in turn.texts for content in text.contents if content]

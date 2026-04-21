@@ -11,6 +11,8 @@ from aiperf.common.metric_records_wire import (
     MetricRecordMetadata,
     MetricRecordsBatchWireMessage,
     MetricRecordsData,
+    TelemetryRecordsWireMessage,
+    _error_to_wire,
 )
 from aiperf.common.models import (
     ErrorDetails,
@@ -19,10 +21,6 @@ from aiperf.common.models import (
     ProfileResults,
     TelemetryHierarchy,
     TelemetryRecord,
-)
-from aiperf.common.telemetry_records_wire import (
-    TelemetryRecordsWireMessage,
-    build_telemetry_records_wire_message,
 )
 from aiperf.common.types import MetricTagT
 from aiperf.records.records_manager import RecordsManager
@@ -85,12 +83,11 @@ class TestRecordsManagerTelemetry:
             )
         ]
 
-        message = build_telemetry_records_wire_message(
+        message = TelemetryRecordsWireMessage(
             service_id="test_service",
             collector_id="test_collector",
             dcgm_url="http://localhost:9400/metrics",
-            records=records,
-            error=None,
+            records=tuple(records),
         )
         assert isinstance(message, TelemetryRecordsWireMessage)
 
@@ -115,12 +112,11 @@ class TestRecordsManagerTelemetry:
         """Test handling invalid telemetry records with errors."""
         error = ErrorDetails(message="Test error", code=500)
 
-        message = build_telemetry_records_wire_message(
+        message = TelemetryRecordsWireMessage(
             service_id="test_service",
             collector_id="test_collector",
             dcgm_url="http://localhost:9400/metrics",
-            records=[],
-            error=error,
+            error=_error_to_wire(error),
         )
 
         mock_send_to_processors = AsyncMock()
@@ -294,51 +290,46 @@ class TestRecordsManagerTimeslice:
 
 
 class TestRecordsManagerServerMetricsErrorHandling:
-    """T1 regression: server-metrics wire deserialization errors must be
-    caught and counted, matching the telemetry path. Before the fix the
-    ValidationError from a malformed record dict propagated out of the
-    PULL handler and was silently swallowed by the dispatcher, losing
+    """T1 regression: server-metrics processor exceptions must be caught and
+    counted, matching the telemetry path. Before the fix these propagated out
+    of the PULL handler and were silently swallowed by the dispatcher, losing
     the error signal entirely.
     """
 
     @pytest.mark.asyncio
-    async def test_deserialization_exception_is_counted_not_propagated(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_processor_exception_is_counted_not_propagated(self) -> None:
         from collections import defaultdict
 
-        from aiperf.common.server_metrics_records_wire import (
+        from aiperf.common.metric_records_wire import (
             ServerMetricsRecordWireMessage,
         )
+        from aiperf.common.models import ServerMetricsRecord
 
         manager = SimpleNamespace(
-            _send_server_metrics_to_results_processors=AsyncMock(),
+            _send_server_metrics_to_results_processors=AsyncMock(
+                side_effect=ValueError("processor failure")
+            ),
             _server_metrics_state=SimpleNamespace(
                 error_counts=defaultdict(int),
             ),
             debug=MagicMock(),
         )
 
-        def explode(_message):
-            raise ValueError("malformed server-metrics record")
-
-        monkeypatch.setattr(
-            "aiperf.records.records_manager.server_metrics_record_from_wire",
-            explode,
-        )
-
-        # Minimal valid envelope so the `if message.valid` branch fires.
         message = ServerMetricsRecordWireMessage(
             service_id="server-metrics-manager",
             collector_id="col-1",
-            record={"bogus": True},
+            record=ServerMetricsRecord(
+                endpoint_url="http://localhost:8081/metrics",
+                timestamp_ns=1_000_000_000,
+                metrics={},
+            ),
         )
 
-        # Must NOT raise — the asymmetry with the telemetry handler is the bug.
+        # Must NOT raise — processor failures must be absorbed by the handler.
         await RecordsManager._on_server_metrics_records(manager, message)
 
-        # Exactly one error recorded; no record forwarded to processors.
+        # Exactly one error recorded; processor was attempted once.
         assert sum(manager._server_metrics_state.error_counts.values()) == 1, (
-            "ValidationError from malformed record should have been counted"
+            "Processor exception should have been counted"
         )
-        manager._send_server_metrics_to_results_processors.assert_not_awaited()
+        manager._send_server_metrics_to_results_processors.assert_awaited_once()

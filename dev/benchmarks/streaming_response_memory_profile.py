@@ -21,6 +21,12 @@ import tracemalloc
 import uuid
 
 import orjson
+from aiperf.common.models.model_endpoint_info import (
+    EndpointInfo,
+    ModelEndpointInfo,
+    ModelInfo,
+    ModelListInfo,
+)
 
 from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
 from aiperf.common.models import (
@@ -30,12 +36,6 @@ from aiperf.common.models import (
     SSEMessage,
     Text,
     Turn,
-)
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
 )
 from aiperf.common.models.record_models import SSEField, TokenCounts
 from aiperf.endpoints.openai_chat import ChatEndpoint

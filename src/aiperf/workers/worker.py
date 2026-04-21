@@ -968,7 +968,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """
         credit = credit_context.credit
         return RequestInfo(
-            config=self.run.cfg,
             credit_num=credit.id,
             session_num=credit.session_num,
             credit_phase=credit.phase,
@@ -1041,7 +1040,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             await self._send_inference_result_message(
                 RequestRecord(
                     request_info=RequestInfo(
-                        config=self.run.cfg,
                         conversation_id=conversation_id,
                         turn_index=0,
                         turns=[],

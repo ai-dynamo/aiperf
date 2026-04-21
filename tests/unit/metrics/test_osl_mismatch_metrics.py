@@ -23,14 +23,13 @@ from aiperf.metrics.types.osl_mismatch_metrics import (
 from aiperf.metrics.types.output_sequence_length_metric import (
     OutputSequenceLengthMetric,
 )
-from tests.unit.metrics.conftest import _make_config, run_simple_metrics_pipeline
+from tests.unit.metrics.conftest import run_simple_metrics_pipeline
 
 
 def _create_request_info_with_max_tokens(max_tokens: int | None) -> RequestInfo:
     """Create a RequestInfo with a turn that has max_tokens set."""
     turn = Turn(max_tokens=max_tokens)
     return RequestInfo(
-        config=_make_config(),
         turns=[turn],
         turn_index=0,
         credit_num=0,

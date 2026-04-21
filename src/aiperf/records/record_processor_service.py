@@ -350,7 +350,6 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
     async def _on_inference_results(self, message: InferenceResultsWireMessage) -> None:
         """Handle an inference results message."""
         worker_id, record = wire_message_to_request_record(
-            config=self.run.cfg,
             message=message,
         )
 

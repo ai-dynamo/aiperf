@@ -8,7 +8,7 @@ worker->record-processor channel.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import Any, TypeAlias
 
 import msgspec
 import orjson
@@ -26,9 +26,6 @@ from aiperf.common.models.record_models import (
 from aiperf.common.models.trace_models import AioHttpTraceData, BaseTraceData
 
 TraceDataWireT = BaseTraceData | AioHttpTraceData
-
-if TYPE_CHECKING:
-    from aiperf.config import BenchmarkConfig
 
 
 def _json_safe(value: Any) -> Any:
@@ -469,7 +466,6 @@ def decode_inference_results_wire_message(
 
 def wire_record_to_request_record(
     *,
-    config: BenchmarkConfig,
     wire_record: InferenceWireRecord,
 ) -> RequestRecord:
     """Rehydrate the wire projection back into the current RequestRecord shape."""
@@ -480,7 +476,6 @@ def wire_record_to_request_record(
         turns[-1].max_tokens = wire_record.metadata.requested_max_tokens
 
     request_info = RequestInfo(
-        config=config,
         turns=turns,
         turn_index=wire_record.metadata.turn_index,
         credit_num=wire_record.metadata.credit_num,
@@ -521,11 +516,10 @@ def wire_record_to_request_record(
 
 def wire_message_to_request_record(
     *,
-    config: BenchmarkConfig,
     message: InferenceResultsWireMessage,
 ) -> tuple[str, RequestRecord]:
     """Decode the wire envelope into the current runtime types."""
     return (
         message.service_id,
-        wire_record_to_request_record(config=config, wire_record=message.record),
+        wire_record_to_request_record(wire_record=message.record),
     )

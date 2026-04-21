@@ -240,7 +240,6 @@ class TestInferenceClient:
     ):
         """Test that send_request raises ValueError when turns is empty."""
         request_info = RequestInfo(
-            config=benchmark_run.cfg,
             turns=[],
             turn_index=0,
             credit_num=42,
@@ -268,7 +267,6 @@ class TestInferenceClient:
             model="standalone-model",
         )
         request_info = RequestInfo(
-            config=benchmark_run.cfg,
             turns=[turn],
             turn_index=3,
             credit_num=0,
