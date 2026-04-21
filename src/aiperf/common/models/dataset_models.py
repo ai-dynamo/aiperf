@@ -6,11 +6,10 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import msgspec
-from pydantic import Field, GetCoreSchemaHandler, field_validator
-from pydantic_core import CoreSchema, core_schema
+from pydantic import Field, field_validator
 
 from aiperf.common.enums import ConversationContextMode, MediaType
-from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.base_models import AIPerfBaseModel, PydanticStructMixin
 from aiperf.common.types import MediaTypeT
 from aiperf.plugin.enums import DatasetClientStoreType, DatasetSamplingStrategy
 
@@ -68,54 +67,12 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
 
 # Hot-path dataset models use msgspec.Struct for ~3-4x faster encode/decode/construct
 # vs Pydantic v2. These are instantiated per-turn per-request at high QPS.
-
-
-class _PydanticStructMixin:
-    """Shim letting Pydantic v2 parents accept/serialize a msgspec.Struct field.
-
-    Pydantic cannot natively validate or JSON-serialize a msgspec.Struct. This
-    teaches Pydantic to accept dicts/instances during validation (via
-    ``msgspec.convert``) and to emit plain dicts during dump (via
-    ``msgspec.to_builtins``), so wrappers like ``ConversationResponseMessage``
-    continue to round-trip without special-casing at every callsite.
-    """
-
-    @classmethod
-    def __get_pydantic_core_schema__(
-        cls,
-        source_type: Any,
-        handler: GetCoreSchemaHandler,
-    ) -> CoreSchema:
-        def _validate(value: Any) -> Any:
-            if isinstance(value, cls):
-                return value
-            # Pydantic resolves union members by trying each in order. If we get
-            # a non-mapping (e.g. a `str` URL being validated against
-            # `list[str] | list[Image]`), raise a plain ValueError so Pydantic
-            # falls through to the next union variant rather than bubbling a
-            # msgspec-specific error that older pydantic versions treat as
-            # fatal.
-            if not isinstance(value, dict):
-                raise ValueError(
-                    f"Expected dict or {cls.__name__} instance, got {type(value).__name__}"
-                )
-            return msgspec.convert(value, cls)
-
-        def _serialize(value: Any) -> Any:
-            return msgspec.to_builtins(value)
-
-        return core_schema.no_info_plain_validator_function(
-            _validate,
-            serialization=core_schema.plain_serializer_function_ser_schema(
-                _serialize,
-                return_schema=core_schema.any_schema(),
-                when_used="always",
-            ),
-        )
+# The PydanticStructMixin lets these structs appear as fields on Pydantic
+# envelopes (e.g. ConversationResponseMessage) without bespoke serialization.
 
 
 class Media(
-    _PydanticStructMixin,
+    PydanticStructMixin,
     msgspec.Struct,
     kw_only=True,
     omit_defaults=False,
@@ -164,7 +121,7 @@ class TurnMetadata(AIPerfBaseModel):
 
 
 class Turn(
-    _PydanticStructMixin,
+    PydanticStructMixin,
     msgspec.Struct,
     kw_only=True,
     omit_defaults=False,
@@ -311,7 +268,7 @@ class DatasetMetadata(AIPerfBaseModel):
 
 
 class Conversation(
-    _PydanticStructMixin,
+    PydanticStructMixin,
     msgspec.Struct,
     kw_only=True,
     omit_defaults=False,
