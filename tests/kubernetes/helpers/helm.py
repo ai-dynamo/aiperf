@@ -386,7 +386,11 @@ class HelmClient:
 class HelmDeployer:
     """Manages Helm-based operator deployment and AIPerfJob lifecycle."""
 
-    RELEASE_NAME = "aiperf-operator"
+    # Use a distinct release name from the kubectl-deployed operator so the
+    # generated cluster-scoped resources (ClusterRole, ClusterRoleBinding)
+    # have different names. Otherwise a helm test's CRB would clobber the
+    # kubectl deploy's CRB and break cross-test RBAC checks.
+    RELEASE_NAME = "aiperf-operator-helm"
     OPERATOR_NAMESPACE = "aiperf-system"
     CRD_NAME = "aiperfjobs.aiperf.nvidia.com"
 

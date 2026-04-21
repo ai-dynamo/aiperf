@@ -912,6 +912,18 @@ def k8s_ready(
 
 
 @pytest.fixture(scope="session")
+def worker_id(request: pytest.FixtureRequest) -> str:
+    """Fallback worker_id fixture for non-xdist runs.
+
+    pytest-xdist provides a session-scoped ``worker_id`` fixture when running
+    under ``-n <N>``; when running without xdist that fixture is absent and
+    any conftest helper depending on it errors out. Provide a default so the
+    targeted failure-rerun path works without xdist.
+    """
+    return getattr(request.config, "workerinput", {}).get("workerid", "master")
+
+
+@pytest.fixture(scope="session")
 def worker_namespace_suffix(worker_id: str) -> str:
     """Per-xdist-worker suffix used to build isolated namespaces."""
     return worker_id.replace("_", "-").lower()
