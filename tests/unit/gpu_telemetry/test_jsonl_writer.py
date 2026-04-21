@@ -5,12 +5,12 @@ import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
+import msgspec
 import orjson
 import pytest
 
 from aiperf.common.environment import Environment
 from aiperf.common.models.telemetry_models import (
-    TelemetryMetrics,
     TelemetryRecord,
 )
 from aiperf.config import AIPerfConfig, BenchmarkRun
@@ -227,15 +227,15 @@ class TestGPUTelemetryJSONLWriterProcessing:
 
         lines = processor.output_file.read_text().splitlines()
         record_dict = orjson.loads(lines[0])
-        record = TelemetryRecord.model_validate(record_dict)
+        record = msgspec.convert(record_dict, type=TelemetryRecord)
 
         assert record.timestamp_ns == 1_000_000_000
         assert record.dcgm_url == "http://node1:9401/metrics"
         assert record.gpu_index == 0
         assert record.gpu_uuid == "GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc"
         assert record.gpu_model_name == "NVIDIA RTX 6000 Ada Generation"
-        assert record.telemetry_data.gpu_power_usage == 75.5
-        assert record.telemetry_data.gpu_utilization == 85.0
+        assert record.telemetry_data.get("gpu_power_usage") == 75.5
+        assert record.telemetry_data.get("gpu_utilization") == 85.0
 
     @pytest.mark.asyncio
     async def test_process_telemetry_record_with_partial_data(
@@ -255,13 +255,13 @@ class TestGPUTelemetryJSONLWriterProcessing:
 
         lines = processor.output_file.read_text().splitlines()
         record_dict = orjson.loads(lines[0])
-        record = TelemetryRecord.model_validate(record_dict)
+        record = msgspec.convert(record_dict, type=TelemetryRecord)
 
         assert record.timestamp_ns == 2_000_000_000
         assert record.pci_bus_id is None
         assert record.device is None
-        assert record.telemetry_data.energy_consumption is None
-        assert record.telemetry_data.power_violation is None
+        assert record.telemetry_data.get("energy_consumption") is None
+        assert record.telemetry_data.get("power_violation") is None
 
     @pytest.mark.asyncio
     async def test_process_multiple_telemetry_records(
@@ -459,7 +459,7 @@ class TestGPUTelemetryJSONLWriterFileFormat:
             if line.strip():
                 record_dict = orjson.loads(line)
                 assert isinstance(record_dict, dict)
-                record = TelemetryRecord.model_validate(record_dict)
+                record = msgspec.convert(record_dict, type=TelemetryRecord)
                 assert isinstance(record, TelemetryRecord)
 
     @pytest.mark.asyncio
@@ -482,14 +482,14 @@ class TestGPUTelemetryJSONLWriterFileFormat:
 
         for line in lines:
             record_dict = orjson.loads(line)
-            record = TelemetryRecord.model_validate(record_dict)
+            record = msgspec.convert(record_dict, type=TelemetryRecord)
 
             assert isinstance(record.timestamp_ns, int)
             assert isinstance(record.dcgm_url, str)
             assert isinstance(record.gpu_index, int)
             assert isinstance(record.gpu_uuid, str)
             assert isinstance(record.gpu_model_name, str)
-            assert isinstance(record.telemetry_data, TelemetryMetrics)
+            assert isinstance(record.telemetry_data, dict)
 
     @pytest.mark.asyncio
     async def test_preserves_all_telemetry_fields(
@@ -509,7 +509,7 @@ class TestGPUTelemetryJSONLWriterFileFormat:
 
         lines = processor.output_file.read_text().splitlines()
         record_dict = orjson.loads(lines[0])
-        record = TelemetryRecord.model_validate(record_dict)
+        record = msgspec.convert(record_dict, type=TelemetryRecord)
 
         # Check all metadata fields
         assert record.timestamp_ns == sample_telemetry_record.timestamp_ns
@@ -522,18 +522,15 @@ class TestGPUTelemetryJSONLWriterFileFormat:
         assert record.hostname == sample_telemetry_record.hostname
 
         # Check telemetry data fields
-        assert (
-            record.telemetry_data.gpu_power_usage
-            == sample_telemetry_record.telemetry_data.gpu_power_usage
-        )
-        assert (
-            record.telemetry_data.gpu_utilization
-            == sample_telemetry_record.telemetry_data.gpu_utilization
-        )
-        assert (
-            record.telemetry_data.gpu_memory_used
-            == sample_telemetry_record.telemetry_data.gpu_memory_used
-        )
+        assert record.telemetry_data.get(
+            "gpu_power_usage"
+        ) == sample_telemetry_record.telemetry_data.get("gpu_power_usage")
+        assert record.telemetry_data.get(
+            "gpu_utilization"
+        ) == sample_telemetry_record.telemetry_data.get("gpu_utilization")
+        assert record.telemetry_data.get(
+            "gpu_memory_used"
+        ) == sample_telemetry_record.telemetry_data.get("gpu_memory_used")
 
     @pytest.mark.asyncio
     async def test_handles_none_values(
@@ -717,10 +714,10 @@ class TestGPUTelemetryJSONLWriterLifecycle:
         assert len(lines) == Environment.RECORD.EXPORT_BATCH_SIZE * 2
 
         for i, line in enumerate(lines):
-            record = TelemetryRecord.model_validate_json(line)
+            record = msgspec.json.decode(line, type=TelemetryRecord)
             assert record.timestamp_ns == 1_000_000_000 + i
             assert record.gpu_uuid == "GPU-test"
-            assert record.telemetry_data.gpu_power_usage == 100.0 + i
+            assert record.telemetry_data.get("gpu_power_usage") == 100.0 + i
 
     @pytest.mark.asyncio
     async def test_file_handle_lifecycle(
@@ -851,7 +848,7 @@ class TestGPUTelemetryJSONLWriterIntegration:
         # Verify parseable
         lines = content.splitlines()
         record_dict = orjson.loads(lines[0])
-        record = TelemetryRecord.model_validate(record_dict)
+        record = msgspec.convert(record_dict, type=TelemetryRecord)
         assert record.gpu_uuid == sample_telemetry_record.gpu_uuid
 
     @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import msgspec
 import numpy as np
 from numpy.typing import NDArray
 from pydantic import ConfigDict, Field
@@ -12,126 +13,108 @@ from aiperf.common.models.record_models import MetricResult
 from aiperf.common.models.server_metrics_models import TimeRangeFilter
 
 
-class TelemetryMetrics(AIPerfBaseModel):
-    """GPU metrics collected at a single point in time.
-
-    All fields are optional to handle cases where specific metrics are not available
-    from the DCGM exporter or are filtered out due to invalid values.
-
-    Custom metrics from user-provided CSV files are supported via extra='allow'.
-    """
-
-    model_config = ConfigDict(extra="allow")
-
-    gpu_power_usage: float | None = Field(
-        default=None, description="Current GPU power usage in W"
-    )
-    energy_consumption: float | None = Field(
-        default=None, description="Cumulative energy consumption in MJ"
-    )
-    gpu_utilization: float | None = Field(
-        default=None,
-        description="GPU utilization percentage (0-100). "
-        "Percent of time over the past sample period during which one or more kernels was executing on the GPU.",
-    )
-    gpu_memory_used: float | None = Field(
-        default=None, description="GPU memory used in GB"
-    )
-    gpu_temperature: float | None = Field(
-        default=None, description="GPU temperature in °C"
-    )
-    mem_utilization: float | None = Field(
-        default=None,
-        description="Memory bandwidth utilization percentage (0-100). "
-        "Percent of time over the past sample period during which global (device) memory was being read or written.",
-    )
-    sm_utilization: float | None = Field(
-        default=None,
-        description="Streaming multiprocessor utilization percentage (0-100)",
-    )
-    decoder_utilization: float | None = Field(
-        default=None, description="Video decoder (NVDEC) utilization percentage (0-100)"
-    )
-    encoder_utilization: float | None = Field(
-        default=None, description="Video encoder (NVENC) utilization percentage (0-100)"
-    )
-    jpg_utilization: float | None = Field(
-        default=None, description="JPEG decoder utilization percentage (0-100)"
-    )
-    xid_errors: float | None = Field(
-        default=None, description="Value of the last XID error encountered"
-    )
-    power_violation: float | None = Field(
-        default=None,
-        description="Throttling duration due to power constraints in microseconds",
-    )
-
-
-class GpuMetadata(AIPerfBaseModel):
+class GpuMetadata(msgspec.Struct, frozen=True, kw_only=True, omit_defaults=True):
     """Static metadata for a GPU that doesn't change over time.
 
     This is stored once per GPU and referenced by all telemetry data points
     to avoid duplicating metadata in every time-series entry.
     """
 
-    gpu_index: int = Field(
-        description="GPU index on this node (0, 1, 2, etc.) - used for display ordering"
-    )
-    gpu_uuid: str = Field(
-        description="Unique GPU identifier (e.g., 'GPU-ef6ef310-...') - primary key for data"
-    )
-    gpu_model_name: str = Field(
-        description="GPU model name (e.g., 'NVIDIA RTX 6000 Ada Generation')"
-    )
-    pci_bus_id: str | None = Field(
-        default=None, description="PCI Bus ID (e.g., '00000000:02:00.0')"
-    )
-    device: str | None = Field(
-        default=None, description="Device identifier (e.g., 'nvidia0')"
-    )
-    hostname: str | None = Field(
-        default=None, description="Hostname where GPU is located"
-    )
-    namespace: str | None = Field(
-        default=None, description="Namespace where the GPU is located (kubernetes only)"
-    )
-    pod_name: str | None = Field(
-        default=None, description="Pod name where the GPU is located (kubernetes only)"
-    )
+    gpu_index: int
+    """GPU index on this node (0, 1, 2, etc.) - used for display ordering."""
+
+    gpu_uuid: str
+    """Unique GPU identifier (e.g., 'GPU-ef6ef310-...') - primary key for data."""
+
+    gpu_model_name: str
+    """GPU model name (e.g., 'NVIDIA RTX 6000 Ada Generation')."""
+
+    pci_bus_id: str | None = None
+    """PCI Bus ID (e.g., '00000000:02:00.0')."""
+
+    device: str | None = None
+    """Device identifier (e.g., 'nvidia0')."""
+
+    hostname: str | None = None
+    """Hostname where GPU is located."""
+
+    namespace: str | None = None
+    """Namespace where the GPU is located (kubernetes only)."""
+
+    pod_name: str | None = None
+    """Pod name where the GPU is located (kubernetes only)."""
 
 
-class TelemetryRecord(GpuMetadata):
+class TelemetryRecord(
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
     """Single telemetry data point from GPU monitoring.
 
     This record contains all telemetry data for one GPU at one point in time,
     along with metadata to identify the source DCGM endpoint and specific GPU.
     Used for hierarchical storage: dcgm_url -> gpu_uuid -> time series data.
 
-    Inherits from GpuMetadata to avoid duplicating metadata fields.
+    `telemetry_data` is a plain ``dict[str, float]`` mapping canonical metric
+    names (``gpu_power_usage``, ``gpu_utilization``, ...) to values. Custom
+    metrics loaded from user CSV files go into the same dict keyed by their
+    ``DCGM_TO_FIELD_MAPPING`` entry.
     """
 
-    timestamp_ns: int = Field(
-        description="Nanosecond wall-clock timestamp when telemetry was collected (time_ns)"
-    )
-    dcgm_url: str = Field(
-        description="Source identifier (DCGM URL e.g., 'http://node1:9401/metrics' or 'pynvml://localhost')"
-    )
-    telemetry_data: TelemetryMetrics = Field(
-        description="GPU metrics snapshot collected at this timestamp"
-    )
+    gpu_index: int
+    """GPU index on this node (0, 1, 2, etc.) - used for display ordering."""
+
+    gpu_uuid: str
+    """Unique GPU identifier (e.g., 'GPU-ef6ef310-...') - primary key for data."""
+
+    gpu_model_name: str
+    """GPU model name (e.g., 'NVIDIA RTX 6000 Ada Generation')."""
+
+    timestamp_ns: int
+    """Nanosecond wall-clock timestamp when telemetry was collected (time_ns)."""
+
+    dcgm_url: str
+    """Source identifier (DCGM URL e.g., 'http://node1:9401/metrics' or
+    'pynvml://localhost')."""
+
+    telemetry_data: dict[str, float]
+    """GPU metrics snapshot collected at this timestamp."""
+
+    pci_bus_id: str | None = None
+    """PCI Bus ID (e.g., '00000000:02:00.0')."""
+
+    device: str | None = None
+    """Device identifier (e.g., 'nvidia0')."""
+
+    hostname: str | None = None
+    """Hostname where GPU is located."""
+
+    namespace: str | None = None
+    """Namespace where the GPU is located (kubernetes only)."""
+
+    pod_name: str | None = None
+    """Pod name where the GPU is located (kubernetes only)."""
 
 
-class GpuTelemetrySnapshot(AIPerfBaseModel):
+class GpuTelemetrySnapshot(
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
     """All metrics for a single GPU at one point in time.
 
     Groups all metric values collected during a single collection cycle,
     eliminating timestamp duplication across individual metrics.
     """
 
-    timestamp_ns: int = Field(description="Collection timestamp for all metrics")
-    metrics: dict[str, float] = Field(
-        default_factory=dict, description="All metric values at this timestamp"
-    )
+    timestamp_ns: int
+    """Collection timestamp for all metrics."""
+
+    metrics: dict[str, float] = msgspec.field(default_factory=dict)
+    """All metric values at this timestamp."""
 
 
 class GpuMetricTimeSeries:
@@ -455,8 +438,9 @@ class GpuTelemetryData(AIPerfBaseModel):
 
         Note: Groups all metric values from the record into a single snapshot
         """
-        metric_mapping = record.telemetry_data.model_dump()
-        valid_metrics = {k: v for k, v in metric_mapping.items() if v is not None}
+        valid_metrics = {
+            k: v for k, v in record.telemetry_data.items() if v is not None
+        }
         if valid_metrics:
             self.time_series.append_snapshot(valid_metrics, record.timestamp_ns)
 

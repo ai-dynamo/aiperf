@@ -3,7 +3,6 @@
 
 import numpy as np
 import pytest
-from pydantic import ValidationError
 
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models.server_metrics_models import TimeRangeFilter
@@ -12,7 +11,6 @@ from aiperf.common.models.telemetry_models import (
     GpuMetricTimeSeries,
     GpuTelemetryData,
     GpuTelemetrySnapshot,
-    TelemetryMetrics,
     TelemetryRecord,
 )
 
@@ -29,7 +27,7 @@ def _make_record(timestamp_ns: int, **metrics: float) -> TelemetryRecord:
         gpu_index=0,
         gpu_model_name="Test GPU",
         gpu_uuid="GPU-test-uuid",
-        telemetry_data=TelemetryMetrics(**metrics),
+        telemetry_data={**metrics},
     )
 
 
@@ -95,12 +93,12 @@ class TestTelemetryRecord:
             pci_bus_id="00000000:02:00.0",
             device="nvidia0",
             hostname="ed7e7a5e585f",
-            telemetry_data=TelemetryMetrics(
-                gpu_power_usage=75.5,
-                energy_consumption=1000000000,
-                gpu_utilization=85.0,
-                gpu_memory_used=15.26,
-            ),
+            telemetry_data={
+                "gpu_power_usage": 75.5,
+                "energy_consumption": 1000000000,
+                "gpu_utilization": 85.0,
+                "gpu_memory_used": 15.26,
+            },
         )
 
         assert record.timestamp_ns == 1000000000
@@ -113,10 +111,10 @@ class TestTelemetryRecord:
         assert record.device == "nvidia0"
         assert record.hostname == "ed7e7a5e585f"
 
-        assert record.telemetry_data.gpu_power_usage == 75.5
-        assert record.telemetry_data.energy_consumption == 1000000000
-        assert record.telemetry_data.gpu_utilization == 85.0
-        assert record.telemetry_data.gpu_memory_used == 15.26
+        assert record.telemetry_data.get("gpu_power_usage") == 75.5
+        assert record.telemetry_data.get("energy_consumption") == 1000000000
+        assert record.telemetry_data.get("gpu_utilization") == 85.0
+        assert record.telemetry_data.get("gpu_memory_used") == 15.26
 
     def test_telemetry_record_minimal_creation(self):
         """Test creating a TelemetryRecord with only required fields.
@@ -132,7 +130,7 @@ class TestTelemetryRecord:
             gpu_index=1,
             gpu_model_name="NVIDIA H100",
             gpu_uuid="GPU-00000000-0000-0000-0000-000000000001",
-            telemetry_data=TelemetryMetrics(),
+            telemetry_data={},
         )
 
         # Verify required fields are set
@@ -145,17 +143,16 @@ class TestTelemetryRecord:
         assert record.pci_bus_id is None
         assert record.device is None
         assert record.hostname is None
-        assert record.telemetry_data.gpu_power_usage is None
-        assert record.telemetry_data.energy_consumption is None
-        assert record.telemetry_data.gpu_utilization is None
-        assert record.telemetry_data.gpu_memory_used is None
+        assert record.telemetry_data.get("gpu_power_usage") is None
+        assert record.telemetry_data.get("energy_consumption") is None
+        assert record.telemetry_data.get("gpu_utilization") is None
+        assert record.telemetry_data.get("gpu_memory_used") is None
 
     def test_telemetry_record_field_validation(self):
-        """Test Pydantic validation of required fields.
+        """Test that required fields are enforced by msgspec construction.
 
-        Verifies that TelemetryRecord enforces required field validation
-        and raises appropriate validation errors when required fields
-        are missing. Tests the data integrity guarantees.
+        Verifies that TelemetryRecord's msgspec.Struct definition rejects
+        construction without required fields.
         """
 
         record = TelemetryRecord(
@@ -164,11 +161,11 @@ class TestTelemetryRecord:
             gpu_index=0,
             gpu_model_name="NVIDIA RTX 6000",
             gpu_uuid="GPU-test-uuid",
-            telemetry_data=TelemetryMetrics(),
+            telemetry_data={},
         )
         assert record.timestamp_ns == 1000000000
 
-        with pytest.raises(ValidationError):  # Pydantic validation error
+        with pytest.raises(TypeError):  # msgspec raises TypeError for missing fields
             TelemetryRecord()  # No fields provided
 
     def test_telemetry_record_metadata_structure(self):
@@ -189,7 +186,7 @@ class TestTelemetryRecord:
             pci_bus_id="00000000:02:00.0",
             device="nvidia0",
             hostname="gpu-node-01",
-            telemetry_data=TelemetryMetrics(),
+            telemetry_data={},
         )
 
         # Verify hierarchical identification works

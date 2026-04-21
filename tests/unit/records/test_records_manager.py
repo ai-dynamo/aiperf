@@ -18,7 +18,6 @@ from aiperf.common.models import (
     ProcessRecordsResult,
     ProfileResults,
     TelemetryHierarchy,
-    TelemetryMetrics,
     TelemetryRecord,
 )
 from aiperf.common.types import MetricTagT
@@ -76,9 +75,9 @@ class TestRecordsManagerTelemetry:
                 gpu_index=0,
                 gpu_uuid="GPU-123",
                 gpu_model_name="Test GPU",
-                telemetry_data=TelemetryMetrics(
-                    gpu_power_usage=100.0,
-                ),
+                telemetry_data={
+                    "gpu_power_usage": 100.0,
+                },
             )
         ]
 
@@ -149,7 +148,7 @@ class TestRecordsManagerTelemetry:
                 gpu_index=0,
                 gpu_uuid="GPU-123",
                 gpu_model_name="Test GPU",
-                telemetry_data=TelemetryMetrics(),
+                telemetry_data={},
             ),
             TelemetryRecord(
                 timestamp_ns=1000001,
@@ -157,7 +156,7 @@ class TestRecordsManagerTelemetry:
                 gpu_index=1,
                 gpu_uuid="GPU-456",
                 gpu_model_name="Test GPU",
-                telemetry_data=TelemetryMetrics(),
+                telemetry_data={},
             ),
         ]
 
@@ -178,9 +177,9 @@ class TestRecordsManagerTelemetry:
             gpu_index=0,
             gpu_uuid="GPU-123",
             gpu_model_name="Test GPU",
-            telemetry_data=TelemetryMetrics(
-                gpu_power_usage=100.0,
-            ),
+            telemetry_data={
+                "gpu_power_usage": 100.0,
+            },
         )
 
         # Add record to hierarchy

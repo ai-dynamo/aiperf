@@ -11,7 +11,7 @@ from aiperf.common.mixins import (
     TErrorCallback,
     TRecordCallback,
 )
-from aiperf.common.models import GpuMetadata, TelemetryMetrics, TelemetryRecord
+from aiperf.common.models import GpuMetadata, TelemetryRecord
 from aiperf.gpu_telemetry.constants import DCGM_TO_FIELD_MAPPING
 
 __all__ = ["DCGMTelemetryCollector"]
@@ -170,8 +170,15 @@ class DCGMTelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
             record = TelemetryRecord(
                 timestamp_ns=current_timestamp,
                 dcgm_url=self.endpoint_url,
-                **metadata.model_dump(),
-                telemetry_data=TelemetryMetrics(**scaled_metrics),
+                gpu_index=metadata.gpu_index,
+                gpu_uuid=metadata.gpu_uuid,
+                gpu_model_name=metadata.gpu_model_name,
+                pci_bus_id=metadata.pci_bus_id,
+                device=metadata.device,
+                hostname=metadata.hostname,
+                namespace=metadata.namespace,
+                pod_name=metadata.pod_name,
+                telemetry_data=scaled_metrics,
             )
             records.append(record)
 

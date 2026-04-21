@@ -23,7 +23,6 @@ from aiperf.common.models.server_metrics_models import (
     ServerMetricsResults,
 )
 from aiperf.common.models.telemetry_models import (
-    TelemetryMetrics,
     TelemetryRecord,
 )
 from aiperf.server_metrics.storage import ServerMetricsHierarchy
@@ -41,15 +40,15 @@ def sample_telemetry_record():
         pci_bus_id="00000000:01:00.0",
         device="nvidia0",
         hostname="test-node-01",
-        telemetry_data=TelemetryMetrics(
-            gpu_power_usage=300.0,
-            energy_consumption=1000.5,
-            gpu_utilization=85.0,
-            gpu_memory_used=72.5,
-            gpu_temperature=70.0,
-            xid_errors=0.0,
-            power_violation=0.0,
-        ),
+        telemetry_data={
+            "gpu_power_usage": 300.0,
+            "energy_consumption": 1000.5,
+            "gpu_utilization": 85.0,
+            "gpu_memory_used": 72.5,
+            "gpu_temperature": 70.0,
+            "xid_errors": 0.0,
+            "power_violation": 0.0,
+        },
     )
 
 

@@ -89,10 +89,10 @@ class TestPrometheusMetricParsing:
         assert record.hostname == "ed7e7a5e585f"
 
         # Verify telemetry data has reasonable values from DCGMFaker
-        assert record.telemetry_data.gpu_power_usage is not None
-        assert 0 < record.telemetry_data.gpu_power_usage < 400
-        assert record.telemetry_data.energy_consumption is not None
-        assert record.telemetry_data.gpu_memory_used is not None
+        assert record.telemetry_data.get("gpu_power_usage") is not None
+        assert 0 < record.telemetry_data.get("gpu_power_usage") < 400
+        assert record.telemetry_data.get("energy_consumption") is not None
+        assert record.telemetry_data.get("gpu_memory_used") is not None
 
     def test_complete_parsing_multi_gpu(self, multi_gpu_dcgm_data):
         """Test parsing complete DCGM response for multiple GPUs.
@@ -549,11 +549,11 @@ class TestDataProcessingEdgeCases:
         # Should only include the valid metric
         assert len(records) == 1
         # NaN, Inf, -Inf should be filtered out
-        assert records[0].telemetry_data.gpu_power_usage is None
-        assert records[0].telemetry_data.gpu_utilization is None
-        assert records[0].telemetry_data.gpu_temperature is None
+        assert records[0].telemetry_data.get("gpu_power_usage") is None
+        assert records[0].telemetry_data.get("gpu_utilization") is None
+        assert records[0].telemetry_data.get("gpu_temperature") is None
         # Valid value should be present
-        assert records[0].telemetry_data.gpu_memory_used is not None
+        assert records[0].telemetry_data.get("gpu_memory_used") is not None
 
     def test_invalid_gpu_index_handling(self):
         """Test handling of non-numeric GPU index values."""

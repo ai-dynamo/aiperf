@@ -219,22 +219,22 @@ class TestDCGMFakerTelemetryCollector:
             # Verify TelemetryMetrics are correctly scaled
             telemetry = record.telemetry_data
             assert telemetry is not None
-            assert telemetry.gpu_power_usage == approx(gpu.power, abs=0.01)
-            assert telemetry.gpu_utilization == approx(gpu.util, abs=0.01)
-            assert telemetry.gpu_temperature == approx(gpu.temp, abs=0.01)
-            assert telemetry.energy_consumption == approx(
+            assert telemetry.get("gpu_power_usage") == approx(gpu.power, abs=0.01)
+            assert telemetry.get("gpu_utilization") == approx(gpu.util, abs=0.01)
+            assert telemetry.get("gpu_temperature") == approx(gpu.temp, abs=0.01)
+            assert telemetry.get("energy_consumption") == approx(
                 gpu.energy * 1e-9, abs=0.01
             )  # mJ to MJ
-            assert telemetry.gpu_memory_used == approx(
+            assert telemetry.get("gpu_memory_used") == approx(
                 gpu.mem_used * 1.048576 * 1e-3, abs=0.01
             )  # MiB to GB
-            assert telemetry.xid_errors == approx(gpu.xid, abs=0.01)
-            assert telemetry.power_violation == approx(gpu.power_viol, abs=0.01)
+            assert telemetry.get("xid_errors") == approx(gpu.xid, abs=0.01)
+            assert telemetry.get("power_violation") == approx(gpu.power_viol, abs=0.01)
 
             # Verify values are in reasonable ranges
-            assert 0 <= telemetry.gpu_utilization <= 100
-            assert 0 < telemetry.gpu_power_usage <= gpu.cfg.max_power_w
-            assert 0 < telemetry.gpu_temperature <= 100
+            assert 0 <= telemetry.get("gpu_utilization") <= 100
+            assert 0 < telemetry.get("gpu_power_usage") <= gpu.cfg.max_power_w
+            assert 0 < telemetry.get("gpu_temperature") <= 100
 
     def test_load_affects_telemetry_records(self):
         """Test that load changes affect TelemetryRecords when parsed by real collector."""
@@ -254,10 +254,18 @@ class TestDCGMFakerTelemetryCollector:
         high_telemetry = high_records[0].telemetry_data
 
         # High load should produce higher values
-        assert high_telemetry.gpu_power_usage > low_telemetry.gpu_power_usage
-        assert high_telemetry.gpu_temperature > low_telemetry.gpu_temperature
-        assert high_telemetry.gpu_utilization > low_telemetry.gpu_utilization
-        assert high_telemetry.gpu_memory_used > low_telemetry.gpu_memory_used
+        assert high_telemetry.get("gpu_power_usage") > low_telemetry.get(
+            "gpu_power_usage"
+        )
+        assert high_telemetry.get("gpu_temperature") > low_telemetry.get(
+            "gpu_temperature"
+        )
+        assert high_telemetry.get("gpu_utilization") > low_telemetry.get(
+            "gpu_utilization"
+        )
+        assert high_telemetry.get("gpu_memory_used") > low_telemetry.get(
+            "gpu_memory_used"
+        )
 
     def test_metrics_clamped_to_bounds(self):
         """Test that all metrics are clamped to [0, max] bounds."""
@@ -274,11 +282,11 @@ class TestDCGMFakerTelemetryCollector:
                 t = record.telemetry_data
 
                 # All metrics should be non-negative
-                assert t.gpu_utilization >= 0
-                assert t.gpu_power_usage >= 0
-                assert t.gpu_temperature >= 0
-                assert t.gpu_memory_used >= 0
+                assert t.get("gpu_utilization") >= 0
+                assert t.get("gpu_power_usage") >= 0
+                assert t.get("gpu_temperature") >= 0
+                assert t.get("gpu_memory_used") >= 0
 
                 # All metrics should not exceed their max values
-                assert t.gpu_utilization <= 100
-                assert t.gpu_temperature <= 100
+                assert t.get("gpu_utilization") <= 100
+                assert t.get("gpu_temperature") <= 100

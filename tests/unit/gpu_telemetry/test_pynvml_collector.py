@@ -362,27 +362,33 @@ class TestPyNVMLMetricsCollection:
         assert gpu0.dcgm_url == PYNVML_SOURCE_IDENTIFIER
         assert gpu0.gpu_uuid == "GPU-abc123"
         assert gpu0.gpu_model_name == "NVIDIA GeForce RTX 4090"
-        assert gpu0.telemetry_data.gpu_power_usage == pytest.approx(350.0, rel=0.01)
-        assert gpu0.telemetry_data.gpu_utilization == 95.0
-        assert gpu0.telemetry_data.mem_utilization == 45.0
-        assert gpu0.telemetry_data.gpu_temperature == 72.0
-        assert gpu0.telemetry_data.gpu_memory_used == pytest.approx(20.0, rel=0.1)
-        assert gpu0.telemetry_data.encoder_utilization == 30.0
-        assert gpu0.telemetry_data.decoder_utilization == 25.0
-        assert gpu0.telemetry_data.jpg_utilization == 10.0
-        assert gpu0.telemetry_data.sm_utilization == 85.0
-        assert gpu0.telemetry_data.power_violation == 5000.0
+        assert gpu0.telemetry_data.get("gpu_power_usage") == pytest.approx(
+            350.0, rel=0.01
+        )
+        assert gpu0.telemetry_data.get("gpu_utilization") == 95.0
+        assert gpu0.telemetry_data.get("mem_utilization") == 45.0
+        assert gpu0.telemetry_data.get("gpu_temperature") == 72.0
+        assert gpu0.telemetry_data.get("gpu_memory_used") == pytest.approx(
+            20.0, rel=0.1
+        )
+        assert gpu0.telemetry_data.get("encoder_utilization") == 30.0
+        assert gpu0.telemetry_data.get("decoder_utilization") == 25.0
+        assert gpu0.telemetry_data.get("jpg_utilization") == 10.0
+        assert gpu0.telemetry_data.get("sm_utilization") == 85.0
+        assert gpu0.telemetry_data.get("power_violation") == 5000.0
 
         # GPU 1 verification
         assert gpu1.gpu_uuid == "GPU-def456"
-        assert gpu1.telemetry_data.gpu_power_usage == pytest.approx(280.0, rel=0.01)
-        assert gpu1.telemetry_data.gpu_utilization == 75.0
-        assert gpu1.telemetry_data.mem_utilization == 35.0
-        assert gpu1.telemetry_data.encoder_utilization == 20.0
-        assert gpu1.telemetry_data.decoder_utilization == 15.0
-        assert gpu1.telemetry_data.jpg_utilization == 5.0
-        assert gpu1.telemetry_data.sm_utilization == 65.0
-        assert gpu1.telemetry_data.power_violation == 2000.0
+        assert gpu1.telemetry_data.get("gpu_power_usage") == pytest.approx(
+            280.0, rel=0.01
+        )
+        assert gpu1.telemetry_data.get("gpu_utilization") == 75.0
+        assert gpu1.telemetry_data.get("mem_utilization") == 35.0
+        assert gpu1.telemetry_data.get("encoder_utilization") == 20.0
+        assert gpu1.telemetry_data.get("decoder_utilization") == 15.0
+        assert gpu1.telemetry_data.get("jpg_utilization") == 5.0
+        assert gpu1.telemetry_data.get("sm_utilization") == 65.0
+        assert gpu1.telemetry_data.get("power_violation") == 2000.0
 
     @pytest.mark.asyncio
     async def test_collect_handles_nvml_errors(self, patch_pynvml):
@@ -401,9 +407,9 @@ class TestPyNVMLMetricsCollection:
         # Should still get records with other metrics
         assert len(records) == 2
         for r in records:
-            assert r.telemetry_data.gpu_power_usage is None
-            assert r.telemetry_data.gpu_utilization is not None
-            assert r.telemetry_data.gpu_temperature is not None
+            assert r.telemetry_data.get("gpu_power_usage") is None
+            assert r.telemetry_data.get("gpu_utilization") is not None
+            assert r.telemetry_data.get("gpu_temperature") is not None
 
         await collector.stop()
 
@@ -544,7 +550,9 @@ class TestPyNVMLEdgeCases:
 
         gpu0 = next(r for r in records if r.gpu_index == 0)
         # 1000000000 mJ * 1e-9 = 1.0 MJ
-        assert gpu0.telemetry_data.energy_consumption == pytest.approx(1.0, rel=0.01)
+        assert gpu0.telemetry_data.get("energy_consumption") == pytest.approx(
+            1.0, rel=0.01
+        )
 
     @pytest.mark.asyncio
     async def test_sm_utilization_sums_multiple_processes(self, patch_pynvml):
@@ -565,7 +573,7 @@ class TestPyNVMLEdgeCases:
         gpu0 = next(r for r in records if r.gpu_index == 0)
 
         # Should sum: 40 + 35 = 75
-        assert gpu0.telemetry_data.sm_utilization == 75.0
+        assert gpu0.telemetry_data.get("sm_utilization") == 75.0
 
         await collector.stop()
 
@@ -584,7 +592,7 @@ class TestPyNVMLEdgeCases:
         records = collector._collect_gpu_metrics()
 
         for r in records:
-            assert r.telemetry_data.sm_utilization == 0.0
+            assert r.telemetry_data.get("sm_utilization") == 0.0
 
         await collector.stop()
 
@@ -607,7 +615,7 @@ class TestPyNVMLEdgeCases:
         gpu0 = next(r for r in records if r.gpu_index == 0)
 
         # Sum would be 60 + 55 = 115, but should be capped at 100.0
-        assert gpu0.telemetry_data.sm_utilization == 100.0
+        assert gpu0.telemetry_data.get("sm_utilization") == 100.0
 
         await collector.stop()
 
@@ -668,7 +676,7 @@ class TestPyNVMLGPM:
 
         # Should still collect SM utilization via process API
         records = collector._collect_gpu_metrics()
-        assert all(r.telemetry_data.sm_utilization is not None for r in records)
+        assert all(r.telemetry_data.get("sm_utilization") is not None for r in records)
 
         await collector.stop()
 
@@ -743,7 +751,7 @@ class TestPyNVMLGPM:
 
         # SM utilization should come from GPM
         gpu0 = next(r for r in records if r.gpu_index == 0)
-        assert gpu0.telemetry_data.sm_utilization == 88.5
+        assert gpu0.telemetry_data.get("sm_utilization") == 88.5
 
         await collector.stop()
 
@@ -765,7 +773,7 @@ class TestPyNVMLGPM:
 
         # Should still work via process API
         records = collector._collect_gpu_metrics()
-        assert all(r.telemetry_data.sm_utilization is not None for r in records)
+        assert all(r.telemetry_data.get("sm_utilization") is not None for r in records)
 
         await collector.stop()
 
@@ -815,7 +823,7 @@ class TestPyNVMLGPM:
         records = collector._collect_gpu_metrics()
 
         # Should still get SM utilization from process API fallback
-        assert all(r.telemetry_data.sm_utilization is not None for r in records)
+        assert all(r.telemetry_data.get("sm_utilization") is not None for r in records)
 
         # Process API should have been called
         mock_pynvml.nvmlDeviceGetProcessesUtilizationInfo.assert_called()

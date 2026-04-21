@@ -24,7 +24,6 @@ from aiperf.common.models import (
     ParsedResponseRecord,
     RequestInfo,
     RequestRecord,
-    TelemetryMetrics,
     TelemetryRecord,
     TextResponse,
 )
@@ -601,6 +600,15 @@ def make_telemetry_record(
     power_violation: float | None = None,
 ) -> TelemetryRecord:
     """Factory for creating TelemetryRecord instances with sensible defaults."""
+    raw_metrics = {
+        "gpu_power_usage": gpu_power_usage,
+        "gpu_utilization": gpu_utilization,
+        "energy_consumption": energy_consumption,
+        "gpu_memory_used": gpu_memory_used,
+        "gpu_temperature": gpu_temperature,
+        "xid_errors": xid_errors,
+        "power_violation": power_violation,
+    }
     return TelemetryRecord(
         timestamp_ns=timestamp_ns,
         dcgm_url=dcgm_url,
@@ -610,13 +618,5 @@ def make_telemetry_record(
         hostname=hostname,
         pci_bus_id=pci_bus_id,
         device=device,
-        telemetry_data=TelemetryMetrics(
-            gpu_power_usage=gpu_power_usage,
-            gpu_utilization=gpu_utilization,
-            energy_consumption=energy_consumption,
-            gpu_memory_used=gpu_memory_used,
-            gpu_temperature=gpu_temperature,
-            xid_errors=xid_errors,
-            power_violation=power_violation,
-        ),
+        telemetry_data={k: v for k, v in raw_metrics.items() if v is not None},
     )

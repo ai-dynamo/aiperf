@@ -128,7 +128,6 @@ from aiperf.common.models.telemetry_models import (
     GpuTelemetrySnapshot,
     ProcessTelemetryResult,
     TelemetryHierarchy,
-    TelemetryMetrics,
     TelemetryRecord,
 )
 from aiperf.common.models.trace_models import (
@@ -232,7 +231,6 @@ __all__ = [
     "SlimRecord",
     "TelemetryExportData",
     "TelemetryHierarchy",
-    "TelemetryMetrics",
     "TelemetryRecord",
     "TelemetrySummary",
     "Text",
