@@ -173,16 +173,8 @@ svg { display: block; }
     <input id="concurrency" type="number" value="50" min="1">
   </div>
   <div class="control-group">
-    <label>Prefill Workers:</label>
-    <input id="prefill-workers" type="number" value="2" min="1">
-  </div>
-  <div class="control-group">
-    <label>DP Workers:</label>
-    <input id="dp-workers" type="number" value="8" min="1">
-  </div>
-  <div class="control-group">
-    <label>Per-Worker TPS:</label>
-    <input id="per-worker-tps" type="number" value="4000" min="1">
+    <label>Prefill TPS:</label>
+    <input id="prefill-tps" type="number" value="64000" min="1">
   </div>
   <div class="control-group">
     <label>Decode TPS:</label>
@@ -272,9 +264,8 @@ const theoreticalHitRate = computeTheoreticalHitRate(SESSIONS);
 const MAX_GROUPS = $MAX_GROUPS;
 const MAX_GROUP_BLOCKS = $MAX_GROUP_BLOCKS;
 
-function simulate(sessions, concurrency, prefillWorkers, dpWorkers, perWorkerTps, decodeTps, kvBytesPerToken, gpuKvCapacityGb, l1Tokens, l15Tokens, blockSize) {
-  const effectivePrefillWorkers = prefillWorkers * dpWorkers;
-  const prefillWorkerFreeAt = new Float64Array(effectivePrefillWorkers);
+function simulate(sessions, concurrency, prefillTps, decodeTps, kvBytesPerToken, gpuKvCapacityGb, l1Tokens, l15Tokens, blockSize) {
+  let prefillFreeAt = 0;
 
   // Hash ID range boundaries for layer classification
   const l1BlockCount = Math.ceil(l1Tokens / blockSize);
@@ -308,18 +299,11 @@ function simulate(sessions, concurrency, prefillWorkers, dpWorkers, perWorkerTps
     return e;
   }
 
-  function acquirePrefillWorker(readyTime) {
-    let bestIdx = 0;
-    for (let i = 1; i < effectivePrefillWorkers; i++) {
-      if (prefillWorkerFreeAt[i] < prefillWorkerFreeAt[bestIdx]) bestIdx = i;
-    }
-    const workerFree = prefillWorkerFreeAt[bestIdx];
-    const startTime = Math.max(readyTime, workerFree);
-    return { workerIdx: bestIdx, startTime };
-  }
-
-  function releasePrefillWorker(workerIdx, endTime) {
-    prefillWorkerFreeAt[workerIdx] = endTime;
+  function reservePrefill(readyTime, duration) {
+    const startTime = Math.max(readyTime, prefillFreeAt);
+    const endTime = startTime + duration;
+    prefillFreeAt = endTime;
+    return { startTime, endTime };
   }
 
   // Slot tracking for Gantt
@@ -454,12 +438,10 @@ function simulate(sessions, concurrency, prefillWorkers, dpWorkers, perWorkerTps
     totalHitTokens += hitTokens;
     totalMissTokens += missTokens;
 
-    const prefillDuration = (missTokens / perWorkerTps) * 1000;
+    const prefillDuration = (missTokens / prefillTps) * 1000;
     const decodeDuration = (turn.output_length / decodeTps) * 1000;
 
-    const { workerIdx, startTime: prefillStart } = acquirePrefillWorker(turnReadyTime);
-    const prefillEnd = prefillStart + prefillDuration;
-    releasePrefillWorker(workerIdx, prefillEnd);
+    const { startTime: prefillStart, endTime: prefillEnd } = reservePrefill(turnReadyTime, prefillDuration);
 
     const decodeStart = prefillEnd;
     const decodeEnd = decodeStart + decodeDuration;
@@ -694,25 +676,18 @@ function gbToInfo(gb) {
 const tooltip = d3.select('#tooltip');
 
 function updateComputedStats() {
-  const pw = +document.getElementById('prefill-workers').value;
-  const dp = +document.getElementById('dp-workers').value;
-  const tps = +document.getElementById('per-worker-tps').value;
-  const eff = pw * dp;
-  const sysTps = eff * tps;
+  const prefillTps = +document.getElementById('prefill-tps').value;
   const kvBytesPerToken = +document.getElementById('kv-bytes-per-token').value;
   const totalKvGb = +document.getElementById('total-kv-cache-gb').value;
   const totalKvTokens = totalKvGb * 1e9 / kvBytesPerToken;
   document.getElementById('computed-stats').innerHTML =
-    `Effective prefill workers: <span>${eff}</span> &nbsp;|&nbsp; ` +
-    `System prefill TPS: <span>${formatNumber(sysTps)}</span> tok/s &nbsp;|&nbsp; ` +
+    `Prefill TPS: <span>${formatNumber(prefillTps)}</span> tok/s &nbsp;|&nbsp; ` +
     `Total KV capacity: <span>${totalKvGb.toFixed(0)} GB</span> ~<span>${formatNumber(Math.round(totalKvTokens))}</span> tokens`;
 }
 
 function runSimulation() {
   const concurrency = +document.getElementById('concurrency').value;
-  const prefillWorkers = +document.getElementById('prefill-workers').value;
-  const dpWorkers = +document.getElementById('dp-workers').value;
-  const perWorkerTps = +document.getElementById('per-worker-tps').value;
+  const prefillTps = +document.getElementById('prefill-tps').value;
   const decodeTps = +document.getElementById('decode-tps').value;
   const kvBytesPerToken = +document.getElementById('kv-bytes-per-token').value;
   const gpuKvCapacityGb = +document.getElementById('total-kv-cache-gb').value;
@@ -729,7 +704,7 @@ function runSimulation() {
   updateComputedStats();
 
   const { timeSeries, sessionStates, maxTime, totalPrefillMs, totalDecodeMs, totalWaitMs, avgTtft, turnCount, evictionCount, missL15Blocks, missSessionBlocks, totalEvictedBlocks, cacheHitRate, totalHitTokens, totalMissTokens } =
-    simulate(SESSIONS, concurrency, prefillWorkers, dpWorkers, perWorkerTps, decodeTps, kvBytesPerToken, gpuKvCapacityGb, l1Tokens, l15Tokens, blockSize);
+    simulate(SESSIONS, concurrency, prefillTps, decodeTps, kvBytesPerToken, gpuKvCapacityGb, l1Tokens, l15Tokens, blockSize);
 
   const peakRequests = d3.max(timeSeries, d => d.active_requests);
   const peakISL = d3.max(timeSeries, d => d.input_tokens);
@@ -1181,7 +1156,7 @@ function drawGantt(selector, sessionStates, maxTime, concurrency) {
 }
 
 // Update computed stats on any input change
-['prefill-workers', 'dp-workers', 'per-worker-tps', 'kv-bytes-per-token', 'total-kv-cache-gb', 'block-size'].forEach(id => {
+['prefill-tps', 'kv-bytes-per-token', 'total-kv-cache-gb', 'block-size'].forEach(id => {
   document.getElementById(id).addEventListener('input', updateComputedStats);
 });
 

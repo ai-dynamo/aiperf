@@ -25,13 +25,11 @@ from aiperf.dataset.agentic_code_gen.reporting.simulation_engine import (
 
 # block_size=100 throughout: 1 block = 100 tokens, easy mental math.
 # kv_bytes_per_token=1: capacity in GB = capacity in tokens / 1e9.
-# 4 prefill workers at 1M tps: prefill is near-instant for miss tokens.
+# prefill_tps=1M: prefill is near-instant for miss tokens.
 # decode_tps=10: slow decode so sessions stay alive long enough to overlap.
 
 FAST_PREFILL = dict(
-    prefill_workers=4,
-    dp_workers=1,
-    per_worker_tps=1_000_000,
+    prefill_tps=1_000_000,
     kv_bytes_per_token=1,
     l1_tokens=0,
     l1_5_tokens=0,
@@ -113,9 +111,7 @@ class TestSimulationConfigValidation:
         "field",
         [
             "concurrency",
-            "prefill_workers",
-            "dp_workers",
-            "per_worker_tps",
+            "prefill_tps",
             "decode_tps",
             "block_size",
         ],
@@ -684,7 +680,7 @@ class TestCacheHitFromBlocks:
 
         config = _cfg(
             concurrency=1,
-            per_worker_tps=100,  # slow prefill to make timing measurable
+            prefill_tps=100,  # slow prefill to make timing measurable
             decode_tps=1_000_000,
             gpu_kv_capacity_gb=1.0,
         )
@@ -769,7 +765,7 @@ class TestTimingCorrectness:
 
         config = _cfg(
             concurrency=1,
-            per_worker_tps=100,
+            prefill_tps=100,
             decode_tps=1_000_000,
         )
 
@@ -790,7 +786,7 @@ class TestTimingCorrectness:
 
         config = _cfg(
             concurrency=1,
-            per_worker_tps=1_000_000,
+            prefill_tps=1_000_000,
             decode_tps=50,
         )
 
@@ -799,8 +795,8 @@ class TestTimingCorrectness:
         decode_ms = evt.decode_end - evt.decode_start
         assert decode_ms == pytest.approx(10_000.0)
 
-    def test_prefill_worker_queuing(self) -> None:
-        """With 1 prefill worker and 2 sessions, second must wait."""
+    def test_prefill_tps_is_shared_capacity(self) -> None:
+        """Concurrent sessions share one aggregate prefill TPS budget."""
         s0 = _make_session(
             "s0",
             [
@@ -824,8 +820,7 @@ class TestTimingCorrectness:
 
         config = _cfg(
             concurrency=2,
-            prefill_workers=1,
-            per_worker_tps=100,
+            prefill_tps=100,
             decode_tps=10,
         )
 
@@ -834,8 +829,8 @@ class TestTimingCorrectness:
         evt1 = result.session_states[1].turn_events[0]
         assert evt1.prefill_start == pytest.approx(evt0.decode_start)
 
-    def test_dp_workers_multiply_parallelism(self) -> None:
-        """dp_workers * prefill_workers = effective parallelism."""
+    def test_prefill_tps_queues_ready_turns(self) -> None:
+        """Ready turns reserve aggregate prefill capacity in order."""
         sessions = [
             _make_session(
                 f"s{i}",
@@ -852,13 +847,12 @@ class TestTimingCorrectness:
 
         config = _cfg(
             concurrency=4,
-            prefill_workers=2,
-            dp_workers=2,
-            per_worker_tps=100,
+            prefill_tps=400,
             decode_tps=10,
         )
 
         result = simulate(sessions, config)
-        for i in range(4):
-            evt = result.session_states[i].turn_events[0]
-            assert evt.prefill_start == pytest.approx(0.0)
+        starts = [
+            result.session_states[i].turn_events[0].prefill_start for i in range(4)
+        ]
+        assert starts == pytest.approx([0.0, 2500.0, 5000.0, 7500.0])

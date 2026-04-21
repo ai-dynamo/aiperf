@@ -35,14 +35,8 @@ class SimulationConfig:
     concurrency: int = field(
         default=50, metadata={"description": "Max concurrent sessions"}
     )
-    prefill_workers: int = field(
-        default=8, metadata={"description": "Number of prefill workers"}
-    )
-    dp_workers: int = field(
-        default=4, metadata={"description": "Data-parallel worker count"}
-    )
-    per_worker_tps: int = field(
-        default=4000, metadata={"description": "Prefill tokens/sec per worker"}
+    prefill_tps: int = field(
+        default=64000, metadata={"description": "Aggregate prefill tokens/sec"}
     )
     decode_tps: int = field(default=200, metadata={"description": "Decode tokens/sec"})
     kv_bytes_per_token: int = field(
@@ -66,9 +60,7 @@ class SimulationConfig:
         """Raise ValueError for invalid simulation parameters."""
         positive_fields = {
             "concurrency": self.concurrency,
-            "prefill_workers": self.prefill_workers,
-            "dp_workers": self.dp_workers,
-            "per_worker_tps": self.per_worker_tps,
+            "prefill_tps": self.prefill_tps,
             "decode_tps": self.decode_tps,
             "block_size": self.block_size,
         }
@@ -183,8 +175,7 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
     that need prefill. This replaces the old flat cache_hit_rate input.
     """
     config.validate()
-    effective_prefill_workers = config.prefill_workers * config.dp_workers
-    prefill_worker_free_at = [0.0] * effective_prefill_workers
+    prefill_free_at = 0.0
 
     l1_block_count = math.ceil(config.l1_tokens / config.block_size)
     session_region_base = l1_block_count + MAX_GROUPS * MAX_GROUP_BLOCKS
@@ -209,13 +200,12 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
         heapq.heappush(pq, (time, counter, etype, s_idx, t_idx))
         counter += 1
 
-    def acquire_prefill_worker(ready_time: float) -> tuple[int, float]:
-        best_idx = 0
-        for i in range(1, effective_prefill_workers):
-            if prefill_worker_free_at[i] < prefill_worker_free_at[best_idx]:
-                best_idx = i
-        start_time = max(ready_time, prefill_worker_free_at[best_idx])
-        return best_idx, start_time
+    def reserve_prefill(ready_time: float, duration: float) -> tuple[float, float]:
+        nonlocal prefill_free_at
+        start_time = max(ready_time, prefill_free_at)
+        end_time = start_time + duration
+        prefill_free_at = end_time
+        return start_time, end_time
 
     # Slot tracking for Gantt
     slot_free_at = [0.0] * config.concurrency
@@ -356,12 +346,10 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
         total_miss_tokens += miss_tokens
 
         # Only miss tokens need prefill
-        prefill_duration = (miss_tokens / config.per_worker_tps) * 1000
+        prefill_duration = (miss_tokens / config.prefill_tps) * 1000
         decode_duration = (turn["output_length"] / config.decode_tps) * 1000
 
-        worker_idx, prefill_start = acquire_prefill_worker(time)
-        prefill_end = prefill_start + prefill_duration
-        prefill_worker_free_at[worker_idx] = prefill_end
+        prefill_start, prefill_end = reserve_prefill(time, prefill_duration)
 
         decode_start = prefill_end
         decode_end = decode_start + decode_duration
