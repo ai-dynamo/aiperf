@@ -62,6 +62,7 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import ORJSONResponse, PlainTextResponse, StreamingResponse
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
 from starlette.requests import Request
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 dcgm_fakers: list[DCGMFaker] = []
 server_start_time: float = 0.0
@@ -162,10 +163,10 @@ class InferenceReadinessMiddleware:
     startup delay. Used by readiness-probe tests to simulate a server
     whose frontend is up but whose workers haven't loaded weights yet."""
 
-    def __init__(self, inner_app):
+    def __init__(self, inner_app: ASGIApp) -> None:
         self.app = inner_app
 
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if (
             scope["type"] == "http"
             and server_config.inference_ready_delay_seconds > 0
