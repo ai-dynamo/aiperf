@@ -156,6 +156,13 @@ class TestRunSingleBenchmark:
         ):
             yield
 
+    @pytest.fixture(autouse=True)
+    def _mock_os_exit(self):
+        """_run_single_benchmark terminates with os._exit to bypass Python teardown;
+        neutralize it so test assertions can run."""
+        with patch("os._exit") as mock_exit:
+            yield mock_exit
+
     @pytest.fixture
     def run_simple(self) -> BenchmarkRun:
         """Create a BenchmarkRun with Simple UI type."""
@@ -182,17 +189,19 @@ class TestRunSingleBenchmark:
 
     @patch("aiperf.config.resolvers.build_default_resolver_chain")
     @patch("aiperf.common.bootstrap.bootstrap_and_run_service")
-    def test_bootstrap_exception_is_raised(
+    def test_bootstrap_exception_exits_nonzero(
         self,
         mock_bootstrap: Mock,
         mock_chain: Mock,
         run: BenchmarkRun,
+        _mock_os_exit: Mock,
     ):
-        """Test that exceptions from bootstrap are raised."""
+        """Bootstrap exceptions are logged and surfaced via a non-zero exit code."""
         mock_bootstrap.side_effect = RuntimeError("Bootstrap failed")
 
-        with pytest.raises(RuntimeError, match="Bootstrap failed"):
-            _run_single_benchmark(run)
+        _run_single_benchmark(run)
+
+        _mock_os_exit.assert_called_once_with(1)
 
 
 class TestRunMultiBenchmark:

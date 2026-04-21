@@ -40,6 +40,13 @@ def _mock_tokenizer_validation(mock_get_global_error_queue):
 class TestMacOSTerminalFixes:
     """Test the macOS-specific terminal corruption fixes in cli_runner.py"""
 
+    @pytest.fixture(autouse=True)
+    def _mock_os_exit(self):
+        """_run_single_benchmark terminates with os._exit to bypass Python teardown;
+        neutralize it so test assertions can run."""
+        with patch("os._exit"):
+            yield
+
     @pytest.fixture
     def config_dashboard(self) -> BenchmarkPlan:
         """Create a BenchmarkPlan with Dashboard UI type."""

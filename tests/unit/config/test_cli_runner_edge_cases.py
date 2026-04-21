@@ -181,6 +181,13 @@ class TestSingleRunErrorPaths:
     def _prevent_forkserver(self, mock_get_global_error_queue):
         """Prevent forkserver initialization when calling _run_single_benchmark."""
 
+    @pytest.fixture(autouse=True)
+    def _mock_os_exit(self):
+        """_run_single_benchmark terminates with os._exit to bypass Python teardown;
+        neutralize it so test assertions can run."""
+        with patch("os._exit") as mock_exit:
+            yield mock_exit
+
     @patch("aiperf.config.resolvers.build_default_resolver_chain")
     @patch("aiperf.common.logging.setup_rich_logging")
     def test_resolver_chain_failure_exits(
@@ -205,11 +212,12 @@ class TestSingleRunErrorPaths:
     @patch("aiperf.config.resolvers.build_default_resolver_chain")
     @patch("aiperf.common.bootstrap.bootstrap_and_run_service")
     @patch("aiperf.common.logging.setup_rich_logging")
-    def test_bootstrap_exception_logged_and_reraised(
+    def test_bootstrap_exception_logged_and_exits_nonzero(
         self,
         mock_setup_rich: Mock,
         mock_bootstrap: Mock,
         mock_chain_factory: Mock,
+        _mock_os_exit: Mock,
     ) -> None:
         mock_bootstrap.side_effect = RuntimeError("Bootstrap failed")
 
@@ -219,8 +227,9 @@ class TestSingleRunErrorPaths:
             artifact_dir=Path("/tmp/test"),
         )
 
-        with pytest.raises(RuntimeError, match="Bootstrap failed"):
-            _run_single_benchmark(run)
+        _run_single_benchmark(run)
+
+        _mock_os_exit.assert_called_once_with(1)
 
 
 # ============================================================

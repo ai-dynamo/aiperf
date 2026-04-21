@@ -71,13 +71,18 @@ class TestBootstrapMacOSRedirect:
             )
             mock_redirect.assert_not_called()
 
-    def test_redirect_not_called_on_linux(
+    def test_redirect_called_in_linux_child_process(
         self,
         service_config_no_uvloop: BenchmarkRun,
         mock_log_queue,
         mock_linux_child_process,
     ):
-        """_redirect_stdio_to_devnull is NOT called on Linux."""
+        """_redirect_stdio_to_devnull is also called on Linux child processes.
+
+        Required so the parent's captured stdout/stderr pipes close promptly
+        when aiperf exits, otherwise harnesses doing process.communicate()
+        can hang indefinitely.
+        """
         with patch(
             "aiperf.common.bootstrap._redirect_stdio_to_devnull"
         ) as mock_redirect:
@@ -87,7 +92,7 @@ class TestBootstrapMacOSRedirect:
                 log_queue=mock_log_queue,
                 service_id="test_service",
             )
-            mock_redirect.assert_not_called()
+            mock_redirect.assert_called_once()
 
 
 class TestRedirectStdioToDevnull:

@@ -362,7 +362,7 @@ class TestRampConfig:
 class TestCLIModelStructure:
     """Structural integrity tests (replaces test_cli_mapping.py safety net)."""
 
-    EXPECTED_FIELD_COUNT = 144
+    EXPECTED_FIELD_COUNT = 148
 
     def test_field_count(self) -> None:
         assert len(CLIModel.model_fields) == self.EXPECTED_FIELD_COUNT

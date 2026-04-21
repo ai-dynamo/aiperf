@@ -295,8 +295,8 @@ class TestJobSetSpec:
         manifest = basic_jobset_spec.to_k8s_manifest()
         assert "ttlSecondsAfterFinished" in manifest["spec"]
 
-    def test_worker_job_inherits_nonzero_ttl_for_debugging(self) -> None:
-        """Worker jobs should keep pods around long enough for post-failure inspection."""
+    def test_worker_job_ttl_is_zero_for_immediate_gc(self) -> None:
+        """Worker jobs must GC immediately; the outer JobSet carries the real TTL."""
         spec = JobSetSpec(
             name="aiperf-test",
             namespace="default",
@@ -308,7 +308,7 @@ class TestJobSetSpec:
         worker_job = next(
             j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "workers"
         )
-        assert worker_job["template"]["spec"]["ttlSecondsAfterFinished"] == 600
+        assert worker_job["template"]["spec"]["ttlSecondsAfterFinished"] == 0
 
     def test_to_k8s_manifest_custom_ttl(self) -> None:
         """Test JobSet with custom TTL."""
@@ -351,7 +351,11 @@ class TestJobSetSpec:
     def test_jobset_manifest_default_keeps_existing_retry_and_ttl_behavior(
         self,
     ) -> None:
-        """Default mode should preserve current worker retry and explicit TTL behavior."""
+        """Default mode preserves worker retries and puts TTL on the outer JobSet.
+
+        Worker jobs are forced to ttl=0 for immediate GC; the benchmark-wide TTL
+        lives on the JobSet itself.
+        """
         spec = JobSetSpec(
             name="aiperf-test",
             namespace="default",
@@ -367,7 +371,7 @@ class TestJobSetSpec:
 
         assert controller_job["template"]["spec"]["backoffLimit"] == 0
         assert worker_job["template"]["spec"]["backoffLimit"] == 3
-        assert worker_job["template"]["spec"]["ttlSecondsAfterFinished"] == 600
+        assert worker_job["template"]["spec"]["ttlSecondsAfterFinished"] == 0
         assert manifest["spec"]["ttlSecondsAfterFinished"] == 600
 
     def test_to_k8s_manifest_controller_containers(
