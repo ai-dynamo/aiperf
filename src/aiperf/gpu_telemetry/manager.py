@@ -32,12 +32,12 @@ class GPUTelemetryManager(BaseComponentService):
 
     The GPUTelemetryManager coordinates multiple TelemetryDataCollector instances
     to collect GPU telemetry from multiple DCGM endpoints and send unified
-    TelemetryRecordsMessage to RecordsManager.
+    TelemetryRecordsWireMessage to RecordsManager.
 
     This service:
     - Manages lifecycle of TelemetryDataCollector instances
     - Collects telemetry from multiple DCGM endpoints
-    - Sends TelemetryRecordsMessage to RecordsManager via message system
+    - Sends TelemetryRecordsWireMessage to RecordsManager via message system
     - Handles errors gracefully with ErrorDetails
     - Follows centralized architecture patterns
 
@@ -444,7 +444,7 @@ class GPUTelemetryManager(BaseComponentService):
     ) -> None:
         """Async callback for receiving telemetry records from collectors.
 
-        Sends TelemetryRecordsMessage to RecordsManager via message system.
+        Sends TelemetryRecordsWireMessage to RecordsManager via message system.
         Empty record lists are ignored.
 
         Args:
@@ -473,7 +473,7 @@ class GPUTelemetryManager(BaseComponentService):
     async def _on_telemetry_error(self, error: ErrorDetails, collector_id: str) -> None:
         """Async callback for receiving telemetry errors from collectors.
 
-        Sends error TelemetryRecordsMessage to RecordsManager via message system.
+        Sends error TelemetryRecordsWireMessage to RecordsManager via message system.
         The message contains an empty records list and the error details.
 
         Args:

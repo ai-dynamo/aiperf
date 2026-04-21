@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from aiperf.common.messages import TelemetryRecordsMessage
 from aiperf.common.metric_records_wire import (
     MetricRecordMetadata,
     MetricRecordsBatchWireMessage,
@@ -19,6 +18,10 @@ from aiperf.common.models import (
     ProfileResults,
     TelemetryHierarchy,
     TelemetryRecord,
+)
+from aiperf.common.telemetry_records_wire import (
+    TelemetryRecordsWireMessage,
+    build_telemetry_records_wire_message,
 )
 from aiperf.common.types import MetricTagT
 from aiperf.records.records_manager import RecordsManager
@@ -81,13 +84,14 @@ class TestRecordsManagerTelemetry:
             )
         ]
 
-        message = TelemetryRecordsMessage(
+        message = build_telemetry_records_wire_message(
             service_id="test_service",
             collector_id="test_collector",
             dcgm_url="http://localhost:9400/metrics",
             records=records,
             error=None,
         )
+        assert isinstance(message, TelemetryRecordsWireMessage)
 
         # Mock the hierarchy
         mock_hierarchy = MagicMock(spec=TelemetryHierarchy)
@@ -103,14 +107,14 @@ class TestRecordsManagerTelemetry:
 
         # Verify behavior
         assert mock_hierarchy.add_record.call_count == len(records)
-        mock_send_to_processors.assert_called_once_with(records)
+        mock_send_to_processors.assert_called_once_with(message.records)
 
     @pytest.mark.asyncio
     async def test_on_telemetry_records_invalid(self):
         """Test handling invalid telemetry records with errors."""
         error = ErrorDetails(message="Test error", code=500)
 
-        message = TelemetryRecordsMessage(
+        message = build_telemetry_records_wire_message(
             service_id="test_service",
             collector_id="test_collector",
             dcgm_url="http://localhost:9400/metrics",
@@ -131,8 +135,8 @@ class TestRecordsManagerTelemetry:
         mock_send_to_processors.assert_not_called()
 
         # Error should be tracked
-        assert error in error_counts
-        assert error_counts[error] == 1
+        assert message.error in error_counts
+        assert error_counts[message.error] == 1
 
     @pytest.mark.asyncio
     async def test_send_telemetry_to_results_processors(self):

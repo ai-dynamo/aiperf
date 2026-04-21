@@ -40,12 +40,12 @@ class ServerMetricsManager(BaseComponentService):
 
     The ServerMetricsManager coordinates multiple ServerMetricsDataCollector instances
     to collect server metrics from multiple Prometheus endpoints and send unified
-    ServerMetricsRecordsMessage to RecordsManager.
+    ServerMetricsRecordWireMessage to RecordsManager.
 
     This service:
     - Manages lifecycle of ServerMetricsDataCollector instances
     - Collects metrics from multiple Prometheus endpoints
-    - Sends ServerMetricsRecordsMessage to RecordsManager via message system
+    - Sends ServerMetricsRecordWireMessage to RecordsManager via message system
     - Handles errors gracefully with ErrorDetails
     - Follows centralized architecture patterns
 

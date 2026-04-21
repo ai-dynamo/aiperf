@@ -28,7 +28,6 @@ from aiperf.common.messages.progress_messages import (
 from aiperf.common.messages.server_metrics_messages import (
     ProcessServerMetricsResultMessage,
     RealtimeServerMetricsMessage,
-    ServerMetricsRecordMessage,
     ServerMetricsStatusMessage,
 )
 from aiperf.common.messages.service_messages import (
@@ -44,7 +43,6 @@ from aiperf.common.messages.service_messages import (
 from aiperf.common.messages.telemetry_messages import (
     ProcessTelemetryResultMessage,
     RealtimeTelemetryMetricsMessage,
-    TelemetryRecordsMessage,
     TelemetryStatusMessage,
 )
 from aiperf.common.messages.worker_messages import (
@@ -82,10 +80,8 @@ __all__ = [
     "RecordsProcessingStatsMessage",
     "RegistrationMessage",
     "RequiresRequestNSMixin",
-    "ServerMetricsRecordMessage",
     "ServerMetricsStatusMessage",
     "StatusMessage",
-    "TelemetryRecordsMessage",
     "TelemetryStatusMessage",
     "WorkerHealthMessage",
     "WorkerPodStateMessage",

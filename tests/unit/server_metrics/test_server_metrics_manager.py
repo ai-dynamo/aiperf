@@ -322,7 +322,7 @@ class TestManagerCallbackFunctionality:
         self,
         config_with_endpoint: BenchmarkRun,
     ):
-        """Test that record callback sends ServerMetricsRecordMessage."""
+        """Test that record callback sends ServerMetricsRecordWireMessage."""
         manager = ServerMetricsManager(
             run=config_with_endpoint,
         )
