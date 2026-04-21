@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
+import random
 import signal
 import subprocess
 import sys
@@ -94,17 +94,38 @@ def get_job_state(ns: str, name: str) -> dict | None:
     }
 
 
-def wait_for_send_complete(ns: str, name: str, poll_s: int = 10) -> str:
+def wait_for_send_complete(
+    ns: str,
+    name: str,
+    poll_s: int = 10,
+    max_retries_on_missing: int = 1,
+) -> str:
     """Block until send phase completes or job reaches a terminal state.
 
     Returns one of: 'send_complete', 'failed', 'completed', 'missing'.
+
+    A 'None' kubectl read is re-polled up to ``max_retries_on_missing`` times
+    (10–20s jittered sleep between each) before we declare the CR missing.
+    Any successful read in between resets the counter.
     """
     last = None
+    missing_retries = 0
     while True:
         s = get_job_state(ns, name)
         if s is None:
-            log(f"{name}: CR missing; treating as terminal")
+            if missing_retries < max_retries_on_missing:
+                missing_retries += 1
+                backoff = 10 + random.randint(0, 10)
+                log(
+                    f"{name}: CR not found (retry {missing_retries}/"
+                    f"{max_retries_on_missing} in {backoff}s)"
+                )
+                time.sleep(backoff)
+                continue
+            suffix = f" after {missing_retries} retries" if missing_retries else ""
+            log(f"{name}: CR missing{suffix}; treating as terminal")
             return "missing"
+        missing_retries = 0
         sig = (
             s["phase"],
             s["currentPhase"],
@@ -198,6 +219,14 @@ def parse_args() -> argparse.Namespace:
         default=5,
         help="Halt if this many consecutive runs end in Failed/missing.",
     )
+    p.add_argument(
+        "--max-retries-on-missing",
+        type=int,
+        default=1,
+        help="When kubectl reports the CR missing, re-check after a 10–20s "
+        "backoff up to this many times before treating the run as skipped. "
+        "Smooths over transient kubectl/apiserver blips. Default 1.",
+    )
     return p.parse_args()
 
 
@@ -222,7 +251,9 @@ def main() -> int:
     consecutive_failures = 0
 
     while True:
-        outcome = wait_for_send_complete(ns, cur_name)
+        outcome = wait_for_send_complete(
+            ns, cur_name, max_retries_on_missing=args.max_retries_on_missing
+        )
         log(f"{cur_name}: outcome={outcome}")
         if outcome in ("failed", "missing"):
             consecutive_failures += 1
