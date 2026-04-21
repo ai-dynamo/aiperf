@@ -10,7 +10,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " ever but slenderly known himself GONERIL The best and soundest of his time hath been but rash then must we look from his age to receive not alone the imperfections of longengrafted condition but therewithal the unruly waywardness that infirm and choleric years bring with them REGAN Such unconstant starts are we like to have from him as this of Kents banishment GONERIL There is further compliment of leavetaking between France and him Pray you let us hit together if our father carry authority with such disposition as"
+                  "text": " ever but slenderly known himself GONERIL The best and soundest of his time hath been but rash then must we look from his age to receive not alone the imperfections of longengrafted condition but therewithal the unruly waywardness that infirm and choleric years bring with them REGAN Such unconstant starts are we like to have from him as this of Kents banishment GONERIL There is further compliment of leavetaking between France and him Pray you let us hit together if our father carry authority with such disposition as he bears this last surrender of his will but offend us REGAN"
                 },
                 {
                   "type": "input_audio",
@@ -24,7 +24,7 @@
           ],
           "model": "openai/gpt-oss-20b",
           "stream": false,
-          "max_completion_tokens": 50
+          "max_completion_tokens": 42
         }
       ]
     },
@@ -38,7 +38,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " it to my wife and fetch your money ANGELO Come come you know I gave it you even now Either send the chain or send by me some token ANTIPHOLUS OF EPHESUS Fie now you run this humour out of breath Come wheres the chain I pray you let me see it MERCHANT My business cannot brook this dalliance Good sir say wheer youll answer me or no If not Ill leave him to the officer ANTIPHOLUS OF EPHESUS I answer you What should"
+                  "text": " it to my wife and fetch your money ANGELO Come come you know I gave it you even now Either send the chain or send by me some token ANTIPHOLUS OF EPHESUS Fie now you run this humour out of breath Come wheres the chain I pray you let me see it MERCHANT My business cannot brook this dalliance Good sir say wheer youll answer me or no If not Ill leave him to the officer ANTIPHOLUS OF EPHESUS I answer you What"
                 },
                 {
                   "type": "input_audio",
@@ -52,7 +52,7 @@
           ],
           "model": "openai/gpt-oss-120b",
           "stream": false,
-          "max_completion_tokens": 50
+          "max_completion_tokens": 57
         }
       ]
     },
@@ -66,7 +66,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " the judges clerk Would he were gelt that had it for my part Since you do take it love so much at heart PORTIA A quarrel ho already Whats the matter GRATIANO About a hoop of gold a paltry ring That she did give me whose posy was For all the world like cutlers poetry Upon a knife Love me and leave me not NERISSA What talk you of the posy or the value You swore to me when I did give it you That you would wear"
+                  "text": " the judges clerk Would he were gelt that had it for my part Since you do take it love so much at heart PORTIA A quarrel ho already Whats the matter GRATIANO About a hoop of gold a paltry ring That she did give me whose posy was For all the world like cutlers poetry Upon a knife Love me and leave me not NERISSA What talk you of the posy or the value You swore to me when I did give it you That you would wear it till your hour of death And that it should lie with you in"
                 },
                 {
                   "type": "input_audio",
@@ -80,7 +80,7 @@
           ],
           "model": "openai/gpt-oss-20b",
           "stream": false,
-          "max_completion_tokens": 50
+          "max_completion_tokens": 55
         }
       ]
     },
@@ -94,7 +94,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " his wife Exeunt SCENE V A Room in Olivias House Enter Maria and Clown MARIA Nay either tell me where thou hast been or I will not open my lips so wide as a bristle may enter in way of thy excuse my lady will hang thee for thy absenceCLOWN Let her hang me he that is well hanged in this world needs to fear no colours MARIA Make that good CLOWN He shall see none to fear MARIA A good lenten answer I can tell thee where that saying was born of I fear no colours CLOWN Where"
+                  "text": " his wife Exeunt SCENE V A Room in Olivias House Enter Maria and Clown MARIA Nay either tell me where thou hast been or I will not open my lips so wide as a bristle may enter in way of thy excuse my lady will hang thee for thy absenceCLOWN Let her hang me he that is well hanged in this world needs to fear no colours MARIA Make that good CLOWN He shall see none to fear MARIA A good lenten answer I can tell thee where that saying was born of I fear no colours CLOWN Where good Mistress Mary MARIA In"
                 },
                 {
                   "type": "input_audio",
@@ -108,7 +108,7 @@
           ],
           "model": "openai/gpt-oss-20b",
           "stream": false,
-          "max_completion_tokens": 50
+          "max_completion_tokens": 51
         }
       ]
     },
@@ -122,7 +122,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " Officers Soldiers c EDMUND Some officers take them away good guard Until their greater pleasures first be known That are to censure them CORDELIA We are not the first Who with best meaning have incurrd the worst For thee oppressed King I am cast down Myself could else outfrown false fortunes frown Shall we not see these daughters and these sisters LEAR No no no no Come lets away to prison"
+                  "text": " Officers Soldiers c EDMUND Some officers take them away good guard Until their greater pleasures first be known That are to censure them CORDELIA We are not the first Who with best meaning have incurrd the worst For thee oppressed King I am cast down Myself could else outfrown false fortunes frown Shall we not see these daughters and these sisters LEAR No no no no Come lets away to prison We two alone will"
                 },
                 {
                   "type": "input_audio",
@@ -136,7 +136,7 @@
           ],
           "model": "openai/gpt-oss-120b",
           "stream": false,
-          "max_completion_tokens": 50
+          "max_completion_tokens": 41
         }
       ]
     },
@@ -150,7 +150,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " Enter Diomedes and a Servant DIOMEDES Go go my servant take thou Troilus horse Present the fair steed to my lady Cressid Fellow commend my service to her beauty Tell her I have chastisd the amorous Trojan And am her knight by proof SERVANT I go my lord Exit Enter Agamemnon AGAMEMNON Renew renew The fierce Polydamas Hath beat down Menon bastard Margarelon Hath D"
+                  "text": " Enter Diomedes and a Servant DIOMEDES Go go my servant take thou Troilus horse Present the fair steed to my lady Cressid Fellow commend my service to her beauty Tell her I have chastisd the amorous Trojan And am her knight by proof SERVANT I go my lord Exit Enter Agamemnon AGAMEMNON Renew renew The fierce Polydamas Hath beat down Menon bastard Margarelon Hath Doreus prisoner And stands colossus"
                 },
                 {
                   "type": "input_audio",
@@ -164,7 +164,7 @@
           ],
           "model": "openai/gpt-oss-120b",
           "stream": false,
-          "max_completion_tokens": 50
+          "max_completion_tokens": 62
         }
       ]
     },
@@ -178,7 +178,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " in love shall not deny me this BASSANIO This ring good sir Alas it is a trifle I will not shame myself to give you this PORTIA I will have nothing else but only this And now methinks I have a mind to it BASSANIO Theres more depends on this than on the value The dearest ring in Venice will I give you And find it out by proclamation Only for this I pray you pardon me PORTIA I see sir you"
+                  "text": " in love shall not deny me this BASSANIO This ring good sir Alas it is a trifle I will not shame myself to give you this PORTIA I will have nothing else but only this And now methinks I have a mind to it BASSANIO Theres more depends on this than on the value The dearest ring in Venice will I give you And find it out by proclamation Only for this I pray you pardon me PORT"
                 },
                 {
                   "type": "input_audio",
@@ -192,7 +192,7 @@
           ],
           "model": "openai/gpt-oss-120b",
           "stream": false,
-          "max_completion_tokens": 50
+          "max_completion_tokens": 38
         }
       ]
     },
@@ -206,7 +206,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " damns himself to do and dares better be damnd than to dot SECOND LORD You do not know him my lord as we do certain it is that he will steal himself into a mans favour and for a week escape a great deal of discoveries but when you find him out you have him ever after BERTRAM Why do you think he will make no deed at all of this that so seriously he does address himself unto FIRST LORD None in the world but return with an invention and clap upon you two or three probable lies but we have almost"
+                  "text": " damns himself to do and dares better be damnd than to dot SECOND LORD You do not know him my lord as we do certain it is that he will steal himself into a mans favour and for a week escape a great deal of discoveries but when you find him out you have him ever after BERTRAM Why do you think he will make no deed at all of this that so seriously he does address himself unto FIRST LORD None in the world but return with an invention and clap upon you two or three probable lies but we have almost embossed him you shall see his fall tonight for indeed he is not for your lordships respect SECOND LORD Well"
                 },
                 {
                   "type": "input_audio",
@@ -220,7 +220,7 @@
           ],
           "model": "openai/gpt-oss-120b",
           "stream": false,
-          "max_completion_tokens": 50
+          "max_completion_tokens": 61
         }
       ]
     },
@@ -234,7 +234,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " the author thou the instrument Therefore that I may conquer Fortunes spite By living low where Fortune cannot hurt me And that the people of this blessed land May not be punished with my thwarting stars Warwick although my head still wear the crown I here resign my government to thee For thou art fortunate in all thy deeds WARWICK Your Grace hath still been famed for virtuous And now may seem as wise as virtuous By spying and avoiding Fortunes malice For few men rightly temper with the stars Yet in this one thing let me blame"
+                  "text": " the author thou the instrument Therefore that I may conquer Fortunes spite By living low where Fortune cannot hurt me And that the people of this blessed land May not be punished with my thwarting stars Warwick although my head still wear the crown I here resign my government to thee For thou art fortunate in all thy deeds WARWICK Your Grace hath still been famed for virtuous And now"
                 },
                 {
                   "type": "input_audio",
@@ -248,7 +248,7 @@
           ],
           "model": "openai/gpt-oss-120b",
           "stream": false,
-          "max_completion_tokens": 50
+          "max_completion_tokens": 45
         }
       ]
     },
@@ -262,7 +262,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " Theres a fearful point Shall I not then be stifled in the vault To whose foul mouth no healthsome air breathes in And there die strangled ere my Romeo comes Or if I live is it not very like The horrible conceit of death and night Together with the terror of the place As in a vault an ancient receptacle Where for this many hundred years the bones Of all my buried ancestors are packd Where bloody Tybalt yet but green in earth Lies festering in his shroud where as they say"
+                  "text": " Theres a fearful point Shall I not then be stifled in the vault To whose foul mouth no healthsome air breathes in And there die strangled ere my Romeo comes Or if I live is it not very like The horrible conceit of death and night Together with the terror of the place As in a vault an ancient receptacle Where for this many hundred years the bones Of all my buried ancestors are packd Where bloody Tybalt yet but green in earth Lies festering in his shroud"
                 },
                 {
                   "type": "input_audio",
@@ -304,7 +304,7 @@
           ],
           "model": "openai/gpt-oss-20b",
           "stream": false,
-          "max_completion_tokens": 50
+          "max_completion_tokens": 56
         }
       ]
     },
@@ -318,7 +318,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " never with more care Read to her sons than she hath read to thee Sweet poetry and Tullys Orator MARCUS Canst thou not guess wherefore she plies thee thus YOUNG LUCIUS My lord I know not I nor can I guess Unless some fit or frenzy do possess her For I have heard my grandsire say full oft Extremity of griefs would make men mad And I have read that Hecuba"
+                  "text": " never with more care Read to her sons than she hath read to thee Sweet poetry and Tullys Orator MARCUS Canst thou not guess wherefore she plies thee thus YOUNG LUCIUS My lord I know not I nor can I guess Unless some fit or frenzy do possess her For I have heard my grandsire say full oft Extremity of griefs would make men"
                 },
                 {
                   "type": "input_audio",
@@ -332,7 +332,7 @@
           ],
           "model": "openai/gpt-oss-120b",
           "stream": false,
-          "max_completion_tokens": 50
+          "max_completion_tokens": 49
         }
       ]
     },
@@ -346,7 +346,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " look you there look how it steals away My father in his habit as he livd Look where he goes even now out at the portal Exit Ghost QUEEN This is the very coinage of your brain This bodiless creation ecstasy Is very cunning in HAMLET Ecstasy My pulse as yours doth temperately keep time And makes as healthful music It is not madness That I have utterd Bring me to the test And I the matter will reword which madness Would gambol from"
+                  "text": " look you there look how it steals away My father in his habit as he livd Look where he goes even now out at the portal Exit Ghost QUEEN This is the very coinage of your brain This bodiless creation ecstasy Is very cunning in HAMLET Ecstasy My pulse as yours doth temperately keep time And makes as healthful music It is not madness That I have utterd Bring me to the test And I the matter will reword which madness"
                 },
                 {
                   "type": "input_audio",
@@ -360,7 +360,7 @@
           ],
           "model": "openai/gpt-oss-20b",
           "stream": false,
-          "max_completion_tokens": 50
+          "max_completion_tokens": 45
         }
       ]
     },
@@ -374,7 +374,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " eyes of man ALCIBIADES What is thy name Is man so hateful to thee That art thyself a man TIMON I am Misanthropos and hate mankind For thy part I do wish thou wert a dog That I might love thee something ALCIBIADES I know thee well But in thy fortunes am unlearned and strange TIMON I know thee too and more than that I know thee I not desire to know Follow thy drum With mans blood paint the ground gules gules Religious canons"
+                  "text": " eyes of man ALCIBIADES What is thy name Is man so hateful to thee That art thyself a man TIMON I am Misanthropos and hate mankind For thy part I do wish thou wert a dog That I might love thee something ALCIBIADES I know thee well But in thy fortunes am unlearned and strange TIMON I know thee too and more than that I know thee I not desire to know Follow thy drum With mans blood paint the ground gules gules Religious canons civil laws are cruel Then what should"
                 },
                 {
                   "type": "input_audio",
@@ -388,7 +388,7 @@
           ],
           "model": "openai/gpt-oss-20b",
           "stream": false,
-          "max_completion_tokens": 50
+          "max_completion_tokens": 58
         }
       ]
     },
@@ -402,7 +402,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " fool Was not a man my father Hadst thou foxship To banish him that struck more blows for Rome Than thou hast spoken words SICINIUS O blessed heavens VOLUMNIA More noble blows than ever thou wise words And for Romes good Ill tell thee whatyet go Nay but thou shalt stay too I would my son Were in Arabia and thy tribe before him His good sword in his hand SICINIUS What then VIRGILIA What then Hed make an end of thy poster"
+                  "text": " fool Was not a man my father Hadst thou foxship To banish him that struck more blows for Rome Than thou hast spoken words SICINIUS O blessed heavens VOLUMNIA More noble blows than ever thou wise words And for Romes good Ill tell thee whatyet go Nay but thou shalt stay too I would my son Were in Arabia and thy tribe before him His good sword in"
                 },
                 {
                   "type": "input_audio",
@@ -416,7 +416,7 @@
           ],
           "model": "openai/gpt-oss-120b",
           "stream": false,
-          "max_completion_tokens": 50
+          "max_completion_tokens": 49
         }
       ]
     },
@@ -430,7 +430,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " barren ground Long heath brown furze anything The wills above be done but I would fain die a dry death Exit SCENE II The Island Before the cell of Prospero Enter Prospero and Miranda MIRANDA If by your art my dearest father you have Put the wild waters in this roar allay them The sky it seems would pour down stinking pitch But that the sea mounting to th welkins cheek Dashes the fire out O I have suffered With those that I saw suffer A"
+                  "text": " barren ground Long heath brown furze anything The wills above be done but I would fain die a dry death Exit SCENE II The Island Before the cell of Prospero Enter Prospero and Miranda MIRANDA If by your art my dearest father you have Put the wild waters in this roar allay them The sky it seems would pour down stinking pitch But that the sea mounting to th welkins cheek"
                 },
                 {
                   "type": "input_audio",
@@ -444,7 +444,7 @@
           ],
           "model": "openai/gpt-oss-20b",
           "stream": false,
-          "max_completion_tokens": 50
+          "max_completion_tokens": 49
         }
       ]
     },
@@ -458,7 +458,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " climb The generals disdaind By him one step below he by the next That next by him beneath so every step Exampld by the first pace that is sick Of his superior grows to an envious fever Of pale and bloodless emulation And tis this fever that keeps Troy on foot Not her own sinews To end a tale of length Troy in our weakness stands not in her strength NESTOR Most wisely hath Ulysses here discoverd The fever whereof all our power is sick AGAMEMNON The nature of the"
+                  "text": " climb The generals disdaind By him one step below he by the next That next by him beneath so every step Exampld by the first pace that is sick Of his superior grows to an envious fever Of pale and bloodless emulation And tis this fever that keeps Troy on foot Not her own sinews To end a tale of length Troy in our weakness stands not in her strength NESTOR Most wisely hath Ulysses here discoverd The fever whereof all our power"
                 },
                 {
                   "type": "input_audio",
@@ -472,7 +472,7 @@
           ],
           "model": "openai/gpt-oss-20b",
           "stream": false,
-          "max_completion_tokens": 50
+          "max_completion_tokens": 56
         }
       ]
     },
@@ -486,7 +486,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " that knows it O thou thinkest To serve me last that I may longest keep Thy sorrow in my breast Come ladies go To meet at London Londons king in woe What was I born to this that my sad look Should grace the triumph of great Bolingbroke Gardner for telling me these news of woe Pray God the plants thou graftst may never grow Exeunt Queen and Ladies GARDENER Poor Queen so that thy state might be no worse I"
+                  "text": " that knows it O thou thinkest To serve me last that I may longest keep Thy sorrow in my breast Come ladies go To meet at London Londons king in woe What was I born to this that my sad look Should grace the triumph of great Bolingbroke Gardner for telling me these news of woe Pray God the plants thou graftst may never grow Exeunt Queen and Ladies GARDENER Poor Queen so that thy state might be no worse I would my skill were subject to thy curse Here"
                 },
                 {
                   "type": "input_audio",
@@ -500,7 +500,7 @@
           ],
           "model": "openai/gpt-oss-120b",
           "stream": false,
-          "max_completion_tokens": 50
+          "max_completion_tokens": 51
         }
       ]
     },
@@ -514,7 +514,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " Shall cumber all the parts of Italy Blood and destruction shall be so in use And dreadful objects so familiar That mothers shall but smile when they behold Their infants quartered with the hands of war All pity chokd with custom of fell deeds And Caesars spirit ranging for revenge With Ate by his side come hot from Hell Shall in these confines with a monarchs voice Cry havoc and let slip the dogs of war That this foul deed shall smell above the earth With carrion men groaning"
+                  "text": " Shall cumber all the parts of Italy Blood and destruction shall be so in use And dreadful objects so familiar That mothers shall but smile when they behold Their infants quartered with the hands of war All pity chokd with custom of fell deeds And Caesars spirit ranging for revenge With Ate by his side come hot from Hell Shall in these confines with a monarchs voice Cry havoc and let slip the dogs of war That this foul deed shall smell above the earth With carrion men groaning for burial Enter a Servant You serve Octavius Caesar do"
                 },
                 {
                   "type": "input_audio",
@@ -542,7 +542,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": " the subjects to his hate And he to yours and all of you to Gods Exit BUCKINGHAM My hair doth stand on end to hear her curses RIVERS And so doth mine I muse why shes at liberty RICHARD I cannot blame her By Gods holy mother She hath had too much wrong and I repent My part thereof that I have done to her QUEEN ELIZABETH I never did her any to my knowledge RICHARD Yet you have all the vantage of her wrong"
+                  "text": " the subjects to his hate And he to yours and all of you to Gods Exit BUCKINGHAM My hair doth stand on end to hear her curses RIVERS And so doth mine I muse why shes at liberty RICHARD I cannot blame her By Gods holy mother She hath had too much wrong and I repent My part thereof that I have done to her QUEEN ELIZABETH I never did her any to my knowledge RICHARD Yet you"
                 },
                 {
                   "type": "input_audio",
@@ -556,7 +556,7 @@
           ],
           "model": "openai/gpt-oss-120b",
           "stream": false,
-          "max_completion_tokens": 50
+          "max_completion_tokens": 44
         }
       ]
     }

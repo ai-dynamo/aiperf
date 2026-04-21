@@ -138,12 +138,21 @@ class SequenceLengthDistribution:
                 "Distribution must contain at least one sequence length pair"
             )
 
-        self._rng = rng.derive("models.sequence.distribution")
+        # Lazily derive the RNG on first use. The CLI converter constructs
+        # SequenceLengthDistribution during option parsing, which runs before
+        # rng.init() in the bootstrap flow.
+        self._rng_instance = None
         self._pairs = tuple(pairs)  # Immutable copy
         _validate_probability_sum(list(self._pairs))
         self._cumulative_probs = self._compute_cumulative_probabilities()
 
         logger.debug(f"Created distribution with {len(self._pairs)} pairs: {self}")
+
+    @property
+    def _rng(self):
+        if self._rng_instance is None:
+            self._rng_instance = rng.derive("models.sequence.distribution")
+        return self._rng_instance
 
     def _compute_cumulative_probabilities(self) -> np.ndarray:
         """Compute cumulative probability distribution for efficient sampling."""
