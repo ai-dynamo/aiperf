@@ -7,7 +7,15 @@ import sys
 import time
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Annotated, Any, AnyStr, Protocol, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    AnyStr,
+    ClassVar,
+    Protocol,
+    runtime_checkable,
+)
 
 import msgspec
 import orjson
@@ -31,7 +39,6 @@ from aiperf.common.exceptions import InvalidInferenceResultError
 # annotations below reference MetricRecordMetadata as a string thanks to
 # `from __future__ import annotations`; the only runtime use is inside
 # decode_metric_record_info_json, which does a local import.
-from aiperf.common.models.base_models import PydanticStructMixin
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.export_models import JsonMetricResult
@@ -46,18 +53,22 @@ if TYPE_CHECKING:
 _logger = AIPerfLogger(__name__)
 
 
-class MetricResult(
-    msgspec.Struct,
-    kw_only=True,
-    omit_defaults=True,
-):
+@dataclass(slots=True, kw_only=True)
+class MetricResult:
     """The result values of a single metric.
+
+    Slotted dataclass — shared type for msgspec envelopes
+    (``RealtimeMetricsMessage.metrics``, ``ProfileResults.records``) and
+    Pydantic (``ProfileResults`` under ``BenchmarkResultsResponse``) via
+    ``__pydantic_config__``.
 
     Carries every JsonMetricResult percentile/stat directly — historically
     inherited, but a msgspec.Struct cannot subclass Pydantic BaseModel, so the
     fields are duplicated here (see ``to_json_result`` for the conversion
     back to the Pydantic JSON-export shape).
     """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     tag: MetricTagT
     header: str
@@ -116,17 +127,22 @@ class MetricValue:
     """The display unit label (e.g. 'ms', 'tokens/s')."""
 
 
-class ProfileResults(
-    msgspec.Struct,
-    kw_only=True,
-):
+@dataclass(slots=True, kw_only=True)
+class ProfileResults:
     """The results of a profile run.
 
-    Intentionally does not set ``omit_defaults=True``: ProfileResults rides
-    on the /api/results HTTP endpoint and downstream consumers expect every
-    field (including ``was_cancelled=False`` and ``error_summary=[]``) to be
-    present on the wire.
+    Slotted dataclass — shared type for msgspec
+    (``ProfileResultsMessage.profile_results``, the /api/results HTTP
+    payload encoded via msgspec) and Pydantic
+    (``BenchmarkResultsResponse.results`` via ``ProcessRecordsResult``).
+
+    Every field including ``was_cancelled=False`` and ``error_summary=[]``
+    is serialized on the wire (historical ``omit_defaults=False`` semantics)
+    because downstream consumers expect them — dataclasses always emit
+    every field.
     """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     completed: int
     start_ns: int
@@ -135,7 +151,7 @@ class ProfileResults(
     timeslice_metric_results: dict[TimeSliceT, list[MetricResult]] | None = None
     total_expected: int | None = None
     was_cancelled: bool = False
-    error_summary: list[ErrorDetailsCount] = msgspec.field(default_factory=list)
+    error_summary: list[ErrorDetailsCount] = field(default_factory=list)
 
     def get(self, tag: MetricTagT) -> MetricResult | None:
         """Get a metric result by tag, if it exists."""
@@ -145,15 +161,20 @@ class ProfileResults(
         return None
 
 
-class ProcessRecordsResult(
-    PydanticStructMixin,
-    msgspec.Struct,
-    kw_only=True,
-):
-    """Result of the process records command."""
+@dataclass(slots=True, kw_only=True)
+class ProcessRecordsResult:
+    """Result of the process records command.
+
+    Slotted dataclass — the last user of ``PydanticStructMixin`` and the
+    leaf that held it in place. Now shared natively between msgspec
+    (``ProcessRecordsResultMessage.results``) and Pydantic
+    (``BenchmarkResultsResponse.results``).
+    """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     results: ProfileResults
-    errors: list[ErrorDetails] = msgspec.field(default_factory=list)
+    errors: list[ErrorDetails] = field(default_factory=list)
 
     def get(self, tag: MetricTagT) -> MetricResult | None:
         """Get a metric result by tag, if it exists."""
