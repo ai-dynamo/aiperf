@@ -456,6 +456,14 @@ def build_aiperf_config(cli: BaseModel) -> AIPerfConfig:
         mr["disable_warmup_after_first"] = cli.profile_run_disable_warmup_after_first
     if "set_consistent_seed" in s:
         mr["set_consistent_seed"] = cli.set_consistent_seed
+    if "convergence_metric" in s:
+        mr["convergence_metric"] = cli.convergence_metric
+    if "convergence_mode" in s:
+        mr["convergence_mode"] = cli.convergence_mode
+    if "convergence_threshold" in s:
+        mr["convergence_threshold"] = cli.convergence_threshold
+    if "convergence_stat" in s:
+        mr["convergence_stat"] = cli.convergence_stat
     if mr:
         nested["multi_run"] = mr
 

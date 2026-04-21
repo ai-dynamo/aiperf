@@ -956,6 +956,33 @@ Disable warmup for runs after the first. When true, only the first run includes 
 Auto-set random seed if not specified for workload consistency.
 <br/>_Default: `True`_
 
+#### `--convergence-metric` `<str>`
+
+Target metric name for adaptive convergence stopping. When set, enables adaptive mode that stops early once the metric stabilizes.
+
+#### `--convergence-mode` `<str>`
+
+Statistical method for convergence detection.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `ci_width` | _default_ | Stop when Student's t confidence interval width relative to mean is below threshold. |
+| `cv` |  | Stop when coefficient of variation (std/mean) is below threshold. |
+| `distribution` |  | Stop when KS test p-value indicates latest run matches prior runs. |
+
+#### `--convergence-threshold` `<float>`
+
+Threshold for convergence detection (must be between 0 and 1).
+<br/>_Default: `0.1`_
+
+#### `--convergence-stat` `<str>`
+
+Statistic to evaluate for convergence when using ci_width or cv mode.
+<br/>_Choices: [`avg`, `p50`, `p90`, `p95`, `p99`, `min`, `max`]_
+<br/>_Default: `avg`_
+
 <hr/>
 
 ## `aiperf plot`
@@ -2061,6 +2088,33 @@ Disable warmup for runs after the first. When true, only the first run includes 
 Auto-set random seed if not specified for workload consistency.
 <br/>_Default: `True`_
 
+#### `--convergence-metric` `<str>`
+
+Target metric name for adaptive convergence stopping. When set, enables adaptive mode that stops early once the metric stabilizes.
+
+#### `--convergence-mode` `<str>`
+
+Statistical method for convergence detection.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `ci_width` | _default_ | Stop when Student's t confidence interval width relative to mean is below threshold. |
+| `cv` |  | Stop when coefficient of variation (std/mean) is below threshold. |
+| `distribution` |  | Stop when KS test p-value indicates latest run matches prior runs. |
+
+#### `--convergence-threshold` `<float>`
+
+Threshold for convergence detection (must be between 0 and 1).
+<br/>_Default: `0.1`_
+
+#### `--convergence-stat` `<str>`
+
+Statistic to evaluate for convergence when using ci_width or cv mode.
+<br/>_Choices: [`avg`, `p50`, `p90`, `p95`, `p99`, `min`, `max`]_
+<br/>_Default: `avg`_
+
 ### Parameters
 
 #### `--output` `<str>`
@@ -2895,6 +2949,33 @@ Disable warmup for runs after the first. When true, only the first run includes 
 
 Auto-set random seed if not specified for workload consistency.
 <br/>_Default: `True`_
+
+#### `--convergence-metric` `<str>`
+
+Target metric name for adaptive convergence stopping. When set, enables adaptive mode that stops early once the metric stabilizes.
+
+#### `--convergence-mode` `<str>`
+
+Statistical method for convergence detection.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `ci_width` | _default_ | Stop when Student's t confidence interval width relative to mean is below threshold. |
+| `cv` |  | Stop when coefficient of variation (std/mean) is below threshold. |
+| `distribution` |  | Stop when KS test p-value indicates latest run matches prior runs. |
+
+#### `--convergence-threshold` `<float>`
+
+Threshold for convergence detection (must be between 0 and 1).
+<br/>_Default: `0.1`_
+
+#### `--convergence-stat` `<str>`
+
+Statistic to evaluate for convergence when using ci_width or cv mode.
+<br/>_Choices: [`avg`, `p50`, `p90`, `p95`, `p99`, `min`, `max`]_
+<br/>_Default: `avg`_
 
 ### Kubernetes
 
@@ -3825,6 +3906,33 @@ Disable warmup for runs after the first. When true, only the first run includes 
 
 Auto-set random seed if not specified for workload consistency.
 <br/>_Default: `True`_
+
+#### `--convergence-metric` `<str>`
+
+Target metric name for adaptive convergence stopping. When set, enables adaptive mode that stops early once the metric stabilizes.
+
+#### `--convergence-mode` `<str>`
+
+Statistical method for convergence detection.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `ci_width` | _default_ | Stop when Student's t confidence interval width relative to mean is below threshold. |
+| `cv` |  | Stop when coefficient of variation (std/mean) is below threshold. |
+| `distribution` |  | Stop when KS test p-value indicates latest run matches prior runs. |
+
+#### `--convergence-threshold` `<float>`
+
+Threshold for convergence detection (must be between 0 and 1).
+<br/>_Default: `0.1`_
+
+#### `--convergence-stat` `<str>`
+
+Statistic to evaluate for convergence when using ci_width or cv mode.
+<br/>_Choices: [`avg`, `p50`, `p90`, `p95`, `p99`, `min`, `max`]_
+<br/>_Default: `avg`_
 
 ### Kubernetes
 

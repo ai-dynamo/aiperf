@@ -24,6 +24,12 @@ def run_benchmark(plan: BenchmarkPlan) -> None:
     For single-config single-trial plans, runs directly (Dashboard works).
     For multi-config or multi-trial plans, uses the MultiRunOrchestrator.
     """
+    if plan.use_adaptive and plan.trials <= 1:
+        raise ValueError(
+            "--convergence-metric requires --num-profile-runs > 1. "
+            "Set --num-profile-runs to at least 2 to enable adaptive convergence."
+        )
+
     if plan.is_single_run:
         run = _make_benchmark_run(plan.configs[0])
         _run_single_benchmark(run)
@@ -325,7 +331,7 @@ def _run_multi_benchmark(plan: BenchmarkPlan) -> None:
 
         # Compute detailed aggregation synchronously before async export
         detailed_result = None
-        if plan.use_adaptive and plan.export_level != ExportLevel.SUMMARY:
+        if plan.use_adaptive:
             from aiperf.orchestrator.aggregation.detailed import DetailedAggregation
 
             detailed_aggregation = DetailedAggregation(
@@ -360,11 +366,7 @@ def _run_multi_benchmark(plan: BenchmarkPlan) -> None:
         csv_path = export_paths[1]
         logger.info(f"Aggregate JSON written to: {json_path}")
         logger.info(f"Aggregate CSV written to: {csv_path}")
-        if (
-            plan.use_adaptive
-            and plan.export_level != ExportLevel.SUMMARY
-            and len(export_paths) > 2
-        ):
+        if plan.use_adaptive and len(export_paths) > 2:
             logger.info(f"Collated aggregate JSON written to: {export_paths[2]}")
 
         _print_aggregate_summary(aggregate_result, logger)

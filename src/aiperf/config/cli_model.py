@@ -19,6 +19,8 @@ from aiperf.common.enums import (
     AIPerfLogLevel,
     AudioFormat,
     ConnectionReuseStrategy,
+    ConvergenceMode,
+    ConvergenceStat,
     DatasetFormat,
     ExportLevel,
     ImageFormat,
@@ -1588,6 +1590,36 @@ class CLIModel(BaseModel):
         "Auto-set random seed if not specified for workload consistency.",
         default=True,
         negative=None,
+    )
+    convergence_metric: annotated_type(
+        str | None,
+        "--convergence-metric",
+        Groups.MULTI_RUN,
+        (
+            "Target metric name for adaptive convergence stopping. "
+            "When set, enables adaptive mode that stops early once the metric stabilizes."
+        ),
+    )
+    convergence_mode: annotated_type(
+        ConvergenceMode,
+        "--convergence-mode",
+        Groups.MULTI_RUN,
+        "Statistical method for convergence detection.",
+        default=ConvergenceMode.CI_WIDTH,
+    )
+    convergence_threshold: annotated_type(
+        float,
+        "--convergence-threshold",
+        Groups.MULTI_RUN,
+        "Threshold for convergence detection (must be between 0 and 1).",
+        default=0.10,
+    )
+    convergence_stat: annotated_type(
+        ConvergenceStat,
+        "--convergence-stat",
+        Groups.MULTI_RUN,
+        "Statistic to evaluate for convergence when using ci_width or cv mode.",
+        default=ConvergenceStat.AVG,
     )
 
     # =========================================================================

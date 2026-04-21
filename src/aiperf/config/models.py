@@ -30,6 +30,8 @@ from typing_extensions import Self
 from aiperf.common.enums import (
     AIPerfLogLevel,
     CommunicationType,
+    ConvergenceMode,
+    ConvergenceStat,
     ModelSelectionStrategy,
 )
 from aiperf.config._base import BaseConfig
@@ -737,6 +739,41 @@ class MultiRunConfig(BaseConfig):
             default=True,
             description="Disable warmup for runs after the first. "
             "When true, only the first run includes warmup for steady-state measurement.",
+        ),
+    ]
+
+    convergence_metric: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Target metric name for adaptive convergence stopping. "
+            "When set, enables adaptive mode that stops early once the metric stabilizes.",
+        ),
+    ]
+
+    convergence_stat: Annotated[
+        ConvergenceStat,
+        Field(
+            default=ConvergenceStat.AVG,
+            description="Statistic to evaluate for convergence when using ci_width or cv mode.",
+        ),
+    ]
+
+    convergence_threshold: Annotated[
+        float,
+        Field(
+            gt=0,
+            lt=1,
+            default=0.10,
+            description="Threshold for convergence detection.",
+        ),
+    ]
+
+    convergence_mode: Annotated[
+        ConvergenceMode,
+        Field(
+            default=ConvergenceMode.CI_WIDTH,
+            description="Statistical method for convergence detection (ci_width, cv, distribution).",
         ),
     ]
 

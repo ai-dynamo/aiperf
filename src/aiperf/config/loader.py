@@ -781,7 +781,7 @@ def build_benchmark_plan(config: AIPerfConfig) -> BenchmarkPlan:
     if not variations:
         variations = [SweepVariation(index=0, label="base", values={})]
 
-    return BenchmarkPlan(
+    plan_kwargs: dict[str, Any] = dict(
         configs=configs,
         variations=variations,
         trials=multi_run.get("num_runs", 1),
@@ -790,6 +790,15 @@ def build_benchmark_plan(config: AIPerfConfig) -> BenchmarkPlan:
         set_consistent_seed=multi_run.get("set_consistent_seed", True),
         disable_warmup_after_first=multi_run.get("disable_warmup_after_first", True),
     )
+    for key in (
+        "convergence_metric",
+        "convergence_mode",
+        "convergence_threshold",
+        "convergence_stat",
+    ):
+        if key in multi_run and multi_run[key] is not None:
+            plan_kwargs[key] = multi_run[key]
+    return BenchmarkPlan(**plan_kwargs)
 
 
 def load_benchmark_plan(

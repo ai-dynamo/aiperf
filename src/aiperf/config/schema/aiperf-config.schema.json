@@ -1205,6 +1205,30 @@
       "title": "ConstantPhase",
       "type": "object"
     },
+    "ConvergenceMode": {
+      "description": "Statistical method for convergence detection in adaptive multi-run mode.",
+      "enum": [
+        "ci_width",
+        "cv",
+        "distribution"
+      ],
+      "title": "ConvergenceMode",
+      "type": "string"
+    },
+    "ConvergenceStat": {
+      "description": "Statistic to evaluate for convergence when using ci_width or cv mode.",
+      "enum": [
+        "avg",
+        "p50",
+        "p90",
+        "p95",
+        "p99",
+        "min",
+        "max"
+      ],
+      "title": "ConvergenceStat",
+      "type": "string"
+    },
     "DatasetFormat": {
       "description": "Defines the format of file-based datasets.",
       "enum": [
@@ -3044,6 +3068,54 @@
           "description": "Disable warmup for runs after the first. When true, only the first run includes warmup for steady-state measurement.",
           "title": "Disablewarmupafterfirst",
           "type": "boolean"
+        },
+        "convergenceMetric": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Target metric name for adaptive convergence stopping. When set, enables adaptive mode that stops early once the metric stabilizes.",
+          "title": "Convergencemetric"
+        },
+        "convergenceStat": {
+          "$ref": "#/$defs/ConvergenceStat",
+          "default": "avg"
+        },
+        "convergenceThreshold": {
+          "default": 0.1,
+          "description": "Threshold for convergence detection.",
+          "title": "Convergencethreshold",
+          "oneOf": [
+            {
+              "default": 0.1,
+              "description": "Threshold for convergence detection.",
+              "exclusiveMaximum": 1,
+              "exclusiveMinimum": 0,
+              "title": "Convergencethreshold",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "convergenceMode": {
+          "$ref": "#/$defs/ConvergenceMode",
+          "default": "ci_width",
+          "description": "Statistical method for convergence detection (ci_width, cv, distribution)."
         }
       },
       "title": "MultiRunConfig",
