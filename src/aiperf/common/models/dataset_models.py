@@ -1,12 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from functools import cached_property
 from pathlib import Path
 from typing import Any, ClassVar
 
 import msgspec
-from pydantic import Field, field_validator
+from pydantic import Field
 
 from aiperf.common.enums import ConversationContextMode, MediaType
 from aiperf.common.models.base_models import AIPerfBaseModel, PydanticStructMixin
@@ -107,17 +106,17 @@ class Video(Media):
     media_type: ClassVar[MediaTypeT] = MediaType.VIDEO
 
 
-class TurnMetadata(AIPerfBaseModel):
-    """Metadata of a turn."""
+class TurnMetadata(
+    PydanticStructMixin,
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
+    """Metadata of a turn: absolute timestamp (ms) and/or delay (ms)."""
 
-    timestamp_ms: int | float | None = Field(
-        default=None,
-        description="The absolute timestamp of the turn in milliseconds.",
-    )
-    delay_ms: int | float | None = Field(
-        default=None,
-        description="The delay of the turn in the conversation (in milliseconds).",
-    )
+    timestamp_ms: int | float | None = None
+    delay_ms: int | float | None = None
 
 
 class Turn(
@@ -197,24 +196,27 @@ class Turn(
         )
 
 
-class ConversationMetadata(AIPerfBaseModel):
+class ConversationMetadata(
+    PydanticStructMixin,
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
     """Metadata of a conversation."""
 
-    conversation_id: str = Field(
-        ...,
-        description="The ID of the conversation.",
-    )
-    context_mode: ConversationContextMode | None = Field(
-        default=None,
-        description="Resolved or explicit context mode for this conversation.",
-    )
-    turns: list[TurnMetadata] = Field(
-        default_factory=list,
-        description="The metadata of the turns in the conversation.",
-    )
+    conversation_id: str
+    context_mode: ConversationContextMode | None = None
+    turns: list[TurnMetadata] = msgspec.field(default_factory=list)
 
 
-class DatasetMetadata(AIPerfBaseModel):
+class DatasetMetadata(
+    PydanticStructMixin,
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
     """Metadata of a dataset's structure.
 
     Contains dataset structure information (conversations, timing) used by
@@ -223,43 +225,29 @@ class DatasetMetadata(AIPerfBaseModel):
     DatasetConfiguredNotification).
     """
 
-    conversations: list[ConversationMetadata] = Field(
-        default_factory=list,
-        description="The conversation metadata of the dataset.",
-    )
-    sampling_strategy: DatasetSamplingStrategy = Field(
-        ...,
-        description="The sampling strategy to use when choosing conversations from the dataset.",
-    )
-    has_timing_data: bool = Field(
-        default=False,
-        description="Whether the dataset has timing data (timestamps/delays in turns).",
-    )
-    default_context_mode: ConversationContextMode | None = Field(
-        default=None,
-        description="Dataset-level default for how prior turns are accumulated. "
-        "Set by the loader based on dataset format semantics. "
-        "Individual conversations can override this via their own context_mode field.",
-    )
+    sampling_strategy: DatasetSamplingStrategy
+    conversations: list[ConversationMetadata] = msgspec.field(default_factory=list)
+    has_timing_data: bool = False
+    # Dataset-level default for how prior turns are accumulated. Set by the
+    # loader based on dataset format semantics. Individual conversations can
+    # override this via their own context_mode field.
+    default_context_mode: ConversationContextMode | None = None
 
-    @field_validator("default_context_mode")
-    @classmethod
-    def _reject_unimplemented_context_mode(
-        cls,
-        v: ConversationContextMode | None,
-    ) -> ConversationContextMode | None:
-        if v == ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES:
+    def __post_init__(self) -> None:
+        if (
+            self.default_context_mode
+            == ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES
+        ):
             raise ValueError(
                 f"{ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES} is not yet supported"
             )
-        return v
 
-    @cached_property
+    @property
     def total_turn_count(self) -> int:
         """Get the total number of turns in the dataset."""
         return sum(len(conversation.turns) for conversation in self.conversations)
 
-    @cached_property
+    @property
     def average_turn_count(self) -> float:
         """Get the average number of turns across all conversations in the dataset."""
         if len(self.conversations) == 0:

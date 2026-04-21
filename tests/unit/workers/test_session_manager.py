@@ -7,7 +7,6 @@ len(conversation.turns), which is critical for ramp-up users who start mid-sessi
 """
 
 import pytest
-from pydantic import ValidationError
 from pytest import param
 
 from aiperf.common.enums import ConversationContextMode
@@ -422,7 +421,7 @@ class TestMessageArrayWithoutResponsesRejected:
             )
 
     def test_dataset_metadata_rejects_unsupported_default_mode(self) -> None:
-        with pytest.raises(ValidationError, match="not yet supported"):
+        with pytest.raises(ValueError, match="not yet supported"):
             DatasetMetadata(
                 sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
                 default_context_mode=ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES,
