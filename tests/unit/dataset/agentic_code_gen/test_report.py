@@ -16,9 +16,11 @@ from aiperf.dataset.agentic_code_gen.models import (
     ResetConfig,
     SessionDistributionConfig,
 )
+from aiperf.dataset.agentic_code_gen.reporting.cache_explorer import (
+    _classify_turn_blocks,
+)
 from aiperf.dataset.agentic_code_gen.reporting.report import (
     ParsedTurn,
-    _classify_turn_blocks,
     build_report_data,
     extract_cache_metrics,
     extract_metrics,

@@ -357,7 +357,8 @@ class SessionDistributionConfig(BaseConfig):
 
     def _validate_turn_feasibility(self) -> None:
         """Reject clearly impossible explicit-turn configs up front."""
-        assert self.turns is not None
+        if self.turns is None:
+            return
 
         min_l2 = int(self.cache.layer2.min) if self.cache.layer2.min is not None else 1
         min_new_tokens = (

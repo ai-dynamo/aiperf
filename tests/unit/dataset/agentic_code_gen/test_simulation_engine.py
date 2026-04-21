@@ -113,6 +113,8 @@ class TestSimulationConfigValidation:
             "concurrency",
             "prefill_tps",
             "decode_tps",
+            "kv_bytes_per_token",
+            "gpu_kv_capacity_gb",
             "block_size",
         ],
     )
@@ -123,6 +125,14 @@ class TestSimulationConfigValidation:
         session = _make_session("s0", [{"input_length": 100, "hash_ids": [1]}])
 
         with pytest.raises(ValueError, match=f"{field} must be > 0"):
+            simulate([session], config)
+
+    @pytest.mark.parametrize("field", ["l1_tokens", "l1_5_tokens"])
+    def test_simulate_negative_token_fields_raise_value_error(self, field: str) -> None:
+        config = _cfg(**{field: -1})
+        session = _make_session("s0", [{"input_length": 100, "hash_ids": [1]}])
+
+        with pytest.raises(ValueError, match=f"{field} must be >= 0"):
             simulate([session], config)
 
 
@@ -856,3 +866,26 @@ class TestTimingCorrectness:
             result.session_states[i].turn_events[0].prefill_start for i in range(4)
         ]
         assert starts == pytest.approx([0.0, 2500.0, 5000.0, 7500.0])
+
+    def test_avg_ttft_excludes_inter_turn_delay(self) -> None:
+        """TTFT starts when the delayed turn becomes ready, not at prior decode end."""
+        s = _make_session(
+            "s0",
+            [
+                {"input_length": 100, "hash_ids": [0]},
+                {"input_length": 100, "delay_ms": 5000, "hash_ids": [1]},
+            ],
+        )
+
+        config = _cfg(
+            concurrency=1,
+            prefill_tps=100,
+            decode_tps=1_000_000,
+            gpu_kv_capacity_gb=1.0,
+        )
+
+        result = simulate([s], config)
+        evt1 = result.session_states[0].turn_events[1]
+        assert evt1.turn_ready - evt1.delay_start == pytest.approx(5000.0)
+        assert result.avg_ttft == pytest.approx(1000.0)
+        assert result.total_wait_ms == pytest.approx(0.0)

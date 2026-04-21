@@ -307,25 +307,11 @@ function simulate(sessions, concurrency, prefillTps, decodeTps, kvBytesPerToken,
   }
 
   // Slot tracking for Gantt
-  const slotFreeAt = new Float64Array(concurrency);
   let nextSlot = 0;
 
-  function assignSlot(sIdx, startTime) {
-    if (nextSlot < concurrency) {
-      const slot = nextSlot++;
-      sessionStates[sIdx].slot = slot;
-      return;
-    }
-    let bestSlot = 0;
-    for (let i = 1; i < concurrency; i++) {
-      if (slotFreeAt[i] < slotFreeAt[bestSlot]) bestSlot = i;
-    }
-    sessionStates[sIdx].slot = bestSlot;
-  }
-
-  function releaseSlot(sIdx, endTime) {
-    const slot = sessionStates[sIdx].slot;
-    if (slot !== undefined) slotFreeAt[slot] = endTime;
+  function assignSlot(sIdx) {
+    if (nextSlot >= concurrency) throw new Error('no concurrency slot available');
+    sessionStates[sIdx].slot = nextSlot++;
   }
 
   let activeCount = 0;
@@ -344,7 +330,9 @@ function simulate(sessions, concurrency, prefillTps, decodeTps, kvBytesPerToken,
   const sessionBlocks = sessions.map(() => new Set());
 
   // LRU eviction: idle (between turns) AND ended sessions are evictable
-  const lruQueue = [];  // sIdx of idle/ended sessions, oldest first
+  const lruQueue = [];  // [sIdx, generation] of idle/ended sessions, oldest first
+  let lruHead = 0;
+  const lruGeneration = new Uint32Array(sessions.length);
   const inLruQueue = new Set();  // fast lookup for sessions currently in LRU
   const sessionEvicted = new Uint8Array(sessions.length);  // 1 if session was evicted mid-session
   let evictionCount = 0;
@@ -356,16 +344,36 @@ function simulate(sessions, concurrency, prefillTps, decodeTps, kvBytesPerToken,
   let totalMissTokens = 0;
   let totalEvictedBlocks = 0;
 
+  function cachedGroupCounts() {
+    const counts = {};
+    for (let i = 0; i < sessionCacheTokens.length; i++) {
+      if (sessionCacheTokens[i] > 0) {
+        const gid = sessionGroupId[i];
+        counts[gid] = (counts[gid] || 0) + 1;
+      }
+    }
+    return counts;
+  }
+
+  function cachedSessionCount() {
+    let count = 0;
+    for (let i = 0; i < sessionCacheTokens.length; i++) {
+      if (sessionCacheTokens[i] > 0) count++;
+    }
+    return count;
+  }
+
   function computeDedupTokens() {
-    const l1Dedup = Math.max(0, aliveSessions - 1) * l1Tokens;
-    const l15Dedup = Object.values(activeGroups).reduce((sum, cnt) => sum + Math.max(0, cnt - 1) * l15Tokens, 0);
+    const l1Dedup = Math.max(0, cachedSessionCount() - 1) * l1Tokens;
+    const l15Dedup = Object.values(cachedGroupCounts()).reduce((sum, cnt) => sum + Math.max(0, cnt - 1) * l15Tokens, 0);
     return Math.max(0, cachedTokens - l1Dedup - l15Dedup);
   }
 
   function evictLRU() {
     let uniqueCached = computeDedupTokens();
-    while (uniqueCached > totalCapacityTokens && lruQueue.length > 0) {
-      const victimIdx = lruQueue.shift();
+    while (uniqueCached > totalCapacityTokens && lruHead < lruQueue.length) {
+      const [victimIdx, generation] = lruQueue[lruHead++];
+      if (!inLruQueue.has(victimIdx) || generation !== lruGeneration[victimIdx]) continue;
       inLruQueue.delete(victimIdx);
       if (sessionCacheTokens[victimIdx] === 0) continue;
       cachedTokens -= sessionCacheTokens[victimIdx];
@@ -389,18 +397,16 @@ function simulate(sessions, concurrency, prefillTps, decodeTps, kvBytesPerToken,
 
   function addToLRU(sIdx) {
     if (!inLruQueue.has(sIdx)) {
-      lruQueue.push(sIdx);
+      lruGeneration[sIdx]++;
+      lruQueue.push([sIdx, lruGeneration[sIdx]]);
       inLruQueue.add(sIdx);
     }
   }
 
   function removeFromLRU(sIdx) {
     if (inLruQueue.has(sIdx)) {
-      const pos = lruQueue.indexOf(sIdx);
-      if (pos !== -1) {
-        lruQueue.splice(pos, 1);
-      }
       inLruQueue.delete(sIdx);
+      lruGeneration[sIdx]++;
     }
   }
 
@@ -409,7 +415,7 @@ function simulate(sessions, concurrency, prefillTps, decodeTps, kvBytesPerToken,
     if (inheritSlot !== undefined) {
       sessionStates[sIdx].slot = inheritSlot;
     } else {
-      assignSlot(sIdx, time);
+      assignSlot(sIdx);
     }
     startTurn(sIdx, 0, time);
   }
@@ -423,6 +429,13 @@ function simulate(sessions, concurrency, prefillTps, decodeTps, kvBytesPerToken,
     if (tIdx > 0 && delay > 0) {
       addToLRU(sIdx);
     }
+
+    pushEvent(turnReadyTime, 'turn_ready', sIdx, tIdx);
+  }
+
+  function turnReady(sIdx, tIdx, time) {
+    const turn = sessions[sIdx].turns[tIdx];
+    removeFromLRU(sIdx);
 
     // Cache hit: check ALL cumulative blocks for this turn against blockRefCount.
     // Blocks from prior turns of this session are already in cache (hits).
@@ -451,7 +464,8 @@ function simulate(sessions, concurrency, prefillTps, decodeTps, kvBytesPerToken,
 
     sessionStates[sIdx].turnEvents.push({
       turnIdx: tIdx,
-      delayStart: time,
+      delayStart: time - (tIdx === 0 ? 0 : turn.delay_ms),
+      turnReady: time,
       prefillStart: prefillStart,
       decodeStart: decodeStart,
       decodeEnd: decodeEnd,
@@ -485,9 +499,6 @@ function simulate(sessions, concurrency, prefillTps, decodeTps, kvBytesPerToken,
       const turn = sessions[sIdx].turns[tIdx];
       inputTokens += turn.cumulative_input_length;
       outputTokens += turn.output_length;
-
-      // Remove from LRU: actively processing now
-      removeFromLRU(sIdx);
 
       // If this session was evicted during idle, it needs full re-cache
       // If session was evicted mid-pause, it needs to re-fetch ALL accumulated blocks
@@ -547,6 +558,8 @@ function simulate(sessions, concurrency, prefillTps, decodeTps, kvBytesPerToken,
 
       // Evict LRU idle/ended sessions if over capacity
       evictLRU();
+    } else if (type === 'turn_ready') {
+      turnReady(sIdx, tIdx, time);
     } else if (type === 'request_end') {
       activeRequests--;
       const turn = sessions[sIdx].turns[tIdx];
@@ -569,7 +582,6 @@ function simulate(sessions, concurrency, prefillTps, decodeTps, kvBytesPerToken,
 
         sessionStates[sIdx].endTime = time;
         const freedSlot = sessionStates[sIdx].slot;
-        releaseSlot(sIdx, time);
         activeCount--;
         if (nextSession < sessions.length) {
           activeCount++;
@@ -582,9 +594,7 @@ function simulate(sessions, concurrency, prefillTps, decodeTps, kvBytesPerToken,
     // Only record time series for request_start/request_end events
     if (type === 'request_start' || type === 'request_end') {
       // L1/L1.5 deduplication for unique cache footprint
-      const l1Dedup = Math.max(0, aliveSessions - 1) * l1Tokens;
-      const l15Dedup = Object.values(activeGroups).reduce((sum, cnt) => sum + Math.max(0, cnt - 1) * l15Tokens, 0);
-      const uniqueCached = Math.max(0, cachedTokens - l1Dedup - l15Dedup);
+      const uniqueCached = computeDedupTokens();
       const kvCacheGb = uniqueCached * kvBytesPerToken / 1e9;
 
       timeSeriesRaw.push({
@@ -628,10 +638,10 @@ function simulate(sessions, concurrency, prefillTps, decodeTps, kvBytesPerToken,
   let ttftSum = 0;
   sessionStates.forEach(s => {
     s.turnEvents.forEach(evt => {
-      totalWaitMs += evt.prefillStart - evt.delayStart;
+      totalWaitMs += evt.prefillStart - evt.turnReady;
       totalPrefillMs += evt.decodeStart - evt.prefillStart;
       totalDecodeMs += evt.decodeEnd - evt.decodeStart;
-      ttftSum += evt.decodeStart - evt.delayStart;
+      ttftSum += evt.decodeStart - evt.turnReady;
       turnCount++;
     });
   });
@@ -1104,10 +1114,15 @@ function drawGantt(selector, sessionStates, maxTime, concurrency) {
             .attr('opacity', 0.5);
           seg.on('mousemove', function(event) {
             const dur = (evt.prefillStart - evt.delayStart) / 1000;
+            const delayDur = Math.max(0, evt.turnReady - evt.delayStart) / 1000;
+            const waitDur = Math.max(0, evt.prefillStart - evt.turnReady) / 1000;
             tooltip.style('display', 'block')
               .style('left', (event.clientX + 12) + 'px')
               .style('top', (event.clientY - 30) + 'px')
-              .html(`S${session.idx}${isRestart ? ' [restart]' : ''} Turn ${evt.turnIdx} - <b>Wait</b><br>Duration: ${dur.toFixed(3)}s`);
+              .html(`S${session.idx}${isRestart ? ' [restart]' : ''} Turn ${evt.turnIdx} - <b>Wait / Delay</b><br>` +
+                `Total: ${dur.toFixed(3)}s<br>` +
+                `Delay: ${delayDur.toFixed(3)}s<br>` +
+                `Scheduler wait: ${waitDur.toFixed(3)}s`);
           }).on('mouseleave', () => tooltip.style('display', 'none'));
         }
 

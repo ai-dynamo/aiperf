@@ -19,10 +19,9 @@ Key design decisions:
 
 from __future__ import annotations
 
-import contextlib
 import heapq
 import math
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 
 from aiperf.dataset.agentic_code_gen.prefix_model import MAX_GROUP_BLOCKS, MAX_GROUPS
@@ -62,11 +61,20 @@ class SimulationConfig:
             "concurrency": self.concurrency,
             "prefill_tps": self.prefill_tps,
             "decode_tps": self.decode_tps,
+            "kv_bytes_per_token": self.kv_bytes_per_token,
+            "gpu_kv_capacity_gb": self.gpu_kv_capacity_gb,
             "block_size": self.block_size,
         }
         for name, value in positive_fields.items():
             if value <= 0:
                 raise ValueError(f"{name} must be > 0")
+        nonnegative_fields = {
+            "l1_tokens": self.l1_tokens,
+            "l1_5_tokens": self.l1_5_tokens,
+        }
+        for name, value in nonnegative_fields.items():
+            if value < 0:
+                raise ValueError(f"{name} must be >= 0")
 
 
 @dataclass(slots=True)
@@ -97,6 +105,7 @@ class TurnEvent:
 
     turn_idx: int
     delay_start: float
+    turn_ready: float
     prefill_start: float
     decode_start: float
     decode_end: float
@@ -207,26 +216,15 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
         prefill_free_at = end_time
         return start_time, end_time
 
-    # Slot tracking for Gantt
-    slot_free_at = [0.0] * config.concurrency
+    # Slot tracking for Gantt.
     next_slot = 0
 
-    def assign_slot(s_idx: int, _start_time: float) -> None:
+    def assign_slot(s_idx: int) -> None:
         nonlocal next_slot
-        if next_slot < config.concurrency:
-            session_states[s_idx].slot = next_slot
-            next_slot += 1
-            return
-        best_slot = 0
-        for i in range(1, config.concurrency):
-            if slot_free_at[i] < slot_free_at[best_slot]:
-                best_slot = i
-        session_states[s_idx].slot = best_slot
-
-    def release_slot(s_idx: int, end_time: float) -> None:
-        slot = session_states[s_idx].slot
-        if slot is not None:
-            slot_free_at[slot] = end_time
+        if next_slot >= config.concurrency:
+            raise RuntimeError("no concurrency slot available")
+        session_states[s_idx].slot = next_slot
+        next_slot += 1
 
     active_count = 0
     next_session = 0
@@ -243,7 +241,8 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
     session_blocks: list[set[int]] = [set() for _ in sessions]
 
     # LRU eviction
-    lru_queue: list[int] = []
+    lru_queue: deque[tuple[int, int]] = deque()
+    lru_generation = [0] * len(sessions)
     in_lru_queue: set[int] = set()
     session_evicted = [False] * len(sessions)
     eviction_count = 0
@@ -282,7 +281,12 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
         nonlocal cached_tokens, eviction_count, total_evicted_blocks
         unique_cached = compute_unique_cached_tokens()
         while unique_cached > total_capacity_tokens and lru_queue:
-            victim_idx = lru_queue.pop(0)
+            victim_idx, generation = lru_queue.popleft()
+            if (
+                victim_idx not in in_lru_queue
+                or generation != lru_generation[victim_idx]
+            ):
+                continue
             in_lru_queue.discard(victim_idx)
             if session_cache_tokens[victim_idx] == 0:
                 continue
@@ -301,21 +305,21 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
 
     def add_to_lru(s_idx: int) -> None:
         if s_idx not in in_lru_queue:
-            lru_queue.append(s_idx)
+            lru_generation[s_idx] += 1
+            lru_queue.append((s_idx, lru_generation[s_idx]))
             in_lru_queue.add(s_idx)
 
     def remove_from_lru(s_idx: int) -> None:
         if s_idx in in_lru_queue:
-            with contextlib.suppress(ValueError):
-                lru_queue.remove(s_idx)
             in_lru_queue.discard(s_idx)
+            lru_generation[s_idx] += 1
 
     def start_session(s_idx: int, time: float, inherit_slot: int | None = None) -> None:
         session_states[s_idx].start_time = time
         if inherit_slot is not None:
             session_states[s_idx].slot = inherit_slot
         else:
-            assign_slot(s_idx, time)
+            assign_slot(s_idx)
         start_turn(s_idx, 0, time)
 
     def start_turn(s_idx: int, t_idx: int, time: float) -> None:
@@ -361,6 +365,7 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
             TurnEvent(
                 turn_idx=t_idx,
                 delay_start=time - (0.0 if t_idx == 0 else turn["delay_ms"]),
+                turn_ready=time,
                 prefill_start=prefill_start,
                 decode_start=decode_start,
                 decode_end=decode_end,
@@ -467,7 +472,6 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
 
                 session_states[s_idx].end_time = time
                 freed_slot = session_states[s_idx].slot
-                release_slot(s_idx, time)
                 active_count -= 1
                 if next_session < len(sessions):
                     active_count += 1
@@ -507,10 +511,10 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
     turn_count = 0
     for s in session_states:
         for evt in s.turn_events:
-            total_wait_ms += evt.prefill_start - evt.delay_start
+            total_wait_ms += evt.prefill_start - evt.turn_ready
             total_prefill_ms += evt.decode_start - evt.prefill_start
             total_decode_ms += evt.decode_end - evt.decode_start
-            ttft_sum += evt.decode_start - evt.delay_start
+            ttft_sum += evt.decode_start - evt.turn_ready
             turn_count += 1
     avg_ttft = ttft_sum / turn_count if turn_count > 0 else 0.0
 

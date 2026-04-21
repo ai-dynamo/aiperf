@@ -144,7 +144,7 @@ def load_simulation_sessions(jsonl_path: Path) -> list[dict[str, Any]]:
         result.append(
             {
                 "session_id": session_id,
-                "group_id": first.group_id or 0,
+                "group_id": first.group_id if first.group_id is not None else 0,
                 "is_restart": first.is_restart,
                 "turns": sim_turns,
             }

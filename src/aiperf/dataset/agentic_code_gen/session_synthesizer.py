@@ -156,7 +156,7 @@ class SessionSynthesizer:
         if turns_cfg is None:
             raise RuntimeError("explicit turn sampling requested without turns config")
         sampled = sample_lognormal(turns_cfg.to_lognormal(), self._rng, size=1)[0]
-        target = int(round(sampled))
+        target = round(sampled)
         return min(max(target, turns_cfg.min), turns_cfg.max)
 
     def _synthesize_explicit_turn_session(self) -> SynthesizedSession:

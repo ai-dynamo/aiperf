@@ -17,7 +17,6 @@ from aiperf.dataset.agentic_code_gen.models import (
     SynthesizedSession,
 )
 from aiperf.dataset.agentic_code_gen.reporting.cache_explorer import (
-    _classify_turn_blocks,
     render_cache_explorer,
     write_cache_structure,
 )
@@ -25,7 +24,6 @@ from aiperf.dataset.agentic_code_gen.reporting.comparison import render_comparis
 from aiperf.dataset.agentic_code_gen.reporting.metrics import (
     ReportData,
     TargetComparison,
-    _pct_error,
     _percentile_stats,
     build_report_data,
     extract_cache_metrics,
@@ -44,9 +42,6 @@ __all__ = [
     "PercentileStats",
     "ReportData",
     "TargetComparison",
-    "_classify_turn_blocks",
-    "_pct_error",
-    "_percentile_stats",
     "build_report_data",
     "extract_cache_metrics",
     "extract_metrics",

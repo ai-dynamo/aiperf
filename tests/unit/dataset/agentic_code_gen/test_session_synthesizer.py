@@ -354,17 +354,7 @@ class TestMaxIsl:
                 assert turn.input_length <= small_config.max_prompt_tokens
 
     def test_max_isl_override_clips_sessions(self) -> None:
-        """Simulates --max-isl by using model_copy to lower max_prompt_tokens."""
-        from aiperf.dataset.agentic_code_gen.distributions import (
-            lognormal_from_mean_median,
-        )
-        from aiperf.dataset.agentic_code_gen.models import (
-            CacheLayerConfig,
-            Layer15GroupConfig,
-            MixtureDelayConfig,
-            ResetConfig,
-        )
-
+        """Simulates --max-isl by lowering max_prompt_tokens."""
         base = SessionDistributionConfig(
             new_tokens_per_turn=lognormal_from_mean_median(mean=200, median=100),
             generation_length=lognormal_from_mean_median(mean=50, median=30),
@@ -384,7 +374,9 @@ class TestMaxIsl:
             ),
         )
         max_isl = 2_000
-        clipped = base.model_copy(update={"max_prompt_tokens": max_isl})
+        clipped = base.__class__.model_validate(
+            {**base.model_dump(), "max_prompt_tokens": max_isl}
+        )
         synth = SessionSynthesizer(clipped, seed=42)
         sessions = synth.synthesize_sessions(200)
         for session in sessions:

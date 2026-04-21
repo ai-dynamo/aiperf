@@ -58,12 +58,7 @@ def synthesize(
         dist_config = SessionDistributionConfig()
         config_name = "default"
 
-    if max_isl is not None:
-        dist_config = dist_config.model_copy(update={"max_prompt_tokens": max_isl})
-
-    if max_osl is not None:
-        gen = dist_config.generation_length.model_copy(update={"max": float(max_osl)})
-        dist_config = dist_config.model_copy(update={"generation_length": gen})
+    dist_config = _apply_cli_overrides(dist_config, max_isl=max_isl, max_osl=max_osl)
 
     timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
     run_dir_name = f"{config_name}_{num_sessions}s_seed{seed}_{timestamp}"
@@ -118,10 +113,32 @@ def validate(
         input_path: Path to JSONL dataset file.
     """
     console = Console()
+    if not input_path.is_file():
+        console.print(f"[red]Validation failed: {input_path} is not a file.[/red]")
+        raise SystemExit(1)
     line_count = _validate_mooncake_or_exit(input_path, console)
     console.print(
         f"[green]Validation passed: {line_count} rows are Mooncake-compatible.[/green]"
     )
+
+
+def _apply_cli_overrides(
+    dist_config: SessionDistributionConfig,
+    max_isl: int | None,
+    max_osl: int | None,
+) -> SessionDistributionConfig:
+    """Apply CLI overrides through normal model validation."""
+    if max_isl is None and max_osl is None:
+        return dist_config
+
+    data = dist_config.model_dump()
+    if max_isl is not None:
+        data["max_prompt_tokens"] = max_isl
+    if max_osl is not None:
+        generation_length = dict(data["generation_length"])
+        generation_length["max"] = float(max_osl)
+        data["generation_length"] = generation_length
+    return dist_config.__class__.model_validate(data)
 
 
 def _validate_mooncake_or_exit(input_path: Path, console: Console) -> int:
