@@ -39,7 +39,7 @@ curl -s localhost:8000/v1/chat/completions \
 AIPerf loads the MMStar dataset from HuggingFace, attaches the image from each row to the
 question, and sends each pair as a single-turn vision request.
 
-{/* aiperf-run-vllm-vision-openai-endpoint-server */}
+<!-- aiperf-run-vllm-vision-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -50,7 +50,7 @@ aiperf profile \
     --request-count 10 \
     --concurrency 4
 ```
-{/* /aiperf-run-vllm-vision-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-vision-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 

@@ -8,12 +8,11 @@ sidebar-title: Creating Your First AIPerf Plugin
 
 This tutorial walks you through creating a custom AIPerf endpoint plugin from scratch. By the end, you'll have a working plugin package that can benchmark any custom API.
 
-<Tip>
-**Contributing directly to AIPerf?** The endpoint class (Step 2) and manifest format (Step 3) are the same, but you can skip the external packaging:
-- Add your class under `src/aiperf/` instead of a separate package
-- Register it in the existing `src/aiperf/plugin/plugins.yaml` instead of creating a new one
-- Skip: Project Structure, Step 1 (pyproject.toml/entry points), Step 4 (install)
-</Tip>
+> [!TIP]
+> **Contributing directly to AIPerf?** The endpoint class (Step 2) and manifest format (Step 3) are the same, but you can skip the external packaging:
+> - Add your class under `src/aiperf/` instead of a separate package
+> - Register it in the existing `src/aiperf/plugin/plugins.yaml` instead of creating a new one
+> - Skip: Project Structure, Step 1 (pyproject.toml/entry points), Step 4 (install)
 
 ## What You'll Build
 
