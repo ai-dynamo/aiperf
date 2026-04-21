@@ -984,7 +984,9 @@ class JobSetSpec(AIPerfBaseModel):
             volumes=volumes,
             restart_policy=RestartPolicy.ON_FAILURE,
             backoff_limit=jobset_config.WORKER_BACKOFF_LIMIT,
-            job_ttl_seconds=None if self.keep_failed_pods else self.ttl_seconds,
+            # Workers are ephemeral and must be garbage-collected immediately
+            # once the benchmark ends; the outer JobSet carries the real TTL.
+            job_ttl_seconds=None if self.keep_failed_pods else 0,
             pod_template=self.pod_template,
             job_id=self.job_id,
         )
