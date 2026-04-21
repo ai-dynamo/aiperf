@@ -3,19 +3,12 @@
 """msgspec wire envelope for server-metrics records.
 
 The RECORDS channel uses a typed msgspec decoder (see
-``aiperf.common.channel_codecs.RECORDS_CODEC``). To share that channel the
-server-metrics path builds a msgspec-native envelope at push time and
-rehydrates the Pydantic ``ServerMetricsRecord`` in the pull handler.
-
-The nested ``ServerMetricsRecord`` model tree (MetricFamily -> MetricSample
-with histogram buckets) is deep, so the wire envelope carries the record as a
-JSON-safe ``dict`` rather than mirroring every Pydantic type as a separate
-msgspec Struct.
+``aiperf.common.channel_codecs.RECORDS_CODEC``). The wire envelope carries a
+native ``ServerMetricsRecord`` msgspec struct directly — no JSON dict
+round-tripping.
 """
 
 from __future__ import annotations
-
-from typing import Any
 
 from msgspec import Struct
 
@@ -41,7 +34,7 @@ class ServerMetricsRecordWireMessage(
     message_type: MessageType = MessageType.SERVER_METRICS_RECORD
     service_id: str
     collector_id: str
-    record: dict[str, Any] | None = None
+    record: ServerMetricsRecord | None = None
     error: WireErrorDetails | None = None
 
     @property
@@ -60,11 +53,7 @@ def build_server_metrics_record_wire_message(
     return ServerMetricsRecordWireMessage(
         service_id=service_id,
         collector_id=collector_id,
-        record=(
-            record.model_dump(exclude_none=True, mode="json")
-            if record is not None
-            else None
-        ),
+        record=record,
         error=_error_to_wire(error),
     )
 
@@ -72,10 +61,8 @@ def build_server_metrics_record_wire_message(
 def server_metrics_record_from_wire(
     wire: ServerMetricsRecordWireMessage,
 ) -> ServerMetricsRecord | None:
-    """Rehydrate the pydantic ServerMetricsRecord from its wire envelope."""
-    if wire.record is None:
-        return None
-    return ServerMetricsRecord.model_validate(wire.record)
+    """Return the native server-metrics record from its wire envelope."""
+    return wire.record
 
 
 def server_metrics_error_from_wire(

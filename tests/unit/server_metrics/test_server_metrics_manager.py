@@ -342,8 +342,8 @@ class TestManagerCallbackFunctionality:
         call_args = manager.records_push_client.push.call_args[0][0]
         assert isinstance(call_args, ServerMetricsRecordWireMessage)
         assert call_args.record is not None
-        assert call_args.record["endpoint_url"] == test_record.endpoint_url
-        assert call_args.record["timestamp_ns"] == test_record.timestamp_ns
+        assert call_args.record.endpoint_url == test_record.endpoint_url
+        assert call_args.record.timestamp_ns == test_record.timestamp_ns
 
     @pytest.mark.asyncio
     async def test_error_callback_logs_error(

@@ -9,6 +9,7 @@ the exported data (JSON, JSONL, CSV).
 
 import platform
 
+import msgspec
 import pyarrow.parquet as pq
 import pytest
 
@@ -449,7 +450,7 @@ class TestServerMetrics:
             lines = jsonl_file.read_text().strip().split("\n")
             assert len(lines) > 0
             # Validate first record
-            first_record = SlimRecord.model_validate_json(lines[0])
+            first_record = msgspec.json.decode(lines[0], type=SlimRecord)
             assert first_record.timestamp_ns > 0
 
     # ========================================================================

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Generic
 
 import aiofiles
+import msgspec
 import orjson
 
 from aiperf.common.environment import Environment
@@ -99,6 +100,8 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
             return record.to_json_bytes()
         if hasattr(record, "model_dump"):
             return orjson.dumps(record.model_dump(exclude_none=True, mode="json"))
+        if isinstance(record, msgspec.Struct):
+            return msgspec.json.encode(record)
         raise TypeError(f"Unsupported JSONL record type: {type(record)}")
 
     async def _flush_buffer(self, buffer_to_flush: list[bytes]) -> None:

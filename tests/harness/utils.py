@@ -240,16 +240,19 @@ class AIPerfResults:
         return ServerMetricsExportData.model_validate_json(file_path.read_text())
 
     def _load_server_metrics_jsonl(self) -> list[SlimRecord] | None:
-        """Load server metrics JSONL records as Pydantic models."""
+        """Load server metrics JSONL records as msgspec structs."""
         file_path = self._find_file("**/*server_metrics_export.jsonl")
         if not file_path:
             return None
 
+        import msgspec
+
+        decoder = msgspec.json.Decoder(SlimRecord)
         records = []
         with open(file_path, encoding="utf-8") as f:
             for line in f:
                 if line.strip():
-                    records.append(SlimRecord.model_validate_json(line))
+                    records.append(decoder.decode(line))
         return records
 
     @property

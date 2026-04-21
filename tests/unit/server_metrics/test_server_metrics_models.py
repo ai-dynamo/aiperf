@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest
+import pytest  # noqa: F401
 
 from aiperf.common.models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.server_metrics_models import (
@@ -17,8 +17,16 @@ from aiperf.server_metrics.storage import (
 )
 
 
-class TestMetricSampleValidation:
-    """Test MetricSample mutual exclusivity validation."""
+class TestMetricSampleConstruction:
+    """Test MetricSample construction patterns.
+
+    ``MetricSample`` is a frozen ``msgspec.Struct`` populated by the Prometheus
+    parser in ``ServerMetricsDataCollector``. The parser only emits
+    value-only (counter/gauge) or histogram (buckets/sum/count) samples; the
+    earlier Pydantic model carried a defensive mutual-exclusivity validator
+    which no longer exists on the msgspec path — callers that need to reject
+    malformed samples should do so explicitly.
+    """
 
     def test_value_only_is_valid(self):
         """Test that value-only sample is valid."""
@@ -59,30 +67,6 @@ class TestMetricSampleValidation:
         assert sample.buckets == {"0.01": 5.0, "0.1": 15.0, "1.0": 50.0, "+Inf": 100.0}
         assert sample.sum == 125.5
         assert sample.count == 100.0
-
-    def test_neither_value_nor_buckets_raises(self):
-        """Test that setting neither value nor buckets raises ValidationError."""
-        with pytest.raises(ValueError, match="One of value or buckets must be set"):
-            MetricSample(labels={"key": "value"})
-
-    def test_value_and_buckets_raises(self):
-        """Test that setting both value and buckets raises ValidationError."""
-        with pytest.raises(ValueError, match="Only one of value or buckets can be set"):
-            MetricSample(value=42.0, buckets={"0.1": 10})
-
-    def test_value_with_sum_raises(self):
-        """Test that setting value with sum raises ValidationError."""
-        with pytest.raises(
-            ValueError, match="If value is set, sum and count must not be set"
-        ):
-            MetricSample(value=42.0, sum=100.0)
-
-    def test_value_with_count_raises(self):
-        """Test that setting value with count raises ValidationError."""
-        with pytest.raises(
-            ValueError, match="If value is set, sum and count must not be set"
-        ):
-            MetricSample(value=42.0, count=100)
 
 
 class TestServerMetricsRecordConversion:

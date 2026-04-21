@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import ClassVar
 
-from pydantic import Field, SerializeAsAny, model_validator
-from typing_extensions import Self
+import msgspec
+from pydantic import Field, SerializeAsAny
 
 from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -82,7 +82,12 @@ class TimeRangeFilter:
 # =============================================================================
 
 
-class MetricSample(AIPerfBaseModel):
+class MetricSample(
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
     """Single metric sample from Prometheus exposition format.
 
     Represents one data point from a Prometheus metric scrape. Format depends
@@ -93,56 +98,31 @@ class MetricSample(AIPerfBaseModel):
     Labels provide dimensional data for grouping and filtering (e.g., HTTP method,
     status code, instance ID). Histogram labels exclude the special "le" label
     which is used for bucket boundaries instead.
-
-    Validation ensures mutual exclusivity between value and histogram fields
-    to prevent malformed samples.
     """
 
-    labels: dict[str, str] | None = Field(
-        default=None,
-        description="Metric labels (excluding histogram special labels). None if no labels.",
-    )
-    value: float | None = Field(
-        default=None, description="Simple metric value (counter/gauge)"
-    )
-    buckets: dict[str, float] | None = Field(
-        default=None,
-        description='Histogram bucket upper bounds (le="less than or equal") to counts. Keys are strings like "0.01", "0.1", "1.0"',
-    )
-    sum: float | None = Field(
-        default=None,
-        description="Sum of all observed values (for histogram only)",
-    )
-    count: float | None = Field(
-        default=None,
-        description="Total number of observations (for histogram only)",
-    )
+    labels: dict[str, str] | None = None
+    """Metric labels (excluding histogram special labels). None if no labels."""
 
-    @model_validator(mode="after")
-    def _validate_mutual_exclusivity(self) -> Self:
-        """Ensure metric sample has valid field combination.
+    value: float | None = None
+    """Simple metric value (counter/gauge)."""
 
-        Validates that:
-        1. Exactly one of {value, buckets} is set (not both, not neither)
-        2. If value set (counter/gauge), then sum/count must be None
-        3. If buckets set (histogram), value must be None
+    buckets: dict[str, float] | None = None
+    """Histogram bucket upper bounds (le="less than or equal") to counts.
+    Keys are strings like "0.01", "0.1", "1.0"."""
 
-        Raises:
-            ValueError: If field combination is invalid
+    sum: float | None = None
+    """Sum of all observed values (for histogram only)."""
 
-        Returns:
-            Self for method chaining
-        """
-        if self.value is not None and self.buckets is not None:
-            raise ValueError("Only one of value or buckets can be set")
-        if self.value is None and self.buckets is None:
-            raise ValueError("One of value or buckets must be set")
-        if self.value is not None and (self.sum is not None or self.count is not None):
-            raise ValueError("If value is set, sum and count must not be set")
-        return self
+    count: float | None = None
+    """Total number of observations (for histogram only)."""
 
 
-class MetricFamily(AIPerfBaseModel):
+class MetricFamily(
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
     """Group of related metrics with same name and type from Prometheus.
 
     Represents a complete metric family from Prometheus exposition format
@@ -152,21 +132,24 @@ class MetricFamily(AIPerfBaseModel):
     For multi-dimensional metrics, samples list contains one entry per unique
     label combination. For histograms, each sample contains all buckets for
     that label set.
-
-    Args:
-        type: Prometheus metric type (COUNTER, GAUGE, HISTOGRAM, etc.)
-        description: Human-readable description from HELP text
-        samples: List of MetricSample objects, one per unique label combination
     """
 
-    type: PrometheusMetricType = Field(description="Metric type as enum")
-    description: str = Field(description="Metric description from HELP text")
-    samples: list[MetricSample] = Field(
-        description="Metric samples grouped by base labels"
-    )
+    type: PrometheusMetricType
+    """Metric type as enum."""
+
+    description: str
+    """Metric description from HELP text."""
+
+    samples: list[MetricSample]
+    """Metric samples grouped by base labels."""
 
 
-class SlimRecord(AIPerfBaseModel):
+class SlimRecord(
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
     """Slim server metrics record containing only time-varying data.
 
     This record excludes static metadata (metric types, help text)
@@ -174,29 +157,31 @@ class SlimRecord(AIPerfBaseModel):
     precise correlation with client request timestamps.
     """
 
-    endpoint_url: str = Field(
-        description="Source Prometheus metrics endpoint URL (e.g., 'http://localhost:8081/metrics')"
-    )
-    timestamp_ns: int = Field(
-        description="Nanosecond wall-clock timestamp representing when server generated metrics"
-    )
-    endpoint_latency_ns: int = Field(
-        description="Nanoseconds for total HTTP round-trip (request start to completion)"
-    )
-    metrics: dict[str, list[MetricSample]] = Field(
-        description="Metrics grouped by family name, mapping directly to metric sample list"
-    )
-    request_sent_ns: int | None = Field(
-        default=None,
-        description="Wall-clock timestamp in nanoseconds when HTTP request was initiated",
-    )
-    first_byte_ns: int | None = Field(
-        default=None,
-        description="Wall-clock timestamp in nanoseconds when first response byte received from server",
-    )
+    endpoint_url: str
+    """Source Prometheus metrics endpoint URL (e.g., 'http://localhost:8081/metrics')."""
+
+    timestamp_ns: int
+    """Nanosecond wall-clock timestamp representing when server generated metrics."""
+
+    metrics: dict[str, list[MetricSample]]
+    """Metrics grouped by family name, mapping directly to metric sample list."""
+
+    endpoint_latency_ns: int | None = None
+    """Nanoseconds for total HTTP round-trip (request start to completion)."""
+
+    request_sent_ns: int | None = None
+    """Wall-clock timestamp in nanoseconds when HTTP request was initiated."""
+
+    first_byte_ns: int | None = None
+    """Wall-clock timestamp in nanoseconds when first response byte received from server."""
 
 
-class ServerMetricsRecord(AIPerfBaseModel):
+class ServerMetricsRecord(
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
     """Single server metrics data point from Prometheus endpoint.
 
     This record contains all metrics scraped from one Prometheus endpoint at one point in time.
@@ -207,42 +192,36 @@ class ServerMetricsRecord(AIPerfBaseModel):
     the client received the full response.
     """
 
-    endpoint_url: str = Field(
-        description="Source Prometheus metrics endpoint URL (e.g., 'http://localhost:8081/metrics')"
-    )
-    timestamp_ns: int = Field(
-        description="Nanosecond wall-clock timestamp representing when server generated metrics. "
-        "Uses first_byte_ns if available (most accurate), otherwise falls back to time after request completes."
-    )
-    endpoint_latency_ns: int | None = Field(
-        default=None,
-        description="Nanoseconds for total HTTP round-trip (request start to completion)",
-    )
-    metrics: dict[str, MetricFamily] = Field(
-        description="Metrics grouped by family name"
-    )
-    request_sent_ns: int | None = Field(
-        default=None,
-        description="Wall-clock timestamp in nanoseconds when HTTP request was initiated (from aiohttp trace)",
-    )
-    first_byte_ns: int | None = Field(
-        default=None,
-        description="Wall-clock timestamp in nanoseconds when first response byte received from server. "
-        "Best approximation of when server generated the metrics.",
-    )
-    is_duplicate: bool = Field(
-        default=False,
-        description="True if this record's metrics are identical to the previous fetch from this endpoint",
-    )
+    endpoint_url: str
+    """Source Prometheus metrics endpoint URL."""
+
+    timestamp_ns: int
+    """Nanosecond wall-clock timestamp representing when server generated metrics.
+    Uses first_byte_ns if available (most accurate), otherwise falls back to
+    time after request completes."""
+
+    metrics: dict[str, MetricFamily]
+    """Metrics grouped by family name."""
+
+    endpoint_latency_ns: int | None = None
+    """Nanoseconds for total HTTP round-trip (request start to completion)."""
+
+    request_sent_ns: int | None = None
+    """Wall-clock timestamp in nanoseconds when HTTP request was initiated
+    (from aiohttp trace)."""
+
+    first_byte_ns: int | None = None
+    """Wall-clock timestamp in nanoseconds when first response byte received from server.
+    Best approximation of when server generated the metrics."""
+
+    is_duplicate: bool = False
+    """True if this record's metrics are identical to the previous fetch from this endpoint."""
 
     def to_slim(self) -> SlimRecord:
         """Convert to slim record.
 
         Excludes metrics ending in _info as they are typically used for metadata and not metrics,
         so they will be include in the final export, but not in the JSONL records.
-
-        Returns:
-            ServerMetricsSlimRecord with only timestamp and slim samples (flat structure)
         """
         slim_metrics = {
             name: family.samples
