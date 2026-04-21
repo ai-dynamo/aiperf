@@ -378,10 +378,13 @@ def generate_report(
     print(f"Found {len(run_dirs)} run directories.")
     results = build_report(run_dirs, metric_type=metric)
 
+    for model_data in results.values():
+        for cat, v in model_data.items():
+            if isinstance(v, float) and math.isnan(v):
+                model_data[cat] = None
+
     has_value = any(
-        v is not None and not (isinstance(v, float) and math.isnan(v))
-        for model_data in results.values()
-        for v in model_data.values()
+        v is not None for model_data in results.values() for v in model_data.values()
     )
     if not has_value:
         raise SpeedBenchReportError("no SPEED-Bench results extracted")
