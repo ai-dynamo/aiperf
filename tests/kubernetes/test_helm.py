@@ -454,7 +454,9 @@ class TestHelmErrorHandling:
                 "aiperfjob", "invalid-config-test", namespace="default"
             )
 
-    @pytest.mark.timeout(TEST_JOB_TIMEOUT)
+    # The preflight's endpoint reachability check has its own retry/backoff
+    # ladder that can push this past TEST_JOB_TIMEOUT (60s); give it room.
+    @pytest.mark.timeout(180)
     @pytest.mark.asyncio
     async def test_unreachable_endpoint_fails_gracefully(
         self,
