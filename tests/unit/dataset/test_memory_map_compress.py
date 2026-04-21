@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for MemoryMapDatasetBackingStore compress_only mode."""
 
+import msgspec
 import pytest
 import zstandard
 
@@ -78,7 +79,7 @@ class TestCompressOnlyRoundTrip:
             decompressed_data = reader.read()
         decompressed_index = dctx.decompress(metadata.index_file_path.read_bytes())
 
-        roundtrip_conv = Conversation.model_validate_json(decompressed_data)
+        roundtrip_conv = msgspec.json.decode(decompressed_data, type=Conversation)
         assert roundtrip_conv.session_id == "sess-1"
 
         index = MemoryMapDatasetIndex.model_validate_json(decompressed_index)

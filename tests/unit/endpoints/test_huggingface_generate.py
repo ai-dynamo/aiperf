@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from aiperf.common.models import ParsedResponse
+from aiperf.common.models.dataset_models import Text
 from aiperf.common.models.record_models import (
     InferenceServerResponse,
     TextResponseData,
@@ -46,7 +47,7 @@ class TestHuggingFaceGenerateEndpoint:
         assert meta.metrics_title == "LLM Metrics"
 
     def test_format_payload_basic(self, endpoint, model_endpoint):
-        turn = Turn(texts=[{"contents": ["Hello world"]}])
+        turn = Turn(texts=[Text(contents=["Hello world"])])
         request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
@@ -61,7 +62,7 @@ class TestHuggingFaceGenerateEndpoint:
         )
         ep = HuggingFaceGenerateEndpoint(run=_wrap_run(cfg))
         ep.debug = Mock()
-        turn = Turn(texts=[{"contents": ["hi"]}], max_tokens=25)
+        turn = Turn(texts=[Text(contents=["hi"])], max_tokens=25)
         request_info = create_request_info(config=cfg, turns=[turn])
 
         payload = ep.format_payload(request_info)
@@ -69,8 +70,8 @@ class TestHuggingFaceGenerateEndpoint:
         assert payload["parameters"]["temperature"] == 0.9
 
     def test_format_payload_multiple_turns_raises(self, endpoint, model_endpoint):
-        turn1 = Turn(texts=[{"contents": ["a"]}])
-        turn2 = Turn(texts=[{"contents": ["b"]}])
+        turn1 = Turn(texts=[Text(contents=["a"])])
+        turn2 = Turn(texts=[Text(contents=["b"])])
         request_info = create_request_info(config=model_endpoint, turns=[turn1, turn2])
         with pytest.raises(ValueError):
             endpoint.format_payload(request_info)

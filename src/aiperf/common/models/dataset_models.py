@@ -5,7 +5,9 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any, ClassVar
 
-from pydantic import Field, field_validator
+import msgspec
+from pydantic import Field, GetCoreSchemaHandler, field_validator
+from pydantic_core import CoreSchema, core_schema
 
 from aiperf.common.enums import ConversationContextMode, MediaType
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -64,15 +66,64 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
     )
 
 
-class Media(AIPerfBaseModel):
+# Hot-path dataset models use msgspec.Struct for ~3-4x faster encode/decode/construct
+# vs Pydantic v2. These are instantiated per-turn per-request at high QPS.
+
+
+class _PydanticStructMixin:
+    """Shim letting Pydantic v2 parents accept/serialize a msgspec.Struct field.
+
+    Pydantic cannot natively validate or JSON-serialize a msgspec.Struct. This
+    teaches Pydantic to accept dicts/instances during validation (via
+    ``msgspec.convert``) and to emit plain dicts during dump (via
+    ``msgspec.to_builtins``), so wrappers like ``ConversationResponseMessage``
+    continue to round-trip without special-casing at every callsite.
+    """
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls,
+        source_type: Any,
+        handler: GetCoreSchemaHandler,
+    ) -> CoreSchema:
+        def _validate(value: Any) -> Any:
+            if isinstance(value, cls):
+                return value
+            # Pydantic resolves union members by trying each in order. If we get
+            # a non-mapping (e.g. a `str` URL being validated against
+            # `list[str] | list[Image]`), raise a plain ValueError so Pydantic
+            # falls through to the next union variant rather than bubbling a
+            # msgspec-specific error that older pydantic versions treat as
+            # fatal.
+            if not isinstance(value, dict):
+                raise ValueError(
+                    f"Expected dict or {cls.__name__} instance, got {type(value).__name__}"
+                )
+            return msgspec.convert(value, cls)
+
+        def _serialize(value: Any) -> Any:
+            return msgspec.to_builtins(value)
+
+        return core_schema.no_info_plain_validator_function(
+            _validate,
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                _serialize,
+                return_schema=core_schema.any_schema(),
+                when_used="always",
+            ),
+        )
+
+
+class Media(
+    _PydanticStructMixin,
+    msgspec.Struct,
+    kw_only=True,
+    omit_defaults=False,
+):
     """Base class for all media fields. Contains name and contents of the media data."""
 
-    name: str = Field(default="", description="Name of the media field.")
-
-    contents: list[str] = Field(
-        default=[],
-        description="List of media contents. Supports batched media payload in a single turn.",
-    )
+    name: str = ""
+    contents: list[str] = msgspec.field(default_factory=list)
 
 
 class Text(Media):
@@ -112,50 +163,31 @@ class TurnMetadata(AIPerfBaseModel):
     )
 
 
-class Turn(AIPerfBaseModel):
+class Turn(
+    _PydanticStructMixin,
+    msgspec.Struct,
+    kw_only=True,
+    omit_defaults=False,
+):
     """A dataset representation of a single turn within a conversation.
 
     A turn is a single interaction between a user and an AI assistant,
     and it contains timestamp, delay, and raw data that user sends in each turn.
     """
 
-    model: str | None = Field(default=None, description="Model name used for the turn.")
-    role: str | None = Field(default=None, description="Role of the turn.")
-    timestamp: int | float | None = Field(
-        default=None,
-        description="The absolute timestamp of the turn in milliseconds.",
-    )
-    delay: int | float | None = Field(
-        default=None,
-        description="The delay of the turn in the conversation (in milliseconds).",
-    )
-    max_tokens: int | None = Field(
-        default=None, description="Maximum number of tokens to generate for this turn."
-    )
-    raw_messages: list[dict[str, Any]] | None = Field(
-        default=None,
-        description="Pre-formatted OpenAI-compatible messages array. "
-        "When set, bypasses normal turn-based message construction in endpoints.",
-    )
-    raw_tools: list[dict[str, Any]] | None = Field(
-        default=None,
-        description="Pre-formatted OpenAI-compatible tool definitions. "
-        "When set alongside raw_messages, injected into the API payload.",
-    )
-    texts: list[Text] = Field(
-        default=[], description="Collection of text data in each turn."
-    )
-    images: list[Image] = Field(
-        default=[], description="Collection of image data in each turn."
-    )
-    audios: list[Audio] = Field(
-        default=[], description="Collection of audio data in each turn."
-    )
-    videos: list[Video] = Field(
-        default=[], description="Collection of video data in each turn."
-    )
+    model: str | None = None
+    role: str | None = None
+    timestamp: int | float | None = None
+    delay: int | float | None = None
+    max_tokens: int | None = None
+    raw_messages: list[dict[str, Any]] | None = None
+    raw_tools: list[dict[str, Any]] | None = None
+    texts: list[Text] = msgspec.field(default_factory=list)
+    images: list[Image] = msgspec.field(default_factory=list)
+    audios: list[Audio] = msgspec.field(default_factory=list)
+    videos: list[Video] = msgspec.field(default_factory=list)
 
-    def metadata(self) -> TurnMetadata:
+    def metadata(self) -> "TurnMetadata":
         """Get the metadata of the turn."""
         return TurnMetadata(
             timestamp_ms=self.timestamp,
@@ -278,47 +310,30 @@ class DatasetMetadata(AIPerfBaseModel):
         return self.total_turn_count / len(self.conversations)
 
 
-class Conversation(AIPerfBaseModel):
+class Conversation(
+    _PydanticStructMixin,
+    msgspec.Struct,
+    kw_only=True,
+    omit_defaults=False,
+):
     """A dataset representation of a full conversation.
 
     A conversation is a sequence of turns between a user and an endpoint,
     and it contains the session ID and all the turns that consists the conversation.
     """
 
-    session_id: str = Field(
-        default="", description="Unique identifier for the conversation."
-    )
-    context_mode: ConversationContextMode | None = Field(
-        default=None,
-        description="How prior turns are accumulated for this conversation. "
-        "When None, inherits the dataset-level default.",
-    )
+    session_id: str = ""
+    context_mode: ConversationContextMode | None = None
+    turns: list[Turn] = msgspec.field(default_factory=list)
+    system_message: str | None = None
+    user_context_message: str | None = None
 
-    @field_validator("context_mode")
-    @classmethod
-    def _reject_unimplemented_context_mode(
-        cls,
-        v: ConversationContextMode | None,
-    ) -> ConversationContextMode | None:
-        if v == ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES:
+    def __post_init__(self) -> None:
+        # Parity with the former Pydantic field_validator on context_mode.
+        if self.context_mode == ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES:
             raise ValueError(
                 f"{ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES} is not yet supported"
             )
-        return v
-
-    turns: list[Turn] = Field(
-        default=[], description="List of turns in the conversation."
-    )
-    system_message: str | None = Field(
-        default=None,
-        description="Optional shared system message prepended to the first turn. "
-        "Identical across all conversations when using --shared-system-prompt-length.",
-    )
-    user_context_message: str | None = Field(
-        default=None,
-        description="Optional per-conversation user context prepended to the first turn. "
-        "Unique for each conversation when using --user-context-prompt-length.",
-    )
 
     def metadata(self) -> ConversationMetadata:
         """Get the metadata of the conversation."""
@@ -336,7 +351,7 @@ class SessionPayloads(AIPerfBaseModel):
         default=None, description="Session ID of the conversation."
     )
     payloads: list[dict[str, Any]] = Field(
-        default=[],
+        default_factory=list,
         description="List of formatted payloads in the session (one per turn). These have been formatted for the model and endpoint.",
     )
 
@@ -347,5 +362,5 @@ class InputsFile(AIPerfBaseModel):
     """
 
     data: list[SessionPayloads] = Field(
-        default=[], description="List of all dataset sessions."
+        default_factory=list, description="List of all dataset sessions."
     )

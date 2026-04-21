@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.enums import CreditPhase
-from aiperf.common.models.dataset_models import Turn
+from aiperf.common.models.dataset_models import Text, Turn
 from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.credit.structs import Credit
 
@@ -172,7 +172,7 @@ class TestPerCreditIntegration:
             """Simulate TimingManager fetching and embedding turn data."""
             turn = Turn(
                 role="user",
-                content=f"Turn {turn_index} content",
+                texts=[Text(contents=[f"Turn {turn_index} content"])],
                 delay=100 if turn_index > 0 else None,
             )
             return {
@@ -190,7 +190,7 @@ class TestPerCreditIntegration:
             credit = data["credit"]
             return {
                 "turn_index": credit.turn_index,
-                "content": turn_data.content,
+                "content": turn_data.texts[0].contents[0],
                 "delay": turn_data.delay,
             }
 

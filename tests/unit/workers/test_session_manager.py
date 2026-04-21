@@ -27,9 +27,9 @@ def session_manager():
 def sample_conversation():
     """Create a sample conversation with 5 turns."""
     return Conversation(
-        conversation_id="test-conv",
+        session_id="test-conv",
         turns=[
-            Turn(messages=[{"role": "user", "content": f"Question {i + 1}"}])
+            Turn(raw_messages=[{"role": "user", "content": f"Question {i + 1}"}])
             for i in range(5)
         ],
     )
@@ -100,7 +100,7 @@ class TestUserSessionManager:
         turn = session.advance_turn(0)
 
         # Should access first turn of conversation (conversation has all 5 turns available)
-        assert turn.messages[0]["content"] == "Question 1"
+        assert turn.raw_messages[0]["content"] == "Question 1"
 
         # After turn 0, is_final_turn should be True (0 == 1-1)
         # This would be determined by Credit.is_final_turn, which we validate here
@@ -123,7 +123,7 @@ class TestUserSessionManager:
         # Should be able to advance through all 5 turns
         for turn_idx in range(5):
             turn = session.advance_turn(turn_idx)
-            assert turn.messages[0]["content"] == f"Question {turn_idx + 1}"
+            assert turn.raw_messages[0]["content"] == f"Question {turn_idx + 1}"
 
     def test_partial_session_mid_conversation(
         self, session_manager, sample_conversation
@@ -198,10 +198,10 @@ def _make_session(
 ) -> UserSession:
     """Create a UserSession with the given context_mode on its conversation."""
     conversation = Conversation(
-        conversation_id="ctx-conv",
+        session_id="ctx-conv",
         context_mode=context_mode,
         turns=[
-            Turn(messages=[{"role": "user", "content": f"Q{i}"}])
+            Turn(raw_messages=[{"role": "user", "content": f"Q{i}"}])
             for i in range(num_turns)
         ],
     )
@@ -297,14 +297,16 @@ class TestUserSessionTurnList:
             context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES
         )
         session.advance_turn(0)
-        session.store_response(Turn(messages=[{"role": "assistant", "content": "A0"}]))
+        session.store_response(
+            Turn(raw_messages=[{"role": "assistant", "content": "A0"}])
+        )
         session.advance_turn(1)
 
         turns = session.turn_list
         assert len(turns) == 3  # Q0, A0, Q1
-        assert turns[0].messages[0]["content"] == "Q0"
-        assert turns[1].messages[0]["content"] == "A0"
-        assert turns[2].messages[0]["content"] == "Q1"
+        assert turns[0].raw_messages[0]["content"] == "Q0"
+        assert turns[1].raw_messages[0]["content"] == "A0"
+        assert turns[2].raw_messages[0]["content"] == "Q1"
 
     def test_deltas_with_responses_returns_dataset_turns_only(self) -> None:
         session = _make_session(
@@ -315,8 +317,8 @@ class TestUserSessionTurnList:
 
         turns = session.turn_list
         assert len(turns) == 2  # Q0, Q1 (no assistant responses stored)
-        assert turns[0].messages[0]["content"] == "Q0"
-        assert turns[1].messages[0]["content"] == "Q1"
+        assert turns[0].raw_messages[0]["content"] == "Q0"
+        assert turns[1].raw_messages[0]["content"] == "Q1"
 
     def test_message_array_returns_only_last(self) -> None:
         session = _make_session(
@@ -328,7 +330,7 @@ class TestUserSessionTurnList:
 
         turns = session.turn_list
         assert len(turns) == 1
-        assert turns[0].messages[0]["content"] == "Q2"
+        assert turns[0].raw_messages[0]["content"] == "Q2"
 
     def test_message_array_single_turn(self) -> None:
         session = _make_session(
@@ -339,12 +341,14 @@ class TestUserSessionTurnList:
 
         turns = session.turn_list
         assert len(turns) == 1
-        assert turns[0].messages[0]["content"] == "Q0"
+        assert turns[0].raw_messages[0]["content"] == "Q0"
 
     def test_default_mode_returns_full_history(self) -> None:
         session = _make_session(context_mode=None)
         session.advance_turn(0)
-        session.store_response(Turn(messages=[{"role": "assistant", "content": "A0"}]))
+        session.store_response(
+            Turn(raw_messages=[{"role": "assistant", "content": "A0"}])
+        )
         session.advance_turn(1)
 
         turns = session.turn_list
@@ -367,7 +371,9 @@ class TestUserSessionContextModeWorkflow:
         )
         session.advance_turn(0)
         assert session.should_store_response() is True
-        session.store_response(Turn(messages=[{"role": "assistant", "content": "A0"}]))
+        session.store_response(
+            Turn(raw_messages=[{"role": "assistant", "content": "A0"}])
+        )
         session.advance_turn(1)
 
         assert len(session.turn_list) == 3
@@ -385,7 +391,7 @@ class TestUserSessionContextModeWorkflow:
 
         turns = session.turn_list
         assert len(turns) == 2
-        assert all(t.messages[0]["role"] == "user" for t in turns)
+        assert all(t.raw_messages[0]["role"] == "user" for t in turns)
 
     def test_message_array_skips_responses_sends_only_current_turn(self) -> None:
         session = _make_session(
@@ -398,7 +404,7 @@ class TestUserSessionContextModeWorkflow:
 
         turns = session.turn_list
         assert len(turns) == 1
-        assert turns[0].messages[0]["content"] == "Q1"
+        assert turns[0].raw_messages[0]["content"] == "Q1"
 
 
 # ============================================================
@@ -410,7 +416,7 @@ class TestMessageArrayWithoutResponsesRejected:
     """MESSAGE_ARRAY_WITHOUT_RESPONSES is reserved and must be rejected early."""
 
     def test_conversation_rejects_unsupported_mode(self) -> None:
-        with pytest.raises(ValidationError, match="not yet supported"):
+        with pytest.raises(ValueError, match="not yet supported"):
             Conversation(
                 context_mode=ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES,
             )

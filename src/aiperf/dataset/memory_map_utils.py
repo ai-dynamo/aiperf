@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 import aiofiles
+import msgspec
 from pydantic import Field, field_validator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -45,6 +46,18 @@ from aiperf.common.models import (
 )
 
 _logger = AIPerfLogger(__name__)
+
+# Hot-path JSON codec for Conversation (msgspec.Struct). Reuses the encoder/decoder
+# singletons to amortize setup cost across millions of conversations.
+_CONVERSATION_ENCODER = msgspec.json.Encoder()
+_CONVERSATION_DECODER: msgspec.json.Decoder | None = None
+
+
+def _get_conversation_decoder() -> msgspec.json.Decoder:
+    global _CONVERSATION_DECODER
+    if _CONVERSATION_DECODER is None:
+        _CONVERSATION_DECODER = msgspec.json.Decoder(Conversation)
+    return _CONVERSATION_DECODER
 
 
 def _import_zstandard() -> types.ModuleType:
@@ -158,7 +171,7 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         if self._finalized:
             raise RuntimeError("Cannot add conversations after finalization")
 
-        conv_bytes = conversation.model_dump_json().encode("utf-8")
+        conv_bytes = _CONVERSATION_ENCODER.encode(conversation)
         await self._write_bytes(conv_bytes)
 
         # Track uncompressed offset (workers need this after decompression)
@@ -517,7 +530,7 @@ class MemoryMapDatasetClient:
             MemoryMapSerializationError: If deserialization fails
         """
         try:
-            return Conversation.model_validate_json(data)
+            return _get_conversation_decoder().decode(bytes(data))
         except Exception as e:
             raise MemoryMapSerializationError(
                 f"Failed to decode conversation data: {e}"
