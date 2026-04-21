@@ -175,11 +175,13 @@ When enabled, aiperf polls `{url}/v1/models` before profiling starts and waits f
 #### `--wait-for-model-timeout` `<float>`
 
 Maximum time in seconds to wait for the model to become ready before aborting with a non-zero exit. Only applies when `--wait-for-model` is enabled.
+<br/>_Constraints: > 0.0_
 <br/>_Default: `1800.0`_
 
 #### `--wait-for-model-interval` `<float>`
 
 Seconds between readiness probe attempts while waiting for the model. Only applies when `--wait-for-model` is enabled.
+<br/>_Constraints: > 0.0_
 <br/>_Default: `5.0`_
 
 #### `--transport`, `--transport-type` `<str>`

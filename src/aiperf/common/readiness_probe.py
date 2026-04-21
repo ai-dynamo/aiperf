@@ -15,6 +15,7 @@ import asyncio
 import time
 from typing import TYPE_CHECKING
 
+import aiohttp
 import orjson
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -23,6 +24,11 @@ if TYPE_CHECKING:
     from aiperf.transports.aiohttp_client import AioHttpClient
 
 _logger = AIPerfLogger(__name__)
+
+# Minimum per-request timeout for the probe. `interval_s` can be very small
+# (e.g. 0.5s for fast-retrying tests); using it directly as a request timeout
+# would cause spurious failures on networks with any real latency.
+_MIN_REQUEST_TIMEOUT_S = 5.0
 
 
 def _model_in_payload(payload_text: str, model_name: str) -> bool:
@@ -50,11 +56,27 @@ async def _wait_for_single_url(
     """Poll one URL until model is ready or deadline elapses."""
     deadline = time.monotonic() + timeout_s
     models_url = url.rstrip("/") + "/v1/models"
+    request_timeout_base = max(interval_s, _MIN_REQUEST_TIMEOUT_S)
     attempt = 0
 
     while True:
         attempt += 1
-        record = await client.get_request(models_url, headers=headers)
+
+        # Cap the per-request timeout by the remaining budget so a slow or
+        # hung response can never run past the global deadline.
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(
+                f"Timed out after {timeout_s:.1f}s waiting for model "
+                f"'{model_name}' to become ready at {url} "
+                f"(checked {attempt - 1} time(s))"
+            )
+        request_timeout = aiohttp.ClientTimeout(
+            total=min(request_timeout_base, remaining)
+        )
+        record = await client.get_request(
+            models_url, headers=headers, timeout=request_timeout
+        )
 
         if record.status == 200 and record.responses:
             body = (
@@ -71,8 +93,21 @@ async def _wait_for_single_url(
             )
         elif record.status == 404:
             # Fallback: server doesn't expose /v1/models. Try the base URL; if
-            # it answers 2xx we accept it as "server up" and move on.
-            fallback = await client.get_request(url, headers=headers)
+            # it answers 2xx we accept it as "server up" and move on. Cap the
+            # fallback request by the same per-request budget.
+            fallback_remaining = deadline - time.monotonic()
+            if fallback_remaining <= 0:
+                raise TimeoutError(
+                    f"Timed out after {timeout_s:.1f}s waiting for model "
+                    f"'{model_name}' to become ready at {url} "
+                    f"(checked {attempt} time(s))"
+                )
+            fallback_timeout = aiohttp.ClientTimeout(
+                total=min(request_timeout_base, fallback_remaining)
+            )
+            fallback = await client.get_request(
+                url, headers=headers, timeout=fallback_timeout
+            )
             if fallback.status is not None and 200 <= fallback.status < 300:
                 _logger.info(
                     f"/v1/models not available at {url}; base URL responded "
@@ -95,28 +130,25 @@ async def _wait_for_single_url(
                 f"(attempt {attempt}), retrying in {interval_s}s"
             )
 
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            elapsed = timeout_s - remaining
-            raise TimeoutError(
-                f"Timed out after {elapsed:.1f}s waiting for model "
-                f"'{model_name}' to become ready at {url} "
-                f"(checked {attempt} time(s))"
-            )
-        await asyncio.sleep(min(interval_s, remaining))
+        # Pre-check at the top of the loop raises on deadline; here we only
+        # need to sleep before the next attempt, capped so we never sleep
+        # past the deadline.
+        sleep_for = min(interval_s, max(0.0, deadline - time.monotonic()))
+        await asyncio.sleep(sleep_for)
 
 
 async def wait_for_models_ready(
     urls: list[str],
-    model_name: str,
+    model_names: list[str],
     timeout_s: float,
     interval_s: float,
     headers: dict[str, str],
 ) -> None:
-    """Block until `model_name` is ready on every URL, or raise TimeoutError.
+    """Block until every model in `model_names` is ready on every URL, or raise TimeoutError.
 
-    URLs are checked sequentially — at typical fleet sizes (1-4 URLs) this
-    keeps log output legible, and the caller's timeout is per-URL.
+    URLs and models are checked sequentially — at typical fleet sizes (1-4 URLs,
+    1-2 models) this keeps log output legible, and the caller's timeout is
+    per-URL-per-model.
     """
     # Imported lazily to avoid a circular import: aiperf.common is imported
     # before aiperf.transports, and AioHttpClient pulls in a mixin that
@@ -124,19 +156,20 @@ async def wait_for_models_ready(
     from aiperf.transports.aiohttp_client import AioHttpClient
 
     _logger.info(
-        f"Waiting for model '{model_name}' to be ready at: {', '.join(urls)} "
+        f"Waiting for model(s) {model_names} to be ready at: {', '.join(urls)} "
         f"(timeout={timeout_s}s, interval={interval_s}s)"
     )
     client = AioHttpClient(timeout=max(interval_s, 5.0))
     try:
         for url in urls:
-            await _wait_for_single_url(
-                client=client,
-                url=url,
-                model_name=model_name,
-                timeout_s=timeout_s,
-                interval_s=interval_s,
-                headers=headers,
-            )
+            for model_name in model_names:
+                await _wait_for_single_url(
+                    client=client,
+                    url=url,
+                    model_name=model_name,
+                    timeout_s=timeout_s,
+                    interval_s=interval_s,
+                    headers=headers,
+                )
     finally:
         await client.close()

@@ -215,6 +215,7 @@ class EndpointConfig(BaseConfig):
         Field(
             description="Maximum time in seconds to wait for the model to become ready before aborting with a non-zero exit. "
             "Only applies when `--wait-for-model` is enabled.",
+            gt=0.0,
         ),
         CLIParameter(
             name=("--wait-for-model-timeout",),
@@ -227,6 +228,7 @@ class EndpointConfig(BaseConfig):
         Field(
             description="Seconds between readiness probe attempts while waiting for the model. "
             "Only applies when `--wait-for-model` is enabled.",
+            gt=0.0,
         ),
         CLIParameter(
             name=("--wait-for-model-interval",),

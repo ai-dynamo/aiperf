@@ -52,12 +52,18 @@ class TestWaitForModel:
         self, cli: AIPerfCLI, mock_server_factory
     ):
         """With models_ready_delay_seconds>0, the probe sees an empty
-        data list on early attempts and must retry until the model appears."""
+        data list on early attempts and must retry until the model appears.
+
+        Uses a 5.0s server-side delay (vs. a 0.5s probe interval) to give
+        a comfortable margin over subprocess startup time, so the first
+        probe reliably lands before the model becomes ready and we observe
+        at least one retry deterministically.
+        """
         async with mock_server_factory(
             fast=True,
             workers=1,
             default_model="mock-model",
-            models_ready_delay_seconds=2.0,
+            models_ready_delay_seconds=5.0,
         ) as server:
             result = await cli.run(
                 f"""
@@ -71,7 +77,7 @@ class TestWaitForModel:
                     --workers-max 1
                     --ui simple
                     --wait-for-model
-                    --wait-for-model-timeout 20
+                    --wait-for-model-timeout 30
                     --wait-for-model-interval 0.5
                 """,
                 timeout=120.0,

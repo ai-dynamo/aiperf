@@ -76,7 +76,7 @@ def profile(
             asyncio.run(
                 wait_for_models_ready(
                     urls=user_config.endpoint.urls,
-                    model_name=user_config.endpoint.model_names[0],
+                    model_names=user_config.endpoint.model_names,
                     timeout_s=user_config.endpoint.wait_for_model_timeout,
                     interval_s=user_config.endpoint.wait_for_model_interval,
                     headers=headers,

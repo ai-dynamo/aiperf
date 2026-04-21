@@ -803,7 +803,7 @@ async def health():
 
 
 @app.get("/v1/models")
-async def list_models():
+async def list_models() -> dict[str, Any]:
     """OpenAI-compatible models list. Respects models_ready_delay_seconds and
     disable_models_endpoint so readiness-probe tests can exercise all branches
     (immediate success, success after retries, 404 fallback, timeout)."""
