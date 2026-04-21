@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
@@ -39,6 +40,12 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
         self._pod_monitoring_active = False
         self.pod_failure_abort_event = asyncio.Event()
         self.pod_failure_abort_reason: str = ""
+        # Heartbeat watchdog state: two-strike verification + catch-up detection.
+        # A service is only failed after being stale on TWO consecutive ticks,
+        # and decisions are skipped entirely if the watchdog itself was delayed
+        # (see `_monitor_heartbeats` for rationale).
+        self._suspected_stale: dict[str, int] = {}
+        self._last_heartbeat_tick_ns: int | None = None
 
     def notify_shutdown(self) -> None:
         """Signal that shutdown has been initiated.
@@ -145,7 +152,23 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
     async def _monitor_heartbeats(self) -> None:
         """Detect registered services that have stopped sending heartbeats.
 
-        Marks stale services as failed via ServiceRegistry.fail_service,
+        Two protections against false-positive batch expiry (observed in
+        production at 285 WGMs where 141 were flagged dead in the same
+        millisecond after a controller stall):
+
+        1. Catch-up detection: if the gap between consecutive ticks exceeds
+           `HEARTBEAT_INTERVAL * 2`, the watchdog itself was delayed — every
+           registered service looks stale through no fault of its own. Skip
+           death decisions this tick; the next tick will see fresh heartbeats.
+
+        2. Two-strike verification: a service must appear stale on two
+           consecutive ticks before being failed. `_suspected_stale` tracks
+           strike counts; a service that heartbeats between ticks drops back
+           off the suspect list. Worst-case detection latency for a genuinely
+           dead service becomes `HEARTBEAT_INTERVAL * (MISSED_THRESHOLD + 1)`
+           (default 20s), still well under the 60s goal.
+
+        Marks confirmed-stale services as failed via ServiceRegistry.fail_service,
         which wakes all pending waiters.
         """
         if (
@@ -153,18 +176,56 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
             or self.stop_requested
             or not self._heartbeat_monitoring_active
         ):
+            # Reset state so a later activation starts clean.
+            self._suspected_stale.clear()
+            self._last_heartbeat_tick_ns = None
             return
-        threshold_sec = (
-            Environment.SERVICE.HEARTBEAT_INTERVAL
-            * Environment.SERVICE.HEARTBEAT_MISSED_THRESHOLD
-        )
+
+        now_ns = time.time_ns()
+        last_tick_ns = self._last_heartbeat_tick_ns
+        self._last_heartbeat_tick_ns = now_ns
+
+        interval_sec = Environment.SERVICE.HEARTBEAT_INTERVAL
+        threshold_sec = interval_sec * Environment.SERVICE.HEARTBEAT_MISSED_THRESHOLD
         stale = ServiceRegistry.get_stale_services(threshold_sec)
+        stale_ids = {info.service_id for info in stale}
+
+        # Drop strike counts for services that are no longer stale (they sent
+        # a heartbeat since the previous tick).
+        for sid in list(self._suspected_stale):
+            if sid not in stale_ids:
+                del self._suspected_stale[sid]
+
+        # Catch-up detection: if our own tick was delayed, don't blame services.
+        if last_tick_ns is not None:
+            gap_sec = (now_ns - last_tick_ns) / 1_000_000_000
+            if gap_sec > interval_sec * 2:
+                self.warning(
+                    f"Heartbeat watchdog tick delayed {gap_sec:.1f}s "
+                    f"(expected ~{interval_sec:.1f}s); skipping stale checks "
+                    f"for {len(stale_ids)} apparently-stale service(s) this tick"
+                )
+                # Clear strikes: everything looked stale due to our delay,
+                # not due to actual missed heartbeats.
+                self._suspected_stale.clear()
+                return
+
         for info in stale:
+            strikes = self._suspected_stale.get(info.service_id, 0) + 1
+            if strikes < 2:
+                self._suspected_stale[info.service_id] = strikes
+                self.debug(
+                    lambda i=info: f"Service '{i.service_id}' ({i.service_type}) "
+                    f"appears stale; awaiting second-tick confirmation"
+                )
+                continue
+
             self.warning(
                 f"Service '{info.service_id}' ({info.service_type}) "
-                f"missed heartbeats — marking as failed"
+                f"missed heartbeats on {strikes} consecutive ticks — marking as failed"
             )
             ServiceRegistry.fail_service(info.service_id, info.service_type)
+            self._suspected_stale.pop(info.service_id, None)
 
     async def wait_for_api_subprocess(self) -> None:
         """Block until the API service runtime terminates (Kubernetes mode only).

@@ -546,7 +546,7 @@ class TestHeartbeatMonitoring:
     async def test_stale_external_service_triggers_failure(
         self, manager: KubernetesServiceManager
     ) -> None:
-        """External service with missed heartbeats should be marked as failed."""
+        """External service stale on two consecutive ticks should be marked failed."""
         old_ns = time.time_ns() - 60_000_000_000  # 60 seconds ago
         ServiceRegistry.expect_services({ServiceType.WORKER: 1})
         ServiceRegistry.register(
@@ -556,11 +556,15 @@ class TestHeartbeatMonitoring:
             state=LifecycleState.RUNNING,
         )
 
+        # First tick: suspect only (two-strike verification).
         await manager._monitor_heartbeats()
-
         info = ServiceRegistry.get_service("worker_001")
-        assert info is not None
-        assert info.state == LifecycleState.FAILED
+        assert info is not None and info.state == LifecycleState.RUNNING
+
+        # Second tick: still stale → fail.
+        await manager._monitor_heartbeats()
+        info = ServiceRegistry.get_service("worker_001")
+        assert info is not None and info.state == LifecycleState.FAILED
 
     @pytest.mark.asyncio
     async def test_fresh_external_service_not_affected(
@@ -586,7 +590,8 @@ class TestHeartbeatMonitoring:
         """Stale control-plane subprocesses should also be caught by heartbeat monitor.
 
         A subprocess can be alive but hung (not sending heartbeats).
-        _monitor_processes only catches crashed processes.
+        _monitor_processes only catches crashed processes. Two-strike
+        verification means detection takes two watchdog ticks.
         """
         old_ns = time.time_ns() - 60_000_000_000
         ServiceRegistry.expect_services({ServiceType.DATASET_MANAGER: 1})
@@ -597,7 +602,8 @@ class TestHeartbeatMonitoring:
             state=LifecycleState.RUNNING,
         )
 
-        await manager._monitor_heartbeats()
+        await manager._monitor_heartbeats()  # strike 1
+        await manager._monitor_heartbeats()  # strike 2 → fail
 
         info = ServiceRegistry.get_service("dm_0")
         assert info is not None

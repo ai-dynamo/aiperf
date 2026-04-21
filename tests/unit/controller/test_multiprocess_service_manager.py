@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aiperf.common.enums import LifecycleState
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import (
     ServiceProcessDiedError,
     ServiceRegistrationTimeoutError,
@@ -180,7 +181,8 @@ class TestMultiProcessServiceManager:
     async def test_heartbeat_monitor_detects_stale_services(
         self, service_manager: MultiProcessServiceManager
     ):
-        """Stale services should be marked as failed by heartbeat monitor."""
+        """Stale services should be marked as failed by heartbeat monitor
+        after two consecutive stale ticks (two-strike verification)."""
         import time
 
         old_ns = time.time_ns() - 60_000_000_000
@@ -193,8 +195,102 @@ class TestMultiProcessServiceManager:
         )
 
         service_manager.activate_heartbeat_monitoring()
+        # First tick: suspected but not failed (first strike).
         await service_manager._monitor_heartbeats()
+        info = ServiceRegistry.get_service("dm_0")
+        assert info is not None
+        assert info.state == LifecycleState.RUNNING
+        assert "dm_0" in service_manager._suspected_stale
 
+        # Second tick: now failed (second strike).
+        await service_manager._monitor_heartbeats()
         info = ServiceRegistry.get_service("dm_0")
         assert info is not None
         assert info.state == LifecycleState.FAILED
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_monitor_two_strike_clears_on_fresh_heartbeat(
+        self, service_manager: MultiProcessServiceManager
+    ):
+        """A service stale on one tick then heartbeats before next tick is NOT failed."""
+        import time
+
+        old_ns = time.time_ns() - 60_000_000_000
+        ServiceRegistry.expect_services({ServiceType.DATASET_MANAGER: 1})
+        ServiceRegistry.register(
+            "dm_0",
+            ServiceType.DATASET_MANAGER,
+            first_seen_ns=old_ns,
+            state=LifecycleState.RUNNING,
+        )
+
+        service_manager.activate_heartbeat_monitoring()
+        # First tick: first strike recorded, service NOT failed.
+        await service_manager._monitor_heartbeats()
+        assert "dm_0" in service_manager._suspected_stale
+        info = ServiceRegistry.get_service("dm_0")
+        assert info is not None
+        assert info.state == LifecycleState.RUNNING
+
+        # Simulate a fresh heartbeat arriving before the next tick.
+        ServiceRegistry.update_service(
+            "dm_0",
+            ServiceType.DATASET_MANAGER,
+            last_seen_ns=time.time_ns(),
+            state=LifecycleState.RUNNING,
+        )
+
+        # Second tick: service is no longer stale — strike cleared, still not failed.
+        await service_manager._monitor_heartbeats()
+        assert "dm_0" not in service_manager._suspected_stale
+        info = ServiceRegistry.get_service("dm_0")
+        assert info is not None
+        assert info.state == LifecycleState.RUNNING
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_monitor_skips_on_catch_up_tick(
+        self,
+        service_manager: MultiProcessServiceManager,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """If the monitor tick was delayed (controller stall), death decisions
+        are skipped for this iteration and a WARNING is logged."""
+        import logging
+        import time
+
+        old_ns = time.time_ns() - 60_000_000_000
+        ServiceRegistry.expect_services({ServiceType.DATASET_MANAGER: 1})
+        ServiceRegistry.register(
+            "dm_0",
+            ServiceType.DATASET_MANAGER,
+            first_seen_ns=old_ns,
+            state=LifecycleState.RUNNING,
+        )
+
+        service_manager.activate_heartbeat_monitoring()
+        # First tick: records strike 1 and the tick time.
+        await service_manager._monitor_heartbeats()
+        assert "dm_0" in service_manager._suspected_stale
+
+        # Simulate a long stall: backdate the last tick time so the gap
+        # exceeds HEARTBEAT_INTERVAL * 2.
+        interval_ns = int(Environment.SERVICE.HEARTBEAT_INTERVAL * 1_000_000_000)
+        service_manager._last_heartbeat_tick_ns = time.time_ns() - (interval_ns * 5)
+
+        with (
+            caplog.at_level(logging.WARNING),
+            patch.object(ServiceRegistry, "fail_service") as mock_fail,
+        ):
+            await service_manager._monitor_heartbeats()
+            assert mock_fail.call_count == 0
+
+        assert any(
+            "watchdog tick delayed" in record.message.lower()
+            for record in caplog.records
+        )
+        # Suspected-stale state must be cleared so we don't carry forward
+        # a bogus strike from the stalled window.
+        assert service_manager._suspected_stale == {}
+        info = ServiceRegistry.get_service("dm_0")
+        assert info is not None
+        assert info.state == LifecycleState.RUNNING
