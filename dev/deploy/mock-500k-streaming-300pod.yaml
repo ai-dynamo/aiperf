@@ -2,7 +2,7 @@
 apiVersion: aiperf.nvidia.com/v1alpha1
 kind: AIPerfJob
 metadata:
-  name: mock-500k-streaming-300pod
+  name: mock-500k-run4
   namespace: acasagrande-aiperf-bench
 spec:
   benchmark:
@@ -35,7 +35,7 @@ spec:
     runtime:
       ui: none
       workers: 1500
-      workers_per_pod: 5
+      workers_per_pod: 10
       record_processors_per_pod: 2
 
     gpu_telemetry:
@@ -48,10 +48,11 @@ spec:
       records:
         - jsonl
 
-  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260328-055723-e7f05a9b7
+  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260421-064618-0c240cc13
   connectionsPerWorker: 1000
   resourceMode: burstable
-  ttlSecondsAfterFinished: 600
+  ttlSecondsAfterFinished: 3600
+  keepFailedPods: true
 
   podTemplate:
     imagePullSecrets:
