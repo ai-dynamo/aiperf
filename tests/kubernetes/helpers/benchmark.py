@@ -859,10 +859,31 @@ class BenchmarkDeployer:
                             continue
 
                         if cr_status.is_completed or cr_status.is_failed:
+                            cr_results = cr_status.results or cr_status.live_metrics
+                            # When Completed, wait up to 30s for status.results
+                            # to be populated by the operator; it's written
+                            # after phase=Completed in the operator's handler.
+                            if (
+                                cr_status.is_completed
+                                and not cr_results
+                                and time.time() - start_time < timeout - 30
+                            ):
+                                results_deadline = time.time() + 30
+                                while time.time() < results_deadline:
+                                    await asyncio.sleep(3)
+                                    try:
+                                        data = await self.kubectl.get_json(
+                                            "aiperfjob", cr_name, namespace=result.namespace
+                                        )
+                                        cr_status = AIPerfJobStatus.from_json(data)
+                                    except RuntimeError:
+                                        continue
+                                    cr_results = cr_status.results or cr_status.live_metrics
+                                    if cr_results:
+                                        break
                             result.success = cr_status.is_completed
                             if cr_status.is_failed:
                                 result.error_message = cr_status.error
-                            cr_results = cr_status.results or cr_status.live_metrics
                             result.api_results = {
                                 "status": "complete"
                                 if cr_status.is_completed

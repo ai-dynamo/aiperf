@@ -396,8 +396,16 @@ def _parse_metrics_from_files(
             else:
                 data = orjson.loads(path.read_bytes())
 
-            if isinstance(data, dict) and data.get("request_throughput"):
+            if not isinstance(data, dict):
+                continue
+            # Newer exports wrap metrics under "metrics"; older ones put them
+            # at the top level. Accept either shape and return a dict that
+            # has a populated "metrics" key so downstream readers always see
+            # the same structure in CR status.
+            if isinstance(data.get("metrics"), dict) and data["metrics"]:
                 return data
+            if data.get("request_throughput"):
+                return {"metrics": data, **{k: v for k, v in data.items() if k != "metrics"}}
     except Exception as e:
         logger.warning(f"Failed to parse metrics from {dest_dir}: {e}")
     return None
