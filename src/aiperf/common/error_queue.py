@@ -16,6 +16,8 @@ import queue
 import threading
 from typing import TYPE_CHECKING, Protocol, TypeAlias
 
+import msgspec
+
 from aiperf.common.aiperf_logger import AIPerfLogger
 
 ErrorQueue: TypeAlias = multiprocessing.Queue
@@ -85,7 +87,7 @@ def drain_error_queue(
     while True:
         try:
             data = error_queue.get_nowait()
-            errors.append(ExitErrorInfo.model_validate(data))
+            errors.append(msgspec.convert(data, ExitErrorInfo))
         except queue.Empty:
             break
         except Exception as e:
@@ -107,7 +109,7 @@ def report_errors(
     """
     for error_info in errors:
         try:
-            error_queue.put_nowait(error_info.model_dump())
+            error_queue.put_nowait(msgspec.to_builtins(error_info))
         except queue.Full:
             break
         except Exception:

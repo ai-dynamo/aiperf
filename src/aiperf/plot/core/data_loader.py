@@ -16,6 +16,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
+import msgspec
 import numpy as np
 import orjson
 import pandas as pd
@@ -795,7 +796,7 @@ class DataLoader(AIPerfLoggerMixin):
             flat[key] = metric_value.value
 
         if record.error:
-            flat["error"] = record.error.model_dump()
+            flat["error"] = msgspec.to_builtins(record.error)
 
         return flat
 

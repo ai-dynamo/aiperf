@@ -955,7 +955,7 @@ class SystemController(SignalHandlerMixin, BaseService):
                         error_details=ErrorDetails(
                             type="CommandError",
                             message=response.error,
-                            traceback=response.traceback or None,
+                            cause=response.traceback or None,
                         ),
                         operation=operation,
                         service_id=response.sid,

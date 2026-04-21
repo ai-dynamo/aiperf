@@ -949,7 +949,7 @@ def decode_metric_record_info_json(data: str | bytes) -> MetricRecordInfo:
             key: MetricValue(**value) for key, value in payload["metrics"].items()
         },
         trace_data=TraceDataExport.model_validate(trace_data) if trace_data else None,
-        error=ErrorDetails.model_validate(payload["error"])
+        error=msgspec.convert(payload["error"], ErrorDetails)
         if payload.get("error")
         else None,
     )
@@ -967,7 +967,7 @@ def decode_raw_record_info_json(data: str | bytes) -> RawRecordInfo:
         status=payload.get("status"),
         response_headers=payload.get("response_headers"),
         responses=payload["responses"],
-        error=ErrorDetails.model_validate(payload["error"])
+        error=msgspec.convert(payload["error"], ErrorDetails)
         if payload.get("error")
         else None,
     )

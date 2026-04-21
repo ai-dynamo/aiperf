@@ -3,6 +3,8 @@
 import multiprocessing
 import time
 
+import msgspec
+
 from aiperf.common.error_queue import (
     _ERROR_QUEUE_MAXSIZE,
     drain_error_queue,
@@ -38,7 +40,7 @@ class TestReportErrors:
 
         item = q.get(timeout=1)
         assert isinstance(item, dict)
-        error_info = ExitErrorInfo.model_validate(item)
+        error_info = msgspec.convert(item, ExitErrorInfo)
         assert error_info.service_id == "worker_abc"
         assert error_info.operation == "service_run"
         assert "something broke" in error_info.error_details.message
@@ -54,8 +56,8 @@ class TestReportErrors:
 
         item1 = q.get(timeout=1)
         item2 = q.get(timeout=1)
-        assert ExitErrorInfo.model_validate(item1).service_id == "svc_a"
-        assert ExitErrorInfo.model_validate(item2).service_id == "svc_b"
+        assert msgspec.convert(item1, ExitErrorInfo).service_id == "svc_a"
+        assert msgspec.convert(item2, ExitErrorInfo).service_id == "svc_b"
 
     def test_report_errors_drops_when_queue_full(self) -> None:
         q: multiprocessing.Queue = multiprocessing.Queue(maxsize=1)
