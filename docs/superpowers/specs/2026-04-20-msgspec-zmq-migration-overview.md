@@ -198,10 +198,10 @@ Filled as specs land. Each cell = spec status + PR link.
 
 | Domain | Status | Spec | PRs |
 |---|---|---|---|
-| M0 port-forward | Not started | (this doc) | — |
+| M0 port-forward | Complete (landed in 1ffa85e96, eb19be5ab, 9984bff27) | (this doc) | — |
 | Records | Not started | `msgspec-records-migration-design.md` | — |
 | Dataset | Not started | `msgspec-dataset-migration-design.md` | — |
-| Credit | Not started | `msgspec-credit-migration-design.md` | — |
+| Credit | Complete (landed in 0d004dd07, 3a5080a25, e506378bf) | `msgspec-credit-migration-design.md` | — |
 | Service lifecycle | Not started | `msgspec-service-lifecycle-migration-design.md` | — |
 | Primitives (terminal) | Not started | `msgspec-primitives-migration-design.md` | — |
 

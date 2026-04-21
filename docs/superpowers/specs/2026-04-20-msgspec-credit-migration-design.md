@@ -1,8 +1,9 @@
 # Msgspec Conversion: Credit Path
 
-**Status:** Proposed
+**Status:** Complete (2026-04-21)
 **Owner:** Anthony Casagrande (acasagrande@nvidia.com)
 **Date:** 2026-04-20
+**Commits:** `0d004dd07` (C1), `3a5080a25` (C2), `e506378bf` (C3)
 **Part of:** [msgspec-zmq-migration-overview.md](./2026-04-20-msgspec-zmq-migration-overview.md)
 
 ## Goal
