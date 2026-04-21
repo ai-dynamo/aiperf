@@ -121,8 +121,14 @@ class TestZMQXPubXSubProxy:
         assert mock_zmq_socket.bind.call_count >= 2
 
     @pytest.mark.asyncio
-    async def test_xpub_socket_sets_verbose_option(self, mock_zmq_context):
-        """Test that XPUB socket sets XPUB_VERBOSE option."""
+    async def test_xpub_socket_does_not_set_verbose(self, mock_zmq_context):
+        """XPUB_VERBOSE is intentionally left at its default (off).
+
+        Verbose forwarding re-sends every subscribe frame to every publisher,
+        which amplifies the startup subscription storm at scale without
+        buying us anything — ZMQ's default subscription-frame dedup is what
+        we want, and ``_run_connection_probes`` doesn't rely on verbose.
+        """
         config = ZMQTCPConfig()
 
         mock_socket = Mock()
@@ -134,12 +140,9 @@ class TestZMQXPubXSubProxy:
 
         await proxy.initialize()
 
-        # Verify XPUB_VERBOSE was set (for subscription forwarding)
         calls = mock_socket.setsockopt.call_args_list
         option_names = [call[0][0] for call in calls if len(call[0]) > 0]
-
-        # XPUB_VERBOSE should be set on the backend (XPUB) socket
-        assert any(opt == zmq.XPUB_VERBOSE for opt in option_names)
+        assert not any(opt == zmq.XPUB_VERBOSE for opt in option_names)
 
 
 class TestZMQDealerRouterProxy:

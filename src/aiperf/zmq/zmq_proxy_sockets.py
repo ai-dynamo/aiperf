@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import zmq
 from zmq import SocketType
 
 from aiperf.common.hooks import on_init
@@ -52,12 +51,15 @@ def create_proxy_socket_class(
 
         @on_init
         async def _initialize_socket(self) -> None:
-            """Initialize the socket with proper configuration for XPUB/XSUB proxy."""
-            if self.socket_type == SocketType.XPUB:
-                self.socket.setsockopt(zmq.XPUB_VERBOSE, 1)
-                self.debug(
-                    lambda: "XPUB socket configured with XPUB_VERBOSE=1 for subscription forwarding"
-                )
+            """Initialize the socket with proper configuration for XPUB/XSUB proxy.
+
+            We leave ``XPUB_VERBOSE`` at its default (off). ZMQ already
+            deduplicates subscription frames per-topic per-subscriber-connection,
+            so enabling verbose forwarding just amplifies the startup
+            subscription storm (every re-subscribe propagated to every
+            publisher) without buying us anything our runtime relies on —
+            the `_run_connection_probes` self-echo does not depend on it.
+            """
 
     # Dynamically set the class name and qualname based on the socket and end type
     ProxySocket.__name__ = class_name
