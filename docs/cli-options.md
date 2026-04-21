@@ -167,6 +167,21 @@ Maximum time in seconds to wait for each HTTP request to complete, including con
 
 API authentication key for the endpoint. When provided, automatically included in request headers as `Authorization: Bearer <api_key>`.
 
+#### `--wait-for-model`
+
+When enabled, aiperf polls `{url}/v1/models` before profiling starts and waits for the target `--model` id to appear in the response. Falls back to a single GET on the base URL if `/v1/models` returns 404. Eliminates the need for external shell-based readiness loops in containers and Kubernetes recipes.
+<br/>_Flag (no value required)_
+
+#### `--wait-for-model-timeout` `<float>`
+
+Maximum time in seconds to wait for the model to become ready before aborting with a non-zero exit. Only applies when `--wait-for-model` is enabled.
+<br/>_Default: `1800.0`_
+
+#### `--wait-for-model-interval` `<float>`
+
+Seconds between readiness probe attempts while waiting for the model. Only applies when `--wait-for-model` is enabled.
+<br/>_Default: `5.0`_
+
 #### `--transport`, `--transport-type` `<str>`
 
 Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` → `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.

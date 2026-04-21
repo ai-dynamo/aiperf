@@ -197,6 +197,43 @@ class EndpointConfig(BaseConfig):
         ),
     ] = EndpointDefaults.API_KEY
 
+    wait_for_model: Annotated[
+        bool,
+        Field(
+            description="When enabled, aiperf polls `{url}/v1/models` before profiling starts and waits for the target "
+            "`--model` id to appear in the response. Falls back to a single GET on the base URL if `/v1/models` returns 404. "
+            "Eliminates the need for external shell-based readiness loops in containers and Kubernetes recipes.",
+        ),
+        CLIParameter(
+            name=("--wait-for-model",),
+            group=_CLI_GROUP,
+        ),
+    ] = EndpointDefaults.WAIT_FOR_MODEL
+
+    wait_for_model_timeout: Annotated[
+        float,
+        Field(
+            description="Maximum time in seconds to wait for the model to become ready before aborting with a non-zero exit. "
+            "Only applies when `--wait-for-model` is enabled.",
+        ),
+        CLIParameter(
+            name=("--wait-for-model-timeout",),
+            group=_CLI_GROUP,
+        ),
+    ] = EndpointDefaults.WAIT_FOR_MODEL_TIMEOUT
+
+    wait_for_model_interval: Annotated[
+        float,
+        Field(
+            description="Seconds between readiness probe attempts while waiting for the model. "
+            "Only applies when `--wait-for-model` is enabled.",
+        ),
+        CLIParameter(
+            name=("--wait-for-model-interval",),
+            group=_CLI_GROUP,
+        ),
+    ] = EndpointDefaults.WAIT_FOR_MODEL_INTERVAL
+
     transport: Annotated[
         TransportType | None,
         Field(

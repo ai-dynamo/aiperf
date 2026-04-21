@@ -802,6 +802,22 @@ async def health():
     return {"status": "healthy", "config": server_config.model_dump()}
 
 
+@app.get("/v1/models")
+async def list_models():
+    """OpenAI-compatible models list. Respects models_ready_delay_seconds and
+    disable_models_endpoint so readiness-probe tests can exercise all branches
+    (immediate success, success after retries, 404 fallback, timeout)."""
+    if server_config.disable_models_endpoint:
+        raise HTTPException(status_code=404, detail="Not Found")
+    elapsed = time.time() - server_start_time if server_start_time > 0 else 0.0
+    if elapsed < server_config.models_ready_delay_seconds:
+        return {"object": "list", "data": []}
+    return {
+        "object": "list",
+        "data": [{"id": server_config.default_model, "object": "model"}],
+    }
+
+
 @app.get("/")
 async def root():
     """Root info."""

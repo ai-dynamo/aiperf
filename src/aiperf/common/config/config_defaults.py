@@ -48,6 +48,9 @@ class EndpointDefaults:
     CONNECTION_REUSE_STRATEGY = ConnectionReuseStrategy.POOLED
     DOWNLOAD_VIDEO_CONTENT = False
     REQUEST_CONTENT_TYPE = None
+    WAIT_FOR_MODEL = False
+    WAIT_FOR_MODEL_TIMEOUT = 1800.0
+    WAIT_FOR_MODEL_INTERVAL = 5.0
 
 
 @dataclass(frozen=True)
