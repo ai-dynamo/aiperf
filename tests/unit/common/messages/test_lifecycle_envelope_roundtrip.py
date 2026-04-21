@@ -2,11 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Round-trip tests for the service-lifecycle envelopes that now carry
-msgspec-typed payload structs (ProcessHealth, WorkerTaskStats).
+dataclass payloads (ProcessHealth, WorkerTaskStats).
 
-Exists to confirm the PydanticStructMixin shim handles the mix of mutable
-and frozen structs introduced by S1/S2 of the msgspec-service-lifecycle
-migration.
+Exists to confirm msgspec encodes/decodes the mix of mutable and frozen
+slotted dataclasses introduced by the service-lifecycle migration.
 """
 
 from __future__ import annotations

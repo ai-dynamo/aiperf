@@ -165,8 +165,7 @@ class ProfileResults:
 class ProcessRecordsResult:
     """Result of the process records command.
 
-    Slotted dataclass — the last user of ``PydanticStructMixin`` and the
-    leaf that held it in place. Now shared natively between msgspec
+    Slotted dataclass — shared natively between msgspec
     (``ProcessRecordsResultMessage.results``) and Pydantic
     (``BenchmarkResultsResponse.results``).
     """

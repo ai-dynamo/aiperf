@@ -3,7 +3,8 @@
 
 """Round-trip tests for the records envelopes that now carry msgspec
 payloads (RequestRecord, MetricResult, ProfileResults, ProcessRecordsResult,
-WorkerProcessingStats, PhaseRecordsStats) via PydanticStructMixin.
+WorkerProcessingStats, PhaseRecordsStats) as slotted dataclasses or
+msgspec.Structs.
 
 Covers the four envelopes in the records spec scope (R5):
 - InferenceResultsMessage

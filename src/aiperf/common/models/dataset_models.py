@@ -42,10 +42,9 @@ class DatasetClientMetadata(
         source_type: Any,
         handler: Any,
     ) -> Any:
-        # Override the default PydanticStructMixin schema so that validation
-        # against the base class dispatches across every tagged subclass.
-        # msgspec.convert requires a Union type when decoding via tag; the
-        # bare base class does not route.
+        # Custom core schema for the tagged-union base class so validation
+        # dispatches across every tagged subclass. msgspec.convert requires a
+        # Union type when decoding via tag; the bare base class does not route.
         from pydantic_core import core_schema as _core_schema
 
         from aiperf.common.models.base_models import (
