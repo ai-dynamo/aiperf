@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for AutoRoutedModel-based message routing."""
+"""Tests for Message.from_json tagged-union routing."""
 
 import json
 
@@ -25,8 +25,8 @@ def assert_routed_to(msg, expected_class, **expected_attrs):
         )
 
 
-class TestAutoRoutedModel:
-    """Test AutoRoutedModel routing behavior."""
+class TestMessageRouting:
+    """Test Message.from_json routing behavior."""
 
     @pytest.mark.parametrize(
         "data,expected_class,expected_attrs",
@@ -74,8 +74,7 @@ class TestAutoRoutedModel:
     def test_unknown_discriminator_value_raises(self):
         """Test that unknown discriminator values raise ValidationError.
 
-        Prior AutoRoutedModel behavior silently fell back to the base Message
-        class for unknown tags; msgspec is stricter — decode fails fast.
+        msgspec is strict — decode fails fast for unknown message_type tags.
         """
         data = {
             "message_type": "unknown_type",

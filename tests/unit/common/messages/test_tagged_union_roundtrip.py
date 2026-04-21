@@ -48,7 +48,7 @@ def test_json_roundtrip_preserves_tag_field_name():
 
 
 def test_from_json_compat_wrapper_accepts_bytes_and_dict():
-    """Message.from_json preserves AutoRoutedModel's dual-input API over msgspec."""
+    """Message.from_json accepts bytes, bytearray, str, and dict inputs."""
     heartbeat_dict = {
         "message_type": MessageType.HEARTBEAT,
         "service_id": "svc-3",

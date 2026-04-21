@@ -5,17 +5,12 @@ from pathlib import PurePath
 from typing import Any
 
 import msgspec
-from pydantic import ConfigDict, GetCoreSchemaHandler
+from pydantic import BaseModel, ConfigDict, GetCoreSchemaHandler
 from pydantic_core import CoreSchema, core_schema
 
-from aiperf.common.models.auto_routed_model import AutoRoutedModel
 
-
-class AIPerfBaseModel(AutoRoutedModel):
+class AIPerfBaseModel(BaseModel):
     """Base model for all AIPerf Pydantic models.
-
-    Inherits high-performance auto-routing capabilities from AutoRoutedModel.
-    Models can optionally set discriminator_field to enable automatic routing.
 
     This class is configured to allow arbitrary types to be used as fields
     to allow for more flexible model definitions by end users without breaking

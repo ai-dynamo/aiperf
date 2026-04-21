@@ -717,14 +717,14 @@ class TestTraceDataEdgeCases:
 
 
 def test_trace_data_export_has_no_autoroutedmodel_registry():
-    """TraceDataExport no longer populates AutoRoutedModel's lookup table."""
+    """TraceDataExport does not use a discriminator_field registry."""
     from aiperf.common.models import TraceDataExport
 
     assert "discriminator_field" not in TraceDataExport.__dict__
 
 
 def test_base_trace_data_to_export_still_routes_via_export_lookup():
-    """to_export() uses the manual _EXPORT_LOOKUP, not AutoRoutedModel."""
+    """to_export() uses the manual _EXPORT_LOOKUP for routing."""
     from aiperf.common.models.trace_models import (
         AioHttpTraceData,
         AioHttpTraceDataExport,

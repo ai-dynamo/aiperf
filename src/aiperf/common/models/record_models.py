@@ -502,7 +502,7 @@ class RequestRecord(
     def __post_init__(self) -> None:
         # Parity with the former Pydantic field_validator on trace_data:
         # route dict payloads to the correct BaseTraceData subclass via
-        # AutoRoutedModel discrimination.
+        # msgspec tagged-union decoding (see BaseTraceData.from_json).
         if isinstance(self.trace_data, dict):
             self.trace_data = BaseTraceData.from_json(self.trace_data)
 

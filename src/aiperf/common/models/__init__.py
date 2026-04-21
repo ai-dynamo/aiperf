@@ -11,7 +11,6 @@
 # PEP 562 __getattr__ keeps `from aiperf.common.models import MetricRecordMetadata`
 # working (documented public API, used in tutorials) without forcing
 # metric_records_wire to finish loading before this package init.
-from aiperf.common.models.auto_routed_model import AutoRoutedModel
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.credit_models import (
     BasePhaseStats,
@@ -144,7 +143,6 @@ __all__ = [
     "AioHttpTraceData",
     "AioHttpTraceDataExport",
     "Audio",
-    "AutoRoutedModel",
     "BasePhaseStats",
     "BaseResponseData",
     "BaseSeries",

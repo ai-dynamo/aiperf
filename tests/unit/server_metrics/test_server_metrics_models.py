@@ -238,7 +238,7 @@ class TestServerMetricsResults:
 
 
 def test_base_server_metric_data_has_no_autoroutedmodel_registry():
-    """BaseServerMetricData no longer populates AutoRoutedModel's lookup table."""
+    """BaseServerMetricData does not use a discriminator_field registry."""
     from aiperf.common.models import BaseServerMetricData
 
     assert "discriminator_field" not in BaseServerMetricData.__dict__
