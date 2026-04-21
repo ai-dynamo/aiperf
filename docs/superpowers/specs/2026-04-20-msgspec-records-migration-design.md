@@ -1,30 +1,10 @@
 # Msgspec Conversion: Records Path
 
-**Status:** Partial (R4 complete, R1-R3 + R5 pending)
+**Status:** Complete (2026-04-21)
 **Owner:** Anthony Casagrande (acasagrande@nvidia.com)
 **Date:** 2026-04-20
-**Commits so far:** `bf724526b` (R4)
+**Commits:** `bf724526b` (R4), `74e7bc9a4` (R1), `c1727c582` (R2), `453f22f0f` (R3), `debf6bfa5` (R5)
 **Part of:** [msgspec-zmq-migration-overview.md](./2026-04-20-msgspec-zmq-migration-overview.md)
-
-## Remaining work
-
-- **R1** — Record-leaf conversion (TextResponse, BinaryResponse, SSEField,
-  SSEMessage, RequestInfo). Touches `src/aiperf/transports/aiohttp_client.py`,
-  `httpcore_client.py`, and `base_http_transport.py` construction sites.
-- **R2** — RequestRecord conversion with tagged-union ``responses``. This
-  is where `src/aiperf/common/inference_wire.py`'s `_to_wire` / `_from_wire`
-  translation layer (~500 LoC of twin types) can be retired in favour of
-  emitting RequestRecord directly.
-- **R3** — MetricResult + ProfileResults + ProcessRecordsResult, plus
-  byte-equality fixture for profile_export_aiperf.json.
-- **R5** — Envelope shim retrofit (InferenceResultsMessage,
-  RealtimeMetricsMessage, ProfileResultsMessage, ProcessRecordsResultMessage,
-  RecordsProcessingStatsMessage, AllRecordsReceivedMessage) via
-  PydanticStructMixin + round-trip tests.
-
-> **Start here next session:** tackle R1 + R2 together since
-> `RequestRecord.responses` union discrimination only works end-to-end when
-> both leaves and the parent are msgspec.
 
 ## Goal
 
