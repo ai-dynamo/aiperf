@@ -48,7 +48,7 @@ def speed_bench_report(
         metric: Which metric to report - 'accept_length', 'accept_rate', or 'throughput'.
             Defaults to 'accept_length'.
     """
-    from aiperf.dataset.loader.speed_bench_report import (
+    from aiperf.analysis.speed_bench_report import (
         SpeedBenchReportError,
         generate_report,
     )

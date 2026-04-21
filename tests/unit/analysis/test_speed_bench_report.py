@@ -9,7 +9,7 @@ from pathlib import Path
 import orjson
 import pytest
 
-from aiperf.dataset.loader.speed_bench_report import (
+from aiperf.analysis.speed_bench_report import (
     PROFILE_JSON,
     SERVER_METRICS_JSON,
     SpeedBenchReportError,
