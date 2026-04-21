@@ -1,0 +1,423 @@
+{
+  "$defs": {
+    "CacheLayerConfig": {
+      "additionalProperties": true,
+      "description": "Token sizes for the KV cache prefix model.\n\nL1: Global (tools + system prompt), shared by all sessions.\nL1.5: Group-shared (repo instructions and context), shared within a group.\nL2: Session-specific prefix (initial files), sampled per session.\nL3: Conversation history, grows turn-by-turn (not configured here).",
+      "properties": {
+        "layer1_5_groups": {
+          "$ref": "#/$defs/Layer15GroupConfig",
+          "description": "L1.5 group assignment for prefix sharing"
+        },
+        "layer1_5_tokens": {
+          "default": 20000,
+          "description": "L1.5: group-shared prefix tokens (repo instructions and context)",
+          "minimum": 0,
+          "title": "Layer1 5 Tokens",
+          "type": "integer"
+        },
+        "layer1_tokens": {
+          "default": 32000,
+          "description": "L1: tools + system prompt tokens (globally cached)",
+          "minimum": 0,
+          "title": "Layer1 Tokens",
+          "type": "integer"
+        },
+        "layer2": {
+          "$ref": "#/$defs/LognormalParams",
+          "description": "L2: session-specific prefix token distribution"
+        }
+      },
+      "title": "CacheLayerConfig",
+      "type": "object"
+    },
+    "Layer15GroupConfig": {
+      "additionalProperties": true,
+      "description": "Group assignment for L1.5 cache sharing via Zipf distribution.",
+      "properties": {
+        "num_groups": {
+          "default": 50,
+          "description": "Number of distinct groups (repos/projects)",
+          "minimum": 1,
+          "title": "Num Groups",
+          "type": "integer"
+        },
+        "zipf_alpha": {
+          "default": 1.2,
+          "description": "Zipf skew parameter (higher = more skewed)",
+          "minimum": 0.0,
+          "title": "Zipf Alpha",
+          "type": "number"
+        }
+      },
+      "title": "Layer15GroupConfig",
+      "type": "object"
+    },
+    "LognormalParams": {
+      "additionalProperties": true,
+      "description": "Lognormal distribution parameters with real-space summary statistics.\n\nCan be constructed in two ways:\n1. Full: mu, sigma, mean, median all provided (e.g. from manifest.json or fit-stats)\n2. Simplified: just mean and median — mu/sigma auto-computed via model validator",
+      "properties": {
+        "max": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hard upper bound (rejection sampled)",
+          "title": "Max"
+        },
+        "mean": {
+          "description": "Real-space mean (derived)",
+          "exclusiveMinimum": 0.0,
+          "title": "Mean",
+          "type": "number"
+        },
+        "median": {
+          "description": "Real-space median (derived)",
+          "exclusiveMinimum": 0.0,
+          "title": "Median",
+          "type": "number"
+        },
+        "min": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hard lower bound (rejection sampled)",
+          "title": "Min"
+        },
+        "mu": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Log-space mean",
+          "title": "Mu"
+        },
+        "sigma": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Log-space standard deviation",
+          "title": "Sigma"
+        }
+      },
+      "required": [
+        "mean",
+        "median"
+      ],
+      "title": "LognormalParams",
+      "type": "object"
+    },
+    "MixtureDelayConfig": {
+      "additionalProperties": true,
+      "description": "Two-component mixture model for inter-turn delays.\n\nAgentic turns (tool-call follow-ups) are fast; human turns are slow.\nA Bernoulli draw selects which component to sample from.",
+      "properties": {
+        "agentic_delay": {
+          "$ref": "#/$defs/LognormalParams",
+          "description": "Fast delay distribution (tool-call follow-ups)"
+        },
+        "agentic_fraction": {
+          "default": 0.7,
+          "description": "Probability of sampling the fast agentic delay",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Agentic Fraction",
+          "type": "number"
+        },
+        "human_delay": {
+          "$ref": "#/$defs/LognormalParams",
+          "description": "Slow delay distribution (human think time)"
+        },
+        "max": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hard upper clip on sampled delay (ms)",
+          "title": "Max"
+        }
+      },
+      "title": "MixtureDelayConfig",
+      "type": "object"
+    },
+    "NewTokensPerTurnConfig": {
+      "additionalProperties": true,
+      "description": "Lognormal config for new tokens per turn with truncation-bias correction.",
+      "properties": {
+        "bias": {
+          "default": 1.0,
+          "description": "Multiplier on the target mean/median to compensate for truncation bias",
+          "exclusiveMinimum": 0.0,
+          "title": "Bias",
+          "type": "number"
+        },
+        "max": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hard upper bound (rejection sampled)",
+          "title": "Max"
+        },
+        "mean": {
+          "description": "Real-space mean (derived)",
+          "exclusiveMinimum": 0.0,
+          "title": "Mean",
+          "type": "number"
+        },
+        "median": {
+          "description": "Real-space median (derived)",
+          "exclusiveMinimum": 0.0,
+          "title": "Median",
+          "type": "number"
+        },
+        "min": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hard lower bound (rejection sampled)",
+          "title": "Min"
+        },
+        "mu": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Log-space mean",
+          "title": "Mu"
+        },
+        "sigma": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Log-space standard deviation",
+          "title": "Sigma"
+        }
+      },
+      "required": [
+        "mean",
+        "median"
+      ],
+      "title": "NewTokensPerTurnConfig",
+      "type": "object"
+    },
+    "ResetConfig": {
+      "additionalProperties": true,
+      "description": "Context-dependent reset probability.\n\nModels explicit continuation, repo-context edits, and TTL expiry.\nP(reset) = base_probability * (1 + (context_scaling - 1) * input_length / max_prompt_tokens)",
+      "properties": {
+        "base_probability": {
+          "default": 0.02,
+          "description": "Base reset chance per turn",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Base Probability",
+          "type": "number"
+        },
+        "context_scaling": {
+          "default": 2.0,
+          "description": "Multiplier at max_prompt_tokens",
+          "minimum": 1.0,
+          "title": "Context Scaling",
+          "type": "number"
+        }
+      },
+      "title": "ResetConfig",
+      "type": "object"
+    },
+    "TurnCountConfig": {
+      "additionalProperties": true,
+      "description": "Explicit target distribution for turns per session.",
+      "properties": {
+        "allow_truncation": {
+          "default": false,
+          "description": "Allow sessions to end early at the context limit instead of resampling",
+          "title": "Allow Truncation",
+          "type": "boolean"
+        },
+        "max": {
+          "description": "Hard upper bound on sampled turn count",
+          "exclusiveMinimum": 0,
+          "title": "Max",
+          "type": "integer"
+        },
+        "max_session_attempts": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max full-session retries before failing in exact-turn mode",
+          "title": "Max Session Attempts"
+        },
+        "mean": {
+          "description": "Target mean turns per session",
+          "exclusiveMinimum": 0,
+          "title": "Mean",
+          "type": "integer"
+        },
+        "median": {
+          "description": "Target median turns per session",
+          "exclusiveMinimum": 0,
+          "title": "Median",
+          "type": "integer"
+        },
+        "min": {
+          "description": "Hard lower bound on sampled turn count",
+          "exclusiveMinimum": 0,
+          "title": "Min",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mean",
+        "median",
+        "min",
+        "max"
+      ],
+      "title": "TurnCountConfig",
+      "type": "object"
+    }
+  },
+  "$id": "https://ai-dynamo.github.io/aiperf/schemas/agentic-code-gen-config.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "Full configuration for synthesizing Agentic Code sessions.\n\ninitial_context is derived: L1 + L1.5 + sampled L2. Not directly configured.\n\nThis schema is a reference for recognized Agentic Code generator config fields. AIPerf config parsing is permissive for forward compatibility: unknown fields are accepted by the base model, but only the documented properties below are interpreted by the generator.",
+  "properties": {
+    "block_size": {
+      "default": 512,
+      "description": "KV cache page size in tokens",
+      "minimum": 1,
+      "title": "Block Size",
+      "type": "integer"
+    },
+    "cache": {
+      "$ref": "#/$defs/CacheLayerConfig",
+      "description": "Cache layer config"
+    },
+    "generation_length": {
+      "$ref": "#/$defs/LognormalParams",
+      "description": "Output token distribution"
+    },
+    "inter_turn_delay": {
+      "$ref": "#/$defs/MixtureDelayConfig",
+      "description": "Inter-turn delay mixture model"
+    },
+    "max_prompt_tokens": {
+      "default": 200000,
+      "description": "Context window limit",
+      "minimum": 1,
+      "title": "Max Prompt Tokens",
+      "type": "integer"
+    },
+    "new_tokens_per_turn": {
+      "$ref": "#/$defs/NewTokensPerTurnConfig",
+      "description": "New tokens added per turn"
+    },
+    "reset": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ResetConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Reset probability config"
+    },
+    "restart_initial_probability": {
+      "default": 0.0,
+      "description": "Initial probability that a primary session is split into a restart continuation. The probability decays linearly to zero across the first 75% of generated primary sessions, so the observed continuation count is lower than this value.",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Restart Initial Probability",
+      "type": "number"
+    },
+    "restart_turn_range": {
+      "default": [
+        5,
+        15
+      ],
+      "description": "[min, max) turn index range for restart split point",
+      "items": {
+        "type": "integer"
+      },
+      "maxItems": 2,
+      "minItems": 2,
+      "title": "Restart Turn Range",
+      "type": "array"
+    },
+    "turns": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TurnCountConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Explicit turns-per-session mode (mutually exclusive with reset)"
+    }
+  },
+  "title": "SessionDistributionConfig",
+  "type": "object"
+}

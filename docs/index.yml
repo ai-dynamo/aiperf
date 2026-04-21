@@ -84,6 +84,8 @@ navigation:
       path: tutorials/sequence-distributions.md
     - page: Prefix Data Synthesis Tutorial
       path: tutorials/prefix-synthesis.md
+    - page: Agentic Code Dataset Generator
+      path: tutorials/agentic-code-generator.md
   - section: Load Patterns & Scheduling
     collapsed: true
     contents:
