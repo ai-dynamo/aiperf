@@ -1,24 +1,24 @@
 # Msgspec Conversion: Primitives (Terminal)
 
-**Status:** Partial (P1 landed, P2+P3 pending)
+**Status:** Partial (P1+P2 landed, P3 pending)
 **Owner:** Anthony Casagrande (acasagrande@nvidia.com)
 **Date:** 2026-04-20
-**Commits so far:** `41e53697e` (P1)
+**Commits so far:** `41e53697e` (P1), `33c149e6b`+`f05c0abcb`+`8899602cf`+`409538d27`+`26fadd851` (P2)
 **Part of:** [msgspec-zmq-migration-overview.md](./2026-04-20-msgspec-zmq-migration-overview.md)
 
 ## Remaining work
 
-- **P2** — `Message` base flip. The 4 Phase 2 domain specs left every
-  envelope (~40 classes) Pydantic with `PydanticStructMixin`-shimmed
-  msgspec payloads. P2 flips `Message` itself to `msgspec.Struct` with
-  ``tag_field="message_type"``, rewrites every envelope as a tagged-union
-  subclass (``class HeartbeatMessage(Message, tag=MessageType.HEARTBEAT):``),
-  deletes `AutoRoutedModel` (audit trace_models/server_metrics_models
-  which still use its ``discriminator_field`` for non-Message unions; keep
-  `AutoRoutedModel` only if those remain), and retires
-  `PydanticStructMixin`. This is the largest single PR in the migration
-  per the overview's risk section — land on a dedicated integration
-  branch and rebase onto ``main`` after each Phase 2 spec merges.
+- **P2 (landed)** — `Message` base class is now `msgspec.Struct(tag_field="message_type")`;
+  every envelope across `base_messages`, `service_messages`, `worker_messages`,
+  `progress_messages`, `inference_messages`, `dataset_messages`,
+  `telemetry_messages`, `server_metrics_messages`, and `credit/messages.py` is a
+  tagged-union member. `AutoRoutedModel` deleted; `AIPerfBaseModel` detached to
+  plain `BaseModel`. `PydanticStructMixin` retired from every struct except
+  seven still referenced by Pydantic parents (`ErrorDetailsCount`,
+  `ProcessRecordsResult`, `WorkerStats`, `BasePhaseStats`, `CreditPhaseConfig`,
+  `Media` hierarchy, `Turn`/`Conversation`). `JsonMessageCodec` and
+  `PydanticMsgpackCodec` rewritten on top of msgspec but kept API-compatible;
+  P3 collapses them.
 - **P3** — Codec collapse + invariant assertion. Deletes
   `JsonMessageCodec`, `PydanticMsgpackCodec`, the codec `_enc_hook` /
   `_dec_hook`, and the `MsgspecField` shim. Adds
@@ -26,10 +26,10 @@
   `src/aiperf/common/messages/` for `pydantic` imports and
   `model_dump`/`model_validate` usage.
 
-> **Start here next session:** P2 requires a dedicated branch. The
-> existing `PydanticStructMixin` pattern is load-bearing until every
-> envelope flips in one atomic move — partial P2 leaves the codebase in
-> a broken state.
+> **Start here next session:** P3 deletes `JsonMessageCodec` and
+> `PydanticMsgpackCodec`, removes `_enc_hook` / `_dec_hook`, and adds
+> `tests/unit/test_no_pydantic_on_wire.py` grep assertions. No dedicated
+> branch required — the surface is small.
 
 ## Goal
 

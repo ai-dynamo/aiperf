@@ -203,7 +203,7 @@ Filled as specs land. Each cell = spec status + PR link.
 | Dataset | Complete (landed in e1cdd1233, a2e8bb599, 0c767fee4) | `msgspec-dataset-migration-design.md` | — |
 | Credit | Complete (landed in 0d004dd07, 3a5080a25, e506378bf) | `msgspec-credit-migration-design.md` | — |
 | Service lifecycle | Complete (landed in a02690c8f, 23ff3e411, 14180a2bb) | `msgspec-service-lifecycle-migration-design.md` | — |
-| Primitives (terminal) | In progress (P1 landed in 41e53697e; P2/P3 pending) | `msgspec-primitives-migration-design.md` | — |
+| Primitives (terminal) | In progress (P1 landed in 41e53697e, P2 landed in 33c149e6b..26fadd851; P3 pending) | `msgspec-primitives-migration-design.md` | — |
 
 ## Non-goals
 
