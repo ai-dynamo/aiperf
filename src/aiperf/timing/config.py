@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import msgspec
 from pydantic import ConfigDict, Field
 
 from aiperf.common.enums import CreditPhase
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
     from aiperf.config import BenchmarkConfig
     from aiperf.config.phases import BasePhaseConfig
 
-from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.base_models import AIPerfBaseModel, PydanticStructMixin
 from aiperf.plugin.enums import (
     ArrivalPattern,
     PhaseType,
@@ -92,8 +93,14 @@ class TimingConfig(AIPerfBaseModel):
         )
 
 
-class CreditPhaseConfig(AIPerfBaseModel):
-    """Model for credit phase config. This is used to configure a credit phase.
+class CreditPhaseConfig(
+    PydanticStructMixin,
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+):
+    """Config for a single credit phase.
 
     Stop conditions (first one reached wins):
     - total_expected_requests: Stop after sending this many total requests
@@ -101,114 +108,30 @@ class CreditPhaseConfig(AIPerfBaseModel):
     - expected_duration_sec: Stop after this time
     """
 
-    model_config = ConfigDict(frozen=True)
-
-    phase: CreditPhase = Field(
-        ..., description="The name of the credit phase (e.g. 'warmup', 'main')."
-    )
-    exclude_from_results: bool = Field(
-        default=False,
-        description="Whether this phase is excluded from final results.",
-    )
-    timing_mode: TimingMode = Field(
-        ...,
-        description="The timing mode of the credit phase. Used to determine "
-        "how to send requests to the workers.",
-    )
-    total_expected_requests: int | None = Field(
-        default=None, gt=0, description="The total number of expected requests to send."
-    )
-    expected_num_sessions: int | None = Field(
-        default=None, gt=0, description="The total number of expected sessions to send."
-    )
-    expected_duration_sec: float | None = Field(
-        default=None,
-        gt=0,
-        description="The expected duration of the credit phase in seconds.",
-    )
-    seamless: bool = Field(
-        default=False,
-        description="Whether the credit phase should be seamless. "
-        "Seamless phases start immediately after the previous phase sends all credits, "
-        "without waiting for all credits to return. This can be used to maintain concurrency "
-        "during phase transitions.",
-    )
-    concurrency: int | None = Field(
-        default=None,
-        gt=0,
-        description="The max concurrency of the credit phase. "
-        "This is the max number of requests that can be in flight at once. "
-        "If None, the concurrency is unlimited.",
-    )
-    prefill_concurrency: int | None = Field(
-        default=None,
-        gt=0,
-        description="The max concurrency of the prefill phase. "
-        "This is the max number of requests that can be waiting for the first token at once. "
-        "If None, the prefill concurrency is unlimited.",
-    )
-    request_rate: float | None = Field(
-        default=None, gt=0, description="The request rate of the credit phase."
-    )
-    arrival_pattern: ArrivalPattern = Field(
-        default=ArrivalPattern.POISSON,
-        description="The arrival pattern of the credit phase.",
-    )
-    arrival_smoothness: float | None = Field(
-        default=None,
-        gt=0,
-        description="The smoothness parameter for gamma distribution arrivals. "
-        "Only used when arrival_pattern is GAMMA. Controls the shape of the distribution: "
-        "1.0 = Poisson-like (exponential), <1.0 = bursty, >1.0 = smooth/regular. "
-        "If None, defaults to 1.0 when using GAMMA arrival pattern.",
-    )
-    grace_period_sec: float | None = Field(
-        default=None,
-        ge=0,
-        description="The grace period of the credit phase in seconds. "
-        "This is the time to wait after the expected duration of the phase has elapsed "
-        "before the phase is considered complete. This can be used to ensure that all requests "
-        "have returned before the phase is considered complete. "
-        "If None, the grace period is disabled.",
-    )
-    num_users: int | None = Field(
-        default=None,
-        ge=1,
-        description="The number of concurrent users to use for the credit phase. "
-        "This is only applicable when using user-centric rate limiting mode. ",
-    )
-    concurrency_ramp_duration_sec: float | None = Field(
-        default=None,
-        gt=0,
-        description="Duration in seconds to ramp session concurrency from 1 to target. "
-        "If None, concurrency starts at target immediately.",
-    )
-    prefill_concurrency_ramp_duration_sec: float | None = Field(
-        default=None,
-        gt=0,
-        description="Duration in seconds to ramp prefill concurrency from 1 to target. "
-        "If None, prefill concurrency starts at target immediately.",
-    )
-    request_rate_ramp_duration_sec: float | None = Field(
-        default=None,
-        gt=0,
-        description="Duration in seconds to ramp request rate from 1 QPS to target. "
-        "If None, request rate starts at target immediately.",
-    )
-    auto_offset_timestamps: bool = Field(
-        default=InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET,
-        description="The auto offset timestamps of the timing manager.",
-    )
-    fixed_schedule_start_offset: int | None = Field(
-        default=None,
-        ge=0,
-        description="The fixed schedule start offset of the timing manager.",
-    )
-    fixed_schedule_end_offset: int | None = Field(
-        default=None,
-        ge=0,
-        description="The fixed schedule end offset of the timing manager.",
-    )
+    phase: CreditPhase
+    timing_mode: TimingMode
+    exclude_from_results: bool = False
+    total_expected_requests: int | None = None
+    expected_num_sessions: int | None = None
+    expected_duration_sec: float | None = None
+    seamless: bool = False
+    concurrency: int | None = None
+    prefill_concurrency: int | None = None
+    request_rate: float | None = None
+    arrival_pattern: ArrivalPattern = ArrivalPattern.POISSON
+    # Only used when arrival_pattern is GAMMA. Controls the shape of the
+    # distribution: 1.0 = Poisson-like (exponential), <1.0 = bursty,
+    # >1.0 = smooth/regular. If None, defaults to 1.0 when using GAMMA.
+    arrival_smoothness: float | None = None
+    grace_period_sec: float | None = None
+    # Only applicable for user-centric rate-limiting mode.
+    num_users: int | None = None
+    concurrency_ramp_duration_sec: float | None = None
+    prefill_concurrency_ramp_duration_sec: float | None = None
+    request_rate_ramp_duration_sec: float | None = None
+    auto_offset_timestamps: bool = InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET
+    fixed_schedule_start_offset: int | None = None
+    fixed_schedule_end_offset: int | None = None
 
 
 def _phase_type_to_timing(phase_type: PhaseType) -> tuple[TimingMode, ArrivalPattern]:

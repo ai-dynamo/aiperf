@@ -12,6 +12,8 @@ import asyncio
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+import msgspec
+
 from aiperf.common.enums import CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.loop_scheduler import LoopScheduler
@@ -103,11 +105,10 @@ class PhaseRunner(TaskManagerMixin):
         # reflects the actual filtered dataset after start/end offset filtering.
         metadata = conversation_source.dataset_metadata
         if config.timing_mode == TimingMode.FIXED_SCHEDULE and metadata:
-            self._config = config.model_copy(
-                update={
-                    "total_expected_requests": metadata.total_turn_count,
-                    "expected_num_sessions": len(metadata.conversations),
-                }
+            self._config = msgspec.structs.replace(
+                config,
+                total_expected_requests=metadata.total_turn_count,
+                expected_num_sessions=len(metadata.conversations),
             )
         self._phase_publisher = phase_publisher
         self._credit_router = credit_router

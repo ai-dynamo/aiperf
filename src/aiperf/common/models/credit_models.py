@@ -3,11 +3,10 @@
 import time
 
 import msgspec
-from pydantic import Field
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
-from aiperf.common.models.base_models import AIPerfBaseModel, PydanticStructMixin
+from aiperf.common.models.base_models import PydanticStructMixin
 
 
 class BasePhaseStats(
@@ -205,16 +204,20 @@ class PhaseRecordsStats(
         return self.records_end_ns is not None
 
 
-class ProcessingStats(AIPerfBaseModel):
-    """Model for phase processing stats. How many requests were processed and
-    how many errors were encountered."""
+class ProcessingStats(
+    PydanticStructMixin,
+    msgspec.Struct,
+    kw_only=True,
+    omit_defaults=True,
+):
+    """Per-worker record-processing counters.
 
-    processed: int = Field(
-        default=0, description="The number of records processed successfully"
-    )
-    errors: int = Field(
-        default=0, description="The number of record errors encountered"
-    )
+    Mutable accumulator used by the RecordsTracker to tally success/error
+    counts in place — hence no ``frozen=True``.
+    """
+
+    processed: int = 0
+    errors: int = 0
 
     @property
     def total_records(self) -> int:

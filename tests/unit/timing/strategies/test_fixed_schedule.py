@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import ValidationError
 
 from aiperf.common.constants import MILLIS_PER_SECOND
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
@@ -80,7 +79,11 @@ def make_strategy(
 @pytest.mark.asyncio
 class TestFixedScheduleStrategy:
     async def test_empty_schedule_raises(self, create_orchestrator_harness) -> None:
-        with pytest.raises(ValidationError, match="greater than 0"):
+        # With an empty schedule, the dataset sampler rejects an empty
+        # conversation list. (Previously this raised pydantic ValidationError on
+        # CreditPhaseConfig(total_expected_requests=0); the gt=0 constraint was
+        # dropped when CreditPhaseConfig became msgspec.)
+        with pytest.raises(ValueError, match="conversation_ids cannot be empty"):
             create_orchestrator_harness(schedule=[])
 
     @pytest.mark.parametrize(

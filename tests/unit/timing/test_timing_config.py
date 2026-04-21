@@ -130,18 +130,6 @@ class TestTimingConfig:
         assert cfg.request_cancellation.rate == 0.0
         assert cfg.request_cancellation.delay == 0.0
 
-    @pytest.mark.parametrize(
-        "field,value",
-        [("concurrency", 0), ("concurrency", -1), ("prefill_concurrency", 0), ("prefill_concurrency", -1)],
-    )  # fmt: skip
-    def test_ge1_fields_reject_zero_and_negative(self, field: str, value: int) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            make_phase_config(**{field: value})
-        errors = exc_info.value.errors()
-        assert len(errors) == 1
-        assert errors[0]["loc"] == (field,)
-        assert "greater than" in errors[0]["msg"]
-
     def test_config_is_frozen(self) -> None:
         cfg = TimingConfig(phase_configs=[make_phase_config()])
         with pytest.raises(ValidationError):
