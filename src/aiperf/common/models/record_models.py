@@ -1011,19 +1011,13 @@ class RawRecordInfo(msgspec.Struct, frozen=True, kw_only=True, omit_defaults=Tru
 
 
 def _record_info_enc_hook(obj: Any) -> Any:
-    if isinstance(obj, MetricValue):
-        return {"value": obj.value, "unit": obj.unit}
+    # MetricValue is a dataclass, which msgspec encodes natively — no hook
+    # needed. Only the Pydantic fallback below is load-bearing: TraceDataExport
+    # (and its AioHttpTraceDataExport subtype) plus ErrorDetails are Pydantic
+    # final-export models, and msgspec can't serialize them directly.
     if hasattr(obj, "model_dump"):
         return obj.model_dump(exclude_none=True, mode="json")
     raise TypeError(f"Unsupported record artifact type: {type(obj)}")
-
-
-def _record_info_dec_hook(type_: type, obj: Any) -> Any:
-    if type_ is MetricValue:
-        return MetricValue(**obj)
-    if issubclass(type_, AIPerfBaseModel):
-        return type_.model_validate(obj)
-    raise NotImplementedError(f"Unsupported record artifact decode type: {type_}")
 
 
 _METRIC_RECORD_INFO_ENCODER = msgspec.json.Encoder(enc_hook=_record_info_enc_hook)
