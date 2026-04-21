@@ -4,7 +4,7 @@
 import msgspec
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import ConfigDict, Field
+from pydantic import Field
 
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -414,21 +414,22 @@ class GpuMetricTimeSeries:
         return self._size
 
 
-class GpuTelemetryData(AIPerfBaseModel):
+class GpuTelemetryData(msgspec.Struct, kw_only=True):
     """Complete telemetry data for one GPU: metadata + grouped metric time series.
 
     This combines static GPU information with dynamic time-series data,
-    providing the complete picture for one GPU's telemetry using efficient columnar storage.
+    providing the complete picture for one GPU's telemetry using efficient
+    columnar storage. Not frozen because ``time_series`` is mutated in place
+    as records arrive.
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    metadata: GpuMetadata
+    """Static GPU information."""
 
-    metadata: GpuMetadata = Field(description="Static GPU information")
-    time_series: GpuMetricTimeSeries = Field(
-        default_factory=GpuMetricTimeSeries,
-        description="Columnar time series for all metrics",
-        exclude=True,  # Numpy arrays are not serializable by default
+    time_series: GpuMetricTimeSeries = msgspec.field(
+        default_factory=GpuMetricTimeSeries
     )
+    """Columnar time series for all metrics. Numpy-backed, not serialized."""
 
     def add_record(self, record: TelemetryRecord) -> None:
         """Add telemetry record as a grouped snapshot.
@@ -473,7 +474,7 @@ class GpuTelemetryData(AIPerfBaseModel):
         return self.time_series.to_metric_result(metric_name, tag, header, unit)
 
 
-class TelemetryHierarchy(AIPerfBaseModel):
+class TelemetryHierarchy(msgspec.Struct, kw_only=True):
     """Hierarchical storage: dcgm_url -> gpu_uuid -> complete GPU telemetry data.
 
     This provides the requested hierarchical structure while maintaining efficient
@@ -491,10 +492,10 @@ class TelemetryHierarchy(AIPerfBaseModel):
     }
     """
 
-    dcgm_endpoints: dict[str, dict[str, GpuTelemetryData]] = Field(
-        default_factory=dict,
-        description="Nested dict: dcgm_url -> gpu_uuid -> telemetry data",
+    dcgm_endpoints: dict[str, dict[str, GpuTelemetryData]] = msgspec.field(
+        default_factory=dict
     )
+    """Nested dict: dcgm_url -> gpu_uuid -> telemetry data."""
 
     def add_record(self, record: TelemetryRecord) -> None:
         """Add telemetry record to hierarchical storage.
