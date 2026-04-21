@@ -5,7 +5,10 @@ import pytest
 
 from aiperf.common.inference_wire import InferenceResultsWireMessage
 from aiperf.common.messages import InferenceResultsMessage
-from aiperf.common.metric_records_wire import MetricRecordsWireMessage
+from aiperf.common.metric_records_wire import (
+    MetricRecordsBatchWireMessage,
+    MetricRecordsWireMessage,
+)
 from tests.component_integration.conftest import (
     AIPerfRunnerResultWithSharedBus,
 )
@@ -51,11 +54,24 @@ class TestMsgpackPipeline:
         metric_payloads = [
             payload
             for payload in runner_result.sent_payloads
-            if isinstance(payload.payload, MetricRecordsWireMessage)
+            if isinstance(
+                payload.payload,
+                MetricRecordsWireMessage | MetricRecordsBatchWireMessage,
+            )
         ]
 
         assert len(wire_payloads) == 4
-        assert len(metric_payloads) == 4
+        # Record processor batches metric records before pushing to records manager,
+        # so the number of messages varies with flush timing. What matters is that
+        # every inference result produced exactly one metric record delivered via
+        # the msgspec wire path.
+        total_metric_records = sum(
+            len(p.payload.records)
+            if isinstance(p.payload, MetricRecordsBatchWireMessage)
+            else 1
+            for p in metric_payloads
+        )
+        assert total_metric_records == 4
         assert not any(
             isinstance(payload.payload, InferenceResultsMessage)
             for payload in runner_result.sent_payloads

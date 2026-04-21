@@ -1450,14 +1450,10 @@ class SystemController(SignalHandlerMixin, BaseService):
         # cleanup with a hard timeout: multiprocessing.Queue.join_thread can
         # block indefinitely when the feeder thread cannot flush pending
         # items (e.g. pipe buffer contention under heavy xdist load).
-        try:
+        with contextlib.suppress(asyncio.TimeoutError, Exception):
             await asyncio.wait_for(cleanup_global_log_queue(), timeout=2.0)
-        except (asyncio.TimeoutError, Exception):
-            pass
-        try:
+        with contextlib.suppress(asyncio.TimeoutError, Exception):
             await asyncio.wait_for(cleanup_global_error_queue(), timeout=2.0)
-        except (asyncio.TimeoutError, Exception):
-            pass
 
         is_k8s_mode = self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
         keep_api_running = is_k8s_mode and self.run.cfg.runtime.api_port
@@ -1856,12 +1852,13 @@ class SystemController(SignalHandlerMixin, BaseService):
         while time.monotonic() < deadline:
             if raw_records_dir.exists():
                 files = list(raw_records_dir.glob("raw_records_*.jsonl"))
-                if len(files) >= expected and all(
-                    f.stat().st_size > 0 for f in files
-                ):
+                if len(files) >= expected and all(f.stat().st_size > 0 for f in files):
                     snapshot = (len(files), sum(f.stat().st_size for f in files))
                     stable_snapshots.append(snapshot)
-                    if len(stable_snapshots) >= 2 and stable_snapshots[-1] == stable_snapshots[-2]:
+                    if (
+                        len(stable_snapshots) >= 2
+                        and stable_snapshots[-1] == stable_snapshots[-2]
+                    ):
                         self.debug(
                             f"Raw record files stable at {raw_records_dir} "
                             f"(files={snapshot[0]}, bytes={snapshot[1]})"

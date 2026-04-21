@@ -597,7 +597,9 @@ class TestGroupLifecycleWireContract:
             conversation_count=4,
             total_size_bytes=128,
         )
-        hello = GroupPeerHello(rid="rid-1", service_id="worker-0", service_type="worker")
+        hello = GroupPeerHello(
+            rid="rid-1", service_id="worker-0", service_type="worker"
+        )
 
         decoded_ready = peer_decoder.decode(encoder.encode(ready))
         decoded_hello = manager_decoder.decode(encoder.encode(hello))

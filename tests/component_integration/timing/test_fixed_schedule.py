@@ -751,9 +751,18 @@ class TestFixedScheduleOffsetFiltering:
         # phase can complete successfully even if the first turn is not within the offset range,
         # however that is a larger overall issue that needs to be addressed.
 
-        # For now, it is important that the run does not hang, and will return a non-zero exit code
-        # from the failure to setup the phase.
-        assert result.exit_code != 0
+        # For now, it is important that the run does not hang (timeout catches that) and
+        # that the phase fails to start, producing no profile results. In production this
+        # surfaces as a non-zero exit code via os._exit, but the component-integration
+        # harness intercepts os._exit so we assert on the observable side effects instead.
+        assert result.json is None, (
+            "Expected no profile results to be exported when first turn is "
+            "filtered out, but JSON export was produced."
+        )
+        assert not result.jsonl, (
+            "Expected no records when phase setup fails, "
+            f"but got {len(result.jsonl) if result.jsonl else 0}."
+        )
 
     def test_offset_filtering_single_entry(self, cli: AIPerfCLI, tmp_path: Path):
         """Test offset filtering that results in a single entry."""

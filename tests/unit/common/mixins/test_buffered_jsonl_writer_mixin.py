@@ -143,9 +143,7 @@ class TestBufferedJSONLWriterMixin:
         assert temp_output_file.exists(), "File with content should be preserved"
 
     @pytest.mark.asyncio
-    async def test_late_buffered_write_during_close_is_drained(
-        self, temp_output_file
-    ):
+    async def test_late_buffered_write_during_close_is_drained(self, temp_output_file):
         """P1 regression: a buffered_write that arrives while _close_file is
         already awaiting wait_for_tasks schedules a new flush task AFTER
         the wait's self.tasks snapshot. Without the drain loop the new

@@ -873,12 +873,16 @@ class BenchmarkDeployer:
                                     await asyncio.sleep(3)
                                     try:
                                         data = await self.kubectl.get_json(
-                                            "aiperfjob", cr_name, namespace=result.namespace
+                                            "aiperfjob",
+                                            cr_name,
+                                            namespace=result.namespace,
                                         )
                                         cr_status = AIPerfJobStatus.from_json(data)
                                     except RuntimeError:
                                         continue
-                                    cr_results = cr_status.results or cr_status.live_metrics
+                                    cr_results = (
+                                        cr_status.results or cr_status.live_metrics
+                                    )
                                     if cr_results:
                                         break
                             result.success = cr_status.is_completed

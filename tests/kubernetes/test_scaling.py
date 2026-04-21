@@ -255,8 +255,7 @@ class TestPodSecurityConfiguration:
             for container in containers:
                 # Only require probes on containers that expose a health port
                 has_health_port = any(
-                    p.get("name") == "health"
-                    for p in container.get("ports", [])
+                    p.get("name") == "health" for p in container.get("ports", [])
                 )
                 if not has_health_port:
                     continue
