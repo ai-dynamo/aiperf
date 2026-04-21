@@ -123,7 +123,7 @@ class SessionSynthesizer:
             sample_lognormal(self._config.cache.layer2, self._rng, size=1)[0]
         )
         l2_tokens = max(l2_tokens, 1)
-        return min(self._fixed_prefix + l2_tokens, self._config.max_prompt_tokens)
+        return min(self._fixed_prefix + l2_tokens, self._config.max_prompt_tokens - 1)
 
     def _sample_output_length(self) -> int:
         return int(
@@ -398,7 +398,7 @@ class SessionSynthesizer:
         session_id = f"sess-{uuid.UUID(bytes=rand_bytes).hex[:12]}"
 
         initial_input = prev_input + prev_output
-        initial_input = min(initial_input, self._config.max_prompt_tokens)
+        initial_input = min(initial_input, self._config.max_prompt_tokens - 1)
 
         output_len = self._sample_output_length()
 
@@ -495,7 +495,7 @@ class SessionSynthesizer:
         restart_probability = self._config.restart_initial_probability
         cutoff = 0.75
         primary: list[SynthesizedSession] = []
-        deferred: list[SynthesizedSession] = []
+        deferred: list[tuple[SynthesizedSession, int]] = []
         for i in range(num_sessions):
             progress = i / max(1, num_sessions - 1)
             if progress >= cutoff:
@@ -504,9 +504,10 @@ class SessionSynthesizer:
                 p_restart = restart_probability * (1.0 - progress / cutoff)
             inject = float(self._rng.random()) < p_restart
             result = self.synthesize_session(inject_restart=inject)
+            origin_index = len(primary)
             primary.append(result[0])
             if len(result) > 1:
-                deferred.extend(result[1:])
+                deferred.extend((session, origin_index) for session in result[1:])
 
         if not deferred:
             return primary
@@ -515,8 +516,13 @@ class SessionSynthesizer:
         # min_offset ensures Session B never shares a concurrency window
         # with its Session A (restarts only fire in first 75%).
         min_offset = max(1, int(num_sessions * 0.25))
-        for session_b in deferred:
-            pos = int(self._rng.integers(min_offset, len(primary) + 1))
+        for session_b, origin_index in deferred:
+            low = min(origin_index + min_offset, len(primary))
+            pos = (
+                len(primary)
+                if low >= len(primary)
+                else int(self._rng.integers(low, len(primary) + 1))
+            )
             primary.insert(pos, session_b)
 
         return primary

@@ -10,7 +10,12 @@ from pathlib import Path
 import orjson
 import pytest
 
-from aiperf.dataset.agentic_code_gen.models import SessionDistributionConfig
+from aiperf.dataset.agentic_code_gen.models import (
+    SessionDistributionConfig,
+    SessionEndReason,
+    SynthesizedSession,
+    SynthesizedTurn,
+)
 from aiperf.dataset.agentic_code_gen.session_synthesizer import SessionSynthesizer
 from aiperf.dataset.agentic_code_gen.writer import compute_quality_report, write_dataset
 from aiperf.dataset.loader.models import MooncakeTrace
@@ -111,6 +116,73 @@ class TestWriteDataset:
                     f"line {line_num}: duplicate hash_ids"
                 )
                 assert all(h >= 0 for h in hids), f"line {line_num}: negative hash_id"
+
+    def test_jsonl_post_turn_hash_ids_are_dataset_unique(
+        self, tmp_path: Path, coding_config: SessionDistributionConfig
+    ) -> None:
+        sessions = [
+            SynthesizedSession(
+                session_id="s0",
+                group_id=0,
+                end_reason=SessionEndReason.TARGET_TURN_COUNT,
+                turns=[
+                    SynthesizedTurn(
+                        turn_index=0,
+                        input_length=64,
+                        output_length=1,
+                        new_tokens=64,
+                        delay_ms=0,
+                        timestamp_ms=0,
+                        hash_ids=[10],
+                    ),
+                    SynthesizedTurn(
+                        turn_index=1,
+                        input_length=129,
+                        output_length=1,
+                        new_tokens=64,
+                        delay_ms=1,
+                        timestamp_ms=1,
+                        hash_ids=[10, 11],
+                    ),
+                ],
+            ),
+            SynthesizedSession(
+                session_id="s1",
+                group_id=0,
+                end_reason=SessionEndReason.TARGET_TURN_COUNT,
+                turns=[
+                    SynthesizedTurn(
+                        turn_index=0,
+                        input_length=64,
+                        output_length=1,
+                        new_tokens=64,
+                        delay_ms=0,
+                        timestamp_ms=0,
+                        hash_ids=[20],
+                    ),
+                    SynthesizedTurn(
+                        turn_index=1,
+                        input_length=129,
+                        output_length=1,
+                        new_tokens=64,
+                        delay_ms=1,
+                        timestamp_ms=1,
+                        hash_ids=[20, 21],
+                    ),
+                ],
+            ),
+        ]
+        run_dir = tmp_path / "run"
+        write_dataset(sessions, run_dir, coding_config, seed=42)
+        rows = [
+            orjson.loads(line)
+            for line in (run_dir / "dataset.jsonl").read_bytes().splitlines()
+            if line.strip()
+        ]
+        post_turn_ids = [
+            hash_id for row in rows if "delay" in row for hash_id in row["hash_ids"]
+        ]
+        assert len(post_turn_ids) == len(set(post_turn_ids))
 
 
 class TestGroupIdInJsonl:

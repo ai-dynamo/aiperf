@@ -90,3 +90,20 @@ class TestRenderSimulation:
         assert "const SESSIONS =" in html
         assert '"session_id":"s1"' in html
         assert 'value="64"' in html
+
+    def test_escapes_inline_json_script_end_tags(self, tmp_path: Path) -> None:
+        sessions = [
+            {
+                "session_id": "</script><div>",
+                "group_id": 0,
+                "is_restart": False,
+                "turns": [],
+            }
+        ]
+        output = tmp_path / "simulation.html"
+
+        render_simulation(sessions, output)
+
+        html = output.read_text()
+        assert "<\\/script>" in html
+        assert "</script><div>" not in html

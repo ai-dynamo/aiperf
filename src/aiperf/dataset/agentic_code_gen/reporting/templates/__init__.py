@@ -6,6 +6,9 @@
 from __future__ import annotations
 
 from importlib.resources import files
+from typing import Any
+
+import orjson
 
 _TEMPLATE_PACKAGE = "aiperf.dataset.agentic_code_gen.reporting.templates"
 
@@ -21,3 +24,8 @@ def render_template(name: str, **replacements: str) -> str:
     for key, value in replacements.items():
         rendered = rendered.replace(f"__{key}__", value)
     return rendered
+
+
+def script_safe_json(value: Any) -> str:
+    """Serialize JSON for inline script tags without allowing tag termination."""
+    return orjson.dumps(value).decode("utf-8").replace("</", "<\\/")

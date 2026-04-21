@@ -13,6 +13,7 @@ h1{text-align:center;margin-bottom:20px;color:#333}
 .card{background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.12);
       cursor:pointer;position:relative;overflow:hidden;transition:box-shadow .2s}
 .card:hover{box-shadow:0 4px 12px rgba(0,0,0,.2)}
+.card:focus-visible{outline:3px solid #76b900;outline-offset:2px}
 .card.span2{grid-column:span 2}
 .overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;
          align-items:center;justify-content:center;padding:24px}
@@ -31,32 +32,45 @@ __CARDS_HTML__
 </div>
 <div class="overlay" id="overlay">
 <div class="overlay-inner" id="overlay-inner">
-<button class="close-btn" id="close-btn">&times;</button>
+<button class="close-btn" id="close-btn" aria-label="Close chart overlay">&times;</button>
 </div>
 </div>
 <script>document.addEventListener('DOMContentLoaded',function(){
   var overlay=document.getElementById('overlay');
   var inner=document.getElementById('overlay-inner');
   var closeBtn=document.getElementById('close-btn');
+  var lastFocusedCard=null;
+  function openCard(card){
+    var plotDiv=card.querySelector('.js-plotly-plot');
+    if(!plotDiv)return;
+    lastFocusedCard=card;
+    var clone=plotDiv.cloneNode(true);
+    clone.id='overlay-plot';
+    clone.style.width='100%';
+    clone.style.height='100%';
+    inner.querySelectorAll('.js-plotly-plot').forEach(function(el){el.remove()});
+    inner.appendChild(clone);
+    overlay.classList.add('active');
+    closeBtn.focus();
+    Plotly.newPlot(clone,plotDiv.data,
+      Object.assign({},plotDiv.layout,{width:null,height:null,autosize:true}),
+      {responsive:true});
+  }
   document.querySelectorAll('.card').forEach(function(card){
-    card.addEventListener('click',function(){
-      var plotDiv=card.querySelector('.js-plotly-plot');
-      if(!plotDiv)return;
-      var clone=plotDiv.cloneNode(true);
-      clone.id='overlay-plot';
-      clone.style.width='100%';
-      clone.style.height='100%';
-      inner.querySelectorAll('.js-plotly-plot').forEach(function(el){el.remove()});
-      inner.appendChild(clone);
-      overlay.classList.add('active');
-      Plotly.newPlot(clone,plotDiv.data,
-        Object.assign({},plotDiv.layout,{width:null,height:null,autosize:true}),
-        {responsive:true});
+    card.setAttribute('role','button');
+    card.setAttribute('tabindex','0');
+    card.addEventListener('click',function(){openCard(card)});
+    card.addEventListener('keydown',function(e){
+      if(e.key==='Enter'||e.key===' '){
+        e.preventDefault();
+        openCard(card);
+      }
     });
   });
   function closeOverlay(){
     overlay.classList.remove('active');
     inner.querySelectorAll('.js-plotly-plot').forEach(function(el){el.remove()});
+    if(lastFocusedCard)lastFocusedCard.focus();
   }
   closeBtn.addEventListener('click',function(e){e.stopPropagation();closeOverlay()});
   overlay.addEventListener('click',function(e){if(e.target===overlay)closeOverlay()});

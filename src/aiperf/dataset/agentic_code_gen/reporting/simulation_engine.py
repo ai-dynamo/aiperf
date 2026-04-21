@@ -62,6 +62,20 @@ class SimulationConfig:
         metadata={"description": "KV cache block size in tokens (from synthesis)"},
     )
 
+    def validate(self) -> None:
+        """Raise ValueError for invalid simulation parameters."""
+        positive_fields = {
+            "concurrency": self.concurrency,
+            "prefill_workers": self.prefill_workers,
+            "dp_workers": self.dp_workers,
+            "per_worker_tps": self.per_worker_tps,
+            "decode_tps": self.decode_tps,
+            "block_size": self.block_size,
+        }
+        for name, value in positive_fields.items():
+            if value <= 0:
+                raise ValueError(f"{name} must be > 0")
+
 
 @dataclass(slots=True)
 class TimeSeriesPoint:
@@ -145,6 +159,8 @@ def _compute_dedup_tokens(
     active_groups: dict[int, int],
     l1_tokens: int,
     l1_5_tokens: int,
+    cached_sessions: int | None = None,
+    cached_groups: dict[int, int] | None = None,
 ) -> int:
     """Compute deduplicated unique cache footprint in tokens.
 
@@ -152,8 +168,10 @@ def _compute_dedup_tokens(
     of how many sessions reference them, and L1.5 blocks are stored once
     per group. This subtracts the duplicate copies.
     """
-    l1_dedup = max(0, alive_sessions - 1) * l1_tokens
-    l15_dedup = sum(max(0, cnt - 1) * l1_5_tokens for cnt in active_groups.values())
+    session_count = alive_sessions if cached_sessions is None else cached_sessions
+    group_counts = active_groups if cached_groups is None else cached_groups
+    l1_dedup = max(0, session_count - 1) * l1_tokens
+    l15_dedup = sum(max(0, cnt - 1) * l1_5_tokens for cnt in group_counts.values())
     return max(0, cached_tokens - l1_dedup - l15_dedup)
 
 
@@ -164,6 +182,7 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
     already in the global cache (blockRefCount) are hits; the rest are misses
     that need prefill. This replaces the old flat cache_hit_rate input.
     """
+    config.validate()
     effective_prefill_workers = config.prefill_workers * config.dp_workers
     prefill_worker_free_at = [0.0] * effective_prefill_workers
 
@@ -248,15 +267,30 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
     total_hit_tokens = 0
     total_miss_tokens = 0
 
-    def evict_lru() -> None:
-        nonlocal cached_tokens, eviction_count, total_evicted_blocks
-        unique_cached = _compute_dedup_tokens(
+    def cached_group_counts() -> dict[int, int]:
+        counts: dict[int, int] = defaultdict(int)
+        for idx, tokens in enumerate(session_cache_tokens):
+            if tokens > 0:
+                counts[session_group_id[idx]] += 1
+        return counts
+
+    def cached_session_count() -> int:
+        return sum(1 for tokens in session_cache_tokens if tokens > 0)
+
+    def compute_unique_cached_tokens() -> int:
+        return _compute_dedup_tokens(
             cached_tokens,
             alive_sessions,
             active_groups,
             config.l1_tokens,
             config.l1_5_tokens,
+            cached_sessions=cached_session_count(),
+            cached_groups=cached_group_counts(),
         )
+
+    def evict_lru() -> None:
+        nonlocal cached_tokens, eviction_count, total_evicted_blocks
+        unique_cached = compute_unique_cached_tokens()
         while unique_cached > total_capacity_tokens and lru_queue:
             victim_idx = lru_queue.pop(0)
             in_lru_queue.discard(victim_idx)
@@ -273,13 +307,7 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
             session_blocks[victim_idx].clear()
             session_evicted[victim_idx] = True
             eviction_count += 1
-            unique_cached = _compute_dedup_tokens(
-                cached_tokens,
-                alive_sessions,
-                active_groups,
-                config.l1_tokens,
-                config.l1_5_tokens,
-            )
+            unique_cached = compute_unique_cached_tokens()
 
     def add_to_lru(s_idx: int) -> None:
         if s_idx not in in_lru_queue:
@@ -301,13 +329,19 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
         start_turn(s_idx, 0, time)
 
     def start_turn(s_idx: int, t_idx: int, time: float) -> None:
-        nonlocal total_hit_tokens, total_miss_tokens
         turn = sessions[s_idx]["turns"][t_idx]
         delay = 0.0 if t_idx == 0 else turn["delay_ms"]
         turn_ready_time = time + delay
 
         if t_idx > 0 and delay > 0:
             add_to_lru(s_idx)
+
+        push_event(turn_ready_time, "turn_ready", s_idx, t_idx)
+
+    def turn_ready(s_idx: int, t_idx: int, time: float) -> None:
+        nonlocal total_hit_tokens, total_miss_tokens
+        turn = sessions[s_idx]["turns"][t_idx]
+        remove_from_lru(s_idx)
 
         # Compute cache hits from actual block state:
         # check ALL cumulative blocks (not just incremental) against cache.
@@ -325,7 +359,7 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
         prefill_duration = (miss_tokens / config.per_worker_tps) * 1000
         decode_duration = (turn["output_length"] / config.decode_tps) * 1000
 
-        worker_idx, prefill_start = acquire_prefill_worker(turn_ready_time)
+        worker_idx, prefill_start = acquire_prefill_worker(time)
         prefill_end = prefill_start + prefill_duration
         prefill_worker_free_at[worker_idx] = prefill_end
 
@@ -338,7 +372,7 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
         session_states[s_idx].turn_events.append(
             TurnEvent(
                 turn_idx=t_idx,
-                delay_start=time,
+                delay_start=time - (0.0 if t_idx == 0 else turn["delay_ms"]),
                 prefill_start=prefill_start,
                 decode_start=decode_start,
                 decode_end=decode_end,
@@ -371,8 +405,6 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
             turn = sessions[s_idx]["turns"][t_idx]
             input_tokens += turn["cumulative_input_length"]
             output_tokens += turn["output_length"]
-
-            remove_from_lru(s_idx)
 
             # Re-cache evicted session's blocks
             if session_evicted[s_idx]:
@@ -423,6 +455,9 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
 
             evict_lru()
 
+        elif etype == "turn_ready":
+            turn_ready(s_idx, t_idx, time)
+
         elif etype == "request_end":
             active_requests -= 1
             turn = sessions[s_idx]["turns"][t_idx]
@@ -452,13 +487,7 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
                     next_session += 1
 
         if etype in ("request_start", "request_end"):
-            unique_cached = _compute_dedup_tokens(
-                cached_tokens,
-                alive_sessions,
-                active_groups,
-                config.l1_tokens,
-                config.l1_5_tokens,
-            )
+            unique_cached = compute_unique_cached_tokens()
             kv_cache_gb = unique_cached * config.kv_bytes_per_token / 1e9
 
             time_series_raw.append(
@@ -500,29 +529,6 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
     total_tokens = total_hit_tokens + total_miss_tokens
     cache_hit_rate = total_hit_tokens / total_tokens if total_tokens > 0 else 0.0
 
-    last = (
-        time_series_raw[-1]
-        if time_series_raw
-        else TimeSeriesPoint(
-            time_s=0,
-            active_requests=0,
-            input_tokens=0,
-            output_tokens=0,
-            queued=0,
-            active_sessions=0,
-            kv_cache_gb=0,
-            unique_cached_tokens=0,
-            alive_sessions=0,
-            unique_blocks=0,
-            eviction_count=0,
-            miss_l15_blocks=0,
-            miss_session_blocks=0,
-            total_evicted_blocks=0,
-            cumulative_hit_tokens=0,
-            cumulative_miss_tokens=0,
-        )
-    )
-
     return SimulationResult(
         time_series=time_series_raw,
         session_states=session_states,
@@ -533,8 +539,8 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
         avg_ttft=avg_ttft,
         turn_count=turn_count,
         eviction_count=eviction_count,
-        miss_l15_blocks=last.miss_l15_blocks,
-        miss_session_blocks=last.miss_session_blocks,
-        total_evicted_blocks=last.total_evicted_blocks,
+        miss_l15_blocks=miss_l15_blocks,
+        miss_session_blocks=miss_session_blocks,
+        total_evicted_blocks=total_evicted_blocks,
         cache_hit_rate=cache_hit_rate,
     )

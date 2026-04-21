@@ -34,7 +34,7 @@ def lognormal_from_mean_median(mean: float, median: float) -> LognormalParams:
 def fit_from_samples(samples: np.ndarray) -> LognormalParams:
     """Fit lognormal parameters from raw samples using MLE.
 
-    Takes log of positive samples, computes sample mean/std in log-space.
+    Takes log of positive samples, computes MLE mean/std in log-space.
     """
     positive = samples[samples > 0]
     if len(positive) < 2:
@@ -42,7 +42,7 @@ def fit_from_samples(samples: np.ndarray) -> LognormalParams:
 
     log_samples = np.log(positive)
     mu = float(np.mean(log_samples))
-    sigma = float(np.std(log_samples, ddof=1))
+    sigma = float(np.std(log_samples, ddof=0))
 
     real_mean = math.exp(mu + sigma**2 / 2.0)
     real_median = math.exp(mu)
@@ -95,10 +95,9 @@ def sample_mixture_delay(
     then the corresponding lognormal is sampled.
     """
     is_agentic = rng.random(size=size) < config.agentic_fraction
-    agentic_samples = rng.lognormal(
-        mean=config.agentic_delay.mu, sigma=config.agentic_delay.sigma, size=size
-    )
-    human_samples = rng.lognormal(
-        mean=config.human_delay.mu, sigma=config.human_delay.sigma, size=size
-    )
-    return np.where(is_agentic, agentic_samples, human_samples)
+    agentic_samples = sample_lognormal(config.agentic_delay, rng, size=size)
+    human_samples = sample_lognormal(config.human_delay, rng, size=size)
+    samples = np.where(is_agentic, agentic_samples, human_samples)
+    if config.max is not None:
+        samples = np.minimum(samples, config.max)
+    return samples

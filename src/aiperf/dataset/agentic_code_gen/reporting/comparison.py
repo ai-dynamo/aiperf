@@ -47,7 +47,14 @@ def render_comparison_text(
         observed = f"{obs_val:>12,.1f}" if obs_val is not None else f"{'-':>12s}"
         error = ""
         if pct_err is not None:
-            sign = "+" if obs_val and target_val and obs_val > target_val else "-"
+            sign = (
+                "+"
+                if obs_val is None
+                or target_val is None
+                or abs(pct_err) == 0.0
+                or obs_val >= target_val
+                else "-"
+            )
             error = f"  {sign}{abs(pct_err):.1f}%"
         w(f"  {row_label:38s}{target}{observed}{error}")
 

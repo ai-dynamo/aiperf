@@ -57,8 +57,8 @@ __all__ = [
     "render_comparison_text",
     "render_plot_report",
     "render_text_report",
-    "write_generated_reports",
     "write_cache_structure",
+    "write_generated_reports",
 ]
 
 
@@ -222,6 +222,11 @@ def generate_report(
     decode_tps: float = 60,
 ) -> ReportData:
     """Load a run directory and generate the requested report artifacts."""
+    allowed_formats = {"text", "plot", "both"}
+    if fmt not in allowed_formats:
+        allowed = ", ".join(sorted(allowed_formats))
+        raise ValueError(f"fmt must be one of: {allowed}")
+
     jsonl_path = run_dir / "dataset.jsonl"
     manifest_path = run_dir / "manifest.json"
 

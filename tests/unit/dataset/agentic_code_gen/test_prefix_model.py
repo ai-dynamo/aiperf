@@ -10,8 +10,10 @@ import math
 import pytest
 
 from aiperf.dataset.agentic_code_gen.distributions import lognormal_from_mean_median
-from aiperf.dataset.agentic_code_gen.models import CacheLayerConfig
+from aiperf.dataset.agentic_code_gen.models import CacheLayerConfig, Layer15GroupConfig
 from aiperf.dataset.agentic_code_gen.prefix_model import (
+    MAX_GROUP_BLOCKS,
+    MAX_GROUPS,
     MAX_SESSION_BLOCKS,
     PrefixAllocator,
 )
@@ -184,6 +186,30 @@ class TestPrefixAllocator:
         shared = l1 | l15
         overlap = ids_s0 & ids_s1
         assert overlap == shared
+
+    def test_group_count_exceeding_reserved_regions_raises(self) -> None:
+        config = CacheLayerConfig(
+            layer1_tokens=0,
+            layer1_5_tokens=0,
+            layer2=lognormal_from_mean_median(mean=100, median=100),
+            layer1_5_groups=Layer15GroupConfig(
+                num_groups=MAX_GROUPS + 1,
+                zipf_alpha=1.0,
+            ),
+        )
+
+        with pytest.raises(ValueError, match="MAX_GROUPS"):
+            PrefixAllocator(config, block_size=64)
+
+    def test_l15_blocks_exceeding_reserved_region_raises(self) -> None:
+        config = CacheLayerConfig(
+            layer1_tokens=0,
+            layer1_5_tokens=(MAX_GROUP_BLOCKS + 1) * 64,
+            layer2=lognormal_from_mean_median(mean=100, median=100),
+        )
+
+        with pytest.raises(ValueError, match="MAX_GROUP_BLOCKS"):
+            PrefixAllocator(config, block_size=64)
 
     def test_turn0_no_l3(self, allocator: PrefixAllocator) -> None:
         """Turn 0 should have L1 + L1.5 + session prefix blocks (no L3)."""

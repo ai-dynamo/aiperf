@@ -72,10 +72,14 @@ def load_config(path_or_name: str) -> SessionDistributionConfig:
 
 def _load_json(path: Path) -> SessionDistributionConfig:
     data = orjson.loads(path.read_bytes())
+    if not isinstance(data, dict):
+        raise ValueError(f"Config '{path}' must be a JSON object")
     if data.get("$id") == CONFIG_SCHEMA_ID and "properties" in data:
         raise ValueError("spec.json is a JSON Schema reference, not a loadable config")
     if "generation_params" in data:
         data = data["generation_params"]
+        if not isinstance(data, dict):
+            raise ValueError(f"Config '{path}' generation_params must be a JSON object")
     return SessionDistributionConfig(**data)
 
 

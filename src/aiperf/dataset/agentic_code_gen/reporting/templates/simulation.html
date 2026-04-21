@@ -269,6 +269,8 @@ function computeTheoreticalHitRate(sessions) {
   return totalBlocks > 0 ? (hitBlocks / totalBlocks) * 100 : 0;
 }
 const theoreticalHitRate = computeTheoreticalHitRate(SESSIONS);
+const MAX_GROUPS = $MAX_GROUPS;
+const MAX_GROUP_BLOCKS = $MAX_GROUP_BLOCKS;
 
 function simulate(sessions, concurrency, prefillWorkers, dpWorkers, perWorkerTps, decodeTps, kvBytesPerToken, gpuKvCapacityGb, l1Tokens, l15Tokens, blockSize) {
   const effectivePrefillWorkers = prefillWorkers * dpWorkers;
@@ -277,7 +279,7 @@ function simulate(sessions, concurrency, prefillWorkers, dpWorkers, perWorkerTps
   // Hash ID range boundaries for layer classification
   const l1BlockCount = Math.ceil(l1Tokens / blockSize);
   const l15BlockCount = Math.ceil(l15Tokens / blockSize);
-  const sessionRegionBase = l1BlockCount + 1000 * 200;  // MAX_GROUPS * MAX_GROUP_BLOCKS
+  const sessionRegionBase = l1BlockCount + MAX_GROUPS * MAX_GROUP_BLOCKS;
 
   function classifyBlock(bid) {
     if (bid < l1BlockCount) return 'l1';
@@ -653,9 +655,8 @@ function simulate(sessions, concurrency, prefillWorkers, dpWorkers, perWorkerTps
   });
   const avgTtft = turnCount > 0 ? ttftSum / turnCount : 0;
 
-  const last = timeSeriesRaw.length > 0 ? timeSeriesRaw[timeSeriesRaw.length - 1] : {};
   const cacheHitRate = (totalHitTokens + totalMissTokens) > 0 ? (totalHitTokens / (totalHitTokens + totalMissTokens)) * 100 : 0;
-  return { timeSeries, sessionStates, maxTime, totalPrefillMs, totalDecodeMs, totalWaitMs, avgTtft, turnCount, evictionCount, missL15Blocks: last.miss_l15_blocks || 0, missSessionBlocks: last.miss_session_blocks || 0, totalEvictedBlocks: last.total_evicted_blocks || 0, cacheHitRate, totalHitTokens, totalMissTokens };
+  return { timeSeries, sessionStates, maxTime, totalPrefillMs, totalDecodeMs, totalWaitMs, avgTtft, turnCount, evictionCount, missL15Blocks, missSessionBlocks, totalEvictedBlocks, cacheHitRate, totalHitTokens, totalMissTokens };
 }
 
 function formatDuration(ms) {

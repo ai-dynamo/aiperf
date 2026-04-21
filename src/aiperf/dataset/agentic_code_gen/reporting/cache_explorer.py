@@ -10,8 +10,11 @@ from pathlib import Path
 
 import orjson
 
-from aiperf.dataset.agentic_code_gen.models import DatasetManifest
-from aiperf.dataset.agentic_code_gen.reporting.templates import render_template
+from aiperf.dataset.agentic_code_gen.models import CacheLayerConfig, DatasetManifest
+from aiperf.dataset.agentic_code_gen.reporting.templates import (
+    render_template,
+    script_safe_json,
+)
 from aiperf.dataset.agentic_code_gen.reporting.trace import ParsedTurn
 
 
@@ -52,8 +55,9 @@ def write_cache_structure(
     output_dir: Path,
 ) -> dict:
     """Generate cache_structure.json with per-session block classification."""
-    l1_tokens = 32_000
-    l15_tokens = 0
+    default_cache = CacheLayerConfig()
+    l1_tokens = default_cache.layer1_tokens
+    l15_tokens = default_cache.layer1_5_tokens
     block_size = 512
     if manifest:
         block_size = manifest.generation_params.block_size
@@ -109,7 +113,7 @@ def render_cache_explorer(output_dir: Path, cache_payload: dict) -> Path:
     out_path = output_dir / "cache_explorer.html"
     html = render_template(
         "cache_explorer.html",
-        INLINE_DATA=orjson.dumps(cache_payload).decode(),
+        INLINE_DATA=script_safe_json(cache_payload),
     )
     out_path.write_text(html)
     return out_path

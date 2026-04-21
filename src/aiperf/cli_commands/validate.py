@@ -18,16 +18,19 @@ def validate(
         Literal["mooncake-trace"],
         Parameter(help="Artifact format to validate"),
     ],
-    input: Path,
+    input_path: Annotated[
+        Path,
+        Parameter(name="--input", help="Path to the artifact file"),
+    ],
 ) -> None:
     """Validate a benchmark artifact.
 
     Args:
         target: Artifact format to validate.
-        input: Path to the artifact file.
+        input_path: Path to the artifact file.
     """
     match target:
         case "mooncake-trace":
             from aiperf.dataset.agentic_code_gen.cli import validate as _validate
 
-            _validate(input=input)
+            _validate(input_path=input_path)

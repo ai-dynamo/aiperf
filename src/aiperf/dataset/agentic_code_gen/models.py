@@ -9,8 +9,9 @@ import math
 from enum import Enum
 
 import numpy as np
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
+from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.models import AIPerfBaseModel
 
 
@@ -79,11 +80,19 @@ class LognormalParams(AIPerfBaseModel):
 
     @model_validator(mode="after")
     def compute_mu_sigma(self) -> LognormalParams:
-        if self.mu is None or self.sigma is None:
-            if self.mean < self.median:
-                raise ValueError(
-                    f"mean ({self.mean}) must be >= median ({self.median}) for lognormal"
-                )
+        if self.mean < self.median:
+            raise ValueError(
+                f"mean ({self.mean}) must be >= median ({self.median}) for lognormal"
+            )
+        if self.min is not None and self.max is not None and self.min > self.max:
+            raise ValueError(f"min ({self.min}) must be <= max ({self.max})")
+        if (self.mu is None) != (self.sigma is None):
+            raise ValueError("mu and sigma must be supplied as a pair")
+        if self.mu is not None and not math.isfinite(self.mu):
+            raise ValueError("mu must be finite")
+        if self.sigma is not None and not math.isfinite(self.sigma):
+            raise ValueError("sigma must be finite")
+        if self.mu is None:
             self.mu = math.log(self.median)
             ratio = self.mean / self.median
             self.sigma = math.sqrt(2.0 * math.log(ratio)) if ratio > 1.0 else 0.0
@@ -245,11 +254,13 @@ def _default_generation_length() -> LognormalParams:
     return LognormalParams(mean=500, median=300)
 
 
-class SessionDistributionConfig(AIPerfBaseModel):
+class SessionDistributionConfig(BaseConfig):
     """Full configuration for synthesizing Agentic Code sessions.
 
     initial_context is derived: L1 + L1.5 + sampled L2. Not directly configured.
     """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
     new_tokens_per_turn: NewTokensPerTurnConfig = Field(
         default_factory=_default_new_tokens_per_turn,
@@ -315,7 +326,7 @@ class SessionDistributionConfig(AIPerfBaseModel):
                         "restart_initial_probability"
                     )
                 data["restart_initial_probability"] = restart_fraction
-            if "turns" in data and "reset" not in data:
+            if data.get("turns") is not None and "reset" not in data:
                 data["reset"] = None
             ntp = data.get("new_tokens_per_turn")
             if isinstance(ntp, LognormalParams):
@@ -324,6 +335,12 @@ class SessionDistributionConfig(AIPerfBaseModel):
 
     @model_validator(mode="after")
     def validate_turn_mode(self) -> SessionDistributionConfig:
+        lo, hi = self.restart_turn_range
+        if lo < 1:
+            raise ValueError("restart_turn_range minimum must be >= 1")
+        if hi <= lo:
+            raise ValueError("restart_turn_range must be ordered as [min, max)")
+
         if self.turns is None:
             return self
 
@@ -401,6 +418,8 @@ class SynthesizedSession(AIPerfBaseModel):
 
     @model_validator(mode="after")
     def validate_turns_ordered(self) -> SynthesizedSession:
+        if not self.turns:
+            raise ValueError("sessions must contain at least one turn")
         for i, turn in enumerate(self.turns):
             if turn.turn_index != i:
                 raise ValueError(

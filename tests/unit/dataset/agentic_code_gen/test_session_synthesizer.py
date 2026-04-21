@@ -275,6 +275,18 @@ class TestTurnModeValidation:
                 restart_initial_probability=0.2,
             )
 
+    def test_turns_null_keeps_default_reset_mode(self) -> None:
+        config = SessionDistributionConfig(turns=None)
+        assert config.turns is None
+        assert config.reset is not None
+
+    @pytest.mark.parametrize("restart_turn_range", [[0, 5], [5, 5], [6, 5]])
+    def test_restart_turn_range_invalid_values_raise(
+        self, restart_turn_range: list[int]
+    ) -> None:
+        with pytest.raises(ValueError, match="restart_turn_range"):
+            SessionDistributionConfig(restart_turn_range=restart_turn_range)
+
     def test_turns_mode_rejects_impossible_minimum(self) -> None:
         with pytest.raises(ValueError, match="minimum turn count cannot fit"):
             SessionDistributionConfig(
@@ -400,6 +412,39 @@ class TestInitialContextFloor:
         alloc = synth.allocator
         for session in sessions:
             assert len(session.turns[0].hash_ids) >= alloc.l1_blocks
+
+
+class TestRestartScattering:
+    def test_restart_continuations_appear_after_origin_sessions(self) -> None:
+        config = SessionDistributionConfig(
+            reset=ResetConfig(base_probability=0.0, context_scaling=1.0),
+            restart_initial_probability=1.0,
+            restart_turn_range=[1, 2],
+        )
+        synth = SessionSynthesizer(config, seed=42)
+        sessions = synth.synthesize_sessions(20)
+        restart_origins = [
+            (idx, session)
+            for idx, session in enumerate(sessions)
+            if session.end_reason == SessionEndReason.RESTART_SPLIT
+        ]
+        continuations = [
+            (idx, session)
+            for idx, session in enumerate(sessions)
+            if session.is_restart_continuation
+        ]
+        assert continuations
+
+        for continuation_idx, continuation in continuations:
+            matches = [
+                origin_idx
+                for origin_idx, origin in restart_origins
+                if origin.group_id == continuation.group_id
+                and continuation.turns[0].hash_ids[: len(origin.turns[-1].hash_ids)]
+                == origin.turns[-1].hash_ids
+            ]
+            assert matches
+            assert continuation_idx > max(matches)
 
 
 class TestGroupAssignment:

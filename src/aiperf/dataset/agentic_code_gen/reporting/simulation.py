@@ -8,10 +8,13 @@ from __future__ import annotations
 import string
 from pathlib import Path
 
-import orjson
 from rich.console import Console
 
-from aiperf.dataset.agentic_code_gen.reporting.templates import read_template
+from aiperf.dataset.agentic_code_gen.prefix_model import MAX_GROUP_BLOCKS, MAX_GROUPS
+from aiperf.dataset.agentic_code_gen.reporting.templates import (
+    read_template,
+    script_safe_json,
+)
 from aiperf.dataset.agentic_code_gen.reporting.trace import load_simulation_sessions
 
 
@@ -29,12 +32,14 @@ def render_simulation(
 ) -> None:
     """Inline session data and config into HTML template and write file."""
     console = Console()
-    sessions_json = orjson.dumps(sessions).decode("utf-8")
+    sessions_json = script_safe_json(sessions)
     html = string.Template(read_template("simulation.html")).safe_substitute(
         SESSIONS_JSON=sessions_json,
         BLOCK_SIZE=str(block_size),
         L1_TOKENS=str(l1_tokens),
         L1_5_TOKENS=str(l1_5_tokens),
+        MAX_GROUPS=str(MAX_GROUPS),
+        MAX_GROUP_BLOCKS=str(MAX_GROUP_BLOCKS),
     )
     output_path.write_text(html, encoding="utf-8")
     console.print(f"[green]Wrote {output_path} ({len(sessions)} sessions)[/green]")

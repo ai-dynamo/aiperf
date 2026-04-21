@@ -48,11 +48,12 @@ def _make_session(
     """Build a session dict matching the format from load_sessions."""
     cumulative = 0
     for turn in turns:
+        turn.setdefault("output_length", 10)
         cumulative += turn["input_length"]
         turn["cumulative_input_length"] = cumulative
+        cumulative += turn["output_length"]
         turn.setdefault("delay_ms", 0)
         turn.setdefault("hash_ids", [])
-        turn.setdefault("output_length", 10)
     return {
         "session_id": sid,
         "group_id": group_id,
@@ -91,6 +92,42 @@ class TestComputeDedupTokens:
 
     def test_floor_at_zero(self) -> None:
         assert _compute_dedup_tokens(10, 100, {0: 100}, 200, 100) == 0
+
+    def test_cached_counts_ignore_evicted_sessions(self) -> None:
+        assert (
+            _compute_dedup_tokens(
+                1000,
+                3,
+                {0: 3},
+                200,
+                100,
+                cached_sessions=1,
+                cached_groups={0: 1},
+            )
+            == 1000
+        )
+
+
+class TestSimulationConfigValidation:
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "concurrency",
+            "prefill_workers",
+            "dp_workers",
+            "per_worker_tps",
+            "decode_tps",
+            "block_size",
+        ],
+    )
+    def test_simulate_invalid_positive_fields_raise_value_error(
+        self, field: str
+    ) -> None:
+        config = _cfg(**{field: 0})
+        session = _make_session("s0", [{"input_length": 100, "hash_ids": [1]}])
+
+        with pytest.raises(ValueError, match=f"{field} must be > 0"):
+            simulate([session], config)
 
 
 # ---------------------------------------------------------------------------

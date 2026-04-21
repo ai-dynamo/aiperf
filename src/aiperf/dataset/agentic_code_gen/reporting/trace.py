@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import orjson
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.dataset.agentic_code_gen.models import SynthesizedSession
@@ -84,6 +84,10 @@ def synthesized_sessions_to_parsed(
                 output_length=t.output_length,
                 hash_ids=t.hash_ids,
                 delay_ms=t.delay_ms,
+                group_id=session.group_id if t.turn_index == 0 else None,
+                is_restart=session.is_restart_continuation
+                if t.turn_index == 0
+                else False,
             )
             for t in session.turns
         ]
@@ -103,7 +107,7 @@ def validate_mooncake_trace(path: Path, max_errors: int = 10) -> tuple[int, list
             line_count += 1
             try:
                 MooncakeTrace(**orjson.loads(line))
-            except Exception as e:
+            except (orjson.JSONDecodeError, ValidationError) as e:
                 errors.append(f"Line {line_num}: {e}")
                 if len(errors) >= max_errors:
                     break

@@ -83,6 +83,31 @@ class TestLognormalParamsAutoCompute:
         with pytest.raises(ValueError, match="must be >= median"):
             LognormalParams(mean=50, median=100)
 
+    def test_explicit_mu_sigma_still_validates_mean_median(self) -> None:
+        with pytest.raises(ValueError, match="must be >= median"):
+            LognormalParams(mu=1.0, sigma=0.1, mean=50, median=100)
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"mu": 1.0},
+            {"sigma": 0.1},
+        ],
+    )
+    def test_partial_mu_sigma_raises(self, kwargs: dict[str, float]) -> None:
+        with pytest.raises(ValueError, match="supplied as a pair"):
+            LognormalParams(mean=100, median=100, **kwargs)
+
+    def test_non_finite_explicit_mu_sigma_raises(self) -> None:
+        with pytest.raises(ValueError, match="mu must be finite"):
+            LognormalParams(mu=math.inf, sigma=0.1, mean=100, median=100)
+        with pytest.raises(ValueError, match="sigma must be finite"):
+            LognormalParams(mu=1.0, sigma=math.inf, mean=100, median=100)
+
+    def test_min_greater_than_max_raises(self) -> None:
+        with pytest.raises(ValueError, match="must be <= max"):
+            LognormalParams(mean=100, median=100, min=10, max=5)
+
     def test_roundtrip_with_lognormal_from_mean_median(self) -> None:
         explicit = lognormal_from_mean_median(mean=4500, median=2100)
         auto = LognormalParams(mean=4500, median=2100)
@@ -157,3 +182,14 @@ class TestSampleMixtureDelay:
         rng = np.random.default_rng(42)
         samples = sample_mixture_delay(config, rng, size=1000)
         assert float(np.median(samples)) < 10_000
+
+    def test_component_and_mixture_max_bounds_limit_samples(self) -> None:
+        config = MixtureDelayConfig(
+            agentic_fraction=0.5,
+            agentic_delay=LognormalParams(mean=3_000, median=2_000, max=4_000),
+            human_delay=LognormalParams(mean=45_000, median=30_000, max=50_000),
+            max=10_000,
+        )
+        rng = np.random.default_rng(42)
+        samples = sample_mixture_delay(config, rng, size=1000)
+        assert samples.max() <= 10_000

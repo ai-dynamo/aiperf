@@ -107,7 +107,7 @@ def synthesize(
 
 
 def validate(
-    input: Path,
+    input_path: Path,
 ) -> None:
     """Validate a generated JSONL dataset for Mooncake compatibility.
 
@@ -115,17 +115,17 @@ def validate(
         aiperf validate mooncake-trace --input dataset.jsonl
 
     Args:
-        input: Path to JSONL dataset file.
+        input_path: Path to JSONL dataset file.
     """
     console = Console()
-    line_count = _validate_mooncake_or_exit(input, console)
+    line_count = _validate_mooncake_or_exit(input_path, console)
     console.print(
         f"[green]Validation passed: {line_count} rows are Mooncake-compatible.[/green]"
     )
 
 
-def _validate_mooncake_or_exit(input: Path, console: Console) -> int:
-    line_count, errors = validate_mooncake_trace(input)
+def _validate_mooncake_or_exit(input_path: Path, console: Console) -> int:
+    line_count, errors = validate_mooncake_trace(input_path)
 
     if errors:
         console.print(f"[red]Validation failed with {len(errors)} error(s):[/red]")

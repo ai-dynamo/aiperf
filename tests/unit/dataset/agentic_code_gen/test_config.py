@@ -22,6 +22,10 @@ class TestLoadConfig:
     def test_load_bundled_default(self) -> None:
         config = load_config("default")
         assert config.max_prompt_tokens == 167_000
+        assert config.inter_turn_delay.agentic_delay.mean == 2_500
+        assert config.inter_turn_delay.human_delay.mean == 40_000
+        assert config.inter_turn_delay.agentic_delay.max != 1
+        assert config.inter_turn_delay.human_delay.max != 1
 
     def test_list_bundled_configs(self) -> None:
         names = list_bundled_configs()
@@ -116,6 +120,15 @@ class TestLoadConfig:
 
         config = load_config(str(path))
         assert config.generation_length.mean == 600
+
+    def test_load_config_non_object_json_raises_value_error(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "array.json"
+        path.write_bytes(orjson.dumps([{"not": "a config"}]))
+
+        with pytest.raises(ValueError, match="must be a JSON object"):
+            load_config(str(path))
 
     def test_unknown_path_raises(self) -> None:
         with pytest.raises(FileNotFoundError, match="not found"):

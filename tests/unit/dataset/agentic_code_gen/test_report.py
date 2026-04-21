@@ -13,6 +13,7 @@ import pytest
 
 from aiperf.dataset.agentic_code_gen.models import (
     DatasetManifest,
+    ResetConfig,
     SessionDistributionConfig,
 )
 from aiperf.dataset.agentic_code_gen.reporting.report import (
@@ -27,6 +28,10 @@ from aiperf.dataset.agentic_code_gen.reporting.report import (
     render_cache_explorer,
     render_text_report,
     write_cache_structure,
+)
+from aiperf.dataset.agentic_code_gen.reporting.trace import (
+    synthesized_sessions_to_parsed,
+    validate_mooncake_trace,
 )
 from aiperf.dataset.agentic_code_gen.session_synthesizer import SessionSynthesizer
 from aiperf.dataset.agentic_code_gen.writer import write_dataset
@@ -68,6 +73,34 @@ class TestGroupSessions:
         for _sid, session_turns in sessions.items():
             # First turn should have delay_ms == 0
             assert session_turns[0].delay_ms == 0.0
+
+
+class TestTraceValidation:
+    def test_validate_mooncake_trace_reports_json_errors(self, tmp_path: Path) -> None:
+        path = tmp_path / "bad.jsonl"
+        path.write_text("{not-json}\n")
+
+        line_count, errors = validate_mooncake_trace(path)
+
+        assert line_count == 1
+        assert errors
+        assert "Line 1" in errors[0]
+
+    def test_synthesized_sessions_to_parsed_preserves_restart_metadata(self) -> None:
+        config = SessionDistributionConfig(
+            reset=ResetConfig(base_probability=0.0, context_scaling=1.0),
+            restart_initial_probability=1.0,
+            restart_turn_range=[1, 2],
+        )
+        sessions = SessionSynthesizer(config, seed=42).synthesize_session(
+            inject_restart=True
+        )
+        parsed = synthesized_sessions_to_parsed(sessions)
+        continuation = sessions[1]
+        first_turn = parsed[continuation.session_id][0]
+
+        assert first_turn.group_id == continuation.group_id
+        assert first_turn.is_restart is True
 
 
 class TestExtractMetrics:
@@ -283,6 +316,18 @@ class TestRenderCacheExplorer:
         content = path.read_text()
         assert "d3" in content
         assert "svg" in content
+
+    def test_escapes_inline_json_script_end_tags(self, run_dir: Path) -> None:
+        cache_payload = {
+            "block_size": 512,
+            "l1_blocks": 0,
+            "l15_blocks": 0,
+            "sessions": [{"session_id": "</script><div>", "turns": []}],
+        }
+        path = render_cache_explorer(run_dir, cache_payload)
+        content = path.read_text()
+        assert "<\\/script>" in content
+        assert "</script><div>" not in content
 
     def test_block_classification_l1_always_cached(self) -> None:
         hash_ids = list(range(10))

@@ -75,18 +75,19 @@ def _write_jsonl(
         1 <= final_block_size <= block_size
 
     Turn 0 uses the synthesizer's prefix hash_ids (L1 + L1.5 + L2).
-    Turns 1+ allocate fresh sequential IDs starting after the session's
-    last turn-0 hash_id, guaranteeing uniqueness across sessions.
+    Turns 1+ allocate fresh sequential IDs from a dataset-wide cursor,
+    guaranteeing uniqueness across sessions.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
+    next_hash_id = 0
     with path.open("wb") as f:
         for session in sessions:
-            next_hash_id = 0
             for turn in session.turns:
                 n_blocks = math.ceil(turn.new_tokens / block_size)
                 if turn.turn_index == 0:
                     hash_ids = turn.hash_ids
-                    next_hash_id = max(hash_ids) + 1 if hash_ids else 0
+                    if hash_ids:
+                        next_hash_id = max(next_hash_id, max(hash_ids) + 1)
                 else:
                     hash_ids = list(range(next_hash_id, next_hash_id + n_blocks))
                     next_hash_id += n_blocks

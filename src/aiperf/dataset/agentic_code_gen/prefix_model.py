@@ -31,9 +31,20 @@ class PrefixAllocator:
     """Allocates deterministic hash IDs for the layered prefix model."""
 
     def __init__(self, config: CacheLayerConfig, block_size: int) -> None:
+        if block_size <= 0:
+            raise ValueError("block_size must be > 0")
         self._block_size = block_size
         self._l1_blocks = math.ceil(config.layer1_tokens / block_size)
         self._l15_blocks = math.ceil(config.layer1_5_tokens / block_size)
+        num_groups = config.layer1_5_groups.num_groups
+        if num_groups > MAX_GROUPS:
+            raise ValueError(f"num_groups={num_groups} exceeds MAX_GROUPS={MAX_GROUPS}")
+        if self._l15_blocks > MAX_GROUP_BLOCKS:
+            raise ValueError(
+                f"layer1_5_tokens={config.layer1_5_tokens} needs "
+                f"{self._l15_blocks} blocks, exceeding "
+                f"MAX_GROUP_BLOCKS={MAX_GROUP_BLOCKS}"
+            )
         self._l1_ids = list(range(self._l1_blocks))
         self._prefix_blocks = self._l1_blocks + self._l15_blocks
         # Session region starts after all group regions
