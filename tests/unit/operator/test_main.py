@@ -515,6 +515,25 @@ class TestBuildPhaseProgress:
 class TestOnCreateHandler:
     """Tests for on_create kopf handler."""
 
+    @pytest.fixture(autouse=True)
+    def _mock_persistence(self):
+        """Persistence runs before JobSet create (H1); stub it out for tests.
+
+        Without this, save_job_spec_file hits /data and raises TemporaryError,
+        which masks the actual resource-creation assertions.
+        """
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.create.save_job_spec_file",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.create.index_job_created",
+                new_callable=AsyncMock,
+            ),
+        ):
+            yield
+
     @pytest.fixture
     def mock_all_events(self):
         """Mock all event functions to avoid kopf context issues."""
@@ -2834,6 +2853,21 @@ class TestHandleCompletionBackfill:
 class TestOnCreatePreflightIntegration:
     """Integration tests for on_create handler's preflight check interactions."""
 
+    @pytest.fixture(autouse=True)
+    def _mock_persistence(self):
+        """Persistence runs before JobSet create (H1); stub for tests."""
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.create.save_job_spec_file",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.create.index_job_created",
+                new_callable=AsyncMock,
+            ),
+        ):
+            yield
+
     @pytest.fixture
     def mock_all_events(self) -> dict[str, MagicMock]:
         """Mock all event functions and return them for assertion."""
@@ -3278,3 +3312,134 @@ class TestOnCreatePreflightIntegration:
 
         # run_all was called
         mock_checker_instance.run_all.assert_called_once()
+
+
+class TestMonitorStaleReadLogging:
+    """Verify that stale-read recovery failures surface as logged exceptions
+    instead of being silently swallowed."""
+
+    @pytest.mark.asyncio
+    async def test_stale_read_exception_is_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """When the fresh CR re-read fails after JobSet NotFound, the handler
+        should log the exception (with traceback) before falling through to
+        the FAILED phase."""
+        import logging
+
+        import kr8s
+
+        from aiperf.operator.main import monitor_progress
+
+        kopf_patch = MagicMock()
+        kopf_patch.status = {}
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.get_api",
+                new_callable=AsyncMock,
+                return_value=AsyncMock(),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
+                new_callable=AsyncMock,
+                side_effect=kr8s.NotFoundError("not found"),
+            ),
+            mock_patch(
+                "aiperf.kubernetes.kr8s_resources.AsyncAIPerfJob.get",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("api blip"),
+            ),
+            caplog.at_level(logging.ERROR, logger="aiperf.operator.handlers.monitor"),
+        ):
+            await monitor_progress(
+                body={},
+                status={
+                    "phase": Phase.RUNNING,
+                    "jobSetName": "test-jobset",
+                    "jobId": "job-1",
+                },
+                spec={},
+                name="test-job",
+                namespace="default",
+                patch=kopf_patch,
+            )
+
+        # Fall-through to FAILED is preserved
+        assert kopf_patch.status["phase"] == Phase.FAILED
+        # The stale-read failure is logged with traceback (logger.exception)
+        assert any(
+            "Stale-read recovery failed" in rec.message and rec.exc_info is not None
+            for rec in caplog.records
+        ), (
+            f"Expected stale-read exception log, got: {[r.message for r in caplog.records]}"
+        )
+
+
+class TestFetchProgressServerMetricsLogging:
+    """Verify that server metrics fetch failures are logged at debug level
+    with the exception detail, rather than silently swallowed."""
+
+    @pytest.mark.asyncio
+    async def test_server_metrics_exception_logs_debug(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        from aiperf.operator.handlers.monitor import _fetch_progress
+        from aiperf.operator.status import StatusBuilder
+
+        kopf_patch = MagicMock()
+        kopf_patch.status = {}
+        sb = StatusBuilder(kopf_patch)
+
+        mock_progress = JobProgress(
+            phases={
+                "profiling": CombinedPhaseStats(
+                    phase="profiling",
+                    total_expected_requests=10,
+                    requests_completed=1,
+                    start_ns=1,
+                    last_update_ns=2,
+                )
+            },
+            workers=AggregateWorkerStatus(
+                ready=1,
+                total=2,
+                dispatchable=1,
+                router_connected=2,
+                ready_record_processors=1,
+                declared_record_processors=1,
+                ready_pods=1,
+                total_pods=2,
+                degraded_pods=0,
+            ),
+        )
+
+        mock_client = AsyncMock()
+        mock_client.get_progress = AsyncMock(return_value=mock_progress)
+        mock_client.get_metrics = AsyncMock(return_value=None)
+        mock_client.get_server_metrics = AsyncMock(
+            side_effect=RuntimeError("endpoint not ready yet")
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="aiperf.operator.handlers.monitor"):
+            await _fetch_progress(
+                "default",
+                "test-jobset",
+                kopf_patch,
+                sb,
+                mock_client,
+                "default/job-1",
+            )
+
+        assert any(
+            "Server metrics unavailable for test-jobset" in rec.message
+            and "endpoint not ready yet" in rec.message
+            and rec.levelname == "DEBUG"
+            for rec in caplog.records
+        ), (
+            f"Expected debug log with exception detail, got: {[r.message for r in caplog.records]}"
+        )
+        # Server metrics must not be written to status on failure
+        assert "serverMetrics" not in kopf_patch.status

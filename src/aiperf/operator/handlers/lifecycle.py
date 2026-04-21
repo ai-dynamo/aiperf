@@ -120,6 +120,12 @@ async def on_benchmark_complete(
         client = await get_or_create_progress_client(key)
         await client.send_shutdown(host)
     except Exception as e:
-        logger.warning(f"Failed to send shutdown to {host}: {e}")
+        logger.exception(f"Failed to send shutdown to {host}")
+        kopf.event(
+            body,
+            type="Warning",
+            reason="ShutdownSignalFailed",
+            message=f"Failed to send shutdown to controller at {host}: {e}",
+        )
 
     await close_progress_client(key)

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import kopf
 import kr8s
 
 from aiperf.kubernetes.client import get_api
@@ -73,6 +74,12 @@ async def handle_completion(
     has_metrics = bool(result.metrics and result.metrics.get("metrics"))
     key_result_files = {"profile_export_aiperf.json", "profile_export_aiperf.csv"}
     has_files = bool(key_result_files & set(result.downloaded or []))
+    # A partial fetch can set has_files=True but still populate result.error
+    # (e.g. checkpoints saved but key export files missing). Treat error as
+    # authoritative so a false-success Completed phase never overwrites the
+    # real failure signal.
+    has_error = bool(result.error)
+    success = has_files and not has_error
 
     logger.info(
         f"Results for {job_id}: has_metrics={has_metrics}, has_files={has_files}, "
@@ -102,8 +109,10 @@ async def handle_completion(
 
     # Set condition based on what was actually retrieved.
     # Result files are the authoritative source - /api/metrics is a convenience
-    # that duplicates what's derivable from the files. Files alone = full success.
-    if has_files:
+    # that duplicates what's derivable from the files. Files alone = full success,
+    # but only if FetchResult.error is empty: a partial fetch can set has_files
+    # while still reporting an error for missing key artifacts.
+    if success:
         reason = "ResultsStored"
         if has_metrics:
             msg = f"Metrics and {len(result.downloaded)} result files stored"
@@ -117,39 +126,65 @@ async def handle_completion(
         sb.conditions.set_true(ConditionType.RESULTS_AVAILABLE, reason, msg)
     else:
         sb.set_phase(Phase.FAILED)
+        failure_reason = "ResultsFetchFailed"
+        failure_msg = (
+            result.error
+            if has_error
+            else "Failed to fetch complete result files from controller"
+        )
         sb.conditions.set_false(
             ConditionType.RESULTS_AVAILABLE,
-            "ResultsFetchFailed",
-            "Failed to fetch complete result files from controller",
+            failure_reason,
+            failure_msg,
         )
-        if has_metrics:
+        if has_files and has_error:
+            logger.warning(
+                f"Partial results for {jobset_name}: key files present but "
+                f"fetch reported error: {result.error}"
+            )
+        elif has_metrics:
             logger.warning(
                 f"Metrics were fetched for {jobset_name}, but complete result files were not available"
             )
         else:
             logger.warning(f"No result files downloaded for {jobset_name}")
-        events.results_failed(body, "Could not fetch complete result files")
+        events.results_failed(body, failure_msg)
 
     sb.finalize()
-    if has_files:
+    if success:
         events.completed(body, job_id, duration_sec)
 
-    # Update job index with completion data
+    # Update job index with completion data. Results are already persisted
+    # to disk, so a failure here only affects discoverability via the
+    # index/history API - don't retry the whole completion handler, but
+    # set a status condition and event so operators can see the gap.
     try:
         await index_job_completed(
             namespace=namespace,
             job_id=job_id,
-            phase="Completed" if has_files else "Failed",
+            phase="Completed" if success else "Failed",
             metrics=result.metrics,
             downloaded_files=result.downloaded,
         )
     except Exception as e:
-        logger.warning(f"Failed to update job index for {job_id}: {e}")
+        logger.exception(f"Failed to update job index for {job_id}")
+        sb.conditions.set_false(
+            ConditionType.INDEX_UPDATED,
+            "IndexUpdateFailed",
+            f"Index write failed: {e}",
+        )
+        sb.finalize()
+        kopf.event(
+            body,
+            type="Warning",
+            reason="IndexUpdateFailed",
+            message=f"Job index update failed (results still on disk): {e}",
+        )
 
     # Delete the JobSet to free cluster resources after complete result files are stored.
     # Keep pods alive for retry on the next monitor tick if fetch failed or only
     # partial/non-authoritative artifacts were available.
-    if has_files:
+    if success:
         try:
             api = await get_api()
             js = await AsyncJobSet.get(jobset_name, namespace=namespace, api=api)
@@ -374,7 +409,7 @@ def _parse_metrics_from_files(
                 dest_dir / "profile_export_aiperf.json",
             ]
         )
-        candidate_paths.sort(key=lambda p: (0 if p.suffix == ".zst" else 1))
+        candidate_paths.sort(key=lambda p: 0 if p.suffix == ".zst" else 1)
 
         seen: set[Path] = set()
         for path in candidate_paths:
@@ -405,7 +440,10 @@ def _parse_metrics_from_files(
             if isinstance(data.get("metrics"), dict) and data["metrics"]:
                 return data
             if data.get("request_throughput"):
-                return {"metrics": data, **{k: v for k, v in data.items() if k != "metrics"}}
+                return {
+                    "metrics": data,
+                    **{k: v for k, v in data.items() if k != "metrics"},
+                }
     except Exception as e:
         logger.warning(f"Failed to parse metrics from {dest_dir}: {e}")
     return None

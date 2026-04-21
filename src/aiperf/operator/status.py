@@ -76,6 +76,8 @@ class ConditionType(CaseInsensitiveStrEnum):
     WORKERS_READY = "WorkersReady"
     BENCHMARK_RUNNING = "BenchmarkRunning"
     RESULTS_AVAILABLE = "ResultsAvailable"
+    INDEX_UPDATED = "IndexUpdated"
+    """Set to False when the job index write fails; results remain on disk."""
 
 
 class ConditionManager:

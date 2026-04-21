@@ -172,3 +172,64 @@ class TestOnBenchmarkComplete:
 
         assert "ns/j" in _shutdown_sent
         mock_client.send_shutdown.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_failure_logs_exception_and_emits_kopf_event(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """When send_shutdown raises, the handler must preserve the traceback
+        via logger.exception and surface the failure to cluster operators
+        via a kopf Warning event."""
+        import logging
+
+        from aiperf.operator.handlers.lifecycle import on_benchmark_complete
+
+        mock_client = AsyncMock()
+        mock_client.send_shutdown = AsyncMock(side_effect=RuntimeError("boom"))
+        patch = MagicMock()
+        patch.status = {}
+        body = {"kind": "AIPerfJob", "metadata": {"name": "j", "namespace": "ns"}}
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.handle_completion",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.get_or_create_progress_client",
+                new_callable=AsyncMock,
+                return_value=mock_client,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.close_progress_client",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.kopf.event"
+            ) as mock_kopf_event,
+            caplog.at_level(logging.ERROR, logger="aiperf.operator.handlers.lifecycle"),
+        ):
+            await on_benchmark_complete(
+                body=body,
+                status={"phase": Phase.RUNNING, "jobId": "j", "jobSetName": "js"},
+                name="j",
+                namespace="ns",
+                patch=patch,
+            )
+
+        # Exception is logged with traceback
+        assert any(
+            "Failed to send shutdown" in rec.message and rec.exc_info is not None
+            for rec in caplog.records
+        ), (
+            f"Expected exception log with traceback, got: {[r.message for r in caplog.records]}"
+        )
+
+        # kopf Warning event is emitted
+        mock_kopf_event.assert_called_once()
+        call_kwargs = mock_kopf_event.call_args.kwargs
+        assert call_kwargs["type"] == "Warning"
+        assert call_kwargs["reason"] == "ShutdownSignalFailed"
+        assert "boom" in call_kwargs["message"]
+        # Positional body arg
+        assert mock_kopf_event.call_args.args[0] is body

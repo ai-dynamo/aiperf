@@ -203,6 +203,21 @@ async def on_create(
         # 100 pods race to mount the ConfigMap before kubelets have cached it.
         await asyncio.sleep(OperatorEnvironment.CONFIGMAP_PROPAGATION_DELAY_SECONDS)
 
+        # Step 6.5: Persist spec + index BEFORE JobSet launch so operator
+        # restart can always reconstruct the job from disk. If this fails,
+        # kopf retries the whole handler rather than leaving a JobSet
+        # running that the index cannot see. RBAC/ConfigMap creates above
+        # are idempotent via create_idempotent, so retry is safe.
+        try:
+            plain_spec = _to_plain(spec)
+            await save_job_spec_file(namespace, job_id, plain_spec)
+            await index_job_created(namespace, job_id, plain_spec)
+        except (OSError, aiohttp.ClientError, ConnectionError, TimeoutError) as e:
+            logger.warning(f"Transient persistence failure for {namespace}/{name}: {e}")
+            raise kopf.TemporaryError(
+                f"Persisting job spec/index failed: {e}", delay=10
+            ) from e
+
         # Step 7: Create JobSet
         jobset = deployment.get_jobset_spec().to_k8s_manifest()
         jobset.setdefault("metadata", {}).setdefault("ownerReferences", []).append(
@@ -221,16 +236,6 @@ async def on_create(
         events.resources_created(body, configmap_name, jobset_name)
         events.created(body, job_id, total_workers)
 
-        # Step 8: Save original CR spec and update job index
-        # kopf wraps spec in special Spec/Body types that orjson can't serialize.
-        # Recursively convert all Mapping subclasses to plain dicts.
-        try:
-            plain_spec = _to_plain(spec)
-            await save_job_spec_file(namespace, job_id, plain_spec)
-            await index_job_created(namespace, job_id, plain_spec)
-        except Exception as e:
-            logger.warning(f"Failed to save job spec/index for {namespace}/{name}: {e}")
-
         # Set initial status
         status.set_phase(Phase.PENDING)
         patch.status["startTime"] = format_timestamp()
@@ -245,7 +250,7 @@ async def on_create(
         status.finalize()
         return {"jobSetName": deployment.jobset_name, "workers": total_workers}
 
-    except kopf.PermanentError:
+    except (kopf.PermanentError, kopf.TemporaryError):
         raise
     except (kr8s.ServerError, aiohttp.ClientError, ConnectionError, TimeoutError) as e:
         logger.warning(f"Transient error creating AIPerfJob {namespace}/{name}: {e}")

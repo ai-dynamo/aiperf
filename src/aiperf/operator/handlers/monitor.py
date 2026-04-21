@@ -197,7 +197,10 @@ async def monitor_progress(
                         await close_progress_client(key)
                         return
                 except Exception:
-                    pass
+                    logger.exception(
+                        f"Stale-read recovery failed while reconciling "
+                        f"{namespace}/{name} after JobSet {jobset_name} not found"
+                    )
                 sb.set_phase(Phase.FAILED).set_error("JobSet not found")
                 sb.finalize()
             await close_progress_client(key)
@@ -638,8 +641,11 @@ async def _fetch_progress(
                 "endpoint_summaries"
             ):
                 patch.status["serverMetrics"] = server_metrics
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(
+                f"Server metrics unavailable for {jobset_name} "
+                f"(endpoint may not be ready yet): {e}"
+            )
 
         # Return completion status for caller to handle
         if progress.is_complete and key not in _shutdown_sent:
