@@ -205,7 +205,6 @@ class PhaseRecordsStats(
 
 
 class ProcessingStats(
-    PydanticStructMixin,
     msgspec.Struct,
     kw_only=True,
     omit_defaults=True,

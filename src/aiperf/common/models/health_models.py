@@ -3,11 +3,8 @@
 
 import msgspec
 
-from aiperf.common.models.base_models import PydanticStructMixin
-
 
 class NumericAggregate(
-    PydanticStructMixin,
     msgspec.Struct,
     kw_only=True,
     omit_defaults=True,
@@ -40,7 +37,6 @@ class NumericAggregate(
 
 
 class ProcessHealthAggregates(
-    PydanticStructMixin,
     msgspec.Struct,
     kw_only=True,
     omit_defaults=True,
@@ -72,7 +68,6 @@ class ProcessHealthAggregates(
 # consumers (UI, tests) depend on. Constructed via positional splat from the
 # psutil namedtuples — see ``ProcessHealthMixin.get_process_health``.
 class IOCounters(
-    PydanticStructMixin,
     msgspec.Struct,
     frozen=True,
 ):
@@ -85,7 +80,6 @@ class IOCounters(
 
 
 class CPUTimes(
-    PydanticStructMixin,
     msgspec.Struct,
     frozen=True,
     kw_only=True,
@@ -96,7 +90,6 @@ class CPUTimes(
 
 
 class CtxSwitches(
-    PydanticStructMixin,
     msgspec.Struct,
     frozen=True,
 ):
@@ -105,7 +98,6 @@ class CtxSwitches(
 
 
 class ProcessHealth(
-    PydanticStructMixin,
     msgspec.Struct,
     frozen=True,
     kw_only=True,

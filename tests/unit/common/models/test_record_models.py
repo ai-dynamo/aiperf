@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
-from pydantic import BaseModel, Field
 
 from aiperf.common.enums import SSEFieldType
 from aiperf.common.models import MetricResult, ProfileResults, SSEMessage
@@ -149,18 +148,15 @@ class TestSSEMessageDataclass:
         assert msg.packets[0].value == "from_bytes"
 
     def test_pydantic_serialization_roundtrip(self) -> None:
-        """SSEMessage roundtrips through Pydantic when inside a model field."""
-
-        class Wrapper(BaseModel):
-            responses: list[SSEMessage] = Field(default_factory=list)
+        """SSEMessage roundtrips through msgspec encode/decode."""
+        import msgspec
 
         msg = SSEMessage.parse("data: roundtrip\nevent: test", perf_ns=123)
-        wrapper = Wrapper(responses=[msg])
-        json_bytes = wrapper.model_dump_json().encode()
-        restored = Wrapper.model_validate_json(json_bytes)
-        assert restored.responses[0].perf_ns == 123
-        assert len(restored.responses[0].packets) == 2
-        assert restored.responses[0].packets[0].value == "roundtrip"
+        encoded = msgspec.json.encode(msg)
+        restored = msgspec.json.decode(encoded, type=SSEMessage)
+        assert restored.perf_ns == 123
+        assert len(restored.packets) == 2
+        assert restored.packets[0].value == "roundtrip"
 
     def test_parse_get_text_and_get_json(self) -> None:
         """Protocol methods work on dataclass instances."""

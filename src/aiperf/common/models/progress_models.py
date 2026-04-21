@@ -12,7 +12,6 @@ from aiperf.common.models.worker_models import WorkerTaskStats
 
 
 class WorkerProcessingStats(
-    PydanticStructMixin,
     msgspec.Struct,
     kw_only=True,
     omit_defaults=True,

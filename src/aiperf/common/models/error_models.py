@@ -10,7 +10,6 @@ from aiperf.common.redact import redact_string
 
 
 class ErrorDetails(
-    PydanticStructMixin,
     msgspec.Struct,
     frozen=True,
     kw_only=True,
@@ -100,7 +99,6 @@ class ErrorDetails(
 
 
 class ExitErrorInfo(
-    PydanticStructMixin,
     msgspec.Struct,
     frozen=True,
     kw_only=True,

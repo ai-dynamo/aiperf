@@ -48,7 +48,6 @@ _logger = AIPerfLogger(__name__)
 
 
 class MetricResult(
-    PydanticStructMixin,
     msgspec.Struct,
     kw_only=True,
     omit_defaults=True,
@@ -119,7 +118,6 @@ class MetricValue:
 
 
 class ProfileResults(
-    PydanticStructMixin,
     msgspec.Struct,
     kw_only=True,
 ):
@@ -214,7 +212,6 @@ class InferenceServerResponse(Protocol):
 
 
 class SSEField(
-    PydanticStructMixin,
     msgspec.Struct,
     kw_only=True,
     omit_defaults=True,
@@ -235,7 +232,6 @@ class SSEField(
 
 
 class TextResponse(
-    PydanticStructMixin,
     msgspec.Struct,
     tag_field="response_type",
     tag="text",
@@ -276,7 +272,6 @@ class TextResponse(
 
 
 class BinaryResponse(
-    PydanticStructMixin,
     msgspec.Struct,
     tag_field="response_type",
     tag="binary",
@@ -308,7 +303,6 @@ class BinaryResponse(
 
 
 class SSEMessage(
-    PydanticStructMixin,
     msgspec.Struct,
     tag_field="response_type",
     tag="sse",
@@ -318,7 +312,6 @@ class SSEMessage(
     """Individual SSE message from an SSE stream. Delimited by \\n\\n.
 
     Uses msgspec.Struct for memory efficiency under streaming load.
-    Pydantic envelopes accept it through PydanticStructMixin.
     """
 
     perf_ns: int
@@ -423,7 +416,6 @@ class SSEMessage(
 
 
 class RequestInfo(
-    PydanticStructMixin,
     msgspec.Struct,
     kw_only=True,
     omit_defaults=True,
@@ -433,7 +425,7 @@ class RequestInfo(
     Mutable msgspec struct: the worker populates many fields
     incrementally after construction. ``config`` is a nested Pydantic
     BenchmarkConfig that msgspec serialises via the enc/dec hooks in
-    ``PydanticStructMixin``. It stays local to the worker /
+    ``_msgspec_enc_hook``/``_msgspec_dec_hook``. It stays local to the worker /
     records-manager processes — the wire projection in
     ``inference_wire.py`` strips it.
     """
@@ -460,7 +452,6 @@ class RequestInfo(
 
 
 class RequestRecord(
-    PydanticStructMixin,
     msgspec.Struct,
     kw_only=True,
     omit_defaults=True,
@@ -482,7 +473,7 @@ class RequestRecord(
     recv_start_perf_ns: int | None = None
     status: int | None = None
     # Msgspec-tagged union (tag_field="response_type") — each leaf is a
-    # msgspec.Struct with PydanticStructMixin. The records-manager nulls
+    # msgspec.Struct. The records-manager nulls
     # the field after parsing, so it must accept None.
     responses: list[SSEMessage | TextResponse | BinaryResponse] | None = msgspec.field(
         default_factory=list

@@ -13,7 +13,6 @@ from aiperf.plugin.enums import DatasetClientStoreType, DatasetSamplingStrategy
 
 
 class DatasetClientMetadata(
-    PydanticStructMixin,
     msgspec.Struct,
     tag_field="client_type",
     frozen=True,
@@ -120,8 +119,9 @@ class MemoryMapClientMetadata(
 
 # Hot-path dataset models use msgspec.Struct for ~3-4x faster encode/decode/construct
 # vs Pydantic v2. These are instantiated per-turn per-request at high QPS.
-# The PydanticStructMixin lets these structs appear as fields on Pydantic
-# envelopes (e.g. ConversationResponseMessage) without bespoke serialization.
+# Media (and its Text/Image/Audio/Video subclasses), Turn, and Conversation retain
+# PydanticStructMixin — they appear as fields in SingleTurn and UserSession
+# (both AIPerfBaseModel) and need the Pydantic compat shim.
 
 
 class Media(
@@ -161,7 +161,6 @@ class Video(Media):
 
 
 class TurnMetadata(
-    PydanticStructMixin,
     msgspec.Struct,
     frozen=True,
     kw_only=True,
@@ -251,7 +250,6 @@ class Turn(
 
 
 class ConversationMetadata(
-    PydanticStructMixin,
     msgspec.Struct,
     frozen=True,
     kw_only=True,
@@ -265,7 +263,6 @@ class ConversationMetadata(
 
 
 class DatasetMetadata(
-    PydanticStructMixin,
     msgspec.Struct,
     frozen=True,
     kw_only=True,
@@ -344,7 +341,6 @@ class Conversation(
 
 
 class SessionPayloads(
-    PydanticStructMixin,
     msgspec.Struct,
     frozen=True,
     kw_only=True,
@@ -358,7 +354,6 @@ class SessionPayloads(
 
 
 class InputsFile(
-    PydanticStructMixin,
     msgspec.Struct,
     frozen=True,
     kw_only=True,

@@ -7,12 +7,10 @@ from aiperf.common.enums import (
     LifecycleState,
     ServiceRegistrationStatus,
 )
-from aiperf.common.models.base_models import PydanticStructMixin
 from aiperf.common.types import ServiceTypeT
 
 
 class ServiceRunInfo(
-    PydanticStructMixin,
     msgspec.Struct,
     kw_only=True,
     omit_defaults=True,
