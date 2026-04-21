@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import time
 import uuid
@@ -361,6 +362,21 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             await self._configure_for_profiling()
         elif message.command == str(CommandType.SHUTDOWN):
             await self.stop()
+        elif message.command == str(CommandType.ABORT):
+            # WGM has failed its own lifecycle. Hard-exit so kubelet restarts
+            # this container alongside the WGM restart — a clean self.stop()
+            # here would exit 0 and leave the pod at 1/13 Ready with no
+            # workers. Best-effort ack before exit; the WGM is already on
+            # its way out so delivery is not required.
+            self.error(
+                f"Received ABORT from WorkerGroupManager; force-exiting "
+                f"{self.service_id} so kubelet restarts this container"
+            )
+            with contextlib.suppress(Exception):
+                await self.pod_lifecycle_dealer_client.send(
+                    GroupPeerCommandAck(cid=message.cid, service_id=self.service_id)
+                )
+            os._exit(1)
         else:
             self.warning(f"Unknown group-local command: {message.command}")
             return
