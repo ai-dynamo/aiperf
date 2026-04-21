@@ -11,6 +11,7 @@ acceptance-length matrix matching the SPEED-Bench paper format.
 from __future__ import annotations
 
 import csv
+import math
 import sys
 from pathlib import Path
 from statistics import mean
@@ -377,7 +378,12 @@ def generate_report(
     print(f"Found {len(run_dirs)} run directories.")
     results = build_report(run_dirs, metric_type=metric)
 
-    if not results:
+    has_value = any(
+        v is not None and not (isinstance(v, float) and math.isnan(v))
+        for model_data in results.values()
+        for v in model_data.values()
+    )
+    if not has_value:
         raise SpeedBenchReportError("no SPEED-Bench results extracted")
 
     columns = detect_columns(results)
