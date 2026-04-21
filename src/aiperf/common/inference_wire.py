@@ -23,7 +23,9 @@ from aiperf.common.models.record_models import (
     SSEMessage,
     TextResponse,
 )
-from aiperf.common.models.trace_models import BaseTraceData
+from aiperf.common.models.trace_models import AioHttpTraceData, BaseTraceData
+
+TraceDataWireT = BaseTraceData | AioHttpTraceData
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkConfig
@@ -246,8 +248,8 @@ class InferenceWireRecord(Struct, frozen=True, kw_only=True, omit_defaults=True)
     clock_offset_ns: int | None = None
     """Estimated clock offset in nanoseconds for cross-process time alignment."""
 
-    trace_data: dict[str, Any] | None = None
-    """JSON-safe trace data dict for plugin-specific trace fields."""
+    trace_data: TraceDataWireT | None = None
+    """Native trace data (msgspec Struct) for plugin-specific trace fields."""
 
     request_headers: dict[str, str] | None = None
     """HTTP request headers sent to the inference server."""
@@ -415,9 +417,7 @@ def build_inference_results_wire_message(
             user_context_message=request_info.user_context_message,
         )
 
-    trace_data = None
-    if include_trace_data and record.trace_data is not None:
-        trace_data = record.trace_data.model_dump(exclude_none=True, mode="json")
+    trace_data = record.trace_data if include_trace_data else None
 
     wire_record = InferenceWireRecord(
         metadata=WireRequestMetadata(
@@ -511,9 +511,7 @@ def wire_record_to_request_record(
         credit_drop_latency=wire_record.credit_drop_latency,
         cancellation_perf_ns=wire_record.cancellation_perf_ns,
         clock_offset_ns=wire_record.clock_offset_ns,
-        trace_data=BaseTraceData.from_json(wire_record.trace_data)
-        if wire_record.trace_data is not None
-        else None,
+        trace_data=wire_record.trace_data,
         turns=turns,
     )
     if wire_record.raw_payload is not None:

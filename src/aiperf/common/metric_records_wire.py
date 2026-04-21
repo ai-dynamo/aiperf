@@ -11,8 +11,10 @@ from msgspec import Struct
 
 from aiperf.common.enums import CreditPhase, MessageType, MetricValueTypeT
 from aiperf.common.models.error_models import ErrorDetails
-from aiperf.common.models.trace_models import BaseTraceData
+from aiperf.common.models.trace_models import AioHttpTraceData, BaseTraceData
 from aiperf.common.types import MetricTagT
+
+TraceDataWireT = BaseTraceData | AioHttpTraceData
 
 
 def _json_safe(value: Any) -> Any:
@@ -130,11 +132,13 @@ class MetricRecordsData(Struct, frozen=True, kw_only=True, omit_defaults=True):
     metrics: dict[MetricTagT, Any]
     """Computed metric values keyed by metric tag."""
 
-    trace_data: BaseTraceData | None = None
-    """Plugin-specific trace data, when available."""
+    trace_data: TraceDataWireT | None = None
+    """Native trace data (msgspec Struct) for plugin-specific trace fields."""
 
-    error: ErrorDetails | None = None
-    """Error details if the request failed."""
+    error: WireErrorDetails | None = None
+    """Msgpack-safe error details if the request failed. Use
+    wire_error_to_domain_error to get the Pydantic ErrorDetails form when a
+    consumer needs it."""
 
     @property
     def valid(self) -> bool:
@@ -166,8 +170,8 @@ class MetricRecordsWireMessage(
     metrics: dict[MetricTagT, Any]
     """Computed metric values keyed by metric tag."""
 
-    trace_data: dict[str, Any] | None = None
-    """JSON-safe trace data dict for plugin-specific trace fields."""
+    trace_data: TraceDataWireT | None = None
+    """Native trace data (msgspec Struct) for plugin-specific trace fields."""
 
     error: WireErrorDetails | None = None
     """Wire-format error details if the request failed."""
@@ -259,7 +263,7 @@ def build_metric_records_data(
         metadata=metric_record_metadata_from_model(metadata),
         metrics=metrics,
         trace_data=trace_data,
-        error=error,
+        error=_error_to_wire(error),
     )
 
 
@@ -276,9 +280,7 @@ def build_metric_records_wire_message(
         service_id=service_id,
         metadata=metadata_struct,
         metrics=metrics,
-        trace_data=trace_data.model_dump(exclude_none=True, mode="json")
-        if trace_data is not None
-        else None,
+        trace_data=trace_data,
         error=_error_to_wire(error),
     )
 
@@ -295,8 +297,13 @@ def wire_message_to_record_data(message: MetricRecordsWireMessage) -> MetricReco
     return MetricRecordsData(
         metadata=message.metadata,
         metrics=message.metrics,
-        trace_data=BaseTraceData.from_json(message.trace_data)
-        if message.trace_data is not None
-        else None,
-        error=_wire_to_error(message.error),
+        trace_data=message.trace_data,
+        error=message.error,
     )
+
+
+def wire_error_to_domain_error(
+    error: WireErrorDetails | None,
+) -> ErrorDetails | None:
+    """Convert a WireErrorDetails (msgpack-safe) to domain ErrorDetails."""
+    return _wire_to_error(error)

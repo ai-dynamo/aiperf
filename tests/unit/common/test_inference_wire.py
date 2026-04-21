@@ -203,7 +203,7 @@ class TestInferenceWire:
 
         assert rebuilt_service_id == "worker-1"
         assert wire_message.record.trace_data is not None
-        assert wire_message.record.trace_data["trace_type"] == "httpcore"
+        assert wire_message.record.trace_data.trace_type == "httpcore"
         assert rebuilt_record.trace_data is not None
         assert rebuilt_record.trace_data.trace_type == "httpcore"
         assert rebuilt_record.trace_data.request_send_start_perf_ns == 111

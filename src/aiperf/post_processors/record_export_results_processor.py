@@ -99,11 +99,13 @@ class RecordExportResultsProcessor(
             if self.export_http_trace and record_data.trace_data:
                 export_trace_data = record_data.trace_data.to_export()
 
+            from aiperf.common.metric_records_wire import wire_error_to_domain_error
+
             record_info = MetricRecordInfo(
                 metadata=record_data.metadata,
                 metrics=display_metrics,
                 trace_data=export_trace_data,
-                error=record_data.error,
+                error=wire_error_to_domain_error(record_data.error),
             )
 
             # Write using the buffered writer mixin (handles batching and flushing)

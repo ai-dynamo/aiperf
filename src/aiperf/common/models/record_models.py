@@ -7,7 +7,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Annotated, Any, AnyStr, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Any, AnyStr, Protocol, runtime_checkable
 
 import msgspec
 import orjson
@@ -17,6 +17,7 @@ from pydantic import (
     PlainSerializer,
     RootModel,
     SerializeAsAny,
+    field_serializer,
     field_validator,
 )
 from pydantic.functional_validators import AfterValidator
@@ -32,8 +33,7 @@ from aiperf.common.exceptions import InvalidInferenceResultError
 # metric_records_wire is the first-entry module in a load chain. Type
 # annotations below reference MetricRecordMetadata as a string thanks to
 # `from __future__ import annotations`; the only runtime use is inside
-# decode_metric_record_info_json / decode_raw_record_info_json, which do a
-# local import.
+# decode_metric_record_info_json, which does a local import.
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
@@ -43,6 +43,9 @@ from aiperf.common.models.usage_models import Usage
 from aiperf.common.types import JsonObject, MetricTagT, TimeSliceT
 from aiperf.common.utils import load_json_str
 from aiperf.config.config import BenchmarkConfig
+
+if TYPE_CHECKING:
+    from aiperf.common.metric_records_wire import MetricRecordMetadata
 
 _logger = AIPerfLogger(__name__)
 
@@ -559,7 +562,7 @@ class RequestRecord(AIPerfBaseModel):
         "Used for cross-machine timestamp alignment in Kubernetes deployments. "
         "To convert worker timestamp to controller time: controller_time = timestamp_ns - clock_offset_ns.",
     )
-    trace_data: SerializeAsAny[BaseTraceData] | None = Field(
+    trace_data: BaseTraceData | None = Field(
         default=None,
         description="Comprehensive trace data captured via a trace config. "
         "Includes detailed timing for connection establishment, DNS resolution, request/response events, etc. "
@@ -574,10 +577,21 @@ class RequestRecord(AIPerfBaseModel):
     @field_validator("trace_data", mode="before")
     @classmethod
     def route_trace_data(cls, v: Any) -> BaseTraceData | None:
-        """Route nested trace_data to correct subclass based on trace_type discriminator."""
+        """Route nested trace_data (dict form) to correct subclass based on trace_type discriminator."""
+        if v is None or isinstance(v, BaseTraceData):
+            return v
         if isinstance(v, dict):
             return BaseTraceData.from_json(v)
         return v
+
+    @field_serializer("trace_data")
+    def _serialize_trace_data(
+        self, value: BaseTraceData | None
+    ) -> dict[str, Any] | None:
+        """Serialize msgspec trace data Struct to a plain dict for Pydantic output."""
+        if value is None:
+            return None
+        return value.model_dump(exclude_none=True)
 
     @property
     def was_cancelled(self) -> bool:
