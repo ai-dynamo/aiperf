@@ -79,7 +79,9 @@ class TestOperatorDeployment:
     ) -> None:
         """Verify operator has necessary RBAC permissions."""
         stdout = ""
-        for _ in range(15):
+        # RBAC propagation in kind can take 30-60s after CRB apply when the
+        # API server has just started; keep retrying to absorb that window.
+        for _ in range(60):
             result = await kubectl.run(
                 "auth",
                 "can-i",
