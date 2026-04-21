@@ -36,6 +36,12 @@ Fixed schedule files use JSONL format with timestamp-based entries:
 - `output_length`: Maximum number of tokens in the response (optional)
 - `hash_ids`: Hash block identifiers to simulate text reuse with 512-token blocks (optional)
 
+> [!NOTE]
+> Fixed schedule files describe request arrivals with `timestamp` in
+> milliseconds. They are different from concurrency schedule files used by
+> `--concurrency-schedule-file`, which contain `time_sec` and `concurrency`
+> rows to change the session concurrency limit over time.
+
 ## Basic Fixed Schedule Execution
 
 ### Setting Up the Server
