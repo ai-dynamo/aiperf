@@ -191,9 +191,20 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             error_summary=error_summary or [],
         )
 
-        # Export Parquet file directly from accumulator if format is enabled
+        # Parquet spans all endpoints with a single filter; widen to bracket
+        # any scrape data across endpoints so sub-scrape-interval benchmarks
+        # still emit rows. Matches the per-endpoint widening in
+        # _compute_endpoint_summaries.
+        parquet_start = start_ns
+        parquet_end = end_ns
+        for ts in self._server_metrics_hierarchy.endpoints.values():
+            if ts.last_update_ns:
+                parquet_end = max(parquet_end, ts.last_update_ns)
+                if ts.last_update_ns < parquet_start:
+                    parquet_start = ts.last_update_ns
+
         await self._export_parquet_if_enabled(
-            TimeRangeFilter(start_ns=start_ns, end_ns=end_ns)
+            TimeRangeFilter(start_ns=parquet_start, end_ns=parquet_end)
         )
 
         return results
@@ -240,10 +251,18 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
             # Construct per-endpoint TimeFilter
             # Use profiling_start_ns to exclude warmup period (reference point can be before start)
-            # Use max(profiling_end, last_update) as end to include final collection
-            # This ensures warmup metrics are excluded from aggregation
+            # Widen the filter to include observed data on either side of the
+            # profiling window. Short benchmarks (sub-scrape-interval) can
+            # finish before any scrape lands inside the window; without this
+            # widening, counter/gauge stats would be dropped entirely while
+            # histogram stats are retained, producing inconsistent exports.
             endpoint_start_ns = profiling_start_ns
             endpoint_end_ns = max(profiling_end_ns, time_series.last_update_ns)
+            if (
+                time_series.last_update_ns
+                and time_series.last_update_ns < endpoint_start_ns
+            ):
+                endpoint_start_ns = time_series.last_update_ns
             time_filter = TimeRangeFilter(
                 start_ns=endpoint_start_ns,
                 end_ns=endpoint_end_ns,
