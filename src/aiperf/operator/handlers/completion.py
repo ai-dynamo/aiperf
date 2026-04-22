@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import kopf
 import kr8s
@@ -214,6 +216,121 @@ async def handle_completion(
             )
 
 
+# Progress-aware retry: give up after this many CONSECUTIVE attempts with
+# no new bytes/files arriving in the results dir. Tuning rationale below.
+_NO_PROGRESS_STAGNATION_LIMIT = 5
+
+
+async def _fetch_with_progress_aware_retry(
+    fetch_once: Callable[[], Awaitable[FetchResult]],
+    *,
+    dest_dir: Path,
+    job_id: str,
+    initial_delay: float,
+    description: str,
+    is_cancelled: Callable[[], bool] | None = None,
+    max_delay: float = 30.0,
+    backoff_multiplier: float = 2.0,
+    stagnation_limit: int = _NO_PROGRESS_STAGNATION_LIMIT,
+) -> FetchResult:
+    """Retry ``fetch_once`` until it returns, or until no progress has been
+    made for ``stagnation_limit`` consecutive attempts.
+
+    Unlike a plain count-based retry (``retry_with_backoff``), this tolerates
+    controllers that take minutes to finalise their export. Records-manager
+    is single-core bound on pure-Python aggregation; at high concurrency its
+    final ``summarize()`` can run longer than any fixed retry window. As long
+    as the partial checkpoint on disk is still growing or new files are
+    landing, we know the controller is still working and should keep waiting.
+    Only if nothing changes across ``stagnation_limit`` consecutive attempts
+    (wall-clock ~60s at default cap) do we give up.
+
+    Progress signal: total bytes of all files directly under ``dest_dir``
+    and its subtree. A file that grows counts as progress; a file that
+    shrinks or disappears does not.
+
+    ``is_cancelled``, if supplied, is polled between attempts and at each
+    sleep wakeup; returning True aborts the loop promptly. This avoids
+    blocking a CR deletion behind a full stagnation window.
+    """
+
+    def _snapshot_bytes() -> int:
+        total = 0
+        if not dest_dir.exists():
+            return 0
+        for entry in dest_dir.rglob("*"):
+            if entry.is_file():
+                try:
+                    total += entry.stat().st_size
+                except OSError:
+                    # File vanished between rglob and stat — skip silently.
+                    continue
+        return total
+
+    delay = initial_delay
+    attempt = 0
+    no_progress_streak = 0
+    last_bytes = _snapshot_bytes()
+    pending_exc: BaseException | None = None
+    while True:
+        if is_cancelled is not None and is_cancelled():
+            return await fetch_once()
+        attempt += 1
+        try:
+            return await fetch_once()
+        except _IncompleteResultsError as e:
+            pending_exc = e
+        except Exception as e:
+            # Transient errors (network, IO) count as no-progress attempts
+            # too; if they persist past stagnation_limit we bubble them up.
+            pending_exc = e
+            logger.debug(
+                "%s attempt %d raised %s; treating as no-progress",
+                description,
+                attempt,
+                type(e).__name__,
+            )
+
+        if is_cancelled is not None and is_cancelled():
+            return await fetch_once()
+
+        bytes_now = _snapshot_bytes()
+        if bytes_now > last_bytes:
+            # Controller is still producing output — reset stagnation.
+            no_progress_streak = 0
+            logger.debug(
+                "%s attempt %d progressing: %d -> %d bytes on disk; retrying in %.1fs",
+                description,
+                attempt,
+                last_bytes,
+                bytes_now,
+                delay,
+            )
+        else:
+            no_progress_streak += 1
+            logger.debug(
+                "%s attempt %d no new bytes (%d) — stagnation %d/%d",
+                description,
+                attempt,
+                bytes_now,
+                no_progress_streak,
+                stagnation_limit,
+            )
+            if no_progress_streak >= stagnation_limit:
+                logger.warning(
+                    "%s stalled at %d bytes for %d consecutive attempts — giving up",
+                    description,
+                    bytes_now,
+                    no_progress_streak,
+                )
+                assert pending_exc is not None
+                raise pending_exc
+        last_bytes = bytes_now
+        jittered_delay = delay * random.uniform(0.8, 1.2)
+        await asyncio.sleep(jittered_delay)
+        delay = min(delay * backoff_multiplier, max_delay)
+
+
 async def fetch_results_with_retry(
     controller_host: str,
     namespace: str,
@@ -226,7 +343,6 @@ async def fetch_results_with_retry(
 
     Uses the cached ProgressClient for the job. Falls back to creating
     a temporary client if no cached one exists (e.g. after restart).
-
     Args:
         controller_host: Controller pod DNS name.
         namespace: Kubernetes namespace (used for results directory scoping).
@@ -355,11 +471,14 @@ async def fetch_results_with_retry(
         )
 
     try:
-        return await retry_with_backoff(
+        return await _fetch_with_progress_aware_retry(
             _fetch_once,
-            max_retries=max_retries,
+            dest_dir=dest_dir,
+            job_id=job_id,
             initial_delay=retry_delay,
             description=f"results fetch for {job_id}",
+            is_cancelled=lambda: is_cancellation_requested(key),
+            stagnation_limit=max(max_retries, 1),
         )
     except _IncompleteResultsError as e:
         return e.to_fetch_result(job_id)
