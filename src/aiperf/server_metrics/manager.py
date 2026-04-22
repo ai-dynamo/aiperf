@@ -409,7 +409,8 @@ class ServerMetricsManager(BaseComponentService):
     async def _publish_server_metrics_result(
         self, start_ns: int | None, end_ns: int | None
     ) -> None:
-        """Publish accumulated server metrics results to subscribers."""
+        """Publish accumulated server metrics results to subscribers. Idempotent."""
+        # Latch before awaits so a failed publish still prevents republish on re-entry.
         self._result_published = True
         error_summary = [
             ErrorDetailsCount(error_details=err, count=count)
@@ -423,9 +424,18 @@ class ServerMetricsManager(BaseComponentService):
                 )
             )
             return
+        resolved_start_ns = start_ns or time.time_ns()
+        resolved_end_ns = end_ns or time.time_ns()
+        if resolved_end_ns < resolved_start_ns:
+            self.warning(
+                f"Invalid time window start_ns={resolved_start_ns} > end_ns={resolved_end_ns}; "
+                "falling back to full-history export (start_ns=0)"
+            )
+            resolved_start_ns = 0
+
         export_data = await self._accumulator.export_results(
-            start_ns=start_ns or time.time_ns(),
-            end_ns=end_ns or time.time_ns(),
+            start_ns=resolved_start_ns,
+            end_ns=resolved_end_ns,
             error_summary=error_summary,
         )
         await self.publish(
@@ -493,15 +503,14 @@ class ServerMetricsManager(BaseComponentService):
     async def _on_server_metrics_records(
         self, records: list[ServerMetricsRecord], collector_id: str
     ) -> None:
-        """Async callback for receiving server metrics records from collectors.
+        """Fan out records to all loaded server metrics processors, then push via ZMQ.
 
-        Called by ServerMetricsDataCollector instances when they successfully
-        collect metrics. Forwards records to RecordsManager via ZMQ push socket,
-        preserving all metadata for hierarchical storage and processing.
-
-        Handles errors gracefully by sending error messages to RecordsManager
-        instead of raising exceptions, ensuring collector continues operation
-        despite individual record processing failures.
+        Two paths run side-by-side:
+        - Local fan-out: a single flattened gather over every (processor, record)
+          pair. Server metrics storage tolerates out-of-order ingestion, so
+          per-record serialization provides no correctness benefit.
+        - Wire push: transitional forwarding of each record to RecordsManager via
+          ZMQ push socket, preserving metadata. Removed in Task 4.
 
         Args:
             records: List of ServerMetricsRecord objects from a collection cycle.
@@ -512,23 +521,20 @@ class ServerMetricsManager(BaseComponentService):
         if not records:
             return
 
-        for record in records:
-            errors = await asyncio.gather(
-                *[
-                    processor.process_server_metrics_record(record)
-                    for processor in self._processors
-                ],
-                return_exceptions=True,
-            )
-            for error in errors:
-                if isinstance(error, BaseException):
-                    self.exception(
-                        f"Failed to process server metrics record: {error!r}"
-                    )
-                    self._error_state.error_counts[
-                        ErrorDetails.from_exception(error)
-                    ] += 1
+        errors = await asyncio.gather(
+            *[
+                processor.process_server_metrics_record(record)
+                for processor in self._processors
+                for record in records
+            ],
+            return_exceptions=True,
+        )
+        for error in errors:
+            if isinstance(error, BaseException):
+                self.exception(f"Failed to process server metrics record: {error!r}")
+                self._error_state.error_counts[ErrorDetails.from_exception(error)] += 1
 
+        for record in records:
             try:
                 message = ServerMetricsRecordWireMessage(
                     service_id=self.service_id,
