@@ -226,6 +226,15 @@ class TestCohereEmbeddingsEndpoint:
         assert parsed.usage.prompt_tokens == 12
         assert parsed.usage.completion_tokens == 0
 
+    @pytest.mark.parametrize("json_data", [None, {}])
+    def test_parse_response_without_json_object_returns_none(self, endpoint, json_data):
+        """Falsy JSON payloads should return None."""
+        mock_response = create_mock_response(json_data=json_data)
+
+        parsed = endpoint.parse_response(mock_response)
+
+        assert parsed is None
+
     def test_parse_response_without_float_embeddings_returns_usage_only(self, endpoint):
         """Non-float embedding payloads should be ignored."""
         mock_response = create_mock_response(
@@ -241,6 +250,38 @@ class TestCohereEmbeddingsEndpoint:
         assert parsed.data is None
         assert parsed.usage is not None
         assert parsed.usage.prompt_tokens == 6
+
+    def test_parse_response_non_dict_meta_ignores_usage(self, endpoint):
+        """Malformed meta payloads should not prevent embedding parsing."""
+        mock_response = create_mock_response(
+            json_data={
+                "embeddings": {"float": [[0.1, 0.2]]},
+                "meta": ["not-a-dict"],
+            }
+        )
+
+        parsed = endpoint.parse_response(mock_response)
+
+        assert parsed is not None
+        assert isinstance(parsed.data, EmbeddingResponseData)
+        assert parsed.data.embeddings == [[0.1, 0.2]]
+        assert parsed.usage is None
+
+    def test_parse_response_non_integer_input_tokens_ignores_usage(self, endpoint):
+        """Non-integer input token counts should be ignored."""
+        mock_response = create_mock_response(
+            json_data={
+                "embeddings": {"float": [[0.1, 0.2]]},
+                "meta": {"billed_units": {"input_tokens": "12"}},
+            }
+        )
+
+        parsed = endpoint.parse_response(mock_response)
+
+        assert parsed is not None
+        assert isinstance(parsed.data, EmbeddingResponseData)
+        assert parsed.data.embeddings == [[0.1, 0.2]]
+        assert parsed.usage is None
 
     def test_parse_response_missing_embeddings_returns_none(self, endpoint):
         """Missing embeddings field should return None."""
