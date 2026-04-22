@@ -39,16 +39,31 @@ _PROBLEM_STATES: dict[str, tuple[str, str]] = {
 }
 
 
+def _pod_to_raw(pod: Any) -> tuple[str, dict[str, Any]]:
+    """Normalize V1Pod or legacy ``.raw``-style mock to (name, raw_dict)."""
+    raw = getattr(pod, "raw", None)
+    if raw is not None:
+        name = getattr(pod, "name", None) or raw.get("metadata", {}).get("name", "")
+        return (name, raw)
+    # Real V1Pod from kubernetes_asyncio — serialize to dict shape.
+    from kubernetes_asyncio.client import ApiClient
+
+    raw = ApiClient().sanitize_for_serialization(pod) or {}
+    name = raw.get("metadata", {}).get("name", "")
+    return (name, raw)
+
+
 def _extract_pod_info(pod: Any) -> dict[str, Any]:
-    """Extract diagnostic info from a kr8s pod object.
+    """Extract diagnostic info from a Pod object.
 
     Args:
-        pod: kr8s Pod object.
+        pod: V1Pod (kubernetes_asyncio) or any object exposing ``.name`` and
+            a ``.raw`` dict (legacy test mocks).
 
     Returns:
         Dict with pod name, phase, conditions, container statuses, and problems.
     """
-    raw = pod.raw
+    pod_name, raw = _pod_to_raw(pod)
     status = raw.get("status", {})
     phase = status.get("phase", "Unknown")
     container_statuses = status.get("containerStatuses", [])
@@ -137,9 +152,10 @@ def _extract_pod_info(pod: Any) -> dict[str, Any]:
                 }
             )
 
+    metadata = raw.get("metadata", {})
     return {
-        "name": pod.name,
-        "namespace": raw.get("metadata", {}).get("namespace", ""),
+        "name": pod_name,
+        "namespace": metadata.get("namespace", ""),
         "phase": phase,
         "restarts": restarts,
         "problems": problems,
@@ -169,20 +185,25 @@ async def _get_namespace_events(
     """Fetch recent events from a namespace.
 
     Args:
-        api: kr8s API client.
+        api: kubernetes_asyncio ``ApiClient``.
         namespace: Namespace to query.
 
     Returns:
         List of event dicts sorted by last timestamp (newest first).
     """
+    from kubernetes_asyncio import client as k8s_client_mod
+    from kubernetes_asyncio.client import ApiClient
+
     try:
-        events = [e async for e in api.async_get("events", namespace=namespace)]
+        core = k8s_client_mod.CoreV1Api(api)
+        event_list = await core.list_namespaced_event(namespace)
     except Exception:
         return []
 
+    serializer = ApiClient()
     result = []
-    for event in events:
-        raw = event.raw
+    for event in event_list.items:
+        raw = serializer.sanitize_for_serialization(event) or {}
         involved = raw.get("involvedObject", {})
         result.append(
             {
@@ -203,19 +224,24 @@ async def _get_node_resources(api: Any) -> list[dict[str, Any]]:
     """Fetch node resource info.
 
     Args:
-        api: kr8s API client.
+        api: kubernetes_asyncio ``ApiClient``.
 
     Returns:
         List of node resource dicts with capacity and conditions.
     """
+    from kubernetes_asyncio import client as k8s_client_mod
+    from kubernetes_asyncio.client import ApiClient
+
     try:
-        nodes = [n async for n in api.async_get("nodes")]
+        core = k8s_client_mod.CoreV1Api(api)
+        node_list = await core.list_node()
     except Exception:
         return []
 
+    serializer = ApiClient()
     result = []
-    for node in nodes:
-        raw = node.raw
+    for node in node_list.items:
+        raw = serializer.sanitize_for_serialization(node) or {}
         status = raw.get("status", {})
         capacity = status.get("capacity", {})
         allocatable = status.get("allocatable", {})
@@ -236,7 +262,7 @@ async def _get_node_resources(api: Any) -> list[dict[str, Any]]:
 
         result.append(
             {
-                "name": node.name,
+                "name": raw.get("metadata", {}).get("name", ""),
                 "ready": ready,
                 "cpu_capacity": capacity.get("cpu", "0"),
                 "memory_capacity": capacity.get("memory", "0"),
@@ -252,51 +278,53 @@ async def _get_node_resources(api: Any) -> list[dict[str, Any]]:
 
 
 async def _get_problem_pod_logs(
-    pods: list[Any],
+    api: Any,
     pod_infos: list[dict[str, Any]],
     tail_lines: int = 20,
 ) -> dict[str, dict[str, str]]:
     """Fetch recent logs from pods with problems.
 
     Args:
-        pods: List of kr8s Pod objects.
-        pod_infos: Corresponding list of extracted pod info dicts.
+        api: kubernetes_asyncio ``ApiClient``.
+        pod_infos: List of extracted pod info dicts (from ``_extract_pod_info``).
         tail_lines: Number of log lines to fetch per container.
 
     Returns:
         Dict mapping pod_name -> {container_name: log_text}.
     """
-    import kr8s as kr8s_module
+    from kubernetes_asyncio import client as k8s_client_mod
+    from kubernetes_asyncio.client.exceptions import ApiException
 
+    core = k8s_client_mod.CoreV1Api(api)
     result: dict[str, dict[str, str]] = {}
 
-    pod_by_name = {p.name: p for p in pods}
     problem_pods = [info for info in pod_infos if info["problems"]]
 
     for info in problem_pods:
-        pod = pod_by_name.get(info["name"])
-        if not pod:
+        pod_name = info["name"]
+        namespace = info.get("namespace") or ""
+        if not namespace:
             continue
 
         container_logs: dict[str, str] = {}
         for cs in info["container_statuses"]:
             container_name = cs.get("name", "unknown")
             try:
-                lines = [
-                    line
-                    async for line in pod.logs(
-                        container=container_name, tail_lines=tail_lines
-                    )
-                ]
-                if lines:
-                    container_logs[container_name] = "\n".join(lines)
-            except kr8s_module.ServerError:
+                log_text = await core.read_namespaced_pod_log(
+                    name=pod_name,
+                    namespace=namespace,
+                    container=container_name,
+                    tail_lines=tail_lines,
+                )
+                if log_text:
+                    container_logs[container_name] = log_text.rstrip("\n")
+            except ApiException:
                 container_logs[container_name] = "<logs unavailable>"
             except Exception:
                 container_logs[container_name] = "<error fetching logs>"
 
         if container_logs:
-            result[info["name"]] = container_logs
+            result[pod_name] = container_logs
 
     return result
 
@@ -522,59 +550,57 @@ async def debug(
     from aiperf import cli_utils
 
     with cli_utils.exit_on_error(title="Error Running Diagnostics"):
-        from aiperf.kubernetes import client
+        from aiperf.kubernetes import client as kube_client_mod
         from aiperf.kubernetes import console as kube_console
         from aiperf.kubernetes.constants import Labels
 
-        kube_client = await client.AIPerfKubeClient.create(
+        async with kube_client_mod.k8s_client(
             kubeconfig=kubeconfig,
-            kube_context=context,
-        )
-        api = kube_client.api
+            context=context,
+        ) as api:
+            target_namespaces: list[str] = []
 
-        target_namespaces: list[str] = []
-
-        if all_namespaces:
-            jobsets = await kube_client.list_jobsets(all_namespaces=True)
-            target_namespaces = list({js.namespace for js in jobsets})
-            if not target_namespaces:
-                kube_console.print_warning(
-                    "No AIPerf deployments found in any namespace"
-                )
-                return
-        elif job_id:
-            jobset_info = await kube_client.find_jobset(job_id, namespace)
-            if jobset_info:
-                target_namespaces = [jobset_info.namespace]
+            if all_namespaces:
+                jobsets = await kube_client_mod.list_jobsets(api, all_namespaces=True)
+                target_namespaces = list({js.namespace for js in jobsets})
+                if not target_namespaces:
+                    kube_console.print_warning(
+                        "No AIPerf deployments found in any namespace"
+                    )
+                    return
+            elif job_id:
+                jobset_info = await kube_client_mod.find_jobset(api, job_id, namespace)
+                if jobset_info:
+                    target_namespaces = [jobset_info.namespace]
+                else:
+                    kube_console.print_error(f"No AIPerf job found with ID: {job_id}")
+                    return
+            elif namespace:
+                target_namespaces = [namespace]
             else:
-                kube_console.print_error(f"No AIPerf job found with ID: {job_id}")
-                return
-        elif namespace:
-            target_namespaces = [namespace]
-        else:
-            from aiperf.kubernetes.cli_helpers import resolve_job_id_and_namespace
+                from aiperf.kubernetes.cli_helpers import resolve_job_id_and_namespace
 
-            resolved = resolve_job_id_and_namespace(None, None)
-            if resolved:
-                _, ns = resolved
-                target_namespaces = [ns or "default"]
-            else:
-                return
+                resolved = resolve_job_id_and_namespace(None, None)
+                if resolved:
+                    _, ns = resolved
+                    target_namespaces = [ns or "default"]
+                else:
+                    return
 
-        node_resources = await _get_node_resources(api)
+            node_resources = await _get_node_resources(api)
 
-        for ns in sorted(target_namespaces):
-            label_selector = Labels.SELECTOR
-            if job_id:
-                label_selector = kube_client.job_selector(job_id)
+            for ns in sorted(target_namespaces):
+                label_selector = Labels.SELECTOR
+                if job_id:
+                    label_selector = kube_client_mod.job_selector(job_id)
 
-            pods = await kube_client.get_pods(ns, label_selector)
-            pod_infos = [_extract_pod_info(pod) for pod in pods]
+                pods = await kube_client_mod.get_pods(api, ns, label_selector)
+                pod_infos = [_extract_pod_info(pod) for pod in pods]
 
-            events = await _get_namespace_events(api, ns)
+                events = await _get_namespace_events(api, ns)
 
-            pod_logs: dict[str, dict[str, str]] = {}
-            if verbose:
-                pod_logs = await _get_problem_pod_logs(pods, pod_infos)
+                pod_logs: dict[str, dict[str, str]] = {}
+                if verbose:
+                    pod_logs = await _get_problem_pod_logs(api, pod_infos)
 
-            _print_report(ns, pod_infos, events, node_resources, pod_logs, verbose)
+                _print_report(ns, pod_infos, events, node_resources, pod_logs, verbose)

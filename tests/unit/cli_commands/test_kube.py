@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for aiperf.cli_commands.kube module."""
 
+from contextlib import asynccontextmanager
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,6 +18,13 @@ from aiperf.kubernetes.cli_helpers import resolve_job_id_and_namespace
 from aiperf.kubernetes.console import LastBenchmarkInfo
 from aiperf.kubernetes.models import AIPerfJobInfo, JobSetInfo
 from aiperf.kubernetes.ui_dispatch import print_progress_message, print_realtime_metrics
+
+
+@asynccontextmanager
+async def _fake_k8s_client(api: Any):
+    """Drop-in replacement for ``k8s_client`` yielding the provided api object."""
+    yield api
+
 
 _BUILD_CONFIG = "aiperf.config.cli_converter.build_aiperf_config"
 
@@ -74,11 +83,15 @@ def manage_options():
 
 @pytest.fixture
 def mock_kube_client():
-    """Mock AIPerfKubeClient for CLI command tests.
+    """Mock AIPerfKubeClient + patched free functions for CLI command tests.
 
-    Patches AIPerfKubeClient.create to return a mock client with all
-    methods available as AsyncMocks. Individual tests configure return
-    values as needed.
+    Exposes a single mock-client object whose ``list_jobs``, ``find_job``,
+    ``find_jobset``, ``list_jobsets``, ``get_pods``, ``find_controller_pod``,
+    and ``find_operator_pod`` attributes are AsyncMocks. The same mocks are
+    installed as ``aiperf.kubernetes.client.<free_fn>`` with ``api`` passed
+    as first positional arg (stripped in the side_effect wrappers), so tests
+    that still use the legacy ``mock_kube_client.method(...)`` assertions
+    match the new free-function call sites.
     """
     from aiperf.kubernetes.client import AIPerfKubeClient
 
@@ -86,9 +99,66 @@ def mock_kube_client():
     mock_client.job_selector = AIPerfKubeClient.job_selector
     mock_client.controller_selector = AIPerfKubeClient.controller_selector
 
-    with patch(
-        "aiperf.kubernetes.client.AIPerfKubeClient.create",
-        new=AsyncMock(return_value=mock_client),
+    api = MagicMock()
+
+    async def _strip_api_list_jobs(_api, **kwargs):
+        return await mock_client.list_jobs(**kwargs)
+
+    async def _strip_api_find_job(_api, *args, **kwargs):
+        return await mock_client.find_job(*args, **kwargs)
+
+    async def _strip_api_find_jobset(_api, *args, **kwargs):
+        return await mock_client.find_jobset(*args, **kwargs)
+
+    async def _strip_api_list_jobsets(_api, **kwargs):
+        return await mock_client.list_jobsets(**kwargs)
+
+    async def _strip_api_get_pods(_api, *args, **kwargs):
+        return await mock_client.get_pods(*args, **kwargs)
+
+    async def _strip_api_find_controller_pod(_api, *args, **kwargs):
+        return await mock_client.find_controller_pod(*args, **kwargs)
+
+    async def _strip_api_find_operator_pod(_api, *args, **kwargs):
+        return await mock_client.find_operator_pod(*args, **kwargs)
+
+    with (
+        patch(
+            "aiperf.kubernetes.client.AIPerfKubeClient.create",
+            new=AsyncMock(return_value=mock_client),
+        ),
+        patch(
+            "aiperf.kubernetes.client.k8s_client",
+            return_value=_fake_k8s_client(api),
+        ),
+        patch(
+            "aiperf.kubernetes.client.list_aiperf_jobs",
+            new=_strip_api_list_jobs,
+        ),
+        patch(
+            "aiperf.kubernetes.client.find_aiperf_job",
+            new=_strip_api_find_job,
+        ),
+        patch(
+            "aiperf.kubernetes.client.find_jobset",
+            new=_strip_api_find_jobset,
+        ),
+        patch(
+            "aiperf.kubernetes.client.list_jobsets",
+            new=_strip_api_list_jobsets,
+        ),
+        patch(
+            "aiperf.kubernetes.client.get_pods",
+            new=_strip_api_get_pods,
+        ),
+        patch(
+            "aiperf.kubernetes.client.find_controller_pod",
+            new=_strip_api_find_controller_pod,
+        ),
+        patch(
+            "aiperf.kubernetes.client.find_operator_pod",
+            new=_strip_api_find_operator_pod,
+        ),
     ):
         yield mock_client
 

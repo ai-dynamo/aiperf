@@ -305,21 +305,36 @@ async def _operator_available(kube_options: KubeOptions) -> bool:
     Returns True if the operator CRD exists (operator mode), False otherwise
     (direct mode). Logs which mode is selected.
     """
+    from kubernetes_asyncio import client as k8s_client_mod
+    from kubernetes_asyncio.client.exceptions import ApiException
+
     from aiperf.kubernetes import console as kube_console
-    from aiperf.kubernetes.client import get_api
+    from aiperf.kubernetes.client import k8s_client
     from aiperf.kubernetes.constants import AIPERF_GROUP, AIPERF_PLURAL
 
+    crd_name = f"{AIPERF_PLURAL}.{AIPERF_GROUP}"
     try:
-        api = await get_api(
+        async with k8s_client(
             kubeconfig=kube_options.kubeconfig,
-            kube_context=kube_options.kube_context,
-        )
-        from kr8s.asyncio.objects import CustomResourceDefinition
-
-        crd_name = f"{AIPERF_PLURAL}.{AIPERF_GROUP}"
-        await CustomResourceDefinition.get(crd_name, api=api)
+            context=kube_options.kube_context,
+        ) as api:
+            await k8s_client_mod.ApiextensionsV1Api(
+                api
+            ).read_custom_resource_definition(
+                crd_name,
+            )
         kube_console.print_info("AIPerfJob CRD detected, using operator mode")
         return True
+    except ApiException as e:
+        if e.status != 404:
+            kube_console.print_info(
+                f"AIPerfJob CRD not found, deploying directly (no operator) [ApiException: {e}]"
+            )
+            return False
+        kube_console.print_info(
+            "AIPerfJob CRD not found, deploying directly (no operator)"
+        )
+        return False
     except Exception as e:
         kube_console.print_info(
             f"AIPerfJob CRD not found, deploying directly (no operator) [{type(e).__name__}: {e}]"
@@ -351,64 +366,85 @@ async def _deploy_via_operator(
         kube_console.console.print(output, highlight=False)
         return
 
-    import kr8s
+    from kubernetes_asyncio import client as k8s_client_mod
+    from kubernetes_asyncio.client.exceptions import ApiException
 
-    from aiperf.kubernetes.client import get_api
-
-    api = await get_api(
-        kubeconfig=kube_options.kubeconfig,
-        kube_context=kube_options.kube_context,
+    from aiperf.kubernetes.client import k8s_client
+    from aiperf.kubernetes.cr_refs import (
+        AIPERF_JOB_GROUP,
+        AIPERF_JOB_PLURAL,
+        AIPERF_JOB_VERSION,
     )
-    from kr8s.asyncio.objects import Namespace
 
-    ns_manifest = {
-        "apiVersion": "v1",
-        "kind": "Namespace",
-        "metadata": {"name": namespace},
-    }
-    try:
-        await Namespace(ns_manifest, api=api).create()
-    except kr8s.ServerError as e:
-        if e.response and e.response.status_code == 409:
-            pass
-        else:
-            raise
+    async with k8s_client(
+        kubeconfig=kube_options.kubeconfig,
+        context=kube_options.kube_context,
+    ) as api:
+        core = k8s_client_mod.CoreV1Api(api)
+        custom = k8s_client_mod.CustomObjectsApi(api)
 
-    from aiperf.kubernetes.kr8s_resources import AsyncAIPerfJob
-
-    # Check for existing CR with same name
-    try:
-        existing = await AsyncAIPerfJob.get(name, namespace=namespace, api=api)
-        phase = existing.raw.get("status", {}).get("phase", "")
-        if phase in ("Running", "Pending"):
-            ctx_flag = (
-                f" --context {kube_options.kube_context}"
-                if kube_options.kube_context
-                else ""
+        try:
+            await core.create_namespace(
+                body=k8s_client_mod.V1Namespace(
+                    metadata=k8s_client_mod.V1ObjectMeta(name=namespace),
+                )
             )
-            raise SystemExit(
-                f"AIPerfJob {name} is already {phase}. "
-                f"Delete it first: kubectl{ctx_flag} delete aiperfjob {name} -n {namespace}"
-            )
-        kube_console.print_info(f"Replacing completed AIPerfJob {name}")
-        await existing.delete()
-        await asyncio.sleep(2)
-    except kr8s.NotFoundError:
-        pass
+        except ApiException as e:
+            if e.status != 409:
+                raise
 
-    try:
-        await AsyncAIPerfJob(cr, api=api).create()
-    except kr8s.ServerError as e:
-        if e.response:
+        # Check for existing CR with same name
+        try:
+            existing = await custom.get_namespaced_custom_object(
+                group=AIPERF_JOB_GROUP,
+                version=AIPERF_JOB_VERSION,
+                plural=AIPERF_JOB_PLURAL,
+                namespace=namespace,
+                name=name,
+            )
+            phase = (existing.get("status") or {}).get("phase", "")
+            if phase in ("Running", "Pending"):
+                ctx_flag = (
+                    f" --context {kube_options.kube_context}"
+                    if kube_options.kube_context
+                    else ""
+                )
+                raise SystemExit(
+                    f"AIPerfJob {name} is already {phase}. "
+                    f"Delete it first: kubectl{ctx_flag} delete aiperfjob {name} -n {namespace}"
+                )
+            kube_console.print_info(f"Replacing completed AIPerfJob {name}")
+            await custom.delete_namespaced_custom_object(
+                group=AIPERF_JOB_GROUP,
+                version=AIPERF_JOB_VERSION,
+                plural=AIPERF_JOB_PLURAL,
+                namespace=namespace,
+                name=name,
+            )
+            await asyncio.sleep(2)
+        except ApiException as e:
+            if e.status != 404:
+                raise
+
+        try:
+            await custom.create_namespaced_custom_object(
+                group=AIPERF_JOB_GROUP,
+                version=AIPERF_JOB_VERSION,
+                plural=AIPERF_JOB_PLURAL,
+                namespace=namespace,
+                body=cr,
+            )
+        except ApiException as e:
             import orjson
 
-            try:
-                body = orjson.loads(e.response.text)
-                detail = body.get("message", "")
-            except (orjson.JSONDecodeError, TypeError):
-                detail = e.response.text[:200] if e.response.text else ""
+            detail = ""
+            if e.body:
+                try:
+                    body = orjson.loads(e.body)
+                    detail = body.get("message", "")
+                except (orjson.JSONDecodeError, TypeError):
+                    detail = e.body[:200] if e.body else ""
             raise SystemExit(f"Failed to create AIPerfJob: {detail}") from e
-        raise
 
     kube_console.print_cr_submission_summary(
         name=name,
@@ -521,40 +557,58 @@ async def _deploy_direct(
             yaml.dump(manifest, sys.stdout)
         return
 
-    import kr8s
-    from kr8s.asyncio.objects import ConfigMap, Namespace, Role, RoleBinding
+    from kubernetes_asyncio import client as k8s_client_mod
+    from kubernetes_asyncio.client.exceptions import ApiException
 
-    from aiperf.kubernetes.client import get_api
-    from aiperf.kubernetes.kr8s_resources import AsyncJobSet
+    from aiperf.kubernetes.client import k8s_client
+    from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
 
-    api = await get_api(
+    async with k8s_client(
         kubeconfig=kube_options.kubeconfig,
-        kube_context=kube_options.kube_context,
-    )
+        context=kube_options.kube_context,
+    ) as api:
+        core = k8s_client_mod.CoreV1Api(api)
+        rbac = k8s_client_mod.RbacAuthorizationV1Api(api)
+        custom = k8s_client_mod.CustomObjectsApi(api)
 
-    resource_classes = {
-        "Namespace": Namespace,
-        "Role": Role,
-        "RoleBinding": RoleBinding,
-        "ConfigMap": ConfigMap,
-        "JobSet": AsyncJobSet,
-    }
-
-    for manifest in manifests:
-        kind = manifest["kind"]
-        res_name = manifest["metadata"]["name"]
-        cls = resource_classes.get(kind)
-        if cls is None:
-            kube_console.print_warning(f"Unknown resource kind: {kind}, skipping")
-            continue
-        try:
-            await cls(manifest, api=api).create()
-            kube_console.print_success(f"Created {kind}/{res_name}")
-        except kr8s.ServerError as exc:
-            if exc.response and exc.response.status_code == 409:
-                kube_console.print_info(f"{kind}/{res_name} already exists")
-            else:
-                raise
+        for manifest in manifests:
+            kind = manifest["kind"]
+            res_name = manifest["metadata"]["name"]
+            manifest_ns = manifest["metadata"].get("namespace") or effective_ns
+            try:
+                if kind == "Namespace":
+                    await core.create_namespace(body=manifest)
+                elif kind == "ConfigMap":
+                    await core.create_namespaced_config_map(
+                        namespace=manifest_ns, body=manifest
+                    )
+                elif kind == "Role":
+                    await rbac.create_namespaced_role(
+                        namespace=manifest_ns, body=manifest
+                    )
+                elif kind == "RoleBinding":
+                    await rbac.create_namespaced_role_binding(
+                        namespace=manifest_ns, body=manifest
+                    )
+                elif kind == "JobSet":
+                    await custom.create_namespaced_custom_object(
+                        group=JOBSET_GROUP,
+                        version=JOBSET_VERSION,
+                        plural=JOBSET_PLURAL,
+                        namespace=manifest_ns,
+                        body=manifest,
+                    )
+                else:
+                    kube_console.print_warning(
+                        f"Unknown resource kind: {kind}, skipping"
+                    )
+                    continue
+                kube_console.print_success(f"Created {kind}/{res_name}")
+            except ApiException as exc:
+                if exc.status == 409:
+                    kube_console.print_info(f"{kind}/{res_name} already exists")
+                else:
+                    raise
 
     kube_console.print_cr_submission_summary(
         name=name,

@@ -18,7 +18,7 @@ from pytest import param
 
 @pytest.fixture
 def mock_api() -> MagicMock:
-    """Create a mock kr8s API client."""
+    """Create a mock kubernetes_asyncio API client."""
     return MagicMock()
 
 

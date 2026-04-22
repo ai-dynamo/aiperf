@@ -62,7 +62,7 @@ async def dashboard(
     manage_options = manage_options or KubeManageOptions()
 
     with cli_utils.exit_on_error(title="Error Opening Dashboard"):
-        from aiperf.kubernetes.client import AIPerfKubeClient
+        from aiperf.kubernetes.client import find_operator_pod, k8s_client
         from aiperf.kubernetes.console import (
             print_error,
             print_info,
@@ -71,21 +71,18 @@ async def dashboard(
         from aiperf.kubernetes.port_forward import port_forward_with_status
         from aiperf.kubernetes.results import RESULTS_SERVER_PORT
 
-        client = await AIPerfKubeClient.create(
+        async with k8s_client(
             kubeconfig=manage_options.kubeconfig,
-            kube_context=manage_options.kube_context,
-        )
+            context=manage_options.kube_context,
+        ) as api:
+            pod_info = await find_operator_pod(api, namespace=operator_namespace)
+            if not pod_info:
+                print_error("Operator pod not found")
+                print_info(f"Looked in namespace: {operator_namespace}")
+                return
 
-        pod_info = await client.find_operator_pod(
-            namespace=operator_namespace,
-        )
-        if not pod_info:
-            print_error("Operator pod not found")
-            print_info(f"Looked in namespace: {operator_namespace}")
-            return
-
-        pod_name, pod_phase = pod_info
-        print_info(f"Found operator pod: {pod_name} (status: {pod_phase})")
+            pod_name, pod_phase = pod_info
+            print_info(f"Found operator pod: {pod_name} (status: {pod_phase})")
 
         async with port_forward_with_status(
             operator_namespace,

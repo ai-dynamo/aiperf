@@ -77,7 +77,7 @@ async def list_jobs(
     import asyncio
 
     from aiperf import cli_utils
-    from aiperf.kubernetes import client
+    from aiperf.kubernetes import client as kube_client_mod
     from aiperf.kubernetes import console as kube_console
 
     manage_options = manage_options or KubeManageOptions()
@@ -98,49 +98,57 @@ async def list_jobs(
     search_all = all_namespaces and manage_options.namespace is None
 
     with cli_utils.exit_on_error(title="Error Listing Kubernetes Jobs"):
-        kube_client = await client.AIPerfKubeClient.create(
+        async with kube_client_mod.k8s_client(
             kubeconfig=manage_options.kubeconfig,
-            kube_context=manage_options.kube_context,
-        )
+            context=manage_options.kube_context,
+        ) as api:
+            while True:
+                jobs = await _fetch_jobs(
+                    api, manage_options, search_all, status_filter, job_id
+                )
 
-        while True:
-            jobs = await _fetch_jobs(
-                kube_client, manage_options, search_all, status_filter, job_id
-            )
+                if not jobs:
+                    filter_msg = (
+                        f" with phase '{status_filter}'" if status_filter else ""
+                    )
+                    kube_console.print_info(f"No AIPerf jobs found{filter_msg}")
+                    if not watch:
+                        return
+                else:
+                    if watch:
+                        # Clear screen for live refresh
+                        print("\033[2J\033[H", end="", flush=True)
+                    kube_console.print_aiperfjob_table(jobs, wide=wide)
 
-            if not jobs:
-                filter_msg = f" with phase '{status_filter}'" if status_filter else ""
-                kube_console.print_info(f"No AIPerf jobs found{filter_msg}")
                 if not watch:
                     return
-            else:
-                if watch:
-                    # Clear screen for live refresh
-                    print("\033[2J\033[H", end="", flush=True)
-                kube_console.print_aiperfjob_table(jobs, wide=wide)
 
-            if not watch:
-                return
-
-            try:
-                await asyncio.sleep(interval)
-            except (KeyboardInterrupt, asyncio.CancelledError):
-                return
+                try:
+                    await asyncio.sleep(interval)
+                except (KeyboardInterrupt, asyncio.CancelledError):
+                    return
 
 
 async def _fetch_jobs(
-    kube_client: object,
+    api: object,
     manage_options: KubeManageOptions,
     search_all: bool,
     status_filter: str | None,
     job_id: str | None,
 ) -> list:
     """Fetch job list from cluster."""
+    from aiperf.kubernetes.client import (
+        find_aiperf_job,
+        list_aiperf_jobs,
+        list_jobsets,
+    )
+
     if job_id:
-        job_info = await kube_client.find_job(job_id, manage_options.namespace)
+        job_info = await find_aiperf_job(api, job_id, manage_options.namespace)
         return [job_info] if job_info else []
 
-    jobs = await kube_client.list_jobs(
+    jobs = await list_aiperf_jobs(
+        api,
         namespace=manage_options.namespace,
         all_namespaces=search_all,
         status_filter=status_filter,
@@ -149,7 +157,8 @@ async def _fetch_jobs(
     if not jobs:
         from aiperf.kubernetes.models import AIPerfJobInfo
 
-        jobsets = await kube_client.list_jobsets(
+        jobsets = await list_jobsets(
+            api,
             namespace=manage_options.namespace,
             all_namespaces=search_all,
             job_id=job_id,
