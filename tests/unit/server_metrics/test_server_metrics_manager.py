@@ -7,9 +7,7 @@ import pytest
 
 from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommandType, CreditPhase
-from aiperf.common.metric_records_wire import ServerMetricsRecordWireMessage
 from aiperf.common.models import CreditPhaseStats, ErrorDetails
-from aiperf.common.models.server_metrics_models import ServerMetricsRecord
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.credit.messages import CreditPhaseStartMessage
 from aiperf.plugin.enums import TimingMode
@@ -312,77 +310,6 @@ class TestProfileStartCommand:
             # Verify delayed shutdown was scheduled via asyncio.create_task
             mock_create_task.assert_called_once()
             assert hasattr(manager, "_shutdown_task")
-
-
-class TestManagerCallbackFunctionality:
-    """Test callback handling for records and errors."""
-
-    @pytest.mark.asyncio
-    async def test_record_callback_sends_message(
-        self,
-        config_with_endpoint: BenchmarkRun,
-    ):
-        """Test that record callback sends ServerMetricsRecordWireMessage."""
-        manager = ServerMetricsManager(
-            run=config_with_endpoint,
-        )
-
-        manager.records_push_client.push = AsyncMock()
-
-        test_record = ServerMetricsRecord(
-            endpoint_url="http://localhost:8081/metrics",
-            timestamp_ns=1_000_000_000,
-            endpoint_latency_ns=5_000_000,
-            metrics={},
-        )
-
-        await manager._on_server_metrics_records([test_record], "test_collector")
-
-        manager.records_push_client.push.assert_called_once()
-        call_args = manager.records_push_client.push.call_args[0][0]
-        assert isinstance(call_args, ServerMetricsRecordWireMessage)
-        assert call_args.record is not None
-        assert call_args.record.endpoint_url == test_record.endpoint_url
-        assert call_args.record.timestamp_ns == test_record.timestamp_ns
-
-    @pytest.mark.asyncio
-    async def test_error_callback_logs_error(
-        self,
-        config_with_endpoint: BenchmarkRun,
-    ):
-        """Test that error callback logs the error."""
-        manager = ServerMetricsManager(
-            run=config_with_endpoint,
-        )
-
-        test_error = ErrorDetails.from_exception(ValueError("Test error"))
-
-        await manager._on_server_metrics_error(test_error, "test_collector")
-
-    @pytest.mark.asyncio
-    async def test_record_callback_handles_send_failure(
-        self,
-        config_with_endpoint: BenchmarkRun,
-    ):
-        """Test that record callback handles message send failures gracefully."""
-        manager = ServerMetricsManager(
-            run=config_with_endpoint,
-        )
-
-        manager.records_push_client.push = AsyncMock(
-            side_effect=Exception("Send failed")
-        )
-
-        test_records = [
-            ServerMetricsRecord(
-                endpoint_url="http://localhost:8081/metrics",
-                timestamp_ns=1_000_000_000,
-                endpoint_latency_ns=5_000_000,
-                metrics={},
-            )
-        ]
-
-        await manager._on_server_metrics_records(test_records, "test_collector")
 
 
 class TestDisabledServerMetrics:
@@ -706,31 +633,27 @@ class TestCallbackEdgeCases:
             run=config_with_endpoint,
         )
 
-        manager.records_push_client.push = AsyncMock()
-
+        # Empty list should be a no-op (no processor fan-out, no error tracking).
         await manager._on_server_metrics_records([], "test_collector")
 
-        # Should not push anything for empty list
-        manager.records_push_client.push.assert_not_called()
+        assert sum(manager._error_state.error_counts.values()) == 0
 
     @pytest.mark.asyncio
-    async def test_error_callback_handles_send_failure(
+    async def test_error_callback_records_error(
         self,
         config_with_endpoint: BenchmarkRun,
     ):
-        """Test that error callback handles message send failures gracefully."""
+        """Test that error callback records the error against local state."""
         manager = ServerMetricsManager(
             run=config_with_endpoint,
-        )
-
-        manager.records_push_client.push = AsyncMock(
-            side_effect=Exception("Send failed")
         )
 
         test_error = ErrorDetails.from_exception(ValueError("Test error"))
 
         # Should not raise exception
         await manager._on_server_metrics_error(test_error, "test_collector")
+
+        assert sum(manager._error_state.error_counts.values()) == 1
 
     @pytest.mark.asyncio
     async def test_status_send_failure(

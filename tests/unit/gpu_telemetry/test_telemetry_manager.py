@@ -8,8 +8,7 @@ import pytest
 from aiperf.common.control_structs import Command, TelemetryStatus
 from aiperf.common.enums import CommandType, CreditPhase
 from aiperf.common.environment import Environment
-from aiperf.common.metric_records_wire import TelemetryRecordsWireMessage
-from aiperf.common.models import CreditPhaseStats, ErrorDetails
+from aiperf.common.models import CreditPhaseStats
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.credit.messages import CreditPhaseStartMessage
 from aiperf.gpu_telemetry.constants import PYNVML_SOURCE_IDENTIFIER
@@ -63,6 +62,14 @@ class TestTelemetryManagerInitialization:
             manager = object.__new__(GPUTelemetryManager)
             manager.comms = MagicMock()
             manager.comms.create_push_client = MagicMock(return_value=MagicMock())
+            # BaseComponentService.__init__ is mocked, so manually set attributes
+            # that the manager's __init__ expects to exist (service_id, run, pub_client).
+            manager.service_id = "test_manager"
+            manager.run = run
+            manager.pub_client = AsyncMock()
+            manager.attach_child_lifecycle = MagicMock()
+            manager.debug = MagicMock()
+            manager.error = MagicMock()
 
             # Call actual __init__ to run real initialization logic
             GPUTelemetryManager.__init__(
@@ -184,126 +191,6 @@ class TestUrlNormalization:
         assert normalized == "http://node1:9401/dcgm/metrics"
 
 
-class TestCallbackFunctions:
-    """Test callback functions for receiving telemetry data."""
-
-    def _create_test_manager(self):
-        """Helper to create a TelemetryManager instance for testing."""
-        # Create minimal manager instance without full initialization
-        manager = GPUTelemetryManager.__new__(GPUTelemetryManager)
-        manager.service_id = "test_manager"
-        manager._collectors = {}
-        manager._collector_id_to_url = {}
-        manager._dcgm_endpoints = []
-        manager._user_provided_endpoints = []
-        manager._user_explicitly_configured_telemetry = False
-        manager._telemetry_disabled = False
-        manager._collection_interval = 0.333
-        return manager
-
-    @pytest.mark.asyncio
-    async def test_on_telemetry_records_valid(self, sample_telemetry_records):
-        """Test _on_telemetry_records with valid records."""
-        manager = self._create_test_manager()
-        manager._collector_id_to_url["test_collector"] = "http://localhost:9400/metrics"
-
-        # Mock the push client
-        mock_push_client = AsyncMock()
-        manager.records_push_client = mock_push_client
-
-        # Call the callback
-        await manager._on_telemetry_records(sample_telemetry_records, "test_collector")
-
-        # Verify push was called with correct message
-        mock_push_client.push.assert_called_once()
-        call_args = mock_push_client.push.call_args[0][0]
-        assert isinstance(call_args, TelemetryRecordsWireMessage)
-        assert call_args.service_id == "test_manager"
-        assert call_args.collector_id == "test_collector"
-        assert call_args.dcgm_url == "http://localhost:9400/metrics"
-        assert len(call_args.records) == len(sample_telemetry_records)
-        assert call_args.error is None
-
-    @pytest.mark.asyncio
-    async def test_on_telemetry_records_empty(self):
-        """Test _on_telemetry_records with empty records list skips sending."""
-        manager = self._create_test_manager()
-
-        # Mock the push client
-        mock_push_client = AsyncMock()
-        manager.records_push_client = mock_push_client
-
-        # Call with empty records
-        await manager._on_telemetry_records([], "test_collector")
-
-        # Verify push was NOT called
-        mock_push_client.push.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_on_telemetry_records_exception_handling(
-        self, sample_telemetry_records
-    ):
-        """Test _on_telemetry_records handles exceptions gracefully."""
-        manager = self._create_test_manager()
-
-        # Mock the push client to raise exception
-        mock_push_client = AsyncMock()
-        mock_push_client.push.side_effect = Exception("Network error")
-        manager.records_push_client = mock_push_client
-        manager.error = MagicMock()  # Mock error logging
-
-        # Should not raise exception
-        await manager._on_telemetry_records(sample_telemetry_records, "test_collector")
-
-        # Verify error was logged
-        manager.error.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_on_telemetry_error(self):
-        """Test _on_telemetry_error callback."""
-        manager = self._create_test_manager()
-        manager._collector_id_to_url["test_collector"] = "http://localhost:9400/metrics"
-
-        # Mock the push client
-        mock_push_client = AsyncMock()
-        manager.records_push_client = mock_push_client
-
-        error_details = ErrorDetails(message="Collection failed")
-
-        # Call the error callback
-        await manager._on_telemetry_error(error_details, "test_collector")
-
-        # Verify push was called with error message
-        mock_push_client.push.assert_called_once()
-        call_args = mock_push_client.push.call_args[0][0]
-        assert isinstance(call_args, TelemetryRecordsWireMessage)
-        assert call_args.service_id == "test_manager"
-        assert call_args.collector_id == "test_collector"
-        assert call_args.dcgm_url == "http://localhost:9400/metrics"
-        assert call_args.records == ()
-        assert call_args.error is not None
-        assert call_args.error.message == error_details.message
-
-    @pytest.mark.asyncio
-    async def test_on_telemetry_error_exception_handling(self):
-        """Test _on_telemetry_error handles exceptions during message sending."""
-        manager = self._create_test_manager()
-
-        # Mock the push client to raise exception
-        mock_push_client = AsyncMock()
-        mock_push_client.push.side_effect = Exception("Push failed")
-        manager.records_push_client = mock_push_client
-        manager.error = MagicMock()  # Mock error logging
-
-        error_details = ErrorDetails(message="Collection failed")
-
-        # Should not raise exception
-        await manager._on_telemetry_error(error_details, "test_collector")
-
-        # Verify error was logged
-        manager.error.assert_called_once()
-
-
 class TestStatusMessaging:
     """Test status message sending functionality."""
 
@@ -312,7 +199,6 @@ class TestStatusMessaging:
         manager = GPUTelemetryManager.__new__(GPUTelemetryManager)
         manager.service_id = "test_manager"
         manager._collectors = {}
-        manager._collector_id_to_url = {}
         manager._dcgm_endpoints = []
         manager._user_provided_endpoints = []
         manager._user_explicitly_configured_telemetry = False
@@ -437,7 +323,6 @@ class TestCollectorManagement:
         manager = GPUTelemetryManager.__new__(GPUTelemetryManager)
         manager.service_id = "test_manager"
         manager._collectors = {}
-        manager._collector_id_to_url = {}
         manager._dcgm_endpoints = []
         manager._user_provided_endpoints = []
         manager._user_explicitly_configured_telemetry = False
@@ -528,6 +413,12 @@ class TestEdgeCases:
             manager = object.__new__(GPUTelemetryManager)
             manager.comms = MagicMock()
             manager.comms.create_push_client = MagicMock(return_value=MagicMock())
+            manager.service_id = "test_manager"
+            manager.run = run
+            manager.pub_client = AsyncMock()
+            manager.attach_child_lifecycle = MagicMock()
+            manager.debug = MagicMock()
+            manager.error = MagicMock()
 
             GPUTelemetryManager.__init__(
                 manager,
@@ -567,6 +458,12 @@ class TestBothDefaultEndpoints:
             manager = object.__new__(GPUTelemetryManager)
             manager.comms = MagicMock()
             manager.comms.create_push_client = MagicMock(return_value=MagicMock())
+            manager.service_id = "test_manager"
+            manager.run = run
+            manager.pub_client = AsyncMock()
+            manager.attach_child_lifecycle = MagicMock()
+            manager.debug = MagicMock()
+            manager.error = MagicMock()
 
             GPUTelemetryManager.__init__(
                 manager,
@@ -625,7 +522,6 @@ class TestProfileConfigure:
         manager = GPUTelemetryManager.__new__(GPUTelemetryManager)
         manager.service_id = "test_manager"
         manager._collectors = {}
-        manager._collector_id_to_url = {}
         manager._dcgm_endpoints = list(Environment.GPU.DEFAULT_DCGM_ENDPOINTS)
         manager._user_provided_endpoints = []
         manager._user_explicitly_configured_telemetry = False
@@ -766,7 +662,6 @@ class TestSmartDefaultVisibility:
         manager = GPUTelemetryManager.__new__(GPUTelemetryManager)
         manager.service_id = "test_manager"
         manager._collectors = {}
-        manager._collector_id_to_url = {}
         manager._dcgm_endpoints = (
             list(Environment.GPU.DEFAULT_DCGM_ENDPOINTS) + user_endpoints
         )
@@ -892,7 +787,6 @@ class TestPynvmlCollectorIntegration:
         manager = GPUTelemetryManager.__new__(GPUTelemetryManager)
         manager.service_id = "test_manager"
         manager._collectors = {}
-        manager._collector_id_to_url = {}
         manager._dcgm_endpoints = list(Environment.GPU.DEFAULT_DCGM_ENDPOINTS)
         manager._user_provided_endpoints = []
         manager._user_explicitly_configured_telemetry = False
@@ -932,9 +826,6 @@ class TestPynvmlCollectorIntegration:
 
         # Should have collector registered
         assert PYNVML_SOURCE_IDENTIFIER in manager._collectors
-        assert (
-            manager._collector_id_to_url["pynvml_collector"] == PYNVML_SOURCE_IDENTIFIER
-        )
 
     @pytest.mark.asyncio
     async def test_configure_pynvml_collector_no_gpus_found(self):
@@ -1032,7 +923,6 @@ class TestCreditPhaseStart:
         manager = GPUTelemetryManager.__new__(GPUTelemetryManager)
         manager.service_id = "test_manager"
         manager._collectors = {}
-        manager._collector_id_to_url = {}
         manager._dcgm_endpoints = []
         manager._user_provided_endpoints = []
         manager._user_explicitly_configured_telemetry = False
