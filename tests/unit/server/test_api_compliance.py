@@ -382,7 +382,8 @@ class TestEmbeddings:
 class TestCohereEmbed:
     """Test /v2/embed endpoint for Cohere API compliance."""
 
-    async def test_basic_cohere_embed(self, client: AsyncClient):
+    @pytest.mark.asyncio
+    async def test_embed_cohere_basic_success(self, client: AsyncClient):
         """Test basic Cohere embed request."""
         resp = await client.post(
             "/v2/embed",
