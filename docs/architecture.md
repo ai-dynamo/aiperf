@@ -183,7 +183,8 @@ This section describes the end-to-end message flow during a benchmark run, showi
 3. Workers send requests to Inference Server (external HTTP)
 4. Workers push raw results to Record Processors
 5. Record Processors push metric records to Records Manager via a dedicated msgspec MessagePack wire payload on the records PUSH/PULL channel
-6. Records Manager aggregates and exports final results
+6. Records Manager aggregates request metrics and publishes `ProcessRecordsResultMessage` to the System Controller
+7. GPU Telemetry Manager and Server Metrics Manager accumulate their own collector records in-process and publish `ProcessTelemetryResultMessage` / `ProcessServerMetricsResultMessage` directly to the System Controller on `PROFILE_COMPLETE` — these side-channel result streams never flow through Records Manager
 
 ## Communication Architecture
 
