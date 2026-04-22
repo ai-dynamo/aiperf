@@ -1495,26 +1495,6 @@
       "pydantic-fields",
       "src/aiperf/common/models/export_models.py",
       "JsonExportData"
-    ],
-    [
-      "stdlib-json",
-      "src/aiperf/plot/dashboard/cache.py",
-      "import json"
-    ],
-    [
-      "stdlib-json",
-      "src/aiperf/plot/dashboard/cache.py",
-      "json.dumps("
-    ],
-    [
-      "stdlib-json",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "import json"
-    ],
-    [
-      "stdlib-json",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "json.loads("
     ]
   ]
 }

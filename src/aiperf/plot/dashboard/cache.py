@@ -9,10 +9,10 @@ regenerating plots when switching themes, hiding/showing plots, or exporting.
 """
 
 import hashlib
-import json
 import time
 from dataclasses import dataclass, field
 
+import orjson
 import plotly.graph_objects as go
 
 from aiperf.plot.constants import PlotTheme
@@ -220,8 +220,8 @@ def compute_config_hash(plot_config: dict) -> str:
     ]
 
     cache_dict = {k: plot_config.get(k) for k in relevant_keys}
-    json_str = json.dumps(cache_dict, sort_keys=True, default=str)
-    return hashlib.md5(json_str.encode(), usedforsecurity=False).hexdigest()[:12]
+    json_bytes = orjson.dumps(cache_dict, default=str, option=orjson.OPT_SORT_KEYS)
+    return hashlib.md5(json_bytes, usedforsecurity=False).hexdigest()[:12]
 
 
 def compute_runs_hash(selected_runs: list[int] | None) -> str:
