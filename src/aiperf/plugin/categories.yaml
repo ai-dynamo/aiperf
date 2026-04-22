@@ -160,6 +160,25 @@ results_processor:
     Final stage of metrics pipeline for aggregated statistics and summaries.
     One-to-many mapping: multiple processors can be loaded simultaneously.
 
+gpu_telemetry_processor:
+  protocol: aiperf.post_processors.base_metrics_processor:BaseMetricsProcessor
+  enum: GPUTelemetryProcessorType
+  description: |
+    GPU telemetry processors aggregate and export GPU telemetry records locally
+    within GPUTelemetryManager. Side-channel pipeline that keeps telemetry
+    records in their origin process rather than routing through RecordsManager.
+    One-to-many mapping: multiple processors can be loaded simultaneously.
+
+server_metrics_processor:
+  protocol: aiperf.post_processors.base_metrics_processor:BaseMetricsProcessor
+  enum: ServerMetricsProcessorType
+  description: |
+    Server metrics processors aggregate and export Prometheus server metrics
+    records locally within ServerMetricsManager. Side-channel pipeline that
+    keeps server metrics records in their origin process rather than routing
+    through RecordsManager.
+    One-to-many mapping: multiple processors can be loaded simultaneously.
+
 # =============================================================================
 # Accuracy Categories
 # =============================================================================

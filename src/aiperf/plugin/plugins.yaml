@@ -705,19 +705,6 @@ record_processor:
 # One-to-many mapping: multiple processors can be loaded simultaneously.
 # =============================================================================
 results_processor:
-  gpu_telemetry_accumulator:
-    class: aiperf.gpu_telemetry.accumulator:GPUTelemetryAccumulator
-    description: |
-      GPU telemetry accumulator that aggregates GPU telemetry records and computes
-      metrics in a hierarchical structure. Loaded when telemetry is enabled.
-
-  gpu_telemetry_jsonl_writer:
-    class: aiperf.gpu_telemetry.jsonl_writer:GPUTelemetryJSONLWriter
-    description: |
-      GPU telemetry JSONL writer that exports per-record GPU telemetry data to
-      JSONL files as it arrives from GPUTelemetryManager. Enabled with telemetry
-      export config.
-
   metric_results:
     class: aiperf.post_processors.metric_results_processor:MetricResultsProcessor
     description: |
@@ -737,18 +724,6 @@ results_processor:
       Record export processor that writes per-record metrics to CSV files with
       flat column layout. Enabled when export_level is RECORDS or RAW.
 
-  server_metrics_accumulator:
-    class: aiperf.server_metrics.accumulator:ServerMetricsAccumulator
-    description: |
-      Server metrics accumulator that aggregates Prometheus server metrics records
-      and computes summary statistics. Supports Gauge, Counter, and Histogram metrics.
-
-  server_metrics_jsonl_writer:
-    class: aiperf.server_metrics.jsonl_writer:ServerMetricsJSONLWriter
-    description: |
-      Server metrics JSONL writer that exports per-record server metrics data to
-      JSONL files in slim format.
-
   timeslice:
     class: aiperf.post_processors.timeslice_metric_results_processor:TimesliceMetricResultsProcessor
     description: |
@@ -761,6 +736,45 @@ results_processor:
     description: |
       Accuracy results processor that aggregates grading results and computes
       summary accuracy metrics. Self-disables when accuracy mode is off.
+
+# =============================================================================
+# GPU Telemetry Processors
+# =============================================================================
+# GPU telemetry processors aggregate and export GPU telemetry records locally
+# within GPUTelemetryManager. One-to-many mapping.
+# =============================================================================
+gpu_telemetry_processor:
+  gpu_telemetry_accumulator:
+    class: aiperf.gpu_telemetry.accumulator:GPUTelemetryAccumulator
+    description: |
+      GPU telemetry accumulator that aggregates GPU telemetry records and computes
+      metrics in a hierarchical structure. Loaded when telemetry is enabled.
+
+  gpu_telemetry_jsonl_writer:
+    class: aiperf.gpu_telemetry.jsonl_writer:GPUTelemetryJSONLWriter
+    description: |
+      GPU telemetry JSONL writer that exports per-record GPU telemetry data to
+      JSONL files as it arrives from GPUTelemetryManager. Enabled with telemetry
+      export config.
+
+# =============================================================================
+# Server Metrics Processors
+# =============================================================================
+# Server metrics processors aggregate and export Prometheus server metrics
+# records locally within ServerMetricsManager. One-to-many mapping.
+# =============================================================================
+server_metrics_processor:
+  server_metrics_accumulator:
+    class: aiperf.server_metrics.accumulator:ServerMetricsAccumulator
+    description: |
+      Server metrics accumulator that aggregates Prometheus server metrics records
+      and computes summary statistics. Supports Gauge, Counter, and Histogram metrics.
+
+  server_metrics_jsonl_writer:
+    class: aiperf.server_metrics.jsonl_writer:ServerMetricsJSONLWriter
+    description: |
+      Server metrics JSONL writer that exports per-record server metrics data to
+      JSONL files in slim format.
 
 # =============================================================================
 # Data Exporters
