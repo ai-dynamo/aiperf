@@ -112,6 +112,7 @@ def parallel_decode(
             tokenizer_name,
             trust_remote_code=trust_remote_code,
             revision=revision,
+            resolve_alias=False,
         )
         return [tokenizer.decode(tokens) for tokens in token_sequences]
 
