@@ -65,6 +65,14 @@ async def on_create(
     job_id = name
     logger.info(f"Creating AIPerfJob {namespace}/{name}")
 
+    # Drop any stale cancellation flag left over from a previously-deleted
+    # CR with the same name. Without this, deleting and recreating a CR of
+    # the same name inherits the sticky cancel flag and the new CR can
+    # never exit Pending.
+    from aiperf.operator.client_cache import clear_cancellation, job_key
+
+    clear_cancellation(job_key(namespace, job_id))
+
     status = StatusBuilder(patch)
 
     try:

@@ -66,6 +66,21 @@ def is_cancellation_requested(key: str) -> bool:
     return event is not None and event.is_set()
 
 
+def clear_cancellation(key: str) -> None:
+    """Drop the cancellation flag for a job key.
+
+    `request_cancellation` is sticky by design: once set, a flag stays set
+    for the lifetime of the operator process so that in-flight observers
+    (fetch-retry, etc.) reliably short-circuit even after the client-cache
+    entry is freed. But when a new CR is created with the same
+    namespace/name as a previously-deleted one, the key collides and the
+    new CR inherits the old flag — every monitor tick skips, the CR stays
+    Pending forever, results are never downloaded. Call this from
+    `on_create` to give the new CR a clean slate.
+    """
+    _cancellation_events.pop(key, None)
+
+
 def job_key(namespace: str, job_id: str) -> str:
     """Create a unique cache key scoped to namespace.
 
