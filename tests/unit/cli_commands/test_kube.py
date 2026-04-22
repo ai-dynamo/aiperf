@@ -336,10 +336,15 @@ class TestResultsCommand:
 
         mock_kube_client.find_job.return_value = _sample_job_info()
         mock_kube_client.find_jobset.return_value = running_jobset_info
-        mock_kube_client.find_controller_pod.return_value = None
-        with patch(
-            "aiperf.kubernetes.results.retrieve_results_from_api",
-            new=AsyncMock(return_value=False),
+        with (
+            patch(
+                "aiperf.kubernetes.results.retrieve_results_from_api",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "aiperf.kubernetes.results.find_controller_pod",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             await results(
                 job_id="abc123",
@@ -750,8 +755,11 @@ class TestAttachCommandAdditional:
 
         mock_kube_client.find_job.return_value = _sample_job_info()
         mock_kube_client.find_jobset.return_value = running_jobset_info
-        mock_kube_client.find_controller_pod.return_value = None
-        await attach(job_id="abc123", manage_options=manage_options)
+        with patch(
+            "aiperf.kubernetes.attach.find_controller_pod",
+            new=AsyncMock(return_value=None),
+        ):
+            await attach(job_id="abc123", manage_options=manage_options)
 
         captured = capsys.readouterr()
         assert "No controller pod found" in captured.out

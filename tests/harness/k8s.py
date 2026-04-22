@@ -9,35 +9,85 @@ as fixtures; test files can also import them directly.
 from __future__ import annotations
 
 import copy
+from contextlib import ExitStack, contextmanager
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from aiperf.config.benchmark import BenchmarkRun
 
-import kr8s
+from kubernetes_asyncio.client import ApiClient
+from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.config import AIPerfConfig
 from aiperf.config.deployment import PodTemplateConfig
-from aiperf.kubernetes.client import AIPerfKubeClient
 
 # =============================================================================
-# Mock kr8s API
+# Mock ApiClient + accessor patchers
 # =============================================================================
 
 
-def build_mock_kr8s_api() -> MagicMock:
-    """Create a mock kr8s async API client."""
-    api = MagicMock(spec=kr8s.Api)
-    api.async_get = AsyncMock(return_value=[])
+def build_mock_api() -> MagicMock:
+    """Return a MagicMock(spec=ApiClient) with AsyncMock close()."""
+    api = MagicMock(spec=ApiClient)
+    api.close = AsyncMock()
     return api
 
 
-def build_mock_kube_client(api: MagicMock | None = None) -> AIPerfKubeClient:
-    """Create a mock AIPerfKubeClient wrapping a mock kr8s API."""
-    if api is None:
-        api = build_mock_kr8s_api()
-    return AIPerfKubeClient(api)
+@contextmanager
+def patch_api_accessors(
+    *,
+    core: MagicMock | None = None,
+    custom: MagicMock | None = None,
+    apps: MagicMock | None = None,
+    rbac: MagicMock | None = None,
+    version: MagicMock | None = None,
+    module_targets: list[str] | None = None,
+) -> Iterator[dict[str, MagicMock]]:
+    """Patch kubernetes_asyncio typed-API constructors in listed modules.
+
+    ``module_targets`` is the list of fully-qualified module paths to patch.
+    Each target is patched so that ``client.CoreV1Api(api)`` / etc. return the
+    supplied mock. If a mock is not provided, a ``MagicMock`` is created.
+    """
+    targets = module_targets or ["aiperf.kubernetes.client"]
+    accessors: dict[str, MagicMock] = {
+        "core": core or MagicMock(),
+        "custom": custom or MagicMock(),
+        "apps": apps or MagicMock(),
+        "rbac": rbac or MagicMock(),
+        "version": version or MagicMock(),
+    }
+
+    stack = ExitStack()
+    try:
+        for module in targets:
+            stack.enter_context(
+                patch(f"{module}.client.CoreV1Api", return_value=accessors["core"])
+            )
+            stack.enter_context(
+                patch(
+                    f"{module}.client.CustomObjectsApi",
+                    return_value=accessors["custom"],
+                )
+            )
+            stack.enter_context(
+                patch(f"{module}.client.AppsV1Api", return_value=accessors["apps"])
+            )
+            stack.enter_context(
+                patch(
+                    f"{module}.client.RbacAuthorizationV1Api",
+                    return_value=accessors["rbac"],
+                )
+            )
+            stack.enter_context(
+                patch(f"{module}.client.VersionApi", return_value=accessors["version"])
+            )
+        yield accessors
+    finally:
+        stack.close()
 
 
 # =============================================================================
@@ -45,8 +95,23 @@ def build_mock_kube_client(api: MagicMock | None = None) -> AIPerfKubeClient:
 # =============================================================================
 
 
-def create_server_error(status_code: int, reason: str = "Error") -> kr8s.ServerError:
-    """Create a kr8s ServerError for testing error handling."""
+def create_api_exception(
+    status_code: int, reason: str = "Error", body: str | None = None
+) -> ApiException:
+    """Create an ApiException for testing kubernetes_asyncio error paths."""
+    return ApiException(status=status_code, reason=reason, http_resp=None)
+
+
+# ---------------------------------------------------------------------------
+# Deprecated kr8s-era compatibility shims (kept until Task 3/7 rewrites their
+# preflight test modules; safe to delete in Task 8 cleanup)
+# ---------------------------------------------------------------------------
+
+
+def create_server_error(status_code: int, reason: str = "Error"):
+    """Return a kr8s.ServerError; deprecated shim for unmigrated preflight tests."""
+    import kr8s
+
     mock_response = MagicMock()
     mock_response.status_code = status_code
     mock_response.reason_phrase = reason
@@ -54,18 +119,21 @@ def create_server_error(status_code: int, reason: str = "Error") -> kr8s.ServerE
     return kr8s.ServerError(reason, response=mock_response)
 
 
-def create_not_found_error(name: str = "resource") -> kr8s.NotFoundError:
-    """Create a kr8s NotFoundError for testing."""
+def create_not_found_error(name: str = "resource"):
+    """Return a kr8s.NotFoundError; deprecated shim for unmigrated preflight tests."""
+    import kr8s
+
     return kr8s.NotFoundError(f"{name} not found")
 
 
-# =============================================================================
-# Mock kr8s Object
-# =============================================================================
-
-
 def make_kr8s_object(raw: dict[str, Any]) -> MagicMock:
-    """Create a mock kr8s object with a .raw attribute from a dict."""
+    """Create a mock kr8s-style object with a .raw attribute from a dict.
+
+    Deprecated compatibility shim used by tests/unit/kubernetes/test_preflight.py
+    and tests/unit/operator/test_preflight.py, which still expect the kr8s
+    object shape. Those modules are rewritten against typed V1* objects in
+    Task 3 and Task 7 respectively; this helper is removed then.
+    """
     obj = MagicMock()
     obj.raw = raw
     obj.name = raw.get("metadata", {}).get("name", "")
@@ -74,7 +142,10 @@ def make_kr8s_object(raw: dict[str, Any]) -> MagicMock:
 
 
 async def async_list(items: list) -> Any:
-    """Create an async generator from a list (for mocking api.async_get)."""
+    """Create an async generator from a list (for mocking kr8s api.async_get).
+
+    Deprecated; retained for the kr8s-era preflight tests noted above.
+    """
     for item in items:
         yield item
 
@@ -85,7 +156,7 @@ async def async_list(items: list) -> Any:
 
 
 def create_jobset_list_response(jobsets: list[dict[str, Any]]) -> dict[str, Any]:
-    """Create a JobSet list API response."""
+    """Create a JobSet list API response (CustomObjectsApi shape)."""
     return {"items": jobsets}
 
 
@@ -144,7 +215,7 @@ def build_failed_jobset(base: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def build_sample_pod() -> dict[str, Any]:
-    """Create a sample Pod dict (kr8s .raw format) for testing."""
+    """Create a sample Pod dict (raw K8s API format) for testing."""
     return {
         "apiVersion": "v1",
         "kind": "Pod",

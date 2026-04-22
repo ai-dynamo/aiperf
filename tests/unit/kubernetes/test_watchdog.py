@@ -5,7 +5,7 @@
 Focuses on:
 - Data model construction and properties (WatchdogReport, PodTimeline, etc.)
 - WatchdogDataSource protocol compliance
-- Kr8sWatchdogSource parsing of raw k8s objects
+- K8sWatchdogSource parsing of typed kubernetes_asyncio objects
 - BenchmarkWatchdog pod analysis, event processing, timeout detection
 - Helper functions (_fmt_duration, _pod_role, _phase_icon, etc.)
 """
@@ -13,17 +13,20 @@ Focuses on:
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from kubernetes_asyncio.client import ApiClient
+from kubernetes_asyncio.client.exceptions import ApiException
 from pytest import param
 
 from aiperf.kubernetes.watchdog import (
     BenchmarkWatchdog,
     ContainerInfo,
     EventInfo,
-    Kr8sWatchdogSource,
+    K8sWatchdogSource,
     NodeResources,
     PodInfo,
     PodMetrics,
@@ -40,16 +43,123 @@ from aiperf.kubernetes.watchdog import (
 )
 from tests.harness.time_traveler import TimeTraveler
 
+# ============================================================
+# Helpers for building typed kubernetes_asyncio fakes
+# ============================================================
 
-def async_list_mock(items: list) -> MagicMock:
-    """Return a MagicMock for kr8s .list() that behaves as an async generator."""
 
-    async def _agen(*_args, **_kwargs):
-        for item in items:
-            yield item
+def _pod_obj(
+    *,
+    name: str = "pod-1",
+    namespace: str = "ns",
+    phase: str = "Running",
+    creation_timestamp: datetime | None = None,
+    container_statuses: list[Any] | None = None,
+    init_container_statuses: list[Any] | None = None,
+) -> MagicMock:
+    """Build an object that looks like a V1Pod with the attributes we access."""
+    pod = MagicMock()
+    pod.metadata = MagicMock()
+    pod.metadata.name = name
+    pod.metadata.namespace = namespace
+    pod.metadata.creation_timestamp = creation_timestamp
+    pod.status = MagicMock()
+    pod.status.phase = phase
+    pod.status.container_statuses = container_statuses
+    pod.status.init_container_statuses = init_container_statuses
+    return pod
 
-    m = MagicMock(side_effect=_agen)
-    return m
+
+def _container_status(
+    *,
+    name: str = "main",
+    ready: bool = True,
+    restart_count: int = 0,
+    running: bool = False,
+    waiting_reason: str | None = None,
+    waiting_message: str | None = None,
+    terminated_reason: str | None = None,
+    terminated_message: str | None = None,
+    terminated_exit_code: int | None = None,
+) -> MagicMock:
+    """Build an object that looks like a V1ContainerStatus."""
+    cs = MagicMock()
+    cs.name = name
+    cs.ready = ready
+    cs.restart_count = restart_count
+    cs.state = MagicMock()
+    cs.state.running = MagicMock() if running else None
+    if waiting_reason is not None or waiting_message is not None:
+        cs.state.waiting = MagicMock()
+        cs.state.waiting.reason = waiting_reason
+        cs.state.waiting.message = waiting_message
+    else:
+        cs.state.waiting = None
+    if (
+        terminated_reason is not None
+        or terminated_message is not None
+        or terminated_exit_code is not None
+    ):
+        cs.state.terminated = MagicMock()
+        cs.state.terminated.reason = terminated_reason
+        cs.state.terminated.message = terminated_message
+        cs.state.terminated.exit_code = terminated_exit_code
+    else:
+        cs.state.terminated = None
+    return cs
+
+
+def _event_obj(
+    *,
+    type_: str = "Normal",
+    reason: str = "",
+    message: str = "",
+    involved_name: str = "pod-1",
+    last_timestamp: datetime | None = None,
+) -> MagicMock:
+    """Build an object that looks like a V1Event."""
+    ev = MagicMock()
+    ev.type = type_
+    ev.reason = reason
+    ev.message = message
+    ev.involved_object = MagicMock()
+    ev.involved_object.name = involved_name
+    ev.last_timestamp = last_timestamp
+    return ev
+
+
+def _node_obj(
+    *,
+    name: str = "node-1",
+    allocatable: dict[str, str] | None = None,
+) -> MagicMock:
+    """Build an object that looks like a V1Node."""
+    node = MagicMock()
+    node.metadata = MagicMock()
+    node.metadata.name = name
+    node.status = MagicMock()
+    node.status.allocatable = allocatable or {}
+    return node
+
+
+def _ns_obj(*, name: str = "default") -> MagicMock:
+    """Build an object that looks like a V1Namespace."""
+    ns = MagicMock()
+    ns.metadata = MagicMock()
+    ns.metadata.name = name
+    return ns
+
+
+def _list_result(items: list[Any]) -> MagicMock:
+    """Build a list API response with .items."""
+    result = MagicMock()
+    result.items = items
+    return result
+
+
+def _patch_core_api(core_mock: MagicMock):
+    """Patch kubernetes_asyncio.client.CoreV1Api inside watchdog module."""
+    return patch("aiperf.kubernetes.watchdog.client.CoreV1Api", return_value=core_mock)
 
 
 # ============================================================
@@ -337,8 +447,8 @@ class TestWatchdogReport:
 class TestWatchdogDataSourceProtocol:
     """Verify protocol compliance."""
 
-    def test_kr8s_source_satisfies_protocol(self) -> None:
-        source = Kr8sWatchdogSource(api=MagicMock())
+    def test_k8s_source_satisfies_protocol(self) -> None:
+        source = K8sWatchdogSource(api=MagicMock(spec=ApiClient))
         assert isinstance(source, WatchdogDataSource)
 
     def test_fake_source_satisfies_protocol(self) -> None:
@@ -347,75 +457,66 @@ class TestWatchdogDataSourceProtocol:
 
 
 # ============================================================
-# Kr8sWatchdogSource
+# K8sWatchdogSource
 # ============================================================
 
 
-class TestKr8sWatchdogSourceGetPods:
-    """Verify pod parsing from raw kr8s objects."""
+class TestK8sWatchdogSourceGetPods:
+    """Verify pod parsing from V1Pod objects."""
 
     @pytest.mark.asyncio
     async def test_get_pods_parses_running_pod(self) -> None:
-        mock_pod = MagicMock()
-        mock_pod.raw = {
-            "metadata": {
-                "name": "aiperf-worker-abc",
-                "namespace": "test-ns",
-                "creationTimestamp": "2026-01-15T10:30:00Z",
-            },
-            "status": {
-                "phase": "Running",
-                "containerStatuses": [
-                    {
-                        "name": "main",
-                        "ready": True,
-                        "restartCount": 0,
-                        "state": {"running": {}},
-                    }
-                ],
-            },
-        }
+        pod = _pod_obj(
+            name="aiperf-worker-abc",
+            namespace="test-ns",
+            phase="Running",
+            creation_timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=timezone.utc),
+            container_statuses=[
+                _container_status(
+                    name="main", ready=True, restart_count=0, running=True
+                )
+            ],
+        )
+        mock_core = MagicMock()
+        mock_core.list_namespaced_pod = AsyncMock(return_value=_list_result([pod]))
 
-        with patch("kr8s.asyncio.objects.Pod.list", new=async_list_mock([mock_pod])):
-            source = Kr8sWatchdogSource(api=MagicMock())
+        with _patch_core_api(mock_core):
+            source = K8sWatchdogSource(api=MagicMock(spec=ApiClient))
             pods = await source.get_pods("test-ns")
 
         assert len(pods) == 1
-        pod = pods[0]
-        assert pod.name == "aiperf-worker-abc"
-        assert pod.phase == "Running"
-        assert pod.ready is True
-        assert pod.restarts == 0
-        assert len(pod.container_statuses) == 1
+        result = pods[0]
+        assert result.name == "aiperf-worker-abc"
+        assert result.phase == "Running"
+        assert result.ready is True
+        assert result.restarts == 0
+        assert len(result.container_statuses) == 1
 
     @pytest.mark.asyncio
     async def test_get_pods_sums_init_container_restarts(self) -> None:
-        mock_pod = MagicMock()
-        mock_pod.raw = {
-            "metadata": {"name": "pod-1", "namespace": "ns"},
-            "status": {
-                "phase": "Running",
-                "containerStatuses": [
-                    {
-                        "name": "main",
-                        "ready": True,
-                        "restartCount": 1,
-                        "state": {"running": {}},
-                    },
-                ],
-                "initContainerStatuses": [
-                    {
-                        "name": "init",
-                        "ready": True,
-                        "restartCount": 2,
-                        "state": {"terminated": {"exitCode": 0}},
-                    },
-                ],
-            },
-        }
+        pod = _pod_obj(
+            name="pod-1",
+            namespace="ns",
+            phase="Running",
+            container_statuses=[
+                _container_status(
+                    name="main", ready=True, restart_count=1, running=True
+                )
+            ],
+            init_container_statuses=[
+                _container_status(
+                    name="init",
+                    ready=True,
+                    restart_count=2,
+                    terminated_exit_code=0,
+                )
+            ],
+        )
+        mock_core = MagicMock()
+        mock_core.list_namespaced_pod = AsyncMock(return_value=_list_result([pod]))
 
-        with patch("kr8s.asyncio.objects.Pod.list", new=async_list_mock([mock_pod])):
-            source = Kr8sWatchdogSource(api=MagicMock())
+        with _patch_core_api(mock_core):
+            source = K8sWatchdogSource(api=MagicMock(spec=ApiClient))
             pods = await source.get_pods("ns")
 
         assert pods[0].restarts == 3
@@ -423,70 +524,70 @@ class TestKr8sWatchdogSourceGetPods:
 
     @pytest.mark.asyncio
     async def test_get_pods_not_ready_when_no_containers(self) -> None:
-        mock_pod = MagicMock()
-        mock_pod.raw = {
-            "metadata": {"name": "pod-1", "namespace": "ns"},
-            "status": {"phase": "Pending"},
-        }
+        pod = _pod_obj(
+            name="pod-1", namespace="ns", phase="Pending", container_statuses=None
+        )
+        mock_core = MagicMock()
+        mock_core.list_namespaced_pod = AsyncMock(return_value=_list_result([pod]))
 
-        with patch("kr8s.asyncio.objects.Pod.list", new=async_list_mock([mock_pod])):
-            source = Kr8sWatchdogSource(api=MagicMock())
+        with _patch_core_api(mock_core):
+            source = K8sWatchdogSource(api=MagicMock(spec=ApiClient))
             pods = await source.get_pods("ns")
 
         assert pods[0].ready is False
 
     @pytest.mark.asyncio
     async def test_get_pods_not_ready_when_container_not_ready(self) -> None:
-        mock_pod = MagicMock()
-        mock_pod.raw = {
-            "metadata": {"name": "pod-1", "namespace": "ns"},
-            "status": {
-                "phase": "Running",
-                "containerStatuses": [
-                    {
-                        "name": "main",
-                        "ready": False,
-                        "restartCount": 0,
-                        "state": {"waiting": {"reason": "CrashLoopBackOff"}},
-                    },
-                ],
-            },
-        }
+        pod = _pod_obj(
+            name="pod-1",
+            namespace="ns",
+            phase="Running",
+            container_statuses=[
+                _container_status(
+                    name="main",
+                    ready=False,
+                    restart_count=0,
+                    waiting_reason="CrashLoopBackOff",
+                )
+            ],
+        )
+        mock_core = MagicMock()
+        mock_core.list_namespaced_pod = AsyncMock(return_value=_list_result([pod]))
 
-        with patch("kr8s.asyncio.objects.Pod.list", new=async_list_mock([mock_pod])):
-            source = Kr8sWatchdogSource(api=MagicMock())
+        with _patch_core_api(mock_core):
+            source = K8sWatchdogSource(api=MagicMock(spec=ApiClient))
             pods = await source.get_pods("ns")
 
         assert pods[0].ready is False
         assert pods[0].container_statuses[0].reason == "CrashLoopBackOff"
 
 
-class TestKr8sWatchdogSourceGetEvents:
+class TestK8sWatchdogSourceGetEvents:
     """Verify event parsing and sorting."""
 
     @pytest.mark.asyncio
     async def test_get_events_parses_and_sorts_by_timestamp(self) -> None:
-        older = MagicMock()
-        older.raw = {
-            "type": "Warning",
-            "reason": "FailedScheduling",
-            "message": "no nodes available",
-            "involvedObject": {"name": "pod-1"},
-            "lastTimestamp": "2026-01-15T10:00:00Z",
-        }
-        newer = MagicMock()
-        newer.raw = {
-            "type": "Normal",
-            "reason": "Scheduled",
-            "message": "assigned to node",
-            "involvedObject": {"name": "pod-1"},
-            "lastTimestamp": "2026-01-15T10:30:00Z",
-        }
+        older = _event_obj(
+            type_="Warning",
+            reason="FailedScheduling",
+            message="no nodes available",
+            involved_name="pod-1",
+            last_timestamp=datetime(2026, 1, 15, 10, 0, tzinfo=timezone.utc),
+        )
+        newer = _event_obj(
+            type_="Normal",
+            reason="Scheduled",
+            message="assigned to node",
+            involved_name="pod-1",
+            last_timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=timezone.utc),
+        )
+        mock_core = MagicMock()
+        mock_core.list_namespaced_event = AsyncMock(
+            return_value=_list_result([older, newer])
+        )
 
-        with patch(
-            "kr8s.asyncio.objects.Event.list", new=async_list_mock([older, newer])
-        ):
-            source = Kr8sWatchdogSource(api=MagicMock())
+        with _patch_core_api(mock_core):
+            source = K8sWatchdogSource(api=MagicMock(spec=ApiClient))
             events = await source.get_events("ns")
 
         assert len(events) == 2
@@ -495,44 +596,46 @@ class TestKr8sWatchdogSourceGetEvents:
 
     @pytest.mark.asyncio
     async def test_get_events_respects_limit(self) -> None:
-        raw_events = []
-        for i in range(5):
-            ev = MagicMock()
-            ev.raw = {
-                "type": "Normal",
-                "reason": f"Event{i}",
-                "message": f"msg{i}",
-                "involvedObject": {"name": "pod-1"},
-                "lastTimestamp": None,
-            }
-            raw_events.append(ev)
+        raw_events = [
+            _event_obj(
+                type_="Normal",
+                reason=f"Event{i}",
+                message=f"msg{i}",
+                involved_name="pod-1",
+                last_timestamp=None,
+            )
+            for i in range(5)
+        ]
+        mock_core = MagicMock()
+        mock_core.list_namespaced_event = AsyncMock(
+            return_value=_list_result(raw_events)
+        )
 
-        with patch("kr8s.asyncio.objects.Event.list", new=async_list_mock(raw_events)):
-            source = Kr8sWatchdogSource(api=MagicMock())
+        with _patch_core_api(mock_core):
+            source = K8sWatchdogSource(api=MagicMock(spec=ApiClient))
             events = await source.get_events("ns", limit=2)
 
         assert len(events) == 2
 
 
-class TestKr8sWatchdogSourceGetNodeResources:
+class TestK8sWatchdogSourceGetNodeResources:
     """Verify node resource parsing."""
 
     @pytest.mark.asyncio
     async def test_get_node_resources_parses_gpu_count(self) -> None:
-        mock_node = MagicMock()
-        mock_node.raw = {
-            "metadata": {"name": "gpu-node-1"},
-            "status": {
-                "allocatable": {
-                    "cpu": "64",
-                    "memory": "256Gi",
-                    "nvidia.com/gpu": "8",
-                },
+        node = _node_obj(
+            name="gpu-node-1",
+            allocatable={
+                "cpu": "64",
+                "memory": "256Gi",
+                "nvidia.com/gpu": "8",
             },
-        }
+        )
+        mock_core = MagicMock()
+        mock_core.list_node = AsyncMock(return_value=_list_result([node]))
 
-        with patch("kr8s.asyncio.objects.Node.list", new=async_list_mock([mock_node])):
-            source = Kr8sWatchdogSource(api=MagicMock())
+        with _patch_core_api(mock_core):
+            source = K8sWatchdogSource(api=MagicMock(spec=ApiClient))
             nodes = await source.get_node_resources()
 
         assert len(nodes) == 1
@@ -542,89 +645,87 @@ class TestKr8sWatchdogSourceGetNodeResources:
 
     @pytest.mark.asyncio
     async def test_get_node_resources_handles_missing_gpu(self) -> None:
-        mock_node = MagicMock()
-        mock_node.raw = {
-            "metadata": {"name": "cpu-node"},
-            "status": {"allocatable": {"cpu": "16", "memory": "64Gi"}},
-        }
+        node = _node_obj(name="cpu-node", allocatable={"cpu": "16", "memory": "64Gi"})
+        mock_core = MagicMock()
+        mock_core.list_node = AsyncMock(return_value=_list_result([node]))
 
-        with patch("kr8s.asyncio.objects.Node.list", new=async_list_mock([mock_node])):
-            source = Kr8sWatchdogSource(api=MagicMock())
+        with _patch_core_api(mock_core):
+            source = K8sWatchdogSource(api=MagicMock(spec=ApiClient))
             nodes = await source.get_node_resources()
 
         assert nodes[0].allocatable_gpu == 0
 
     @pytest.mark.asyncio
     async def test_get_node_resources_handles_invalid_gpu_string(self) -> None:
-        mock_node = MagicMock()
-        mock_node.raw = {
-            "metadata": {"name": "bad-node"},
-            "status": {"allocatable": {"nvidia.com/gpu": "not-a-number"}},
-        }
+        node = _node_obj(
+            name="bad-node", allocatable={"nvidia.com/gpu": "not-a-number"}
+        )
+        mock_core = MagicMock()
+        mock_core.list_node = AsyncMock(return_value=_list_result([node]))
 
-        with patch("kr8s.asyncio.objects.Node.list", new=async_list_mock([mock_node])):
-            source = Kr8sWatchdogSource(api=MagicMock())
+        with _patch_core_api(mock_core):
+            source = K8sWatchdogSource(api=MagicMock(spec=ApiClient))
             nodes = await source.get_node_resources()
 
         assert nodes[0].allocatable_gpu == 0
 
 
-class TestKr8sWatchdogSourceGetNamespaces:
+class TestK8sWatchdogSourceGetNamespaces:
     """Verify namespace listing."""
 
     @pytest.mark.asyncio
     async def test_get_namespaces_returns_names(self) -> None:
-        ns1 = MagicMock()
-        ns1.raw = {"metadata": {"name": "aiperf-run-1"}}
-        ns2 = MagicMock()
-        ns2.raw = {"metadata": {"name": "default"}}
+        ns1 = _ns_obj(name="aiperf-run-1")
+        ns2 = _ns_obj(name="default")
+        mock_core = MagicMock()
+        mock_core.list_namespace = AsyncMock(return_value=_list_result([ns1, ns2]))
 
-        with patch(
-            "kr8s.asyncio.objects.Namespace.list", new=async_list_mock([ns1, ns2])
-        ):
-            source = Kr8sWatchdogSource(api=MagicMock())
+        with _patch_core_api(mock_core):
+            source = K8sWatchdogSource(api=MagicMock(spec=ApiClient))
             result = await source.get_namespaces()
 
         assert result == ["aiperf-run-1", "default"]
 
     @pytest.mark.asyncio
     async def test_get_namespaces_passes_label_selector(self) -> None:
-        mock_list = async_list_mock([])
-        with patch("kr8s.asyncio.objects.Namespace.list", new=mock_list):
-            source = Kr8sWatchdogSource(api=MagicMock())
+        mock_core = MagicMock()
+        mock_core.list_namespace = AsyncMock(return_value=_list_result([]))
+
+        with _patch_core_api(mock_core):
+            source = K8sWatchdogSource(api=MagicMock(spec=ApiClient))
             await source.get_namespaces(label_selector="app=aiperf")
 
-        mock_list.assert_called_once()
-        call_kwargs = mock_list.call_args.kwargs
+        mock_core.list_namespace.assert_awaited_once()
+        call_kwargs = mock_core.list_namespace.call_args.kwargs
         assert call_kwargs["label_selector"] == "app=aiperf"
 
 
-class TestKr8sWatchdogSourceGetPodLogs:
+class TestK8sWatchdogSourceGetPodLogs:
     """Verify pod log fetching."""
 
     @pytest.mark.asyncio
     async def test_get_pod_logs_returns_logs(self) -> None:
-        mock_pod = MagicMock()
-        mock_pod.logs = AsyncMock(return_value="some log output")
+        mock_core = MagicMock()
+        mock_core.read_namespaced_pod_log = AsyncMock(return_value="some log output")
 
-        with patch(
-            "kr8s.asyncio.objects.Pod.get",
-            new_callable=AsyncMock,
-            return_value=mock_pod,
-        ):
-            source = Kr8sWatchdogSource(api=MagicMock())
+        with _patch_core_api(mock_core):
+            source = K8sWatchdogSource(api=MagicMock(spec=ApiClient))
             result = await source.get_pod_logs("pod-1", "ns")
 
         assert result == "some log output"
+        mock_core.read_namespaced_pod_log.assert_awaited_once_with(
+            name="pod-1", namespace="ns", tail_lines=50
+        )
 
     @pytest.mark.asyncio
-    async def test_get_pod_logs_returns_empty_on_error(self) -> None:
-        with patch(
-            "kr8s.asyncio.objects.Pod.get",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("not found"),
-        ):
-            source = Kr8sWatchdogSource(api=MagicMock())
+    async def test_get_pod_logs_returns_empty_on_api_exception(self) -> None:
+        mock_core = MagicMock()
+        mock_core.read_namespaced_pod_log = AsyncMock(
+            side_effect=ApiException(status=404, reason="Not Found")
+        )
+
+        with _patch_core_api(mock_core):
+            source = K8sWatchdogSource(api=MagicMock(spec=ApiClient))
             result = await source.get_pod_logs("missing-pod", "ns")
 
         assert result == ""
