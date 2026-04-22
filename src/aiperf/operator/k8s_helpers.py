@@ -10,7 +10,9 @@ import random
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
-import kr8s
+from kubernetes_asyncio import client
+from kubernetes_asyncio.client import ApiClient
+from kubernetes_asyncio.client.exceptions import ApiException
 
 logger = logging.getLogger(__name__)
 
@@ -66,12 +68,62 @@ async def retry_with_backoff(
     )  # pragma: no cover
 
 
-async def create_idempotent(
-    resource_class: type, manifest: dict[str, Any], api: kr8s.Api
+async def create_idempotent_custom_object(
+    api: ApiClient,
+    group: str,
+    version: str,
+    plural: str,
+    body: dict[str, Any],
+    namespace: str,
 ) -> None:
-    """Create a K8s resource, ignoring AlreadyExists (409)."""
+    """Create a custom resource, ignoring AlreadyExists (409)."""
     try:
-        await resource_class(manifest, api=api).create()
-    except kr8s.ServerError as e:
-        if not (e.response and e.response.status_code == 409):
+        await client.CustomObjectsApi(api).create_namespaced_custom_object(
+            group=group,
+            version=version,
+            plural=plural,
+            namespace=namespace,
+            body=body,
+        )
+    except ApiException as e:
+        if e.status != 409:
+            raise
+
+
+async def create_idempotent_config_map(
+    api: ApiClient, body: dict[str, Any], namespace: str
+) -> None:
+    """Create a ConfigMap, ignoring AlreadyExists (409)."""
+    try:
+        await client.CoreV1Api(api).create_namespaced_config_map(
+            namespace=namespace, body=body
+        )
+    except ApiException as e:
+        if e.status != 409:
+            raise
+
+
+async def create_idempotent_role(
+    api: ApiClient, body: dict[str, Any], namespace: str
+) -> None:
+    """Create a Role, ignoring AlreadyExists (409)."""
+    try:
+        await client.RbacAuthorizationV1Api(api).create_namespaced_role(
+            namespace=namespace, body=body
+        )
+    except ApiException as e:
+        if e.status != 409:
+            raise
+
+
+async def create_idempotent_role_binding(
+    api: ApiClient, body: dict[str, Any], namespace: str
+) -> None:
+    """Create a RoleBinding, ignoring AlreadyExists (409)."""
+    try:
+        await client.RbacAuthorizationV1Api(api).create_namespaced_role_binding(
+            namespace=namespace, body=body
+        )
+    except ApiException as e:
+        if e.status != 409:
             raise

@@ -73,22 +73,27 @@ class TestOnCancel:
 
     @pytest.mark.asyncio
     async def test_cancels_single_job(self, mock_events: None) -> None:
+        from contextlib import asynccontextmanager
+
         from aiperf.operator.handlers.lifecycle import on_cancel
 
-        mock_js = AsyncMock()
+        mock_delete = AsyncMock(return_value={})
+        mock_custom = MagicMock(delete_namespaced_custom_object=mock_delete)
         patch = MagicMock()
         patch.status = {}
 
+        @asynccontextmanager
+        async def _fake_client():
+            yield MagicMock()
+
         with (
             mock_patch(
-                "aiperf.operator.handlers.lifecycle.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.lifecycle.k8s_client",
+                return_value=_fake_client(),
             ),
             mock_patch(
-                "aiperf.operator.handlers.lifecycle.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_js,
+                "aiperf.operator.handlers.lifecycle.client.CustomObjectsApi",
+                return_value=mock_custom,
             ),
         ):
             await on_cancel(
@@ -100,7 +105,7 @@ class TestOnCancel:
                 patch=patch,
             )
 
-        mock_js.delete.assert_called_once()
+        mock_delete.assert_awaited_once()
         assert patch.status["phase"] == Phase.CANCELLED
 
 

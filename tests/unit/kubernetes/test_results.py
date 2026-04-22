@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import orjson
 import pytest
+from kubernetes_asyncio.client import ApiClient
 from pytest import param
 
 from aiperf.kubernetes.constants import Containers
@@ -48,6 +49,13 @@ from aiperf.kubernetes.subproc import CommandResult
 # ============================================================
 # Helpers
 # ============================================================
+
+
+def _make_api() -> MagicMock:
+    """Create a mock kubernetes_asyncio ApiClient."""
+    api = MagicMock(spec=ApiClient)
+    api.close = AsyncMock()
+    return api
 
 
 def _make_jobset_info(status: str = "Running") -> JobSetInfo:
@@ -150,6 +158,30 @@ class FakeSession:
         pass
 
 
+_MODULE = "aiperf.kubernetes.results"
+
+
+def _patch_find_retrievable_pod(result):
+    """Patch find_retrievable_pod import inside results module."""
+    return patch(
+        f"{_MODULE}.find_retrievable_pod", new_callable=AsyncMock, return_value=result
+    )
+
+
+def _patch_find_controller_pod(result):
+    """Patch find_controller_pod import inside results module."""
+    return patch(
+        f"{_MODULE}.find_controller_pod", new_callable=AsyncMock, return_value=result
+    )
+
+
+def _patch_find_operator_pod(result):
+    """Patch find_operator_pod import inside results module."""
+    return patch(
+        f"{_MODULE}.find_operator_pod", new_callable=AsyncMock, return_value=result
+    )
+
+
 # ============================================================
 # _kubectl_kube_args
 # ============================================================
@@ -194,25 +226,22 @@ class TestRetrieveResultsFromApi:
 
     @pytest.mark.asyncio
     async def test_no_jobset_info_returns_false(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        result = await retrieve_results_from_api("job-1", "ns", tmp_path, None, client)
+        api = _make_api()
+        result = await retrieve_results_from_api("job-1", "ns", tmp_path, None, api)
         assert result is False
 
     @pytest.mark.asyncio
     async def test_no_retrievable_pod_returns_false(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        client.find_retrievable_pod = AsyncMock(return_value=None)
-        result = await retrieve_results_from_api(
-            "job-1", "ns", tmp_path, _make_jobset_info(), client
-        )
+        api = _make_api()
+        with _patch_find_retrievable_pod(None):
+            result = await retrieve_results_from_api(
+                "job-1", "ns", tmp_path, _make_jobset_info(), api
+            )
         assert result is False
 
     @pytest.mark.asyncio
     async def test_downloads_key_files_successfully(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        client.find_retrievable_pod = AsyncMock(
-            return_value=("pod-0", PodPhase.RUNNING)
-        )
+        api = _make_api()
 
         metrics_content = orjson.dumps({"throughput": 100})
         profile_content = b"profile data"
@@ -236,6 +265,7 @@ class TestRetrieveResultsFromApi:
         session = FakeSession(responses)
 
         with (
+            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
             patch(
                 "aiperf.kubernetes.results.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
@@ -247,7 +277,7 @@ class TestRetrieveResultsFromApi:
             ),
         ):
             result = await retrieve_results_from_api(
-                "job-1", "ns", tmp_path, _make_jobset_info(), client
+                "job-1", "ns", tmp_path, _make_jobset_info(), api
             )
 
         assert result is True
@@ -258,10 +288,7 @@ class TestRetrieveResultsFromApi:
 
     @pytest.mark.asyncio
     async def test_404_files_skipped_silently(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        client.find_retrievable_pod = AsyncMock(
-            return_value=("pod-0", PodPhase.RUNNING)
-        )
+        api = _make_api()
 
         responses = {
             f"http://localhost:9999{API_RESULTS_FILES_PATH}/metrics.json": FakeResponse(
@@ -271,6 +298,7 @@ class TestRetrieveResultsFromApi:
         session = FakeSession(responses)
 
         with (
+            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
             patch(
                 "aiperf.kubernetes.results.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
@@ -282,7 +310,7 @@ class TestRetrieveResultsFromApi:
             ),
         ):
             result = await retrieve_results_from_api(
-                "job-1", "ns", tmp_path, _make_jobset_info(), client
+                "job-1", "ns", tmp_path, _make_jobset_info(), api
             )
 
         assert result is True
@@ -290,10 +318,7 @@ class TestRetrieveResultsFromApi:
 
     @pytest.mark.asyncio
     async def test_malformed_metrics_json_still_downloads(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        client.find_retrievable_pod = AsyncMock(
-            return_value=("pod-0", PodPhase.RUNNING)
-        )
+        api = _make_api()
 
         bad_json = b"not valid json"
         responses = {
@@ -304,6 +329,7 @@ class TestRetrieveResultsFromApi:
         session = FakeSession(responses)
 
         with (
+            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
             patch(
                 "aiperf.kubernetes.results.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
@@ -315,7 +341,7 @@ class TestRetrieveResultsFromApi:
             ),
         ):
             result = await retrieve_results_from_api(
-                "job-1", "ns", tmp_path, _make_jobset_info(), client
+                "job-1", "ns", tmp_path, _make_jobset_info(), api
             )
 
         assert result is True
@@ -323,22 +349,22 @@ class TestRetrieveResultsFromApi:
 
     @pytest.mark.asyncio
     async def test_port_forward_exception_returns_false(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        client.find_retrievable_pod = AsyncMock(
-            return_value=("pod-0", PodPhase.RUNNING)
-        )
+        api = _make_api()
 
         @asynccontextmanager
         async def _failing_pf(*a, **kw):
             raise ConnectionError("port forward failed")
             yield  # noqa: F841, RET503
 
-        with patch(
-            "aiperf.kubernetes.results.port_forward_with_status",
-            side_effect=lambda *a, **kw: _failing_pf(),
+        with (
+            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
+            patch(
+                "aiperf.kubernetes.results.port_forward_with_status",
+                side_effect=lambda *a, **kw: _failing_pf(),
+            ),
         ):
             result = await retrieve_results_from_api(
-                "job-1", "ns", tmp_path, _make_jobset_info(), client
+                "job-1", "ns", tmp_path, _make_jobset_info(), api
             )
 
         assert result is False
@@ -347,10 +373,7 @@ class TestRetrieveResultsFromApi:
     async def test_connector_error_breaks_loop_returns_false(
         self, tmp_path: Path
     ) -> None:
-        client = MagicMock()
-        client.find_retrievable_pod = AsyncMock(
-            return_value=("pod-0", PodPhase.RUNNING)
-        )
+        api = _make_api()
 
         mock_session = MagicMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
@@ -362,6 +385,7 @@ class TestRetrieveResultsFromApi:
         )
 
         with (
+            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
             patch(
                 "aiperf.kubernetes.results.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
@@ -373,7 +397,7 @@ class TestRetrieveResultsFromApi:
             ),
         ):
             result = await retrieve_results_from_api(
-                "job-1", "ns", tmp_path, _make_jobset_info(), client
+                "job-1", "ns", tmp_path, _make_jobset_info(), api
             )
 
         assert result is False
@@ -389,17 +413,17 @@ class TestRetrieveResultsFromPod:
 
     @pytest.mark.asyncio
     async def test_no_jobset_info_returns_false(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        result = await retrieve_results_from_pod("job-1", "ns", tmp_path, None, client)
+        api = _make_api()
+        result = await retrieve_results_from_pod("job-1", "ns", tmp_path, None, api)
         assert result is False
 
     @pytest.mark.asyncio
     async def test_no_controller_pod_returns_false(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        client.find_controller_pod = AsyncMock(return_value=None)
-        result = await retrieve_results_from_pod(
-            "job-1", "ns", tmp_path, _make_jobset_info(), client
-        )
+        api = _make_api()
+        with _patch_find_controller_pod(None):
+            result = await retrieve_results_from_pod(
+                "job-1", "ns", tmp_path, _make_jobset_info(), api
+            )
         assert result is False
 
     @pytest.mark.asyncio
@@ -414,11 +438,11 @@ class TestRetrieveResultsFromPod:
     async def test_non_retrievable_phase_returns_false(
         self, tmp_path: Path, phase: PodPhase
     ) -> None:
-        client = MagicMock()
-        client.find_controller_pod = AsyncMock(return_value=("pod-0", phase))
-        result = await retrieve_results_from_pod(
-            "job-1", "ns", tmp_path, _make_jobset_info(), client
-        )
+        api = _make_api()
+        with _patch_find_controller_pod(("pod-0", phase)):
+            result = await retrieve_results_from_pod(
+                "job-1", "ns", tmp_path, _make_jobset_info(), api
+            )
         assert result is False
 
     @pytest.mark.asyncio
@@ -429,10 +453,9 @@ class TestRetrieveResultsFromPod:
     async def test_retrievable_phase_calls_kubectl_copy(
         self, tmp_path: Path, phase: PodPhase
     ) -> None:
-        client = MagicMock()
-        client.find_controller_pod = AsyncMock(return_value=("pod-0", phase))
-
+        api = _make_api()
         with (
+            _patch_find_controller_pod(("pod-0", phase)),
             patch(
                 "aiperf.kubernetes.results.kubectl_copy_results",
                 new_callable=AsyncMock,
@@ -440,7 +463,7 @@ class TestRetrieveResultsFromPod:
             ) as mock_cp,
         ):
             result = await retrieve_results_from_pod(
-                "job-1", "ns", tmp_path, _make_jobset_info(), client
+                "job-1", "ns", tmp_path, _make_jobset_info(), api
             )
 
         mock_cp.assert_awaited_once_with(
@@ -455,11 +478,11 @@ class TestRetrieveResultsFromPod:
 
     @pytest.mark.asyncio
     async def test_successful_copy_displays_results(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        client.find_controller_pod = AsyncMock(return_value=("pod-0", PodPhase.RUNNING))
+        api = _make_api()
         jobset_info = _make_jobset_info()
 
         with (
+            _patch_find_controller_pod(("pod-0", PodPhase.RUNNING)),
             patch(
                 "aiperf.kubernetes.results.kubectl_copy_results",
                 new_callable=AsyncMock,
@@ -471,7 +494,7 @@ class TestRetrieveResultsFromPod:
             ) as mock_display,
         ):
             result = await retrieve_results_from_pod(
-                "job-1", "ns", tmp_path, jobset_info, client
+                "job-1", "ns", tmp_path, jobset_info, api
             )
 
         mock_display.assert_called_once_with(tmp_path, jobset_info)
@@ -614,25 +637,22 @@ class TestRetrieveAllArtifacts:
 
     @pytest.mark.asyncio
     async def test_no_jobset_info_returns_false(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        result = await retrieve_all_artifacts("job-1", "ns", tmp_path, None, client, 0)
+        api = _make_api()
+        result = await retrieve_all_artifacts("job-1", "ns", tmp_path, None, api, 0)
         assert result is False
 
     @pytest.mark.asyncio
     async def test_no_retrievable_pod_returns_false(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        client.find_retrievable_pod = AsyncMock(return_value=None)
-        result = await retrieve_all_artifacts(
-            "job-1", "ns", tmp_path, _make_jobset_info(), client, 0
-        )
+        api = _make_api()
+        with _patch_find_retrievable_pod(None):
+            result = await retrieve_all_artifacts(
+                "job-1", "ns", tmp_path, _make_jobset_info(), api, 0
+            )
         assert result is False
 
     @pytest.mark.asyncio
     async def test_downloads_listed_files(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        client.find_retrievable_pod = AsyncMock(
-            return_value=("pod-0", PodPhase.RUNNING)
-        )
+        api = _make_api()
 
         list_resp = FakeResponse(
             json_data={"files": [{"name": "a.json"}, {"name": "b.txt"}]}
@@ -649,6 +669,7 @@ class TestRetrieveAllArtifacts:
         session = FakeSession(responses)
 
         with (
+            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
             patch(
                 "aiperf.kubernetes.results.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
@@ -660,7 +681,7 @@ class TestRetrieveAllArtifacts:
             ),
         ):
             result = await retrieve_all_artifacts(
-                "job-1", "ns", tmp_path, _make_jobset_info(), client, 0
+                "job-1", "ns", tmp_path, _make_jobset_info(), api, 0
             )
 
         assert result is True
@@ -669,10 +690,7 @@ class TestRetrieveAllArtifacts:
 
     @pytest.mark.asyncio
     async def test_x_filename_header_overrides_dest(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        client.find_retrievable_pod = AsyncMock(
-            return_value=("pod-0", PodPhase.RUNNING)
-        )
+        api = _make_api()
 
         list_resp = FakeResponse(json_data={"files": [{"name": "file1"}]})
         file_resp = FakeResponse(body=b"data", headers={"x-filename": "renamed.json"})
@@ -685,6 +703,7 @@ class TestRetrieveAllArtifacts:
         session = FakeSession(responses)
 
         with (
+            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
             patch(
                 "aiperf.kubernetes.results.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
@@ -696,7 +715,7 @@ class TestRetrieveAllArtifacts:
             ),
         ):
             result = await retrieve_all_artifacts(
-                "job-1", "ns", tmp_path, _make_jobset_info(), client, 0
+                "job-1", "ns", tmp_path, _make_jobset_info(), api, 0
             )
 
         assert result is True
@@ -705,10 +724,7 @@ class TestRetrieveAllArtifacts:
 
     @pytest.mark.asyncio
     async def test_empty_file_list_returns_false(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        client.find_retrievable_pod = AsyncMock(
-            return_value=("pod-0", PodPhase.RUNNING)
-        )
+        api = _make_api()
 
         list_resp = FakeResponse(json_data={"files": []})
         base = "http://localhost:9999"
@@ -716,6 +732,7 @@ class TestRetrieveAllArtifacts:
         session = FakeSession(responses)
 
         with (
+            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
             patch(
                 "aiperf.kubernetes.results.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
@@ -727,17 +744,14 @@ class TestRetrieveAllArtifacts:
             ),
         ):
             result = await retrieve_all_artifacts(
-                "job-1", "ns", tmp_path, _make_jobset_info(), client, 0
+                "job-1", "ns", tmp_path, _make_jobset_info(), api, 0
             )
 
         assert result is False
 
     @pytest.mark.asyncio
     async def test_list_request_failure_returns_false(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        client.find_retrievable_pod = AsyncMock(
-            return_value=("pod-0", PodPhase.RUNNING)
-        )
+        api = _make_api()
 
         list_resp = FakeResponse(status=500)
         base = "http://localhost:9999"
@@ -745,6 +759,7 @@ class TestRetrieveAllArtifacts:
         session = FakeSession(responses)
 
         with (
+            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
             patch(
                 "aiperf.kubernetes.results.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
@@ -756,29 +771,29 @@ class TestRetrieveAllArtifacts:
             ),
         ):
             result = await retrieve_all_artifacts(
-                "job-1", "ns", tmp_path, _make_jobset_info(), client, 0
+                "job-1", "ns", tmp_path, _make_jobset_info(), api, 0
             )
 
         assert result is False
 
     @pytest.mark.asyncio
     async def test_port_forward_exception_returns_false(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        client.find_retrievable_pod = AsyncMock(
-            return_value=("pod-0", PodPhase.RUNNING)
-        )
+        api = _make_api()
 
         @asynccontextmanager
         async def _failing_pf(*a, **kw):
             raise RuntimeError("port forward died")
             yield  # noqa: F841, RET503
 
-        with patch(
-            "aiperf.kubernetes.results.port_forward_with_status",
-            side_effect=lambda *a, **kw: _failing_pf(),
+        with (
+            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
+            patch(
+                "aiperf.kubernetes.results.port_forward_with_status",
+                side_effect=lambda *a, **kw: _failing_pf(),
+            ),
         ):
             result = await retrieve_all_artifacts(
-                "job-1", "ns", tmp_path, _make_jobset_info(), client, 0
+                "job-1", "ns", tmp_path, _make_jobset_info(), api, 0
             )
 
         assert result is False
@@ -794,36 +809,34 @@ class TestShutdownApiService:
 
     @pytest.mark.asyncio
     async def test_no_retrievable_pod_no_controller_returns_false(self) -> None:
-        client = MagicMock()
-        client.find_retrievable_pod = AsyncMock(return_value=None)
-        client.find_controller_pod = AsyncMock(return_value=None)
-
-        result = await shutdown_api_service("job-1", "ns", client)
+        api = _make_api()
+        with (
+            _patch_find_retrievable_pod(None),
+            _patch_find_controller_pod(None),
+        ):
+            result = await shutdown_api_service("job-1", "ns", api)
         assert result is False
 
     @pytest.mark.asyncio
     async def test_no_retrievable_pod_but_controller_exists_returns_true(self) -> None:
-        client = MagicMock()
-        client.find_retrievable_pod = AsyncMock(return_value=None)
-        client.find_controller_pod = AsyncMock(
-            return_value=("pod-0", PodPhase.SUCCEEDED)
-        )
-
-        result = await shutdown_api_service("job-1", "ns", client)
+        api = _make_api()
+        with (
+            _patch_find_retrievable_pod(None),
+            _patch_find_controller_pod(("pod-0", PodPhase.SUCCEEDED)),
+        ):
+            result = await shutdown_api_service("job-1", "ns", api)
         assert result is True
 
     @pytest.mark.asyncio
     async def test_shutdown_200_returns_true(self) -> None:
-        client = MagicMock()
-        client.find_retrievable_pod = AsyncMock(
-            return_value=("pod-0", PodPhase.RUNNING)
-        )
+        api = _make_api()
 
         resp = FakeResponse(status=200)
         base = "http://localhost:9999"
         session = FakeSession({f"{base}/api/shutdown": resp})
 
         with (
+            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
             patch(
                 "aiperf.kubernetes.results.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
@@ -834,22 +847,20 @@ class TestShutdownApiService:
                 return_value=None,
             ),
         ):
-            result = await shutdown_api_service("job-1", "ns", client)
+            result = await shutdown_api_service("job-1", "ns", api)
 
         assert result is True
 
     @pytest.mark.asyncio
     async def test_shutdown_409_returns_false(self) -> None:
-        client = MagicMock()
-        client.find_retrievable_pod = AsyncMock(
-            return_value=("pod-0", PodPhase.RUNNING)
-        )
+        api = _make_api()
 
         resp = FakeResponse(status=409)
         base = "http://localhost:9999"
         session = FakeSession({f"{base}/api/shutdown": resp})
 
         with (
+            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
             patch(
                 "aiperf.kubernetes.results.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
@@ -860,22 +871,20 @@ class TestShutdownApiService:
                 return_value=None,
             ),
         ):
-            result = await shutdown_api_service("job-1", "ns", client)
+            result = await shutdown_api_service("job-1", "ns", api)
 
         assert result is False
 
     @pytest.mark.asyncio
     async def test_shutdown_unexpected_status_returns_false(self) -> None:
-        client = MagicMock()
-        client.find_retrievable_pod = AsyncMock(
-            return_value=("pod-0", PodPhase.RUNNING)
-        )
+        api = _make_api()
 
         resp = FakeResponse(status=503)
         base = "http://localhost:9999"
         session = FakeSession({f"{base}/api/shutdown": resp})
 
         with (
+            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
             patch(
                 "aiperf.kubernetes.results.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
@@ -886,27 +895,27 @@ class TestShutdownApiService:
                 return_value=None,
             ),
         ):
-            result = await shutdown_api_service("job-1", "ns", client)
+            result = await shutdown_api_service("job-1", "ns", api)
 
         assert result is False
 
     @pytest.mark.asyncio
     async def test_shutdown_exception_returns_false(self) -> None:
-        client = MagicMock()
-        client.find_retrievable_pod = AsyncMock(
-            return_value=("pod-0", PodPhase.RUNNING)
-        )
+        api = _make_api()
 
         @asynccontextmanager
         async def _failing_pf(*a, **kw):
             raise OSError("connection refused")
             yield  # noqa: F841, RET503
 
-        with patch(
-            "aiperf.kubernetes.results.port_forward_with_status",
-            side_effect=lambda *a, **kw: _failing_pf(),
+        with (
+            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
+            patch(
+                "aiperf.kubernetes.results.port_forward_with_status",
+                side_effect=lambda *a, **kw: _failing_pf(),
+            ),
         ):
-            result = await shutdown_api_service("job-1", "ns", client)
+            result = await shutdown_api_service("job-1", "ns", api)
 
         assert result is False
 
@@ -1161,18 +1170,14 @@ class TestRetrieveResultsFromOperator:
 
     @pytest.mark.asyncio
     async def test_operator_pod_not_found_returns_false(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        client.find_operator_pod = AsyncMock(return_value=None)
-
-        result = await retrieve_results_from_operator("job-1", "ns", tmp_path, client)
+        api = _make_api()
+        with _patch_find_operator_pod(None):
+            result = await retrieve_results_from_operator("job-1", "ns", tmp_path, api)
         assert result is False
 
     @pytest.mark.asyncio
     async def test_health_check_failure_returns_false(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        client.find_operator_pod = AsyncMock(
-            return_value=("operator-0", PodPhase.RUNNING)
-        )
+        api = _make_api()
 
         health_resp = FakeResponse(status=503)
         session = FakeSession(
@@ -1182,6 +1187,7 @@ class TestRetrieveResultsFromOperator:
         )
 
         with (
+            _patch_find_operator_pod(("operator-0", PodPhase.RUNNING)),
             patch(
                 "aiperf.kubernetes.results.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
@@ -1192,18 +1198,13 @@ class TestRetrieveResultsFromOperator:
                 return_value=None,
             ),
         ):
-            result = await retrieve_results_from_operator(
-                "job-1", "ns", tmp_path, client
-            )
+            result = await retrieve_results_from_operator("job-1", "ns", tmp_path, api)
 
         assert result is False
 
     @pytest.mark.asyncio
     async def test_job_not_found_returns_false(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        client.find_operator_pod = AsyncMock(
-            return_value=("operator-0", PodPhase.RUNNING)
-        )
+        api = _make_api()
 
         base = "http://localhost:9999"
         health_session = FakeSession({f"{base}/healthz": FakeResponse()})
@@ -1223,6 +1224,7 @@ class TestRetrieveResultsFromOperator:
             return list_session
 
         with (
+            _patch_find_operator_pod(("operator-0", PodPhase.RUNNING)),
             patch(
                 "aiperf.kubernetes.results.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
@@ -1233,40 +1235,33 @@ class TestRetrieveResultsFromOperator:
                 return_value=None,
             ),
         ):
-            result = await retrieve_results_from_operator(
-                "job-1", "ns", tmp_path, client
-            )
+            result = await retrieve_results_from_operator("job-1", "ns", tmp_path, api)
 
         assert result is False
 
     @pytest.mark.asyncio
     async def test_port_forward_exception_returns_false(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        client.find_operator_pod = AsyncMock(
-            return_value=("operator-0", PodPhase.RUNNING)
-        )
+        api = _make_api()
 
         @asynccontextmanager
         async def _failing_pf(*a, **kw):
             raise ConnectionError("port forward failed")
             yield  # noqa: F841, RET503
 
-        with patch(
-            "aiperf.kubernetes.results.port_forward_with_status",
-            side_effect=lambda *a, **kw: _failing_pf(),
+        with (
+            _patch_find_operator_pod(("operator-0", PodPhase.RUNNING)),
+            patch(
+                "aiperf.kubernetes.results.port_forward_with_status",
+                side_effect=lambda *a, **kw: _failing_pf(),
+            ),
         ):
-            result = await retrieve_results_from_operator(
-                "job-1", "ns", tmp_path, client
-            )
+            result = await retrieve_results_from_operator("job-1", "ns", tmp_path, api)
 
         assert result is False
 
     @pytest.mark.asyncio
     async def test_empty_file_list_returns_false(self, tmp_path: Path) -> None:
-        client = MagicMock()
-        client.find_operator_pod = AsyncMock(
-            return_value=("operator-0", PodPhase.RUNNING)
-        )
+        api = _make_api()
 
         base = "http://localhost:9999"
         health_session = FakeSession({f"{base}/healthz": FakeResponse()})
@@ -1288,6 +1283,7 @@ class TestRetrieveResultsFromOperator:
             return list_session
 
         with (
+            _patch_find_operator_pod(("operator-0", PodPhase.RUNNING)),
             patch(
                 "aiperf.kubernetes.results.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
@@ -1298,8 +1294,6 @@ class TestRetrieveResultsFromOperator:
                 return_value=None,
             ),
         ):
-            result = await retrieve_results_from_operator(
-                "job-1", "ns", tmp_path, client
-            )
+            result = await retrieve_results_from_operator("job-1", "ns", tmp_path, api)
 
         assert result is False

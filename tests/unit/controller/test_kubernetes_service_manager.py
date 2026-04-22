@@ -610,6 +610,27 @@ class TestHeartbeatMonitoring:
         assert info.state == LifecycleState.FAILED
 
 
+def _make_typed_pod(raw: dict) -> MagicMock:
+    """Build a typed V1Pod mock from a legacy ``raw`` dict."""
+    metadata = MagicMock()
+    md = raw.get("metadata", {})
+    metadata.name = md.get("name", "")
+    metadata.namespace = md.get("namespace", "")
+    metadata.labels = md.get("labels") or {}
+
+    status = MagicMock()
+    st = raw.get("status", {})
+    status.phase = st.get("phase")
+    status.container_statuses = None
+    status.conditions = None
+
+    pod = MagicMock()
+    pod.metadata = metadata
+    pod.status = status
+    pod.spec = MagicMock()
+    return pod
+
+
 class TestMonitorWorkerPods:
     """Test _monitor_worker_pods detects failed Kubernetes pods."""
 
@@ -670,16 +691,15 @@ class TestMonitorWorkerPods:
             "status": {"phase": "Failed"},
         }
 
-        mock_client = AsyncMock()
-        mock_client.job_selector.return_value = (
-            "app=aiperf,aiperf.nvidia.com/job-id=test-job"
-        )
-        mock_client.get_pods.return_value = [mock_pod]
-
-        with patch(
-            "aiperf.kubernetes.client.AIPerfKubeClient.create",
-            new_callable=AsyncMock,
-            return_value=mock_client,
+        with (
+            patch.object(
+                manager, "_get_api", new_callable=AsyncMock, return_value=MagicMock()
+            ),
+            patch(
+                "aiperf.controller.kubernetes_service_manager.get_pods",
+                new_callable=AsyncMock,
+                return_value=[_make_typed_pod(mock_pod.raw)],
+            ),
         ):
             await manager._monitor_worker_pods()
 
@@ -723,14 +743,18 @@ class TestMonitorWorkerPods:
             "status": {"phase": "Running"},
         }
 
-        mock_client = AsyncMock()
-        mock_client.job_selector.return_value = "app=aiperf"
-        mock_client.get_pods.return_value = [failed_pod, running_pod]
-
-        with patch(
-            "aiperf.kubernetes.client.AIPerfKubeClient.create",
-            new_callable=AsyncMock,
-            return_value=mock_client,
+        with (
+            patch.object(
+                manager, "_get_api", new_callable=AsyncMock, return_value=MagicMock()
+            ),
+            patch(
+                "aiperf.controller.kubernetes_service_manager.get_pods",
+                new_callable=AsyncMock,
+                return_value=[
+                    _make_typed_pod(failed_pod.raw),
+                    _make_typed_pod(running_pod.raw),
+                ],
+            ),
         ):
             await manager._monitor_worker_pods()
 
@@ -764,14 +788,15 @@ class TestMonitorWorkerPods:
             "status": {"phase": "Running"},
         }
 
-        mock_client = AsyncMock()
-        mock_client.job_selector.return_value = "app=aiperf"
-        mock_client.get_pods.return_value = [mock_pod]
-
-        with patch(
-            "aiperf.kubernetes.client.AIPerfKubeClient.create",
-            new_callable=AsyncMock,
-            return_value=mock_client,
+        with (
+            patch.object(
+                manager, "_get_api", new_callable=AsyncMock, return_value=MagicMock()
+            ),
+            patch(
+                "aiperf.controller.kubernetes_service_manager.get_pods",
+                new_callable=AsyncMock,
+                return_value=[_make_typed_pod(mock_pod.raw)],
+            ),
         ):
             await manager._monitor_worker_pods()
 
@@ -785,8 +810,9 @@ class TestMonitorWorkerPods:
         monkeypatch.setenv("AIPERF_NAMESPACE", "test-ns")
         monkeypatch.setenv("AIPERF_JOB_ID", "test-job")
 
-        with patch(
-            "aiperf.kubernetes.client.AIPerfKubeClient.create",
+        with patch.object(
+            manager,
+            "_get_api",
             new_callable=AsyncMock,
             side_effect=RuntimeError("k8s unreachable"),
         ):
@@ -794,9 +820,9 @@ class TestMonitorWorkerPods:
 
 
 class TestGetKubeClientConcurrentInit:
-    """K2 regression: `_get_kube_client` must serialize lazy init so two
-    concurrent callers don't both pass the None-check, both call
-    AIPerfKubeClient.create(), and leak the first aiohttp session.
+    """K2 regression: `_get_api` must serialize lazy init so two concurrent
+    callers don't both pass the None-check, both build an ApiClient, and
+    leak the first aiohttp session.
     """
 
     @pytest.fixture
@@ -810,41 +836,48 @@ class TestGetKubeClientConcurrentInit:
     async def test_concurrent_calls_create_exactly_one_client(
         self, manager: KubernetesServiceManager
     ) -> None:
-        create_call_count = 0
-        release_first_create = asyncio.Event()
+        build_count = 0
+        release_first_build = asyncio.Event()
 
-        async def fake_create(*args, **kwargs):
-            """First call parks on an event so Task B can race the None
-            check; second concurrent call (without the lock) would also
-            invoke this and increment the count."""
-            nonlocal create_call_count
-            call_idx = create_call_count
-            create_call_count += 1
+        async def fake_load_kube_config(*args, **kwargs):
+            nonlocal build_count
+            call_idx = build_count
+            build_count += 1
             if call_idx == 0:
-                await release_first_create.wait()
-            client = MagicMock()
-            client.close = AsyncMock()
-            return client
+                await release_first_build.wait()
 
-        with patch(
-            "aiperf.kubernetes.client.AIPerfKubeClient.create",
-            side_effect=fake_create,
+        with (
+            patch(
+                "aiperf.controller.kubernetes_service_manager.config.load_incluster_config",
+                side_effect=Exception("not in cluster"),
+            ),
+            patch(
+                "aiperf.controller.kubernetes_service_manager.config.load_kube_config",
+                side_effect=fake_load_kube_config,
+            ),
+            patch(
+                "aiperf.controller.kubernetes_service_manager.ApiClient",
+                side_effect=lambda: MagicMock(close=AsyncMock()),
+            ),
+            patch(
+                "aiperf.controller.kubernetes_service_manager.config.ConfigException",
+                new=Exception,
+            ),
         ):
-            task_a = asyncio.create_task(manager._get_kube_client())
-            # Let task A enter fake_create and park on the event.
+            task_a = asyncio.create_task(manager._get_api())
+            # Let task A enter load_kube_config and park on the event.
             await asyncio.sleep(0)
-            task_b = asyncio.create_task(manager._get_kube_client())
+            task_b = asyncio.create_task(manager._get_api())
             # Let task B have a chance to pass the None check (under the
             # lock it must now wait).
             await asyncio.sleep(0)
 
-            release_first_create.set()
+            release_first_build.set()
             client_a, client_b = await asyncio.gather(task_a, task_b)
 
-        assert create_call_count == 1, (
-            "AIPerfKubeClient.create() must be called exactly once even "
-            "under concurrent _get_kube_client; otherwise the first "
-            "aiohttp session is leaked"
+        assert build_count == 1, (
+            "ApiClient must be built exactly once even under concurrent "
+            "_get_api; otherwise the first aiohttp session is leaked"
         )
         assert client_a is client_b, "Both callers must receive the same cached client"
-        assert manager._kube_client is client_a
+        assert manager._kube_api is client_a

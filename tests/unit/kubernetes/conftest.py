@@ -12,11 +12,9 @@ from typing import Any
 import pytest
 
 from tests.harness.k8s import (
-    async_list,
     build_completed_jobset,
     build_failed_jobset,
-    build_mock_kr8s_api,
-    build_mock_kube_client,
+    build_mock_api,
     build_pending_pod,
     build_running_jobset,
     build_sample_config,
@@ -25,38 +23,29 @@ from tests.harness.k8s import (
     build_sample_pod_template,
     build_sample_run,
     build_succeeded_pod,
+    create_api_exception,
     create_jobset_list_response,
-    create_not_found_error,
-    create_server_error,
-    make_kr8s_object,
+    patch_api_accessors,
 )
 
 # Re-export helper functions so existing ``from tests.unit.kubernetes.conftest import ...``
 # statements continue to work without changes.
 __all__ = [
-    "async_list",
+    "create_api_exception",
     "create_jobset_list_response",
-    "create_not_found_error",
-    "create_server_error",
-    "make_kr8s_object",
+    "patch_api_accessors",
 ]
 
 
 # =============================================================================
-# Mock kr8s API Fixtures
+# Mock ApiClient Fixtures
 # =============================================================================
 
 
 @pytest.fixture
-def mock_kr8s_api():
-    """Mock kr8s async API client."""
-    return build_mock_kr8s_api()
-
-
-@pytest.fixture
-def mock_kube_client(mock_kr8s_api):
-    """Mock AIPerfKubeClient wrapping a mock kr8s API."""
-    return build_mock_kube_client(mock_kr8s_api)
+def mock_api():
+    """Mock kubernetes_asyncio ApiClient."""
+    return build_mock_api()
 
 
 # =============================================================================
@@ -90,7 +79,7 @@ def sample_failed_jobset(sample_jobset) -> dict[str, Any]:
 
 @pytest.fixture
 def sample_pod() -> dict[str, Any]:
-    """Create a sample Pod dict (kr8s .raw format) for testing."""
+    """Create a sample Pod dict (raw K8s API format) for testing."""
     return build_sample_pod()
 
 

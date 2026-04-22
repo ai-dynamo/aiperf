@@ -12,11 +12,12 @@ import logging
 from typing import Any
 
 import kopf
-import kr8s
+from kubernetes_asyncio import client
+from kubernetes_asyncio.client.exceptions import ApiException
 
-from aiperf.kubernetes.client import get_api
+from aiperf.kubernetes.client import k8s_client
+from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
 from aiperf.kubernetes.jobset import controller_dns_name
-from aiperf.kubernetes.kr8s_resources import AsyncJobSet
 from aiperf.operator import events
 from aiperf.operator.client_cache import (
     close_progress_client,
@@ -71,14 +72,18 @@ async def on_cancel(
 
     if jobset_name:
         try:
-            api = await get_api()
-            js = await AsyncJobSet.get(jobset_name, namespace=namespace, api=api)
-            await js.delete()
+            async with k8s_client() as api:
+                await client.CustomObjectsApi(api).delete_namespaced_custom_object(
+                    group=JOBSET_GROUP,
+                    version=JOBSET_VERSION,
+                    plural=JOBSET_PLURAL,
+                    namespace=namespace,
+                    name=jobset_name,
+                )
             logger.info(f"Deleted JobSet {jobset_name}")
-        except kr8s.NotFoundError:
-            pass
-        except kr8s.ServerError as e:
-            logger.warning(f"Failed to delete JobSet: {e}")
+        except ApiException as e:
+            if e.status != 404:
+                logger.warning(f"Failed to delete JobSet: {e}")
 
     await close_progress_client(job_key(namespace, job_id))
     sb.set_phase(Phase.CANCELLED).set_completion_time()
@@ -122,8 +127,8 @@ async def on_benchmark_complete(
 
     host = controller_dns_name(jobset_name, namespace)
     try:
-        client = await get_or_create_progress_client(key)
-        await client.send_shutdown(host)
+        progress_client = await get_or_create_progress_client(key)
+        await progress_client.send_shutdown(host)
     except Exception as e:
         logger.exception(f"Failed to send shutdown to {host}")
         kopf.event(

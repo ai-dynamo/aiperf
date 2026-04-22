@@ -7,8 +7,17 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from kubernetes_asyncio import client
+from kubernetes_asyncio.client.exceptions import ApiException
+
+from aiperf.kubernetes.client import job_selector
+from aiperf.kubernetes.cr_refs import (
+    AIPERF_JOB_GROUP,
+    AIPERF_JOB_PLURAL,
+    AIPERF_JOB_VERSION,
+)
 from aiperf.kubernetes.watch_models import (
     EventSnapshot,
     MetricsSnapshot,
@@ -18,6 +27,9 @@ from aiperf.kubernetes.watch_models import (
 )
 from aiperf.operator.status import parse_timestamp
 
+if TYPE_CHECKING:
+    from kubernetes_asyncio.client import ApiClient
+
 logger = logging.getLogger(__name__)
 
 _CAMEL_RE = re.compile(r"(?<!^)(?=[A-Z])")
@@ -26,8 +38,8 @@ _CAMEL_RE = re.compile(r"(?<!^)(?=[A-Z])")
 class CRPoller:
     """Polls AIPerfJob CR status for phase, metrics, conditions, progress."""
 
-    def __init__(self, client: Any, job_id: str, namespace: str) -> None:
-        self._client = client
+    def __init__(self, api: ApiClient, job_id: str, namespace: str) -> None:
+        self._api = api
         self._job_id = job_id
         self._namespace = namespace
         self.phase: str = "Unknown"
@@ -203,68 +215,143 @@ class CRPoller:
 
     async def _get_raw_cr(self) -> dict[str, Any] | None:
         """Get the raw AIPerfJob CR dict from the K8s API."""
+        custom = client.CustomObjectsApi(self._api)
         try:
-            from aiperf.kubernetes.client import AsyncAIPerfJob
-
-            async for j in self._client._api.async_get(
-                AsyncAIPerfJob,
+            raw = await custom.get_namespaced_custom_object(
+                group=AIPERF_JOB_GROUP,
+                version=AIPERF_JOB_VERSION,
+                plural=AIPERF_JOB_PLURAL,
                 namespace=self._namespace,
-                field_selector=f"metadata.name={self._job_id}",
-            ):
-                return j.raw
+                name=self._job_id,
+            )
+            return raw
+        except ApiException as e:
+            if e.status != 404:
+                logger.debug(f"Failed to fetch CR {self._job_id}: {e}")
+            return None
         except Exception:
             logger.debug(f"Failed to fetch CR {self._job_id}", exc_info=True)
-        return None
+            return None
 
 
 class PodPoller:
     """Polls K8s Pod API for pod status and container states."""
 
-    def __init__(self, client: Any, job_id: str, namespace: str) -> None:
-        self._client = client
+    def __init__(self, api: ApiClient, job_id: str, namespace: str) -> None:
+        self._api = api
         self._job_id = job_id
         self._namespace = namespace
         self.pods: list[PodSnapshot] = []
 
     async def poll(self) -> None:
         """Fetch latest pod status."""
-        raw_pods = await self._client.get_pods(
-            self._namespace, self._client.job_selector(self._job_id)
-        )
-        self.pods = [PodSnapshot.from_raw(p.raw) for p in raw_pods]
+        core = client.CoreV1Api(self._api)
+        try:
+            pod_list = await core.list_namespaced_pod(
+                self._namespace,
+                label_selector=job_selector(self._job_id),
+            )
+        except ApiException:
+            return
+        self.pods = [PodSnapshot.from_raw(_pod_to_raw(p)) for p in pod_list.items]
 
 
 class EventPoller:
     """Polls K8s Event API filtered to this job's resources."""
 
-    def __init__(self, client: Any, job_id: str, namespace: str) -> None:
-        self._client = client
+    def __init__(self, api: ApiClient, job_id: str, namespace: str) -> None:
+        self._api = api
         self._job_id = job_id
         self._namespace = namespace
         self.events: list[EventSnapshot] = []
 
     async def poll(self) -> None:
         """Fetch latest events."""
-        events = await self._client.get_events(self._namespace)
+        core = client.CoreV1Api(self._api)
+        try:
+            ev_list = await core.list_namespaced_event(self._namespace)
+        except ApiException:
+            return
 
         filtered = []
-        for ev in events:
-            if self._job_id not in ev.involved_object:
+        for ev in ev_list.items:
+            involved = ev.involved_object
+            involved_name = involved.name if involved and involved.name else ""
+            if self._job_id not in involved_name:
                 continue
+            ts = ev.last_timestamp
             filtered.append(
                 EventSnapshot(
-                    timestamp=ev.last_timestamp.isoformat()
-                    if ev.last_timestamp
-                    else "",
-                    type=ev.type,
-                    reason=ev.reason,
-                    object=ev.involved_object,
-                    message=ev.message,
+                    timestamp=ts.isoformat() if ts else "",
+                    type=ev.type or "",
+                    reason=ev.reason or "",
+                    object=involved_name,
+                    message=ev.message or "",
                     count=1,
                 )
             )
 
         self.events = sorted(filtered, key=lambda e: e.timestamp)[-20:]
+
+
+def _pod_to_raw(pod: Any) -> dict[str, Any]:
+    """Serialize a V1Pod back to the raw dict shape PodSnapshot.from_raw expects."""
+    metadata = pod.metadata
+    status = pod.status
+    raw_metadata: dict[str, Any] = {}
+    if metadata:
+        raw_metadata = {
+            "name": metadata.name or "",
+            "namespace": metadata.namespace or "",
+        }
+        if metadata.creation_timestamp:
+            ts = metadata.creation_timestamp
+            raw_metadata["creationTimestamp"] = (
+                ts.isoformat() if isinstance(ts, datetime) else str(ts)
+            )
+        if metadata.labels:
+            raw_metadata["labels"] = dict(metadata.labels)
+
+    raw_status: dict[str, Any] = {}
+    if status:
+        if status.phase:
+            raw_status["phase"] = status.phase
+        containers_raw: list[dict[str, Any]] = []
+        for cs in status.container_statuses or []:
+            entry = {
+                "name": cs.name or "",
+                "ready": bool(cs.ready),
+                "restartCount": cs.restart_count or 0,
+            }
+            state_dict: dict[str, Any] = {}
+            if cs.state:
+                if cs.state.running is not None:
+                    state_dict["running"] = {}
+                elif cs.state.waiting is not None:
+                    w = cs.state.waiting
+                    state_dict["waiting"] = {
+                        k: v
+                        for k, v in {"reason": w.reason, "message": w.message}.items()
+                        if v is not None
+                    }
+                elif cs.state.terminated is not None:
+                    t = cs.state.terminated
+                    state_dict["terminated"] = {
+                        k: v
+                        for k, v in {
+                            "reason": t.reason,
+                            "message": t.message,
+                            "exitCode": t.exit_code,
+                        }.items()
+                        if v is not None
+                    }
+            if state_dict:
+                entry["state"] = state_dict
+            containers_raw.append(entry)
+        if containers_raw:
+            raw_status["containerStatuses"] = containers_raw
+
+    return {"metadata": raw_metadata, "status": raw_status}
 
 
 def _metric_avg(metrics: dict, key: str) -> float:

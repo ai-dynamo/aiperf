@@ -12,6 +12,7 @@ that:
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 from unittest.mock import patch as mock_patch
 
@@ -23,6 +24,12 @@ from tests.harness.operator import (
     build_minimal_aiperfjob_spec,
     build_sample_body,
 )
+
+
+@asynccontextmanager
+async def _fake_k8s_client():
+    """Yield a bare MagicMock ApiClient inside an async context."""
+    yield MagicMock()
 
 
 def _status_patch() -> MagicMock:
@@ -43,17 +50,13 @@ def _preflight_ok() -> MagicMock:
     return pr
 
 
-async def _async_identity(*_a, **_kw):
-    return None
-
-
 @pytest.mark.asyncio
 async def test_on_create_persistence_failure_raises_temporary_error_and_skips_jobset():
     """H1: OSError from save_job_spec_file -> TemporaryError, JobSet not created."""
     spec = build_minimal_aiperfjob_spec()
     body = build_sample_body()
 
-    create_idempotent_mock = AsyncMock()
+    create_custom_mock = AsyncMock()
 
     with (
         mock_patch(
@@ -61,15 +64,27 @@ async def test_on_create_persistence_failure_raises_temporary_error_and_skips_jo
             new=AsyncMock(return_value=MagicMock(reachable=True, error=None)),
         ),
         mock_patch(
-            "aiperf.operator.handlers.create.get_api",
-            new=AsyncMock(return_value=MagicMock()),
+            "aiperf.operator.handlers.create.k8s_client",
+            return_value=_fake_k8s_client(),
         ),
         mock_patch(
             "aiperf.operator.preflight.OperatorPreflightChecker",
         ) as preflight_cls,
         mock_patch(
-            "aiperf.operator.handlers.create.create_idempotent",
-            new=create_idempotent_mock,
+            "aiperf.operator.handlers.create.create_idempotent_config_map",
+            new=AsyncMock(),
+        ),
+        mock_patch(
+            "aiperf.operator.handlers.create.create_idempotent_role",
+            new=AsyncMock(),
+        ),
+        mock_patch(
+            "aiperf.operator.handlers.create.create_idempotent_role_binding",
+            new=AsyncMock(),
+        ),
+        mock_patch(
+            "aiperf.operator.handlers.create.create_idempotent_custom_object",
+            new=create_custom_mock,
         ),
         mock_patch(
             "aiperf.operator.handlers.create.asyncio.sleep",
@@ -103,13 +118,8 @@ async def test_on_create_persistence_failure_raises_temporary_error_and_skips_jo
     assert "Persisting job spec/index failed" in msg
     assert "PVC write failed" in msg
 
-    # JobSet create must NOT have been attempted. create_idempotent is used
-    # for Role, RoleBinding, ConfigMap (3 calls) but not JobSet when
-    # persistence raises before step 7.
-    create_types = [c.args[0].__name__ for c in create_idempotent_mock.call_args_list]
-    assert "AsyncJobSet" not in create_types, (
-        f"JobSet must not be created on persistence failure, got: {create_types}"
-    )
+    # JobSet create must NOT have been attempted.
+    create_custom_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -126,8 +136,8 @@ async def test_on_create_persistence_success_then_jobset_created():
     async def record_index(*_a, **_kw):
         call_order.append("index")
 
-    async def record_create(cls, *_a, **_kw):
-        call_order.append(f"create:{cls.__name__}")
+    async def record_create_custom(*_a, **_kw):
+        call_order.append("create:JobSet")
 
     with (
         mock_patch(
@@ -135,15 +145,27 @@ async def test_on_create_persistence_success_then_jobset_created():
             new=AsyncMock(return_value=MagicMock(reachable=True, error=None)),
         ),
         mock_patch(
-            "aiperf.operator.handlers.create.get_api",
-            new=AsyncMock(return_value=MagicMock()),
+            "aiperf.operator.handlers.create.k8s_client",
+            return_value=_fake_k8s_client(),
         ),
         mock_patch(
             "aiperf.operator.preflight.OperatorPreflightChecker",
         ) as preflight_cls,
         mock_patch(
-            "aiperf.operator.handlers.create.create_idempotent",
-            new=AsyncMock(side_effect=record_create),
+            "aiperf.operator.handlers.create.create_idempotent_config_map",
+            new=AsyncMock(),
+        ),
+        mock_patch(
+            "aiperf.operator.handlers.create.create_idempotent_role",
+            new=AsyncMock(),
+        ),
+        mock_patch(
+            "aiperf.operator.handlers.create.create_idempotent_role_binding",
+            new=AsyncMock(),
+        ),
+        mock_patch(
+            "aiperf.operator.handlers.create.create_idempotent_custom_object",
+            new=AsyncMock(side_effect=record_create_custom),
         ),
         mock_patch(
             "aiperf.operator.handlers.create.asyncio.sleep",
@@ -175,11 +197,11 @@ async def test_on_create_persistence_success_then_jobset_created():
         )
 
     assert "jobSetName" in result
-    # ConfigMap/RBAC happen before persistence; JobSet happens after.
+    # Persistence runs before JobSet creation
     save_idx = call_order.index("save")
     index_idx = call_order.index("index")
     jobset_entries = [
-        i for i, c in enumerate(call_order) if c.startswith("create:") and "JobSet" in c
+        i for i, c in enumerate(call_order) if c.startswith("create:JobSet")
     ]
     assert jobset_entries, f"JobSet was not created. call_order={call_order}"
     jobset_idx = jobset_entries[0]
@@ -230,14 +252,26 @@ async def _run_on_create_with_preflight(preflight_result: MagicMock) -> MagicMoc
             new=AsyncMock(return_value=MagicMock(reachable=True, error=None)),
         ),
         mock_patch(
-            "aiperf.operator.handlers.create.get_api",
-            new=AsyncMock(return_value=MagicMock()),
+            "aiperf.operator.handlers.create.k8s_client",
+            return_value=_fake_k8s_client(),
         ),
         mock_patch(
             "aiperf.operator.preflight.OperatorPreflightChecker",
         ) as preflight_cls,
         mock_patch(
-            "aiperf.operator.handlers.create.create_idempotent",
+            "aiperf.operator.handlers.create.create_idempotent_config_map",
+            new=AsyncMock(),
+        ),
+        mock_patch(
+            "aiperf.operator.handlers.create.create_idempotent_role",
+            new=AsyncMock(),
+        ),
+        mock_patch(
+            "aiperf.operator.handlers.create.create_idempotent_role_binding",
+            new=AsyncMock(),
+        ),
+        mock_patch(
+            "aiperf.operator.handlers.create.create_idempotent_custom_object",
             new=AsyncMock(),
         ),
         mock_patch(

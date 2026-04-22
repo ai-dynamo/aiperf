@@ -1,24 +1,22 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Helpers for clamping noisy third-party loggers.
+"""Suppress noisy HTTP loggers emitted by Kubernetes client libraries.
 
-kr8s uses httpx internally, and httpx emits an INFO log line for every request.
-Those request logs add a lot of noise to AIPerf's Kubernetes workflows.
+kubernetes_asyncio uses aiohttp internally and emits access-log-style
+lines for every request; the aiohttp + kubernetes_asyncio.rest loggers
+are raised to WARNING to keep logs readable.
 """
-
-from __future__ import annotations
 
 import logging
 
-_NOISY_HTTP_LOGGERS: dict[str, int] = {
-    "httpx": logging.WARNING,
-    "httpcore": logging.WARNING,
-}
+_NOISY_LOGGERS = (
+    "aiohttp.access",
+    "aiohttp.client",
+    "kubernetes_asyncio.client.rest",
+)
 
 
 def suppress_noisy_http_loggers() -> None:
-    """Raise noisy HTTP client loggers to WARNING unless already stricter."""
-    for logger_name, minimum_level in _NOISY_HTTP_LOGGERS.items():
-        logger = logging.getLogger(logger_name)
-        if logger.level == logging.NOTSET or logger.level < minimum_level:
-            logger.setLevel(minimum_level)
+    """Raise noisy HTTP-client loggers to WARNING."""
+    for name in _NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)

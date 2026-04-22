@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for aiperf.cli_commands.kube module."""
 
+from contextlib import asynccontextmanager
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,6 +18,13 @@ from aiperf.kubernetes.cli_helpers import resolve_job_id_and_namespace
 from aiperf.kubernetes.console import LastBenchmarkInfo
 from aiperf.kubernetes.models import AIPerfJobInfo, JobSetInfo
 from aiperf.kubernetes.ui_dispatch import print_progress_message, print_realtime_metrics
+
+
+@asynccontextmanager
+async def _fake_k8s_client(api: Any):
+    """Drop-in replacement for ``k8s_client`` yielding the provided api object."""
+    yield api
+
 
 _BUILD_CONFIG = "aiperf.config.cli_converter.build_aiperf_config"
 
@@ -74,21 +83,77 @@ def manage_options():
 
 @pytest.fixture
 def mock_kube_client():
-    """Mock AIPerfKubeClient for CLI command tests.
+    """Mock an ApiClient + patched free-function call sites for CLI tests.
 
-    Patches AIPerfKubeClient.create to return a mock client with all
-    methods available as AsyncMocks. Individual tests configure return
-    values as needed.
+    Exposes an ``AsyncMock`` whose attributes (``list_jobs``, ``find_job``,
+    ``find_jobset``, ``list_jobsets``, ``get_pods``, …) back the patched
+    free functions so tests can set return values via
+    ``mock_kube_client.list_jobs.return_value = ...`` and match call
+    assertions with `mock_kube_client.list_jobs.assert_called_once_with(...)`.
+    Each wrapper drops the leading ``api`` arg the real free function expects.
     """
-    from aiperf.kubernetes.client import AIPerfKubeClient
+    mock_client = AsyncMock()
+    api = MagicMock()
+    api.close = AsyncMock()
 
-    mock_client = AsyncMock(spec=AIPerfKubeClient)
-    mock_client.job_selector = AIPerfKubeClient.job_selector
-    mock_client.controller_selector = AIPerfKubeClient.controller_selector
+    async def _strip_api_list_jobs(_api, **kwargs):
+        return await mock_client.list_jobs(**kwargs)
 
-    with patch(
-        "aiperf.kubernetes.client.AIPerfKubeClient.create",
-        new=AsyncMock(return_value=mock_client),
+    async def _strip_api_find_job(_api, *args, **kwargs):
+        return await mock_client.find_job(*args, **kwargs)
+
+    async def _strip_api_find_jobset(_api, *args, **kwargs):
+        return await mock_client.find_jobset(*args, **kwargs)
+
+    async def _strip_api_list_jobsets(_api, **kwargs):
+        return await mock_client.list_jobsets(**kwargs)
+
+    async def _strip_api_get_pods(_api, *args, **kwargs):
+        return await mock_client.get_pods(*args, **kwargs)
+
+    async def _strip_api_find_controller_pod(_api, *args, **kwargs):
+        return await mock_client.find_controller_pod(*args, **kwargs)
+
+    async def _strip_api_find_operator_pod(_api, *args, **kwargs):
+        return await mock_client.find_operator_pod(*args, **kwargs)
+
+    with (
+        patch(
+            "aiperf.kubernetes.client.k8s_client",
+            return_value=_fake_k8s_client(api),
+        ),
+        patch(
+            "aiperf.kubernetes.cli_helpers._open_api_client",
+            new=AsyncMock(return_value=api),
+        ),
+        patch(
+            "aiperf.kubernetes.client.list_aiperf_jobs",
+            new=_strip_api_list_jobs,
+        ),
+        patch(
+            "aiperf.kubernetes.client.find_aiperf_job",
+            new=_strip_api_find_job,
+        ),
+        patch(
+            "aiperf.kubernetes.client.find_jobset",
+            new=_strip_api_find_jobset,
+        ),
+        patch(
+            "aiperf.kubernetes.client.list_jobsets",
+            new=_strip_api_list_jobsets,
+        ),
+        patch(
+            "aiperf.kubernetes.client.get_pods",
+            new=_strip_api_get_pods,
+        ),
+        patch(
+            "aiperf.kubernetes.client.find_controller_pod",
+            new=_strip_api_find_controller_pod,
+        ),
+        patch(
+            "aiperf.kubernetes.client.find_operator_pod",
+            new=_strip_api_find_operator_pod,
+        ),
     ):
         yield mock_client
 
@@ -336,10 +401,15 @@ class TestResultsCommand:
 
         mock_kube_client.find_job.return_value = _sample_job_info()
         mock_kube_client.find_jobset.return_value = running_jobset_info
-        mock_kube_client.find_controller_pod.return_value = None
-        with patch(
-            "aiperf.kubernetes.results.retrieve_results_from_api",
-            new=AsyncMock(return_value=False),
+        with (
+            patch(
+                "aiperf.kubernetes.results.retrieve_results_from_api",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "aiperf.kubernetes.results.find_controller_pod",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             await results(
                 job_id="abc123",
@@ -750,8 +820,11 @@ class TestAttachCommandAdditional:
 
         mock_kube_client.find_job.return_value = _sample_job_info()
         mock_kube_client.find_jobset.return_value = running_jobset_info
-        mock_kube_client.find_controller_pod.return_value = None
-        await attach(job_id="abc123", manage_options=manage_options)
+        with patch(
+            "aiperf.kubernetes.attach.find_controller_pod",
+            new=AsyncMock(return_value=None),
+        ):
+            await attach(job_id="abc123", manage_options=manage_options)
 
         captured = capsys.readouterr()
         assert "No controller pod found" in captured.out

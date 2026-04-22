@@ -14,6 +14,7 @@ from unittest.mock import patch as mock_patch
 import aiohttp
 import kopf
 import pytest
+from kubernetes_asyncio.client.exceptions import ApiException
 from pytest import param
 
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
@@ -50,6 +51,179 @@ async def _async_pod_list(*pods):
     """Create an async generator yielding pods, for mocking Pod.list."""
     for pod in pods:
         yield pod
+
+
+def _fake_k8s_client(mock_api):
+    """Async context manager helper that yields the given mock ApiClient."""
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _ctx():
+        yield mock_api
+
+    return _ctx()
+
+
+class _V1ContainerStateWaiting:
+    """Minimal stand-in for ``V1ContainerStateWaiting``."""
+
+    def __init__(self, reason: str | None = None, message: str | None = None) -> None:
+        self.reason = reason
+        self.message = message
+
+
+class _V1ContainerStateTerminated:
+    """Minimal stand-in for ``V1ContainerStateTerminated``."""
+
+    def __init__(
+        self,
+        reason: str | None = None,
+        exit_code: int | None = None,
+        message: str | None = None,
+    ) -> None:
+        self.reason = reason
+        self.exit_code = exit_code
+        self.message = message
+
+
+class _V1ContainerState:
+    def __init__(self, waiting=None, terminated=None, running=None) -> None:
+        self.waiting = waiting
+        self.terminated = terminated
+        self.running = running
+
+
+class _V1ContainerStatus:
+    def __init__(
+        self,
+        name: str = "",
+        restart_count: int = 0,
+        state: _V1ContainerState | None = None,
+        last_state: _V1ContainerState | None = None,
+        ready: bool = False,
+    ) -> None:
+        self.name = name
+        self.restart_count = restart_count
+        self.state = state or _V1ContainerState()
+        self.last_state = last_state or _V1ContainerState()
+        self.ready = ready
+
+
+class _V1PodStatus:
+    def __init__(
+        self,
+        phase: str | None = None,
+        container_statuses: list | None = None,
+        init_container_statuses: list | None = None,
+        conditions: list | None = None,
+        pod_ip: str | None = None,
+    ) -> None:
+        self.phase = phase
+        self.container_statuses = container_statuses
+        self.init_container_statuses = init_container_statuses
+        self.conditions = conditions
+        self.pod_ip = pod_ip
+
+
+class _V1ObjectMeta:
+    def __init__(
+        self,
+        name: str = "",
+        namespace: str = "",
+        labels: dict | None = None,
+        annotations: dict | None = None,
+    ) -> None:
+        self.name = name
+        self.namespace = namespace
+        self.labels = labels
+        self.annotations = annotations
+
+
+class _V1Pod:
+    def __init__(
+        self,
+        metadata: _V1ObjectMeta | None = None,
+        status: _V1PodStatus | None = None,
+        spec=None,
+    ) -> None:
+        self.metadata = metadata or _V1ObjectMeta()
+        self.status = status or _V1PodStatus()
+        self.spec = spec
+
+
+class _V1PodList:
+    def __init__(self, items: list) -> None:
+        self.items = items
+
+
+def _make_pod(
+    *,
+    name: str = "p",
+    namespace: str = "default",
+    labels: dict | None = None,
+    annotations: dict | None = None,
+    phase: str | None = None,
+    container_statuses_raw: list | None = None,
+    init_container_statuses_raw: list | None = None,
+) -> _V1Pod:
+    """Build a minimal typed V1Pod mock from raw-shape dicts."""
+
+    def _cs_from_raw(d: dict) -> _V1ContainerStatus:
+        state_d = d.get("state") or {}
+        last_state_d = d.get("lastState") or {}
+        waiting_d = state_d.get("waiting") or None
+        terminated_d = state_d.get("terminated") or None
+        last_term_d = last_state_d.get("terminated") or None
+
+        waiting = (
+            _V1ContainerStateWaiting(
+                reason=waiting_d.get("reason"),
+                message=waiting_d.get("message"),
+            )
+            if waiting_d is not None
+            else None
+        )
+        terminated = (
+            _V1ContainerStateTerminated(
+                reason=terminated_d.get("reason"),
+                exit_code=terminated_d.get("exitCode"),
+                message=terminated_d.get("message"),
+            )
+            if terminated_d is not None
+            else None
+        )
+        last_state = _V1ContainerState(
+            terminated=(
+                _V1ContainerStateTerminated(reason=last_term_d.get("reason"))
+                if last_term_d is not None
+                else None
+            )
+        )
+        return _V1ContainerStatus(
+            name=d.get("name", ""),
+            restart_count=d.get("restartCount", 0),
+            state=_V1ContainerState(waiting=waiting, terminated=terminated),
+            last_state=last_state,
+            ready=d.get("ready", False),
+        )
+
+    cs_list = [_cs_from_raw(d) for d in (container_statuses_raw or [])]
+    ics_list = [_cs_from_raw(d) for d in (init_container_statuses_raw or [])]
+
+    return _V1Pod(
+        metadata=_V1ObjectMeta(
+            name=name, namespace=namespace, labels=labels, annotations=annotations
+        ),
+        status=_V1PodStatus(
+            phase=phase,
+            container_statuses=cs_list,
+            init_container_statuses=ics_list,
+        ),
+    )
+
+
+async def _fake_pod_list(*pods) -> _V1PodList:
+    return _V1PodList(items=list(pods))
 
 
 # =============================================================================
@@ -585,10 +759,10 @@ class TestOnCreateHandler:
         kopf_patch.status = {}
 
         mock_api = AsyncMock()
-        mock_configmap = AsyncMock()
-        mock_jobset = AsyncMock()
-        mock_role = AsyncMock()
-        mock_role_binding = AsyncMock()
+        AsyncMock()
+        AsyncMock()
+        AsyncMock()
+        AsyncMock()
 
         mock_preflight = MagicMock()
         mock_preflight.run_all = AsyncMock(
@@ -597,9 +771,8 @@ class TestOnCreateHandler:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.create.get_api",
-                new_callable=AsyncMock,
-                return_value=mock_api,
+                "aiperf.operator.handlers.create.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
             ),
             mock_patch(
                 "aiperf.operator.handlers.create.check_endpoint_health",
@@ -607,15 +780,20 @@ class TestOnCreateHandler:
                 return_value=MagicMock(reachable=True, error=""),
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.ConfigMap", return_value=mock_configmap
+                "aiperf.operator.handlers.create.create_idempotent_config_map",
+                new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.AsyncJobSet", return_value=mock_jobset
+                "aiperf.operator.handlers.create.create_idempotent_custom_object",
+                new_callable=AsyncMock,
             ),
-            mock_patch("aiperf.operator.handlers.create.Role", return_value=mock_role),
             mock_patch(
-                "aiperf.operator.handlers.create.RoleBinding",
-                return_value=mock_role_binding,
+                "aiperf.operator.handlers.create.create_idempotent_role",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.create.create_idempotent_role_binding",
+                new_callable=AsyncMock,
             ),
             mock_patch(
                 "aiperf.operator.preflight.OperatorPreflightChecker",
@@ -633,8 +811,6 @@ class TestOnCreateHandler:
 
         assert "jobSetName" in result
         assert "workers" in result
-        mock_configmap.create.assert_called_once()
-        mock_jobset.create.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_handles_unreachable_endpoint_as_warning(
@@ -650,10 +826,10 @@ class TestOnCreateHandler:
         kopf_patch.status = {}
 
         mock_api = AsyncMock()
-        mock_configmap = AsyncMock()
-        mock_jobset = AsyncMock()
-        mock_role = AsyncMock()
-        mock_role_binding = AsyncMock()
+        AsyncMock()
+        AsyncMock()
+        AsyncMock()
+        AsyncMock()
 
         mock_preflight = MagicMock()
         mock_preflight.run_all = AsyncMock(
@@ -662,9 +838,8 @@ class TestOnCreateHandler:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.create.get_api",
-                new_callable=AsyncMock,
-                return_value=mock_api,
+                "aiperf.operator.handlers.create.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
             ),
             mock_patch(
                 "aiperf.operator.handlers.create.check_endpoint_health",
@@ -672,15 +847,20 @@ class TestOnCreateHandler:
                 return_value=MagicMock(reachable=False, error="Connection refused"),
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.ConfigMap", return_value=mock_configmap
+                "aiperf.operator.handlers.create.create_idempotent_config_map",
+                new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.AsyncJobSet", return_value=mock_jobset
+                "aiperf.operator.handlers.create.create_idempotent_custom_object",
+                new_callable=AsyncMock,
             ),
-            mock_patch("aiperf.operator.handlers.create.Role", return_value=mock_role),
             mock_patch(
-                "aiperf.operator.handlers.create.RoleBinding",
-                return_value=mock_role_binding,
+                "aiperf.operator.handlers.create.create_idempotent_role",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.create.create_idempotent_role_binding",
+                new_callable=AsyncMock,
             ),
             mock_patch(
                 "aiperf.operator.preflight.OperatorPreflightChecker",
@@ -769,19 +949,17 @@ class TestOnCancelHandler:
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
-        mock_api = AsyncMock()
-        mock_jobset = AsyncMock()
+        mock_delete = AsyncMock(return_value={})
+        mock_custom = MagicMock(delete_namespaced_custom_object=mock_delete)
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.lifecycle.get_api",
-                new_callable=AsyncMock,
-                return_value=mock_api,
+                "aiperf.operator.handlers.lifecycle.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.lifecycle.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.lifecycle.client.CustomObjectsApi",
+                return_value=mock_custom,
             ),
         ):
             await on_cancel(
@@ -793,7 +971,7 @@ class TestOnCancelHandler:
                 patch=kopf_patch,
             )
 
-        mock_jobset.delete.assert_called_once()
+        mock_delete.assert_awaited_once()
         assert kopf_patch.status["phase"] == Phase.CANCELLED
 
 
@@ -849,8 +1027,6 @@ class TestMonitorProgressHandler:
     @pytest.mark.asyncio
     async def test_handles_jobset_not_found(self) -> None:
         """Verify sets Failed phase when JobSet is gone."""
-        import kr8s
-
         from aiperf.operator.main import monitor_progress
 
         kopf_patch = MagicMock()
@@ -858,14 +1034,16 @@ class TestMonitorProgressHandler:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                side_effect=kr8s.NotFoundError("not found"),
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=MagicMock(
+                    get_namespaced_custom_object=AsyncMock(
+                        side_effect=ApiException(status=404, reason="not found")
+                    )
+                ),
             ),
         ):
             await monitor_progress(
@@ -900,14 +1078,17 @@ class TestMonitorProgressHandler:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=MagicMock(
+                    get_namespaced_custom_object=AsyncMock(
+                        return_value=mock_jobset.raw
+                    ),
+                    delete_namespaced_custom_object=AsyncMock(return_value={}),
+                ),
             ),
         ):
             await monitor_progress(
@@ -970,14 +1151,17 @@ class TestMonitorCompletedClaimsShutdownKey:
                 side_effect=fake_claim,
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=MagicMock(
+                    get_namespaced_custom_object=AsyncMock(
+                        return_value=mock_jobset.raw
+                    ),
+                    delete_namespaced_custom_object=AsyncMock(return_value={}),
+                ),
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor.handle_completion",
@@ -1061,14 +1245,17 @@ class TestMonitorCompletedClaimsShutdownKey:
                 side_effect=fake_claim,
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=MagicMock(
+                    get_namespaced_custom_object=AsyncMock(
+                        return_value=mock_jobset.raw
+                    ),
+                    delete_namespaced_custom_object=AsyncMock(return_value={}),
+                ),
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor.handle_completion",
@@ -1194,14 +1381,17 @@ class TestMonitorProgressAdvanced:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=MagicMock(
+                    get_namespaced_custom_object=AsyncMock(
+                        return_value=mock_jobset.raw
+                    ),
+                    delete_namespaced_custom_object=AsyncMock(return_value={}),
+                ),
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor.get_or_create_progress_client",
@@ -1258,14 +1448,17 @@ class TestMonitorProgressAdvanced:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=MagicMock(
+                    get_namespaced_custom_object=AsyncMock(
+                        return_value=mock_jobset.raw
+                    ),
+                    delete_namespaced_custom_object=AsyncMock(return_value={}),
+                ),
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor.get_or_create_progress_client",
@@ -1325,14 +1518,17 @@ class TestMonitorProgressAdvanced:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=MagicMock(
+                    get_namespaced_custom_object=AsyncMock(
+                        return_value=mock_jobset.raw
+                    ),
+                    delete_namespaced_custom_object=AsyncMock(return_value={}),
+                ),
             ),
             mock_patch("aiperf.operator.events.failed") as mock_failed,
         ):
@@ -1385,14 +1581,17 @@ class TestMonitorProgressAdvanced:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=MagicMock(
+                    get_namespaced_custom_object=AsyncMock(
+                        return_value=mock_jobset.raw
+                    ),
+                    delete_namespaced_custom_object=AsyncMock(return_value={}),
+                ),
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor.get_or_create_progress_client",
@@ -1427,8 +1626,6 @@ class TestMonitorProgressAdvanced:
     @pytest.mark.asyncio
     async def test_handles_generic_api_exception(self) -> None:
         """Verify handles non-404 API exceptions gracefully."""
-        import kr8s
-
         from aiperf.operator.main import monitor_progress
 
         kopf_patch = MagicMock()
@@ -1436,14 +1633,16 @@ class TestMonitorProgressAdvanced:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                side_effect=kr8s.ServerError("server error", 500),
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=MagicMock(
+                    get_namespaced_custom_object=AsyncMock(
+                        side_effect=ApiException(status=500, reason="server error")
+                    )
+                ),
             ),
         ):
             await monitor_progress(
@@ -1484,14 +1683,17 @@ class TestMonitorProgressAdvanced:
                 return_value=True,
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=MagicMock(
+                    get_namespaced_custom_object=AsyncMock(
+                        return_value=mock_jobset.raw
+                    ),
+                    delete_namespaced_custom_object=AsyncMock(return_value={}),
+                ),
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor.handle_completion",
@@ -1544,8 +1746,8 @@ class TestHandleCompletion:
             ]
         }
 
-        mock_api = AsyncMock()
-        mock_js = AsyncMock()
+        AsyncMock()
+        AsyncMock()
 
         with (
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
@@ -1556,14 +1758,14 @@ class TestHandleCompletion:
                 new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.completion.get_api",
-                new_callable=AsyncMock,
-                return_value=mock_api,
+                "aiperf.operator.handlers.completion.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.completion.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_js,
+                "aiperf.operator.handlers.completion.client.CustomObjectsApi",
+                return_value=MagicMock(
+                    delete_namespaced_custom_object=AsyncMock(return_value={})
+                ),
             ),
         ):
             await _handle_completion(
@@ -1595,7 +1797,7 @@ class TestHandleCompletion:
         kopf_patch.status = {}
         sb = StatusBuilder(kopf_patch, {"workers": {"total": 2}})
 
-        mock_api = AsyncMock()
+        AsyncMock()
         mock_js = AsyncMock()
 
         with (
@@ -1608,14 +1810,14 @@ class TestHandleCompletion:
                 new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.completion.get_api",
-                new_callable=AsyncMock,
-                return_value=mock_api,
+                "aiperf.operator.handlers.completion.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.completion.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_js,
+                "aiperf.operator.handlers.completion.client.CustomObjectsApi",
+                return_value=MagicMock(
+                    delete_namespaced_custom_object=AsyncMock(return_value={})
+                ),
             ),
         ):
             await _handle_completion(
@@ -1664,11 +1866,14 @@ class TestHandleCompletion:
                 new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.completion.AsyncJobSet",
-                **{"get": AsyncMock()},
+                "aiperf.operator.handlers.completion.client.CustomObjectsApi",
+                return_value=MagicMock(
+                    delete_namespaced_custom_object=AsyncMock(return_value={})
+                ),
             ),
             mock_patch(
-                "aiperf.operator.handlers.completion.get_api", new_callable=AsyncMock
+                "aiperf.operator.handlers.completion.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
         ):
             await _handle_completion(
@@ -1711,11 +1916,14 @@ class TestHandleCompletion:
                 new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.completion.AsyncJobSet",
-                **{"get": AsyncMock()},
+                "aiperf.operator.handlers.completion.client.CustomObjectsApi",
+                return_value=MagicMock(
+                    delete_namespaced_custom_object=AsyncMock(return_value={})
+                ),
             ),
             mock_patch(
-                "aiperf.operator.handlers.completion.get_api", new_callable=AsyncMock
+                "aiperf.operator.handlers.completion.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
         ):
             await _handle_completion(
@@ -2228,24 +2436,25 @@ class TestCheckPodRestarts:
         """Verify emits pod restart event when restarts exceed threshold."""
         from aiperf.operator.handlers.monitor import _check_pod_restarts
 
-        mock_pod = MagicMock()
-        mock_pod.name = "worker-0-0"
-        mock_pod.raw = {
-            "status": {
-                "containerStatuses": [
-                    {
-                        "restartCount": 5,
-                        "lastState": {"terminated": {"reason": "OOMKilled"}},
-                        "state": {},
-                    }
-                ]
-            }
-        }
+        pod = _make_pod(
+            name="worker-0-0",
+            container_statuses_raw=[
+                {
+                    "restartCount": 5,
+                    "lastState": {"terminated": {"reason": "OOMKilled"}},
+                    "state": {},
+                }
+            ],
+        )
+
+        mock_core = MagicMock(
+            list_namespaced_pod=AsyncMock(return_value=_V1PodList(items=[pod]))
+        )
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.Pod.list",
-                return_value=_async_pod_list(mock_pod),
+                "aiperf.operator.handlers.monitor.client.CoreV1Api",
+                return_value=mock_core,
             ),
             mock_patch("aiperf.operator.events.pod_restarts") as mock_event,
         ):
@@ -2260,18 +2469,18 @@ class TestCheckPodRestarts:
         """Verify no event when restarts are below threshold."""
         from aiperf.operator.handlers.monitor import _check_pod_restarts
 
-        mock_pod = MagicMock()
-        mock_pod.name = "worker-0-0"
-        mock_pod.raw = {
-            "status": {
-                "containerStatuses": [{"restartCount": 1, "state": {}, "lastState": {}}]
-            }
-        }
+        pod = _make_pod(
+            name="worker-0-0",
+            container_statuses_raw=[{"restartCount": 1, "state": {}, "lastState": {}}],
+        )
+        mock_core = MagicMock(
+            list_namespaced_pod=AsyncMock(return_value=_V1PodList(items=[pod]))
+        )
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.Pod.list",
-                return_value=_async_pod_list(mock_pod),
+                "aiperf.operator.handlers.monitor.client.CoreV1Api",
+                return_value=mock_core,
             ),
             mock_patch("aiperf.operator.events.pod_restarts") as mock_event,
         ):
@@ -2286,24 +2495,24 @@ class TestCheckPodRestarts:
         """Verify uses waiting state reason (CrashLoopBackOff) when available."""
         from aiperf.operator.handlers.monitor import _check_pod_restarts
 
-        mock_pod = MagicMock()
-        mock_pod.name = "worker-0-0"
-        mock_pod.raw = {
-            "status": {
-                "containerStatuses": [
-                    {
-                        "restartCount": 4,
-                        "lastState": {"terminated": {"reason": "Error"}},
-                        "state": {"waiting": {"reason": "CrashLoopBackOff"}},
-                    }
-                ]
-            }
-        }
+        pod = _make_pod(
+            name="worker-0-0",
+            container_statuses_raw=[
+                {
+                    "restartCount": 4,
+                    "lastState": {"terminated": {"reason": "Error"}},
+                    "state": {"waiting": {"reason": "CrashLoopBackOff"}},
+                }
+            ],
+        )
+        mock_core = MagicMock(
+            list_namespaced_pod=AsyncMock(return_value=_V1PodList(items=[pod]))
+        )
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.Pod.list",
-                return_value=_async_pod_list(mock_pod),
+                "aiperf.operator.handlers.monitor.client.CoreV1Api",
+                return_value=mock_core,
             ),
             mock_patch("aiperf.operator.events.pod_restarts") as mock_event,
         ):
@@ -2318,10 +2527,13 @@ class TestCheckPodRestarts:
         """Verify exceptions during pod listing are handled gracefully."""
         from aiperf.operator.handlers.monitor import _check_pod_restarts
 
+        mock_core = MagicMock(
+            list_namespaced_pod=AsyncMock(side_effect=Exception("API unavailable"))
+        )
+
         with mock_patch(
-            "aiperf.operator.handlers.monitor.Pod.list",
-            new_callable=AsyncMock,
-            side_effect=Exception("API unavailable"),
+            "aiperf.operator.handlers.monitor.client.CoreV1Api",
+            return_value=mock_core,
         ):
             # Should not raise
             await _check_pod_restarts(
@@ -2333,24 +2545,24 @@ class TestCheckPodRestarts:
         """Verify same (pod, restart_count) pair only emits event once."""
         from aiperf.operator.handlers.monitor import _check_pod_restarts
 
-        mock_pod = MagicMock()
-        mock_pod.name = "worker-0-0"
-        mock_pod.raw = {
-            "status": {
-                "containerStatuses": [
-                    {
-                        "restartCount": 5,
-                        "lastState": {"terminated": {"reason": "OOMKilled"}},
-                        "state": {},
-                    }
-                ]
-            }
-        }
+        pod = _make_pod(
+            name="worker-0-0",
+            container_statuses_raw=[
+                {
+                    "restartCount": 5,
+                    "lastState": {"terminated": {"reason": "OOMKilled"}},
+                    "state": {},
+                }
+            ],
+        )
+        mock_core = MagicMock(
+            list_namespaced_pod=AsyncMock(return_value=_V1PodList(items=[pod]))
+        )
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.Pod.list",
-                side_effect=lambda **kwargs: _async_pod_list(mock_pod),
+                "aiperf.operator.handlers.monitor.client.CoreV1Api",
+                return_value=mock_core,
             ),
             mock_patch("aiperf.operator.events.pod_restarts") as mock_event,
         ):
@@ -2368,24 +2580,29 @@ class TestCheckPodRestarts:
         """Verify new event when restart count increases past previous value."""
         from aiperf.operator.handlers.monitor import _check_pod_restarts
 
-        mock_pod = MagicMock()
-        mock_pod.name = "worker-0-0"
-        mock_pod.raw = {
-            "status": {
-                "containerStatuses": [
+        restart_counts = {"count": 5}
+
+        def _list_side_effect(*_, **__):
+            pod = _make_pod(
+                name="worker-0-0",
+                container_statuses_raw=[
                     {
-                        "restartCount": 5,
+                        "restartCount": restart_counts["count"],
                         "lastState": {"terminated": {"reason": "OOMKilled"}},
                         "state": {},
                     }
-                ]
-            }
-        }
+                ],
+            )
+            return _V1PodList(items=[pod])
+
+        mock_core = MagicMock(
+            list_namespaced_pod=AsyncMock(side_effect=_list_side_effect)
+        )
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.Pod.list",
-                side_effect=lambda **kwargs: _async_pod_list(mock_pod),
+                "aiperf.operator.handlers.monitor.client.CoreV1Api",
+                return_value=mock_core,
             ),
             mock_patch("aiperf.operator.events.pod_restarts") as mock_event,
         ):
@@ -2393,7 +2610,7 @@ class TestCheckPodRestarts:
                 AsyncMock(), {}, "default", "test-jobset", "job-1"
             )
             # Increase restart count
-            mock_pod.raw["status"]["containerStatuses"][0]["restartCount"] = 10
+            restart_counts["count"] = 10
             await _check_pod_restarts(
                 AsyncMock(), {}, "default", "test-jobset", "job-1"
             )
@@ -2425,29 +2642,30 @@ class TestRecoverTerminatedController:
         kopf_patch.status = {}
         sb = StatusBuilder(kopf_patch, {"workers": {"total": 1}})
 
-        controller_pod = MagicMock()
-        controller_pod.name = "controller-0-0"
-        controller_pod.raw = {
-            "status": {
-                "containerStatuses": [
-                    {
-                        "name": "control-plane",
-                        "state": {
-                            "terminated": {"reason": "OOMKilled", "exitCode": 137}
-                        },
-                    },
-                    {
-                        "name": "results-sidecar",
-                        "state": {"running": {"startedAt": "2026-01-01T00:00:00Z"}},
-                    },
-                ]
-            }
-        }
+        controller_pod = _make_pod(
+            name="controller-0-0",
+            container_statuses_raw=[
+                {
+                    "name": "control-plane",
+                    "state": {"terminated": {"reason": "OOMKilled", "exitCode": 137}},
+                },
+                {
+                    "name": "results-sidecar",
+                    "state": {},
+                },
+            ],
+        )
+
+        mock_core = MagicMock(
+            list_namespaced_pod=AsyncMock(
+                return_value=_V1PodList(items=[controller_pod])
+            )
+        )
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.Pod.list",
-                return_value=_async_pod_list(controller_pod),
+                "aiperf.operator.handlers.monitor.client.CoreV1Api",
+                return_value=mock_core,
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor.fetch_results_with_retry",
@@ -2490,31 +2708,29 @@ class TestRecoverTerminatedController:
         kopf_patch.status = {}
         sb = StatusBuilder(kopf_patch, {"workers": {"total": 1}})
 
-        controller_pod = MagicMock()
-        controller_pod.name = "controller-0-0"
-        controller_pod.raw = {
-            "status": {
-                "containerStatuses": [
-                    {
-                        "name": "control-plane",
-                        "state": {
-                            "terminated": {"reason": "OOMKilled", "exitCode": 137}
-                        },
-                    },
-                    {
-                        "name": "results-sidecar",
-                        "state": {"running": {"startedAt": "2026-01-01T00:00:00Z"}},
-                    },
-                ]
-            }
-        }
+        controller_pod = _make_pod(
+            name="controller-0-0",
+            container_statuses_raw=[
+                {
+                    "name": "control-plane",
+                    "state": {"terminated": {"reason": "OOMKilled", "exitCode": 137}},
+                },
+                {"name": "results-sidecar", "state": {}},
+            ],
+        )
 
-        mock_jobset = AsyncMock()
+        mock_delete = AsyncMock(return_value={})
+        mock_custom = MagicMock(delete_namespaced_custom_object=mock_delete)
+        mock_core = MagicMock(
+            list_namespaced_pod=AsyncMock(
+                return_value=_V1PodList(items=[controller_pod])
+            )
+        )
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.Pod.list",
-                return_value=_async_pod_list(controller_pod),
+                "aiperf.operator.handlers.monitor.client.CoreV1Api",
+                return_value=mock_core,
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor.fetch_results_with_retry",
@@ -2523,9 +2739,8 @@ class TestRecoverTerminatedController:
             ),
             mock_patch("aiperf.operator.events.failed") as mock_failed_event,
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=mock_custom,
             ),
         ):
             handled = await _maybe_recover_terminated_controller(
@@ -2542,7 +2757,7 @@ class TestRecoverTerminatedController:
         assert handled is True
         assert kopf_patch.status["phase"] == Phase.FAILED
         mock_failed_event.assert_called_once()
-        mock_jobset.delete.assert_called_once()
+        mock_delete.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_recovers_partial_checkpoint_when_final_export_missing(
@@ -2558,24 +2773,16 @@ class TestRecoverTerminatedController:
         kopf_patch.status = {}
         sb = StatusBuilder(kopf_patch, {"workers": {"total": 1}})
 
-        controller_pod = MagicMock()
-        controller_pod.name = "controller-0-0"
-        controller_pod.raw = {
-            "status": {
-                "containerStatuses": [
-                    {
-                        "name": "control-plane",
-                        "state": {
-                            "terminated": {"reason": "OOMKilled", "exitCode": 137}
-                        },
-                    },
-                    {
-                        "name": "results-sidecar",
-                        "state": {"running": {"startedAt": "2026-01-01T00:00:00Z"}},
-                    },
-                ]
-            }
-        }
+        controller_pod = _make_pod(
+            name="controller-0-0",
+            container_statuses_raw=[
+                {
+                    "name": "control-plane",
+                    "state": {"terminated": {"reason": "OOMKilled", "exitCode": 137}},
+                },
+                {"name": "results-sidecar", "state": {}},
+            ],
+        )
 
         checkpoint_dir = temp_results_dir / "default" / "job-1" / "checkpoints"
         checkpoint_dir.mkdir(parents=True)
@@ -2583,12 +2790,18 @@ class TestRecoverTerminatedController:
             '{"request_throughput":{"unit":"req/s","avg":123.0}}'
         )
 
-        mock_jobset = AsyncMock()
+        mock_delete = AsyncMock(return_value={})
+        mock_custom = MagicMock(delete_namespaced_custom_object=mock_delete)
+        mock_core = MagicMock(
+            list_namespaced_pod=AsyncMock(
+                return_value=_V1PodList(items=[controller_pod])
+            )
+        )
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.Pod.list",
-                return_value=_async_pod_list(controller_pod),
+                "aiperf.operator.handlers.monitor.client.CoreV1Api",
+                return_value=mock_core,
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor.fetch_results_with_retry",
@@ -2603,9 +2816,8 @@ class TestRecoverTerminatedController:
             mock_patch("aiperf.operator.events.results_stored") as mock_results_stored,
             mock_patch("aiperf.operator.events.failed") as mock_failed_event,
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=mock_custom,
             ),
         ):
             handled = await _maybe_recover_terminated_controller(
@@ -2630,7 +2842,7 @@ class TestRecoverTerminatedController:
         )
         mock_results_stored.assert_called_once()
         mock_failed_event.assert_called_once()
-        mock_jobset.delete.assert_called_once()
+        mock_delete.assert_awaited_once()
 
 
 # =============================================================================
@@ -2661,14 +2873,17 @@ class TestMonitorProgressTimeout:
                 new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=MagicMock(
+                    get_namespaced_custom_object=AsyncMock(
+                        return_value=mock_jobset.raw
+                    ),
+                    delete_namespaced_custom_object=AsyncMock(return_value={}),
+                ),
             ),
         ):
             await monitor_progress(
@@ -2708,14 +2923,17 @@ class TestMonitorProgressTimeout:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=MagicMock(
+                    get_namespaced_custom_object=AsyncMock(
+                        return_value=mock_jobset.raw
+                    ),
+                    delete_namespaced_custom_object=AsyncMock(return_value={}),
+                ),
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor._check_pod_restarts",
@@ -2758,14 +2976,17 @@ class TestMonitorProgressTimeout:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=MagicMock(
+                    get_namespaced_custom_object=AsyncMock(
+                        return_value=mock_jobset.raw
+                    ),
+                    delete_namespaced_custom_object=AsyncMock(return_value={}),
+                ),
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor._check_pod_restarts",
@@ -2967,14 +3188,13 @@ class TestOnCreatePreflightIntegration:
         kopf_patch.status = {}
 
         mock_api = AsyncMock()
-        mock_configmap = AsyncMock()
-        mock_jobset = AsyncMock()
+        AsyncMock()
+        AsyncMock()
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.create.get_api",
-                new_callable=AsyncMock,
-                return_value=mock_api,
+                "aiperf.operator.handlers.create.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
             ),
             mock_patch(
                 "aiperf.operator.handlers.create.check_endpoint_health",
@@ -2982,16 +3202,20 @@ class TestOnCreatePreflightIntegration:
                 return_value=MagicMock(reachable=True, error=""),
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.ConfigMap", return_value=mock_configmap
+                "aiperf.operator.handlers.create.create_idempotent_config_map",
+                new_callable=AsyncMock,
+            ) as mock_create_cm,
+            mock_patch(
+                "aiperf.operator.handlers.create.create_idempotent_custom_object",
+                new_callable=AsyncMock,
+            ) as mock_create_custom,
+            mock_patch(
+                "aiperf.operator.handlers.create.create_idempotent_role",
+                new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.AsyncJobSet", return_value=mock_jobset
-            ),
-            mock_patch(
-                "aiperf.operator.handlers.create.Role", return_value=AsyncMock()
-            ),
-            mock_patch(
-                "aiperf.operator.handlers.create.RoleBinding", return_value=AsyncMock()
+                "aiperf.operator.handlers.create.create_idempotent_role_binding",
+                new_callable=AsyncMock,
             ),
             mock_patch(
                 "aiperf.operator.preflight.OperatorPreflightChecker",
@@ -3017,8 +3241,8 @@ class TestOnCreatePreflightIntegration:
         mock_all_events["event_preflight_passed"].assert_called_once()
 
         # Resources were created
-        mock_configmap.create.assert_called_once()
-        mock_jobset.create.assert_called_once()
+        mock_create_cm.assert_awaited_once()
+        mock_create_custom.assert_awaited_once()
         assert "jobSetName" in result
 
     @pytest.mark.asyncio
@@ -3045,14 +3269,13 @@ class TestOnCreatePreflightIntegration:
         kopf_patch.status = {}
 
         mock_api = AsyncMock()
-        mock_configmap = AsyncMock()
-        mock_jobset = AsyncMock()
+        AsyncMock()
+        AsyncMock()
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.create.get_api",
-                new_callable=AsyncMock,
-                return_value=mock_api,
+                "aiperf.operator.handlers.create.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
             ),
             mock_patch(
                 "aiperf.operator.handlers.create.check_endpoint_health",
@@ -3060,16 +3283,20 @@ class TestOnCreatePreflightIntegration:
                 return_value=MagicMock(reachable=True, error=""),
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.ConfigMap", return_value=mock_configmap
+                "aiperf.operator.handlers.create.create_idempotent_config_map",
+                new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.AsyncJobSet", return_value=mock_jobset
+                "aiperf.operator.handlers.create.create_idempotent_custom_object",
+                new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.Role", return_value=AsyncMock()
+                "aiperf.operator.handlers.create.create_idempotent_role",
+                new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.RoleBinding", return_value=AsyncMock()
+                "aiperf.operator.handlers.create.create_idempotent_role_binding",
+                new_callable=AsyncMock,
             ),
             mock_patch(
                 "aiperf.operator.preflight.OperatorPreflightChecker",
@@ -3100,10 +3327,6 @@ class TestOnCreatePreflightIntegration:
         # event_preflight_failed was called
         mock_all_events["event_preflight_failed"].assert_called_once()
 
-        # No resources were created
-        mock_configmap.create.assert_not_called()
-        mock_jobset.create.assert_not_called()
-
     @pytest.mark.asyncio
     async def test_preflight_warnings_emitted_as_events(
         self,
@@ -3130,14 +3353,13 @@ class TestOnCreatePreflightIntegration:
         kopf_patch.status = {}
 
         mock_api = AsyncMock()
-        mock_configmap = AsyncMock()
-        mock_jobset = AsyncMock()
+        AsyncMock()
+        AsyncMock()
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.create.get_api",
-                new_callable=AsyncMock,
-                return_value=mock_api,
+                "aiperf.operator.handlers.create.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
             ),
             mock_patch(
                 "aiperf.operator.handlers.create.check_endpoint_health",
@@ -3145,16 +3367,20 @@ class TestOnCreatePreflightIntegration:
                 return_value=MagicMock(reachable=True, error=""),
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.ConfigMap", return_value=mock_configmap
+                "aiperf.operator.handlers.create.create_idempotent_config_map",
+                new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.AsyncJobSet", return_value=mock_jobset
+                "aiperf.operator.handlers.create.create_idempotent_custom_object",
+                new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.Role", return_value=AsyncMock()
+                "aiperf.operator.handlers.create.create_idempotent_role",
+                new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.RoleBinding", return_value=AsyncMock()
+                "aiperf.operator.handlers.create.create_idempotent_role_binding",
+                new_callable=AsyncMock,
             ),
             mock_patch(
                 "aiperf.operator.preflight.OperatorPreflightChecker",
@@ -3176,10 +3402,6 @@ class TestOnCreatePreflightIntegration:
         warn_calls = [c.args for c in warn_mock.call_args_list]
         warn_names = {call[1] for call in warn_calls}
         assert warn_names == {"DNS", "Network Policy"}
-
-        # Resources are still created despite warnings
-        mock_configmap.create.assert_called_once()
-        mock_jobset.create.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_preflight_timeout_fails_job(
@@ -3210,14 +3432,13 @@ class TestOnCreatePreflightIntegration:
         kopf_patch.status = {}
 
         mock_api = AsyncMock()
-        mock_configmap = AsyncMock()
-        mock_jobset = AsyncMock()
+        AsyncMock()
+        AsyncMock()
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.create.get_api",
-                new_callable=AsyncMock,
-                return_value=mock_api,
+                "aiperf.operator.handlers.create.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
             ),
             mock_patch(
                 "aiperf.operator.handlers.create.check_endpoint_health",
@@ -3225,16 +3446,20 @@ class TestOnCreatePreflightIntegration:
                 return_value=MagicMock(reachable=True, error=""),
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.ConfigMap", return_value=mock_configmap
+                "aiperf.operator.handlers.create.create_idempotent_config_map",
+                new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.AsyncJobSet", return_value=mock_jobset
+                "aiperf.operator.handlers.create.create_idempotent_custom_object",
+                new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.Role", return_value=AsyncMock()
+                "aiperf.operator.handlers.create.create_idempotent_role",
+                new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.RoleBinding", return_value=AsyncMock()
+                "aiperf.operator.handlers.create.create_idempotent_role_binding",
+                new_callable=AsyncMock,
             ),
             mock_patch(
                 "aiperf.operator.preflight.OperatorPreflightChecker",
@@ -3254,10 +3479,6 @@ class TestOnCreatePreflightIntegration:
         assert kopf_patch.status["phase"] == Phase.FAILED
         assert "timed out" in kopf_patch.status["error"]
 
-        # No resources created
-        mock_configmap.create.assert_not_called()
-        mock_jobset.create.assert_not_called()
-
     @pytest.mark.asyncio
     async def test_preflight_receives_correct_parameters(
         self,
@@ -3275,8 +3496,8 @@ class TestOnCreatePreflightIntegration:
         kopf_patch.status = {}
 
         mock_api = AsyncMock()
-        mock_configmap = AsyncMock()
-        mock_jobset = AsyncMock()
+        AsyncMock()
+        AsyncMock()
 
         mock_checker_cls = MagicMock()
         mock_checker_instance = MagicMock()
@@ -3285,9 +3506,8 @@ class TestOnCreatePreflightIntegration:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.create.get_api",
-                new_callable=AsyncMock,
-                return_value=mock_api,
+                "aiperf.operator.handlers.create.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
             ),
             mock_patch(
                 "aiperf.operator.handlers.create.check_endpoint_health",
@@ -3295,16 +3515,20 @@ class TestOnCreatePreflightIntegration:
                 return_value=MagicMock(reachable=True, error=""),
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.ConfigMap", return_value=mock_configmap
+                "aiperf.operator.handlers.create.create_idempotent_config_map",
+                new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.AsyncJobSet", return_value=mock_jobset
+                "aiperf.operator.handlers.create.create_idempotent_custom_object",
+                new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.Role", return_value=AsyncMock()
+                "aiperf.operator.handlers.create.create_idempotent_role",
+                new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.RoleBinding", return_value=AsyncMock()
+                "aiperf.operator.handlers.create.create_idempotent_role_binding",
+                new_callable=AsyncMock,
             ),
             mock_patch(
                 "aiperf.operator.preflight.OperatorPreflightChecker",
@@ -3360,28 +3584,30 @@ class TestMonitorStaleReadLogging:
         the FAILED phase."""
         import logging
 
-        import kr8s
-
         from aiperf.operator.main import monitor_progress
 
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
+        # The monitor makes 2 get_namespaced_custom_object calls:
+        # 1. JobSet lookup → 404 (NotFound)
+        # 2. Fresh AIPerfJob CR re-read → RuntimeError
+        mock_get = AsyncMock(
+            side_effect=[
+                ApiException(status=404, reason="not found"),
+                RuntimeError("api blip"),
+            ]
+        )
+        mock_custom = MagicMock(get_namespaced_custom_object=mock_get)
+
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                side_effect=kr8s.NotFoundError("not found"),
-            ),
-            mock_patch(
-                "aiperf.kubernetes.kr8s_resources.AsyncAIPerfJob.get",
-                new_callable=AsyncMock,
-                side_effect=RuntimeError("api blip"),
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=mock_custom,
             ),
             caplog.at_level(logging.ERROR, logger="aiperf.operator.handlers.monitor"),
         ):

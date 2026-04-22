@@ -73,7 +73,8 @@ async def logs(
     manage_options = manage_options or KubeManageOptions()
 
     with cli_utils.exit_on_error(title="Error Getting Logs"):
-        import kr8s
+        from kubernetes_asyncio import client as k8s_client_mod
+        from kubernetes_asyncio.client.exceptions import ApiException
 
         from aiperf.kubernetes import (
             cli_helpers,
@@ -93,66 +94,88 @@ async def logs(
             return
         job_id, namespace = resolved
 
-        kube_client = await client.AIPerfKubeClient.create(
-            kubeconfig=manage_options.kubeconfig,
-            kube_context=manage_options.kube_context,
-        )
-
         if output:
             output.mkdir(parents=True, exist_ok=True)
-            await kube_logs.save_pod_logs(
-                job_id,
-                namespace,
-                output,
-                kube_client,
+            async with client.k8s_client(
                 kubeconfig=manage_options.kubeconfig,
-                kube_context=manage_options.kube_context,
-            )
+                context=manage_options.kube_context,
+            ) as api:
+                await kube_logs.save_pod_logs(
+                    job_id,
+                    namespace,
+                    output,
+                    api,
+                    kubeconfig=manage_options.kubeconfig,
+                    kube_context=manage_options.kube_context,
+                )
             kube_console.print_success(f"Logs saved to {output}/logs/")
             return
 
-        pods = await kube_client.get_pods(namespace, kube_client.job_selector(job_id))
+        async with client.k8s_client(
+            kubeconfig=manage_options.kubeconfig,
+            context=manage_options.kube_context,
+        ) as api:
+            core = k8s_client_mod.CoreV1Api(api)
+            pods = await client.get_pods(api, namespace, client.job_selector(job_id))
 
-        if not pods:
-            kube_console.print_warning(f"No pods found for job ID: {job_id}")
-            return
+            if not pods:
+                kube_console.print_warning(f"No pods found for job ID: {job_id}")
+                return
 
-        # Build list of (pod, container_name) targets
-        targets: list[tuple[Any, str]] = []
-        for pod in pods:
-            raw_containers = pod.raw.get("spec", {}).get("containers", [])
-            container_names = [c["name"] for c in raw_containers]
-            target_containers = [container] if container else container_names
-            for cont in target_containers:
-                if cont in container_names:
-                    targets.append((pod, cont))
+            # Build list of (pod, container_name) targets
+            targets: list[tuple[Any, str]] = []
+            for pod in pods:
+                containers = (pod.spec.containers if pod.spec else []) or []
+                container_names = [c.name for c in containers]
+                target_containers = [container] if container else container_names
+                for cont in target_containers:
+                    if cont in container_names:
+                        targets.append((pod, cont))
 
-        if not targets:
-            kube_console.print_warning("No matching containers found")
-            return
+            if not targets:
+                kube_console.print_warning("No matching containers found")
+                return
 
-        if follow and len(targets) > 1:
-            kube_console.print_warning(
-                f"Follow mode streams one container at a time. "
-                f"Showing {targets[0][0].name}/{targets[0][1]} "
-                f"({len(targets)} targets total). "
-                f"Use --container to select a specific container."
-            )
+            if follow and len(targets) > 1:
+                kube_console.print_warning(
+                    f"Follow mode streams one container at a time. "
+                    f"Showing {targets[0][0].metadata.name}/{targets[0][1]} "
+                    f"({len(targets)} targets total). "
+                    f"Use --container to select a specific container."
+                )
 
-        for pod, cont in targets:
-            kube_console.print_header(f"{pod.name}/{cont}")
+            for pod, cont in targets:
+                pod_name = pod.metadata.name
+                kube_console.print_header(f"{pod_name}/{cont}")
 
-            try:
-                kwargs: dict[str, Any] = {}
-                if tail is not None:
-                    kwargs["tail_lines"] = tail
-
-                if follow:
-                    async for line in pod.logs(container=cont, follow=True, **kwargs):
-                        print(line)
-                    break  # Only follow one target
-                else:
-                    lines = [line async for line in pod.logs(container=cont, **kwargs)]
-                    print("\n".join(lines))
-            except kr8s.ServerError as e:
-                kube_console.print_error(f"Error getting logs: {e}")
+                try:
+                    if follow:
+                        raw = await core.read_namespaced_pod_log(
+                            name=pod_name,
+                            namespace=namespace,
+                            container=cont,
+                            follow=True,
+                            _preload_content=False,
+                            **({"tail_lines": tail} if tail is not None else {}),
+                        )
+                        try:
+                            async for line in raw.content:
+                                print(
+                                    line.decode("utf-8", errors="replace").rstrip("\n")
+                                )
+                        finally:
+                            await raw.release()
+                        break  # Only follow one target
+                    else:
+                        log_kwargs: dict[str, Any] = {}
+                        if tail is not None:
+                            log_kwargs["tail_lines"] = tail
+                        log_text = await core.read_namespaced_pod_log(
+                            name=pod_name,
+                            namespace=namespace,
+                            container=cont,
+                            **log_kwargs,
+                        )
+                        print(log_text.rstrip("\n") if log_text else "")
+                except ApiException as e:
+                    kube_console.print_error(f"Error getting logs: {e}")

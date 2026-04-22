@@ -11,11 +11,12 @@ already exists.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 from unittest.mock import patch as mock_patch
 
-import kr8s
 import pytest
+from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.kubernetes.constants import Annotations
 from aiperf.operator.client_cache import (
@@ -46,6 +47,12 @@ def _body_without_annotation() -> dict:
     return {"metadata": {"annotations": {}}}
 
 
+@asynccontextmanager
+async def _fake_k8s_client(mock_api: MagicMock):
+    """Helper that yields the supplied mock ApiClient."""
+    yield mock_api
+
+
 class TestIsCompletionClaimed:
     def test_returns_true_when_annotation_set(self) -> None:
         assert is_completion_claimed(_body_with_annotation()) is True
@@ -66,10 +73,13 @@ class TestTryClaimCompletion:
         """If annotation is already on body, skip the API call and return False."""
         body = _body_with_annotation()
 
-        # Patch get_api to blow up if called — we should not hit it.
+        # Patch k8s_client to blow up if entered — we should not hit it.
+        def _raise(*_, **__):
+            raise AssertionError("should not open a k8s client")
+
         with mock_patch(
-            "aiperf.kubernetes.client.get_api",
-            side_effect=AssertionError("should not call API"),
+            "aiperf.operator.client_cache.k8s_client",
+            new=_raise,
         ):
             result = await try_claim_completion("ns", "j", body)
 
@@ -82,9 +92,12 @@ class TestTryClaimCompletion:
         """If key already in _shutdown_sent this process, return False without touching body/API."""
         _shutdown_sent.add("ns/j")
 
+        def _raise(*_, **__):
+            raise AssertionError("should not open a k8s client")
+
         with mock_patch(
-            "aiperf.kubernetes.client.get_api",
-            side_effect=AssertionError("should not call API"),
+            "aiperf.operator.client_cache.k8s_client",
+            new=_raise,
         ):
             result = await try_claim_completion("ns", "j", _body_without_annotation())
 
@@ -92,30 +105,30 @@ class TestTryClaimCompletion:
 
     @pytest.mark.asyncio
     async def test_successful_claim_patches_annotation(self) -> None:
-        """Slow path: mock get_api + AsyncAIPerfJob.get, verify patch called and True returned."""
+        """Slow path: mock k8s_client + CustomObjectsApi, verify patch called and True returned."""
         body = _body_without_annotation()
-        mock_obj = AsyncMock()
+        mock_api = MagicMock()
+        mock_custom = MagicMock()
+        mock_custom.patch_namespaced_custom_object = AsyncMock(return_value={})
 
         with (
             mock_patch(
-                "aiperf.kubernetes.client.get_api",
-                new_callable=AsyncMock,
-                return_value=MagicMock(),
+                "aiperf.operator.client_cache.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
             ),
             mock_patch(
-                "aiperf.kubernetes.kr8s_resources.AsyncAIPerfJob.get",
-                new_callable=AsyncMock,
-                return_value=mock_obj,
+                "kubernetes_asyncio.client.CustomObjectsApi",
+                return_value=mock_custom,
             ),
         ):
             result = await try_claim_completion("ns", "j", body)
 
         assert result is True
         assert "ns/j" in _shutdown_sent
-        mock_obj.patch.assert_awaited_once()
-        args, kwargs = mock_obj.patch.call_args
-        patch_ops = args[0]
-        assert kwargs.get("type") == "json"
+        mock_custom.patch_namespaced_custom_object.assert_awaited_once()
+        kwargs = mock_custom.patch_namespaced_custom_object.call_args.kwargs
+        patch_ops = kwargs["body"]
+        assert kwargs.get("_content_type") == "application/json-patch+json"
         assert any(op.get("op") == "test" for op in patch_ops)
         assert any(
             op.get("op") == "add" and "completion-claimed" in op.get("path", "")
@@ -126,24 +139,24 @@ class TestTryClaimCompletion:
     async def test_successful_claim_with_null_annotations(self) -> None:
         """If metadata.annotations is missing, patch adds the dict first."""
         body = {"metadata": {}}
-        mock_obj = AsyncMock()
+        mock_api = MagicMock()
+        mock_custom = MagicMock()
+        mock_custom.patch_namespaced_custom_object = AsyncMock(return_value={})
 
         with (
             mock_patch(
-                "aiperf.kubernetes.client.get_api",
-                new_callable=AsyncMock,
-                return_value=MagicMock(),
+                "aiperf.operator.client_cache.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
             ),
             mock_patch(
-                "aiperf.kubernetes.kr8s_resources.AsyncAIPerfJob.get",
-                new_callable=AsyncMock,
-                return_value=mock_obj,
+                "kubernetes_asyncio.client.CustomObjectsApi",
+                return_value=mock_custom,
             ),
         ):
             result = await try_claim_completion("ns", "j", body)
 
         assert result is True
-        patch_ops = mock_obj.patch.call_args[0][0]
+        patch_ops = mock_custom.patch_namespaced_custom_object.call_args.kwargs["body"]
         # Three-op sequence: test null, add dict, add annotation.
         assert len(patch_ops) == 3
         assert patch_ops[0]["op"] == "test"
@@ -155,22 +168,20 @@ class TestTryClaimCompletion:
     async def test_conflict_409_returns_false(self) -> None:
         """On 409 the patch lost a race: return False, mark in-process cache."""
         body = _body_without_annotation()
-        response = MagicMock()
-        response.status_code = 409
-        err = kr8s.ServerError("conflict", response=response)
-        mock_obj = AsyncMock()
-        mock_obj.patch.side_effect = err
+        mock_api = MagicMock()
+        mock_custom = MagicMock()
+        mock_custom.patch_namespaced_custom_object = AsyncMock(
+            side_effect=ApiException(status=409, reason="conflict")
+        )
 
         with (
             mock_patch(
-                "aiperf.kubernetes.client.get_api",
-                new_callable=AsyncMock,
-                return_value=MagicMock(),
+                "aiperf.operator.client_cache.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
             ),
             mock_patch(
-                "aiperf.kubernetes.kr8s_resources.AsyncAIPerfJob.get",
-                new_callable=AsyncMock,
-                return_value=mock_obj,
+                "kubernetes_asyncio.client.CustomObjectsApi",
+                return_value=mock_custom,
             ),
         ):
             result = await try_claim_completion("ns", "j", body)
@@ -182,22 +193,20 @@ class TestTryClaimCompletion:
     async def test_unprocessable_422_returns_false(self) -> None:
         """On 422 (JSON-patch test op failed) return False."""
         body = _body_without_annotation()
-        response = MagicMock()
-        response.status_code = 422
-        err = kr8s.ServerError("test op failed", response=response)
-        mock_obj = AsyncMock()
-        mock_obj.patch.side_effect = err
+        mock_api = MagicMock()
+        mock_custom = MagicMock()
+        mock_custom.patch_namespaced_custom_object = AsyncMock(
+            side_effect=ApiException(status=422, reason="test op failed")
+        )
 
         with (
             mock_patch(
-                "aiperf.kubernetes.client.get_api",
-                new_callable=AsyncMock,
-                return_value=MagicMock(),
+                "aiperf.operator.client_cache.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
             ),
             mock_patch(
-                "aiperf.kubernetes.kr8s_resources.AsyncAIPerfJob.get",
-                new_callable=AsyncMock,
-                return_value=mock_obj,
+                "kubernetes_asyncio.client.CustomObjectsApi",
+                return_value=mock_custom,
             ),
         ):
             result = await try_claim_completion("ns", "j", body)
@@ -213,22 +222,20 @@ class TestTryClaimCompletion:
         the claim off for the lifetime of the operator process.
         """
         body = _body_without_annotation()
-        response = MagicMock()
-        response.status_code = 500
-        err = kr8s.ServerError("server error", response=response)
-        mock_obj = AsyncMock()
-        mock_obj.patch.side_effect = err
+        mock_api = MagicMock()
+        mock_custom = MagicMock()
+        mock_custom.patch_namespaced_custom_object = AsyncMock(
+            side_effect=ApiException(status=500, reason="server error")
+        )
 
         with (
             mock_patch(
-                "aiperf.kubernetes.client.get_api",
-                new_callable=AsyncMock,
-                return_value=MagicMock(),
+                "aiperf.operator.client_cache.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
             ),
             mock_patch(
-                "aiperf.kubernetes.kr8s_resources.AsyncAIPerfJob.get",
-                new_callable=AsyncMock,
-                return_value=mock_obj,
+                "kubernetes_asyncio.client.CustomObjectsApi",
+                return_value=mock_custom,
             ),
         ):
             result = await try_claim_completion("ns", "j", body)
@@ -241,12 +248,12 @@ class TestTryClaimCompletion:
         """Any unexpected error returns False fail-safe (don't double-complete)."""
         body = _body_without_annotation()
 
-        with (
-            mock_patch(
-                "aiperf.kubernetes.client.get_api",
-                new_callable=AsyncMock,
-                side_effect=RuntimeError("boom"),
-            ),
+        def _raise(*_, **__):
+            raise RuntimeError("boom")
+
+        with mock_patch(
+            "aiperf.operator.client_cache.k8s_client",
+            new=_raise,
         ):
             result = await try_claim_completion("ns", "j", body)
 
@@ -341,19 +348,18 @@ class TestMonitorIntegration:
             "metadata": {"labels": {}},
             "spec": {},
         }
-        mock_jobset_obj = MagicMock()
-        mock_jobset_obj.raw = jobset_raw
+        mock_api = MagicMock()
+        mock_custom = MagicMock()
+        mock_custom.get_namespaced_custom_object = AsyncMock(return_value=jobset_raw)
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=MagicMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset_obj,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=mock_custom,
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor.handle_completion",

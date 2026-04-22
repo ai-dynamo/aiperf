@@ -13,6 +13,7 @@ Focuses on:
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -44,11 +45,11 @@ def _make_pod(
     init_container_statuses: list[dict[str, Any]] | None = None,
     conditions: list[dict[str, Any]] | None = None,
 ) -> MagicMock:
-    """Create a mock kr8s Pod object with realistic raw structure."""
+    """Create a mock Pod object exposing ``.name`` and ``.raw`` (legacy shape)."""
     pod = MagicMock()
     pod.name = name
     pod.raw = {
-        "metadata": {"namespace": namespace},
+        "metadata": {"name": name, "namespace": namespace},
         "spec": {"nodeName": node},
         "status": {
             "phase": phase,
@@ -93,10 +94,9 @@ def _make_event_raw(
     obj_name: str = "test-pod",
     count: int = 1,
     last_timestamp: str = "2026-03-11T10:00:00Z",
-) -> MagicMock:
-    """Create a mock kr8s event object."""
-    event = MagicMock()
-    event.raw = {
+) -> dict[str, Any]:
+    """Create a serialized event dict (as CoreV1Api would produce via sanitize)."""
+    return {
         "type": event_type,
         "reason": reason,
         "message": message,
@@ -104,7 +104,6 @@ def _make_event_raw(
         "count": count,
         "lastTimestamp": last_timestamp,
     }
-    return event
 
 
 def _make_node_raw(
@@ -118,10 +117,8 @@ def _make_node_raw(
     memory_allocatable: str = "62Gi",
     gpu_allocatable: str = "4",
     pressure_conditions: list[str] | None = None,
-) -> MagicMock:
-    """Create a mock kr8s node object."""
-    node = MagicMock()
-    node.name = name
+) -> dict[str, Any]:
+    """Create a serialized node dict (as CoreV1Api would produce via sanitize)."""
     conditions = [
         {
             "type": "Ready",
@@ -131,7 +128,8 @@ def _make_node_raw(
     for ptype in pressure_conditions or []:
         conditions.append({"type": ptype, "status": "True"})
 
-    node.raw = {
+    return {
+        "metadata": {"name": name},
         "status": {
             "capacity": {
                 "cpu": cpu_capacity,
@@ -146,17 +144,24 @@ def _make_node_raw(
             "conditions": conditions,
         },
     }
-    return node
 
 
-def _async_iterable(items: list[Any]):
-    """Create an async iterable from a list for mocking api.async_get."""
+def _mock_listing_response(raws: list[dict[str, Any]]) -> MagicMock:
+    """Build a CoreV1Api list response where each item.sanitize yields the raw dict.
 
-    async def _gen(*args, **kwargs):
-        for item in items:
-            yield item
+    Since ``_get_namespace_events`` / ``_get_node_resources`` call
+    ``ApiClient().sanitize_for_serialization(item)`` on each item, we patch
+    ``sanitize_for_serialization`` at the test level to pass-through raws.
+    """
+    response = MagicMock()
+    response.items = list(raws)
+    return response
 
-    return _gen
+
+@asynccontextmanager
+async def _fake_k8s_client(api: Any):
+    """Drop-in replacement for ``k8s_client`` yielding the provided api object."""
+    yield api
 
 
 # ============================================================
@@ -399,15 +404,28 @@ class TestGetNamespaceEvents:
 
     @pytest.mark.asyncio
     async def test_events_sorted_newest_first(self) -> None:
-        events = [
+        raws = [
             _make_event_raw(last_timestamp="2026-03-11T09:00:00Z", reason="Old"),
             _make_event_raw(last_timestamp="2026-03-11T11:00:00Z", reason="New"),
             _make_event_raw(last_timestamp="2026-03-11T10:00:00Z", reason="Mid"),
         ]
         api = MagicMock()
-        api.async_get = _async_iterable(events)
+        mock_core = MagicMock()
+        mock_core.list_namespaced_event = AsyncMock(
+            return_value=_mock_listing_response(raws)
+        )
 
-        result = await _get_namespace_events(api, "default")
+        with (
+            patch(
+                "kubernetes_asyncio.client.CoreV1Api",
+                return_value=mock_core,
+            ),
+            patch(
+                "kubernetes_asyncio.client.ApiClient.sanitize_for_serialization",
+                side_effect=lambda o: o,
+            ),
+        ):
+            result = await _get_namespace_events(api, "default")
 
         assert len(result) == 3
         assert result[0]["reason"] == "New"
@@ -416,11 +434,24 @@ class TestGetNamespaceEvents:
 
     @pytest.mark.asyncio
     async def test_events_include_involved_object(self) -> None:
-        events = [_make_event_raw(kind="Pod", obj_name="my-pod")]
+        raws = [_make_event_raw(kind="Pod", obj_name="my-pod")]
         api = MagicMock()
-        api.async_get = _async_iterable(events)
+        mock_core = MagicMock()
+        mock_core.list_namespaced_event = AsyncMock(
+            return_value=_mock_listing_response(raws)
+        )
 
-        result = await _get_namespace_events(api, "default")
+        with (
+            patch(
+                "kubernetes_asyncio.client.CoreV1Api",
+                return_value=mock_core,
+            ),
+            patch(
+                "kubernetes_asyncio.client.ApiClient.sanitize_for_serialization",
+                side_effect=lambda o: o,
+            ),
+        ):
+            result = await _get_namespace_events(api, "default")
 
         assert result[0]["object"] == "Pod/my-pod"
         assert result[0]["count"] == 1
@@ -428,9 +459,16 @@ class TestGetNamespaceEvents:
     @pytest.mark.asyncio
     async def test_api_error_returns_empty_list(self) -> None:
         api = MagicMock()
-        api.async_get = MagicMock(side_effect=RuntimeError("connection refused"))
+        mock_core = MagicMock()
+        mock_core.list_namespaced_event = AsyncMock(
+            side_effect=RuntimeError("connection refused")
+        )
 
-        result = await _get_namespace_events(api, "default")
+        with patch(
+            "kubernetes_asyncio.client.CoreV1Api",
+            return_value=mock_core,
+        ):
+            result = await _get_namespace_events(api, "default")
         assert result == []
 
 
@@ -444,11 +482,22 @@ class TestGetNodeResources:
 
     @pytest.mark.asyncio
     async def test_healthy_node_resources(self) -> None:
-        nodes = [_make_node_raw("gpu-node-1", gpu_capacity="8", gpu_allocatable="6")]
+        raws = [_make_node_raw("gpu-node-1", gpu_capacity="8", gpu_allocatable="6")]
         api = MagicMock()
-        api.async_get = _async_iterable(nodes)
+        mock_core = MagicMock()
+        mock_core.list_node = AsyncMock(return_value=_mock_listing_response(raws))
 
-        result = await _get_node_resources(api)
+        with (
+            patch(
+                "kubernetes_asyncio.client.CoreV1Api",
+                return_value=mock_core,
+            ),
+            patch(
+                "kubernetes_asyncio.client.ApiClient.sanitize_for_serialization",
+                side_effect=lambda o: o,
+            ),
+        ):
+            result = await _get_node_resources(api)
 
         assert len(result) == 1
         node = result[0]
@@ -460,34 +509,61 @@ class TestGetNodeResources:
 
     @pytest.mark.asyncio
     async def test_node_with_pressure_conditions(self) -> None:
-        nodes = [
+        raws = [
             _make_node_raw(
                 "stressed-node",
                 pressure_conditions=["MemoryPressure", "DiskPressure"],
             )
         ]
         api = MagicMock()
-        api.async_get = _async_iterable(nodes)
+        mock_core = MagicMock()
+        mock_core.list_node = AsyncMock(return_value=_mock_listing_response(raws))
 
-        result = await _get_node_resources(api)
+        with (
+            patch(
+                "kubernetes_asyncio.client.CoreV1Api",
+                return_value=mock_core,
+            ),
+            patch(
+                "kubernetes_asyncio.client.ApiClient.sanitize_for_serialization",
+                side_effect=lambda o: o,
+            ),
+        ):
+            result = await _get_node_resources(api)
 
         assert result[0]["pressure"] == ["MemoryPressure", "DiskPressure"]
 
     @pytest.mark.asyncio
     async def test_not_ready_node(self) -> None:
-        nodes = [_make_node_raw("down-node", ready=False)]
+        raws = [_make_node_raw("down-node", ready=False)]
         api = MagicMock()
-        api.async_get = _async_iterable(nodes)
+        mock_core = MagicMock()
+        mock_core.list_node = AsyncMock(return_value=_mock_listing_response(raws))
 
-        result = await _get_node_resources(api)
+        with (
+            patch(
+                "kubernetes_asyncio.client.CoreV1Api",
+                return_value=mock_core,
+            ),
+            patch(
+                "kubernetes_asyncio.client.ApiClient.sanitize_for_serialization",
+                side_effect=lambda o: o,
+            ),
+        ):
+            result = await _get_node_resources(api)
         assert result[0]["ready"] is False
 
     @pytest.mark.asyncio
     async def test_api_error_returns_empty_list(self) -> None:
         api = MagicMock()
-        api.async_get = MagicMock(side_effect=RuntimeError("timeout"))
+        mock_core = MagicMock()
+        mock_core.list_node = AsyncMock(side_effect=RuntimeError("timeout"))
 
-        result = await _get_node_resources(api)
+        with patch(
+            "kubernetes_asyncio.client.CoreV1Api",
+            return_value=mock_core,
+        ):
+            result = await _get_node_resources(api)
         assert result == []
 
 
@@ -502,50 +578,65 @@ class TestGetProblemPodLogs:
     @pytest.mark.asyncio
     async def test_fetches_logs_from_problem_pods_only(self) -> None:
         healthy_pod = _make_pod(
-            "healthy", container_statuses=[_make_container_status("main")]
+            "healthy",
+            namespace="ns",
+            container_statuses=[_make_container_status("main")],
         )
         problem_pod = _make_pod(
             "broken",
+            namespace="ns",
             container_statuses=[
                 _make_container_status("main", waiting_reason="CrashLoopBackOff")
             ],
         )
-
-        async def _mock_logs(**kwargs):
-            yield "ERROR: segfault"
-            yield "at line 42"
-
-        problem_pod.logs = _mock_logs
-
         pod_infos = [_extract_pod_info(healthy_pod), _extract_pod_info(problem_pod)]
 
-        result = await _get_problem_pod_logs(
-            [healthy_pod, problem_pod], pod_infos, tail_lines=20
+        api = MagicMock()
+        mock_core = MagicMock()
+        mock_core.read_namespaced_pod_log = AsyncMock(
+            return_value="ERROR: segfault\nat line 42\n"
         )
+
+        with patch(
+            "kubernetes_asyncio.client.CoreV1Api",
+            return_value=mock_core,
+        ):
+            result = await _get_problem_pod_logs(api, pod_infos, tail_lines=20)
 
         assert "broken" in result
         assert "healthy" not in result
         assert result["broken"]["main"] == "ERROR: segfault\nat line 42"
+        # Verify the call was for the problem pod's container.
+        mock_core.read_namespaced_pod_log.assert_called_once()
+        call_kwargs = mock_core.read_namespaced_pod_log.call_args.kwargs
+        assert call_kwargs["name"] == "broken"
+        assert call_kwargs["container"] == "main"
+        assert call_kwargs["tail_lines"] == 20
 
     @pytest.mark.asyncio
-    async def test_server_error_returns_unavailable(self) -> None:
-        import kr8s as kr8s_module
+    async def test_api_exception_returns_unavailable(self) -> None:
+        from kubernetes_asyncio.client.exceptions import ApiException
 
         pod = _make_pod(
             "err-pod",
+            namespace="ns",
             container_statuses=[
                 _make_container_status("main", waiting_reason="CrashLoopBackOff")
             ],
         )
-
-        async def _error_logs(**kwargs):
-            raise kr8s_module.ServerError("internal error", 500)
-            yield  # makes this an async generator
-
-        pod.logs = _error_logs
-
         pod_infos = [_extract_pod_info(pod)]
-        result = await _get_problem_pod_logs([pod], pod_infos)
+
+        api = MagicMock()
+        mock_core = MagicMock()
+        mock_core.read_namespaced_pod_log = AsyncMock(
+            side_effect=ApiException(status=500, reason="Internal")
+        )
+
+        with patch(
+            "kubernetes_asyncio.client.CoreV1Api",
+            return_value=mock_core,
+        ):
+            result = await _get_problem_pod_logs(api, pod_infos)
 
         assert result["err-pod"]["main"] == "<logs unavailable>"
 
@@ -553,19 +644,24 @@ class TestGetProblemPodLogs:
     async def test_generic_error_returns_error_message(self) -> None:
         pod = _make_pod(
             "err-pod",
+            namespace="ns",
             container_statuses=[
                 _make_container_status("main", waiting_reason="CrashLoopBackOff")
             ],
         )
-
-        async def _error_logs(**kwargs):
-            raise RuntimeError("unexpected")
-            yield  # makes this an async generator
-
-        pod.logs = _error_logs
-
         pod_infos = [_extract_pod_info(pod)]
-        result = await _get_problem_pod_logs([pod], pod_infos)
+
+        api = MagicMock()
+        mock_core = MagicMock()
+        mock_core.read_namespaced_pod_log = AsyncMock(
+            side_effect=RuntimeError("unexpected")
+        )
+
+        with patch(
+            "kubernetes_asyncio.client.CoreV1Api",
+            return_value=mock_core,
+        ):
+            result = await _get_problem_pod_logs(api, pod_infos)
 
         assert result["err-pod"]["main"] == "<error fetching logs>"
 
@@ -685,15 +781,17 @@ class TestDebugCommand:
     async def test_explicit_namespace_collects_diagnostics(self) -> None:
         from aiperf.cli_commands.kube.debug import debug
 
-        mock_client = AsyncMock()
-        mock_client.api = MagicMock()
-        mock_client.get_pods.return_value = []
+        api = MagicMock()
 
         with (
             patch(
-                "aiperf.kubernetes.client.AIPerfKubeClient.create",
-                new=AsyncMock(return_value=mock_client),
+                "aiperf.kubernetes.client.k8s_client",
+                return_value=_fake_k8s_client(api),
             ),
+            patch(
+                "aiperf.kubernetes.client.get_pods",
+                new=AsyncMock(return_value=[]),
+            ) as mock_get_pods,
             patch(
                 "aiperf.cli_commands.kube.debug._get_node_resources",
                 new=AsyncMock(return_value=[]),
@@ -706,19 +804,18 @@ class TestDebugCommand:
         ):
             await debug(namespace="my-ns")
 
-            mock_client.get_pods.assert_called_once()
-            call_args = mock_client.get_pods.call_args
-            assert call_args[0][0] == "my-ns"
+            mock_get_pods.assert_called_once()
+            call_args = mock_get_pods.call_args
+            # get_pods(api, namespace, label_selector) positional
+            assert call_args[0][1] == "my-ns"
             mock_report.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_job_id_resolves_namespace(self) -> None:
         from aiperf.cli_commands.kube.debug import debug
 
-        mock_client = AsyncMock()
-        mock_client.api = MagicMock()
-        mock_client.get_pods.return_value = []
-        mock_client.find_jobset.return_value = JobSetInfo(
+        api = MagicMock()
+        jobset = JobSetInfo(
             name="aiperf-abc123",
             namespace="bench-ns",
             jobset={},
@@ -727,9 +824,17 @@ class TestDebugCommand:
 
         with (
             patch(
-                "aiperf.kubernetes.client.AIPerfKubeClient.create",
-                new=AsyncMock(return_value=mock_client),
+                "aiperf.kubernetes.client.k8s_client",
+                return_value=_fake_k8s_client(api),
             ),
+            patch(
+                "aiperf.kubernetes.client.find_jobset",
+                new=AsyncMock(return_value=jobset),
+            ) as mock_find,
+            patch(
+                "aiperf.kubernetes.client.get_pods",
+                new=AsyncMock(return_value=[]),
+            ) as mock_get_pods,
             patch(
                 "aiperf.cli_commands.kube.debug._get_node_resources",
                 new=AsyncMock(return_value=[]),
@@ -742,22 +847,24 @@ class TestDebugCommand:
         ):
             await debug(job_id="abc123")
 
-            mock_client.find_jobset.assert_called_once_with("abc123", None)
-            call_ns = mock_client.get_pods.call_args[0][0]
+            mock_find.assert_called_once_with(api, "abc123", None)
+            call_ns = mock_get_pods.call_args[0][1]
             assert call_ns == "bench-ns"
 
     @pytest.mark.asyncio
     async def test_job_id_not_found_prints_error_and_returns(self) -> None:
         from aiperf.cli_commands.kube.debug import debug
 
-        mock_client = AsyncMock()
-        mock_client.api = MagicMock()
-        mock_client.find_jobset.return_value = None
+        api = MagicMock()
 
         with (
             patch(
-                "aiperf.kubernetes.client.AIPerfKubeClient.create",
-                new=AsyncMock(return_value=mock_client),
+                "aiperf.kubernetes.client.k8s_client",
+                return_value=_fake_k8s_client(api),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_jobset",
+                new=AsyncMock(return_value=None),
             ),
             patch("aiperf.kubernetes.console.print_error") as mock_print_error,
             patch("aiperf.cli_commands.kube.debug._print_report") as mock_report,
@@ -772,18 +879,24 @@ class TestDebugCommand:
     async def test_all_namespaces_collects_from_multiple(self) -> None:
         from aiperf.cli_commands.kube.debug import debug
 
-        mock_client = AsyncMock()
-        mock_client.api = MagicMock()
-        mock_client.get_pods.return_value = []
-        mock_client.list_jobsets.return_value = [
+        api = MagicMock()
+        jobsets = [
             JobSetInfo(name="js1", namespace="ns-a", jobset={}, status="Running"),
             JobSetInfo(name="js2", namespace="ns-b", jobset={}, status="Running"),
         ]
 
         with (
             patch(
-                "aiperf.kubernetes.client.AIPerfKubeClient.create",
-                new=AsyncMock(return_value=mock_client),
+                "aiperf.kubernetes.client.k8s_client",
+                return_value=_fake_k8s_client(api),
+            ),
+            patch(
+                "aiperf.kubernetes.client.list_jobsets",
+                new=AsyncMock(return_value=jobsets),
+            ),
+            patch(
+                "aiperf.kubernetes.client.get_pods",
+                new=AsyncMock(return_value=[]),
             ),
             patch(
                 "aiperf.cli_commands.kube.debug._get_node_resources",
@@ -805,14 +918,16 @@ class TestDebugCommand:
     async def test_all_namespaces_no_deployments_warns(self) -> None:
         from aiperf.cli_commands.kube.debug import debug
 
-        mock_client = AsyncMock()
-        mock_client.api = MagicMock()
-        mock_client.list_jobsets.return_value = []
+        api = MagicMock()
 
         with (
             patch(
-                "aiperf.kubernetes.client.AIPerfKubeClient.create",
-                new=AsyncMock(return_value=mock_client),
+                "aiperf.kubernetes.client.k8s_client",
+                return_value=_fake_k8s_client(api),
+            ),
+            patch(
+                "aiperf.kubernetes.client.list_jobsets",
+                new=AsyncMock(return_value=[]),
             ),
             patch("aiperf.kubernetes.console.print_warning") as mock_warn,
             patch("aiperf.cli_commands.kube.debug._print_report") as mock_report,
@@ -832,14 +947,16 @@ class TestDebugCommand:
                 _make_container_status("main", waiting_reason="CrashLoopBackOff")
             ],
         )
-        mock_client = AsyncMock()
-        mock_client.api = MagicMock()
-        mock_client.get_pods.return_value = [crash_pod]
+        api = MagicMock()
 
         with (
             patch(
-                "aiperf.kubernetes.client.AIPerfKubeClient.create",
-                new=AsyncMock(return_value=mock_client),
+                "aiperf.kubernetes.client.k8s_client",
+                return_value=_fake_k8s_client(api),
+            ),
+            patch(
+                "aiperf.kubernetes.client.get_pods",
+                new=AsyncMock(return_value=[crash_pod]),
             ),
             patch(
                 "aiperf.cli_commands.kube.debug._get_node_resources",
@@ -866,14 +983,16 @@ class TestDebugCommand:
     async def test_non_verbose_skips_log_fetching(self) -> None:
         from aiperf.cli_commands.kube.debug import debug
 
-        mock_client = AsyncMock()
-        mock_client.api = MagicMock()
-        mock_client.get_pods.return_value = []
+        api = MagicMock()
 
         with (
             patch(
-                "aiperf.kubernetes.client.AIPerfKubeClient.create",
-                new=AsyncMock(return_value=mock_client),
+                "aiperf.kubernetes.client.k8s_client",
+                return_value=_fake_k8s_client(api),
+            ),
+            patch(
+                "aiperf.kubernetes.client.get_pods",
+                new=AsyncMock(return_value=[]),
             ),
             patch(
                 "aiperf.cli_commands.kube.debug._get_node_resources",
@@ -894,21 +1013,24 @@ class TestDebugCommand:
     async def test_job_id_uses_job_selector(self) -> None:
         from aiperf.cli_commands.kube.debug import debug
 
-        mock_client = AsyncMock()
-        mock_client.api = MagicMock()
-        mock_client.get_pods.return_value = []
-        mock_client.find_jobset.return_value = JobSetInfo(
+        api = MagicMock()
+        jobset = JobSetInfo(
             name="aiperf-xyz", namespace="bench-ns", jobset={}, status="Running"
-        )
-        mock_client.job_selector = MagicMock(
-            return_value="app=aiperf,aiperf.nvidia.com/job-id=xyz"
         )
 
         with (
             patch(
-                "aiperf.kubernetes.client.AIPerfKubeClient.create",
-                new=AsyncMock(return_value=mock_client),
+                "aiperf.kubernetes.client.k8s_client",
+                return_value=_fake_k8s_client(api),
             ),
+            patch(
+                "aiperf.kubernetes.client.find_jobset",
+                new=AsyncMock(return_value=jobset),
+            ),
+            patch(
+                "aiperf.kubernetes.client.get_pods",
+                new=AsyncMock(return_value=[]),
+            ) as mock_get_pods,
             patch(
                 "aiperf.cli_commands.kube.debug._get_node_resources",
                 new=AsyncMock(return_value=[]),
@@ -921,5 +1043,5 @@ class TestDebugCommand:
         ):
             await debug(job_id="xyz")
 
-            selector = mock_client.get_pods.call_args[0][1]
+            selector = mock_get_pods.call_args[0][2]
             assert "job-id" in selector

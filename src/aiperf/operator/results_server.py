@@ -225,8 +225,11 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     base_dir = results_dir or RESULTS_DIR
     db: ResultsDB | None = None
 
-    # Mutable holder for kr8s client - populated during lifespan, read by router
-    kube_client_holder: list = [None]
+    # Mutable holder for Kubernetes ApiClient - populated during lifespan,
+    # read by router. Typed as list to match create_jobs_router signature.
+    from kubernetes_asyncio.client import ApiClient
+
+    api_holder: list[ApiClient | None] = [None]
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -234,19 +237,38 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
         db = ResultsDB(base_dir)
         logger.info(f"DuckDB analytics engine initialized (results_dir={base_dir})")
 
-        # Initialize kr8s client for live job/cluster endpoints
+        # Initialize kubernetes_asyncio client for live job/cluster endpoints.
+        # Load config (in-cluster first, kubeconfig fallback) and build an
+        # ApiClient that lives for the process lifetime.
         try:
-            from aiperf.kubernetes.client import AIPerfKubeClient
+            from kubernetes_asyncio import config
 
-            kube_client_holder[0] = await AIPerfKubeClient.create()
-            logger.info("kr8s client initialized for UI endpoints")
+            from aiperf.common.noisy_loggers import suppress_noisy_http_loggers
+
+            suppress_noisy_http_loggers()
+            try:
+                config.load_incluster_config()
+            except config.ConfigException:
+                await config.load_kube_config()
+            api_holder[0] = ApiClient()
+            logger.info("kubernetes_asyncio client initialized for UI endpoints")
         except Exception as e:
-            logger.warning(f"kr8s unavailable, live job endpoints disabled: {e}")
+            logger.warning(
+                f"Kubernetes client unavailable, live job endpoints disabled: {e}"
+            )
 
         yield
 
         db.close()
         logger.info("DuckDB analytics engine closed")
+
+        api = api_holder[0]
+        if api is not None:
+            try:
+                await api.close()
+            except Exception as e:
+                logger.warning(f"Error closing kubernetes_asyncio client: {e}")
+            api_holder[0] = None
 
     app = FastAPI(
         title="AIPerf Operator Results API",
@@ -258,7 +280,7 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     # Register jobs/cluster router (client populated during lifespan)
     from aiperf.operator.routers.jobs import create_jobs_router
 
-    app.include_router(create_jobs_router(kube_client_holder))
+    app.include_router(create_jobs_router(api_holder))
 
     def _get_db() -> ResultsDB:
         if db is None:

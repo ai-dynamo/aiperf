@@ -9,11 +9,11 @@ Covers:
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from kubernetes_asyncio.client import ApiClient
 from pytest import param
 
 from aiperf.kubernetes.preflight_utils import check_rbac_access, parse_image_ref
@@ -23,28 +23,34 @@ from aiperf.kubernetes.preflight_utils import check_rbac_access, parse_image_ref
 # =============================================================================
 
 
-def _mock_call_api_response(json_body: dict[str, Any], status_code: int = 200):
-    """Return an async context-manager mock for api.call_api."""
-    resp = MagicMock()
-    resp.json.return_value = json_body
-    resp.status_code = status_code
-
-    @asynccontextmanager
-    async def _ctx(*args: Any, **kwargs: Any) -> Any:
-        yield resp
-
-    return _ctx
+def _mock_review(allowed: bool | None) -> Any:
+    """Build a mock V1SelfSubjectAccessReview-like object with status.allowed."""
+    review = MagicMock()
+    if allowed is None:
+        review.status = None
+    else:
+        review.status = MagicMock()
+        review.status.allowed = allowed
+    return review
 
 
-def _mock_call_api_raises(exc: Exception):
-    """Return an async context-manager mock for api.call_api that raises."""
+def _make_authz(
+    review: Any | None = None, *, side_effect: Exception | None = None
+) -> MagicMock:
+    """Build a mock AuthorizationV1Api that returns ``review`` or raises."""
+    authz = MagicMock()
+    if side_effect is not None:
+        authz.create_self_subject_access_review = AsyncMock(side_effect=side_effect)
+    else:
+        authz.create_self_subject_access_review = AsyncMock(return_value=review)
+    return authz
 
-    @asynccontextmanager
-    async def _ctx(*args: Any, **kwargs: Any) -> Any:
-        raise exc
-        yield  # noqa: F841, RET503
 
-    return _ctx
+def _patch_authz(mock_authz: MagicMock) -> Any:
+    return patch(
+        "aiperf.kubernetes.preflight_utils.client.AuthorizationV1Api",
+        return_value=mock_authz,
+    )
 
 
 # =============================================================================
@@ -58,136 +64,130 @@ class TestCheckRbacAccess:
     @pytest.mark.asyncio
     async def test_returns_true_when_allowed(self) -> None:
         """Verify True is returned when the SelfSubjectAccessReview says allowed."""
-        api = MagicMock()
-        api.call_api = _mock_call_api_response({"status": {"allowed": True}})
-
-        result = await check_rbac_access(api, "create", "pods", "", "test-ns")
+        api = MagicMock(spec=ApiClient)
+        with _patch_authz(_make_authz(_mock_review(True))):
+            result = await check_rbac_access(api, "create", "pods", "", "test-ns")
 
         assert result is True
 
     @pytest.mark.asyncio
     async def test_returns_false_when_not_allowed(self) -> None:
         """Verify False is returned when the SelfSubjectAccessReview says not allowed."""
-        api = MagicMock()
-        api.call_api = _mock_call_api_response({"status": {"allowed": False}})
-
-        result = await check_rbac_access(api, "delete", "pods", "", "test-ns")
+        api = MagicMock(spec=ApiClient)
+        with _patch_authz(_make_authz(_mock_review(False))):
+            result = await check_rbac_access(api, "delete", "pods", "", "test-ns")
 
         assert result is False
 
     @pytest.mark.asyncio
     async def test_returns_false_when_status_missing(self) -> None:
-        """Verify False is returned when the response has no status field."""
-        api = MagicMock()
-        api.call_api = _mock_call_api_response({})
-
-        result = await check_rbac_access(api, "get", "pods", "", "test-ns")
+        """Verify False is returned when the review has no status field."""
+        api = MagicMock(spec=ApiClient)
+        with _patch_authz(_make_authz(_mock_review(None))):
+            result = await check_rbac_access(api, "get", "pods", "", "test-ns")
 
         assert result is False
 
     @pytest.mark.asyncio
     async def test_returns_false_when_allowed_missing(self) -> None:
-        """Verify False is returned when status has no allowed field."""
-        api = MagicMock()
-        api.call_api = _mock_call_api_response({"status": {}})
-
-        result = await check_rbac_access(api, "get", "pods", "", "test-ns")
+        """Verify False is returned when status.allowed is None."""
+        api = MagicMock(spec=ApiClient)
+        review = MagicMock()
+        review.status = MagicMock()
+        review.status.allowed = None
+        with _patch_authz(_make_authz(review)):
+            result = await check_rbac_access(api, "get", "pods", "", "test-ns")
 
         assert result is False
 
     @pytest.mark.asyncio
     async def test_propagates_exception_from_api(self) -> None:
-        """Verify exceptions from api.call_api bubble up to the caller."""
-        api = MagicMock()
-        api.call_api = _mock_call_api_raises(RuntimeError("network failure"))
-
-        with pytest.raises(RuntimeError, match="network failure"):
+        """Verify exceptions from create_self_subject_access_review bubble up."""
+        api = MagicMock(spec=ApiClient)
+        with (
+            _patch_authz(_make_authz(side_effect=RuntimeError("network failure"))),
+            pytest.raises(RuntimeError, match="network failure"),
+        ):
             await check_rbac_access(api, "create", "pods", "", "test-ns")
 
     @pytest.mark.asyncio
     async def test_includes_group_when_nonempty(self) -> None:
         """Verify the group field is included in resourceAttributes only when non-empty."""
-        captured_kwargs: dict[str, Any] = {}
-        resp = MagicMock()
-        resp.json.return_value = {"status": {"allowed": True}}
+        captured: dict[str, Any] = {}
 
-        @asynccontextmanager
-        async def _capture(*args: Any, **kwargs: Any) -> Any:
-            captured_kwargs.update(kwargs)
-            yield resp
+        async def _capture(body: Any, **kwargs: Any) -> Any:
+            captured["body"] = body
+            return _mock_review(True)
 
-        api = MagicMock()
-        api.call_api = _capture
+        authz = MagicMock()
+        authz.create_self_subject_access_review = _capture
 
-        await check_rbac_access(api, "create", "jobsets", "jobset.x-k8s.io", "test-ns")
+        api = MagicMock(spec=ApiClient)
+        with _patch_authz(authz):
+            await check_rbac_access(
+                api, "create", "jobsets", "jobset.x-k8s.io", "test-ns"
+            )
 
-        body = captured_kwargs["json"]
-        attrs = body["spec"]["resourceAttributes"]
-        assert attrs["group"] == "jobset.x-k8s.io"
+        body = captured["body"]
+        assert body.spec.resource_attributes.group == "jobset.x-k8s.io"
 
     @pytest.mark.asyncio
     async def test_excludes_group_when_empty(self) -> None:
-        """Verify the group field is NOT in resourceAttributes when group is empty."""
-        captured_kwargs: dict[str, Any] = {}
-        resp = MagicMock()
-        resp.json.return_value = {"status": {"allowed": True}}
+        """Verify the group field is None in resourceAttributes when group is empty."""
+        captured: dict[str, Any] = {}
 
-        @asynccontextmanager
-        async def _capture(*args: Any, **kwargs: Any) -> Any:
-            captured_kwargs.update(kwargs)
-            yield resp
+        async def _capture(body: Any, **kwargs: Any) -> Any:
+            captured["body"] = body
+            return _mock_review(True)
 
-        api = MagicMock()
-        api.call_api = _capture
+        authz = MagicMock()
+        authz.create_self_subject_access_review = _capture
 
-        await check_rbac_access(api, "get", "pods", "", "test-ns")
+        api = MagicMock(spec=ApiClient)
+        with _patch_authz(authz):
+            await check_rbac_access(api, "get", "pods", "", "test-ns")
 
-        body = captured_kwargs["json"]
-        attrs = body["spec"]["resourceAttributes"]
-        assert "group" not in attrs
+        body = captured["body"]
+        assert body.spec.resource_attributes.group is None
 
     @pytest.mark.asyncio
     async def test_namespace_passed_correctly(self) -> None:
         """Verify the namespace is included in the resource attributes."""
-        captured_kwargs: dict[str, Any] = {}
-        resp = MagicMock()
-        resp.json.return_value = {"status": {"allowed": True}}
+        captured: dict[str, Any] = {}
 
-        @asynccontextmanager
-        async def _capture(*args: Any, **kwargs: Any) -> Any:
-            captured_kwargs.update(kwargs)
-            yield resp
+        async def _capture(body: Any, **kwargs: Any) -> Any:
+            captured["body"] = body
+            return _mock_review(True)
 
-        api = MagicMock()
-        api.call_api = _capture
+        authz = MagicMock()
+        authz.create_self_subject_access_review = _capture
 
-        await check_rbac_access(api, "list", "configmaps", "", "my-namespace")
+        api = MagicMock(spec=ApiClient)
+        with _patch_authz(authz):
+            await check_rbac_access(api, "list", "configmaps", "", "my-namespace")
 
-        body = captured_kwargs["json"]
-        attrs = body["spec"]["resourceAttributes"]
-        assert attrs["namespace"] == "my-namespace"
+        body = captured["body"]
+        assert body.spec.resource_attributes.namespace == "my-namespace"
 
     @pytest.mark.asyncio
     async def test_verb_and_resource_passed_correctly(self) -> None:
         """Verify verb and resource are included in the resource attributes."""
-        captured_kwargs: dict[str, Any] = {}
-        resp = MagicMock()
-        resp.json.return_value = {"status": {"allowed": True}}
+        captured: dict[str, Any] = {}
 
-        @asynccontextmanager
-        async def _capture(*args: Any, **kwargs: Any) -> Any:
-            captured_kwargs.update(kwargs)
-            yield resp
+        async def _capture(body: Any, **kwargs: Any) -> Any:
+            captured["body"] = body
+            return _mock_review(True)
 
-        api = MagicMock()
-        api.call_api = _capture
+        authz = MagicMock()
+        authz.create_self_subject_access_review = _capture
 
-        await check_rbac_access(api, "delete", "secrets", "", "ns")
+        api = MagicMock(spec=ApiClient)
+        with _patch_authz(authz):
+            await check_rbac_access(api, "delete", "secrets", "", "ns")
 
-        body = captured_kwargs["json"]
-        attrs = body["spec"]["resourceAttributes"]
-        assert attrs["verb"] == "delete"
-        assert attrs["resource"] == "secrets"
+        body = captured["body"]
+        assert body.spec.resource_attributes.verb == "delete"
+        assert body.spec.resource_attributes.resource == "secrets"
 
 
 # =============================================================================

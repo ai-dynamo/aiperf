@@ -13,6 +13,11 @@ import aiofiles
 import aiohttp
 import orjson
 
+from aiperf.kubernetes.client import (
+    find_controller_pod,
+    find_operator_pod,
+    find_retrievable_pod,
+)
 from aiperf.kubernetes.console import (
     _human_size,
     console,
@@ -36,7 +41,8 @@ from aiperf.kubernetes.subproc import (
 )
 
 if TYPE_CHECKING:
-    from aiperf.kubernetes.client import AIPerfKubeClient
+    from kubernetes_asyncio.client import ApiClient
+
     from aiperf.kubernetes.models import JobSetInfo
 
 # Subset of key result files for quick retrieval (default `results` command)
@@ -70,7 +76,7 @@ async def retrieve_results_from_operator(
     job_id: str,
     namespace: str,
     output_dir: Path,
-    client: AIPerfKubeClient,
+    api: ApiClient,
     local_port: int = 0,
     operator_namespace: str = "aiperf-system",
     results_port: int = RESULTS_SERVER_PORT,
@@ -87,7 +93,8 @@ async def retrieve_results_from_operator(
     """
     from aiperf.transports.aiohttp_client import create_tcp_connector
 
-    pod_info = await client.find_operator_pod(
+    pod_info = await find_operator_pod(
+        api,
         namespace=operator_namespace,
     )
     if not pod_info:
@@ -239,7 +246,7 @@ async def retrieve_results_from_api(
     namespace: str,
     output_dir: Path,
     jobset_info: JobSetInfo | None,
-    client: AIPerfKubeClient,
+    api: ApiClient,
     local_port: int = 0,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
@@ -255,7 +262,7 @@ async def retrieve_results_from_api(
     if not jobset_info:
         return False
 
-    pod = await client.find_retrievable_pod(namespace, job_id)
+    pod = await find_retrievable_pod(api, namespace, job_id)
     if not pod:
         return False
 
@@ -352,7 +359,7 @@ async def retrieve_results_from_pod(
     namespace: str,
     output_dir: Path,
     jobset_info: JobSetInfo | None,
-    client: AIPerfKubeClient,
+    api: ApiClient,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
 ) -> bool:
@@ -366,7 +373,7 @@ async def retrieve_results_from_pod(
         print_info("Results can only be retrieved from pods while the JobSet exists.")
         return False
 
-    pod_info = await client.find_controller_pod(namespace, job_id)
+    pod_info = await find_controller_pod(api, namespace, job_id)
     if not pod_info:
         print_error(f"No controller pod found for job {job_id}")
         print_info("The job may have completed and pods were cleaned up.")
@@ -507,7 +514,7 @@ async def retrieve_all_artifacts(
     namespace: str,
     output_dir: Path,
     jobset_info: JobSetInfo | None,
-    client: AIPerfKubeClient,
+    api: ApiClient,
     local_port: int,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
@@ -527,7 +534,7 @@ async def retrieve_all_artifacts(
         print_info("The --all flag requires the JobSet to still exist.")
         return False
 
-    pod = await client.find_retrievable_pod(namespace, job_id)
+    pod = await find_retrievable_pod(api, namespace, job_id)
     if not pod:
         print_error(f"No controller pod found for job {job_id}")
         print_info("The --all flag requires the controller pod to be running.")
@@ -641,7 +648,7 @@ async def retrieve_all_artifacts(
 async def shutdown_api_service(
     job_id: str,
     namespace: str,
-    client: AIPerfKubeClient,
+    api: ApiClient,
     local_port: int = 0,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
@@ -651,7 +658,7 @@ async def shutdown_api_service(
     Args:
         job_id: AIPerf job ID.
         namespace: Kubernetes namespace.
-        client: AIPerfKubeClient instance.
+        api: Connected kubernetes_asyncio ApiClient.
         local_port: Local port for port-forward.
 
     Returns:
@@ -661,9 +668,9 @@ async def shutdown_api_service(
 
     api_shutdown_path = "/api/shutdown"
 
-    pod = await client.find_retrievable_pod(namespace, job_id, require_running=True)
+    pod = await find_retrievable_pod(api, namespace, job_id, require_running=True)
     if not pod:
-        pod_info = await client.find_controller_pod(namespace, job_id)
+        pod_info = await find_controller_pod(api, namespace, job_id)
         if not pod_info:
             print_warning(
                 f"Controller pod not found for job {job_id}, cannot send shutdown signal"

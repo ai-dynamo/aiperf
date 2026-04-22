@@ -14,17 +14,25 @@ from typing import Any
 
 import aiohttp
 import kopf
-import kr8s
-from kr8s.asyncio.objects import ConfigMap, Role, RoleBinding
+from kubernetes_asyncio.client.exceptions import ApiException
 
-from aiperf.kubernetes.client import get_api
-from aiperf.kubernetes.kr8s_resources import AsyncJobSet
+from aiperf.kubernetes.client import k8s_client
+from aiperf.kubernetes.cr_refs import (
+    JOBSET_GROUP,
+    JOBSET_PLURAL,
+    JOBSET_VERSION,
+)
 from aiperf.kubernetes.resources import KubernetesDeployment
 from aiperf.operator import events
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.health import check_endpoint_health
 from aiperf.operator.job_index import index_job_created, save_job_spec_file
-from aiperf.operator.k8s_helpers import create_idempotent
+from aiperf.operator.k8s_helpers import (
+    create_idempotent_config_map,
+    create_idempotent_custom_object,
+    create_idempotent_role,
+    create_idempotent_role_binding,
+)
 from aiperf.operator.models import AIPerfJobSpec, OwnerReference
 from aiperf.operator.spec_converter import (
     AIPerfJobSpecConverter,
@@ -135,149 +143,163 @@ async def on_create(
         )
 
         owner_ref_dict = OwnerReference.for_aiperf_job(name, uid).to_k8s_dict()
-        api = await get_api()
+        async with k8s_client() as api:
+            # Step 4: Pre-flight checks
+            from aiperf.kubernetes.preflight import CheckStatus
+            from aiperf.operator.preflight import OperatorPreflightChecker
 
-        # Step 4: Pre-flight checks
-        from aiperf.kubernetes.preflight import CheckStatus
-        from aiperf.operator.preflight import OperatorPreflightChecker
-
-        preflight = OperatorPreflightChecker(
-            api=api,
-            namespace=namespace,
-            deployment=deployment,
-            deploy_config=deploy_config,
-            config=config,
-            total_workers=total_workers,
-            num_pods=num_pods,
-        )
-        preflight_results = await preflight.run_all(
-            timeout=OperatorEnvironment.PREFLIGHT_TIMEOUT,
-        )
-
-        if not preflight_results.passed:
-            failures = [
-                c for c in preflight_results.checks if c.status == CheckStatus.FAIL
-            ]
-            error_msg = "; ".join(f"{c.name}: {c.message}" for c in failures)
-            status.conditions.set_false(
-                ConditionType.PREFLIGHT_PASSED,
-                "PreflightFailed",
-                error_msg,
+            preflight = OperatorPreflightChecker(
+                api=api,
+                namespace=namespace,
+                deployment=deployment,
+                deploy_config=deploy_config,
+                config=config,
+                total_workers=total_workers,
+                num_pods=num_pods,
             )
-            status.set_phase(Phase.FAILED).set_error(f"Pre-flight failed: {error_msg}")
-            status.finalize()
-            events.preflight_failed(body, error_msg)
-            raise kopf.PermanentError(f"Pre-flight checks failed: {error_msg}")
+            preflight_results = await preflight.run_all(
+                timeout=OperatorEnvironment.PREFLIGHT_TIMEOUT,
+            )
 
-        status.conditions.set_true(
-            ConditionType.PREFLIGHT_PASSED,
-            "PreflightPassed",
-            f"All {len(preflight_results.checks)} pre-flight checks passed",
-        )
-        events.preflight_passed(body, len(preflight_results.checks))
+            if not preflight_results.passed:
+                failures = [
+                    c for c in preflight_results.checks if c.status == CheckStatus.FAIL
+                ]
+                error_msg = "; ".join(f"{c.name}: {c.message}" for c in failures)
+                status.conditions.set_false(
+                    ConditionType.PREFLIGHT_PASSED,
+                    "PreflightFailed",
+                    error_msg,
+                )
+                status.set_phase(Phase.FAILED).set_error(
+                    f"Pre-flight failed: {error_msg}"
+                )
+                status.finalize()
+                events.preflight_failed(body, error_msg)
+                raise kopf.PermanentError(f"Pre-flight checks failed: {error_msg}")
 
-        warnings = [c for c in preflight_results.checks if c.status == CheckStatus.WARN]
-        if warnings:
-            warning_summary = "; ".join(f"{c.name}: {c.message}" for c in warnings)
-            if len(warning_summary) > 512:
-                warning_summary = warning_summary[:509] + "..."
             status.conditions.set_true(
-                ConditionType.PREFLIGHT_HAS_WARNINGS,
-                "PreflightWarnings",
-                f"{len(warnings)} check(s) produced warnings: {warning_summary}",
+                ConditionType.PREFLIGHT_PASSED,
+                "PreflightPassed",
+                f"All {len(preflight_results.checks)} pre-flight checks passed",
             )
-        else:
-            status.conditions.set_false(
-                ConditionType.PREFLIGHT_HAS_WARNINGS,
-                "NoWarnings",
-                "No preflight warnings",
+            events.preflight_passed(body, len(preflight_results.checks))
+
+            warnings = [
+                c for c in preflight_results.checks if c.status == CheckStatus.WARN
+            ]
+            if warnings:
+                warning_summary = "; ".join(f"{c.name}: {c.message}" for c in warnings)
+                if len(warning_summary) > 512:
+                    warning_summary = warning_summary[:509] + "..."
+                status.conditions.set_true(
+                    ConditionType.PREFLIGHT_HAS_WARNINGS,
+                    "PreflightWarnings",
+                    f"{len(warnings)} check(s) produced warnings: {warning_summary}",
+                )
+            else:
+                status.conditions.set_false(
+                    ConditionType.PREFLIGHT_HAS_WARNINGS,
+                    "NoWarnings",
+                    "No preflight warnings",
+                )
+
+            for check in preflight_results.checks:
+                if check.status == CheckStatus.WARN:
+                    events.preflight_warning(body, check.name, check.message)
+
+            # Step 5: Create RBAC (Role + RoleBinding for benchmark pods)
+            # Uses create-or-skip pattern for idempotency if operator retries.
+            rbac_spec = deployment.get_rbac_spec()
+            role_manifest = rbac_spec.to_role_manifest()
+            role_manifest.setdefault("metadata", {}).setdefault(
+                "ownerReferences", []
+            ).append(owner_ref_dict)
+            await create_idempotent_role(api, role_manifest, namespace)
+
+            binding_manifest = rbac_spec.to_role_binding_manifest()
+            binding_manifest.setdefault("metadata", {}).setdefault(
+                "ownerReferences", []
+            ).append(owner_ref_dict)
+            await create_idempotent_role_binding(api, binding_manifest, namespace)
+            logger.info(
+                f"Created RBAC for service account '{rbac_spec.service_account}'"
             )
 
-        for check in preflight_results.checks:
-            if check.status == CheckStatus.WARN:
-                events.preflight_warning(body, check.name, check.message)
+            # Step 6: Create ConfigMap
+            configmap = deployment.get_configmap_spec().to_k8s_manifest()
+            configmap.setdefault("metadata", {}).setdefault(
+                "ownerReferences", []
+            ).append(owner_ref_dict)
+            await create_idempotent_config_map(api, configmap, namespace)
+            configmap_name = configmap["metadata"]["name"]
+            logger.info(f"Created ConfigMap {configmap_name}")
 
-        # Step 5: Create RBAC (Role + RoleBinding for benchmark pods)
-        # Uses create-or-skip pattern for idempotency if operator retries.
-        rbac_spec = deployment.get_rbac_spec()
-        role_manifest = rbac_spec.to_role_manifest()
-        role_manifest.setdefault("metadata", {}).setdefault(
-            "ownerReferences", []
-        ).append(owner_ref_dict)
-        await create_idempotent(Role, role_manifest, api)
+            # Brief pause to allow kubelet ConfigMap cache to sync before pods try to
+            # mount the volume. Without this, the first attempt after a fresh image
+            # deploy fails with "FailedMount: failed to sync configmap cache" because
+            # 100 pods race to mount the ConfigMap before kubelets have cached it.
+            await asyncio.sleep(OperatorEnvironment.CONFIGMAP_PROPAGATION_DELAY_SECONDS)
 
-        binding_manifest = rbac_spec.to_role_binding_manifest()
-        binding_manifest.setdefault("metadata", {}).setdefault(
-            "ownerReferences", []
-        ).append(owner_ref_dict)
-        await create_idempotent(RoleBinding, binding_manifest, api)
-        logger.info(f"Created RBAC for service account '{rbac_spec.service_account}'")
+            # Step 6.5: Persist spec + index BEFORE JobSet launch so operator
+            # restart can always reconstruct the job from disk. If this fails,
+            # kopf retries the whole handler rather than leaving a JobSet
+            # running that the index cannot see. RBAC/ConfigMap creates above
+            # are idempotent via create_idempotent, so retry is safe.
+            try:
+                plain_spec = _to_plain(spec)
+                await save_job_spec_file(namespace, job_id, plain_spec)
+                await index_job_created(namespace, job_id, plain_spec)
+            except (OSError, aiohttp.ClientError, ConnectionError, TimeoutError) as e:
+                logger.warning(
+                    f"Transient persistence failure for {namespace}/{name}: {e}"
+                )
+                raise kopf.TemporaryError(
+                    f"Persisting job spec/index failed: {e}", delay=10
+                ) from e
 
-        # Step 6: Create ConfigMap
-        configmap = deployment.get_configmap_spec().to_k8s_manifest()
-        configmap.setdefault("metadata", {}).setdefault("ownerReferences", []).append(
-            owner_ref_dict
-        )
-        await create_idempotent(ConfigMap, configmap, api)
-        configmap_name = configmap["metadata"]["name"]
-        logger.info(f"Created ConfigMap {configmap_name}")
+            # Step 7: Create JobSet
+            jobset = deployment.get_jobset_spec().to_k8s_manifest()
+            jobset.setdefault("metadata", {}).setdefault("ownerReferences", []).append(
+                owner_ref_dict
+            )
+            await create_idempotent_custom_object(
+                api=api,
+                group=JOBSET_GROUP,
+                version=JOBSET_VERSION,
+                plural=JOBSET_PLURAL,
+                body=jobset,
+                namespace=namespace,
+            )
+            jobset_name = jobset["metadata"]["name"]
+            logger.info(f"Created JobSet {jobset_name}")
 
-        # Brief pause to allow kubelet ConfigMap cache to sync before pods try to
-        # mount the volume. Without this, the first attempt after a fresh image
-        # deploy fails with "FailedMount: failed to sync configmap cache" because
-        # 100 pods race to mount the ConfigMap before kubelets have cached it.
-        await asyncio.sleep(OperatorEnvironment.CONFIGMAP_PROPAGATION_DELAY_SECONDS)
+            # Set conditions and status
+            status.conditions.set_true(
+                ConditionType.RESOURCES_CREATED,
+                "ResourcesCreated",
+                f"Created ConfigMap/{configmap_name} and JobSet/{jobset_name}",
+            )
+            events.resources_created(body, configmap_name, jobset_name)
+            events.created(body, job_id, total_workers)
 
-        # Step 6.5: Persist spec + index BEFORE JobSet launch so operator
-        # restart can always reconstruct the job from disk. If this fails,
-        # kopf retries the whole handler rather than leaving a JobSet
-        # running that the index cannot see. RBAC/ConfigMap creates above
-        # are idempotent via create_idempotent, so retry is safe.
-        try:
-            plain_spec = _to_plain(spec)
-            await save_job_spec_file(namespace, job_id, plain_spec)
-            await index_job_created(namespace, job_id, plain_spec)
-        except (OSError, aiohttp.ClientError, ConnectionError, TimeoutError) as e:
-            logger.warning(f"Transient persistence failure for {namespace}/{name}: {e}")
-            raise kopf.TemporaryError(
-                f"Persisting job spec/index failed: {e}", delay=10
-            ) from e
+            # Set initial status
+            status.set_phase(Phase.PENDING)
+            patch.status["startTime"] = format_timestamp()
+            patch.status["jobId"] = job_id
+            patch.status["jobSetName"] = deployment.jobset_name
+            status.set_workers(0, total_workers)
 
-        # Step 7: Create JobSet
-        jobset = deployment.get_jobset_spec().to_k8s_manifest()
-        jobset.setdefault("metadata", {}).setdefault("ownerReferences", []).append(
-            owner_ref_dict
-        )
-        await create_idempotent(AsyncJobSet, jobset, api)
-        jobset_name = jobset["metadata"]["name"]
-        logger.info(f"Created JobSet {jobset_name}")
+            # Store results TTL if configured
+            if deploy_config.results_ttl_days:
+                patch.status["resultsTtlDays"] = deploy_config.results_ttl_days
 
-        # Set conditions and status
-        status.conditions.set_true(
-            ConditionType.RESOURCES_CREATED,
-            "ResourcesCreated",
-            f"Created ConfigMap/{configmap_name} and JobSet/{jobset_name}",
-        )
-        events.resources_created(body, configmap_name, jobset_name)
-        events.created(body, job_id, total_workers)
-
-        # Set initial status
-        status.set_phase(Phase.PENDING)
-        patch.status["startTime"] = format_timestamp()
-        patch.status["jobId"] = job_id
-        patch.status["jobSetName"] = deployment.jobset_name
-        status.set_workers(0, total_workers)
-
-        # Store results TTL if configured
-        if deploy_config.results_ttl_days:
-            patch.status["resultsTtlDays"] = deploy_config.results_ttl_days
-
-        status.finalize()
-        return {"jobSetName": deployment.jobset_name, "workers": total_workers}
+            status.finalize()
+            return {"jobSetName": deployment.jobset_name, "workers": total_workers}
 
     except (kopf.PermanentError, kopf.TemporaryError):
         raise
-    except (kr8s.ServerError, aiohttp.ClientError, ConnectionError, TimeoutError) as e:
+    except (ApiException, aiohttp.ClientError, ConnectionError, TimeoutError) as e:
         logger.warning(f"Transient error creating AIPerfJob {namespace}/{name}: {e}")
         raise kopf.TemporaryError(f"Transient error: {e}", delay=30) from e
     except Exception as e:

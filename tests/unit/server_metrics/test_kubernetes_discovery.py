@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,29 +17,74 @@ from aiperf.server_metrics.discovery.kubernetes import (
 )
 
 
+class _Port:
+    def __init__(self, container_port: int | None = None, name: str | None = None):
+        self.container_port = container_port
+        self.name = name
+
+
+class _Container:
+    def __init__(self, ports=None):
+        self.ports = ports
+
+
+class _PodSpec:
+    def __init__(self, containers=None):
+        self.containers = containers
+
+
+class _PodStatus:
+    def __init__(self, pod_ip=None, phase=None):
+        self.pod_ip = pod_ip
+        self.phase = phase
+
+
+class _PodMeta:
+    def __init__(self, labels=None, annotations=None):
+        self.labels = labels
+        self.annotations = annotations
+
+
+class _Pod:
+    def __init__(self, metadata=None, status=None, spec=None):
+        self.metadata = metadata
+        self.status = status
+        self.spec = spec
+
+
+class _PodList:
+    def __init__(self, items):
+        self.items = items
+
+
 def _make_pod(
     *,
     pod_ip: str = "10.1.2.3",
     labels: dict | None = None,
     annotations: dict | None = None,
     ports: list[dict] | None = None,
-) -> MagicMock:
-    """Build a mock kr8s pod with the given raw manifest."""
-    containers = []
+) -> _Pod:
+    """Build a typed-ish V1Pod stand-in with the given manifest pieces."""
+    container_ports = None
     if ports is not None:
-        containers = [{"ports": ports}]
+        container_ports = [
+            _Port(
+                container_port=p.get("containerPort"),
+                name=p.get("name"),
+            )
+            for p in ports
+        ]
+    containers = [_Container(ports=container_ports)] if ports is not None else []
+    return _Pod(
+        metadata=_PodMeta(labels=labels or {}, annotations=annotations or {}),
+        status=_PodStatus(pod_ip=pod_ip, phase="Running"),
+        spec=_PodSpec(containers=containers),
+    )
 
-    raw = {
-        "status": {"podIP": pod_ip},
-        "metadata": {
-            "labels": labels or {},
-            "annotations": annotations or {},
-        },
-        "spec": {"containers": containers},
-    }
-    pod = MagicMock()
-    pod.raw = raw
-    return pod
+
+@asynccontextmanager
+async def _fake_k8s_client(mock_api):
+    yield mock_api
 
 
 # ---------------------------------------------------------------------------
@@ -102,71 +148,54 @@ class TestNormalizePath:
 # ---------------------------------------------------------------------------
 class TestResolvePort:
     def test_annotation_port_takes_precedence(self):
-        raw = {"spec": {"containers": [{"ports": [{"containerPort": 8080}]}]}}
-        assert (
-            _resolve_port(
-                raw,
-                "9090",
-            )
-            == 9090
-        )
+        pod = _make_pod(ports=[{"containerPort": 8080}])
+        assert _resolve_port(pod, "9090") == 9090
 
     def test_invalid_annotation_falls_through_to_container_port(self):
-        raw = {"spec": {"containers": [{"ports": [{"containerPort": 8080}]}]}}
-        assert _resolve_port(raw, "not-a-number") == 8080
+        pod = _make_pod(ports=[{"containerPort": 8080}])
+        assert _resolve_port(pod, "not-a-number") == 8080
 
     def test_preferred_metrics_port_name(self):
-        raw = {
-            "spec": {
-                "containers": [
-                    {
-                        "ports": [
-                            {"containerPort": 8080, "name": "http"},
-                            {"containerPort": 9090, "name": "metrics"},
-                        ]
-                    }
-                ]
-            }
-        }
-        assert _resolve_port(raw, None) == 9090
+        pod = _make_pod(
+            ports=[
+                {"containerPort": 8080, "name": "http"},
+                {"containerPort": 9090, "name": "metrics"},
+            ]
+        )
+        assert _resolve_port(pod, None) == 9090
 
     def test_first_container_port_when_no_named_match(self):
-        raw = {
-            "spec": {
-                "containers": [
-                    {
-                        "ports": [
-                            {"containerPort": 8080, "name": "http"},
-                            {"containerPort": 8443, "name": "https"},
-                        ]
-                    }
-                ]
-            }
-        }
-        assert _resolve_port(raw, None) == 8080
+        pod = _make_pod(
+            ports=[
+                {"containerPort": 8080, "name": "http"},
+                {"containerPort": 8443, "name": "https"},
+            ]
+        )
+        assert _resolve_port(pod, None) == 8080
 
     def test_no_containers_returns_none(self):
-        raw = {"spec": {"containers": []}}
-        assert _resolve_port(raw, None) is None
+        pod = _Pod(spec=_PodSpec(containers=[]), status=_PodStatus(pod_ip="x"))
+        assert _resolve_port(pod, None) is None
 
     def test_no_ports_returns_none(self):
-        raw = {"spec": {"containers": [{"ports": []}]}}
-        assert _resolve_port(raw, None) is None
+        pod = _make_pod(ports=[])
+        assert _resolve_port(pod, None) is None
 
     def test_skips_port_without_container_port(self):
-        raw = {"spec": {"containers": [{"ports": [{"name": "metrics"}]}]}}
-        assert _resolve_port(raw, None) is None
+        pod = _make_pod(ports=[{"name": "metrics"}])
+        assert _resolve_port(pod, None) is None
 
     def test_multiple_containers(self):
-        raw = {
-            "spec": {
-                "containers": [
-                    {"ports": [{"containerPort": 8080, "name": "http"}]},
-                    {"ports": [{"containerPort": 9090, "name": "metrics"}]},
-                ]
-            }
-        }
-        assert _resolve_port(raw, None) == 9090
+        cs = [
+            _Container(ports=[_Port(container_port=8080, name="http")]),
+            _Container(ports=[_Port(container_port=9090, name="metrics")]),
+        ]
+        pod = _Pod(
+            metadata=_PodMeta(labels={}, annotations={}),
+            status=_PodStatus(pod_ip="10.1.2.3"),
+            spec=_PodSpec(containers=cs),
+        )
+        assert _resolve_port(pod, None) == 9090
 
 
 # ---------------------------------------------------------------------------
@@ -211,8 +240,11 @@ class TestPodToUrl:
         assert _pod_to_urls(pod, None) == []
 
     def test_returns_none_when_missing_metadata(self):
-        pod = MagicMock()
-        pod.raw = {"status": {"podIP": "10.1.2.3"}}
+        pod = _Pod(
+            metadata=None,
+            status=_PodStatus(pod_ip="10.1.2.3"),
+            spec=_PodSpec(containers=[]),
+        )
         assert _pod_to_urls(pod, None) == []
 
     def test_multi_path_annotation(self):
@@ -248,9 +280,12 @@ class TestPodToUrl:
 class TestDiscoverKubernetesEndpoints:
     @pytest.mark.asyncio
     async def test_returns_empty_when_api_unavailable(self):
+        def _raise(*_, **__):
+            raise RuntimeError("no cluster")
+
         with patch(
-            "aiperf.server_metrics.discovery.kubernetes._get_api",
-            new=AsyncMock(return_value=None),
+            "aiperf.server_metrics.discovery.kubernetes.k8s_client",
+            new=_raise,
         ):
             urls = await discover_kubernetes_endpoints()
         assert urls == []
@@ -265,8 +300,8 @@ class TestDiscoverKubernetesEndpoints:
 
         with (
             patch(
-                "aiperf.server_metrics.discovery.kubernetes._get_api",
-                new=AsyncMock(return_value=mock_api),
+                "aiperf.server_metrics.discovery.kubernetes.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
             ),
             patch(
                 "aiperf.server_metrics.discovery.kubernetes._list_running_pods",
@@ -293,8 +328,8 @@ class TestDiscoverKubernetesEndpoints:
 
         with (
             patch(
-                "aiperf.server_metrics.discovery.kubernetes._get_api",
-                new=AsyncMock(return_value=mock_api),
+                "aiperf.server_metrics.discovery.kubernetes.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
             ),
             patch(
                 "aiperf.server_metrics.discovery.kubernetes._list_running_pods",
@@ -321,8 +356,8 @@ class TestDiscoverKubernetesEndpoints:
 
         with (
             patch(
-                "aiperf.server_metrics.discovery.kubernetes._get_api",
-                new=AsyncMock(return_value=mock_api),
+                "aiperf.server_metrics.discovery.kubernetes.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
             ),
             patch(
                 "aiperf.server_metrics.discovery.kubernetes._list_running_pods",
@@ -342,8 +377,8 @@ class TestDiscoverKubernetesEndpoints:
 
         with (
             patch(
-                "aiperf.server_metrics.discovery.kubernetes._get_api",
-                new=AsyncMock(return_value=mock_api),
+                "aiperf.server_metrics.discovery.kubernetes.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
             ),
             patch(
                 "aiperf.server_metrics.discovery.kubernetes._list_running_pods",
@@ -371,8 +406,8 @@ class TestDiscoverKubernetesEndpoints:
 
         with (
             patch(
-                "aiperf.server_metrics.discovery.kubernetes._get_api",
-                new=AsyncMock(return_value=mock_api),
+                "aiperf.server_metrics.discovery.kubernetes.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
             ),
             patch(
                 "aiperf.server_metrics.discovery.kubernetes._list_running_pods",
@@ -385,97 +420,57 @@ class TestDiscoverKubernetesEndpoints:
 
 
 # ---------------------------------------------------------------------------
-# _get_api
-# ---------------------------------------------------------------------------
-class TestGetApi:
-    @pytest.mark.asyncio
-    async def test_suppresses_noisy_http_loggers_before_loading_client(self):
-        mock_kr8s_asyncio = MagicMock()
-        mock_kr8s_asyncio.api = AsyncMock(return_value=MagicMock())
-
-        with patch.dict(
-            "sys.modules",
-            {"kr8s": MagicMock(), "kr8s.asyncio": mock_kr8s_asyncio},
-        ):
-            from aiperf.server_metrics.discovery import kubernetes as discovery
-
-            with patch.object(
-                discovery, "suppress_noisy_http_loggers"
-            ) as suppress_mock:
-                await discovery._get_api()
-
-        suppress_mock.assert_called_once_with()
-
-    @pytest.mark.asyncio
-    async def test_returns_none_on_exception(self):
-        mock_kr8s_asyncio = MagicMock()
-        mock_kr8s_asyncio.api = AsyncMock(side_effect=Exception("no cluster"))
-
-        with patch.dict(
-            "sys.modules",
-            {"kr8s": MagicMock(), "kr8s.asyncio": mock_kr8s_asyncio},
-        ):
-            from aiperf.server_metrics.discovery.kubernetes import _get_api
-
-            assert await _get_api() is None
-
-
-# ---------------------------------------------------------------------------
 # _list_running_pods
 # ---------------------------------------------------------------------------
 class TestListRunningPods:
     @pytest.mark.asyncio
     async def test_returns_empty_on_exception(self):
-        import kr8s
-
         mock_api = MagicMock()
+        mock_core = MagicMock(
+            list_pod_for_all_namespaces=AsyncMock(side_effect=RuntimeError("boom"))
+        )
 
-        async def boom(*args, **kwargs):
-            raise kr8s.ServerError("boom", response=MagicMock(status_code=500))
+        with patch(
+            "aiperf.server_metrics.discovery.kubernetes.client.CoreV1Api",
+            return_value=mock_core,
+        ):
+            from aiperf.server_metrics.discovery.kubernetes import _list_running_pods
 
-        mock_api.async_get = boom
-
-        from aiperf.server_metrics.discovery.kubernetes import _list_running_pods
-
-        pods = await _list_running_pods(mock_api, None, None)
-        assert pods == []
+            pods = await _list_running_pods(mock_api, None, None)
+            assert pods == []
 
     @pytest.mark.asyncio
     async def test_passes_field_selector_and_label_selector(self):
         mock_api = MagicMock()
-        call_kwargs = {}
+        mock_core_list = AsyncMock(return_value=_PodList(items=[]))
+        mock_core = MagicMock(list_namespaced_pod=mock_core_list)
 
-        async def capture(*args, **kwargs):
-            call_kwargs.update(kwargs)
-            return
-            yield  # make it an async generator that yields nothing
+        with patch(
+            "aiperf.server_metrics.discovery.kubernetes.client.CoreV1Api",
+            return_value=mock_core,
+        ):
+            from aiperf.server_metrics.discovery.kubernetes import _list_running_pods
 
-        mock_api.async_get = capture
+            await _list_running_pods(mock_api, "test-ns", "app=vllm")
 
-        from aiperf.server_metrics.discovery.kubernetes import _list_running_pods
-
-        await _list_running_pods(mock_api, "test-ns", "app=vllm")
-
-        assert call_kwargs["namespace"] == "test-ns"
-        assert call_kwargs["field_selector"] == "status.phase=Running"
-        assert call_kwargs["label_selector"] == "app=vllm"
+        kwargs = mock_core_list.call_args.kwargs
+        assert kwargs["namespace"] == "test-ns"
+        assert kwargs["field_selector"] == "status.phase=Running"
+        assert kwargs["label_selector"] == "app=vllm"
 
     @pytest.mark.asyncio
-    async def test_uses_kr8s_all_when_no_namespace(self):
-        import kr8s
-
+    async def test_uses_all_namespaces_when_no_namespace(self):
         mock_api = MagicMock()
-        call_kwargs = {}
+        mock_all_ns = AsyncMock(return_value=_PodList(items=[]))
+        mock_core = MagicMock(list_pod_for_all_namespaces=mock_all_ns)
 
-        async def capture(*args, **kwargs):
-            call_kwargs.update(kwargs)
-            return
-            yield
+        with patch(
+            "aiperf.server_metrics.discovery.kubernetes.client.CoreV1Api",
+            return_value=mock_core,
+        ):
+            from aiperf.server_metrics.discovery.kubernetes import _list_running_pods
 
-        mock_api.async_get = capture
+            await _list_running_pods(mock_api, None, None)
 
-        from aiperf.server_metrics.discovery.kubernetes import _list_running_pods
-
-        await _list_running_pods(mock_api, None, None)
-
-        assert call_kwargs["namespace"] is kr8s.ALL
+        mock_all_ns.assert_called_once()
+        assert mock_all_ns.call_args.kwargs["field_selector"] == "status.phase=Running"

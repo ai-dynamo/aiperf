@@ -17,7 +17,10 @@ import asyncio
 import os
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from kubernetes_asyncio import config
+from kubernetes_asyncio.client import ApiClient
 
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import ServiceProcessDiedError
@@ -25,12 +28,10 @@ from aiperf.common.hooks import background_task
 from aiperf.common.service_registry import ServiceRegistry
 from aiperf.common.types import ServiceTypeT
 from aiperf.controller.multiprocess_service_manager import MultiProcessServiceManager
+from aiperf.kubernetes.client import get_pods, job_selector
 from aiperf.kubernetes.constants import JobSetLabels
 from aiperf.kubernetes.enums import PodPhase
 from aiperf.plugin.enums import ServiceType
-
-if TYPE_CHECKING:
-    from aiperf.kubernetes.client import AIPerfKubeClient
 
 # Services that are externally managed in Kubernetes mode (not spawned by the
 # service manager as local subprocesses).
@@ -113,11 +114,11 @@ class KubernetesServiceManager(MultiProcessServiceManager):
         **kwargs,
     ):
         super().__init__(required_services, run, **kwargs)
-        self._kube_client = None
-        # Serializes lazy init of _kube_client. Without it, two concurrent
-        # _get_kube_client callers both pass the None-check, both await
-        # AIPerfKubeClient.create(), and the first assignment is overwritten
-        # and its aiohttp session is leaked.
+        self._kube_api: ApiClient | None = None
+        # Serializes lazy init of _kube_api. Without it, two concurrent
+        # _get_api callers both pass the None-check, both build an ApiClient,
+        # and the first assignment is overwritten and its aiohttp session is
+        # leaked.
         self._kube_client_lock = asyncio.Lock()
         self._pods: dict[str, PodInfo] = {}
         self._restart_warned: set[str] = set()
@@ -189,7 +190,13 @@ class KubernetesServiceManager(MultiProcessServiceManager):
             ServiceRegistry.unregister(info.service_id)
             self._subprocess_manager.remove(info)
 
-        self._kube_client = None
+        api = self._kube_api
+        self._kube_api = None
+        if api is not None:
+            try:
+                await api.close()
+            except Exception as e:
+                self.debug(f"Error closing Kubernetes ApiClient: {e!r}")
 
         return results
 
@@ -281,13 +288,11 @@ class KubernetesServiceManager(MultiProcessServiceManager):
             return
 
         try:
-            client = await self._get_kube_client()
-            pods = await client.get_pods(namespace, client.job_selector(job_id))
+            api = await self._get_api()
+            pods = await get_pods(api, namespace, job_selector(job_id))
 
             for pod in pods:
-                raw = pod.raw
-                metadata = raw.get("metadata", {})
-                labels = metadata.get("labels", {})
+                labels = (pod.metadata.labels or {}) if pod.metadata else {}
                 replicated_job = labels.get(JobSetLabels.REPLICATED_JOB_NAME)
                 if replicated_job and replicated_job != "workers":
                     continue
@@ -295,13 +300,29 @@ class KubernetesServiceManager(MultiProcessServiceManager):
                 if pod_index is None:
                     continue
 
-                phase = PodPhase(raw.get("status", {}).get("phase", PodPhase.UNKNOWN))
+                phase_str = (pod.status.phase if pod.status else None) or str(
+                    PodPhase.UNKNOWN
+                )
+                phase = PodPhase(phase_str)
                 if phase in (PodPhase.FAILED, PodPhase.UNKNOWN):
-                    pod_name = metadata.get("name", "unknown")
-                    status = raw.get("status", {})
-                    container_statuses = status.get("containerStatuses", [])
+                    pod_name = (pod.metadata.name if pod.metadata else "unknown") or (
+                        "unknown"
+                    )
+                    container_statuses = (
+                        _container_statuses_as_dicts(
+                            pod.status.container_statuses or []
+                        )
+                        if pod.status
+                        else []
+                    )
+                    conditions = _conditions_as_dicts(
+                        pod.status.conditions or [] if pod.status else []
+                    )
                     reason = _format_pod_failure_reason(
-                        pod_name, phase, container_statuses, status
+                        pod_name,
+                        phase,
+                        container_statuses,
+                        {"conditions": conditions},
                     )
                     self.error(
                         f"Pod health check failed before PROFILE_START: {reason}"
@@ -373,14 +394,19 @@ class KubernetesServiceManager(MultiProcessServiceManager):
             )
             self.pod_failure_abort_event.set()
 
-    async def _get_kube_client(self) -> AIPerfKubeClient:
-        """Get or create a cached Kubernetes API client."""
+    async def _get_api(self) -> ApiClient:
+        """Get or create a cached Kubernetes ApiClient."""
         async with self._kube_client_lock:
-            if self._kube_client is None:
-                from aiperf.kubernetes.client import AIPerfKubeClient
+            if self._kube_api is None:
+                from aiperf.common.noisy_loggers import suppress_noisy_http_loggers
 
-                self._kube_client = await AIPerfKubeClient.create()
-            return self._kube_client
+                suppress_noisy_http_loggers()
+                try:
+                    config.load_incluster_config()
+                except config.ConfigException:
+                    await config.load_kube_config()
+                self._kube_api = ApiClient()
+            return self._kube_api
 
     @background_task(
         interval=lambda self: Environment.SERVICE.PROCESS_MONITOR_INTERVAL,
@@ -414,16 +440,14 @@ class KubernetesServiceManager(MultiProcessServiceManager):
             return
 
         try:
-            client = await self._get_kube_client()
-            pods = await client.get_pods(namespace, client.job_selector(job_id))
+            api = await self._get_api()
+            pods = await get_pods(api, namespace, job_selector(job_id))
             now_ns = time.time_ns()
 
             pods_by_index: dict[str, tuple[str, PodPhase, list[dict], dict]] = {}
             for pod in pods:
-                raw = pod.raw
-                metadata = raw.get("metadata", {})
-                pod_name = metadata.get("name", "unknown")
-                labels = metadata.get("labels", {})
+                pod_name = (pod.metadata.name if pod.metadata else "") or "unknown"
+                labels = (pod.metadata.labels or {}) if pod.metadata else {}
                 replicated_job = labels.get(JobSetLabels.REPLICATED_JOB_NAME)
                 if replicated_job and replicated_job != "workers":
                     continue
@@ -431,8 +455,22 @@ class KubernetesServiceManager(MultiProcessServiceManager):
                 if pod_index is None:
                     continue
 
-                status = raw.get("status", {})
-                phase = PodPhase(status.get("phase", PodPhase.UNKNOWN))
+                phase_str = (pod.status.phase if pod.status else None) or str(
+                    PodPhase.UNKNOWN
+                )
+                phase = PodPhase(phase_str)
+                cs_dicts = (
+                    _container_statuses_as_dicts(pod.status.container_statuses or [])
+                    if pod.status
+                    else []
+                )
+                cond_dicts = _conditions_as_dicts(
+                    pod.status.conditions or [] if pod.status else []
+                )
+                status_dict = {
+                    "conditions": cond_dicts,
+                    "containerStatuses": cs_dicts,
+                }
                 existing = pods_by_index.get(pod_index)
                 if existing is None or (
                     existing[1] in (PodPhase.FAILED, PodPhase.UNKNOWN)
@@ -441,8 +479,8 @@ class KubernetesServiceManager(MultiProcessServiceManager):
                     pods_by_index[pod_index] = (
                         pod_name,
                         phase,
-                        status.get("containerStatuses", []),
-                        status,
+                        cs_dicts,
+                        status_dict,
                     )
 
             for pod_index, (
@@ -501,6 +539,60 @@ class KubernetesServiceManager(MultiProcessServiceManager):
 
         except Exception as e:
             self.warning(f"Failed to query Kubernetes pod statuses: {e!r}")
+
+
+def _container_statuses_as_dicts(container_statuses: list[Any]) -> list[dict]:
+    """Convert a list of V1ContainerStatus objects to the legacy dict shape.
+
+    Preserves the container-state field names (``state``, ``waiting``,
+    ``terminated``, ``lastState``) used by ``_extract_container_issues`` and
+    ``_format_pod_failure_reason`` so those helpers keep working unchanged.
+    """
+    results: list[dict] = []
+    for cs in container_statuses:
+        state_dict: dict[str, Any] = {}
+        state = cs.state
+        if state is not None:
+            if state.waiting is not None:
+                state_dict["waiting"] = {
+                    "reason": state.waiting.reason or "",
+                    "message": state.waiting.message or "",
+                }
+            if state.terminated is not None:
+                state_dict["terminated"] = {
+                    "reason": state.terminated.reason or "",
+                    "message": state.terminated.message or "",
+                    "exitCode": state.terminated.exit_code,
+                }
+
+        last_state_dict: dict[str, Any] = {}
+        last_state = cs.last_state
+        if last_state is not None and last_state.terminated is not None:
+            last_state_dict["terminated"] = {
+                "reason": last_state.terminated.reason or "",
+            }
+
+        results.append(
+            {
+                "name": cs.name or "unknown",
+                "restartCount": cs.restart_count or 0,
+                "state": state_dict,
+                "lastState": last_state_dict,
+            }
+        )
+    return results
+
+
+def _conditions_as_dicts(conditions: list[Any]) -> list[dict]:
+    """Convert V1PodCondition objects to the legacy dict shape."""
+    return [
+        {
+            "type": c.type or "",
+            "status": c.status or "",
+            "message": c.message or "",
+        }
+        for c in conditions
+    ]
 
 
 def _extract_container_issues(container_statuses: list[dict]) -> list[str]:

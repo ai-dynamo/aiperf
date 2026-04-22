@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for aiperf kube dashboard command."""
 
-from unittest.mock import AsyncMock, patch
+from contextlib import asynccontextmanager
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -11,35 +13,42 @@ from aiperf.config.kube import KubeManageOptions
 from aiperf.kubernetes.enums import PodPhase
 
 
+@asynccontextmanager
+async def _fake_k8s_client(api: Any):
+    """Drop-in replacement for ``k8s_client`` yielding the provided api object."""
+    yield api
+
+
 @pytest.fixture
 def manage_options():
     return KubeManageOptions(kubeconfig=None, namespace=None)
 
 
 @pytest.fixture
-def mock_kube_client():
-    from aiperf.kubernetes.client import AIPerfKubeClient
-
-    mock_client = AsyncMock(spec=AIPerfKubeClient)
-    with patch(
-        "aiperf.kubernetes.client.AIPerfKubeClient.create",
-        new=AsyncMock(return_value=mock_client),
+def patched_k8s():
+    """Patch k8s_client and find_operator_pod; yields the find_operator_pod mock."""
+    api = MagicMock()
+    mock_find = AsyncMock(return_value=("aiperf-operator-abc", PodPhase.RUNNING))
+    with (
+        patch(
+            "aiperf.kubernetes.client.k8s_client",
+            return_value=_fake_k8s_client(api),
+        ),
+        patch(
+            "aiperf.kubernetes.client.find_operator_pod",
+            new=mock_find,
+        ),
     ):
-        yield mock_client
+        yield mock_find
 
 
 class TestDashboardCommand:
     """Tests for the kube dashboard command."""
 
     async def test_dashboard_opens_browser(
-        self, mock_kube_client, manage_options
+        self, patched_k8s: AsyncMock, manage_options: KubeManageOptions
     ) -> None:
         """Test dashboard port-forwards and opens browser."""
-        mock_kube_client.find_operator_pod.return_value = (
-            "aiperf-operator-abc",
-            PodPhase.RUNNING,
-        )
-
         mock_port_forward = AsyncMock()
         mock_port_forward.__aenter__ = AsyncMock(return_value=54321)
         mock_port_forward.__aexit__ = AsyncMock(return_value=False)
@@ -64,14 +73,9 @@ class TestDashboardCommand:
             mock_browser.assert_called_once_with("http://localhost:54321")
 
     async def test_dashboard_no_browser_flag(
-        self, mock_kube_client, manage_options
+        self, patched_k8s: AsyncMock, manage_options: KubeManageOptions
     ) -> None:
         """Test --no-browser prints URL instead of opening browser."""
-        mock_kube_client.find_operator_pod.return_value = (
-            "aiperf-operator-abc",
-            PodPhase.RUNNING,
-        )
-
         mock_port_forward = AsyncMock()
         mock_port_forward.__aenter__ = AsyncMock(return_value=54321)
         mock_port_forward.__aexit__ = AsyncMock(return_value=False)
@@ -90,10 +94,10 @@ class TestDashboardCommand:
             mock_browser.assert_not_called()
 
     async def test_dashboard_operator_not_found(
-        self, mock_kube_client, manage_options
+        self, patched_k8s: AsyncMock, manage_options: KubeManageOptions
     ) -> None:
         """Test dashboard exits gracefully when operator pod not found."""
-        mock_kube_client.find_operator_pod.return_value = None
+        patched_k8s.return_value = None
 
         with patch("webbrowser.open") as mock_browser:
             await dashboard(manage_options=manage_options)
@@ -101,14 +105,9 @@ class TestDashboardCommand:
         mock_browser.assert_not_called()
 
     async def test_dashboard_custom_port(
-        self, mock_kube_client, manage_options
+        self, patched_k8s: AsyncMock, manage_options: KubeManageOptions
     ) -> None:
         """Test dashboard with custom local port."""
-        mock_kube_client.find_operator_pod.return_value = (
-            "aiperf-operator-abc",
-            PodPhase.RUNNING,
-        )
-
         mock_port_forward = AsyncMock()
         mock_port_forward.__aenter__ = AsyncMock(return_value=8081)
         mock_port_forward.__aexit__ = AsyncMock(return_value=False)
@@ -127,14 +126,9 @@ class TestDashboardCommand:
             assert mock_pf.call_args[0][2] == 8081
 
     async def test_dashboard_custom_operator_namespace(
-        self, mock_kube_client, manage_options
+        self, patched_k8s: AsyncMock, manage_options: KubeManageOptions
     ) -> None:
         """Test dashboard with custom operator namespace."""
-        mock_kube_client.find_operator_pod.return_value = (
-            "aiperf-operator-abc",
-            PodPhase.RUNNING,
-        )
-
         mock_port_forward = AsyncMock()
         mock_port_forward.__aenter__ = AsyncMock(return_value=54321)
         mock_port_forward.__aexit__ = AsyncMock(return_value=False)
@@ -154,6 +148,6 @@ class TestDashboardCommand:
                 )
 
             assert mock_pf.call_args[0][0] == "custom-ns"
-            mock_kube_client.find_operator_pod.assert_called_once_with(
-                namespace="custom-ns",
-            )
+            patched_k8s.assert_called_once()
+            call_kwargs = patched_k8s.call_args
+            assert call_kwargs.kwargs["namespace"] == "custom-ns"

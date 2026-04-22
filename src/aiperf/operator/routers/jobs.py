@@ -5,15 +5,22 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from kubernetes_asyncio import client
+from kubernetes_asyncio.client import ApiClient
 from pydantic import Field
 
 from aiperf.common.models import AIPerfBaseModel
-
-if TYPE_CHECKING:
-    from aiperf.kubernetes.client import AIPerfKubeClient
+from aiperf.kubernetes.client import (
+    cancel_aiperf_job,
+    cluster_version,
+    find_aiperf_job,
+    get_pods,
+    get_raw_aiperfjob_status,
+    list_aiperf_jobs,
+)
 
 logger = logging.getLogger("aiperf.operator.ui")
 
@@ -49,51 +56,52 @@ class CancelResponse(AIPerfBaseModel):
 
 
 def create_jobs_router(
-    client_holder: list[AIPerfKubeClient | None] | None = None,
+    api_holder: list[ApiClient | None] | None = None,
 ) -> APIRouter:
     """Create the jobs/cluster API router.
 
     Args:
-        client_holder: Mutable single-element list holding the kr8s client.
-            The client is set during app lifespan startup. If the list is
-            empty or contains None, endpoints return 503.
+        api_holder: Mutable single-element list holding the kubernetes_asyncio
+            ApiClient. The client is set during app lifespan startup. If the
+            list is empty or contains None, endpoints return 503.
     """
-    _holder = client_holder if client_holder is not None else [None]
+    _holder = api_holder if api_holder is not None else [None]
     router = APIRouter(prefix="/api/v1", tags=["jobs"])
 
-    def _require_client() -> AIPerfKubeClient:
-        client = _holder[0] if _holder else None
-        if client is None:
+    def _require_api() -> ApiClient:
+        api = _holder[0] if _holder else None
+        if api is None:
             raise HTTPException(503, "Kubernetes API unavailable")
-        return client
+        return api
 
     @router.get("/jobs", response_model=JobListResponse)
     async def list_jobs() -> JobListResponse:
         """List all AIPerfJob CRs across namespaces."""
-        client = _require_client()
-        jobs = await client.list_jobs(all_namespaces=True)
+        api = _require_api()
+        jobs = await list_aiperf_jobs(api, all_namespaces=True)
         return JobListResponse(jobs=[j.model_dump(by_alias=True) for j in jobs])
 
     @router.get("/jobs/{namespace}/{name}", response_model=JobDetailResponse)
     async def get_job(namespace: str, name: str) -> JobDetailResponse:
         """Get detailed status for a single AIPerfJob."""
-        client = _require_client()
-        job = await client.find_job(name, namespace)
+        api = _require_api()
+        job = await find_aiperf_job(api, name, namespace)
         if not job:
             raise HTTPException(404, f"Job {namespace}/{name} not found")
 
-        raw_status = await client.get_raw_status(name, namespace)
-        pods_raw = await client.get_pods(namespace, f"aiperf.nvidia.com/job-id={name}")
+        raw_status = await get_raw_aiperfjob_status(api, name, namespace)
+        pods_raw = await get_pods(api, namespace, f"aiperf.nvidia.com/job-id={name}")
         pods = [
             {
-                "name": p.metadata.get("name", ""),
-                "phase": p.status.get("phase", "Unknown"),
+                "name": (p.metadata.name if p.metadata else "") or "",
+                "phase": (p.status.phase if p.status else None) or "Unknown",
                 "ready": any(
-                    c.get("ready", False) for c in p.status.get("containerStatuses", [])
+                    bool(c.ready)
+                    for c in ((p.status.container_statuses or []) if p.status else [])
                 ),
                 "restarts": sum(
-                    c.get("restartCount", 0)
-                    for c in p.status.get("containerStatuses", [])
+                    int(c.restart_count or 0)
+                    for c in ((p.status.container_statuses or []) if p.status else [])
                 ),
             }
             for p in pods_raw
@@ -108,32 +116,31 @@ def create_jobs_router(
     @router.post("/jobs/{namespace}/{name}/cancel", response_model=CancelResponse)
     async def cancel_job(namespace: str, name: str) -> CancelResponse:
         """Cancel a running AIPerfJob."""
-        client = _require_client()
-        await client.cancel_job(name, namespace)
+        api = _require_api()
+        await cancel_aiperf_job(api, name, namespace)
         return CancelResponse(cancelled=True)
 
     @router.get("/cluster", response_model=ClusterResponse)
     async def cluster_info() -> ClusterResponse:
         """Get cluster node and GPU information."""
-        client = _require_client()
+        api = _require_api()
         try:
-            version_info = await client.version()
+            version_info = await cluster_version(api)
             k8s_version = version_info.get("gitVersion", "unknown")
         except Exception:
             k8s_version = "unknown"
 
         try:
-            # Node is cluster-scoped; do not pass a namespace kwarg.
-            nodes = [n async for n in client.api.get("nodes")]
+            node_list = await client.CoreV1Api(api).list_node()
+            nodes = node_list.items
             node_count = len(nodes)
-            gpu_count = sum(
-                int(
-                    n.raw.get("status", {})
-                    .get("allocatable", {})
-                    .get("nvidia.com/gpu", 0)
-                )
-                for n in nodes
-            )
+            gpu_count = 0
+            for n in nodes:
+                alloc = (n.status.allocatable or {}) if n.status else {}
+                try:
+                    gpu_count += int(alloc.get("nvidia.com/gpu", 0))
+                except (TypeError, ValueError):
+                    continue
         except Exception as e:
             logger.warning(f"Failed to query nodes: {e}")
             node_count = 0

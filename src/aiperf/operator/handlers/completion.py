@@ -7,17 +7,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 import kopf
-import kr8s
+from kubernetes_asyncio import client
+from kubernetes_asyncio.client.exceptions import ApiException
 
-from aiperf.kubernetes.client import get_api
+from aiperf.kubernetes.client import k8s_client
+from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import controller_dns_name
-from aiperf.kubernetes.kr8s_resources import AsyncJobSet
 from aiperf.kubernetes.results_sidecar import CHECKPOINTS_DIR_NAME
 from aiperf.operator import events
 from aiperf.operator.client_cache import (
@@ -27,7 +29,6 @@ from aiperf.operator.client_cache import (
 )
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.job_index import index_job_completed
-from aiperf.operator.k8s_helpers import retry_with_backoff
 from aiperf.operator.models import FetchResult, MetricsSummary
 from aiperf.operator.progress_client import ProgressClient
 from aiperf.operator.status import ConditionType, Phase, StatusBuilder, parse_timestamp
@@ -204,16 +205,20 @@ async def handle_completion(
     # ownerReferences will reap the JobSet once the CR is gone.
     if success and not is_cancellation_requested(job_key(namespace, job_id)):
         try:
-            api = await get_api()
-            js = await AsyncJobSet.get(jobset_name, namespace=namespace, api=api)
-            await js.delete()
+            async with k8s_client() as api:
+                await client.CustomObjectsApi(api).delete_namespaced_custom_object(
+                    group=JOBSET_GROUP,
+                    version=JOBSET_VERSION,
+                    plural=JOBSET_PLURAL,
+                    namespace=namespace,
+                    name=jobset_name,
+                )
             logger.info(f"Deleted JobSet {jobset_name} after results stored")
-        except kr8s.NotFoundError:
-            pass
-        except kr8s.ServerError as e:
-            logger.warning(
-                f"Failed to delete JobSet {jobset_name} after completion: {e}"
-            )
+        except ApiException as e:
+            if e.status != 404:
+                logger.warning(
+                    f"Failed to delete JobSet {jobset_name} after completion: {e}"
+                )
 
 
 # Progress-aware retry: give up after this many CONSECUTIVE attempts with
