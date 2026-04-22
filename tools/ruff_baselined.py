@@ -147,15 +147,15 @@ def _enclosing_function(rel: str, line: int) -> str | None:
         node, path_names = stack.pop()
         for child in ast.iter_child_nodes(node):
             if isinstance(child, ast.ClassDef):
-                stack.append((child, path_names + [child.name]))
+                stack.append((child, [*path_names, child.name]))
             elif isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
                 end = child.end_lineno or child.lineno
                 if child.lineno <= line <= end:
-                    qualname = ".".join(path_names + [child.name])
+                    qualname = ".".join([*path_names, child.name])
                     if best is None or child.lineno > best[0]:
                         best = (child.lineno, qualname)
                 # Recurse into nested defs.
-                stack.append((child, path_names + [child.name]))
+                stack.append((child, [*path_names, child.name]))
             else:
                 stack.append((child, path_names))
     result = best[1] if best else None
@@ -202,7 +202,9 @@ def write_baseline(keys: set[tuple[str, str, str]]) -> None:
 
 def run_ruff(paths: list[str]) -> list[Violation]:
     cmd = [
-        ".venv/bin/ruff",
+        sys.executable,
+        "-m",
+        "ruff",
         "check",
         "--select",
         ",".join(RULES),

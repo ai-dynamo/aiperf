@@ -31,7 +31,7 @@ Axes below label **research principle** (universal) vs **AIPerf-specific impleme
 
 **Core principle:** Every finding must cite a specific file:line, quote the current text, and propose a concrete rewrite. "This could be better" is not acceptable output.
 
-**The 7 judgment axes (with research basis, full rationale in `artifacts/code-review-2026-04-21/llm-codebase-ergonomics-extended.md`):**
+**The 7 judgment axes (with research basis):**
 
 1. Error-message informativeness — *compression paradox* (arxiv 2604.07502)
 2. Type-hint descriptiveness — *type constraints reduce errors >50%* (arxiv 2504.09246)
@@ -367,7 +367,6 @@ Highest-priority: <one-line summary of the top HIGH finding>
 ### Mechanical tooling (AIPerf-local)
 
 - The 18 mechanical checks and their baselines: `tools/check_ergonomics.py`, `tools/ruff_baselined.py`, `tools/ergonomics_baseline.json`, `tools/ruff_baseline.json`.
-- Research synthesis for AIPerf: `artifacts/code-review-2026-04-21/llm-codebase-ergonomics.md` (the original 8 structural rules) and `artifacts/code-review-2026-04-21/llm-codebase-ergonomics-extended.md` (R9–R17, the axes this skill operationalizes).
 - Sibling skill: `aiperf-code-review` for correctness review (different goal — use both sequentially on important PRs).
 
 ### Primary research sources for the 7 axes

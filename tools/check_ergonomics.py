@@ -351,7 +351,9 @@ def check_pydantic_fields(tree: ast.Module, rel: str) -> list[Violation]:
     return out
 
 
-_JSON_IMPORT_RE = re.compile(r"^\s*(import json|from json\s)", re.MULTILINE)
+_JSON_IMPORT_RE = re.compile(
+    r"^\s*(import json(?:\s|$|\s+as\s)|from json\s)", re.MULTILINE
+)
 _JSON_USE_RE = re.compile(r"\bjson\.(dumps|loads)\s*\(")
 
 
