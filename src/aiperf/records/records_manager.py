@@ -251,7 +251,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             Command(
                 cid=uuid.uuid4().hex,
                 cmd=CommandType.PROFILE_COMPLETE,
-                payload=orjson.dumps({"start_ns": start_ns, "end_ns": end_ns}).decode(),
+                payload=orjson.dumps({"start_ns": start_ns, "end_ns": end_ns}),
             ),
             timeout=10.0,
         )
