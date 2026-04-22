@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 from typing import TYPE_CHECKING
+
+import orjson
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.channel_codecs import RECORDS_CODEC
@@ -13,19 +16,34 @@ from aiperf.common.enums import CommAddress, CommandType, MessageType
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
 from aiperf.common.environment import Environment
+from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.hooks import on_command, on_init, on_message, on_stop
+from aiperf.common.messages import ProcessTelemetryResultMessage
 from aiperf.common.metric_records_wire import (
     TelemetryRecordsWireMessage,
     _error_to_wire,
 )
-from aiperf.common.models import ErrorDetails, TelemetryRecord
+from aiperf.common.models import (
+    ErrorDetails,
+    ErrorDetailsCount,
+    ProcessTelemetryResult,
+    TelemetryRecord,
+)
 from aiperf.common.protocols import PushClientProtocol
 from aiperf.credit.messages import CreditPhaseStartMessage
 from aiperf.gpu_telemetry.constants import PYNVML_SOURCE_IDENTIFIER
 from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
-from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
+from aiperf.gpu_telemetry.protocols import (
+    GPUTelemetryAccumulatorProtocol,
+    GPUTelemetryCollectorProtocol,
+    GPUTelemetryProcessorProtocol,
+)
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import GPUTelemetryCollectorType, PluginType
+from aiperf.plugin.enums import (
+    GPUTelemetryCollectorType,
+    GPUTelemetryProcessorType,
+    PluginType,
+)
 
 __all__ = ["GPUTelemetryManager"]
 
@@ -99,6 +117,37 @@ class GPUTelemetryManager(BaseComponentService):
         )
 
         self._collection_interval = Environment.GPU.COLLECTION_INTERVAL
+
+        self._processors: list[GPUTelemetryProcessorProtocol] = []
+        self._accumulator: GPUTelemetryAccumulatorProtocol | None = None
+        self._error_counts: dict[ErrorDetails, int] = defaultdict(int)
+
+        for entry in plugins.iter_entries(PluginType.GPU_TELEMETRY_PROCESSOR):
+            try:
+                ProcessorClass = plugins.get_class(
+                    PluginType.GPU_TELEMETRY_PROCESSOR, entry.name
+                )
+                processor = ProcessorClass(
+                    service_id=self.service_id,
+                    run=self.run,
+                    pub_client=self.pub_client,
+                )
+                self.attach_child_lifecycle(processor)
+                self._processors.append(processor)
+                if entry.name == GPUTelemetryProcessorType.GPU_TELEMETRY_ACCUMULATOR:
+                    self._accumulator = processor
+                self.debug(
+                    f"Created GPU telemetry processor: {entry.name}: "
+                    f"{processor.__class__.__name__}"
+                )
+            except PostProcessorDisabled:
+                self.debug(
+                    f"GPU telemetry processor {entry.name} is disabled and will not be used"
+                )
+            except Exception as e:
+                self.error(
+                    f"Failed to create GPU telemetry processor {entry.name}: {e}"
+                )
 
     @staticmethod
     def _normalize_dcgm_url(url: str) -> str:
@@ -386,22 +435,66 @@ class GPUTelemetryManager(BaseComponentService):
         Args:
             message: Profile complete command from SystemController
         """
-        if not self._collectors:
+        if self._collectors:
+            self.info("GPU Telemetry: Profiling complete, capturing final metrics...")
+
+            for dcgm_url, collector in list(self._collectors.items()):
+                try:
+                    await collector.collect_and_process_metrics()
+                    self.debug(f"GPU Telemetry: Captured final state from {dcgm_url}")
+                except Exception as e:
+                    self.warning(
+                        f"GPU Telemetry: Failed to capture final state from {dcgm_url}: {e}"
+                    )
+
+            await self._stop_all_collectors()
+        else:
             self.debug("GPU Telemetry: Already stopped, skipping final scrape")
-            return
 
-        self.info("GPU Telemetry: Profiling complete, capturing final metrics...")
-
-        for dcgm_url, collector in list(self._collectors.items()):
+        start_ns: int | None = None
+        if message.payload:
             try:
-                await collector.collect_and_process_metrics()
-                self.debug(f"GPU Telemetry: Captured final state from {dcgm_url}")
-            except Exception as e:
-                self.warning(
-                    f"GPU Telemetry: Failed to capture final state from {dcgm_url}: {e}"
-                )
+                parsed = orjson.loads(message.payload)
+                start_ns = parsed.get("start_ns")
+            except Exception:
+                self.debug("Failed to parse PROFILE_COMPLETE payload")
 
-        await self._stop_all_collectors()
+        await self._publish_telemetry_result(start_ns=start_ns)
+
+    async def _publish_telemetry_result(self, start_ns: int | None) -> None:
+        """Publish accumulated telemetry results to subscribers."""
+        error_summary = [
+            ErrorDetailsCount(error_details=err, count=count)
+            for err, count in self._error_counts.items()
+        ]
+        if not self._accumulator:
+            await self.publish(
+                ProcessTelemetryResultMessage(
+                    service_id=self.service_id,
+                    telemetry_result=ProcessTelemetryResult(results=None),
+                )
+            )
+            return
+        export_data = self._accumulator.export_results(
+            start_ns=start_ns or 0,
+            error_summary=error_summary,
+        )
+        await self.publish(
+            ProcessTelemetryResultMessage(
+                service_id=self.service_id,
+                telemetry_result=ProcessTelemetryResult(results=export_data),
+            )
+        )
+
+    @on_command(CommandType.START_REALTIME_TELEMETRY)
+    async def _on_start_realtime_telemetry_command(self, message: Command) -> None:
+        """Start the realtime telemetry background task on the local accumulator."""
+        if self._accumulator:
+            self._accumulator.start_realtime_telemetry()
+        else:
+            self.error(
+                "GPU telemetry accumulator not found, cannot start realtime telemetry"
+            )
 
     @on_stop
     async def _telemetry_manager_stop(self) -> None:
@@ -458,6 +551,20 @@ class GPUTelemetryManager(BaseComponentService):
         if not records:
             return
 
+        if self._processors:
+            errors = await asyncio.gather(
+                *[
+                    processor.process_telemetry_record(record)
+                    for processor in self._processors
+                    for record in records
+                ],
+                return_exceptions=True,
+            )
+            for error in errors:
+                if isinstance(error, BaseException):
+                    self.exception(f"Failed to process telemetry record: {error!r}")
+                    self._error_counts[ErrorDetails.from_exception(error)] += 1
+
         try:
             dcgm_url = self._collector_id_to_url.get(collector_id, "")
             wire_message = TelemetryRecordsWireMessage(
@@ -482,6 +589,8 @@ class GPUTelemetryManager(BaseComponentService):
             error: ErrorDetails describing the collection error
             collector_id: Unique identifier of the collector that encountered the error
         """
+
+        self._error_counts[error] += 1
 
         try:
             dcgm_url = self._collector_id_to_url.get(collector_id, "")
