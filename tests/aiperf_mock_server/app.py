@@ -323,8 +323,7 @@ def _build_cohere_embedding_response_data(
     """Build Cohere /v2/embed response data."""
     embedding_dim = req.output_dimension or 768
     vectors = [
-        generate_embedding(text, dim=embedding_dim)
-        for text in req.embedding_inputs
+        generate_embedding(text, dim=embedding_dim) for text in req.embedding_inputs
     ]
 
     response: dict[str, Any] = {
