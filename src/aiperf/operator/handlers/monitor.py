@@ -341,9 +341,17 @@ async def monitor_progress(
             await close_progress_client(key)
             return
 
-        # Fetch controller progress once bootstrap reaches initializing.
+        # Fetch controller progress whenever the pod has a reachable API.
+        # Including PENDING is deliberate: for fast-completing benchmarks the
+        # worker JobSet can transition from active → succeeded inside a single
+        # monitor-poll interval, so the phase-transition guard at line ~329
+        # (PENDING → INITIALIZING on workers_ready > 0) may never fire. Without
+        # this, `_fetch_progress()` is skipped, the controller's completion
+        # annotation is observed too late, and the CR stays Pending forever.
+        # `_fetch_progress` handles controller-not-yet-ready gracefully, so
+        # polling during early startup is safe — it just no-ops.
         effective_phase = sb.get_phase() or current_phase
-        if effective_phase in (Phase.INITIALIZING, Phase.RUNNING) or (
+        if effective_phase in (Phase.PENDING, Phase.INITIALIZING, Phase.RUNNING) or (
             workers_succeeded > 0 and workers_succeeded >= total_workers
         ):
             if client is None:
