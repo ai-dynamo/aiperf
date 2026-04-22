@@ -21,7 +21,7 @@ Before starting, confirm:
 - Baseline unit tests all pass:
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/kubernetes/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/ -q --no-header
 # expected: 1445 passed
 ```
 
@@ -334,9 +334,9 @@ def suppress_noisy_http_loggers() -> None:
 Per memory `feedback_pytest_single_subfolder.md`, run subfolders one at a time. Use these three commands:
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/kubernetes/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/operator/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/ -q --no-header --ignore=tests/unit/kubernetes --ignore=tests/unit/operator
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/operator/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/ -q --no-header --ignore=tests/unit/kubernetes --ignore=tests/unit/operator
 ```
 
 Expected: all green; counts at or above baseline.
@@ -989,7 +989,7 @@ Use `@pytest.mark.asyncio` + `pytest.param` with `# fmt: skip` on the closing `)
 - [ ] **Step 4: Run kubernetes tests**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/kubernetes/test_client.py -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/test_client.py -q --no-header
 ```
 
 Expected: all tests pass.
@@ -997,7 +997,7 @@ Expected: all tests pass.
 - [ ] **Step 5: Run the full kubernetes subfolder**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/kubernetes/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/ -q --no-header
 ```
 
 Expected: still green. Other kubernetes tests still mock `kr8s` — that is correct at this stage because `preflight`, `watchdog`, etc. still use `kr8s`; they are migrated in later tasks.
@@ -1005,8 +1005,8 @@ Expected: still green. Other kubernetes tests still mock `kr8s` — that is corr
 - [ ] **Step 6: Run operator + other subfolders**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/operator/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/ -q --no-header \
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/operator/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/ -q --no-header \
   --ignore=tests/unit/kubernetes --ignore=tests/unit/operator
 ```
 
@@ -1107,7 +1107,7 @@ Apply the same mock translation.
 - [ ] **Step 5: Run preflight-related tests**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/kubernetes/test_preflight.py tests/unit/cli_commands/test_kube_preflight.py -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/test_preflight.py tests/unit/cli_commands/test_kube_preflight.py -q --no-header
 ```
 
 Expected: green.
@@ -1115,8 +1115,8 @@ Expected: green.
 - [ ] **Step 6: Full kubernetes subfolder + spot-check others**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/kubernetes/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/cli_commands/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/cli_commands/ -q --no-header
 ```
 
 Expected: green.
@@ -1260,7 +1260,7 @@ Substitute all kr8s mocks with kubernetes_asyncio mocks per pattern P10. Use `Ma
 - [ ] **Step 7: Run watchdog tests**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/kubernetes/test_watchdog.py -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/test_watchdog.py -q --no-header
 ```
 
 Expected: green.
@@ -1268,7 +1268,7 @@ Expected: green.
 - [ ] **Step 8: Full subfolder sweep + lint**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/kubernetes/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/ -q --no-header
 ruff format . && ruff check --fix .
 pre-commit run --all-files
 ```
@@ -1406,8 +1406,8 @@ Same mock-surface change. Test the free-function call paths now.
 - [ ] **Step 9: Run kubernetes + cli_commands subfolders**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/kubernetes/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/cli_commands/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/cli_commands/ -q --no-header
 ```
 
 Expected: green.
@@ -1526,8 +1526,8 @@ This is the most involved CLI command — it creates Namespace, ConfigMap, Role,
 - [ ] **Step 6: Run cli_commands tests**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/cli_commands/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/kubernetes/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/cli_commands/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/ -q --no-header
 ```
 
 Expected: green.
@@ -1718,9 +1718,9 @@ Swap kr8s mocks. Two sites (lines 429, 465).
 - [ ] **Step 17: Run the three subfolders separately**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/operator/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/server_metrics/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/ -q --no-header \
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/operator/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/server_metrics/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/ -q --no-header \
   --ignore=tests/unit/kubernetes --ignore=tests/unit/operator --ignore=tests/unit/server_metrics
 ```
 
@@ -1841,11 +1841,11 @@ unset VIRTUAL_ENV && make install
 - [ ] **Step 9: Run full test suites, subfolder by subfolder**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/kubernetes/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/operator/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/cli_commands/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/server_metrics/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/ -q --no-header \
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/operator/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/cli_commands/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/server_metrics/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/ -q --no-header \
   --ignore=tests/unit/kubernetes --ignore=tests/unit/operator \
   --ignore=tests/unit/cli_commands --ignore=tests/unit/server_metrics
 ```
@@ -1895,7 +1895,7 @@ Expected: all pass.
 
 If a live kind / minikube cluster exists:
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest tests/kubernetes/ -q --no-header -x
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/kubernetes/ -q --no-header -x
 ```
 
 Expected: green. If no cluster is available, skip and rely on CI.
@@ -1927,7 +1927,7 @@ EOF
 - [ ] **Final Step 1: Full unit test run (all subfolders)**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest tests/unit/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/ -q --no-header
 ```
 
 Expected: full suite green, count ≈ 1445 or higher.
@@ -1968,10 +1968,10 @@ Plan: `docs/superpowers/plans/2026-04-21-replace-kr8s-with-kubernetes-asyncio.md
 ## Test plan
 
 - [ ] `make first-time-setup`
-- [ ] `uv run pytest tests/unit/kubernetes -n auto`
-- [ ] `uv run pytest tests/unit/operator -n auto`
-- [ ] `uv run pytest tests/unit/cli_commands -n auto`
-- [ ] `uv run pytest tests/unit/ -n auto`
+- [ ] `uv run pytest -n auto tests/unit/kubernetes -n auto`
+- [ ] `uv run pytest -n auto tests/unit/operator -n auto`
+- [ ] `uv run pytest -n auto tests/unit/cli_commands -n auto`
+- [ ] `uv run pytest -n auto tests/unit/ -n auto`
 - [ ] `ruff format . && ruff check --fix .`
 - [ ] `pre-commit run --all-files`
 - [ ] (If cluster) `uv run pytest -m integration -n auto`
