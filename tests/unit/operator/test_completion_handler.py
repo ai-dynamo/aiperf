@@ -142,12 +142,13 @@ async def test_handle_completion_index_failure_sets_condition_and_event() -> Non
             kopf_event_mock,
         ),
         patch(
-            "aiperf.operator.handlers.completion.get_api",
-            new=AsyncMock(return_value=AsyncMock()),
+            "aiperf.operator.handlers.completion.k8s_client",
         ),
         patch(
-            "aiperf.operator.handlers.completion.AsyncJobSet.get",
-            new=AsyncMock(return_value=AsyncMock()),
+            "aiperf.operator.handlers.completion.client.CustomObjectsApi",
+            return_value=MagicMock(
+                delete_namespaced_custom_object=AsyncMock(return_value={})
+            ),
         ),
     ):
         await handle_completion(

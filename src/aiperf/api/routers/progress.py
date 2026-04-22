@@ -145,14 +145,22 @@ async def _patch_jobset_annotations(
     annotations: dict[str, str],
 ) -> None:
     """Patch annotations on the JobSet for the given job."""
-    from aiperf.kubernetes.client import get_api
-    from aiperf.kubernetes.kr8s_resources import AsyncJobSet
+    from kubernetes_asyncio import client
 
-    api = await get_api()
+    from aiperf.kubernetes.client import k8s_client
+    from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
+
     jobset_name = f"aiperf-{job_id}"
 
-    jobset = await AsyncJobSet.get(jobset_name, namespace=namespace, api=api)
-    await jobset.patch({"metadata": {"annotations": annotations}})
+    async with k8s_client() as api:
+        await client.CustomObjectsApi(api).patch_namespaced_custom_object(
+            group=JOBSET_GROUP,
+            version=JOBSET_VERSION,
+            plural=JOBSET_PLURAL,
+            namespace=namespace,
+            name=jobset_name,
+            body={"metadata": {"annotations": annotations}},
+        )
 
 
 def _get_controller_workers(conn: HTTPConnection) -> AggregateWorkerStatus:

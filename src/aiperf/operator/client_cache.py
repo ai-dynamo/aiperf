@@ -13,9 +13,16 @@ import asyncio
 import logging
 from typing import Any
 
-import kr8s
+from kubernetes_asyncio import client
+from kubernetes_asyncio.client.exceptions import ApiException
 
+from aiperf.kubernetes.client import k8s_client
 from aiperf.kubernetes.constants import Annotations
+from aiperf.kubernetes.cr_refs import (
+    AIPERF_JOB_GROUP,
+    AIPERF_JOB_PLURAL,
+    AIPERF_JOB_VERSION,
+)
 from aiperf.operator.progress_client import ProgressClient
 
 logger = logging.getLogger(__name__)
@@ -164,9 +171,6 @@ async def try_claim_completion(
         return False
 
     # Slow path: attempt to durably claim by patching the annotation.
-    # Import lazily to avoid circular imports with aiperf.kubernetes.client.
-    from aiperf.kubernetes.client import get_api
-    from aiperf.kubernetes.kr8s_resources import AsyncAIPerfJob
     from aiperf.operator.status import format_timestamp
 
     # JSON Pointer RFC 6901: escape '/' as '~1' and '~' as '~0'.
@@ -204,11 +208,18 @@ async def try_claim_completion(
         ]
 
     try:
-        api = await get_api()
-        obj = await AsyncAIPerfJob.get(name, namespace=namespace, api=api)
-        await obj.patch(patch_ops, type="json")
-    except kr8s.ServerError as e:
-        status_code = e.response.status_code if e.response else 0
+        async with k8s_client() as api:
+            await client.CustomObjectsApi(api).patch_namespaced_custom_object(
+                group=AIPERF_JOB_GROUP,
+                version=AIPERF_JOB_VERSION,
+                plural=AIPERF_JOB_PLURAL,
+                namespace=namespace,
+                name=name,
+                body=patch_ops,
+                _content_type="application/json-patch+json",
+            )
+    except ApiException as e:
+        status_code = e.status or 0
         if status_code in (409, 422):
             logger.debug(
                 "Completion claim for %s/%s lost race (status %s), skipping",

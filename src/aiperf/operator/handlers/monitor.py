@@ -15,12 +15,21 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 import kopf
-import kr8s
-from kr8s.asyncio.objects import Pod
+from kubernetes_asyncio import client
+from kubernetes_asyncio.client import ApiClient
+from kubernetes_asyncio.client.exceptions import ApiException
 
+from aiperf.kubernetes.client import k8s_client
 from aiperf.kubernetes.constants import Containers, JobSetLabels
+from aiperf.kubernetes.cr_refs import (
+    AIPERF_JOB_GROUP,
+    AIPERF_JOB_PLURAL,
+    AIPERF_JOB_VERSION,
+    JOBSET_GROUP,
+    JOBSET_PLURAL,
+    JOBSET_VERSION,
+)
 from aiperf.kubernetes.jobset import controller_dns_name
-from aiperf.kubernetes.kr8s_resources import AsyncJobSet
 from aiperf.operator import events
 from aiperf.operator.client_cache import (
     _shutdown_sent,
@@ -48,9 +57,6 @@ from aiperf.operator.status import (
 
 if TYPE_CHECKING:
     from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
-    from aiperf.kubernetes.client import get_api
-else:
-    from aiperf.kubernetes.client import get_api
 
 logger = logging.getLogger(__name__)
 
@@ -148,248 +154,267 @@ async def monitor_progress(
             )
             return
 
-        # Check job timeout
-        timeout_sec = _get_job_timeout(spec)
-        if timeout_sec > 0:
-            elapsed = _get_elapsed_seconds(status)
-            if elapsed is not None and elapsed > timeout_sec:
-                sb.set_phase(Phase.FAILED).set_error(
-                    f"Job timed out after {elapsed:.0f}s (limit: {timeout_sec:.0f}s)"
+        async with k8s_client() as api:
+            custom = client.CustomObjectsApi(api)
+
+            # Check job timeout
+            timeout_sec = _get_job_timeout(spec)
+            if timeout_sec > 0:
+                elapsed = _get_elapsed_seconds(status)
+                if elapsed is not None and elapsed > timeout_sec:
+                    sb.set_phase(Phase.FAILED).set_error(
+                        f"Job timed out after {elapsed:.0f}s (limit: {timeout_sec:.0f}s)"
+                    )
+                    sb.set_completion_time()
+                    sb.finalize()
+                    events.job_timeout(body, job_id, elapsed)
+                    # Delete JobSet to free resources (like cancel does)
+                    if jobset_name:
+                        try:
+                            await custom.delete_namespaced_custom_object(
+                                group=JOBSET_GROUP,
+                                version=JOBSET_VERSION,
+                                plural=JOBSET_PLURAL,
+                                namespace=namespace,
+                                name=jobset_name,
+                            )
+                            logger.info(f"Deleted JobSet {jobset_name} after timeout")
+                        except ApiException as e:
+                            if e.status != 404:
+                                logger.warning(
+                                    f"Failed to delete JobSet on timeout: {e}"
+                                )
+                    await close_progress_client(key)
+                    return
+
+            # Get JobSet status
+            try:
+                jobset = await custom.get_namespaced_custom_object(
+                    group=JOBSET_GROUP,
+                    version=JOBSET_VERSION,
+                    plural=JOBSET_PLURAL,
+                    namespace=namespace,
+                    name=jobset_name,
                 )
-                sb.set_completion_time()
-                sb.finalize()
-                events.job_timeout(body, job_id, elapsed)
-                # Delete JobSet to free resources (like cancel does)
-                if jobset_name:
+            except ApiException as e:
+                if e.status != 404:
+                    raise
+                # JobSet may have been deleted by the completion handler after
+                # successful results fetch. Don't overwrite a terminal phase.
+                if current_phase in (Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED):
+                    logger.debug(
+                        f"JobSet {jobset_name} not found but phase is already "
+                        f"{current_phase} - skipping"
+                    )
+                else:
+                    # Re-read the CR to catch completion handler's update
+                    # (it may have set phase=Completed and deleted the JobSet
+                    # between our phase read and the JobSet lookup).
+                    await asyncio.sleep(2)
+
                     try:
-                        api = await get_api()
-                        js = await AsyncJobSet.get(
-                            jobset_name, namespace=namespace, api=api
+                        fresh = await custom.get_namespaced_custom_object(
+                            group=AIPERF_JOB_GROUP,
+                            version=AIPERF_JOB_VERSION,
+                            plural=AIPERF_JOB_PLURAL,
+                            namespace=namespace,
+                            name=name,
                         )
-                        await js.delete()
-                        logger.info(f"Deleted JobSet {jobset_name} after timeout")
-                    except kr8s.NotFoundError:
-                        pass
-                    except kr8s.ServerError as e:
-                        logger.warning(f"Failed to delete JobSet on timeout: {e}")
+                        fresh_phase = fresh.get("status", {}).get("phase", "")
+                        if fresh_phase in (
+                            Phase.COMPLETED,
+                            Phase.FAILED,
+                            Phase.CANCELLED,
+                        ):
+                            logger.debug(
+                                f"JobSet {jobset_name} not found but fresh phase is "
+                                f"{fresh_phase} - skipping"
+                            )
+                            await close_progress_client(key)
+                            return
+                    except Exception:
+                        logger.exception(
+                            f"Stale-read recovery failed while reconciling "
+                            f"{namespace}/{name} after JobSet {jobset_name} not found"
+                        )
+                    sb.set_phase(Phase.FAILED).set_error("JobSet not found")
+                    sb.finalize()
                 await close_progress_client(key)
                 return
 
-        api = await get_api()
+            jobset_status = jobset.get("status", {})
 
-        # Get JobSet status
-        try:
-            jobset_obj = await AsyncJobSet.get(
-                jobset_name, namespace=namespace, api=api
-            )
-            jobset = jobset_obj.raw
-        except kr8s.NotFoundError:
-            # JobSet may have been deleted by the completion handler after
-            # successful results fetch. Don't overwrite a terminal phase.
-            if current_phase in (Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED):
-                logger.debug(
-                    f"JobSet {jobset_name} not found but phase is already "
-                    f"{current_phase} - skipping"
-                )
-            else:
-                # Re-read the CR to catch completion handler's update
-                # (it may have set phase=Completed and deleted the JobSet
-                # between our phase read and the JobSet lookup).
-                await asyncio.sleep(2)
-                from aiperf.kubernetes.kr8s_resources import AsyncAIPerfJob
+            # Detect Kueue-managed suspension (gang-scheduling)
+            jobset_labels = jobset.get("metadata", {}).get("labels", {})
+            is_kueue_managed = "kueue.x-k8s.io/queue-name" in jobset_labels
+            jobset_suspended = jobset.get("spec", {}).get("suspend", False)
 
-                try:
-                    api = await get_api()
-                    fresh = await AsyncAIPerfJob.get(name, namespace=namespace, api=api)
-                    fresh_phase = fresh.raw.get("status", {}).get("phase", "")
-                    if fresh_phase in (Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED):
-                        logger.debug(
-                            f"JobSet {jobset_name} not found but fresh phase is "
-                            f"{fresh_phase} - skipping"
+            if (
+                is_kueue_managed
+                and jobset_suspended
+                and current_phase in (Phase.PENDING, Phase.QUEUED)
+            ):
+                sb.set_phase(Phase.QUEUED)
+                sb.finalize()
+                return
+
+            # Check for terminal state
+            for condition in jobset_status.get("conditions", []):
+                if condition.get("status") != "True":
+                    continue
+                if condition.get("type") == "Completed":
+                    # Only enter handle_completion if we successfully claim the
+                    # completion branch via a durable CR annotation. A claim
+                    # set by a previous operator run (or by the annotation
+                    # handler) causes this to return False and we skip.
+                    # try_claim_completion also latches the in-process
+                    # _shutdown_sent set, so a second concurrent handler in
+                    # the same process short-circuits without hitting the API.
+                    if await try_claim_completion(namespace, name, body):
+                        await handle_completion(
+                            body, namespace, jobset_name, job_id, status, sb
+                        )
+                    await close_progress_client(key)
+                    return
+                if condition.get("type") == "Failed":
+                    is_fatal, failed_scope = _classify_jobset_failure(jobset_status)
+                    if is_fatal:
+                        sb.set_phase(Phase.FAILED)
+                        sb.set_error(condition.get("message", "JobSet failed"))
+                        sb.finalize()
+                        events.failed(
+                            body, job_id, condition.get("message", "JobSet failed")
                         )
                         await close_progress_client(key)
                         return
-                except Exception:
-                    logger.exception(
-                        f"Stale-read recovery failed while reconciling "
-                        f"{namespace}/{name} after JobSet {jobset_name} not found"
+
+                    logger.warning(
+                        "Ignoring non-fatal JobSet failure for %s: "
+                        "failed_scope=%s message=%s",
+                        job_id,
+                        failed_scope,
+                        condition.get("message", "JobSet failed"),
                     )
-                sb.set_phase(Phase.FAILED).set_error("JobSet not found")
-                sb.finalize()
-            await close_progress_client(key)
-            return
 
-        jobset_status = jobset.get("status", {})
+                    # The JobSet default cascade kills the controller pod even when
+                    # only workers failed. If the controller pod is gone, the
+                    # benchmark is unrecoverable regardless of the failure scope.
+                    ctrl_replicated = {
+                        rj.get("name"): rj
+                        for rj in jobset_status.get("replicatedJobsStatus", [])
+                    }
+                    ctrl_active = ctrl_replicated.get("controller", {}).get("active", 0)
+                    ctrl_succeeded = ctrl_replicated.get("controller", {}).get(
+                        "succeeded", 0
+                    )
+                    if ctrl_active == 0 and ctrl_succeeded == 0:
+                        error_msg = (
+                            f"Controller terminated after worker failure "
+                            f"(JobSet cascade): {condition.get('message', '')}"
+                        )
+                        logger.error(
+                            "Escalating non-fatal failure to fatal for %s: "
+                            "controller pod is gone (active=%s, succeeded=%s)",
+                            job_id,
+                            ctrl_active,
+                            ctrl_succeeded,
+                        )
+                        sb.set_phase(Phase.FAILED)
+                        sb.set_error(error_msg)
+                        sb.finalize()
+                        events.failed(body, job_id, error_msg)
+                        await close_progress_client(key)
+                        return
 
-        # Detect Kueue-managed suspension (gang-scheduling)
-        jobset_labels = jobset.get("metadata", {}).get("labels", {})
-        is_kueue_managed = "kueue.x-k8s.io/queue-name" in jobset_labels
-        jobset_suspended = jobset.get("spec", {}).get("suspend", False)
+            # Update worker count and phase
+            total_workers = status.get("workers", {}).get("total", 0)
+            workers_ready = 0
+            workers_succeeded = 0
 
-        if (
-            is_kueue_managed
-            and jobset_suspended
-            and current_phase in (Phase.PENDING, Phase.QUEUED)
-        ):
-            sb.set_phase(Phase.QUEUED)
-            sb.finalize()
-            return
+            for rj in jobset_status.get("replicatedJobsStatus", []):
+                if rj.get("name") == "workers":
+                    workers_ready = rj.get("ready", 0)
+                    workers_succeeded = rj.get("succeeded", 0)
+                    # Derive total from JobSet if CRD status doesn't have it yet
+                    if total_workers == 0:
+                        total_workers = (
+                            rj.get("ready", 0)
+                            + rj.get("active", 0)
+                            + rj.get("succeeded", 0)
+                            + rj.get("failed", 0)
+                            + rj.get("suspended", 0)
+                        ) or 1  # Fallback to 1 if all zero
+                    sb.set_workers(workers_ready, total_workers)
 
-        # Check for terminal state
-        for condition in jobset_status.get("conditions", []):
-            if condition.get("status") != "True":
-                continue
-            if condition.get("type") == "Completed":
-                # Only enter handle_completion if we successfully claim the
-                # completion branch via a durable CR annotation. A claim
-                # set by a previous operator run (or by the annotation
-                # handler) causes this to return False and we skip.
-                # try_claim_completion also latches the in-process
-                # _shutdown_sent set, so a second concurrent handler in
-                # the same process short-circuits without hitting the API.
-                if await try_claim_completion(namespace, name, body):
+            # Phase transitions based on worker readiness
+            if current_phase in (Phase.PENDING, Phase.QUEUED) and (
+                workers_ready > 0 or workers_succeeded > 0
+            ):
+                sb.set_phase(Phase.INITIALIZING)
+
+            progress_client = None
+
+            effective_phase = sb.get_phase() or current_phase
+
+            # Check for pod restarts (CrashLoopBackOff detection)
+            await _check_pod_restarts(api, body, namespace, jobset_name, key)
+
+            if await _maybe_recover_terminated_controller(
+                api, body, namespace, jobset_name, job_id, status, sb, key
+            ):
+                await close_progress_client(key)
+                return
+
+            # Fetch controller progress whenever the pod has a reachable API.
+            # Including PENDING is deliberate: for fast-completing benchmarks the
+            # worker JobSet can transition from active → succeeded inside a single
+            # monitor-poll interval, so the phase-transition guard at line ~329
+            # (PENDING → INITIALIZING on workers_ready > 0) may never fire. Without
+            # this, `_fetch_progress()` is skipped, the controller's completion
+            # annotation is observed too late, and the CR stays Pending forever.
+            # `_fetch_progress` handles controller-not-yet-ready gracefully, so
+            # polling during early startup is safe — it just no-ops.
+            effective_phase = sb.get_phase() or current_phase
+            if effective_phase in (
+                Phase.PENDING,
+                Phase.INITIALIZING,
+                Phase.RUNNING,
+            ) or (workers_succeeded > 0 and workers_succeeded >= total_workers):
+                if progress_client is None:
+                    progress_client = await get_or_create_progress_client(key)
+                benchmark_complete = await _fetch_progress(
+                    namespace,
+                    jobset_name,
+                    patch,
+                    sb,
+                    progress_client,
+                    key,
+                    effective_phase,
+                    body=body,
+                )
+
+                # If benchmark is done, fetch results then shutdown controller
+                if benchmark_complete:
+                    if not await try_claim_completion(namespace, name, body):
+                        await close_progress_client(key)
+                        return
+                    logger.info(
+                        f"Benchmark complete for {jobset_name}, "
+                        f"fetching results and shutting down controller"
+                    )
+                    host = controller_dns_name(jobset_name, namespace)
                     await handle_completion(
                         body, namespace, jobset_name, job_id, status, sb
                     )
-                await close_progress_client(key)
-                return
-            if condition.get("type") == "Failed":
-                is_fatal, failed_scope = _classify_jobset_failure(jobset_status)
-                if is_fatal:
-                    sb.set_phase(Phase.FAILED)
-                    sb.set_error(condition.get("message", "JobSet failed"))
-                    sb.finalize()
-                    events.failed(
-                        body, job_id, condition.get("message", "JobSet failed")
-                    )
+                    # Shutdown controller after results are fetched
+                    await progress_client.send_shutdown(host)
                     await close_progress_client(key)
                     return
 
-                logger.warning(
-                    "Ignoring non-fatal JobSet failure for %s: failed_scope=%s message=%s",
-                    job_id,
-                    failed_scope,
-                    condition.get("message", "JobSet failed"),
-                )
-
-                # The JobSet default cascade kills the controller pod even when
-                # only workers failed. If the controller pod is gone, the
-                # benchmark is unrecoverable regardless of the failure scope.
-                ctrl_replicated = {
-                    rj.get("name"): rj
-                    for rj in jobset_status.get("replicatedJobsStatus", [])
-                }
-                ctrl_active = ctrl_replicated.get("controller", {}).get("active", 0)
-                ctrl_succeeded = ctrl_replicated.get("controller", {}).get(
-                    "succeeded", 0
-                )
-                if ctrl_active == 0 and ctrl_succeeded == 0:
-                    error_msg = (
-                        f"Controller terminated after worker failure "
-                        f"(JobSet cascade): {condition.get('message', '')}"
-                    )
-                    logger.error(
-                        "Escalating non-fatal failure to fatal for %s: "
-                        "controller pod is gone (active=%s, succeeded=%s)",
-                        job_id,
-                        ctrl_active,
-                        ctrl_succeeded,
-                    )
-                    sb.set_phase(Phase.FAILED)
-                    sb.set_error(error_msg)
-                    sb.finalize()
-                    events.failed(body, job_id, error_msg)
-                    await close_progress_client(key)
-                    return
-
-        # Update worker count and phase
-        total_workers = status.get("workers", {}).get("total", 0)
-        workers_ready = 0
-        workers_succeeded = 0
-
-        for rj in jobset_status.get("replicatedJobsStatus", []):
-            if rj.get("name") == "workers":
-                workers_ready = rj.get("ready", 0)
-                workers_succeeded = rj.get("succeeded", 0)
-                # Derive total from JobSet if CRD status doesn't have it yet
-                if total_workers == 0:
-                    total_workers = (
-                        rj.get("ready", 0)
-                        + rj.get("active", 0)
-                        + rj.get("succeeded", 0)
-                        + rj.get("failed", 0)
-                        + rj.get("suspended", 0)
-                    ) or 1  # Fallback to 1 if all zero
-                sb.set_workers(workers_ready, total_workers)
-
-        # Phase transitions based on worker readiness
-        if current_phase in (Phase.PENDING, Phase.QUEUED) and (
-            workers_ready > 0 or workers_succeeded > 0
-        ):
-            sb.set_phase(Phase.INITIALIZING)
-
-        client = None
-
-        effective_phase = sb.get_phase() or current_phase
-
-        # Check for pod restarts (CrashLoopBackOff detection)
-        await _check_pod_restarts(api, body, namespace, jobset_name, key)
-
-        if await _maybe_recover_terminated_controller(
-            api, body, namespace, jobset_name, job_id, status, sb, key
-        ):
-            await close_progress_client(key)
-            return
-
-        # Fetch controller progress whenever the pod has a reachable API.
-        # Including PENDING is deliberate: for fast-completing benchmarks the
-        # worker JobSet can transition from active → succeeded inside a single
-        # monitor-poll interval, so the phase-transition guard at line ~329
-        # (PENDING → INITIALIZING on workers_ready > 0) may never fire. Without
-        # this, `_fetch_progress()` is skipped, the controller's completion
-        # annotation is observed too late, and the CR stays Pending forever.
-        # `_fetch_progress` handles controller-not-yet-ready gracefully, so
-        # polling during early startup is safe — it just no-ops.
-        effective_phase = sb.get_phase() or current_phase
-        if effective_phase in (Phase.PENDING, Phase.INITIALIZING, Phase.RUNNING) or (
-            workers_succeeded > 0 and workers_succeeded >= total_workers
-        ):
-            if client is None:
-                client = await get_or_create_progress_client(key)
-            benchmark_complete = await _fetch_progress(
-                namespace,
-                jobset_name,
-                patch,
-                sb,
-                client,
-                key,
-                effective_phase,
-                body=body,
-            )
-
-            # If benchmark is done, fetch results then shutdown controller
-            if benchmark_complete:
-                if not await try_claim_completion(namespace, name, body):
-                    await close_progress_client(key)
-                    return
-                logger.info(
-                    f"Benchmark complete for {jobset_name}, "
-                    f"fetching results and shutting down controller"
-                )
-                host = controller_dns_name(jobset_name, namespace)
-                await handle_completion(
-                    body, namespace, jobset_name, job_id, status, sb
-                )
-                # Shutdown controller after results are fetched
-                await client.send_shutdown(host)
-                await close_progress_client(key)
-                return
-
-        sb.finalize()
+            sb.finalize()
 
     except (
-        kr8s.ServerError,
-        kr8s.NotFoundError,
+        ApiException,
         aiohttp.ClientError,
         ConnectionError,
         TimeoutError,
@@ -404,7 +429,7 @@ async def monitor_progress(
 
 
 async def _check_pod_restarts(
-    api: kr8s.Api,
+    api: ApiClient,
     body: dict[str, Any],
     namespace: str,
     jobset_name: str,
@@ -412,53 +437,49 @@ async def _check_pod_restarts(
 ) -> None:
     """Check for excessive pod restarts and emit warning events (deduplicated)."""
     try:
-        pods = [
-            pod
-            async for pod in Pod.list(
-                namespace=namespace,
-                label_selector=f"jobset.sigs.k8s.io/jobset-name={jobset_name}",
-                api=api,
-            )
-        ]
+        pod_list = await client.CoreV1Api(api).list_namespaced_pod(
+            namespace=namespace,
+            label_selector=f"jobset.sigs.k8s.io/jobset-name={jobset_name}",
+        )
+        pods = pod_list.items
         warned = _warned_pod_restarts.setdefault(key, set())
         for pod in pods:
-            pod_status = pod.raw.get("status", {})
-            all_statuses = pod_status.get("containerStatuses", []) + pod_status.get(
-                "initContainerStatuses", []
+            pod_name = (pod.metadata.name if pod.metadata else "") or ""
+            container_statuses = (
+                (pod.status.container_statuses or []) if pod.status else []
             )
+            init_statuses = (
+                (pod.status.init_container_statuses or []) if pod.status else []
+            )
+            all_statuses = list(container_statuses) + list(init_statuses)
             for cs in all_statuses:
-                restart_count = cs.get("restartCount", 0)
+                restart_count = cs.restart_count or 0
                 if restart_count < OperatorEnvironment.POD_RESTART_THRESHOLD:
                     continue
-                dedup_key = (pod.name, restart_count)
+                dedup_key = (pod_name, restart_count)
                 if dedup_key in warned:
                     continue
                 warned.add(dedup_key)
                 reason = "Unknown"
-                last_state = cs.get("lastState", {})
-                terminated = last_state.get("terminated", {})
-                if terminated:
-                    reason = terminated.get("reason", "Unknown")
-                waiting = cs.get("state", {}).get("waiting", {})
-                if waiting:
-                    reason = waiting.get("reason", reason)
-                events.pod_restarts(body, pod.name, restart_count, reason)
+                if cs.last_state and cs.last_state.terminated:
+                    reason = cs.last_state.terminated.reason or "Unknown"
+                if cs.state and cs.state.waiting:
+                    reason = cs.state.waiting.reason or reason
+                events.pod_restarts(body, pod_name, restart_count, reason)
     except Exception as e:
         logger.warning(f"Failed to check pod restarts: {e}")
 
 
-def _container_status_by_name(
-    statuses: list[dict[str, Any]], name: str
-) -> dict[str, Any] | None:
+def _container_status_by_name(statuses: list[Any], name: str) -> Any | None:
     """Return the first container status matching the given name."""
     for status in statuses:
-        if status.get("name") == name:
+        if getattr(status, "name", None) == name:
             return status
     return None
 
 
 async def _maybe_recover_terminated_controller(
-    api: kr8s.Api,
+    api: ApiClient,
     body: dict[str, Any],
     namespace: str,
     jobset_name: str,
@@ -478,17 +499,14 @@ async def _maybe_recover_terminated_controller(
         return False
 
     try:
-        pods = [
-            pod
-            async for pod in Pod.list(
-                namespace=namespace,
-                label_selector=(
-                    f"{JobSetLabels.JOBSET_NAME}={jobset_name},"
-                    f"{JobSetLabels.REPLICATED_JOB_NAME}=controller"
-                ),
-                api=api,
-            )
-        ]
+        pod_list = await client.CoreV1Api(api).list_namespaced_pod(
+            namespace=namespace,
+            label_selector=(
+                f"{JobSetLabels.JOBSET_NAME}={jobset_name},"
+                f"{JobSetLabels.REPLICATED_JOB_NAME}=controller"
+            ),
+        )
+        pods = pod_list.items
     except Exception as e:
         logger.warning(f"Failed to inspect controller pod for salvage: {e}")
         return False
@@ -497,25 +515,30 @@ async def _maybe_recover_terminated_controller(
         return False
 
     pod = pods[0]
-    statuses = pod.raw.get("status", {}).get("containerStatuses", [])
+    pod_name = (pod.metadata.name if pod.metadata else "") or ""
+    statuses = (pod.status.container_statuses or []) if pod.status else []
     controller_status = _container_status_by_name(statuses, Containers.CONTROL_PLANE)
     sidecar_status = _container_status_by_name(statuses, Containers.RESULTS_SIDECAR)
     if controller_status is None or sidecar_status is None:
         return False
 
-    terminated = controller_status.get("state", {}).get("terminated")
+    terminated = (
+        controller_status.state.terminated
+        if controller_status.state and controller_status.state.terminated
+        else None
+    )
     if not terminated:
         return False
 
-    exit_code = int(terminated.get("exitCode", 0) or 0)
-    reason = terminated.get("reason", "Error")
+    exit_code = int(terminated.exit_code or 0)
+    reason = terminated.reason or "Error"
     if exit_code == 0:
         return False
 
     logger.warning(
         "Controller container terminated in pod %s (reason=%s, exitCode=%s), "
         "attempting results recovery from sidecar",
-        pod.name,
+        pod_name,
         reason,
         exit_code,
     )
@@ -538,6 +561,7 @@ async def _maybe_recover_terminated_controller(
         )
         return True
 
+    custom = client.CustomObjectsApi(api)
     if result.checkpoints:
         dest_dir = OperatorEnvironment.RESULTS.DIR / namespace / job_id
         checkpoint_metrics = _parse_metrics_from_files(
@@ -567,17 +591,21 @@ async def _maybe_recover_terminated_controller(
         events.failed(body, job_id, error)
 
         try:
-            js = await AsyncJobSet.get(jobset_name, namespace=namespace, api=api)
-            await js.delete()
+            await custom.delete_namespaced_custom_object(
+                group=JOBSET_GROUP,
+                version=JOBSET_VERSION,
+                plural=JOBSET_PLURAL,
+                namespace=namespace,
+                name=jobset_name,
+            )
             logger.info(
                 "Deleted JobSet %s after partial checkpoint recovery", jobset_name
             )
-        except kr8s.NotFoundError:
-            pass
-        except kr8s.ServerError as e:
-            logger.warning(
-                f"Failed to delete JobSet {jobset_name} after checkpoint recovery: {e}"
-            )
+        except ApiException as e:
+            if e.status != 404:
+                logger.warning(
+                    f"Failed to delete JobSet {jobset_name} after checkpoint recovery: {e}"
+                )
         return True
 
     error = f"Controller container terminated before results were recoverable: {reason}"
@@ -591,17 +619,22 @@ async def _maybe_recover_terminated_controller(
     events.failed(body, job_id, error)
 
     try:
-        js = await AsyncJobSet.get(jobset_name, namespace=namespace, api=api)
-        await js.delete()
+        await custom.delete_namespaced_custom_object(
+            group=JOBSET_GROUP,
+            version=JOBSET_VERSION,
+            plural=JOBSET_PLURAL,
+            namespace=namespace,
+            name=jobset_name,
+        )
         logger.info(
-            "Deleted JobSet %s after unrecoverable controller termination", jobset_name
+            "Deleted JobSet %s after unrecoverable controller termination",
+            jobset_name,
         )
-    except kr8s.NotFoundError:
-        pass
-    except kr8s.ServerError as e:
-        logger.warning(
-            f"Failed to delete JobSet {jobset_name} after controller termination: {e}"
-        )
+    except ApiException as e:
+        if e.status != 404:
+            logger.warning(
+                f"Failed to delete JobSet {jobset_name} after controller termination: {e}"
+            )
     return True
 
 
@@ -610,7 +643,7 @@ async def _fetch_progress(
     jobset_name: str,
     patch: kopf.Patch,
     sb: StatusBuilder,
-    client: Any,
+    progress_client: Any,
     key: str,
     current_phase: str = Phase.RUNNING,
     *,
@@ -624,7 +657,7 @@ async def _fetch_progress(
     host = controller_dns_name(jobset_name, namespace)
 
     try:
-        progress = await client.get_progress(host)
+        progress = await progress_client.get_progress(host)
 
         if progress.connection_error:
             logger.debug(
@@ -647,7 +680,7 @@ async def _fetch_progress(
 
         # Fetch live metrics
         try:
-            metrics = await client.get_metrics(host)
+            metrics = await progress_client.get_metrics(host)
         except Exception as e:
             logger.warning(f"Live metrics fetch failed for {jobset_name}: {e}")
             metrics = None
@@ -662,7 +695,7 @@ async def _fetch_progress(
 
         # Server metrics: fetch if available (endpoint may not exist yet)
         try:
-            server_metrics = await client.get_server_metrics(host)
+            server_metrics = await progress_client.get_server_metrics(host)
             if isinstance(server_metrics, dict) and server_metrics.get(
                 "endpoint_summaries"
             ):

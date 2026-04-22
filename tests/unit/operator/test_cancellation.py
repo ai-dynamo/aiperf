@@ -97,9 +97,8 @@ async def test_handle_completion_short_circuits_on_cancellation() -> None:
             new=AsyncMock(),
         ) as mock_fetch,
         mock_patch(
-            "aiperf.operator.handlers.completion.get_api",
-            new=AsyncMock(),
-        ) as mock_api,
+            "aiperf.operator.handlers.completion.k8s_client",
+        ) as mock_client_cm,
         mock_patch(
             "aiperf.operator.handlers.completion.events.completed"
         ) as mock_completed,
@@ -114,7 +113,7 @@ async def test_handle_completion_short_circuits_on_cancellation() -> None:
         )
 
     mock_fetch.assert_not_awaited()
-    mock_api.assert_not_awaited()
+    mock_client_cm.assert_not_called()
     mock_completed.assert_not_called()
 
 
@@ -129,16 +128,9 @@ async def test_monitor_progress_short_circuits_on_cancellation() -> None:
     patch = MagicMock()
     patch.status = {}
 
-    with (
-        mock_patch(
-            "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-            new_callable=AsyncMock,
-        ) as mock_js_get,
-        mock_patch(
-            "aiperf.operator.handlers.monitor.get_api",
-            new_callable=AsyncMock,
-        ) as mock_get_api,
-    ):
+    with mock_patch(
+        "aiperf.operator.handlers.monitor.k8s_client",
+    ) as mock_client_cm:
         await monitor_progress(
             body={},
             status={
@@ -152,8 +144,8 @@ async def test_monitor_progress_short_circuits_on_cancellation() -> None:
             patch=patch,
         )
 
-    mock_js_get.assert_not_awaited()
-    mock_get_api.assert_not_awaited()
+    # k8s_client must not have been entered (cancellation short-circuits before)
+    mock_client_cm.assert_not_called()
 
 
 @pytest.mark.asyncio
