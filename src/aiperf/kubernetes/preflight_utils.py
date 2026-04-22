@@ -8,11 +8,17 @@ Functions used by both the CLI ``PreflightChecker`` and the operator
 
 from __future__ import annotations
 
-from typing import Any
+from kubernetes_asyncio import client
+from kubernetes_asyncio.client import ApiClient
+from kubernetes_asyncio.client.models import (
+    V1ResourceAttributes,
+    V1SelfSubjectAccessReview,
+    V1SelfSubjectAccessReviewSpec,
+)
 
 
 async def check_rbac_access(
-    api: Any,
+    api: ApiClient,
     verb: str,
     resource: str,
     group: str,
@@ -23,7 +29,7 @@ async def check_rbac_access(
     Submits a ``SelfSubjectAccessReview`` to the API server.
 
     Args:
-        api: kr8s async API client.
+        api: kubernetes_asyncio ApiClient.
         verb: Kubernetes verb (e.g. "create", "get", "delete").
         resource: Resource type (e.g. "pods", "configmaps").
         group: API group (e.g. "rbac.authorization.k8s.io", or "" for core).
@@ -32,29 +38,20 @@ async def check_rbac_access(
     Returns:
         True if the access is allowed.
     """
-    resource_attrs: dict[str, str] = {
-        "verb": verb,
-        "resource": resource,
-        "namespace": namespace,
-    }
-    if group:
-        resource_attrs["group"] = group
-
-    body = {
-        "apiVersion": "authorization.k8s.io/v1",
-        "kind": "SelfSubjectAccessReview",
-        "spec": {"resourceAttributes": resource_attrs},
-    }
-
-    async with api.call_api(
-        "POST",
-        base="/apis/authorization.k8s.io",
-        version="v1",
-        url="selfsubjectaccessreviews",
-        json=body,
-    ) as resp:
-        result = resp.json()
-        return result.get("status", {}).get("allowed", False)
+    body = V1SelfSubjectAccessReview(
+        spec=V1SelfSubjectAccessReviewSpec(
+            resource_attributes=V1ResourceAttributes(
+                verb=verb,
+                resource=resource,
+                namespace=namespace,
+                group=group or None,
+            ),
+        ),
+    )
+    review = await client.AuthorizationV1Api(api).create_self_subject_access_review(
+        body=body,
+    )
+    return bool(review.status and review.status.allowed)
 
 
 def parse_image_ref(image: str) -> tuple[str, str, str]:

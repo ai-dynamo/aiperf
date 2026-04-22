@@ -14,6 +14,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from kubernetes_asyncio import client
+from kubernetes_asyncio.client import ApiClient
+from kubernetes_asyncio.client.exceptions import ApiException
+
 from aiperf.kubernetes.console import logger
 from aiperf.kubernetes.environment import (
     CONTROLLER_RESOURCE_KEYS,
@@ -239,7 +243,7 @@ class PreflightChecker:
         self.endpoint_url = endpoint_url
         self.workers = workers
 
-        self._api: Any = None
+        self._api: ApiClient | None = None
 
     async def _run_check(
         self,
@@ -340,14 +344,16 @@ class PreflightChecker:
 
     async def _check_cluster_connectivity(self) -> CheckResult:
         """Check if we can connect to the Kubernetes cluster."""
-        from aiperf.kubernetes.client import get_api
+        from aiperf.kubernetes.client import k8s_client
 
         try:
-            self._api = await get_api(
+            cm = k8s_client(
                 kubeconfig=self.kubeconfig,
-                kube_context=self.kube_context,
+                context=self.kube_context,
             )
-            await self._api.async_version()
+            self._api = await cm.__aenter__()
+            # Validate connectivity by reading the cluster version.
+            await client.VersionApi(self._api).get_code()
 
             return CheckResult(
                 name="Cluster Connectivity",
@@ -370,12 +376,12 @@ class PreflightChecker:
         import re
 
         try:
-            version = await self._api.async_version()
-            major_str = re.sub(r"[^0-9]", "", version.get("major", "0") or "0")
-            minor_str = re.sub(r"[^0-9]", "", version.get("minor", "0") or "0")
+            version = await client.VersionApi(self._api).get_code()
+            major_str = re.sub(r"[^0-9]", "", version.major or "0")
+            minor_str = re.sub(r"[^0-9]", "", version.minor or "0")
             major = int(major_str) if major_str else 0
             minor = int(minor_str) if minor_str else 0
-            git_version = version.get("gitVersion", "unknown")
+            git_version = version.git_version or "unknown"
 
             if major > 1 or (major == 1 and minor >= 24):
                 return CheckResult(
@@ -408,45 +414,43 @@ class PreflightChecker:
 
     async def _check_namespace(self) -> CheckResult:
         """Check if namespace exists or can be created."""
-        import kr8s
-        from kr8s.asyncio.objects import Namespace
-
         try:
-            await Namespace.get(self.namespace, api=self._api)
+            await client.CoreV1Api(self._api).read_namespace(self.namespace)
             return CheckResult(
                 name="Namespace",
                 status=CheckStatus.PASS,
                 message=f"Namespace '{self.namespace}' exists",
             )
-        except kr8s.NotFoundError:
-            try:
-                allowed = await self._check_access("create", "namespaces", "")
-                if allowed:
+        except ApiException as e:
+            if e.status == 404:
+                try:
+                    allowed = await self._check_access("create", "namespaces", "")
+                    if allowed:
+                        return CheckResult(
+                            name="Namespace",
+                            status=CheckStatus.PASS,
+                            message=f"Namespace '{self.namespace}' will be created",
+                        )
+                    else:
+                        return CheckResult(
+                            name="Namespace",
+                            status=CheckStatus.FAIL,
+                            message=f"Namespace '{self.namespace}' does not exist",
+                            hints=[
+                                f"Ask an admin to create namespace '{self.namespace}'"
+                            ],
+                        )
+                except Exception as perm_err:
                     return CheckResult(
                         name="Namespace",
-                        status=CheckStatus.PASS,
-                        message=f"Namespace '{self.namespace}' will be created",
+                        status=CheckStatus.WARN,
+                        message=f"Namespace '{self.namespace}' does not exist, cannot verify create permission",
+                        details=[str(perm_err)],
                     )
-                else:
-                    return CheckResult(
-                        name="Namespace",
-                        status=CheckStatus.FAIL,
-                        message=f"Namespace '{self.namespace}' does not exist",
-                        hints=[f"Ask an admin to create namespace '{self.namespace}'"],
-                    )
-            except Exception as perm_err:
-                return CheckResult(
-                    name="Namespace",
-                    status=CheckStatus.WARN,
-                    message=f"Namespace '{self.namespace}' does not exist, cannot verify create permission",
-                    details=[str(perm_err)],
-                )
-        except kr8s.ServerError as e:
-            status_code = e.response.status_code if e.response else "unknown"
             return CheckResult(
                 name="Namespace",
                 status=CheckStatus.FAIL,
-                message=f"Error checking namespace: HTTP {status_code}",
+                message=f"Error checking namespace: HTTP {e.status}",
             )
 
     async def _check_rbac_permissions(self) -> CheckResult:
@@ -488,37 +492,30 @@ class PreflightChecker:
 
     async def _check_jobset_crd(self) -> CheckResult:
         """Check if JobSet CRD is installed."""
-        import kr8s
-
+        crd_name = f"{JOBSET_API.plural}.{JOBSET_API.group}"
         try:
-            async with self._api.call_api(
-                "GET",
-                base=f"/apis/{JOBSET_API.group}",
-                version=JOBSET_API.version,
-                url=JOBSET_API.plural,
-                params={"limit": "1"},
-            ) as resp:
-                resp.raise_for_status()
+            await client.ApiextensionsV1Api(self._api).read_custom_resource_definition(
+                crd_name
+            )
             return CheckResult(
                 name="JobSet CRD",
                 status=CheckStatus.PASS,
                 message=f"JobSet CRD ({JOBSET_API.group}/{JOBSET_API.version}) installed",
             )
-        except kr8s.NotFoundError:
-            return CheckResult(
-                name="JobSet CRD",
-                status=CheckStatus.FAIL,
-                message="JobSet CRD not found",
-                hints=[
-                    get_jobset_install_hint(),
-                ],
-            )
-        except kr8s.ServerError as e:
-            status_code = e.response.status_code if e.response else "unknown"
+        except ApiException as e:
+            if e.status == 404:
+                return CheckResult(
+                    name="JobSet CRD",
+                    status=CheckStatus.FAIL,
+                    message="JobSet CRD not found",
+                    hints=[
+                        get_jobset_install_hint(),
+                    ],
+                )
             return CheckResult(
                 name="JobSet CRD",
                 status=CheckStatus.WARN,
-                message=f"Error checking JobSet CRD: HTTP {status_code}",
+                message=f"Error checking JobSet CRD: HTTP {e.status}",
             )
 
     async def _find_deployment(
@@ -533,21 +530,20 @@ class PreflightChecker:
         Returns:
             Tuple of (found, ready).
         """
-        from kr8s.asyncio.objects import Deployment
-
-        deployments = [
-            d async for d in self._api.async_get(Deployment, namespace=namespace)
-        ]
+        deployments = (
+            await client.AppsV1Api(self._api).list_namespaced_deployment(namespace)
+        ).items
         for deploy in deployments:
-            if name_substring in deploy.name.lower():
-                ready_replicas = deploy.raw.get("status", {}).get("readyReplicas", 0)
+            name = deploy.metadata.name if deploy.metadata else ""
+            if name_substring in (name or "").lower():
+                ready_replicas = (
+                    (deploy.status.ready_replicas or 0) if deploy.status else 0
+                )
                 return True, ready_replicas > 0
         return False, False
 
     async def _check_jobset_controller(self) -> CheckResult:
         """Check if JobSet controller is running."""
-        import kr8s
-
         try:
             controller_found, controller_ready = await self._find_deployment(
                 "jobset-system", "jobset"
@@ -575,32 +571,27 @@ class PreflightChecker:
                         "Install JobSet controller or ensure it's in 'jobset-system' namespace"
                     ],
                 )
-        except kr8s.ServerError as e:
-            if e.response and e.response.status_code == 403:
+        except ApiException as e:
+            if e.status == 403:
                 return CheckResult(
                     name="JobSet Controller",
                     status=CheckStatus.SKIP,
                     message="Cannot check jobset-system namespace (permission denied)",
                 )
-            status_code = e.response.status_code if e.response else "unknown"
             return CheckResult(
                 name="JobSet Controller",
                 status=CheckStatus.WARN,
-                message=f"Could not verify controller: HTTP {status_code}",
+                message=f"Could not verify controller: HTTP {e.status}",
             )
 
     async def _check_resource_quotas(self) -> CheckResult:
         """Check resource quotas in the namespace."""
-        import kr8s
-        from kr8s.asyncio.objects import ResourceQuota
-
         try:
-            quotas = [
-                q
-                async for q in self._api.async_get(
-                    ResourceQuota, namespace=self.namespace
+            quotas = (
+                await client.CoreV1Api(self._api).list_namespaced_resource_quota(
+                    self.namespace
                 )
-            ]
+            ).items
 
             if not quotas:
                 return CheckResult(
@@ -618,11 +609,10 @@ class PreflightChecker:
             details = []
             would_exceed = False
             for quota in quotas:
-                raw = quota.raw
-                name = raw["metadata"]["name"]
+                name = quota.metadata.name if quota.metadata else ""
                 details.append(f"ResourceQuota '{name}':")
-                hard = raw.get("status", {}).get("hard", {})
-                used = raw.get("status", {}).get("used", {})
+                hard = (quota.status.hard or {}) if quota.status else {}
+                used = (quota.status.used or {}) if quota.status else {}
                 for resource, limit in hard.items():
                     details.append(
                         f"    {resource}: {used.get(resource, '0')} / {limit}"
@@ -674,20 +664,17 @@ class PreflightChecker:
                 message=f"Found {len(quotas)} resource quota(s)",
                 details=details,
             )
-        except kr8s.ServerError as e:
-            status_code = e.response.status_code if e.response else "unknown"
+        except ApiException as e:
             return CheckResult(
                 name="Resource Quotas",
                 status=CheckStatus.WARN,
-                message=f"Error checking quotas: HTTP {status_code}",
+                message=f"Error checking quotas: HTTP {e.status}",
             )
 
     async def _check_node_resources(self) -> CheckResult:
         """Check if cluster has sufficient node resources."""
-        from kr8s.asyncio.objects import Node
-
         try:
-            nodes = [n async for n in self._api.async_get(Node)]
+            nodes = (await client.CoreV1Api(self._api).list_node()).items
 
             if not nodes:
                 return CheckResult(
@@ -701,14 +688,12 @@ class PreflightChecker:
             ready_nodes = 0
 
             for node in nodes:
-                raw = node.raw
-                conditions = raw.get("status", {}).get("conditions", [])
+                conditions = (node.status.conditions or []) if node.status else []
                 is_ready = any(
-                    c.get("type") == "Ready" and c.get("status") == "True"
-                    for c in conditions
+                    c.type == "Ready" and c.status == "True" for c in conditions
                 )
 
-                allocatable = raw.get("status", {}).get("allocatable", {})
+                allocatable = (node.status.allocatable or {}) if node.status else {}
                 if is_ready and allocatable:
                     ready_nodes += 1
                     total_cpu += parse_cpu(allocatable.get("cpu", "0"))
@@ -742,15 +727,13 @@ class PreflightChecker:
             max_pod_mem = max(ctrl_mem, worker_mem)
             node_can_fit = False
             for node in nodes:
-                raw = node.raw
-                conditions = raw.get("status", {}).get("conditions", [])
+                conditions = (node.status.conditions or []) if node.status else []
                 is_ready = any(
-                    c.get("type") == "Ready" and c.get("status") == "True"
-                    for c in conditions
+                    c.type == "Ready" and c.status == "True" for c in conditions
                 )
                 if not is_ready:
                     continue
-                allocatable = raw.get("status", {}).get("allocatable", {})
+                allocatable = (node.status.allocatable or {}) if node.status else {}
                 node_cpu = parse_cpu(allocatable.get("cpu", "0"))
                 node_mem = parse_memory_gib(allocatable.get("memory", "0"))
                 if node_cpu >= max_pod_cpu and node_mem >= max_pod_mem:
@@ -789,9 +772,6 @@ class PreflightChecker:
 
     async def _check_secrets(self) -> CheckResult:
         """Check if required secrets exist."""
-        import kr8s
-        from kr8s.asyncio.objects import Secret
-
         all_secrets = self.image_pull_secrets + self.secrets
         if not all_secrets:
             return CheckResult(
@@ -807,18 +787,18 @@ class PreflightChecker:
         missing = []
         permission_denied = []
 
+        core = client.CoreV1Api(self._api)
         for secret_name in all_secrets:
             try:
-                await Secret.get(secret_name, namespace=self.namespace, api=self._api)
+                await core.read_namespaced_secret(secret_name, self.namespace)
                 found.append(secret_name)
-            except kr8s.NotFoundError:
-                missing.append(secret_name)
-            except kr8s.ServerError as e:
-                if e.response and e.response.status_code == 403:
+            except ApiException as e:
+                if e.status == 404:
+                    missing.append(secret_name)
+                elif e.status == 403:
                     permission_denied.append(secret_name)
                 else:
-                    status_code = e.response.status_code if e.response else "unknown"
-                    missing.append(f"{secret_name} (error: HTTP {status_code})")
+                    missing.append(f"{secret_name} (error: HTTP {e.status})")
 
         details = []
         if found:
@@ -920,16 +900,12 @@ class PreflightChecker:
 
     async def _check_network_policies(self) -> CheckResult:
         """Check for restrictive network policies."""
-        import kr8s
-        from kr8s.asyncio.objects import NetworkPolicy
-
         try:
-            policies = [
-                p
-                async for p in self._api.async_get(
-                    NetworkPolicy, namespace=self.namespace
+            policies = (
+                await client.NetworkingV1Api(self._api).list_namespaced_network_policy(
+                    self.namespace
                 )
-            ]
+            ).items
 
             if not policies:
                 return CheckResult(
@@ -938,7 +914,7 @@ class PreflightChecker:
                     message="No network policies found (unrestricted)",
                 )
 
-            policy_names = [p.name for p in policies]
+            policy_names = [(p.metadata.name if p.metadata else "") for p in policies]
 
             return CheckResult(
                 name="Network Policies",
@@ -950,18 +926,17 @@ class PreflightChecker:
                     "AIPerf pods need to communicate via TCP on multiple ports",
                 ],
             )
-        except kr8s.ServerError as e:
-            if e.response and e.response.status_code == 403:
+        except ApiException as e:
+            if e.status == 403:
                 return CheckResult(
                     name="Network Policies",
                     status=CheckStatus.SKIP,
                     message="Cannot check network policies (permission denied)",
                 )
-            status_code = e.response.status_code if e.response else "unknown"
             return CheckResult(
                 name="Network Policies",
                 status=CheckStatus.WARN,
-                message=f"Error checking network policies: HTTP {status_code}",
+                message=f"Error checking network policies: HTTP {e.status}",
             )
 
     async def _check_dns(self) -> CheckResult:
@@ -1026,8 +1001,6 @@ class PreflightChecker:
             ]
 
             if ".svc" in host or ".svc.cluster.local" in host:
-                from kr8s.asyncio.objects import Service
-
                 try:
                     # Parse name.namespace.svc[.cluster.local] or name.svc[.cluster.local]
                     before_svc = host.split(".svc")[0]
@@ -1036,7 +1009,9 @@ class PreflightChecker:
                     else:
                         svc_name, svc_ns = before_svc, "default"
 
-                    await Service.get(svc_name, namespace=svc_ns, api=self._api)
+                    await client.CoreV1Api(self._api).read_namespaced_service(
+                        svc_name, svc_ns
+                    )
                     return CheckResult(
                         name="Endpoint Connectivity",
                         status=CheckStatus.PASS,

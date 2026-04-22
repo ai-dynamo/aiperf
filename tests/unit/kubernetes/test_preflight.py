@@ -15,8 +15,36 @@ from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import kr8s
 import pytest
+from kubernetes_asyncio.client import (
+    ApiClient,
+    ApiextensionsV1Api,
+    AppsV1Api,
+    CoreV1Api,
+    NetworkingV1Api,
+    VersionApi,
+)
+from kubernetes_asyncio.client.exceptions import ApiException
+from kubernetes_asyncio.client.models import (
+    V1CustomResourceDefinition,
+    V1Deployment,
+    V1DeploymentList,
+    V1DeploymentStatus,
+    V1Namespace,
+    V1NetworkPolicy,
+    V1NetworkPolicyList,
+    V1Node,
+    V1NodeCondition,
+    V1NodeList,
+    V1NodeStatus,
+    V1ObjectMeta,
+    V1ResourceQuota,
+    V1ResourceQuotaList,
+    V1ResourceQuotaStatus,
+    V1Secret,
+    V1Service,
+    VersionInfo,
+)
 from pytest import param
 
 from aiperf.kubernetes.preflight import (
@@ -25,12 +53,6 @@ from aiperf.kubernetes.preflight import (
     PreflightChecker,
     PreflightResults,
     _format_duration,
-)
-from tests.harness.k8s import (
-    async_list,
-    create_not_found_error,
-    create_server_error,
-    make_kr8s_object,
 )
 
 # =============================================================================
@@ -54,56 +76,100 @@ def _make_checker(**overrides: Any) -> PreflightChecker:
     return PreflightChecker(**defaults)
 
 
-def _mock_api() -> MagicMock:
-    """Build a MagicMock kr8s API with commonly-needed async stubs."""
-    api = MagicMock(spec=kr8s.Api)
-    api.async_version = AsyncMock(
-        return_value={"major": "1", "minor": "28", "gitVersion": "v1.28.0"}
+def _make_version(major: str = "1", minor: str = "28") -> VersionInfo:
+    return VersionInfo(
+        build_date="2024-01-01T00:00:00Z",
+        compiler="gc",
+        git_commit="abc",
+        git_tree_state="clean",
+        git_version=f"v{major}.{minor}.0",
+        go_version="go1.21",
+        major=major,
+        minor=minor,
+        platform="linux/amd64",
     )
-    api.async_get = AsyncMock(return_value=[])
-    return api
 
 
-def _mock_call_api_response(json_body: dict[str, Any], status_code: int = 200):
-    """Return an async context-manager mock for api.call_api."""
-    resp = MagicMock()
-    resp.json.return_value = json_body
-    resp.status_code = status_code
-    resp.raise_for_status = MagicMock()
-
-    @asynccontextmanager
-    async def _ctx(*args, **kwargs):
-        yield resp
-
-    return _ctx
+def _mock_api() -> MagicMock:
+    """Build a MagicMock ApiClient (no methods attached — per-check patches add them)."""
+    return MagicMock(spec=ApiClient)
 
 
-def _mock_call_api_raises(exc: Exception):
-    """Return an async context-manager mock for api.call_api that raises."""
-
-    @asynccontextmanager
-    async def _ctx(*args, **kwargs):
-        raise exc
-        yield  # noqa: F841, RET503
-
-    return _ctx
+def _patch_core(mock_core: MagicMock) -> Any:
+    """Context manager that makes ``client.CoreV1Api(api)`` return ``mock_core``."""
+    return patch("aiperf.kubernetes.preflight.client.CoreV1Api", return_value=mock_core)
 
 
-def _node_raw(
+def _patch_apps(mock_apps: MagicMock) -> Any:
+    return patch("aiperf.kubernetes.preflight.client.AppsV1Api", return_value=mock_apps)
+
+
+def _patch_apiext(mock_apiext: MagicMock) -> Any:
+    return patch(
+        "aiperf.kubernetes.preflight.client.ApiextensionsV1Api",
+        return_value=mock_apiext,
+    )
+
+
+def _patch_netw(mock_netw: MagicMock) -> Any:
+    return patch(
+        "aiperf.kubernetes.preflight.client.NetworkingV1Api",
+        return_value=mock_netw,
+    )
+
+
+def _patch_version(mock_version: MagicMock) -> Any:
+    return patch(
+        "aiperf.kubernetes.preflight.client.VersionApi", return_value=mock_version
+    )
+
+
+def _build_node(
     name: str,
     cpu: str,
     memory: str,
     ready: bool = True,
-) -> dict[str, Any]:
-    """Build a minimal Node .raw dict."""
-    conditions = [{"type": "Ready", "status": "True" if ready else "False"}]
-    return {
-        "metadata": {"name": name, "namespace": ""},
-        "status": {
-            "conditions": conditions,
-            "allocatable": {"cpu": cpu, "memory": memory},
-        },
-    }
+) -> V1Node:
+    """Build a V1Node with the given allocatable resources and readiness."""
+    return V1Node(
+        metadata=V1ObjectMeta(name=name),
+        status=V1NodeStatus(
+            conditions=[
+                V1NodeCondition(type="Ready", status="True" if ready else "False")
+            ],
+            allocatable={"cpu": cpu, "memory": memory},
+        ),
+    )
+
+
+def _build_deployment(name: str, namespace: str, ready_replicas: int) -> V1Deployment:
+    return V1Deployment(
+        metadata=V1ObjectMeta(name=name, namespace=namespace),
+        status=V1DeploymentStatus(ready_replicas=ready_replicas),
+    )
+
+
+def _mock_rbac_allowed(allowed: bool) -> MagicMock:
+    """Build a mock AuthorizationV1Api that returns ``allowed`` for all checks."""
+    review = MagicMock()
+    review.status = MagicMock()
+    review.status.allowed = allowed
+    authz = MagicMock()
+    authz.create_self_subject_access_review = AsyncMock(return_value=review)
+    return authz
+
+
+def _patch_authz(mock_authz: MagicMock) -> Any:
+    return patch(
+        "aiperf.kubernetes.preflight_utils.client.AuthorizationV1Api",
+        return_value=mock_authz,
+    )
+
+
+@asynccontextmanager
+async def _mock_k8s_client_yields(api: Any):
+    """An async ctx that yields the given api (patches ``k8s_client``)."""
+    yield api
 
 
 # =============================================================================
@@ -295,8 +361,16 @@ class TestCheckClusterConnectivity:
     async def test_connectivity_pass(self) -> None:
         checker = _make_checker()
         api = _mock_api()
+        version = MagicMock(spec=VersionApi)
+        version.get_code = AsyncMock(return_value=_make_version())
 
-        with patch("aiperf.kubernetes.client.get_api", new=AsyncMock(return_value=api)):
+        with (
+            patch(
+                "aiperf.kubernetes.client.k8s_client",
+                return_value=_mock_k8s_client_yields(api),
+            ),
+            _patch_version(version),
+        ):
             result = await checker._check_cluster_connectivity()
 
         assert result.status == CheckStatus.PASS
@@ -306,10 +380,12 @@ class TestCheckClusterConnectivity:
     async def test_connectivity_fail_on_exception(self) -> None:
         checker = _make_checker()
 
-        with patch(
-            "aiperf.kubernetes.client.get_api",
-            new=AsyncMock(side_effect=ConnectionError("refused")),
-        ):
+        @asynccontextmanager
+        async def _boom(**kwargs):
+            raise ConnectionError("refused")
+            yield  # noqa: F841, RET503
+
+        with patch("aiperf.kubernetes.client.k8s_client", new=_boom):
             result = await checker._check_cluster_connectivity()
 
         assert result.status == CheckStatus.FAIL
@@ -341,12 +417,12 @@ class TestCheckKubernetesVersion:
     ) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.async_version.return_value = {
-            "major": major,
-            "minor": minor,
-            "gitVersion": f"v{major}.{minor}.0",
-        }
-        result = await checker._check_kubernetes_version()
+        version = MagicMock(spec=VersionApi)
+        version.get_code = AsyncMock(return_value=_make_version(major, minor))
+
+        with _patch_version(version):
+            result = await checker._check_kubernetes_version()
+
         assert result.status == expected_status
 
     @pytest.mark.asyncio
@@ -354,20 +430,35 @@ class TestCheckKubernetesVersion:
         """GKE/EKS versions like '28+' should parse correctly."""
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.async_version.return_value = {
-            "major": "1",
-            "minor": "28+",
-            "gitVersion": "v1.28.2-gke.1",
-        }
-        result = await checker._check_kubernetes_version()
+        vi = VersionInfo(
+            build_date="2024-01-01T00:00:00Z",
+            compiler="gc",
+            git_commit="abc",
+            git_tree_state="clean",
+            git_version="v1.28.2-gke.1",
+            go_version="go1.21",
+            major="1",
+            minor="28+",
+            platform="linux/amd64",
+        )
+        version = MagicMock(spec=VersionApi)
+        version.get_code = AsyncMock(return_value=vi)
+
+        with _patch_version(version):
+            result = await checker._check_kubernetes_version()
+
         assert result.status == CheckStatus.PASS
 
     @pytest.mark.asyncio
     async def test_version_api_error_returns_warn(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.async_version.side_effect = RuntimeError("timeout")
-        result = await checker._check_kubernetes_version()
+        version = MagicMock(spec=VersionApi)
+        version.get_code = AsyncMock(side_effect=RuntimeError("timeout"))
+
+        with _patch_version(version):
+            result = await checker._check_kubernetes_version()
+
         assert result.status == CheckStatus.WARN
 
     @pytest.mark.asyncio
@@ -375,12 +466,23 @@ class TestCheckKubernetesVersion:
         """Empty or None version fields should not crash."""
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.async_version.return_value = {
-            "major": "",
-            "minor": None,
-            "gitVersion": "unknown",
-        }
-        result = await checker._check_kubernetes_version()
+        vi = VersionInfo(
+            build_date="",
+            compiler="",
+            git_commit="",
+            git_tree_state="",
+            git_version="unknown",
+            go_version="",
+            major="",
+            minor="0",
+            platform="",
+        )
+        version = MagicMock(spec=VersionApi)
+        version.get_code = AsyncMock(return_value=vi)
+
+        with _patch_version(version):
+            result = await checker._check_kubernetes_version()
+
         assert result.status == CheckStatus.FAIL
 
 
@@ -396,9 +498,12 @@ class TestCheckNamespace:
     async def test_namespace_exists(self) -> None:
         checker = _make_checker(namespace="existing")
         checker._api = _mock_api()
+        core = MagicMock(spec=CoreV1Api)
+        core.read_namespace = AsyncMock(
+            return_value=V1Namespace(metadata=V1ObjectMeta(name="existing"))
+        )
 
-        with patch("kr8s.asyncio.objects.Namespace") as MockNs:
-            MockNs.get = AsyncMock()
+        with _patch_core(core):
             result = await checker._check_namespace()
 
         assert result.status == CheckStatus.PASS
@@ -408,10 +513,10 @@ class TestCheckNamespace:
     async def test_namespace_not_found_but_can_create(self) -> None:
         checker = _make_checker(namespace="new-ns")
         checker._api = _mock_api()
-        checker._api.call_api = _mock_call_api_response({"status": {"allowed": True}})
+        core = MagicMock(spec=CoreV1Api)
+        core.read_namespace = AsyncMock(side_effect=ApiException(status=404))
 
-        with patch("kr8s.asyncio.objects.Namespace") as MockNs:
-            MockNs.get = AsyncMock(side_effect=kr8s.NotFoundError("not found"))
+        with _patch_core(core), _patch_authz(_mock_rbac_allowed(True)):
             result = await checker._check_namespace()
 
         assert result.status == CheckStatus.PASS
@@ -421,10 +526,10 @@ class TestCheckNamespace:
     async def test_namespace_not_found_cannot_create(self) -> None:
         checker = _make_checker(namespace="restricted")
         checker._api = _mock_api()
-        checker._api.call_api = _mock_call_api_response({"status": {"allowed": False}})
+        core = MagicMock(spec=CoreV1Api)
+        core.read_namespace = AsyncMock(side_effect=ApiException(status=404))
 
-        with patch("kr8s.asyncio.objects.Namespace") as MockNs:
-            MockNs.get = AsyncMock(side_effect=kr8s.NotFoundError("not found"))
+        with _patch_core(core), _patch_authz(_mock_rbac_allowed(False)):
             result = await checker._check_namespace()
 
         assert result.status == CheckStatus.FAIL
@@ -434,10 +539,14 @@ class TestCheckNamespace:
     async def test_namespace_not_found_permission_check_fails(self) -> None:
         checker = _make_checker(namespace="broken")
         checker._api = _mock_api()
-        checker._api.call_api = _mock_call_api_raises(RuntimeError("network"))
+        core = MagicMock(spec=CoreV1Api)
+        core.read_namespace = AsyncMock(side_effect=ApiException(status=404))
+        authz = MagicMock()
+        authz.create_self_subject_access_review = AsyncMock(
+            side_effect=RuntimeError("network")
+        )
 
-        with patch("kr8s.asyncio.objects.Namespace") as MockNs:
-            MockNs.get = AsyncMock(side_effect=kr8s.NotFoundError("not found"))
+        with _patch_core(core), _patch_authz(authz):
             result = await checker._check_namespace()
 
         assert result.status == CheckStatus.WARN
@@ -446,9 +555,10 @@ class TestCheckNamespace:
     async def test_namespace_server_error(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
+        core = MagicMock(spec=CoreV1Api)
+        core.read_namespace = AsyncMock(side_effect=ApiException(status=500))
 
-        with patch("kr8s.asyncio.objects.Namespace") as MockNs:
-            MockNs.get = AsyncMock(side_effect=create_server_error(500, "Internal"))
+        with _patch_core(core):
             result = await checker._check_namespace()
 
         assert result.status == CheckStatus.FAIL
@@ -467,8 +577,10 @@ class TestCheckRBACPermissions:
     async def test_all_permissions_granted(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.call_api = _mock_call_api_response({"status": {"allowed": True}})
-        result = await checker._check_rbac_permissions()
+
+        with _patch_authz(_mock_rbac_allowed(True)):
+            result = await checker._check_rbac_permissions()
+
         assert result.status == CheckStatus.PASS
         assert "All" in result.message
 
@@ -479,16 +591,20 @@ class TestCheckRBACPermissions:
 
         call_count = 0
 
-        @asynccontextmanager
-        async def _alternating(*args, **kwargs):
+        async def _alternating(**kwargs):
             nonlocal call_count
             call_count += 1
-            resp = MagicMock()
-            resp.json.return_value = {"status": {"allowed": call_count % 2 == 0}}
-            yield resp
+            review = MagicMock()
+            review.status = MagicMock()
+            review.status.allowed = call_count % 2 == 0
+            return review
 
-        checker._api.call_api = _alternating
-        result = await checker._check_rbac_permissions()
+        authz = MagicMock()
+        authz.create_self_subject_access_review = _alternating
+
+        with _patch_authz(authz):
+            result = await checker._check_rbac_permissions()
+
         assert result.status == CheckStatus.FAIL
         assert "Missing" in result.message
 
@@ -496,8 +612,14 @@ class TestCheckRBACPermissions:
     async def test_rbac_check_exception_treated_as_missing(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.call_api = _mock_call_api_raises(RuntimeError("network"))
-        result = await checker._check_rbac_permissions()
+        authz = MagicMock()
+        authz.create_self_subject_access_review = AsyncMock(
+            side_effect=RuntimeError("network")
+        )
+
+        with _patch_authz(authz):
+            result = await checker._check_rbac_permissions()
+
         assert result.status == CheckStatus.FAIL
         assert "check failed" in str(result.details)
 
@@ -514,18 +636,31 @@ class TestCheckJobSetCRD:
     async def test_crd_installed(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.call_api = _mock_call_api_response({"items": []})
-        result = await checker._check_jobset_crd()
+        apiext = MagicMock(spec=ApiextensionsV1Api)
+        apiext.read_custom_resource_definition = AsyncMock(
+            return_value=V1CustomResourceDefinition(
+                metadata=V1ObjectMeta(name="jobsets.jobset.x-k8s.io"),
+                spec=MagicMock(),
+            )
+        )
+
+        with _patch_apiext(apiext):
+            result = await checker._check_jobset_crd()
+
         assert result.status == CheckStatus.PASS
 
     @pytest.mark.asyncio
     async def test_crd_not_found(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.call_api = _mock_call_api_raises(
-            create_not_found_error("JobSet CRD")
+        apiext = MagicMock(spec=ApiextensionsV1Api)
+        apiext.read_custom_resource_definition = AsyncMock(
+            side_effect=ApiException(status=404)
         )
-        result = await checker._check_jobset_crd()
+
+        with _patch_apiext(apiext):
+            result = await checker._check_jobset_crd()
+
         assert result.status == CheckStatus.FAIL
         assert len(result.hints) >= 1
 
@@ -533,10 +668,14 @@ class TestCheckJobSetCRD:
     async def test_crd_server_error(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.call_api = _mock_call_api_raises(
-            create_server_error(503, "Unavailable")
+        apiext = MagicMock(spec=ApiextensionsV1Api)
+        apiext.read_custom_resource_definition = AsyncMock(
+            side_effect=ApiException(status=503)
         )
-        result = await checker._check_jobset_crd()
+
+        with _patch_apiext(apiext):
+            result = await checker._check_jobset_crd()
+
         assert result.status == CheckStatus.WARN
         assert "503" in result.message
 
@@ -553,67 +692,76 @@ class TestCheckJobSetController:
     async def test_controller_running(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        deploy = make_kr8s_object(
-            {
-                "metadata": {
-                    "name": "jobset-controller-manager",
-                    "namespace": "jobset-system",
-                },
-                "status": {"readyReplicas": 1},
-            }
+        deploy = _build_deployment(
+            "jobset-controller-manager", "jobset-system", ready_replicas=1
         )
-        checker._api.async_get = MagicMock(return_value=async_list([deploy]))
+        apps = MagicMock(spec=AppsV1Api)
+        apps.list_namespaced_deployment = AsyncMock(
+            return_value=V1DeploymentList(items=[deploy])
+        )
 
-        result = await checker._check_jobset_controller()
+        with _patch_apps(apps):
+            result = await checker._check_jobset_controller()
+
         assert result.status == CheckStatus.PASS
 
     @pytest.mark.asyncio
     async def test_controller_found_not_ready(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        deploy = make_kr8s_object(
-            {
-                "metadata": {
-                    "name": "jobset-controller-manager",
-                    "namespace": "jobset-system",
-                },
-                "status": {"readyReplicas": 0},
-            }
+        deploy = _build_deployment(
+            "jobset-controller-manager", "jobset-system", ready_replicas=0
         )
-        checker._api.async_get = MagicMock(return_value=async_list([deploy]))
+        apps = MagicMock(spec=AppsV1Api)
+        apps.list_namespaced_deployment = AsyncMock(
+            return_value=V1DeploymentList(items=[deploy])
+        )
 
-        result = await checker._check_jobset_controller()
+        with _patch_apps(apps):
+            result = await checker._check_jobset_controller()
+
         assert result.status == CheckStatus.WARN
 
     @pytest.mark.asyncio
     async def test_controller_not_found(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.async_get = MagicMock(return_value=async_list([]))
+        apps = MagicMock(spec=AppsV1Api)
+        apps.list_namespaced_deployment = AsyncMock(
+            return_value=V1DeploymentList(items=[])
+        )
 
-        result = await checker._check_jobset_controller()
+        with _patch_apps(apps):
+            result = await checker._check_jobset_controller()
+
         assert result.status == CheckStatus.FAIL
 
     @pytest.mark.asyncio
     async def test_controller_forbidden(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.async_get = MagicMock(
-            side_effect=create_server_error(403, "Forbidden")
+        apps = MagicMock(spec=AppsV1Api)
+        apps.list_namespaced_deployment = AsyncMock(
+            side_effect=ApiException(status=403)
         )
 
-        result = await checker._check_jobset_controller()
+        with _patch_apps(apps):
+            result = await checker._check_jobset_controller()
+
         assert result.status == CheckStatus.SKIP
 
     @pytest.mark.asyncio
     async def test_controller_other_server_error(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.async_get = MagicMock(
-            side_effect=create_server_error(502, "Bad Gateway")
+        apps = MagicMock(spec=AppsV1Api)
+        apps.list_namespaced_deployment = AsyncMock(
+            side_effect=ApiException(status=502)
         )
 
-        result = await checker._check_jobset_controller()
+        with _patch_apps(apps):
+            result = await checker._check_jobset_controller()
+
         assert result.status == CheckStatus.WARN
         assert "502" in result.message
 
@@ -630,27 +778,35 @@ class TestCheckResourceQuotas:
     async def test_no_quotas(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.async_get = MagicMock(return_value=async_list([]))
+        core = MagicMock(spec=CoreV1Api)
+        core.list_namespaced_resource_quota = AsyncMock(
+            return_value=V1ResourceQuotaList(items=[])
+        )
 
-        result = await checker._check_resource_quotas()
+        with _patch_core(core):
+            result = await checker._check_resource_quotas()
+
         assert result.status == CheckStatus.PASS
 
     @pytest.mark.asyncio
     async def test_quotas_found(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        quota = make_kr8s_object(
-            {
-                "metadata": {"name": "compute", "namespace": "test-ns"},
-                "status": {
-                    "hard": {"cpu": "100", "memory": "256Gi"},
-                    "used": {"cpu": "2", "memory": "8Gi"},
-                },
-            }
+        quota = V1ResourceQuota(
+            metadata=V1ObjectMeta(name="compute", namespace="test-ns"),
+            status=V1ResourceQuotaStatus(
+                hard={"cpu": "100", "memory": "256Gi"},
+                used={"cpu": "2", "memory": "8Gi"},
+            ),
         )
-        checker._api.async_get = MagicMock(return_value=async_list([quota]))
+        core = MagicMock(spec=CoreV1Api)
+        core.list_namespaced_resource_quota = AsyncMock(
+            return_value=V1ResourceQuotaList(items=[quota])
+        )
 
-        result = await checker._check_resource_quotas()
+        with _patch_core(core):
+            result = await checker._check_resource_quotas()
+
         assert result.status == CheckStatus.INFO
         assert "1 resource quota" in result.message
 
@@ -658,11 +814,14 @@ class TestCheckResourceQuotas:
     async def test_quotas_server_error(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.async_get = MagicMock(
-            side_effect=create_server_error(500, "Internal")
+        core = MagicMock(spec=CoreV1Api)
+        core.list_namespaced_resource_quota = AsyncMock(
+            side_effect=ApiException(status=500)
         )
 
-        result = await checker._check_resource_quotas()
+        with _patch_core(core):
+            result = await checker._check_resource_quotas()
+
         assert result.status == CheckStatus.WARN
 
 
@@ -678,9 +837,12 @@ class TestCheckNodeResources:
     async def test_no_nodes(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.async_get = MagicMock(return_value=async_list([]))
+        core = MagicMock(spec=CoreV1Api)
+        core.list_node = AsyncMock(return_value=V1NodeList(items=[]))
 
-        result = await checker._check_node_resources()
+        with _patch_core(core):
+            result = await checker._check_node_resources()
+
         assert result.status == CheckStatus.FAIL
         assert "No nodes" in result.message
 
@@ -688,10 +850,14 @@ class TestCheckNodeResources:
     async def test_sufficient_resources(self) -> None:
         checker = _make_checker(workers=1)
         checker._api = _mock_api()
-        node = make_kr8s_object(_node_raw("node-1", "16", "64Gi"))
-        checker._api.async_get = MagicMock(return_value=async_list([node]))
+        core = MagicMock(spec=CoreV1Api)
+        core.list_node = AsyncMock(
+            return_value=V1NodeList(items=[_build_node("node-1", "16", "64Gi")])
+        )
 
-        result = await checker._check_node_resources()
+        with _patch_core(core):
+            result = await checker._check_node_resources()
+
         assert result.status == CheckStatus.PASS
         assert len(result.details) >= 2
 
@@ -699,10 +865,14 @@ class TestCheckNodeResources:
     async def test_insufficient_resources(self) -> None:
         checker = _make_checker(workers=1000)
         checker._api = _mock_api()
-        node = make_kr8s_object(_node_raw("tiny-node", "1", "1Gi"))
-        checker._api.async_get = MagicMock(return_value=async_list([node]))
+        core = MagicMock(spec=CoreV1Api)
+        core.list_node = AsyncMock(
+            return_value=V1NodeList(items=[_build_node("tiny-node", "1", "1Gi")])
+        )
 
-        result = await checker._check_node_resources()
+        with _patch_core(core):
+            result = await checker._check_node_resources()
+
         assert result.status == CheckStatus.WARN
         assert "not have enough" in result.message
 
@@ -711,20 +881,26 @@ class TestCheckNodeResources:
         """Nodes that are not Ready should not contribute to totals."""
         checker = _make_checker(workers=1)
         checker._api = _mock_api()
-        ready = make_kr8s_object(_node_raw("ready", "16", "64Gi", ready=True))
-        not_ready = make_kr8s_object(_node_raw("sick", "16", "64Gi", ready=False))
-        checker._api.async_get = MagicMock(return_value=async_list([ready, not_ready]))
+        ready = _build_node("ready", "16", "64Gi", ready=True)
+        not_ready = _build_node("sick", "16", "64Gi", ready=False)
+        core = MagicMock(spec=CoreV1Api)
+        core.list_node = AsyncMock(return_value=V1NodeList(items=[ready, not_ready]))
 
-        result = await checker._check_node_resources()
+        with _patch_core(core):
+            result = await checker._check_node_resources()
+
         assert "1 ready nodes" in result.details[0] or "1 nodes" in result.details[0]
 
     @pytest.mark.asyncio
     async def test_node_api_error_returns_warn(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.async_get = MagicMock(side_effect=RuntimeError("gone"))
+        core = MagicMock(spec=CoreV1Api)
+        core.list_node = AsyncMock(side_effect=RuntimeError("gone"))
 
-        result = await checker._check_node_resources()
+        with _patch_core(core):
+            result = await checker._check_node_resources()
+
         assert result.status == CheckStatus.WARN
 
 
@@ -746,9 +922,12 @@ class TestCheckSecrets:
     async def test_all_secrets_found(self) -> None:
         checker = _make_checker(secrets=["s1", "s2"])
         checker._api = _mock_api()
+        core = MagicMock(spec=CoreV1Api)
+        core.read_namespaced_secret = AsyncMock(
+            return_value=V1Secret(metadata=V1ObjectMeta(name="x"))
+        )
 
-        with patch("kr8s.asyncio.objects.Secret") as MockSecret:
-            MockSecret.get = AsyncMock()
+        with _patch_core(core):
             result = await checker._check_secrets()
 
         assert result.status == CheckStatus.PASS
@@ -759,12 +938,15 @@ class TestCheckSecrets:
         checker = _make_checker(secrets=["exists", "missing"])
         checker._api = _mock_api()
 
-        async def _get_secret(name, **kwargs):
+        async def _get_secret(name, _ns, **kwargs):
             if name == "missing":
-                raise kr8s.NotFoundError("not found")
+                raise ApiException(status=404)
+            return V1Secret(metadata=V1ObjectMeta(name=name))
 
-        with patch("kr8s.asyncio.objects.Secret") as MockSecret:
-            MockSecret.get = AsyncMock(side_effect=_get_secret)
+        core = MagicMock(spec=CoreV1Api)
+        core.read_namespaced_secret = AsyncMock(side_effect=_get_secret)
+
+        with _patch_core(core):
             result = await checker._check_secrets()
 
         assert result.status == CheckStatus.FAIL
@@ -774,11 +956,10 @@ class TestCheckSecrets:
     async def test_permission_denied_secret(self) -> None:
         checker = _make_checker(secrets=["restricted"])
         checker._api = _mock_api()
+        core = MagicMock(spec=CoreV1Api)
+        core.read_namespaced_secret = AsyncMock(side_effect=ApiException(status=403))
 
-        with patch("kr8s.asyncio.objects.Secret") as MockSecret:
-            MockSecret.get = AsyncMock(
-                side_effect=create_server_error(403, "Forbidden")
-            )
+        with _patch_core(core):
             result = await checker._check_secrets()
 
         assert result.status == CheckStatus.WARN
@@ -790,9 +971,12 @@ class TestCheckSecrets:
             image_pull_secrets=["pull-secret"], secrets=["app-secret"]
         )
         checker._api = _mock_api()
+        core = MagicMock(spec=CoreV1Api)
+        core.read_namespaced_secret = AsyncMock(
+            return_value=V1Secret(metadata=V1ObjectMeta(name="x"))
+        )
 
-        with patch("kr8s.asyncio.objects.Secret") as MockSecret:
-            MockSecret.get = AsyncMock()
+        with _patch_core(core):
             result = await checker._check_secrets()
 
         assert result.status == CheckStatus.PASS
@@ -842,23 +1026,31 @@ class TestCheckNetworkPolicies:
     async def test_no_policies(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.async_get = MagicMock(return_value=async_list([]))
+        netw = MagicMock(spec=NetworkingV1Api)
+        netw.list_namespaced_network_policy = AsyncMock(
+            return_value=V1NetworkPolicyList(items=[])
+        )
 
-        result = await checker._check_network_policies()
+        with _patch_netw(netw):
+            result = await checker._check_network_policies()
+
         assert result.status == CheckStatus.PASS
 
     @pytest.mark.asyncio
     async def test_policies_found(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        policy = make_kr8s_object(
-            {
-                "metadata": {"name": "deny-all", "namespace": "test-ns"},
-            }
+        policy = V1NetworkPolicy(
+            metadata=V1ObjectMeta(name="deny-all", namespace="test-ns")
         )
-        checker._api.async_get = MagicMock(return_value=async_list([policy]))
+        netw = MagicMock(spec=NetworkingV1Api)
+        netw.list_namespaced_network_policy = AsyncMock(
+            return_value=V1NetworkPolicyList(items=[policy])
+        )
 
-        result = await checker._check_network_policies()
+        with _patch_netw(netw):
+            result = await checker._check_network_policies()
+
         assert result.status == CheckStatus.WARN
         assert "1 network policy" in result.message
 
@@ -866,22 +1058,28 @@ class TestCheckNetworkPolicies:
     async def test_policies_forbidden(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.async_get = MagicMock(
-            side_effect=create_server_error(403, "Forbidden")
+        netw = MagicMock(spec=NetworkingV1Api)
+        netw.list_namespaced_network_policy = AsyncMock(
+            side_effect=ApiException(status=403)
         )
 
-        result = await checker._check_network_policies()
+        with _patch_netw(netw):
+            result = await checker._check_network_policies()
+
         assert result.status == CheckStatus.SKIP
 
     @pytest.mark.asyncio
     async def test_policies_server_error(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.async_get = MagicMock(
-            side_effect=create_server_error(500, "Internal")
+        netw = MagicMock(spec=NetworkingV1Api)
+        netw.list_namespaced_network_policy = AsyncMock(
+            side_effect=ApiException(status=500)
         )
 
-        result = await checker._check_network_policies()
+        with _patch_netw(netw):
+            result = await checker._check_network_policies()
+
         assert result.status == CheckStatus.WARN
 
 
@@ -897,48 +1095,56 @@ class TestCheckDNS:
     async def test_coredns_running(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        deploy = make_kr8s_object(
-            {
-                "metadata": {"name": "coredns", "namespace": "kube-system"},
-                "status": {"readyReplicas": 2},
-            }
+        deploy = _build_deployment("coredns", "kube-system", ready_replicas=2)
+        apps = MagicMock(spec=AppsV1Api)
+        apps.list_namespaced_deployment = AsyncMock(
+            return_value=V1DeploymentList(items=[deploy])
         )
-        checker._api.async_get = MagicMock(return_value=async_list([deploy]))
 
-        result = await checker._check_dns()
+        with _patch_apps(apps):
+            result = await checker._check_dns()
+
         assert result.status == CheckStatus.PASS
 
     @pytest.mark.asyncio
     async def test_coredns_found_not_ready(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        deploy = make_kr8s_object(
-            {
-                "metadata": {"name": "coredns", "namespace": "kube-system"},
-                "status": {"readyReplicas": 0},
-            }
+        deploy = _build_deployment("coredns", "kube-system", ready_replicas=0)
+        apps = MagicMock(spec=AppsV1Api)
+        apps.list_namespaced_deployment = AsyncMock(
+            return_value=V1DeploymentList(items=[deploy])
         )
-        checker._api.async_get = MagicMock(return_value=async_list([deploy]))
 
-        result = await checker._check_dns()
+        with _patch_apps(apps):
+            result = await checker._check_dns()
+
         assert result.status == CheckStatus.WARN
 
     @pytest.mark.asyncio
     async def test_coredns_not_found(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.async_get = MagicMock(return_value=async_list([]))
+        apps = MagicMock(spec=AppsV1Api)
+        apps.list_namespaced_deployment = AsyncMock(
+            return_value=V1DeploymentList(items=[])
+        )
 
-        result = await checker._check_dns()
+        with _patch_apps(apps):
+            result = await checker._check_dns()
+
         assert result.status == CheckStatus.WARN
 
     @pytest.mark.asyncio
     async def test_dns_check_error(self) -> None:
         checker = _make_checker()
         checker._api = _mock_api()
-        checker._api.async_get = MagicMock(side_effect=RuntimeError("timeout"))
+        apps = MagicMock(spec=AppsV1Api)
+        apps.list_namespaced_deployment = AsyncMock(side_effect=RuntimeError("timeout"))
 
-        result = await checker._check_dns()
+        with _patch_apps(apps):
+            result = await checker._check_dns()
+
         assert result.status == CheckStatus.WARN
 
 
@@ -970,9 +1176,12 @@ class TestCheckEndpointConnectivity:
             endpoint_url="http://my-llm.inference.svc.cluster.local:8080/v1"
         )
         checker._api = _mock_api()
+        core = MagicMock(spec=CoreV1Api)
+        core.read_namespaced_service = AsyncMock(
+            return_value=V1Service(metadata=V1ObjectMeta(name="my-llm"))
+        )
 
-        with patch("kr8s.asyncio.objects.Service") as MockSvc:
-            MockSvc.get = AsyncMock()
+        with _patch_core(core):
             result = await checker._check_endpoint_connectivity()
 
         assert result.status == CheckStatus.PASS
@@ -984,9 +1193,10 @@ class TestCheckEndpointConnectivity:
             endpoint_url="http://gone.default.svc.cluster.local:8080"
         )
         checker._api = _mock_api()
+        core = MagicMock(spec=CoreV1Api)
+        core.read_namespaced_service = AsyncMock(side_effect=ApiException(status=404))
 
-        with patch("kr8s.asyncio.objects.Service") as MockSvc:
-            MockSvc.get = AsyncMock(side_effect=kr8s.NotFoundError("not found"))
+        with _patch_core(core):
             result = await checker._check_endpoint_connectivity()
 
         assert result.status == CheckStatus.FAIL
@@ -1027,12 +1237,25 @@ class TestRunQuickChecks:
     @pytest.mark.asyncio
     async def test_quick_checks_all_pass(self) -> None:
         checker = _make_checker()
-        checker._api = _mock_api()
-        checker._api.call_api = _mock_call_api_response({"status": {"allowed": True}})
+        api = _mock_api()
+        version = MagicMock(spec=VersionApi)
+        version.get_code = AsyncMock(return_value=_make_version())
+        apiext = MagicMock(spec=ApiextensionsV1Api)
+        apiext.read_custom_resource_definition = AsyncMock(
+            return_value=V1CustomResourceDefinition(
+                metadata=V1ObjectMeta(name="jobsets.jobset.x-k8s.io"),
+                spec=MagicMock(),
+            )
+        )
 
-        with patch(
-            "aiperf.kubernetes.client.get_api",
-            new=AsyncMock(return_value=checker._api),
+        with (
+            patch(
+                "aiperf.kubernetes.client.k8s_client",
+                return_value=_mock_k8s_client_yields(api),
+            ),
+            _patch_version(version),
+            _patch_apiext(apiext),
+            _patch_authz(_mock_rbac_allowed(True)),
         ):
             results = await checker.run_quick_checks()
 
@@ -1043,10 +1266,12 @@ class TestRunQuickChecks:
     async def test_quick_checks_short_circuits_on_connectivity_failure(self) -> None:
         checker = _make_checker()
 
-        with patch(
-            "aiperf.kubernetes.client.get_api",
-            new=AsyncMock(side_effect=ConnectionError("refused")),
-        ):
+        @asynccontextmanager
+        async def _boom(**kwargs):
+            raise ConnectionError("refused")
+            yield  # noqa: F841, RET503
+
+        with patch("aiperf.kubernetes.client.k8s_client", new=_boom):
             results = await checker.run_quick_checks()
 
         assert not results.passed
@@ -1056,12 +1281,25 @@ class TestRunQuickChecks:
     @pytest.mark.asyncio
     async def test_quick_checks_includes_endpoint_when_set(self) -> None:
         checker = _make_checker(endpoint_url="https://api.example.com")
-        checker._api = _mock_api()
-        checker._api.call_api = _mock_call_api_response({"status": {"allowed": True}})
+        api = _mock_api()
+        version = MagicMock(spec=VersionApi)
+        version.get_code = AsyncMock(return_value=_make_version())
+        apiext = MagicMock(spec=ApiextensionsV1Api)
+        apiext.read_custom_resource_definition = AsyncMock(
+            return_value=V1CustomResourceDefinition(
+                metadata=V1ObjectMeta(name="jobsets.jobset.x-k8s.io"),
+                spec=MagicMock(),
+            )
+        )
 
-        with patch(
-            "aiperf.kubernetes.client.get_api",
-            new=AsyncMock(return_value=checker._api),
+        with (
+            patch(
+                "aiperf.kubernetes.client.k8s_client",
+                return_value=_mock_k8s_client_yields(api),
+            ),
+            _patch_version(version),
+            _patch_apiext(apiext),
+            _patch_authz(_mock_rbac_allowed(True)),
         ):
             results = await checker.run_quick_checks()
 
@@ -1071,12 +1309,25 @@ class TestRunQuickChecks:
     @pytest.mark.asyncio
     async def test_quick_checks_no_endpoint_gives_three_checks(self) -> None:
         checker = _make_checker(endpoint_url=None)
-        checker._api = _mock_api()
-        checker._api.call_api = _mock_call_api_response({"status": {"allowed": True}})
+        api = _mock_api()
+        version = MagicMock(spec=VersionApi)
+        version.get_code = AsyncMock(return_value=_make_version())
+        apiext = MagicMock(spec=ApiextensionsV1Api)
+        apiext.read_custom_resource_definition = AsyncMock(
+            return_value=V1CustomResourceDefinition(
+                metadata=V1ObjectMeta(name="jobsets.jobset.x-k8s.io"),
+                spec=MagicMock(),
+            )
+        )
 
-        with patch(
-            "aiperf.kubernetes.client.get_api",
-            new=AsyncMock(return_value=checker._api),
+        with (
+            patch(
+                "aiperf.kubernetes.client.k8s_client",
+                return_value=_mock_k8s_client_yields(api),
+            ),
+            _patch_version(version),
+            _patch_apiext(apiext),
+            _patch_authz(_mock_rbac_allowed(True)),
         ):
             results = await checker.run_quick_checks()
 
@@ -1095,10 +1346,12 @@ class TestRunAllChecks:
     async def test_all_checks_short_circuits_on_connectivity_failure(self) -> None:
         checker = _make_checker()
 
-        with patch(
-            "aiperf.kubernetes.client.get_api",
-            new=AsyncMock(side_effect=ConnectionError("refused")),
-        ):
+        @asynccontextmanager
+        async def _boom(**kwargs):
+            raise ConnectionError("refused")
+            yield  # noqa: F841, RET503
+
+        with patch("aiperf.kubernetes.client.k8s_client", new=_boom):
             results = await checker.run_all_checks()
 
         assert not results.passed
@@ -1113,19 +1366,54 @@ class TestRunAllChecks:
             endpoint_url="https://external.example.com",
         )
         api = _mock_api()
-        api.call_api = _mock_call_api_response({"status": {"allowed": True}})
-        api.async_get = MagicMock(return_value=async_list([]))
+        version = MagicMock(spec=VersionApi)
+        version.get_code = AsyncMock(return_value=_make_version())
+
+        core = MagicMock(spec=CoreV1Api)
+        core.read_namespace = AsyncMock(
+            return_value=V1Namespace(metadata=V1ObjectMeta(name="test-ns"))
+        )
+        core.read_namespaced_secret = AsyncMock(
+            return_value=V1Secret(metadata=V1ObjectMeta(name="s1"))
+        )
+        core.list_namespaced_resource_quota = AsyncMock(
+            return_value=V1ResourceQuotaList(items=[])
+        )
+        core.list_node = AsyncMock(return_value=V1NodeList(items=[]))
+        core.read_namespaced_service = AsyncMock(
+            return_value=V1Service(metadata=V1ObjectMeta(name="x"))
+        )
+
+        apps = MagicMock(spec=AppsV1Api)
+        apps.list_namespaced_deployment = AsyncMock(
+            return_value=V1DeploymentList(items=[])
+        )
+
+        apiext = MagicMock(spec=ApiextensionsV1Api)
+        apiext.read_custom_resource_definition = AsyncMock(
+            return_value=V1CustomResourceDefinition(
+                metadata=V1ObjectMeta(name="jobsets.jobset.x-k8s.io"),
+                spec=MagicMock(),
+            )
+        )
+
+        netw = MagicMock(spec=NetworkingV1Api)
+        netw.list_namespaced_network_policy = AsyncMock(
+            return_value=V1NetworkPolicyList(items=[])
+        )
 
         with (
             patch(
-                "aiperf.kubernetes.client.get_api",
-                new=AsyncMock(return_value=api),
+                "aiperf.kubernetes.client.k8s_client",
+                return_value=_mock_k8s_client_yields(api),
             ),
-            patch("kr8s.asyncio.objects.Namespace") as MockNs,
-            patch("kr8s.asyncio.objects.Secret") as MockSecret,
+            _patch_version(version),
+            _patch_core(core),
+            _patch_apps(apps),
+            _patch_apiext(apiext),
+            _patch_netw(netw),
+            _patch_authz(_mock_rbac_allowed(True)),
         ):
-            MockNs.get = AsyncMock()
-            MockSecret.get = AsyncMock()
             results = await checker.run_all_checks()
 
         assert len(results.checks) == 13
