@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from dataclasses import dataclass
+from collections import defaultdict
+from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 from pydantic import ConfigDict
@@ -133,3 +134,17 @@ class ErrorDetailsCount:
 
     error_details: ErrorDetails
     count: int
+
+
+@dataclass
+class ErrorTrackingState:
+    """State container for tracking errors with counts.
+
+    Provides a common error tracking shape for all metrics subsystems
+    (telemetry, server metrics, regular metrics, GPU telemetry).
+    """
+
+    error_counts: dict[ErrorDetails, int] = field(
+        default_factory=lambda: defaultdict(int)
+    )
+    """Mapping of error details to their occurrence count."""

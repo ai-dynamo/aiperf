@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from collections import defaultdict
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -60,6 +58,7 @@ from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
     ErrorDetails,
     ErrorDetailsCount,
+    ErrorTrackingState,
     MetricResult,
     PhaseRecordsStats,
     ProcessRecordsResult,
@@ -90,20 +89,6 @@ from aiperf.server_metrics.protocols import (
     ServerMetricsAccumulatorProtocol,
     ServerMetricsProcessorProtocol,
 )
-
-
-@dataclass
-class ErrorTrackingState:
-    """State container for tracking errors with counts and thread-safe access.
-
-    Provides common error tracking functionality for all metrics subsystems
-    (telemetry, server metrics, regular metrics).
-    """
-
-    error_counts: dict[ErrorDetails, int] = field(
-        default_factory=lambda: defaultdict(int)
-    )
-    """Mapping of error details to their occurrence count."""
 
 
 def _write_json_file_atomic(path: Path, content: bytes) -> None:
