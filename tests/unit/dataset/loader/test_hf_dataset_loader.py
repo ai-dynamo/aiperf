@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import io
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -353,7 +354,7 @@ class TestHFInstructionResponseDatasetLoader:
         assert decoded.format == "JPEG"
 
 
-def _make_audio_row(duration_seconds: float = 1.0, sr: int = 16000) -> dict:
+def _make_audio_row(duration_seconds: float = 1.0, sr: int = 16000) -> dict[str, Any]:
     """Build a synthetic decoded HF audio row (array + sampling_rate)."""
     num_samples = int(duration_seconds * sr)
     return {

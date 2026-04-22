@@ -388,7 +388,11 @@ class PublicDatasetLoaderMetadata(BaseModel):
     )
     audio_column: str | None = Field(
         default=None,
-        description="Column name containing the audio data (HF Audio dict with array and sampling_rate). Used for ASR/speech datasets.",
+        description=(
+            "Column name containing audio data. Depending on loader/dataset, this can be "
+            "an HF Audio dict with array/sampling_rate (decoded) or bytes/path (decode=False). "
+            "Used for ASR/speech datasets."
+        ),
     )
     conversation_column: str | None = Field(
         default=None,

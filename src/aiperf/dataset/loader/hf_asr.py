@@ -62,7 +62,8 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
             sf.write(buf, array, sr, format="WAV")
             b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
             return [Audio(name="", contents=[f"wav,{b64}"])]
-        except Exception:
+        except Exception as e:
+            self.debug(f"Failed to decode audio bytes: {e}")
             return []
 
     def _duration_seconds(self, audio_value: dict) -> float | None:
@@ -73,7 +74,8 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
         try:
             info = sf.info(io.BytesIO(raw_bytes))
             return info.duration
-        except Exception:
+        except Exception as e:
+            self.debug(f"Failed to estimate audio duration: {e}")
             return None
 
     async def convert_to_conversations(
