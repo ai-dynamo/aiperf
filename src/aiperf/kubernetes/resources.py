@@ -17,11 +17,11 @@ from aiperf.config import AIPerfConfig
 from aiperf.config.benchmark import BenchmarkRun
 from aiperf.config.deployment import DeploymentConfig
 from aiperf.kubernetes.constants import (
-    AIPERF_GROUP,
     DEFAULT_BENCHMARK_NAMESPACE,
     Annotations,
     Labels,
 )
+from aiperf.kubernetes.cr_refs import AIPERF_GROUP
 from aiperf.kubernetes.jobset import JobSetSpec
 
 # Kubernetes ConfigMap size limit is 1 MiB (1,048,576 bytes)

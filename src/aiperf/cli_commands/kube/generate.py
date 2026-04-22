@@ -11,10 +11,10 @@ from cyclopts import App, Parameter
 
 from aiperf.config.cli_model import CLIModel
 from aiperf.config.kube import KubeOptions
+from aiperf.kubernetes.cr_refs import AIPERF_API_VERSION
 
 app = App(name="generate")
 
-AIPERF_API_VERSION = "aiperf.nvidia.com/v1alpha1"
 AIPERF_KIND = "AIPerfJob"
 
 

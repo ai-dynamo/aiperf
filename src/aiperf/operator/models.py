@@ -43,10 +43,10 @@ class OwnerReference(K8sCamelModel):
     @classmethod
     def for_aiperf_job(cls, name: str, uid: str) -> OwnerReference:
         """Create an owner reference for an AIPerfJob CR."""
-        from aiperf.kubernetes.constants import AIPERF_GROUP, AIPERF_VERSION
+        from aiperf.kubernetes.cr_refs import AIPERF_JOB_API_VERSION
 
         return cls(
-            api_version=f"{AIPERF_GROUP}/{AIPERF_VERSION}",
+            api_version=AIPERF_JOB_API_VERSION,
             kind="AIPerfJob",
             name=name,
             uid=uid,

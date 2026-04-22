@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for aiperf.kubernetes.jobset module."""
 
-from dataclasses import FrozenInstanceError
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -13,14 +12,18 @@ from pytest import param
 
 from aiperf.common.environment import Environment
 from aiperf.config.deployment import PodTemplateConfig
+from aiperf.kubernetes.cr_refs import (
+    JOBSET_API_VERSION,
+    JOBSET_GROUP,
+    JOBSET_PLURAL,
+    JOBSET_VERSION,
+)
 from aiperf.kubernetes.enums import ImagePullPolicy
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import (
-    JOBSET_API,
     JOBSET_FALLBACK_VERSION,
     JOBSET_GITHUB_REPO,
     ContainerSpec,
-    JobSetAPIConfig,
     JobSetSpec,
     ReplicatedJobSpec,
     get_jobset_install_hint,
@@ -30,24 +33,18 @@ from aiperf.kubernetes.jobset import (
 from aiperf.kubernetes.utils import parse_cpu, parse_memory_mib
 
 
-class TestJobSetAPIConfig:
-    """Tests for JobSetAPIConfig dataclass."""
+class TestJobSetAPIConstants:
+    """Tests for JobSet API coordinates in cr_refs."""
 
     def test_default_values(self) -> None:
-        """Test JobSetAPIConfig has expected default values."""
-        config = JobSetAPIConfig()
-        assert config.group == "jobset.x-k8s.io"
-        assert config.version == "v1alpha2"
-        assert config.plural == "jobsets"
+        """JobSet cr_refs constants match expected API coordinates."""
+        assert JOBSET_GROUP == "jobset.x-k8s.io"
+        assert JOBSET_VERSION == "v1alpha2"
+        assert JOBSET_PLURAL == "jobsets"
 
-    def test_api_version_property(self) -> None:
-        """Test api_version property returns correct format."""
-        config = JobSetAPIConfig()
-        assert config.api_version == "jobset.x-k8s.io/v1alpha2"
-
-    def test_global_jobset_api(self) -> None:
-        """Test global JOBSET_API instance."""
-        assert JOBSET_API.api_version == "jobset.x-k8s.io/v1alpha2"
+    def test_api_version(self) -> None:
+        """JOBSET_API_VERSION composes group and version correctly."""
+        assert JOBSET_API_VERSION == "jobset.x-k8s.io/v1alpha2"
 
 
 class TestContainerSpec:
@@ -1563,28 +1560,6 @@ class TestImagePullPolicy:
             "Never",
             "IfNotPresent",
         }
-
-
-class TestJobSetAPIConfigCustom:
-    """Additional tests for JobSetAPIConfig with custom values."""
-
-    def test_custom_values(self) -> None:
-        """Test JobSetAPIConfig with custom values."""
-        config = JobSetAPIConfig(
-            group="custom.example.com",
-            version="v1beta1",
-            plural="customjobsets",
-        )
-        assert config.group == "custom.example.com"
-        assert config.version == "v1beta1"
-        assert config.plural == "customjobsets"
-        assert config.api_version == "custom.example.com/v1beta1"
-
-    def test_frozen_dataclass(self) -> None:
-        """Test JobSetAPIConfig is immutable."""
-        config = JobSetAPIConfig()
-        with pytest.raises(FrozenInstanceError):
-            config.group = "modified"  # type: ignore[misc]
 
 
 class TestContainerSpecExtended:

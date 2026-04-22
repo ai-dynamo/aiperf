@@ -7,7 +7,6 @@ benchmark across multiple pods. All resource and port settings are configurable
 via environment variables through K8sEnvironment.
 """
 
-from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import ConfigDict, Field
@@ -17,32 +16,12 @@ from aiperf.common.environment import Environment
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.config.deployment import PodTemplateConfig, SchedulingConfig
 from aiperf.kubernetes.constants import Containers, KueueLabels, Labels
+from aiperf.kubernetes.cr_refs import (
+    JOBSET_API_VERSION,
+)
 from aiperf.kubernetes.enums import ImagePullPolicy, RestartPolicy
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.utils import parse_cpu, parse_memory_mib
-
-
-@dataclass(frozen=True, slots=True)
-class JobSetAPIConfig:
-    """JobSet API configuration constants."""
-
-    group: str = "jobset.x-k8s.io"
-    """Kubernetes API group for JobSet resources."""
-
-    version: str = "v1alpha2"
-    """API version of the JobSet CRD."""
-
-    plural: str = "jobsets"
-    """Plural resource name for API discovery."""
-
-    @property
-    def api_version(self) -> str:
-        """Get the full apiVersion string for manifests."""
-        return f"{self.group}/{self.version}"
-
-
-# Shared JobSet API constants
-JOBSET_API = JobSetAPIConfig()
 
 # Known-good fallback version for JobSet CRD installation
 JOBSET_FALLBACK_VERSION = "v0.5.2"
@@ -1055,7 +1034,7 @@ class JobSetSpec(AIPerfBaseModel):
             metadata["annotations"] = self.extra_annotations
 
         manifest: dict[str, Any] = {
-            "apiVersion": JOBSET_API.api_version,
+            "apiVersion": JOBSET_API_VERSION,
             "kind": "JobSet",
             "metadata": metadata,
             "spec": {

@@ -19,11 +19,12 @@ from kubernetes_asyncio.client import ApiClient
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.kubernetes.console import logger
+from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
 from aiperf.kubernetes.environment import (
     CONTROLLER_RESOURCE_KEYS,
     K8sEnvironment,
 )
-from aiperf.kubernetes.jobset import JOBSET_API, get_jobset_install_hint
+from aiperf.kubernetes.jobset import get_jobset_install_hint
 from aiperf.kubernetes.preflight_utils import (
     check_rbac_access as _shared_check_rbac_access,
 )
@@ -63,9 +64,9 @@ _REQUIRED_RBAC_PERMISSIONS: list[tuple[str, str, str]] = [
     ("get", "pods/log", ""),
     ("create", "roles", "rbac.authorization.k8s.io"),
     ("create", "rolebindings", "rbac.authorization.k8s.io"),
-    ("create", "jobsets", JOBSET_API.group),
-    ("get", "jobsets", JOBSET_API.group),
-    ("delete", "jobsets", JOBSET_API.group),
+    ("create", "jobsets", JOBSET_GROUP),
+    ("get", "jobsets", JOBSET_GROUP),
+    ("delete", "jobsets", JOBSET_GROUP),
 ]
 
 
@@ -492,7 +493,7 @@ class PreflightChecker:
 
     async def _check_jobset_crd(self) -> CheckResult:
         """Check if JobSet CRD is installed."""
-        crd_name = f"{JOBSET_API.plural}.{JOBSET_API.group}"
+        crd_name = f"{JOBSET_PLURAL}.{JOBSET_GROUP}"
         try:
             await client.ApiextensionsV1Api(self._api).read_custom_resource_definition(
                 crd_name
@@ -500,7 +501,7 @@ class PreflightChecker:
             return CheckResult(
                 name="JobSet CRD",
                 status=CheckStatus.PASS,
-                message=f"JobSet CRD ({JOBSET_API.group}/{JOBSET_API.version}) installed",
+                message=f"JobSet CRD ({JOBSET_GROUP}/{JOBSET_VERSION}) installed",
             )
         except ApiException as e:
             if e.status == 404:

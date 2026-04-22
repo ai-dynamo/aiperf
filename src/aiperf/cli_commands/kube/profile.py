@@ -11,10 +11,10 @@ from cyclopts import App, Parameter
 
 from aiperf.config.cli_model import CLIModel
 from aiperf.config.kube import KubeOptions
+from aiperf.kubernetes.cr_refs import AIPERF_API_VERSION
 
 app = App(name="profile")
 
-AIPERF_API_VERSION = "aiperf.nvidia.com/v1alpha1"
 AIPERF_KIND = "AIPerfJob"
 
 
@@ -310,9 +310,9 @@ async def _operator_available(kube_options: KubeOptions) -> bool:
 
     from aiperf.kubernetes import console as kube_console
     from aiperf.kubernetes.client import k8s_client
-    from aiperf.kubernetes.constants import AIPERF_GROUP, AIPERF_PLURAL
+    from aiperf.kubernetes.cr_refs import AIPERF_JOB_GROUP, AIPERF_JOB_PLURAL
 
-    crd_name = f"{AIPERF_PLURAL}.{AIPERF_GROUP}"
+    crd_name = f"{AIPERF_JOB_PLURAL}.{AIPERF_JOB_GROUP}"
     try:
         async with k8s_client(
             kubeconfig=kube_options.kubeconfig,

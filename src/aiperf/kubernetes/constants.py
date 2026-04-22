@@ -159,8 +159,27 @@ class KueueLabels:
 # the user provides --namespace explicitly.
 DEFAULT_BENCHMARK_NAMESPACE = "aiperf-benchmarks"
 
-# CRD API coordinates for AIPerfJob
-AIPERF_GROUP = "aiperf.nvidia.com"
-AIPERF_VERSION = "v1alpha1"
-AIPERF_PLURAL = "aiperfjobs"
+# CRD API coordinates for AIPerfJob live in aiperf.kubernetes.cr_refs.
+# Re-export here for callers that historically imported them from this
+# module; new code should import from aiperf.kubernetes.cr_refs directly.
+from aiperf.kubernetes.cr_refs import (  # noqa: E402
+    AIPERF_GROUP,
+    AIPERF_PLURAL,
+    AIPERF_VERSION,
+)
+
 ANNOTATION_PREFIX = AIPERF_GROUP
+
+__all__ = [
+    "AIPERF_GROUP",
+    "AIPERF_PLURAL",
+    "AIPERF_VERSION",
+    "ANNOTATION_PREFIX",
+]
+
+__all__ = [
+    "AIPERF_GROUP",
+    "AIPERF_PLURAL",
+    "AIPERF_VERSION",
+    "ANNOTATION_PREFIX",
+]

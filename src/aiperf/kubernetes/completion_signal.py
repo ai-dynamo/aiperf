@@ -18,11 +18,11 @@ import logging
 import os
 from typing import Any
 
-from aiperf.kubernetes.constants import (
+from aiperf.kubernetes.constants import Annotations
+from aiperf.kubernetes.cr_refs import (
     AIPERF_GROUP,
     AIPERF_PLURAL,
     AIPERF_VERSION,
-    Annotations,
 )
 
 logger = logging.getLogger(__name__)

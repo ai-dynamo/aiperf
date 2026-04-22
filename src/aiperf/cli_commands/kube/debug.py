@@ -10,6 +10,28 @@ from cyclopts import App, Parameter
 
 app = App(name="debug")
 
+# Lazy module-scoped ApiClient used only for sanitize_for_serialization.
+# Reused across calls to avoid leaking an aiohttp session per invocation;
+# sanitize_for_serialization does not require the client to be started.
+_serializer: Any = None
+
+
+def _get_serializer() -> Any:
+    """Return a cached ``ApiClient`` for ``sanitize_for_serialization``.
+
+    The client is allocated on first use and never explicitly closed --
+    it is only used for synchronous object-to-dict serialization, so no
+    aiohttp session is opened beyond the default one aiohttp lazily
+    creates (which is cleaned up at process exit).
+    """
+    global _serializer
+    if _serializer is None:
+        from kubernetes_asyncio.client import ApiClient
+
+        _serializer = ApiClient()
+    return _serializer
+
+
 # Container states that indicate problems
 _PROBLEM_STATES: dict[str, tuple[str, str]] = {
     "CrashLoopBackOff": (
@@ -45,10 +67,11 @@ def _pod_to_raw(pod: Any) -> tuple[str, dict[str, Any]]:
     if raw is not None:
         name = getattr(pod, "name", None) or raw.get("metadata", {}).get("name", "")
         return (name, raw)
-    # Real V1Pod from kubernetes_asyncio — serialize to dict shape.
-    from kubernetes_asyncio.client import ApiClient
-
-    raw = ApiClient().sanitize_for_serialization(pod) or {}
+    # Real V1Pod from kubernetes_asyncio -- serialize to dict shape.
+    # Use a module-scoped serializer to avoid leaking an aiohttp session per
+    # pod; sanitize_for_serialization only reads class-level attrs so the
+    # singleton is safe to reuse and never needs closing.
+    raw = _get_serializer().sanitize_for_serialization(pod) or {}
     name = raw.get("metadata", {}).get("name", "")
     return (name, raw)
 
@@ -192,7 +215,6 @@ async def _get_namespace_events(
         List of event dicts sorted by last timestamp (newest first).
     """
     from kubernetes_asyncio import client as k8s_client_mod
-    from kubernetes_asyncio.client import ApiClient
 
     try:
         core = k8s_client_mod.CoreV1Api(api)
@@ -200,7 +222,7 @@ async def _get_namespace_events(
     except Exception:
         return []
 
-    serializer = ApiClient()
+    serializer = _get_serializer()
     result = []
     for event in event_list.items:
         raw = serializer.sanitize_for_serialization(event) or {}
@@ -230,7 +252,6 @@ async def _get_node_resources(api: Any) -> list[dict[str, Any]]:
         List of node resource dicts with capacity and conditions.
     """
     from kubernetes_asyncio import client as k8s_client_mod
-    from kubernetes_asyncio.client import ApiClient
 
     try:
         core = k8s_client_mod.CoreV1Api(api)
@@ -238,7 +259,7 @@ async def _get_node_resources(api: Any) -> list[dict[str, Any]]:
     except Exception:
         return []
 
-    serializer = ApiClient()
+    serializer = _get_serializer()
     result = []
     for node in node_list.items:
         raw = serializer.sanitize_for_serialization(node) or {}

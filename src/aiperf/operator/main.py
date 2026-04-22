@@ -27,11 +27,11 @@ from typing import Any
 
 import kopf
 
-from aiperf.kubernetes.constants import (
+from aiperf.kubernetes.constants import Annotations
+from aiperf.kubernetes.cr_refs import (
     AIPERF_GROUP,
     AIPERF_PLURAL,
     AIPERF_VERSION,
-    Annotations,
 )
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.handlers import cleanup, create, lifecycle, monitor

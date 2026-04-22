@@ -16,9 +16,10 @@ from typing import Any
 import yaml
 
 from aiperf.kubernetes import console as kube_console
+from aiperf.kubernetes.cr_refs import AIPERF_API_VERSION
 from aiperf.operator.spec_converter import CONFIG_FIELDS, AIPerfJobSpecConverter
 
-EXPECTED_API_VERSION = "aiperf.nvidia.com/v1alpha1"
+EXPECTED_API_VERSION = AIPERF_API_VERSION
 EXPECTED_KIND = "AIPerfJob"
 K8S_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$")
 K8S_NAME_MAX_LENGTH = 253

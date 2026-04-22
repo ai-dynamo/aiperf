@@ -73,7 +73,17 @@ def resolve_job_id_and_namespace(
 
 
 class ResolvedJob:
-    """Result of resolving a job identifier to an AIPerfJob CR."""
+    """Result of resolving a job identifier to an AIPerfJob CR.
+
+    The ``api`` field is an open ``ApiClient``. This helper is designed
+    for short-lived CLI commands that exit after use; the client is not
+    closed automatically. Long-running contexts MUST NOT use
+    ``resolve_job`` -- open the ``ApiClient`` via
+    ``async with k8s_client() as api:`` instead.
+
+    Callers with a natural choke point may call ``await resolved.aclose()``
+    to release the underlying aiohttp session explicitly.
+    """
 
     __slots__ = ("name", "job_info", "api")
 
@@ -96,6 +106,13 @@ class ResolvedJob:
     def job_id(self) -> str:
         """Job ID from the CR status."""
         return self.job_info.job_id
+
+    async def aclose(self) -> None:
+        """Close the underlying ``ApiClient``. Idempotent.
+
+        Safe to call multiple times; no-ops on an already-closed client.
+        """
+        await self.api.close()
 
 
 async def _open_api_client(
@@ -134,8 +151,13 @@ async def resolve_job(
     and wraps the result.
 
     Returns a ``ResolvedJob`` holding an open ``ApiClient`` the caller can
-    reuse for subsequent kubernetes_asyncio operations; the client lives
-    for the remainder of the (short-lived) CLI command.
+    reuse for subsequent kubernetes_asyncio operations. The client is
+    deliberately *not* managed by an ``async with`` here -- it survives
+    the call so the caller can use it. This is safe for short-lived CLI
+    commands that exit after use; long-running contexts should instead
+    open the ``ApiClient`` via ``async with k8s_client() as api:``.
+    Callers may invoke ``await resolved.aclose()`` at a natural choke
+    point to close the client explicitly.
 
     Args:
         job_id: The job name or ID to search for.

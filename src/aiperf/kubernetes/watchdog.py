@@ -42,7 +42,6 @@ from typing import Any, Protocol, runtime_checkable
 
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client import ApiClient
-from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
@@ -426,9 +425,9 @@ class K8sWatchdogSource:
                 namespace=namespace,
                 tail_lines=tail,
             )
-        except ApiException:
-            return ""
         except Exception:
+            # Best-effort log fetch: swallow both ApiException and any other
+            # client error (network, serialization, pod-deleted-mid-read).
             return ""
 
     async def get_pod_metrics(self, namespace: str) -> list[PodMetrics]:

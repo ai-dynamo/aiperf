@@ -25,7 +25,15 @@ from kubernetes_asyncio import client
 from kubernetes_asyncio.client import ApiClient
 from kubernetes_asyncio.client.exceptions import ApiException
 
-from aiperf.kubernetes.jobset import JOBSET_API, get_jobset_install_hint
+from aiperf.kubernetes.cr_refs import (
+    JOBSET_GROUP,
+    JOBSET_PLURAL,
+    JOBSET_VERSION,
+    KUEUE_GROUP,
+    KUEUE_LOCALQUEUE_PLURAL,
+    KUEUE_VERSION,
+)
+from aiperf.kubernetes.jobset import get_jobset_install_hint
 from aiperf.kubernetes.preflight import CheckResult, CheckStatus, PreflightResults
 from aiperf.kubernetes.preflight_utils import parse_image_ref
 from aiperf.kubernetes.resources import CONFIGMAP_MAX_SIZE_BYTES
@@ -65,11 +73,11 @@ _OPERATOR_RBAC_PERMISSIONS: list[tuple[str, str, str]] = [
     ("create", "events", ""),
     ("patch", "events", ""),
     # JobSet resources
-    ("create", "jobsets", JOBSET_API.group),
-    ("get", "jobsets", JOBSET_API.group),
-    ("delete", "jobsets", JOBSET_API.group),
-    ("watch", "jobsets", JOBSET_API.group),
-    ("get", "jobsets/status", JOBSET_API.group),
+    ("create", "jobsets", JOBSET_GROUP),
+    ("get", "jobsets", JOBSET_GROUP),
+    ("delete", "jobsets", JOBSET_GROUP),
+    ("watch", "jobsets", JOBSET_GROUP),
+    ("get", "jobsets/status", JOBSET_GROUP),
 ]
 
 
@@ -314,15 +322,15 @@ class OperatorPreflightChecker:
         """Verify JobSet CRD is installed."""
         try:
             await client.CustomObjectsApi(self.api).list_cluster_custom_object(
-                group=JOBSET_API.group,
-                version=JOBSET_API.version,
-                plural=JOBSET_API.plural,
+                group=JOBSET_GROUP,
+                version=JOBSET_VERSION,
+                plural=JOBSET_PLURAL,
                 limit=1,
             )
             return CheckResult(
                 name="JobSet CRD",
                 status=CheckStatus.PASS,
-                message=f"JobSet CRD ({JOBSET_API.group}/{JOBSET_API.version}) installed",
+                message=f"JobSet CRD ({JOBSET_GROUP}/{JOBSET_VERSION}) installed",
             )
         except ApiException as e:
             if e.status == 404:
@@ -968,9 +976,9 @@ class OperatorPreflightChecker:
         """Verify a specific Kueue LocalQueue exists."""
         try:
             await client.CustomObjectsApi(self.api).get_namespaced_custom_object(
-                group="kueue.x-k8s.io",
-                version="v1beta1",
-                plural="localqueues",
+                group=KUEUE_GROUP,
+                version=KUEUE_VERSION,
+                plural=KUEUE_LOCALQUEUE_PLURAL,
                 namespace=self.namespace,
                 name=queue_name,
             )
@@ -1011,9 +1019,9 @@ class OperatorPreflightChecker:
         """Check if the Kueue CRD is available on the cluster."""
         try:
             await client.CustomObjectsApi(self.api).list_namespaced_custom_object(
-                group="kueue.x-k8s.io",
-                version="v1beta1",
-                plural="localqueues",
+                group=KUEUE_GROUP,
+                version=KUEUE_VERSION,
+                plural=KUEUE_LOCALQUEUE_PLURAL,
                 namespace=self.namespace,
                 limit=1,
             )
@@ -1063,9 +1071,9 @@ class OperatorPreflightChecker:
         try:
             jobset_manifest = self.deployment.get_jobset_spec().to_k8s_manifest()
             await client.CustomObjectsApi(self.api).create_namespaced_custom_object(
-                group=JOBSET_API.group,
-                version=JOBSET_API.version,
-                plural=JOBSET_API.plural,
+                group=JOBSET_GROUP,
+                version=JOBSET_VERSION,
+                plural=JOBSET_PLURAL,
                 namespace=self.namespace,
                 body=jobset_manifest,
                 dry_run="All",
