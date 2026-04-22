@@ -54,6 +54,14 @@ class TestEndpointType:
                 "Ranking Metrics",
             ),
             (
+                EndpointType.COHERE_EMBEDDINGS,
+                "cohere_embeddings",
+                False,
+                False,
+                "/v2/embed",
+                "Embeddings Metrics",
+            ),
+            (
                 EndpointType.COHERE_RANKINGS,
                 "cohere_rankings",
                 False,
@@ -102,6 +110,7 @@ class TestEndpointType:
             "chat",
             "completions",
             "embeddings",
+            "cohere_embeddings",
             "nim_rankings",
             "hf_tei_rankings",
             "cohere_rankings",

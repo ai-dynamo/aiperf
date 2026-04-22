@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for /v1/embeddings endpoint."""
+"""Tests for embedding endpoints."""
 
 import pytest
 
@@ -12,16 +12,17 @@ from tests.harness.utils import AIPerfCLI
 
 @pytest.mark.component_integration
 class TestEmbeddingsEndpoint:
-    """Tests for /v1/embeddings endpoint."""
+    """Tests for embedding endpoints."""
 
-    def test_basic_embeddings(self, cli: AIPerfCLI):
+    @pytest.mark.parametrize("endpoint_type", ["embeddings", "cohere_embeddings"])
+    def test_basic_embeddings(self, cli: AIPerfCLI, endpoint_type: str):
         """Basic embeddings request."""
         result = cli.run_sync(
             f"""
             aiperf profile \
                 --model nomic-ai/nomic-embed-text-v1.5 \
                 --tokenizer gpt2 \
-                --endpoint-type embeddings \
+                --endpoint-type {endpoint_type} \
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \
                 --workers-max {defaults.workers_max} \

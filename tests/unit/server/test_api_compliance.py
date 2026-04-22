@@ -375,6 +375,36 @@ class TestEmbeddings:
 
 
 # ============================================================================
+# Cohere Embed API Compliance
+# ============================================================================
+
+
+class TestCohereEmbed:
+    """Test /v2/embed endpoint for Cohere API compliance."""
+
+    async def test_basic_cohere_embed(self, client: AsyncClient):
+        """Test basic Cohere embed request."""
+        resp = await client.post(
+            "/v2/embed",
+            json={
+                "model": "embed-english-v3.0",
+                "texts": ["Hello world", "How are you?"],
+                "embedding_types": ["float"],
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert "id" in data
+        assert data["texts"] == ["Hello world", "How are you?"]
+        assert "embeddings" in data
+        assert len(data["embeddings"]["float"]) == 2
+        assert "meta" in data
+        assert data["meta"]["api_version"]["version"] == "2"
+        assert "input_tokens" in data["meta"]["billed_units"]
+
+
+# ============================================================================
 # Rankings API Compliance (NIM)
 # ============================================================================
 

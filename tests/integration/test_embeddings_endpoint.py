@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for /v1/embeddings endpoint."""
+"""Tests for embedding endpoints."""
 
 import pytest
 
@@ -11,10 +11,14 @@ from tests.integration.conftest import IntegrationTestDefaults as defaults
 @pytest.mark.integration
 @pytest.mark.asyncio
 class TestEmbeddingsEndpoint:
-    """Tests for /v1/embeddings endpoint."""
+    """Tests for embedding endpoints."""
 
+    @pytest.mark.parametrize("endpoint_type", ["embeddings", "cohere_embeddings"])
     async def test_basic_embeddings(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+        self,
+        cli: AIPerfCLI,
+        aiperf_mock_server: AIPerfMockServer,
+        endpoint_type: str,
     ):
         """Basic embeddings request completes with expected request count."""
         result = await cli.run(
@@ -23,7 +27,7 @@ class TestEmbeddingsEndpoint:
                 --model nomic-ai/nomic-embed-text-v1.5 \
                 --tokenizer gpt2 \
                 --url {aiperf_mock_server.url} \
-                --endpoint-type embeddings \
+                --endpoint-type {endpoint_type} \
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \
                 --workers-max {defaults.workers_max} \

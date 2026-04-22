@@ -87,6 +87,52 @@ class EmbeddingRequest(BaseModel):
         )
 
 
+class CohereEmbedRequest(BaseModel):
+    """Request model for Cohere /v2/embed endpoint."""
+
+    model: str
+    texts: list[str] | None = None
+    images: list[str] | None = None
+    inputs: list[dict[str, Any]] | None = None
+    input_type: str | None = None
+    embedding_types: list[str] | None = None
+    output_dimension: int | None = None
+    truncate: str | None = None
+
+    @property
+    def embedding_inputs(self) -> list[str]:
+        """Normalize Cohere inputs into a flat list for mock processing."""
+        if self.texts is not None:
+            return [str(text) for text in self.texts]
+
+        if self.images is not None:
+            return [str(image) for image in self.images]
+
+        if self.inputs is None:
+            return []
+
+        flattened_inputs: list[str] = []
+        for item in self.inputs:
+            content = item.get("content", [])
+            parts: list[str] = []
+            if isinstance(content, list):
+                for entry in content:
+                    if not isinstance(entry, dict):
+                        continue
+                    if entry.get("type") == "text" and isinstance(
+                        entry.get("text"), str
+                    ):
+                        parts.append(entry["text"])
+                    elif entry.get("type") == "image_url":
+                        image_url = entry.get("image_url")
+                        if isinstance(image_url, dict) and isinstance(
+                            image_url.get("url"), str
+                        ):
+                            parts.append(image_url["url"])
+            flattened_inputs.append(" ".join(parts))
+        return flattened_inputs
+
+
 class RankingRequest(BaseModel):
     """Request model for NIM ranking endpoints."""
 
@@ -217,6 +263,7 @@ RequestT = (
     ChatCompletionRequest
     | CompletionRequest
     | EmbeddingRequest
+    | CohereEmbedRequest
     | RankingRequest
     | HFTEIRerankRequest
     | CohereRerankRequest

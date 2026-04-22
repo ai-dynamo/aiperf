@@ -3,21 +3,17 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from aiperf.common.models import (
     EmbeddingResponseData,
     InferenceServerResponse,
-    ModelEndpointInfo,
     ParsedResponse,
     RequestInfo,
-    Turn,
 )
 from aiperf.common.types import RequestOutputT
-from aiperf.endpoints.base_endpoint import BaseEndpoint
+from aiperf.endpoints.base_embeddings_endpoint import BaseEmbeddingsEndpoint
 
 
-class EmbeddingsEndpoint(BaseEndpoint):
+class EmbeddingsEndpoint(BaseEmbeddingsEndpoint):
     """OpenAI Embeddings endpoint.
 
     Generates vector embeddings for text inputs.
@@ -33,59 +29,9 @@ class EmbeddingsEndpoint(BaseEndpoint):
             OpenAI Embeddings API payload
         """
         turn = self._validate_and_get_turn(request_info)
+        inputs = self._extract_texts(turn)
 
-        # Extract text contents
-        inputs = [
-            content for text in turn.texts for content in text.contents if content
-        ]
-
-        return self._build_payload(turn, request_info.model_endpoint, inputs)
-
-    def _validate_and_get_turn(self, request_info: RequestInfo):
-        """Validate request and return the single turn.
-
-        Args:
-            request_info: Request context including turns
-
-        Returns:
-            The single turn from the request
-
-        Raises:
-            ValueError: If request doesn't contain exactly one turn
-        """
-        if len(request_info.turns) != 1:
-            raise ValueError("Embeddings endpoint only supports one turn.")
-
-        turn = request_info.turns[0]
-
-        if turn.max_tokens:
-            self.error("Max_tokens is provided but is not supported for embeddings.")
-
-        return turn
-
-    def _build_payload(
-        self, turn: Turn, model_endpoint: ModelEndpointInfo, inputs: list[str]
-    ) -> dict[str, Any]:
-        """Build the final payload dictionary.
-
-        Args:
-            turn: The validated turn containing model override
-            model_endpoint: Model endpoint info with primary model name and extra config
-            inputs: List of input strings to embed
-
-        Returns:
-            OpenAI Embeddings API payload
-        """
-        payload: dict[str, Any] = {
-            "model": turn.model or model_endpoint.primary_model_name,
-            "input": inputs,
-        }
-
-        if model_endpoint.endpoint.extra:
-            payload.update(model_endpoint.endpoint.extra)
-
-        self.trace(lambda: f"Formatted payload: {payload}")
-        return payload
+        return self._build_payload(turn, input=inputs)
 
     def parse_response(
         self, response: InferenceServerResponse

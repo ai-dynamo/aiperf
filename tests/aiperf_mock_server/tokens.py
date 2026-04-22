@@ -9,6 +9,7 @@ from typing import Any
 
 from aiperf_mock_server.models import (
     ChatCompletionRequest,
+    CohereEmbedRequest,
     CohereRerankRequest,
     CompletionRequest,
     EmbeddingRequest,
@@ -142,6 +143,7 @@ def tokenize_request(request: RequestT) -> TokenizedText:
     if isinstance(
         request,
         EmbeddingRequest
+        | CohereEmbedRequest
         | RankingRequest
         | HFTEIRerankRequest
         | CohereRerankRequest
@@ -255,6 +257,8 @@ def _extract_request_content(request: RequestT) -> tuple[str, int | None]:
     elif isinstance(request, EmbeddingRequest):
         text = "\n".join(request.inputs)
         return text, None
+    elif isinstance(request, CohereEmbedRequest):
+        return "\n".join(request.embedding_inputs), None
     elif isinstance(request, RankingRequest | HFTEIRerankRequest | CohereRerankRequest):
         text = request.query_text + "\n" + "\n".join(request.passage_texts)
         return text, None

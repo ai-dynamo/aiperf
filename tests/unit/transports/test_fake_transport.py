@@ -205,6 +205,35 @@ class TestFakeTransportEmbedding:
         response_data = orjson.loads(record.responses[0].text)
         assert len(response_data["data"]) == 3
 
+    @pytest.mark.asyncio
+    async def test_cohere_embedding_text_inputs(self):
+        """Test Cohere embedding requests use the Cohere response schema."""
+        fast_config = MockServerConfig(
+            ttft=1, itl=1, embedding_base_latency=1, embedding_per_input_latency=0
+        )
+        embedding_endpoint = create_model_endpoint(
+            endpoint_type=EndpointType.COHERE_EMBEDDINGS,
+            streaming=False,
+        )
+        transport = FakeTransport(model_endpoint=embedding_endpoint, config=fast_config)
+        await transport.initialize()
+
+        request_info = create_request_info(embedding_endpoint)
+        payload = {
+            "model": "test-model",
+            "texts": ["Hello", "World"],
+            "embedding_types": ["float"],
+        }
+
+        record = await transport.send_request(request_info, payload)
+
+        assert record.status == 200
+        import orjson
+
+        response_data = orjson.loads(record.responses[0].text)
+        assert response_data["texts"] == ["Hello", "World"]
+        assert len(response_data["embeddings"]["float"]) == 2
+
 
 class TestFakeTransportRanking:
     """Test FakeTransport ranking handlers."""

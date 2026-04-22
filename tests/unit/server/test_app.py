@@ -56,6 +56,16 @@ class TestAPIEndpoints:
         assert data["object"] == "list"
         assert len(data["data"]) == 1
 
+    def test_cohere_embeddings_endpoint(self, test_client):
+        response = test_client.post(
+            "/v2/embed",
+            json={"model": "test-model", "texts": ["test text"]},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "embeddings" in data
+        assert len(data["embeddings"]["float"]) == 1
+
     def test_rankings_endpoint(self, test_client):
         response = test_client.post(
             "/v1/ranking",

@@ -5,6 +5,7 @@
 import pytest
 from aiperf_mock_server.models import (
     ChatCompletionRequest,
+    CohereEmbedRequest,
     CompletionRequest,
     EmbeddingRequest,
     Message,
@@ -72,6 +73,31 @@ class TestEmbeddingRequest:
     def test_inputs_property(self, input_data, expected):
         req = EmbeddingRequest(model="test", input=input_data)
         assert req.inputs == expected
+
+
+class TestCohereEmbedRequest:
+    """Tests for CohereEmbedRequest model."""
+
+    def test_embedding_inputs_from_texts(self):
+        req = CohereEmbedRequest(model="test", texts=["text1", "text2"])
+        assert req.embedding_inputs == ["text1", "text2"]
+
+    def test_embedding_inputs_from_mixed_inputs(self):
+        req = CohereEmbedRequest(
+            model="test",
+            inputs=[
+                {
+                    "content": [
+                        {"type": "text", "text": "A photo of a cat"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "data:image/png;base64,abc123"},
+                        },
+                    ]
+                }
+            ],
+        )
+        assert req.embedding_inputs == ["A photo of a cat data:image/png;base64,abc123"]
 
 
 class TestRankingRequest:

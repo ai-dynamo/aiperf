@@ -40,6 +40,7 @@ from aiperf_mock_server.metrics_utils import (
 )
 from aiperf_mock_server.models import (
     ChatCompletionRequest,
+    CohereEmbedRequest,
     CohereRerankRequest,
     CompletionRequest,
     EmbeddingRequest,
@@ -316,30 +317,78 @@ def _build_embedding_response_data(
     }
 
 
-@app.post("/v1/embeddings", response_model=None)
-@with_error_injection
-async def embeddings(req: EmbeddingRequest, request: Request) -> ORJSONResponse:
-    """Embedding endpoint."""
-    endpoint = "/v1/embeddings"
-    start_time = request.state.start_time
+def _build_cohere_embedding_response_data(
+    ctx: RequestCtx, req: CohereEmbedRequest
+) -> dict[str, Any]:
+    """Build Cohere /v2/embed response data."""
+    vectors = [generate_embedding(text) for text in req.embedding_inputs]
+    if req.output_dimension is not None:
+        vectors = [vector[: req.output_dimension] for vector in vectors]
+
+    response: dict[str, Any] = {
+        "id": ctx.request_id,
+        "embeddings": {"float": vectors},
+        "meta": {
+            "api_version": {"version": "2"},
+            "billed_units": {"input_tokens": ctx.usage["prompt_tokens"]},
+        },
+    }
+
+    if req.texts is not None:
+        response["texts"] = req.texts
+    elif req.images is not None:
+        response["images"] = req.images
+    elif req.inputs is not None:
+        response["inputs"] = req.inputs
+
+    return response
+
+
+async def _handle_embedding_request(
+    req: EmbeddingRequest | CohereEmbedRequest,
+    endpoint: str,
+    start_time: float,
+) -> tuple[RequestCtx, list[str]]:
+    """Handle shared embedding request timing and metrics."""
     ctx = make_ctx(req, endpoint, start_time)
+    inputs = req.inputs if isinstance(req, EmbeddingRequest) else req.embedding_inputs
 
     with track_request(endpoint, req.model):
         await _wait_for_processing(
             server_config.embedding_base_latency,
             server_config.embedding_per_input_latency,
-            len(req.inputs),
+            len(inputs),
         )
 
         record_embedding_success(
             endpoint,
             req.model,
             ctx.usage["prompt_tokens"],
-            len(req.inputs),
+            len(inputs),
             perf_counter() - start_time,
         )
 
-        return ORJSONResponse(_build_embedding_response_data(ctx, req.inputs))
+    return ctx, inputs
+
+
+@app.post("/v1/embeddings", response_model=None)
+@with_error_injection
+async def embeddings(req: EmbeddingRequest, request: Request) -> ORJSONResponse:
+    """Embedding endpoint."""
+    endpoint = "/v1/embeddings"
+    ctx, inputs = await _handle_embedding_request(
+        req, endpoint, request.state.start_time
+    )
+    return ORJSONResponse(_build_embedding_response_data(ctx, inputs))
+
+
+@app.post("/v2/embed", response_model=None)
+@with_error_injection
+async def cohere_embed(req: CohereEmbedRequest, request: Request) -> ORJSONResponse:
+    """Mock Cohere /v2/embed endpoint."""
+    endpoint = "/v2/embed"
+    ctx, _ = await _handle_embedding_request(req, endpoint, request.state.start_time)
+    return ORJSONResponse(_build_cohere_embedding_response_data(ctx, req))
 
 
 # ============================================================================

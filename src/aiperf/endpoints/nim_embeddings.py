@@ -28,16 +28,8 @@ class NIMEmbeddingsEndpoint(EmbeddingsEndpoint):
         """
         turn = self._validate_and_get_turn(request_info)
 
-        # Extract text contents
-        texts = [content for text in turn.texts for content in text.contents if content]
-
-        # Extract images (list of data URL strings)
-        images = [
-            image_content
-            for image in turn.images
-            for image_content in image.contents
-            if image_content
-        ]
+        texts = self._extract_texts(turn)
+        images = self._extract_images(turn)
 
         # Determine inputs based on content type
         if texts and images:
@@ -54,4 +46,4 @@ class NIMEmbeddingsEndpoint(EmbeddingsEndpoint):
         else:
             inputs = texts
 
-        return self._build_payload(turn, request_info.model_endpoint, inputs)
+        return self._build_payload(turn, input=inputs)
