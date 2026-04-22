@@ -9,6 +9,7 @@ paths through KubernetesDeployment, JobSetSpec, and operator handlers.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from unittest.mock import patch as mock_patch
@@ -23,6 +24,24 @@ from aiperf.kubernetes.constants import KueueLabels, Labels
 from aiperf.kubernetes.resources import KubernetesDeployment
 from aiperf.operator.spec_converter import AIPerfJobSpecConverter
 from aiperf.operator.status import Phase
+
+
+@asynccontextmanager
+async def _fake_k8s_client(api):
+    """Yield the given mock ApiClient inside an async context."""
+    yield api
+
+
+def _mock_custom_api(return_value=None, side_effect=None):
+    """Build a CustomObjectsApi mock that returns ``return_value`` from
+    ``get_namespaced_custom_object`` or raises ``side_effect``."""
+    mock_custom = MagicMock()
+    mock_custom.get_namespaced_custom_object = AsyncMock(
+        return_value=return_value, side_effect=side_effect
+    )
+    mock_custom.delete_namespaced_custom_object = AsyncMock(return_value={})
+    return mock_custom
+
 
 # =============================================================================
 # Fixtures
@@ -258,8 +277,7 @@ class TestKueueOperatorFlow:
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
-        mock_jobset = MagicMock()
-        mock_jobset.raw = {
+        jobset_raw = {
             "metadata": {
                 "labels": {
                     KueueLabels.QUEUE_NAME: "test-queue",
@@ -275,14 +293,12 @@ class TestKueueOperatorFlow:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=_mock_custom_api(return_value=jobset_raw),
             ),
         ):
             await monitor_progress(
@@ -310,8 +326,7 @@ class TestKueueOperatorFlow:
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
-        mock_jobset = MagicMock()
-        mock_jobset.raw = {
+        jobset_raw = {
             "metadata": {
                 "labels": {
                     KueueLabels.QUEUE_NAME: "test-queue",
@@ -336,14 +351,12 @@ class TestKueueOperatorFlow:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=_mock_custom_api(return_value=jobset_raw),
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor._check_pod_restarts",
@@ -374,8 +387,7 @@ class TestKueueOperatorFlow:
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
-        mock_jobset = MagicMock()
-        mock_jobset.raw = {
+        jobset_raw = {
             "metadata": {
                 "labels": {
                     Labels.APP_KEY: Labels.APP_VALUE,
@@ -390,14 +402,12 @@ class TestKueueOperatorFlow:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=_mock_custom_api(return_value=jobset_raw),
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor._check_pod_restarts",
@@ -427,47 +437,30 @@ class TestKueueOperatorFlow:
         full_spec_with_scheduling: dict[str, Any],
     ) -> None:
         """Verify on_create extracts scheduling config and passes it to KubernetesDeployment."""
-        from aiperf.operator.main import on_create
+        from aiperf.operator.handlers.create import on_create
 
         body = {"metadata": {"name": "test-job", "namespace": "default"}}
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
-        mock_api = AsyncMock()
-        mock_api.async_version = AsyncMock(
-            return_value={
-                "major": "1",
-                "minor": "33",
-                "gitVersion": "v1.33.0",
-            }
-        )
-        mock_configmap = AsyncMock()
-        mock_jobset_instance = AsyncMock()
-
         captured_jobset_manifest: dict[str, Any] = {}
 
-        def capture_jobset(manifest, api=None):
-            captured_jobset_manifest.update(manifest)
-            return mock_jobset_instance
+        async def capture_custom(*, api, group, version, plural, body, namespace):
+            """Pass-through that captures the JobSet manifest submitted."""
+            if plural == "jobsets":
+                captured_jobset_manifest.update(body)
 
-        # Mock preflight to always pass (avoids complex kr8s API mocking)
+        # Mock preflight to always pass (avoids complex API mocking)
         mock_preflight_result = MagicMock()
         mock_preflight_result.passed = True
         mock_preflight_result.checks = []
         mock_preflight = MagicMock()
         mock_preflight.run_all = AsyncMock(return_value=mock_preflight_result)
 
-        async def mock_create_idempotent(cls, manifest, api):
-            """Pass-through that captures JobSet manifest."""
-            name = getattr(cls, "__name__", "") or str(cls)
-            if "JobSet" in name or "jobset" in manifest.get("kind", "").lower():
-                captured_jobset_manifest.update(manifest)
-
         with (
             mock_patch(
-                "aiperf.operator.handlers.create.get_api",
-                new_callable=AsyncMock,
-                return_value=mock_api,
+                "aiperf.operator.handlers.create.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
                 "aiperf.operator.handlers.create.check_endpoint_health",
@@ -475,20 +468,36 @@ class TestKueueOperatorFlow:
                 return_value=MagicMock(reachable=True, error=""),
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.ConfigMap",
-                return_value=mock_configmap,
-            ),
-            mock_patch(
-                "aiperf.operator.handlers.create.AsyncJobSet",
-                side_effect=capture_jobset,
-            ),
-            mock_patch(
                 "aiperf.operator.preflight.OperatorPreflightChecker",
                 return_value=mock_preflight,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.create_idempotent",
-                side_effect=mock_create_idempotent,
+                "aiperf.operator.handlers.create.create_idempotent_role",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.create.create_idempotent_role_binding",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.create.create_idempotent_config_map",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.create.asyncio.sleep",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.create.save_job_spec_file",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.create.index_job_created",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.create.create_idempotent_custom_object",
+                side_effect=capture_custom,
             ),
         ):
             result = await on_create(
@@ -527,8 +536,7 @@ class TestKueueOperatorFlow:
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
-        mock_jobset = MagicMock()
-        mock_jobset.raw = {
+        jobset_raw = {
             "metadata": {
                 "labels": {KueueLabels.QUEUE_NAME: "test-queue"},
             },
@@ -541,14 +549,12 @@ class TestKueueOperatorFlow:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=_mock_custom_api(return_value=jobset_raw),
             ),
         ):
             await monitor_progress(
@@ -574,8 +580,7 @@ class TestKueueOperatorFlow:
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
-        mock_jobset = MagicMock()
-        mock_jobset.raw = {
+        jobset_raw = {
             "metadata": {
                 "labels": {KueueLabels.QUEUE_NAME: "test-queue"},
             },
@@ -588,14 +593,12 @@ class TestKueueOperatorFlow:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor.get_api",
-                new_callable=AsyncMock,
-                return_value=AsyncMock(),
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor.AsyncJobSet.get",
-                new_callable=AsyncMock,
-                return_value=mock_jobset,
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=_mock_custom_api(return_value=jobset_raw),
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor._check_pod_restarts",

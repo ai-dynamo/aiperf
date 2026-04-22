@@ -83,23 +83,18 @@ def manage_options():
 
 @pytest.fixture
 def mock_kube_client():
-    """Mock AIPerfKubeClient + patched free functions for CLI command tests.
+    """Mock an ApiClient + patched free-function call sites for CLI tests.
 
-    Exposes a single mock-client object whose ``list_jobs``, ``find_job``,
-    ``find_jobset``, ``list_jobsets``, ``get_pods``, ``find_controller_pod``,
-    and ``find_operator_pod`` attributes are AsyncMocks. The same mocks are
-    installed as ``aiperf.kubernetes.client.<free_fn>`` with ``api`` passed
-    as first positional arg (stripped in the side_effect wrappers), so tests
-    that still use the legacy ``mock_kube_client.method(...)`` assertions
-    match the new free-function call sites.
+    Exposes an ``AsyncMock`` whose attributes (``list_jobs``, ``find_job``,
+    ``find_jobset``, ``list_jobsets``, ``get_pods``, …) back the patched
+    free functions so tests can set return values via
+    ``mock_kube_client.list_jobs.return_value = ...`` and match call
+    assertions with `mock_kube_client.list_jobs.assert_called_once_with(...)`.
+    Each wrapper drops the leading ``api`` arg the real free function expects.
     """
-    from aiperf.kubernetes.client import AIPerfKubeClient
-
-    mock_client = AsyncMock(spec=AIPerfKubeClient)
-    mock_client.job_selector = AIPerfKubeClient.job_selector
-    mock_client.controller_selector = AIPerfKubeClient.controller_selector
-
+    mock_client = AsyncMock()
     api = MagicMock()
+    api.close = AsyncMock()
 
     async def _strip_api_list_jobs(_api, **kwargs):
         return await mock_client.list_jobs(**kwargs)
@@ -124,12 +119,12 @@ def mock_kube_client():
 
     with (
         patch(
-            "aiperf.kubernetes.client.AIPerfKubeClient.create",
-            new=AsyncMock(return_value=mock_client),
-        ),
-        patch(
             "aiperf.kubernetes.client.k8s_client",
             return_value=_fake_k8s_client(api),
+        ),
+        patch(
+            "aiperf.kubernetes.cli_helpers._open_api_client",
+            new=AsyncMock(return_value=api),
         ),
         patch(
             "aiperf.kubernetes.client.list_aiperf_jobs",

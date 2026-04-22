@@ -30,7 +30,6 @@ from kubernetes_asyncio.client.models import (
 from pytest import param
 
 from aiperf.kubernetes.client import (
-    AIPerfKubeClient,
     cancel_aiperf_job,
     cluster_version,
     controller_selector,
@@ -1169,96 +1168,3 @@ class TestClusterVersion:
             "gitCommit": "abc",
             "platform": "linux/amd64",
         }
-
-
-# ============================================================
-# AIPerfKubeClient facade
-# ============================================================
-
-
-class TestFacade:
-    """Verify the AIPerfKubeClient facade delegates to free functions."""
-
-    @pytest.mark.asyncio
-    async def test_list_jobs_delegates(self) -> None:
-        api = MagicMock()
-        facade = AIPerfKubeClient(api)
-        with patch(
-            "aiperf.kubernetes.client.list_aiperf_jobs",
-            new_callable=AsyncMock,
-            return_value=[],
-        ) as mock_fn:
-            result = await facade.list_jobs(namespace="default")
-        mock_fn.assert_awaited_once_with(api, namespace="default")
-        assert result == []
-
-    @pytest.mark.asyncio
-    async def test_cancel_job_delegates(self) -> None:
-        api = MagicMock()
-        facade = AIPerfKubeClient(api)
-        with patch(
-            "aiperf.kubernetes.client.cancel_aiperf_job",
-            new_callable=AsyncMock,
-        ) as mock_fn:
-            await facade.cancel_job("n", "default")
-        mock_fn.assert_awaited_once_with(api, "n", "default")
-
-    @pytest.mark.asyncio
-    async def test_close_closes_api_client(self) -> None:
-        api = MagicMock()
-        api.close = AsyncMock()
-        facade = AIPerfKubeClient(api)
-        await facade.close()
-        api.close.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_create_loads_incluster_first(self) -> None:
-        fake_api = MagicMock()
-        with (
-            patch("aiperf.kubernetes.client.suppress_noisy_http_loggers"),
-            patch(
-                "aiperf.kubernetes.client.config.load_incluster_config"
-            ) as mock_incluster,
-            patch(
-                "aiperf.kubernetes.client.config.load_kube_config",
-                new_callable=AsyncMock,
-            ) as mock_kube,
-            patch("aiperf.kubernetes.client.ApiClient", return_value=fake_api),
-        ):
-            result = await AIPerfKubeClient.create()
-        mock_incluster.assert_called_once()
-        mock_kube.assert_not_called()
-        assert isinstance(result, AIPerfKubeClient)
-        assert result.api is fake_api
-
-    @pytest.mark.asyncio
-    async def test_create_falls_back_to_kubeconfig(self) -> None:
-        from kubernetes_asyncio import config as k8s_config
-
-        fake_api = MagicMock()
-        with (
-            patch("aiperf.kubernetes.client.suppress_noisy_http_loggers"),
-            patch(
-                "aiperf.kubernetes.client.config.load_incluster_config",
-                side_effect=k8s_config.ConfigException("no incluster"),
-            ),
-            patch(
-                "aiperf.kubernetes.client.config.load_kube_config",
-                new_callable=AsyncMock,
-            ) as mock_kube,
-            patch("aiperf.kubernetes.client.ApiClient", return_value=fake_api),
-        ):
-            await AIPerfKubeClient.create(kubeconfig="/cfg", kube_context="ctx")
-        mock_kube.assert_awaited_once_with(config_file="/cfg", context="ctx")
-
-    def test_api_property(self) -> None:
-        api = MagicMock()
-        facade = AIPerfKubeClient(api)
-        assert facade.api is api
-
-    def test_selector_static_methods(self) -> None:
-        """The facade preserves kr8s-era access to selector functions."""
-        assert (
-            AIPerfKubeClient.job_selector("x")
-            == "app=aiperf,aiperf.nvidia.com/job-id=x"
-        )

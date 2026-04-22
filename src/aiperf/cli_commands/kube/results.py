@@ -127,9 +127,11 @@ async def results(
 
         job_id = resolved.job_id
         ns = resolved.namespace
-        kube_client = resolved.client
+        api = resolved.api
 
-        jobset_info = await kube_client.find_jobset(job_id, ns)
+        from aiperf.kubernetes.client import find_jobset
+
+        jobset_info = await find_jobset(api, job_id, ns)
 
         artifact_name = resolved.job_info.name
         output_dir = output or Path(f"./artifacts/{artifact_name}")
@@ -150,7 +152,7 @@ async def results(
                     ns,
                     output_dir,
                     jobset_info,
-                    kube_client,
+                    api,
                     port,
                     **kube_creds,
                 )
@@ -162,7 +164,7 @@ async def results(
                     ns,
                     output_dir,
                     jobset_info,
-                    kube_client,
+                    api,
                     port,
                     **kube_creds,
                 )
@@ -179,7 +181,7 @@ async def results(
                                 ns,
                                 output_dir,
                                 jobset_info,
-                                kube_client,
+                                api,
                                 **kube_creds,
                             )
                         )
@@ -199,7 +201,7 @@ async def results(
                 job_id,
                 ns,
                 output_dir,
-                kube_client,
+                api,
                 local_port=port,
                 operator_namespace=operator_namespace,
                 **kube_creds,
@@ -216,6 +218,4 @@ async def results(
                 )
 
         if shutdown and used_api and retrieval_success:
-            await kube_results.shutdown_api_service(
-                job_id, ns, kube_client, port, **kube_creds
-            )
+            await kube_results.shutdown_api_service(job_id, ns, api, port, **kube_creds)

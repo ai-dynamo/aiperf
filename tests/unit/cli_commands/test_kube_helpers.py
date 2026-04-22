@@ -9,17 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
-from pytest import param
 
 # =============================================================================
 # Fixtures
 # =============================================================================
-
-
-@pytest.fixture
-def mock_api() -> MagicMock:
-    """Create a mock kubernetes_asyncio API client."""
-    return MagicMock()
 
 
 @pytest.fixture
@@ -33,85 +26,6 @@ def mock_asyncio_process() -> MagicMock:
     proc.kill = MagicMock()
     proc.wait = AsyncMock()
     return proc
-
-
-# =============================================================================
-# wait_for_controller_pod_ready Tests
-# =============================================================================
-
-
-class TestWaitForControllerPodReady:
-    """Tests for AIPerfKubeClient.wait_for_controller_pod_ready method."""
-
-    @pytest.mark.asyncio
-    async def test_pod_ready_immediately_returns_name(
-        self, mock_api: MagicMock
-    ) -> None:
-        """Test returns pod name when pod is immediately running."""
-        from aiperf.kubernetes.client import AIPerfKubeClient
-
-        client = AIPerfKubeClient(mock_api)
-        client.find_controller_pod = AsyncMock(
-            return_value=("aiperf-test-controller-0-0", "Running")
-        )
-
-        result = await client.wait_for_controller_pod_ready(
-            "default", "test-job", timeout=10
-        )
-
-        assert result == "aiperf-test-controller-0-0"
-        client.find_controller_pod.assert_called_once_with("default", "test-job")
-
-    @pytest.mark.asyncio
-    async def test_waits_until_pod_running(self, mock_api: MagicMock) -> None:
-        """Test waits and polls until pod becomes running."""
-        from aiperf.kubernetes.client import AIPerfKubeClient
-
-        client = AIPerfKubeClient(mock_api)
-        client.find_controller_pod = AsyncMock(
-            side_effect=[
-                ("aiperf-test-controller-0-0", "Pending"),
-                ("aiperf-test-controller-0-0", "Running"),
-            ]
-        )
-
-        result = await client.wait_for_controller_pod_ready(
-            "default", "test-job", timeout=10
-        )
-
-        assert result == "aiperf-test-controller-0-0"
-        assert client.find_controller_pod.call_count == 2
-
-    @pytest.mark.asyncio
-    @pytest.mark.looptime
-    async def test_timeout_raises_error(self, mock_api: MagicMock) -> None:
-        """Test raises TimeoutError when pod never becomes ready."""
-        from aiperf.kubernetes.client import AIPerfKubeClient
-
-        client = AIPerfKubeClient(mock_api)
-        client.find_controller_pod = AsyncMock(return_value=None)
-
-        with pytest.raises(TimeoutError) as exc_info:
-            await client.wait_for_controller_pod_ready("default", "test-job", timeout=1)
-
-        assert "Controller pod not ready" in str(exc_info.value)
-        assert "kubectl get pods" in str(exc_info.value)
-
-    @pytest.mark.asyncio
-    @pytest.mark.looptime
-    async def test_correct_args_passed(self, mock_api: MagicMock) -> None:
-        """Test passes correct args to find_controller_pod."""
-        from aiperf.kubernetes.client import AIPerfKubeClient
-
-        client = AIPerfKubeClient(mock_api)
-        client.find_controller_pod = AsyncMock(return_value=None)
-
-        with pytest.raises(TimeoutError):
-            await client.wait_for_controller_pod_ready(
-                "my-namespace", "my-job-id", timeout=1
-            )
-
-        client.find_controller_pod.assert_called_with("my-namespace", "my-job-id")
 
 
 # =============================================================================
@@ -759,43 +673,3 @@ class TestCleanupPortForward:
 
         mock_asyncio_process.terminate.assert_called_once()
         mock_asyncio_process.kill.assert_called_once()
-
-
-# =============================================================================
-# Parameterized Tests
-# =============================================================================
-
-
-class TestWaitForControllerPodReadyParameterized:
-    """Parameterized tests for AIPerfKubeClient.wait_for_controller_pod_ready."""
-
-    @pytest.mark.asyncio
-    @pytest.mark.looptime
-    @pytest.mark.parametrize(
-        "phase,should_return",
-        [
-            param("Running", True, id="running_returns"),
-            param("Pending", False, id="pending_waits"),
-            param("ContainerCreating", False, id="creating_waits"),
-            param("Succeeded", False, id="succeeded_waits"),
-        ],
-    )  # fmt: skip
-    async def test_pod_phase_handling(
-        self, mock_api: MagicMock, phase: str, should_return: bool
-    ) -> None:
-        """Test different pod phases are handled correctly."""
-        from aiperf.kubernetes.client import AIPerfKubeClient
-
-        client = AIPerfKubeClient(mock_api)
-        client.find_controller_pod = AsyncMock(return_value=("test-pod", phase))
-
-        if should_return:
-            result = await client.wait_for_controller_pod_ready(
-                "default", "job-id", timeout=10
-            )
-            assert result == "test-pod"
-        else:
-            with pytest.raises(TimeoutError):
-                await client.wait_for_controller_pod_ready(
-                    "default", "job-id", timeout=1
-                )

@@ -95,20 +95,19 @@ async def logs(
         job_id, namespace = resolved
 
         if output:
-            # Helper in kubernetes/logs.py still takes the facade — use it.
-            kube_client = await client.AIPerfKubeClient.create(
-                kubeconfig=manage_options.kubeconfig,
-                kube_context=manage_options.kube_context,
-            )
             output.mkdir(parents=True, exist_ok=True)
-            await kube_logs.save_pod_logs(
-                job_id,
-                namespace,
-                output,
-                kube_client,
+            async with client.k8s_client(
                 kubeconfig=manage_options.kubeconfig,
-                kube_context=manage_options.kube_context,
-            )
+                context=manage_options.kube_context,
+            ) as api:
+                await kube_logs.save_pod_logs(
+                    job_id,
+                    namespace,
+                    output,
+                    api,
+                    kubeconfig=manage_options.kubeconfig,
+                    kube_context=manage_options.kube_context,
+                )
             kube_console.print_success(f"Logs saved to {output}/logs/")
             return
 

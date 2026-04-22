@@ -69,7 +69,7 @@ async def attach(
             resolved.job_id,
             resolved.namespace,
             port,
-            resolved.client,
+            resolved.api,
             phase=resolved.job_info.phase,
             kubeconfig=manage_options.kubeconfig,
             kube_context=manage_options.kube_context,

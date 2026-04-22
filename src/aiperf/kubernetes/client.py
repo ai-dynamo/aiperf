@@ -1,15 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""AIPerf Kubernetes client — free functions + AIPerfKubeClient facade.
+"""AIPerf Kubernetes client — free functions over kubernetes_asyncio.
 
-Free functions (``k8s_client``, ``list_aiperf_jobs``, ``find_jobset``, …)
-are the canonical interface. They take an ``ApiClient`` explicitly and
-call ``CoreV1Api(api)`` / ``CustomObjectsApi(api)`` inline so the reader
-sees the native kubernetes_asyncio API surface.
-
-``AIPerfKubeClient`` remains as a thin facade that delegates to the free
-functions so existing callers keep working during the migration. It is
-removed in the kr8s cleanup commit when no callers remain.
+The canonical interface is ``k8s_client()`` + free functions
+(``list_aiperf_jobs``, ``find_jobset``, …) that take an ``ApiClient``
+explicitly and call ``CoreV1Api(api)`` / ``CustomObjectsApi(api)``
+inline so the reader sees the native kubernetes_asyncio API surface.
 """
 
 from __future__ import annotations
@@ -44,34 +40,6 @@ from aiperf.kubernetes.models import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-# ----- Legacy kr8s get_api (temporary; migrated in Tasks 3-7) ----------------
-
-
-async def get_api(
-    *,
-    kubeconfig: str | None = None,
-    kube_context: str | None = None,
-) -> Any:
-    """Legacy kr8s API factory retained for callers not yet migrated.
-
-    Callers outside ``aiperf.kubernetes`` still import this and pass the
-    resulting ``kr8s.Api`` to kr8s-specific operations (``async_get``,
-    ``async_version``, ``AsyncAIPerfJob.get(..., api=api)``, etc.).
-    Those call sites migrate to ``k8s_client()`` in Tasks 3-7; this shim
-    disappears in Task 8 with the rest of the kr8s deps.
-    """
-    import kr8s.asyncio
-
-    kwargs: dict[str, str] = {}
-    if kubeconfig is not None:
-        kwargs["kubeconfig"] = kubeconfig
-    if kube_context is not None:
-        kwargs["context"] = kube_context
-        kwargs.setdefault("namespace", "default")
-    suppress_noisy_http_loggers()
-    return await kr8s.asyncio.api(**kwargs)
 
 
 # ----- Config + ApiClient ----------------------------------------------------
@@ -508,128 +476,3 @@ async def cluster_version(api: ApiClient) -> dict[str, Any]:
         "gitCommit": vinfo.git_commit,
         "platform": vinfo.platform,
     }
-
-
-# ----- AIPerfKubeClient facade (removed in kr8s cleanup commit) -------------
-
-
-class AIPerfKubeClient:
-    """Backwards-compat facade over the free functions in this module.
-
-    **Deprecated** — new code should call the free functions directly using
-    ``async with k8s_client() as api:`` to make the underlying
-    ``kubernetes_asyncio`` API surface visible.
-    """
-
-    def __init__(self, api: ApiClient) -> None:
-        self._api = api
-
-    @classmethod
-    async def create(
-        cls,
-        *,
-        kubeconfig: str | None = None,
-        kube_context: str | None = None,
-    ) -> AIPerfKubeClient:
-        """Create a client; CALLER is responsible for eventual cleanup.
-
-        Prefer ``async with k8s_client() as api:`` + free functions. This
-        factory opens an ApiClient without a matching close — acceptable
-        only for process-long services where the client lives until exit.
-        """
-        suppress_noisy_http_loggers()
-        try:
-            config.load_incluster_config()
-        except config.ConfigException:
-            await config.load_kube_config(config_file=kubeconfig, context=kube_context)
-        return cls(ApiClient())
-
-    @property
-    def api(self) -> ApiClient:
-        return self._api
-
-    async def close(self) -> None:
-        await self._api.close()
-
-    # -- label helpers stay as static methods for kr8s-era call sites ---------
-    job_selector = staticmethod(job_selector)
-    controller_selector = staticmethod(controller_selector)
-
-    # -- delegations ---------------------------------------------------------
-
-    async def list_jobs(self, *args, **kwargs):
-        return await list_aiperf_jobs(self._api, *args, **kwargs)
-
-    async def find_job(self, *args, **kwargs):
-        return await find_aiperf_job(self._api, *args, **kwargs)
-
-    async def get_raw_status(self, name: str, namespace: str) -> dict[str, Any]:
-        return await get_raw_aiperfjob_status(self._api, name, namespace)
-
-    async def cancel_job(self, name: str, namespace: str) -> None:
-        await cancel_aiperf_job(self._api, name, namespace)
-
-    async def list_jobsets(self, *args, **kwargs):
-        return await list_jobsets(self._api, *args, **kwargs)
-
-    async def find_jobset(self, *args, **kwargs):
-        return await find_jobset(self._api, *args, **kwargs)
-
-    async def delete_jobset(self, name: str, namespace: str) -> None:
-        await delete_jobset(self._api, name, namespace)
-
-    async def delete_namespace(self, namespace: str) -> None:
-        await delete_namespace(self._api, namespace)
-
-    async def get_pod_summary(self, jobset_name: str, namespace: str) -> PodSummary:
-        return await get_pod_summary(self._api, jobset_name, namespace)
-
-    async def find_operator_pod(self, *args, **kwargs):
-        return await find_operator_pod(self._api, *args, **kwargs)
-
-    async def find_controller_pod(self, namespace: str, job_id: str):
-        return await find_controller_pod(self._api, namespace, job_id)
-
-    async def find_retrievable_pod(self, *args, **kwargs):
-        return await find_retrievable_pod(self._api, *args, **kwargs)
-
-    async def wait_for_controller_pod_ready(
-        self,
-        namespace: str,
-        job_id: str,
-        timeout: int = 300,
-    ) -> str:
-        """Poll until the controller pod is Running; returns its name.
-
-        Implemented on the facade (not delegated) so tests that replace
-        ``self.find_controller_pod`` on the instance continue to work.
-        """
-        start = asyncio.get_running_loop().time()
-        last_log = 0.0
-        while True:
-            result = await self.find_controller_pod(namespace, job_id)
-            elapsed = asyncio.get_running_loop().time() - start
-            if result:
-                pod_name, phase = result
-                if phase == PodPhase.RUNNING:
-                    return pod_name
-                if elapsed - last_log >= 10:
-                    logger.info(
-                        "Controller pod %s: %s (%.0fs)", pod_name, phase, elapsed
-                    )
-                    last_log = elapsed
-            elif elapsed - last_log >= 10:
-                logger.info("No controller pod found yet (%.0fs)", elapsed)
-                last_log = elapsed
-            if elapsed > timeout:
-                raise TimeoutError(
-                    f"Controller pod not ready after {timeout}s. "
-                    f"Check with: kubectl get pods -n {namespace}"
-                )
-            await asyncio.sleep(2)
-
-    async def get_pods(self, namespace: str, label_selector: str):
-        return await get_pods(self._api, namespace, label_selector)
-
-    async def version(self) -> dict[str, Any]:
-        return await cluster_version(self._api)

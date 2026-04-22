@@ -5,8 +5,8 @@
 Job resolution, user confirmation, and formatting utilities shared
 across multiple CLI commands.
 
-kubernetes_asyncio-backed operations live in AIPerfKubeClient
-(aiperf.kubernetes.client).
+kubernetes_asyncio-backed operations live as free functions in
+``aiperf.kubernetes.client`` (callers pass an ``ApiClient`` explicitly).
 """
 
 from __future__ import annotations
@@ -25,7 +25,8 @@ from aiperf.kubernetes.console import (
 from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
 
 if TYPE_CHECKING:
-    from aiperf.kubernetes.client import AIPerfKubeClient
+    from kubernetes_asyncio.client import ApiClient
+
     from aiperf.kubernetes.models import AIPerfJobInfo
 
 
@@ -74,14 +75,12 @@ def resolve_job_id_and_namespace(
 class ResolvedJob:
     """Result of resolving a job identifier to an AIPerfJob CR."""
 
-    __slots__ = ("name", "job_info", "client")
+    __slots__ = ("name", "job_info", "api")
 
-    def __init__(
-        self, name: str, job_info: AIPerfJobInfo, client: AIPerfKubeClient
-    ) -> None:
+    def __init__(self, name: str, job_info: AIPerfJobInfo, api: ApiClient) -> None:
         self.name = name
         self.job_info = job_info
-        self.client = client
+        self.api = api
 
     @property
     def jobset_name(self) -> str | None:
@@ -99,6 +98,30 @@ class ResolvedJob:
         return self.job_info.job_id
 
 
+async def _open_api_client(
+    kubeconfig: str | None = None,
+    kube_context: str | None = None,
+) -> ApiClient:
+    """Load k8s config and return an open ``ApiClient``.
+
+    Separate from ``k8s_client()`` because the returned client survives
+    beyond a single ``async with`` block: CLI commands pass it through
+    ``ResolvedJob`` to subsequent helpers and it closes when the process
+    exits. Tests patch this function to inject a mock api.
+    """
+    from kubernetes_asyncio import config
+    from kubernetes_asyncio.client import ApiClient as _ApiClient
+
+    from aiperf.common.noisy_loggers import suppress_noisy_http_loggers
+
+    suppress_noisy_http_loggers()
+    try:
+        config.load_incluster_config()
+    except config.ConfigException:
+        await config.load_kube_config(config_file=kubeconfig, context=kube_context)
+    return _ApiClient()
+
+
 async def resolve_job(
     job_id: str | None,
     namespace: str | None = None,
@@ -110,6 +133,10 @@ async def resolve_job(
     Queries AIPerfJob CRs first. If not found, falls back to JobSet lookup
     and wraps the result.
 
+    Returns a ``ResolvedJob`` holding an open ``ApiClient`` the caller can
+    reuse for subsequent kubernetes_asyncio operations; the client lives
+    for the remainder of the (short-lived) CLI command.
+
     Args:
         job_id: The job name or ID to search for.
         namespace: Optional namespace to search in.
@@ -119,24 +146,22 @@ async def resolve_job(
     Returns:
         ResolvedJob if found, None otherwise.
     """
-    from aiperf.kubernetes.client import AIPerfKubeClient
+    from aiperf.kubernetes.client import find_aiperf_job, find_jobset
 
     resolved = resolve_job_id_and_namespace(job_id, namespace)
     if not resolved:
         return None
     job_id, namespace = resolved
 
-    client = await AIPerfKubeClient.create(
-        kubeconfig=kubeconfig, kube_context=kube_context
-    )
+    api = await _open_api_client(kubeconfig=kubeconfig, kube_context=kube_context)
 
     # Try AIPerfJob CR first
-    job_info = await client.find_job(job_id, namespace)
+    job_info = await find_aiperf_job(api, job_id, namespace)
     if job_info:
-        return ResolvedJob(name=job_id, job_info=job_info, client=client)
+        return ResolvedJob(name=job_id, job_info=job_info, api=api)
 
     # Fallback to JobSet lookup
-    jobset_info = await client.find_jobset(job_id, namespace)
+    jobset_info = await find_jobset(api, job_id, namespace)
     if not jobset_info:
         print_error(f"No AIPerf job found with ID: {job_id}")
         if namespace:
@@ -144,6 +169,7 @@ async def resolve_job(
         else:
             print_info("Searched all namespaces")
         print_action("Run 'aiperf kube list' to see available jobs")
+        await api.close()
         return None
 
     # Wrap JobSetInfo as a minimal AIPerfJobInfo
@@ -159,7 +185,7 @@ async def resolve_job(
         model=jobset_info.model,
         endpoint=jobset_info.endpoint,
     )
-    return ResolvedJob(name=job_id, job_info=job_info, client=client)
+    return ResolvedJob(name=job_id, job_info=job_info, api=api)
 
 
 async def confirm_action(msg: str) -> bool:

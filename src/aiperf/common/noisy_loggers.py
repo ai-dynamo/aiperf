@@ -3,8 +3,8 @@
 """Suppress noisy HTTP loggers emitted by Kubernetes client libraries.
 
 kubernetes_asyncio uses aiohttp internally and emits access-log-style
-lines for every request. httpx (a legacy kr8s dependency during the
-migration) emits similar lines. Both are silenced to WARNING.
+lines for every request; the aiohttp + kubernetes_asyncio.rest loggers
+are raised to WARNING to keep logs readable.
 """
 
 import logging
@@ -13,7 +13,6 @@ _NOISY_LOGGERS = (
     "aiohttp.access",
     "aiohttp.client",
     "kubernetes_asyncio.client.rest",
-    "httpx",  # legacy — removed with kr8s
 )
 
 

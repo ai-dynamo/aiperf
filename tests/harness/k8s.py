@@ -102,54 +102,6 @@ def create_api_exception(
     return ApiException(status=status_code, reason=reason, http_resp=None)
 
 
-# ---------------------------------------------------------------------------
-# Deprecated kr8s-era compatibility shims (kept until Task 3/7 rewrites their
-# preflight test modules; safe to delete in Task 8 cleanup)
-# ---------------------------------------------------------------------------
-
-
-def create_server_error(status_code: int, reason: str = "Error"):
-    """Return a kr8s.ServerError; deprecated shim for unmigrated preflight tests."""
-    import kr8s
-
-    mock_response = MagicMock()
-    mock_response.status_code = status_code
-    mock_response.reason_phrase = reason
-    mock_response.text = f'{{"message": "{reason}"}}'
-    return kr8s.ServerError(reason, response=mock_response)
-
-
-def create_not_found_error(name: str = "resource"):
-    """Return a kr8s.NotFoundError; deprecated shim for unmigrated preflight tests."""
-    import kr8s
-
-    return kr8s.NotFoundError(f"{name} not found")
-
-
-def make_kr8s_object(raw: dict[str, Any]) -> MagicMock:
-    """Create a mock kr8s-style object with a .raw attribute from a dict.
-
-    Deprecated compatibility shim used by tests/unit/kubernetes/test_preflight.py
-    and tests/unit/operator/test_preflight.py, which still expect the kr8s
-    object shape. Those modules are rewritten against typed V1* objects in
-    Task 3 and Task 7 respectively; this helper is removed then.
-    """
-    obj = MagicMock()
-    obj.raw = raw
-    obj.name = raw.get("metadata", {}).get("name", "")
-    obj.namespace = raw.get("metadata", {}).get("namespace", "")
-    return obj
-
-
-async def async_list(items: list) -> Any:
-    """Create an async generator from a list (for mocking kr8s api.async_get).
-
-    Deprecated; retained for the kr8s-era preflight tests noted above.
-    """
-    for item in items:
-        yield item
-
-
 # =============================================================================
 # Response Builders
 # =============================================================================
