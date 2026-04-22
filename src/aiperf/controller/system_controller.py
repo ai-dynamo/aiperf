@@ -555,10 +555,6 @@ class SystemController(SignalHandlerMixin, BaseService):
                 timeout=Environment.SERVICE.PROFILE_START_TIMEOUT,
             )
 
-        self.info("Post-configure startup flow: checking inference endpoint readiness")
-        # Wait for inference endpoint readiness (real request, not just /health).
-        await self._wait_for_endpoint_ready()
-
         self.info("Post-configure startup flow: sending PROFILE_START to all services")
         await self._start_profiling_all_services()
         self.info("AIPerf System is PROFILING")
@@ -903,29 +899,12 @@ class SystemController(SignalHandlerMixin, BaseService):
             self._all_workers_ready_event.set()
 
     async def _wait_for_endpoint_ready(self) -> None:
-        """Wait for inference endpoint to be ready using a real request.
-
-        Sends a canned inference request to verify the model is loaded,
-        not just that the server responds to /health. Skipped when
-        endpoint.ready_check_timeout is 0 (the default).
+        """Deprecated. Endpoint readiness is now a CLI preflight; see
+        ``cli_runner._preflight_endpoint_ready``. This stub remains only so
+        older tests that stub this method don't break — remove once tests
+        are updated.
         """
-        cfg = self.run.cfg.endpoint
-        if cfg.ready_check_timeout <= 0:
-            return
-
-        from aiperf.workers.ready_checker import wait_for_endpoint
-
-        self.info(f"Checking endpoint readiness (timeout={cfg.ready_check_timeout}s)")
-        await wait_for_endpoint(
-            cfg.urls[0],
-            endpoint_type=str(cfg.type),
-            path=cfg.path,
-            timeout=cfg.ready_check_timeout,
-            api_key=cfg.api_key,
-            model=(self.run.cfg.get_model_names() or [None])[0],
-            extra_headers=cfg.headers or None,
-        )
-        self.info("Endpoint readiness confirmed")
+        return
 
     async def _start_profiling_all_services(self) -> None:
         """Tell all services to start profiling.

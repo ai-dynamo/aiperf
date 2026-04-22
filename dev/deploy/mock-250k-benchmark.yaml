@@ -5,7 +5,7 @@ metadata:
   name: mock-250k-clean-4
   namespace: acasagrande-aiperf-bench
 spec:
-  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260421-163542-bb62f26b8
+  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260422-004743-17d5d810a
   resourceMode: burstable
   connectionsPerWorker: 1000
   timeoutSeconds: 0

@@ -1,308 +1,182 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for endpoint readiness checker."""
+"""Tests for the endpoint readiness checker.
+
+These cover the new multi-URL / multi-model / mode-aware signature. Deep
+HTTP behavior is exercised via integration tests against the mock server;
+here we focus on the dispatch logic and failure paths.
+"""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
-import aiohttp
 import pytest
 
-from aiperf.workers.ready_checker import (
-    _CANNED_PAYLOADS,
-    _DEFAULT_PATHS,
-    wait_for_endpoint,
-)
+from aiperf.workers.ready_checker import wait_for_endpoint
 
 
-class TestWaitForEndpoint:
+def _record(status: int | None, text: str = "") -> SimpleNamespace:
+    """Minimal RequestRecord-shaped object for patching AioHttpClient.get/post."""
+    responses = [SimpleNamespace(text=text)] if text else []
+    return SimpleNamespace(status=status, responses=responses, error=None)
+
+
+class TestWaitForEndpointSkipConditions:
     @pytest.mark.asyncio
     async def test_skips_when_timeout_zero(self) -> None:
-        with patch("aiperf.workers.ready_checker.aiohttp") as mock_aiohttp:
-            await wait_for_endpoint("http://localhost:8000", timeout=0)
-            mock_aiohttp.ClientSession.assert_not_called()
+        with patch("aiperf.workers.ready_checker.AioHttpClient") as MockClient:
+            await wait_for_endpoint(["http://x"], ["m"], timeout=0.0)
+            MockClient.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_skips_when_timeout_negative(self) -> None:
-        with patch("aiperf.workers.ready_checker.aiohttp") as mock_aiohttp:
-            await wait_for_endpoint("http://localhost:8000", timeout=-1)
-            mock_aiohttp.ClientSession.assert_not_called()
+    async def test_skips_when_no_urls(self) -> None:
+        with patch("aiperf.workers.ready_checker.AioHttpClient") as MockClient:
+            await wait_for_endpoint([], ["m"], timeout=10.0)
+            MockClient.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_returns_immediately_on_success(self) -> None:
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
+    async def test_models_mode_requires_model_names(self) -> None:
+        with pytest.raises(ValueError, match="requires at least one model name"):
+            await wait_for_endpoint(["http://x"], [], mode="models", timeout=10.0)
 
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+class TestModelsMode:
+    @pytest.mark.asyncio
+    async def test_success_when_model_in_payload(self) -> None:
+        body = '{"object":"list","data":[{"id":"m-1","object":"model"}]}'
+        client = AsyncMock()
+        client.get_request = AsyncMock(return_value=_record(200, body))
+        client.close = AsyncMock()
+
+        with patch("aiperf.workers.ready_checker.AioHttpClient", return_value=client):
+            await wait_for_endpoint(["http://x"], ["m-1"], mode="models", timeout=10.0)
+
+        client.get_request.assert_awaited_once()
+        client.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_404_falls_back_to_base_url(self) -> None:
+        client = AsyncMock()
+        client.get_request = AsyncMock(side_effect=[_record(404), _record(200, "ok")])
+        client.close = AsyncMock()
+
+        with patch("aiperf.workers.ready_checker.AioHttpClient", return_value=client):
+            await wait_for_endpoint(["http://x"], ["m-1"], mode="models", timeout=10.0)
+
+        assert client.get_request.await_count == 2
+        first_url = client.get_request.await_args_list[0].args[0]
+        second_url = client.get_request.await_args_list[1].args[0]
+        assert first_url.endswith("/v1/models")
+        assert second_url == "http://x"
+
+    @pytest.mark.asyncio
+    async def test_timeout_when_model_never_appears(self) -> None:
+        empty_body = '{"object":"list","data":[]}'
+        client = AsyncMock()
+        client.get_request = AsyncMock(return_value=_record(200, empty_body))
+        client.close = AsyncMock()
 
         with (
-            patch(
-                "aiperf.workers.ready_checker.aiohttp.ClientSession",
-                return_value=mock_session,
-            ),
-            patch("aiperf.workers.ready_checker.create_tcp_connector"),
+            patch("aiperf.workers.ready_checker.AioHttpClient", return_value=client),
+            patch("aiperf.workers.ready_checker.asyncio.sleep", new_callable=AsyncMock),
+            pytest.raises(TimeoutError, match="Timed out"),
         ):
-            await wait_for_endpoint("http://localhost:8000", timeout=10)
+            await wait_for_endpoint(
+                ["http://x"],
+                ["m-1"],
+                mode="models",
+                timeout=0.1,
+                interval=0.01,
+            )
 
-        mock_session.post.assert_called_once()
-        call_args = mock_session.post.call_args
-        assert "/v1/chat/completions" in call_args[0][0]
+
+class TestInferenceMode:
+    @pytest.mark.asyncio
+    async def test_success_on_first_post(self) -> None:
+        client = AsyncMock()
+        client.post_request = AsyncMock(return_value=_record(200))
+        client.close = AsyncMock()
+
+        with patch("aiperf.workers.ready_checker.AioHttpClient", return_value=client):
+            await wait_for_endpoint(
+                ["http://x"], ["m-1"], mode="inference", timeout=10.0
+            )
+
+        client.post_request.assert_awaited_once()
+        post_url = client.post_request.await_args.args[0]
+        assert post_url.endswith("/v1/chat/completions")
 
     @pytest.mark.asyncio
-    async def test_retries_on_500(self) -> None:
-        call_count = 0
+    async def test_4xx_counts_as_ready(self) -> None:
+        client = AsyncMock()
+        client.post_request = AsyncMock(return_value=_record(401))
+        client.close = AsyncMock()
 
-        mock_resp_fail = AsyncMock()
-        mock_resp_fail.status = 503
-        mock_resp_fail.__aenter__ = AsyncMock(return_value=mock_resp_fail)
-        mock_resp_fail.__aexit__ = AsyncMock(return_value=False)
+        with patch("aiperf.workers.ready_checker.AioHttpClient", return_value=client):
+            await wait_for_endpoint(
+                ["http://x"], ["m-1"], mode="inference", timeout=10.0
+            )
 
-        mock_resp_ok = AsyncMock()
-        mock_resp_ok.status = 200
-        mock_resp_ok.__aenter__ = AsyncMock(return_value=mock_resp_ok)
-        mock_resp_ok.__aexit__ = AsyncMock(return_value=False)
+        client.post_request.assert_awaited_once()
 
-        def side_effect(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            return mock_resp_fail if call_count == 1 else mock_resp_ok
-
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(side_effect=side_effect)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+    @pytest.mark.asyncio
+    async def test_retries_on_5xx(self) -> None:
+        client = AsyncMock()
+        client.post_request = AsyncMock(side_effect=[_record(503), _record(200)])
+        client.close = AsyncMock()
 
         with (
-            patch(
-                "aiperf.workers.ready_checker.aiohttp.ClientSession",
-                return_value=mock_session,
-            ),
-            patch("aiperf.workers.ready_checker.create_tcp_connector"),
+            patch("aiperf.workers.ready_checker.AioHttpClient", return_value=client),
             patch("aiperf.workers.ready_checker.asyncio.sleep", new_callable=AsyncMock),
         ):
-            await wait_for_endpoint("http://localhost:8000", timeout=30)
-
-        assert call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_retries_on_connection_error(self) -> None:
-        call_count = 0
-
-        mock_resp_ok = AsyncMock()
-        mock_resp_ok.status = 200
-        mock_resp_ok.__aenter__ = AsyncMock(return_value=mock_resp_ok)
-        mock_resp_ok.__aexit__ = AsyncMock(return_value=False)
-
-        def side_effect(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise aiohttp.ClientConnectorError(
-                    connection_key=MagicMock(), os_error=OSError("refused")
-                )
-            return mock_resp_ok
-
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(side_effect=side_effect)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        with (
-            patch(
-                "aiperf.workers.ready_checker.aiohttp.ClientSession",
-                return_value=mock_session,
-            ),
-            patch("aiperf.workers.ready_checker.create_tcp_connector"),
-            patch("aiperf.workers.ready_checker.asyncio.sleep", new_callable=AsyncMock),
-        ):
-            await wait_for_endpoint("http://localhost:8000", timeout=30)
-
-        assert call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_timeout_raises(self) -> None:
-        mock_resp = AsyncMock()
-        mock_resp.status = 503
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        with (
-            patch(
-                "aiperf.workers.ready_checker.aiohttp.ClientSession",
-                return_value=mock_session,
-            ),
-            patch("aiperf.workers.ready_checker.create_tcp_connector"),
-            patch("aiperf.workers.ready_checker.asyncio.sleep", new_callable=AsyncMock),
-            patch(
-                "aiperf.workers.ready_checker.time.perf_counter",
-                side_effect=[0, 0, 100],
-            ),
-            pytest.raises(TimeoutError, match="not ready after"),
-        ):
-            await wait_for_endpoint("http://localhost:8000", timeout=10)
-
-    @pytest.mark.asyncio
-    async def test_uses_completions_path(self) -> None:
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        with (
-            patch(
-                "aiperf.workers.ready_checker.aiohttp.ClientSession",
-                return_value=mock_session,
-            ),
-            patch("aiperf.workers.ready_checker.create_tcp_connector"),
-        ):
             await wait_for_endpoint(
-                "http://localhost:8000",
-                endpoint_type="completions",
-                timeout=10,
+                ["http://x"],
+                ["m-1"],
+                mode="inference",
+                timeout=10.0,
+                interval=0.01,
             )
 
-        call_url = mock_session.post.call_args[0][0]
-        assert "/v1/completions" in call_url
+        assert client.post_request.await_count == 2
 
+
+class TestMultiURLMultiModel:
     @pytest.mark.asyncio
-    async def test_custom_path_override(self) -> None:
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
+    async def test_iterates_all_urls_and_models(self) -> None:
+        body = '{"data":[{"id":"m-1"},{"id":"m-2"}]}'
+        client = AsyncMock()
+        client.get_request = AsyncMock(return_value=_record(200, body))
+        client.close = AsyncMock()
 
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        with (
-            patch(
-                "aiperf.workers.ready_checker.aiohttp.ClientSession",
-                return_value=mock_session,
-            ),
-            patch("aiperf.workers.ready_checker.create_tcp_connector"),
-        ):
+        with patch("aiperf.workers.ready_checker.AioHttpClient", return_value=client):
             await wait_for_endpoint(
-                "http://localhost:8000",
-                path="/custom/generate",
-                timeout=10,
+                ["http://a", "http://b"],
+                ["m-1", "m-2"],
+                mode="models",
+                timeout=10.0,
             )
 
-        call_url = mock_session.post.call_args[0][0]
-        assert call_url == "http://localhost:8000/custom/generate"
+        # 2 URLs x 2 models = 4 probes
+        assert client.get_request.await_count == 4
 
     @pytest.mark.asyncio
-    async def test_model_name_injected(self) -> None:
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
+    async def test_both_mode_runs_models_then_inference_per_url(self) -> None:
+        body = '{"data":[{"id":"m-1"}]}'
+        client = AsyncMock()
+        client.get_request = AsyncMock(return_value=_record(200, body))
+        client.post_request = AsyncMock(return_value=_record(200))
+        client.close = AsyncMock()
 
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        with (
-            patch(
-                "aiperf.workers.ready_checker.aiohttp.ClientSession",
-                return_value=mock_session,
-            ),
-            patch("aiperf.workers.ready_checker.create_tcp_connector"),
-        ):
+        with patch("aiperf.workers.ready_checker.AioHttpClient", return_value=client):
             await wait_for_endpoint(
-                "http://localhost:8000",
-                model="llama-3-8b",
-                timeout=10,
+                ["http://a", "http://b"],
+                ["m-1"],
+                mode="both",
+                timeout=10.0,
             )
 
-        payload = mock_session.post.call_args[1]["json"]
-        assert payload["model"] == "llama-3-8b"
-
-    @pytest.mark.asyncio
-    async def test_api_key_sent(self) -> None:
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        with (
-            patch(
-                "aiperf.workers.ready_checker.aiohttp.ClientSession",
-                return_value=mock_session,
-            ),
-            patch("aiperf.workers.ready_checker.create_tcp_connector"),
-        ):
-            await wait_for_endpoint(
-                "http://localhost:8000",
-                api_key="sk-test-key",
-                timeout=10,
-            )
-
-        headers = mock_session.post.call_args[1]["headers"]
-        assert headers["Authorization"] == "Bearer sk-test-key"
-
-    @pytest.mark.asyncio
-    async def test_400_counts_as_ready(self) -> None:
-        """4xx means server is up and model loaded, just bad request params."""
-        mock_resp = AsyncMock()
-        mock_resp.status = 400
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        with (
-            patch(
-                "aiperf.workers.ready_checker.aiohttp.ClientSession",
-                return_value=mock_session,
-            ),
-            patch("aiperf.workers.ready_checker.create_tcp_connector"),
-        ):
-            await wait_for_endpoint("http://localhost:8000", timeout=10)
-
-
-class TestCannedPayloads:
-    def test_chat_payload_has_messages(self) -> None:
-        payload = _CANNED_PAYLOADS["chat"]
-        assert "messages" in payload
-        assert payload["max_tokens"] == 1
-
-    def test_completions_payload_has_prompt(self) -> None:
-        payload = _CANNED_PAYLOADS["completions"]
-        assert "prompt" in payload
-        assert payload["max_tokens"] == 1
-
-    def test_embeddings_payload_has_input(self) -> None:
-        payload = _CANNED_PAYLOADS["embeddings"]
-        assert "input" in payload
-
-    def test_default_paths_cover_main_types(self) -> None:
-        assert "chat" in _DEFAULT_PATHS
-        assert "completions" in _DEFAULT_PATHS
-        assert "embeddings" in _DEFAULT_PATHS
+        # 2 URLs: models x 2 + inference x 2
+        assert client.get_request.await_count == 2
+        assert client.post_request.await_count == 2

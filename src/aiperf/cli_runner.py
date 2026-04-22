@@ -30,11 +30,53 @@ def run_benchmark(plan: BenchmarkPlan) -> None:
             "Set --num-profile-runs to at least 2 to enable adaptive convergence."
         )
 
+    _preflight_endpoint_ready(plan)
+
     if plan.is_single_run:
         run = _make_benchmark_run(plan.configs[0])
         _run_single_benchmark(run)
     else:
         _run_multi_benchmark(plan)
+
+
+def _preflight_endpoint_ready(plan: BenchmarkPlan) -> None:
+    """Block until the target endpoint is ready (see ready_checker).
+
+    Runs before any service bootstrap so a slow/down server fails fast with
+    a clear error instead of timing out inside the system controller. Uses
+    the endpoint config of the first run in the plan — multi-run sweeps are
+    assumed to share an endpoint.
+    """
+    import asyncio
+    import logging
+
+    cfg = plan.configs[0].endpoint
+    if cfg.ready_check_timeout <= 0:
+        return
+
+    # Preflight runs before rich logging is installed; install a minimal
+    # stderr handler so probe lines are visible.
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
+
+    from aiperf.workers.ready_checker import wait_for_endpoint
+
+    asyncio.run(
+        wait_for_endpoint(
+            urls=list(cfg.urls),
+            model_names=plan.configs[0].get_model_names(),
+            mode=cfg.ready_check_mode,
+            endpoint_type=str(cfg.type),
+            path=cfg.path,
+            timeout=cfg.ready_check_timeout,
+            interval=cfg.ready_check_interval,
+            api_key=cfg.api_key,
+            headers=cfg.headers or None,
+        )
+    )
 
 
 def _make_benchmark_run(

@@ -2,7 +2,7 @@
 apiVersion: aiperf.nvidia.com/v1alpha1
 kind: AIPerfJob
 metadata:
-  name: mock-500k-run6
+  name: mock-500k-ramp
   namespace: acasagrande-aiperf-bench
 spec:
   benchmark:
@@ -48,7 +48,7 @@ spec:
       records:
         - jsonl
 
-  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260421-163542-bb62f26b8
+  image: nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260422-004743-17d5d810a
   connectionsPerWorker: 1000
   resourceMode: burstable
   ttlSecondsAfterFinished: 3600
@@ -92,3 +92,11 @@ spec:
         value: 32Gi
       - name: AIPERF_K8S_API_CPU
         value: "1000m"
+      # Grace window for heartbeat watchdog: 5s interval × 12 = 60s before a
+      # service is flagged dead. At Kubernetes scale the batch scanner in
+      # base_service_manager._monitor_heartbeats can fall behind during startup
+      # bursts and flag ~100+ healthy WGMs simultaneously; 60s gives startup
+      # thrash and transient controller-overload stalls room to recover before
+      # declaring death. Revisit once per-service deadline tracking lands.
+      - name: AIPERF_SERVICE_HEARTBEAT_MISSED_THRESHOLD
+        value: "12"

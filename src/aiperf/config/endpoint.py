@@ -9,7 +9,7 @@ Endpoint - Server connection and API configuration
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     ConfigDict,
@@ -151,8 +151,30 @@ class EndpointConfig(BaseConfig):
             ge=0.0,
             default=0.0,
             description="Seconds to wait for endpoint readiness before benchmarking "
-            "(0 = skip). Sends a real inference request to verify the model "
-            "is loaded and can generate output, not just a /health check.",
+            "(0 = skip). Probes every URL x model name; see ready_check_mode for "
+            "how the probe is performed.",
+        ),
+    ]
+
+    ready_check_mode: Annotated[
+        Literal["models", "inference", "both"],
+        Field(
+            default="inference",
+            description="How ready_check_timeout probes the endpoint. "
+            "'models': GET /v1/models and check data[].id (cheap, matches PR #841 "
+            "behavior; falls back to a plain base-URL GET if /v1/models returns 404). "
+            "'inference': POST a canned 1-token inference (strongest signal — proves "
+            "weights are loaded and a forward pass works). "
+            "'both': run models first, then inference, on each URL.",
+        ),
+    ]
+
+    ready_check_interval: Annotated[
+        float,
+        Field(
+            gt=0.0,
+            default=5.0,
+            description="Seconds between readiness probe attempts.",
         ),
     ]
 
