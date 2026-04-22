@@ -137,23 +137,39 @@ def preload_tokenizers(
     )
 
     if not resolved_names:
+        if logger:
+            logger.debug("Tokenizer preload skipped: validation was not run")
         return
 
     names_to_load: list[str] = []
     for name in set(resolved_names.values()):
         # tiktoken/builtin: no HF download needed
         if name == BUILTIN_TOKENIZER_NAME or name in TIKTOKEN_ENCODING_NAMES:
+            if logger:
+                logger.debug(
+                    f"Tokenizer preload skipped for '{name}': tiktoken backend"
+                )
             continue
         # Local path: files already on disk
         p = Path(name)
         if p.is_absolute() or name.startswith(("./", "../")) or p.is_dir():
+            if logger:
+                logger.debug(f"Tokenizer preload skipped for '{name}': local path")
             continue
         # Already in HF disk cache
         if _is_hf_cached(name):
+            if logger:
+                logger.debug(
+                    f"Tokenizer preload skipped for '{name}': already in HF cache"
+                )
             continue
         names_to_load.append(name)
 
     if not names_to_load:
+        if logger:
+            logger.debug(
+                "Tokenizer preload: all tokenizers already cached, no download needed"
+            )
         return
 
     if logger:
