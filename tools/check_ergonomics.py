@@ -22,7 +22,7 @@ Fails the build on *new* violations of the 8 rules in
 Existing violations are grandfathered via a baseline file at
 ``tools/ergonomics_baseline.json``. Regenerate the baseline with::
 
-    python -m tools.check_ergonomics --regenerate-baseline
+    python tools/check_ergonomics.py --regenerate-baseline
 
 Checks (each can also be run in isolation with --only <check>):
 
@@ -36,10 +36,10 @@ Checks (each can also be run in isolation with --only <check>):
     stdlib-json         no ``import json`` / ``json.dumps`` / ``json.loads``
 
 Usage:
-    python -m tools.check_ergonomics                 # run all checks
-    python -m tools.check_ergonomics --only file-size
-    python -m tools.check_ergonomics --regenerate-baseline
-    python -m tools.check_ergonomics file1.py file2.py   # check specific files
+    python tools/check_ergonomics.py                 # run all checks
+    python tools/check_ergonomics.py --only file-size
+    python tools/check_ergonomics.py --regenerate-baseline
+    python tools/check_ergonomics.py file1.py file2.py   # check specific files
 
 Thresholds live at the top of this file; adjust as the codebase cleans up.
 """
@@ -119,7 +119,7 @@ def write_baseline(violations: list[Violation]) -> None:
             {
                 "_comment": (
                     "Pre-existing violations of tools/check_ergonomics.py. "
-                    "Regenerate with: python -m tools.check_ergonomics "
+                    "Regenerate with: python tools/check_ergonomics.py "
                     "--regenerate-baseline. New entries here should be rare "
                     "and justified; prefer fixing the underlying violation."
                 ),
@@ -610,7 +610,7 @@ def main() -> int:
     print(
         "\nIf a violation is unavoidable, fix it at the site. "
         "To accept a new baselined entry (rare), run:\n"
-        "  python -m tools.check_ergonomics --regenerate-baseline",
+        "  python tools/check_ergonomics.py --regenerate-baseline",
         file=sys.stderr,
     )
     return 1

@@ -1,5 +1,5 @@
 {
-  "_comment": "Pre-existing violations of tools/check_ergonomics.py. Regenerate with: python -m tools.check_ergonomics --regenerate-baseline. New entries here should be rare and justified; prefer fixing the underlying violation.",
+  "_comment": "Pre-existing violations of tools/check_ergonomics.py. Regenerate with: python tools/check_ergonomics.py --regenerate-baseline. New entries here should be rare and justified; prefer fixing the underlying violation.",
   "violations": [
     [
       "exception-message",
