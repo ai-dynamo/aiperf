@@ -533,7 +533,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         export_data = self._generate_json_export_data(
             records,
             profile_results,
-            include_telemetry=False,
         )
         export_data.checkpoint = True
         export_data.records_completed = total_records
@@ -631,8 +630,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self,
         records: list[MetricResult],
         profile_results: ProfileResults,
-        *,
-        include_telemetry: bool = True,
     ) -> JsonExportData:
         """Generate JsonExportData for ConfigMap publishing.
 
@@ -665,11 +662,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             else None
         )
 
-        # Telemetry data is produced by GPUTelemetryManager via its own
-        # ProcessTelemetryResultMessage; RecordsManager no longer accumulates it,
-        # so partial checkpoints written here omit telemetry.
-        telemetry_data = None
-
         # Create base export data
         export_data = JsonExportData(
             schema_version=JsonExportData.SCHEMA_VERSION,
@@ -680,7 +672,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             error_summary=profile_results.error_summary,
             start_time=start_time,
             end_time=end_time,
-            telemetry_data=telemetry_data,
+            telemetry_data=None,
         )
 
         # Add all metrics dynamically

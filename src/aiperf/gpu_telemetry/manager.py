@@ -78,7 +78,6 @@ class GPUTelemetryManager(BaseComponentService):
         )
 
         self._collectors: dict[str, GPUTelemetryCollectorProtocol] = {}
-        self._collector_id_to_url: dict[str, str] = {}
         self._shutdown_task: asyncio.Task[None] | None = None
 
         self._telemetry_disabled = not run.cfg.gpu_telemetry.enabled
@@ -215,7 +214,6 @@ class GPUTelemetryManager(BaseComponentService):
             return
 
         self._collectors.clear()
-        self._collector_id_to_url.clear()
 
         # Phase 1: Test reachability for all endpoints
         if self._collector_type == GPUTelemetryCollectorType.PYNVML:
@@ -244,7 +242,6 @@ class GPUTelemetryManager(BaseComponentService):
             is_available = await collector.is_url_reachable()
             if is_available:
                 self._collectors[PYNVML_SOURCE_IDENTIFIER] = collector
-                self._collector_id_to_url[collector_id] = PYNVML_SOURCE_IDENTIFIER
                 self.debug("GPU Telemetry: pynvml collector configured successfully")
                 await self._send_telemetry_status(
                     enabled=True,
@@ -283,7 +280,6 @@ class GPUTelemetryManager(BaseComponentService):
         for dcgm_url in self._dcgm_endpoints:
             self.debug(f"GPU Telemetry: Testing reachability of {dcgm_url}")
             collector_id = f"collector_{dcgm_url.replace(':', '_').replace('/', '_')}"
-            self._collector_id_to_url[collector_id] = dcgm_url
             collector = DCGMTelemetryCollector(
                 dcgm_url=dcgm_url,
                 collection_interval=self._collection_interval,
