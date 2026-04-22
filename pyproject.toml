@@ -68,6 +68,7 @@ dependencies = [
   "zstandard>=0.25.0",
   "python-multipart>=0.0.22",
   "kr8s>=0.20.15",
+  "kubernetes_asyncio>=32.0,<33.0",
   "duckdb>=1.5.0",
   "httpcore[http2]>=1.0.0",
 ]
