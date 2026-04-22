@@ -9,10 +9,9 @@ import math
 from enum import Enum
 
 import numpy as np
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from aiperf.common.models import AIPerfBaseModel
-from aiperf.config._base import BaseConfig
 
 
 class PercentileStats(AIPerfBaseModel):
@@ -254,7 +253,7 @@ def _default_generation_length() -> LognormalParams:
     return LognormalParams(mean=500, median=300)
 
 
-class SessionDistributionConfig(BaseConfig):
+class SessionDistributionConfig(BaseModel):
     """Full configuration for synthesizing Agentic Code sessions.
 
     initial_context is derived: L1 + L1.5 + sampled L2. Not directly configured.
