@@ -1533,14 +1533,50 @@
         },
         "readyCheckTimeout": {
           "default": 0.0,
-          "description": "Seconds to wait for endpoint readiness before benchmarking (0 = skip). Sends a real inference request to verify the model is loaded and can generate output, not just a /health check.",
+          "description": "Seconds to wait for endpoint readiness before benchmarking (0 = skip). Probes every URL x model name; see ready_check_mode for how the probe is performed.",
           "title": "Readychecktimeout",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Seconds to wait for endpoint readiness before benchmarking (0 = skip). Sends a real inference request to verify the model is loaded and can generate output, not just a /health check.",
+              "description": "Seconds to wait for endpoint readiness before benchmarking (0 = skip). Probes every URL x model name; see ready_check_mode for how the probe is performed.",
               "minimum": 0.0,
               "title": "Readychecktimeout",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "readyCheckMode": {
+          "default": "inference",
+          "description": "How ready_check_timeout probes the endpoint. 'models': GET /v1/models and check data[].id (cheap, matches PR #841 behavior; falls back to a plain base-URL GET if /v1/models returns 404). 'inference': POST a canned 1-token inference (strongest signal — proves weights are loaded and a forward pass works). 'both': run models first, then inference, on each URL.",
+          "enum": [
+            "models",
+            "inference",
+            "both"
+          ],
+          "title": "Readycheckmode",
+          "type": "string"
+        },
+        "readyCheckInterval": {
+          "default": 5.0,
+          "description": "Seconds between readiness probe attempts.",
+          "title": "Readycheckinterval",
+          "oneOf": [
+            {
+              "default": 5.0,
+              "description": "Seconds between readiness probe attempts.",
+              "exclusiveMinimum": 0.0,
+              "title": "Readycheckinterval",
               "type": "number"
             },
             {

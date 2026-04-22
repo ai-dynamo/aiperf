@@ -132,7 +132,11 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
         if (not record or not record.valid) and not self.has_flags(
             MetricFlags.ERROR_ONLY
         ):
-            raise NoMetricValue("Invalid Record")
+            raise NoMetricValue(
+                f"{type(self).__name__} cannot compute a value from this "
+                "record: record is missing or marked invalid, and this "
+                "metric is not flagged ERROR_ONLY"
+            )
 
     def _check_metrics(self, metrics: MetricRecordDict | MetricResultsDict) -> None:
         """Check that the required metrics are available."""

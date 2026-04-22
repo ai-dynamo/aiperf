@@ -28,12 +28,6 @@ from dataclasses import field as dc_field
 from typing import Any
 
 import orjson
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from msgspec import Struct
 
 from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
@@ -44,6 +38,12 @@ from aiperf.common.models import (
     TextResponseData,
 )
 from aiperf.common.models.dataset_models import Text, Turn
+from aiperf.common.models.model_endpoint_info import (
+    EndpointInfo,
+    ModelEndpointInfo,
+    ModelInfo,
+    ModelListInfo,
+)
 from aiperf.common.models.record_models import RequestInfo, SSEField, TokenCounts
 from aiperf.endpoints.openai_chat import ChatEndpoint
 

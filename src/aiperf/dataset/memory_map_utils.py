@@ -207,7 +207,11 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             RuntimeError: If already finalized
         """
         if self._finalized:
-            raise RuntimeError("Already finalized")
+            raise RuntimeError(
+                "MemoryMapDatasetBuilder.finalize() called on an already-"
+                "finalized builder; each builder instance may be finalized "
+                "at most once — construct a new builder for additional datasets."
+            )
 
         index = MemoryMapDatasetIndex(
             conversation_ids=self._session_ids,

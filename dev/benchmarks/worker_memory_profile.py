@@ -17,13 +17,6 @@ import time
 import tracemalloc
 import uuid
 
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
-
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
     Conversation,
@@ -32,6 +25,12 @@ from aiperf.common.models import (
     SSEMessage,
     Text,
     Turn,
+)
+from aiperf.common.models.model_endpoint_info import (
+    EndpointInfo,
+    ModelEndpointInfo,
+    ModelInfo,
+    ModelListInfo,
 )
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.workers.session_manager import UserSession, UserSessionManager

@@ -117,6 +117,29 @@ repos:
         files: ^(src/aiperf|tests)/.*\.py$
         pass_filenames: false
         args: []
+      - id: check-ergonomics
+        name: check-ergonomics
+        description: >-
+          LLM-ergonomics checks — file size, function size, nesting depth,
+          module-level mutable state, duplicate class names, wide positional
+          signatures, Pydantic field count, stdlib-json ban. Pre-existing
+          violations are grandfathered via tools/ergonomics_baseline.json.
+        entry: python tools/check_ergonomics.py
+        language: python
+        files: ^src/aiperf/.*\.py$
+        pass_filenames: true
+      - id: check-ruff-baseline-drift
+        name: check-ruff-baseline-drift
+        description: >-
+          Run ruff for the LLM-ergonomics rules (PLR0915, PLR0912, C901,
+          TID251) and filter through the out-of-band baseline at
+          tools/ruff_baseline.json (keyed on (rule, file, function-name) —
+          no # noqa comments or per-file ignores). New violations fail the
+          commit; pre-existing grandfathered ones don't.
+        entry: python tools/ruff_baselined.py
+        language: system
+        files: ^src/aiperf/.*\.py$
+        pass_filenames: true
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.11.8
     hooks:
