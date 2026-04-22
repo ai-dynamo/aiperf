@@ -9,8 +9,6 @@ from aiperf.common.message_codecs import MsgspecStructCodec
 from aiperf.common.metric_records_wire import (
     MetricRecordsBatchWireMessage,
     MetricRecordsWireMessage,
-    ServerMetricsRecordWireMessage,
-    TelemetryRecordsWireMessage,
 )
 
 RAW_INFERENCE_CODEC = MsgspecStructCodec(
@@ -19,11 +17,6 @@ RAW_INFERENCE_CODEC = MsgspecStructCodec(
 )
 
 RECORDS_CODEC = MsgspecStructCodec(
-    decode_type=(
-        MetricRecordsWireMessage
-        | MetricRecordsBatchWireMessage
-        | TelemetryRecordsWireMessage
-        | ServerMetricsRecordWireMessage
-    ),
+    decode_type=(MetricRecordsWireMessage | MetricRecordsBatchWireMessage),
     cache_key="records-msgpack",
 )

@@ -11,8 +11,6 @@ from msgspec import Struct
 
 from aiperf.common.enums import CreditPhase, MessageType, MetricValueTypeT
 from aiperf.common.models.error_models import ErrorDetails
-from aiperf.common.models.server_metrics_models import ServerMetricsRecord
-from aiperf.common.models.telemetry_models import TelemetryRecord
 from aiperf.common.models.trace_models import AioHttpTraceData, BaseTraceData
 from aiperf.common.types import MetricTagT
 
@@ -197,49 +195,6 @@ class MetricRecordsBatchWireMessage(
 
     records: list[MetricRecordsData]
     """Batch of computed metric records."""
-
-
-class TelemetryRecordsWireMessage(
-    Struct,
-    frozen=True,
-    kw_only=True,
-    omit_defaults=True,
-    tag_field="t",
-    tag="tlr",
-):
-    """Wire envelope carrying a batch of telemetry records on the RECORDS channel."""
-
-    message_type: MessageType = MessageType.TELEMETRY_RECORDS
-    service_id: str
-    collector_id: str
-    dcgm_url: str
-    records: tuple[TelemetryRecord, ...] = ()
-    error: WireErrorDetails | None = None
-
-    @property
-    def valid(self) -> bool:
-        return self.error is None and len(self.records) > 0
-
-
-class ServerMetricsRecordWireMessage(
-    Struct,
-    frozen=True,
-    kw_only=True,
-    omit_defaults=True,
-    tag_field="t",
-    tag="smr",
-):
-    """Wire envelope for a single server-metrics record on the RECORDS channel."""
-
-    message_type: MessageType = MessageType.SERVER_METRICS_RECORD
-    service_id: str
-    collector_id: str
-    record: ServerMetricsRecord | None = None
-    error: WireErrorDetails | None = None
-
-    @property
-    def valid(self) -> bool:
-        return self.error is None and self.record is not None
 
 
 def _error_to_wire(error: ErrorDetails | None) -> WireErrorDetails | None:

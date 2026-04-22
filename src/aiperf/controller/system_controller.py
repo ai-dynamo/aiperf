@@ -399,12 +399,12 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
 
     async def start_realtime_telemetry(self) -> None:
-        """Send START_REALTIME_TELEMETRY command to RecordsManager(s)."""
-        rm_ids = [
+        """Send START_REALTIME_TELEMETRY command to GPUTelemetryManager(s)."""
+        gpu_ids = [
             s.service_id
-            for s in ServiceRegistry.get_services(ServiceType.RECORDS_MANAGER)
+            for s in ServiceRegistry.get_services(ServiceType.GPU_TELEMETRY_MANAGER)
         ]
-        for sid in rm_ids:
+        for sid in gpu_ids:
             await self._send_control_command(
                 sid, CommandType.START_REALTIME_TELEMETRY, timeout=5.0
             )

@@ -10,10 +10,8 @@ from typing import TYPE_CHECKING
 import orjson
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.channel_codecs import RECORDS_CODEC
 from aiperf.common.control_structs import Command, ServerMetricsStatus
 from aiperf.common.enums import (
-    CommAddress,
     CommandType,
     MessageType,
     ServerMetricsDiscoveryMode,
@@ -22,10 +20,6 @@ from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.hooks import on_command, on_message, on_stop
 from aiperf.common.messages import ProcessServerMetricsResultMessage
-from aiperf.common.metric_records_wire import (
-    ServerMetricsRecordWireMessage,
-    _error_to_wire,
-)
 from aiperf.common.metric_utils import normalize_metrics_endpoint_url
 from aiperf.common.models import (
     ErrorDetails,
@@ -34,7 +28,6 @@ from aiperf.common.models import (
     ProcessServerMetricsResult,
     ServerMetricsRecord,
 )
-from aiperf.common.protocols import PushClientProtocol
 from aiperf.credit.messages import CreditPhaseStartMessage
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServerMetricsProcessorType
@@ -69,8 +62,6 @@ class ServerMetricsManager(BaseComponentService):
       SERVER_METRICS_PROCESSOR) locally on each collected record
     - Accumulates results and publishes ProcessServerMetricsResultMessage on
       PROFILE_COMPLETE
-    - (Transitional) Also forwards records as ServerMetricsRecordWireMessage to
-      RecordsManager; this redundant push is removed in Task 4.
     - Handles errors gracefully with ErrorDetails
 
     Args:
@@ -88,11 +79,6 @@ class ServerMetricsManager(BaseComponentService):
             run=run,
             service_id=service_id,
             **kwargs,
-        )
-
-        self.records_push_client: PushClientProtocol = self.comms.create_push_client(
-            CommAddress.RECORDS,
-            codec=RECORDS_CODEC,
         )
 
         self._collectors: dict[str, ServerMetricsDataCollector] = {}
@@ -389,8 +375,8 @@ class ServerMetricsManager(BaseComponentService):
             )
             return
 
-        # Task 4 will populate this payload from RecordsManager; for now it is
-        # typically empty and we fall back to current time for the time bounds.
+        # RecordsManager sends the results time window in the PROFILE_COMPLETE
+        # payload. Fall back to current time if unavailable.
         start_ns: int | None = None
         end_ns: int | None = None
         if message.payload:
@@ -503,14 +489,11 @@ class ServerMetricsManager(BaseComponentService):
     async def _on_server_metrics_records(
         self, records: list[ServerMetricsRecord], collector_id: str
     ) -> None:
-        """Fan out records to all loaded server metrics processors, then push via ZMQ.
+        """Fan out records to all loaded server metrics processors.
 
-        Two paths run side-by-side:
-        - Local fan-out: a single flattened gather over every (processor, record)
-          pair. Server metrics storage tolerates out-of-order ingestion, so
-          per-record serialization provides no correctness benefit.
-        - Wire push: transitional forwarding of each record to RecordsManager via
-          ZMQ push socket, preserving metadata. Removed in Task 4.
+        A single flattened gather runs over every (processor, record) pair.
+        Server metrics storage tolerates out-of-order ingestion, so per-record
+        serialization provides no correctness benefit.
 
         Args:
             records: List of ServerMetricsRecord objects from a collection cycle.
@@ -534,42 +517,15 @@ class ServerMetricsManager(BaseComponentService):
                 self.exception(f"Failed to process server metrics record: {error!r}")
                 self._error_state.error_counts[ErrorDetails.from_exception(error)] += 1
 
-        for record in records:
-            try:
-                message = ServerMetricsRecordWireMessage(
-                    service_id=self.service_id,
-                    collector_id=collector_id,
-                    record=record,
-                )
-
-                await self.records_push_client.push(message)
-
-            except Exception as e:
-                self.error(
-                    f"Failed to send server metrics record from {collector_id}: {e}"
-                )
-                # Send error message to RecordsManager to track the failure
-                try:
-                    error_message = ServerMetricsRecordWireMessage(
-                        service_id=self.service_id,
-                        collector_id=collector_id,
-                        error=_error_to_wire(ErrorDetails.from_exception(e)),
-                    )
-                    await self.records_push_client.push(error_message)
-                except Exception as nested_error:
-                    self.error(
-                        f"Failed to send error message after record send failure: {nested_error}"
-                    )
-
     async def _on_server_metrics_error(
         self, error: ErrorDetails, collector_id: str
     ) -> None:
         """Async callback for receiving server metrics errors from collectors.
 
         Called by ServerMetricsDataCollector when collection fails (e.g., network
-        timeout, HTTP error, parsing failure). Forwards error to RecordsManager
-        for tracking and reporting, allowing the system to continue operation
-        despite individual collector failures.
+        timeout, HTTP error, parsing failure). Records the error against the local
+        error state so it is reflected in the published
+        ProcessServerMetricsResultMessage on PROFILE_COMPLETE.
 
         This callback-based error handling prevents exceptions from crashing
         the collector's background task, enabling recovery on subsequent scrapes.
@@ -579,18 +535,6 @@ class ServerMetricsManager(BaseComponentService):
             collector_id: Unique identifier of the collector (typically endpoint URL)
         """
         self._error_state.error_counts[error] += 1
-
-        try:
-            error_message = ServerMetricsRecordWireMessage(
-                service_id=self.service_id,
-                collector_id=collector_id,
-                error=_error_to_wire(error),
-            )
-
-            await self.records_push_client.push(error_message)
-
-        except Exception as e:
-            self.error(f"Failed to send server metrics error message: {e}")
 
     async def _send_server_metrics_status(
         self,

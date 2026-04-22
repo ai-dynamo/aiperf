@@ -8,9 +8,8 @@ from typing import TYPE_CHECKING
 import orjson
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.channel_codecs import RECORDS_CODEC
 from aiperf.common.control_structs import Command, TelemetryStatus
-from aiperf.common.enums import CommAddress, CommandType, MessageType
+from aiperf.common.enums import CommandType, MessageType
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
@@ -18,10 +17,6 @@ from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.hooks import on_command, on_init, on_message, on_stop
 from aiperf.common.messages import ProcessTelemetryResultMessage
-from aiperf.common.metric_records_wire import (
-    TelemetryRecordsWireMessage,
-    _error_to_wire,
-)
 from aiperf.common.models import (
     ErrorDetails,
     ErrorDetailsCount,
@@ -29,7 +24,6 @@ from aiperf.common.models import (
     ProcessTelemetryResult,
     TelemetryRecord,
 )
-from aiperf.common.protocols import PushClientProtocol
 from aiperf.credit.messages import CreditPhaseStartMessage
 from aiperf.gpu_telemetry.constants import PYNVML_SOURCE_IDENTIFIER
 from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
@@ -63,8 +57,6 @@ class GPUTelemetryManager(BaseComponentService):
       GPU_TELEMETRY_PROCESSOR) locally on each collected record
     - Accumulates results and publishes ProcessTelemetryResultMessage on
       PROFILE_COMPLETE
-    - (Transitional) Also forwards records as TelemetryRecordsWireMessage to
-      RecordsManager; this redundant push is removed in Task 4.
     - Handles errors gracefully with ErrorDetails
 
     Args:
@@ -83,11 +75,6 @@ class GPUTelemetryManager(BaseComponentService):
             run=run,
             service_id=service_id,
             **kwargs,
-        )
-
-        self.records_push_client: PushClientProtocol = self.comms.create_push_client(
-            CommAddress.RECORDS,
-            codec=RECORDS_CODEC,
         )
 
         self._collectors: dict[str, GPUTelemetryCollectorProtocol] = {}
@@ -502,9 +489,6 @@ class GPUTelemetryManager(BaseComponentService):
             )
         )
 
-    # TODO(task-4): SystemController currently routes START_REALTIME_TELEMETRY to
-    # RECORDS_MANAGER only. Task 4 re-routes it to GPU_TELEMETRY_MANAGER, at which
-    # point this handler becomes the authoritative entry point.
     @on_command(CommandType.START_REALTIME_TELEMETRY)
     async def _on_start_realtime_telemetry_command(self, message: Command) -> None:
         """Start the realtime telemetry background task on the local accumulator."""
@@ -559,7 +543,7 @@ class GPUTelemetryManager(BaseComponentService):
     ) -> None:
         """Async callback for receiving telemetry records from collectors.
 
-        Sends TelemetryRecordsWireMessage to RecordsManager via message system.
+        Fans out each record to locally-loaded GPU telemetry processors.
         Empty record lists are ignored.
 
         Args:
@@ -583,46 +567,17 @@ class GPUTelemetryManager(BaseComponentService):
                 self.exception(f"Failed to process telemetry record: {error!r}")
                 self._error_state.error_counts[ErrorDetails.from_exception(error)] += 1
 
-        try:
-            dcgm_url = self._collector_id_to_url.get(collector_id, "")
-            wire_message = TelemetryRecordsWireMessage(
-                service_id=self.service_id,
-                collector_id=collector_id,
-                dcgm_url=dcgm_url,
-                records=tuple(records),
-            )
-
-            await self.records_push_client.push(wire_message)
-
-        except Exception as e:
-            self.error(f"Failed to send telemetry records: {e}")
-
     async def _on_telemetry_error(self, error: ErrorDetails, collector_id: str) -> None:
         """Async callback for receiving telemetry errors from collectors.
 
-        Sends error TelemetryRecordsWireMessage to RecordsManager via message system.
-        The message contains an empty records list and the error details.
+        Records the error against the local error state so it is reflected in the
+        published ProcessTelemetryResultMessage on PROFILE_COMPLETE.
 
         Args:
             error: ErrorDetails describing the collection error
             collector_id: Unique identifier of the collector that encountered the error
         """
-
         self._error_state.error_counts[error] += 1
-
-        try:
-            dcgm_url = self._collector_id_to_url.get(collector_id, "")
-            error_message = TelemetryRecordsWireMessage(
-                service_id=self.service_id,
-                collector_id=collector_id,
-                dcgm_url=dcgm_url,
-                error=_error_to_wire(error),
-            )
-
-            await self.records_push_client.push(error_message)
-
-        except Exception as e:
-            self.error(f"Failed to send telemetry error message: {e}")
 
     async def _send_telemetry_status(
         self,
