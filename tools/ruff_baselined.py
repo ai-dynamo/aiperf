@@ -148,7 +148,7 @@ def _enclosing_function(rel: str, line: int) -> str | None:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, ast.ClassDef):
                 stack.append((child, path_names + [child.name]))
-            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            elif isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
                 end = child.end_lineno or child.lineno
                 if child.lineno <= line <= end:
                     qualname = ".".join(path_names + [child.name])

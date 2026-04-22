@@ -225,7 +225,7 @@ def check_file_size(path: Path, rel: str) -> list[Violation]:
 def check_function_size(tree: ast.Module, rel: str) -> list[Violation]:
     out: list[Violation] = []
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             end = node.end_lineno or node.lineno
             length = end - node.lineno + 1
             if length > MAX_FUNCTION_LINES:
@@ -244,7 +244,7 @@ def check_function_size(tree: ast.Module, rel: str) -> list[Violation]:
 def check_nesting_depth(tree: ast.Module, rel: str) -> list[Violation]:
     out: list[Violation] = []
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             depth = _max_depth(node)
             if depth > MAX_NESTING_DEPTH:
                 out.append(
@@ -262,7 +262,7 @@ def check_nesting_depth(tree: ast.Module, rel: str) -> list[Violation]:
 def check_keyword_only_args(tree: ast.Module, rel: str) -> list[Violation]:
     out: list[Violation] = []
     for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             continue
         args = node.args
         pos = len(args.args) + len(args.posonlyargs)
@@ -296,7 +296,7 @@ def check_module_state(tree: ast.Module, rel: str) -> list[Violation]:
     }
     out: list[Violation] = []
     for node in tree.body:
-        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+        if not isinstance(node, ast.Assign | ast.AnnAssign):
             continue
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
         for tgt in targets:
@@ -309,7 +309,7 @@ def check_module_state(tree: ast.Module, rel: str) -> list[Violation]:
             if val is None:
                 continue
             kind: str | None = None
-            if isinstance(val, (ast.Dict, ast.List, ast.Set)):
+            if isinstance(val, ast.Dict | ast.List | ast.Set):
                 kind = type(val).__name__
             elif isinstance(val, ast.Call):
                 func = val.func
