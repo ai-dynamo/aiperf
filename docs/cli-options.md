@@ -38,6 +38,14 @@ Run an AIPerf service in a single process.
 
 Assemble per-category SPEED-Bench aiperf results into a matrix report.
 
+### [`synthesize`](#aiperf-synthesize)
+
+Synthesize a dataset workload.
+
+### [`validate`](#aiperf-validate)
+
+Validate a benchmark artifact.
+
 <hr/>
 
 ## `aiperf --install-completion`
@@ -1169,3 +1177,54 @@ Output format - 'csv', 'table', or 'both'. Defaults to 'both'.
 
 Which metric to report - 'accept_length', 'accept_rate', or 'throughput'. Defaults to 'accept_length'.
 <br/>_Default: `accept_length`_
+
+<hr/>
+
+## `aiperf synthesize`
+
+Synthesize a dataset workload.
+
+#### `--target` `<str>` _(Required)_
+
+Dataset workload to synthesize.
+
+#### `--num-sessions` `<int>`
+
+Number of sessions to generate.
+<br/>_Default: `1000`_
+
+#### `--output` `<str>`
+
+Parent directory for the run directory.
+<br/>_Default: `.`_
+
+#### `--config` `<str>`
+
+Path to config/manifest JSON.
+
+#### `--seed` `<int>`
+
+Random seed for reproducibility.
+<br/>_Default: `42`_
+
+#### `--max-isl` `<int>`
+
+Maximum input sequence length.
+
+#### `--max-osl` `<int>`
+
+Maximum output sequence length.
+
+<hr/>
+
+## `aiperf validate`
+
+Validate a benchmark artifact.
+
+#### `--target` `<str>` _(Required)_
+
+Artifact format to validate.
+
+#### `--input` `<str>` _(Required)_
+
+Path to the artifact file.
