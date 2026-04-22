@@ -5,7 +5,8 @@
 Job resolution, user confirmation, and formatting utilities shared
 across multiple CLI commands.
 
-kr8s-backed operations live in AIPerfKubeClient (aiperf.kubernetes.client).
+kubernetes_asyncio-backed operations live in AIPerfKubeClient
+(aiperf.kubernetes.client).
 """
 
 from __future__ import annotations
