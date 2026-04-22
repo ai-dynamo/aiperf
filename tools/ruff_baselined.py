@@ -149,13 +149,14 @@ def _enclosing_function(rel: str, line: int) -> str | None:
             if isinstance(child, ast.ClassDef):
                 stack.append((child, [*path_names, child.name]))
             elif isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
+                new_path = [*path_names, child.name]
                 end = child.end_lineno or child.lineno
                 if child.lineno <= line <= end:
-                    qualname = ".".join([*path_names, child.name])
+                    qualname = ".".join(new_path)
                     if best is None or child.lineno > best[0]:
                         best = (child.lineno, qualname)
                 # Recurse into nested defs.
-                stack.append((child, [*path_names, child.name]))
+                stack.append((child, new_path))
             else:
                 stack.append((child, path_names))
     result = best[1] if best else None
