@@ -21,7 +21,7 @@ Before starting, confirm:
 - Baseline unit tests all pass:
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/ -q --no-header
 # expected: 1445 passed
 ```
 
@@ -334,9 +334,7 @@ def suppress_noisy_http_loggers() -> None:
 Per memory `feedback_pytest_single_subfolder.md`, run subfolders one at a time. Use these three commands:
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/operator/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/ -q --no-header --ignore=tests/unit/kubernetes --ignore=tests/unit/operator
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/ -q --no-header
 ```
 
 Expected: all green; counts at or above baseline.
@@ -345,7 +343,6 @@ Expected: all green; counts at or above baseline.
 
 ```bash
 ruff format . && ruff check --fix .
-pre-commit run --all-files
 ```
 
 Expected: no failures.
@@ -986,37 +983,18 @@ Also add tests for the facade:
 
 Use `@pytest.mark.asyncio` + `pytest.param` with `# fmt: skip` on the closing `)` per CLAUDE.md.
 
-- [ ] **Step 4: Run kubernetes tests**
+- [ ] **Step 4: Run the full unit suite**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/test_client.py -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/ -q --no-header
 ```
 
-Expected: all tests pass.
+Expected: green (facade preserves behavior — operator + other callers that still use `AIPerfKubeClient.*` keep passing).
 
-- [ ] **Step 5: Run the full kubernetes subfolder**
-
-```bash
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/ -q --no-header
-```
-
-Expected: still green. Other kubernetes tests still mock `kr8s` — that is correct at this stage because `preflight`, `watchdog`, etc. still use `kr8s`; they are migrated in later tasks.
-
-- [ ] **Step 6: Run operator + other subfolders**
-
-```bash
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/operator/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/ -q --no-header \
-  --ignore=tests/unit/kubernetes --ignore=tests/unit/operator
-```
-
-Expected: green.
-
-- [ ] **Step 7: ruff + pre-commit**
+- [ ] **Step 5: ruff**
 
 ```bash
 ruff format . && ruff check --fix .
-pre-commit run --all-files
 ```
 
 - [ ] **Step 8: Commit**
@@ -1107,16 +1085,7 @@ Apply the same mock translation.
 - [ ] **Step 5: Run preflight-related tests**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/test_preflight.py tests/unit/cli_commands/test_kube_preflight.py -q --no-header
-```
-
-Expected: green.
-
-- [ ] **Step 6: Full kubernetes subfolder + spot-check others**
-
-```bash
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/cli_commands/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/ -q --no-header
 ```
 
 Expected: green.
@@ -1132,7 +1101,6 @@ grep -n "kr8s" src/aiperf/kubernetes/preflight.py src/aiperf/kubernetes/prefligh
 
 ```bash
 ruff format . && ruff check --fix .
-pre-commit run --all-files
 git add src/aiperf/kubernetes/preflight.py src/aiperf/kubernetes/preflight_utils.py tests/unit/kubernetes/test_preflight.py tests/unit/cli_commands/test_kube_preflight.py
 git commit -s -m "$(cat <<'EOF'
 refactor(kubernetes): port preflight.py and preflight_utils.py to kubernetes_asyncio
@@ -1257,23 +1225,16 @@ finally:
 
 Substitute all kr8s mocks with kubernetes_asyncio mocks per pattern P10. Use `MagicMock(spec=ApiClient)` for the source constructor arg; each test injects an `AsyncMock(return_value=...)` for the specific `CoreV1Api.list_*` method under test.
 
-- [ ] **Step 7: Run watchdog tests**
+- [ ] **Step 7: Run the full unit suite + lint**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/test_watchdog.py -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/ -q --no-header
+ruff format . && ruff check --fix .
 ```
 
 Expected: green.
 
-- [ ] **Step 8: Full subfolder sweep + lint**
-
-```bash
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/ -q --no-header
-ruff format . && ruff check --fix .
-pre-commit run --all-files
-```
-
-- [ ] **Step 9: Verify no kr8s left in watchdog**
+- [ ] **Step 8: Verify no kr8s left in watchdog**
 
 ```bash
 grep -n "kr8s\|Kr8sWatchdogSource" src/aiperf/kubernetes/watchdog.py
@@ -1406,8 +1367,7 @@ Same mock-surface change. Test the free-function call paths now.
 - [ ] **Step 9: Run kubernetes + cli_commands subfolders**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/cli_commands/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/ -q --no-header
 ```
 
 Expected: green.
@@ -1426,7 +1386,6 @@ Note: `kubernetes/client.py` may still reference the `AIPerfKubeClient` facade c
 
 ```bash
 ruff format . && ruff check --fix .
-pre-commit run --all-files
 git add src/aiperf/kubernetes/attach.py src/aiperf/kubernetes/results.py \
         src/aiperf/kubernetes/logs.py src/aiperf/kubernetes/watch_orchestrator.py \
         src/aiperf/kubernetes/watch_pollers.py tests/harness/k8s.py \
@@ -1526,8 +1485,7 @@ This is the most involved CLI command — it creates Namespace, ConfigMap, Role,
 - [ ] **Step 6: Run cli_commands tests**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/cli_commands/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/ -q --no-header
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/ -q --no-header
 ```
 
 Expected: green.
@@ -1554,7 +1512,6 @@ Expected: empty.
 
 ```bash
 ruff format . && ruff check --fix .
-pre-commit run --all-files
 git add src/aiperf/cli_commands/kube/ src/aiperf/kubernetes/cli_helpers.py \
         tests/unit/cli_commands/
 git commit -s -m "$(cat <<'EOF'
@@ -1718,10 +1675,7 @@ Swap kr8s mocks. Two sites (lines 429, 465).
 - [ ] **Step 17: Run the three subfolders separately**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/operator/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/server_metrics/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/ -q --no-header \
-  --ignore=tests/unit/kubernetes --ignore=tests/unit/operator --ignore=tests/unit/server_metrics
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/ -q --no-header
 ```
 
 Expected: green.
@@ -1744,7 +1698,6 @@ Expected: empty (all CR references now use cr_refs constants).
 
 ```bash
 ruff format . && ruff check --fix .
-pre-commit run --all-files
 git add src/aiperf/operator/ src/aiperf/controller/ src/aiperf/server_metrics/ \
         src/aiperf/api/routers/progress.py \
         tests/unit/operator/ tests/unit/server_metrics/
@@ -1841,13 +1794,7 @@ unset VIRTUAL_ENV && make install
 - [ ] **Step 9: Run full test suites, subfolder by subfolder**
 
 ```bash
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/kubernetes/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/operator/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/cli_commands/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/server_metrics/ -q --no-header
-unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/ -q --no-header \
-  --ignore=tests/unit/kubernetes --ignore=tests/unit/operator \
-  --ignore=tests/unit/cli_commands --ignore=tests/unit/server_metrics
+unset VIRTUAL_ENV && uv run --active pytest -n auto tests/unit/ -q --no-header
 ```
 
 Expected: all green.
@@ -1886,7 +1833,6 @@ Expected: the imports succeed and `kr8s` import raises `ModuleNotFoundError`.
 ```bash
 ruff format . && ruff check --fix .
 make validate-plugin-schemas
-pre-commit run --all-files
 ```
 
 Expected: all pass.
@@ -1968,10 +1914,10 @@ Plan: `docs/superpowers/plans/2026-04-21-replace-kr8s-with-kubernetes-asyncio.md
 ## Test plan
 
 - [ ] `make first-time-setup`
-- [ ] `uv run pytest -n auto tests/unit/kubernetes -n auto`
-- [ ] `uv run pytest -n auto tests/unit/operator -n auto`
-- [ ] `uv run pytest -n auto tests/unit/cli_commands -n auto`
-- [ ] `uv run pytest -n auto tests/unit/ -n auto`
+- [ ] `uv run pytest -n auto tests/unit/kubernetes`
+- [ ] `uv run pytest -n auto tests/unit/operator`
+- [ ] `uv run pytest -n auto tests/unit/cli_commands`
+- [ ] `uv run pytest -n auto tests/unit/`
 - [ ] `ruff format . && ruff check --fix .`
 - [ ] `pre-commit run --all-files`
 - [ ] (If cluster) `uv run pytest -m integration -n auto`
