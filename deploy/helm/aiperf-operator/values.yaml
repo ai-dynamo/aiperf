@@ -152,7 +152,7 @@ kueue:
 # defaults contains default settings for AIPerfJob resources
 defaults:
   # defaults.image is the default container image for benchmark jobs
-  image: "nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260422-032659-ebfd68c85"
+  image: "nvcr.io/nvidian/dynamo-dev/aiperf:k8s-arm64-20260422-211121-b385c5c61"
 
   # defaults.imagePullPolicy is the default image pull policy for benchmark jobs
   imagePullPolicy: "IfNotPresent"
