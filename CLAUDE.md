@@ -92,6 +92,16 @@ Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large
 - `from tests.harness import mock_plugin` for plugin mocking
 - Name: `test_<function>_<scenario>_<expected>` e.g. `test_parse_config_missing_field_raises_error`
 - Imports at file top, fixtures for setup, one focus per test
+- Use `from pytest import param` and put `# fmt: skip` on the `)` line:
+  ```python
+  @pytest.mark.parametrize(
+      "arg",
+      [
+          param(..., id="case1"),
+          param(..., id="case2"),
+      ],
+  )  # fmt: skip
+  ```
 - Auto-fixtures (always active): asyncio.sleep runs instantly, RNG=42, singletons reset between tests
 
 ## Git Workflow
