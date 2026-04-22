@@ -69,3 +69,13 @@ app.command(
     name="kube",
     help="Kubernetes deployment and management commands",
 )
+app.command(
+    "aiperf.cli_commands.synthesize:app",
+    name="synthesize",
+    help="Synthesize a dataset workload (e.g. agentic-code)",
+)
+app.command(
+    "aiperf.cli_commands.validate:app",
+    name="validate",
+    help="Validate a benchmark artifact (e.g. mooncake-trace)",
+)

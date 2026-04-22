@@ -130,6 +130,14 @@ Open the operator results server UI in your browser
 
 [Kubernetes](#kubernetes) • [Parameters](#parameters)
 
+### [`synthesize`](#aiperf-synthesize)
+
+Synthesize a dataset workload (e.g. agentic-code)
+
+### [`validate`](#aiperf-validate)
+
+Validate a benchmark artifact (e.g. mooncake-trace)
+
 <hr/>
 
 ## `aiperf --install-completion`
@@ -4406,3 +4414,54 @@ Namespace where the operator is deployed.
 #### `--no-browser`, `--no-no-browser`
 
 Print the URL instead of opening a browser.
+
+<hr/>
+
+## `aiperf synthesize`
+
+Synthesize a dataset workload (e.g. agentic-code)
+
+#### `--target` `<str>` _(Required)_
+
+Dataset workload to synthesize.
+
+#### `--num-sessions` `<int>`
+
+Number of sessions to generate.
+<br/>_Default: `1000`_
+
+#### `--output` `<str>`
+
+Parent directory for the run directory.
+<br/>_Default: `.`_
+
+#### `--config` `<str>`
+
+Path to config/manifest JSON.
+
+#### `--seed` `<int>`
+
+Random seed for reproducibility.
+<br/>_Default: `42`_
+
+#### `--max-isl` `<int>`
+
+Maximum input sequence length.
+
+#### `--max-osl` `<int>`
+
+Maximum output sequence length.
+
+<hr/>
+
+## `aiperf validate`
+
+Validate a benchmark artifact (e.g. mooncake-trace)
+
+#### `--target` `<str>` _(Required)_
+
+Artifact format to validate.
+
+#### `--input` `<str>` _(Required)_
+
+Path to the artifact file.

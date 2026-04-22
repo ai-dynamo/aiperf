@@ -1,0 +1,1185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simulation Dashboard</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --border: #0f3460;
+  --text: #e0e0e0;
+  --muted: #8888aa;
+  --green: #76b900;
+  --green-dim: rgba(118, 185, 0, 0.3);
+  --blue: #4da6ff;
+  --blue-dim: rgba(77, 166, 255, 0.3);
+  --gray: #555;
+  --orange: #e89b00;
+  --red: #ff4444;
+  --red-dim: rgba(255, 68, 68, 0.3);
+  --magenta: #e040fb;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  padding: 20px;
+}
+h1 { font-size: 1.4rem; margin-bottom: 16px; }
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  background: var(--surface);
+  padding: 14px 18px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+.control-group { display: flex; align-items: center; gap: 6px; }
+.control-group label { font-size: 0.85rem; color: var(--muted); white-space: nowrap; }
+.control-group input[type="number"] {
+  width: 90px;
+  padding: 5px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 0.9rem;
+  text-align: right;
+}
+.control-group input[type="range"] {
+  width: 120px;
+  accent-color: var(--green);
+}
+.control-group .range-val {
+  font-size: 0.85rem;
+  color: var(--text);
+  min-width: 36px;
+  text-align: right;
+}
+button#run-btn {
+  padding: 6px 20px;
+  background: var(--green);
+  color: #000;
+  border: none;
+  border-radius: 4px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+button#run-btn:hover { filter: brightness(1.15); }
+.computed-stats {
+  font-size: 0.8rem;
+  color: var(--muted);
+  background: var(--surface);
+  padding: 6px 18px;
+  border-radius: 0 0 8px 8px;
+  border: 1px solid var(--border);
+  border-top: none;
+  margin-bottom: 16px;
+}
+.computed-stats span { color: var(--green); font-weight: 600; }
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: var(--surface);
+  padding: 10px 18px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.stats span { color: var(--text); font-weight: 600; }
+.chart-container {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.chart-container h2 {
+  font-size: 0.95rem;
+  color: var(--muted);
+  margin-bottom: 10px;
+  font-weight: 500;
+}
+svg { display: block; }
+.axis text { fill: var(--muted); font-size: 11px; }
+.axis path, .axis line { stroke: var(--border); }
+.crosshair { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3,3; pointer-events: none; }
+.gantt-wrap {
+  max-height: 500px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) var(--surface);
+}
+.gantt-legend {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 8px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.gantt-legend .swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.tooltip {
+  position: fixed;
+  background: rgba(22, 33, 62, 0.95);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  pointer-events: none;
+  display: none;
+  z-index: 100;
+  line-height: 1.5;
+}
+.kv-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: var(--surface);
+  padding: 10px 18px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.kv-stats span { color: var(--text); font-weight: 600; }
+.kv-stats .overflow { color: var(--red); font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>Simulation Dashboard</h1>
+
+<div class="controls">
+  <div class="control-group">
+    <label>Concurrency:</label>
+    <input id="concurrency" type="number" value="50" min="1">
+  </div>
+  <div class="control-group">
+    <label>Prefill TPS:</label>
+    <input id="prefill-tps" type="number" value="64000" min="1">
+  </div>
+  <div class="control-group">
+    <label>Decode TPS:</label>
+    <input id="decode-tps" type="number" value="30" min="1">
+  </div>
+  <button id="run-btn">Run</button>
+</div>
+<div class="controls">
+  <div class="control-group">
+    <label>Total KV Cache (GB):</label>
+    <input id="total-kv-cache-gb" type="number" value="300" min="1" step="1">
+  </div>
+  <div class="control-group">
+    <label>KV Bytes/Token:</label>
+    <input id="kv-bytes-per-token" type="number" value="35136" min="1">
+  </div>
+  <div class="control-group">
+    <label>Block Size (tokens):</label>
+    <input id="block-size" type="number" value="$BLOCK_SIZE" readonly style="opacity:0.6;cursor:not-allowed">
+  </div>
+</div>
+<div class="computed-stats" id="computed-stats"></div>
+
+<div class="stats" id="stats"></div>
+<div class="chart-container"><h2>Cache Hit Rate Over Time</h2><div id="chart-hit-rate"></div></div>
+<div class="chart-container"><h2>Active Requests Over Time</h2><div id="chart-requests"></div></div>
+<div class="chart-container"><h2>Input Tokens In-Flight</h2><div id="chart-tokens"></div></div>
+<div class="kv-stats" id="kv-stats"></div>
+<div class="chart-container"><h2>KV Cache Memory Pressure</h2><div id="chart-kv-cache"></div></div>
+<div class="kv-stats" id="block-stats"></div>
+<div class="chart-container"><h2>Unique KV Cache Blocks</h2><div id="chart-unique-blocks"></div></div>
+<div class="chart-container"><h2>Total Evicted Blocks (cumulative)</h2><div id="chart-evicted-blocks"></div></div>
+<div class="chart-container"><h2>Eviction Misses by Layer (cumulative re-fetched blocks)</h2><div id="chart-eviction-misses"></div></div>
+<div class="chart-container">
+  <h2>Session Gantt (by concurrency slot)</h2>
+  <div class="gantt-legend">
+    <span><span class="swatch" style="background:#555;opacity:0.5"></span>Wait / Delay</span>
+    <span><span class="swatch" style="background:#e89b00"></span>Prefill</span>
+    <span><span class="swatch" style="background:#76b900"></span>Decode</span>
+    <span><span class="swatch" style="background:#4da6ff"></span>Session boundary</span>
+    <span><span class="swatch" style="background:#e040fb"></span>Restart continuation</span>
+  </div>
+  <div class="gantt-wrap" id="gantt-wrap"><div id="chart-gantt"></div></div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+const SESSIONS = $SESSIONS_JSON;
+
+// Precompute cumulative hash_ids per turn (JSONL stores incremental only).
+// Turn N's full block set = union of hash_ids from turns 0..N.
+(function precomputeCumulativeHashIds() {
+  for (let s = 0; s < SESSIONS.length; s++) {
+    const turns = SESSIONS[s].turns;
+    const cumulative = new Set();
+    for (let t = 0; t < turns.length; t++) {
+      const hids = turns[t].hash_ids || [];
+      for (let i = 0; i < hids.length; i++) cumulative.add(hids[i]);
+      turns[t].cumulative_hash_ids = Array.from(cumulative);
+    }
+  }
+})();
+
+function computeTheoreticalHitRate(sessions) {
+  // Perfect cache: infinite capacity, no evictions.
+  // For each turn, check cumulative blocks against global "ever seen" set.
+  const everSeen = new Set();
+  let hitBlocks = 0, totalBlocks = 0;
+  for (let s = 0; s < sessions.length; s++) {
+    for (let t = 0; t < sessions[s].turns.length; t++) {
+      const allHids = sessions[s].turns[t].cumulative_hash_ids;
+      if (!allHids) continue;
+      totalBlocks += allHids.length;
+      for (let i = 0; i < allHids.length; i++) {
+        if (everSeen.has(allHids[i])) {
+          hitBlocks++;
+        } else {
+          everSeen.add(allHids[i]);
+        }
+      }
+    }
+  }
+  return totalBlocks > 0 ? (hitBlocks / totalBlocks) * 100 : 0;
+}
+const theoreticalHitRate = computeTheoreticalHitRate(SESSIONS);
+const MAX_GROUPS = $MAX_GROUPS;
+const MAX_GROUP_BLOCKS = $MAX_GROUP_BLOCKS;
+
+function simulate(sessions, concurrency, prefillTps, decodeTps, kvBytesPerToken, gpuKvCapacityGb, l1Tokens, l15Tokens, blockSize) {
+  let prefillFreeAt = 0;
+
+  // Hash ID range boundaries for layer classification
+  const l1BlockCount = Math.ceil(l1Tokens / blockSize);
+  const l15BlockCount = Math.ceil(l15Tokens / blockSize);
+  const sessionRegionBase = l1BlockCount + MAX_GROUPS * MAX_GROUP_BLOCKS;
+
+  function classifyBlock(bid) {
+    if (bid < l1BlockCount) return 'l1';
+    if (bid < sessionRegionBase) return 'l15';
+    return 'session';  // L2 + L3
+  }
+
+  const sessionStates = sessions.map((s) => ({
+    startTime: null, endTime: null, turnEvents: [], slot: undefined,
+    isRestart: !!s.is_restart,
+  }));
+
+  const pq = [];
+  function pushEvent(time, type, sIdx, tIdx) {
+    pq.push({ time, type, sIdx, tIdx });
+  }
+  function popEvent() {
+    if (!pq.length) return null;
+    let minIdx = 0;
+    for (let i = 1; i < pq.length; i++) {
+      if (pq[i].time < pq[minIdx].time) minIdx = i;
+    }
+    const e = pq[minIdx];
+    pq[minIdx] = pq[pq.length - 1];
+    pq.pop();
+    return e;
+  }
+
+  function reservePrefill(readyTime, duration) {
+    const startTime = Math.max(readyTime, prefillFreeAt);
+    const endTime = startTime + duration;
+    prefillFreeAt = endTime;
+    return { startTime, endTime };
+  }
+
+  // Slot tracking for Gantt
+  let nextSlot = 0;
+
+  function assignSlot(sIdx) {
+    if (nextSlot >= concurrency) throw new Error('no concurrency slot available');
+    sessionStates[sIdx].slot = nextSlot++;
+  }
+
+  let activeCount = 0;
+  let nextSession = 0;
+
+  // KV cache tracking: counts tokens for ALL resident sessions (active + idle + ended)
+  let cachedTokens = 0;
+  let aliveSessions = 0;
+  const sessionCacheTokens = new Float64Array(sessions.length);
+  const sessionGroupId = new Int32Array(sessions.length);
+  const activeGroups = {};
+  sessions.forEach((s, i) => { sessionGroupId[i] = s.group_id || 0; });
+
+  // Unique block tracking: refcounted global map + per-session block sets
+  const blockRefCount = new Map();
+  const sessionBlocks = sessions.map(() => new Set());
+
+  // LRU eviction: idle (between turns) AND ended sessions are evictable
+  const lruQueue = [];  // [sIdx, generation] of idle/ended sessions, oldest first
+  let lruHead = 0;
+  const lruGeneration = new Uint32Array(sessions.length);
+  const inLruQueue = new Set();  // fast lookup for sessions currently in LRU
+  const sessionEvicted = new Uint8Array(sessions.length);  // 1 if session was evicted mid-session
+  let evictionCount = 0;
+  let missL15Blocks = 0;  // L1.5 blocks needed but evicted
+  let missSessionBlocks = 0;  // L2+L3 blocks needed but evicted
+  const evictedBlocks = new Set();  // block IDs removed from cache by eviction
+  const totalCapacityTokens = gpuKvCapacityGb * 1e9 / kvBytesPerToken;
+  let totalHitTokens = 0;
+  let totalMissTokens = 0;
+  let totalEvictedBlocks = 0;
+
+  function cachedGroupCounts() {
+    const counts = {};
+    for (let i = 0; i < sessionCacheTokens.length; i++) {
+      if (sessionCacheTokens[i] > 0) {
+        const gid = sessionGroupId[i];
+        counts[gid] = (counts[gid] || 0) + 1;
+      }
+    }
+    return counts;
+  }
+
+  function cachedSessionCount() {
+    let count = 0;
+    for (let i = 0; i < sessionCacheTokens.length; i++) {
+      if (sessionCacheTokens[i] > 0) count++;
+    }
+    return count;
+  }
+
+  function computeDedupTokens() {
+    const l1Dedup = Math.max(0, cachedSessionCount() - 1) * l1Tokens;
+    const l15Dedup = Object.values(cachedGroupCounts()).reduce((sum, cnt) => sum + Math.max(0, cnt - 1) * l15Tokens, 0);
+    return Math.max(0, cachedTokens - l1Dedup - l15Dedup);
+  }
+
+  function evictLRU() {
+    let uniqueCached = computeDedupTokens();
+    while (uniqueCached > totalCapacityTokens && lruHead < lruQueue.length) {
+      const [victimIdx, generation] = lruQueue[lruHead++];
+      if (!inLruQueue.has(victimIdx) || generation !== lruGeneration[victimIdx]) continue;
+      inLruQueue.delete(victimIdx);
+      if (sessionCacheTokens[victimIdx] === 0) continue;
+      cachedTokens -= sessionCacheTokens[victimIdx];
+      sessionCacheTokens[victimIdx] = 0;
+      for (const bid of sessionBlocks[victimIdx]) {
+        const rc = blockRefCount.get(bid) - 1;
+        if (rc <= 0) {
+          blockRefCount.delete(bid);
+          evictedBlocks.add(bid);
+          totalEvictedBlocks++;
+        } else {
+          blockRefCount.set(bid, rc);
+        }
+      }
+      sessionBlocks[victimIdx].clear();
+      sessionEvicted[victimIdx] = 1;
+      evictionCount++;
+      uniqueCached = computeDedupTokens();
+    }
+  }
+
+  function addToLRU(sIdx) {
+    if (!inLruQueue.has(sIdx)) {
+      lruGeneration[sIdx]++;
+      lruQueue.push([sIdx, lruGeneration[sIdx]]);
+      inLruQueue.add(sIdx);
+    }
+  }
+
+  function removeFromLRU(sIdx) {
+    if (inLruQueue.has(sIdx)) {
+      inLruQueue.delete(sIdx);
+      lruGeneration[sIdx]++;
+    }
+  }
+
+  function startSession(sIdx, time, inheritSlot) {
+    sessionStates[sIdx].startTime = time;
+    if (inheritSlot !== undefined) {
+      sessionStates[sIdx].slot = inheritSlot;
+    } else {
+      assignSlot(sIdx);
+    }
+    startTurn(sIdx, 0, time);
+  }
+
+  function startTurn(sIdx, tIdx, time) {
+    const turn = sessions[sIdx].turns[tIdx];
+    const delay = tIdx === 0 ? 0 : turn.delay_ms;
+    const turnReadyTime = time + delay;
+
+    // Session goes idle during delay -- add to LRU so it can be evicted
+    if (tIdx > 0 && delay > 0) {
+      addToLRU(sIdx);
+    }
+
+    pushEvent(turnReadyTime, 'turn_ready', sIdx, tIdx);
+  }
+
+  function turnReady(sIdx, tIdx, time) {
+    const turn = sessions[sIdx].turns[tIdx];
+    removeFromLRU(sIdx);
+
+    // Cache hit: check ALL cumulative blocks for this turn against blockRefCount.
+    // Blocks from prior turns of this session are already in cache (hits).
+    // Only genuinely uncached blocks need prefill computation (misses).
+    const allHids = turn.cumulative_hash_ids || [];
+    let hitBlocks = 0;
+    for (let i = 0; i < allHids.length; i++) {
+      if (blockRefCount.has(allHids[i])) hitBlocks++;
+    }
+    const missBlocks = allHids.length - hitBlocks;
+    const hitTokens = hitBlocks * blockSize;
+    const missTokens = missBlocks * blockSize;
+    totalHitTokens += hitTokens;
+    totalMissTokens += missTokens;
+
+    const prefillDuration = (missTokens / prefillTps) * 1000;
+    const decodeDuration = (turn.output_length / decodeTps) * 1000;
+
+    const { startTime: prefillStart, endTime: prefillEnd } = reservePrefill(turnReadyTime, prefillDuration);
+
+    const decodeStart = prefillEnd;
+    const decodeEnd = decodeStart + decodeDuration;
+
+    pushEvent(decodeStart, 'request_start', sIdx, tIdx);
+    pushEvent(decodeEnd, 'request_end', sIdx, tIdx);
+
+    sessionStates[sIdx].turnEvents.push({
+      turnIdx: tIdx,
+      delayStart: time - (tIdx === 0 ? 0 : turn.delay_ms),
+      turnReady: time,
+      prefillStart: prefillStart,
+      decodeStart: decodeStart,
+      decodeEnd: decodeEnd,
+      input_length: turn.input_length,
+      output_length: turn.output_length,
+      hit_tokens: hitTokens,
+      miss_tokens: missTokens,
+    });
+  }
+
+  // Launch initial batch
+  while (nextSession < sessions.length && activeCount < concurrency) {
+    activeCount++;
+    startSession(nextSession, 0);
+    nextSession++;
+  }
+
+  let activeRequests = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let maxTime = 0;
+
+  const timeSeriesRaw = [];
+  let ev;
+  while ((ev = popEvent()) !== null) {
+    const { time, type, sIdx, tIdx } = ev;
+    maxTime = Math.max(maxTime, time);
+
+    if (type === 'request_start') {
+      activeRequests++;
+      const turn = sessions[sIdx].turns[tIdx];
+      inputTokens += turn.cumulative_input_length;
+      outputTokens += turn.output_length;
+
+      // If this session was evicted during idle, it needs full re-cache
+      // If session was evicted mid-pause, it needs to re-fetch ALL accumulated blocks
+      // Check all previous turns' hash_ids for misses (the big L2+L3 re-fetches)
+      if (sessionEvicted[sIdx]) {
+        sessionEvicted[sIdx] = 0;
+        sessionCacheTokens[sIdx] = 0;
+        const sBlocks = sessionBlocks[sIdx];  // already cleared during eviction
+        for (let t = 0; t < tIdx; t++) {
+          const prevHids = sessions[sIdx].turns[t].hash_ids;
+          if (prevHids) {
+            for (let i = 0; i < prevHids.length; i++) {
+              const bid = prevHids[i];
+              if (!sBlocks.has(bid)) {
+                if (evictedBlocks.has(bid)) {
+                  const layer = classifyBlock(bid);
+                  if (layer === 'l15') missL15Blocks++;
+                  else if (layer !== 'l1') missSessionBlocks++;
+                  evictedBlocks.delete(bid);
+                }
+                sBlocks.add(bid);
+                blockRefCount.set(bid, (blockRefCount.get(bid) || 0) + 1);
+              }
+            }
+          }
+        }
+      }
+
+      // Cache: allocate blocks for this turn's input
+      const prevCache = sessionCacheTokens[sIdx];
+      sessionCacheTokens[sIdx] = turn.cumulative_input_length;
+      cachedTokens += (sessionCacheTokens[sIdx] - prevCache);
+      if (tIdx === 0) {
+        aliveSessions++;
+        const gid = sessionGroupId[sIdx];
+        activeGroups[gid] = (activeGroups[gid] || 0) + 1;
+      }
+
+      // Unique blocks: add this turn's hash_ids and detect eviction misses by layer
+      const hids = turn.hash_ids;
+      if (hids) {
+        const sBlocks = sessionBlocks[sIdx];
+        for (let i = 0; i < hids.length; i++) {
+          const bid = hids[i];
+          if (!sBlocks.has(bid)) {
+            if (evictedBlocks.has(bid)) {
+              const layer = classifyBlock(bid);
+              if (layer === 'l15') missL15Blocks++;
+              else if (layer !== 'l1') missSessionBlocks++;
+              evictedBlocks.delete(bid);
+            }
+            sBlocks.add(bid);
+            blockRefCount.set(bid, (blockRefCount.get(bid) || 0) + 1);
+          }
+        }
+      }
+
+      // Evict LRU idle/ended sessions if over capacity
+      evictLRU();
+    } else if (type === 'turn_ready') {
+      turnReady(sIdx, tIdx, time);
+    } else if (type === 'request_end') {
+      activeRequests--;
+      const turn = sessions[sIdx].turns[tIdx];
+      inputTokens -= turn.cumulative_input_length;
+      outputTokens -= turn.output_length;
+
+      // Cache: output tokens now in KV cache too
+      cachedTokens += turn.output_length;
+      sessionCacheTokens[sIdx] += turn.output_length;
+
+      if (tIdx + 1 < sessions[sIdx].turns.length) {
+        startTurn(sIdx, tIdx + 1, time);
+      } else {
+        // Session fully ended: add to LRU for lazy eviction
+        aliveSessions--;
+        const gid = sessionGroupId[sIdx];
+        activeGroups[gid]--;
+        if (activeGroups[gid] <= 0) delete activeGroups[gid];
+        addToLRU(sIdx);
+
+        sessionStates[sIdx].endTime = time;
+        const freedSlot = sessionStates[sIdx].slot;
+        activeCount--;
+        if (nextSession < sessions.length) {
+          activeCount++;
+          startSession(nextSession, time, freedSlot);
+          nextSession++;
+        }
+      }
+    }
+
+    // Only record time series for request_start/request_end events
+    if (type === 'request_start' || type === 'request_end') {
+      // L1/L1.5 deduplication for unique cache footprint
+      const uniqueCached = computeDedupTokens();
+      const kvCacheGb = uniqueCached * kvBytesPerToken / 1e9;
+
+      timeSeriesRaw.push({
+        time_s: time / 1000,
+        active_requests: activeRequests,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        queued: sessions.length - nextSession,
+        active_sessions: activeCount,
+        kv_cache_gb: kvCacheGb,
+        unique_cached_tokens: uniqueCached,
+        alive_sessions: aliveSessions,
+        unique_blocks: blockRefCount.size,
+        eviction_count: evictionCount,
+        miss_l15_blocks: missL15Blocks,
+        miss_session_blocks: missSessionBlocks,
+        total_evicted_blocks: totalEvictedBlocks,
+        cumulative_hit_tokens: totalHitTokens,
+        cumulative_miss_tokens: totalMissTokens,
+        cache_hit_rate: (totalHitTokens + totalMissTokens) > 0 ? (totalHitTokens / (totalHitTokens + totalMissTokens)) * 100 : 0,
+      });
+    }
+  }
+
+  // Adaptive downsampling
+  const maxPoints = Math.min(2000, Math.max(500, timeSeriesRaw.length));
+  let timeSeries;
+  if (timeSeriesRaw.length <= maxPoints) {
+    timeSeries = timeSeriesRaw;
+  } else {
+    timeSeries = [];
+    const step = timeSeriesRaw.length / maxPoints;
+    for (let i = 0; i < maxPoints; i++) {
+      timeSeries.push(timeSeriesRaw[Math.floor(i * step)]);
+    }
+    timeSeries.push(timeSeriesRaw[timeSeriesRaw.length - 1]);
+  }
+
+  // Compute aggregate stats
+  let totalPrefillMs = 0, totalDecodeMs = 0, totalWaitMs = 0, turnCount = 0;
+  let ttftSum = 0;
+  sessionStates.forEach(s => {
+    s.turnEvents.forEach(evt => {
+      totalWaitMs += evt.prefillStart - evt.turnReady;
+      totalPrefillMs += evt.decodeStart - evt.prefillStart;
+      totalDecodeMs += evt.decodeEnd - evt.decodeStart;
+      ttftSum += evt.decodeStart - evt.turnReady;
+      turnCount++;
+    });
+  });
+  const avgTtft = turnCount > 0 ? ttftSum / turnCount : 0;
+
+  const cacheHitRate = (totalHitTokens + totalMissTokens) > 0 ? (totalHitTokens / (totalHitTokens + totalMissTokens)) * 100 : 0;
+  return { timeSeries, sessionStates, maxTime, totalPrefillMs, totalDecodeMs, totalWaitMs, avgTtft, turnCount, evictionCount, missL15Blocks, missSessionBlocks, totalEvictedBlocks, cacheHitRate, totalHitTokens, totalMissTokens };
+}
+
+function formatDuration(ms) {
+  const s = ms / 1000;
+  if (s < 60) return s.toFixed(1) + 's';
+  const m = Math.floor(s / 60);
+  const rem = (s % 60).toFixed(0);
+  return m + 'm ' + rem + 's';
+}
+
+function formatNumber(n) {
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return n.toString();
+}
+
+// Convert between blocks, tokens, and GB for tooltip display
+let _blockSize = 1, _kvBytesPerToken = 1;
+function blocksToInfo(blocks) {
+  const tokens = blocks * _blockSize;
+  const gb = tokens * _kvBytesPerToken / 1e9;
+  return `${formatNumber(blocks)} blocks / ${formatNumber(tokens)} tokens / ${gb.toFixed(2)} GB`;
+}
+function tokensToInfo(tokens) {
+  const blocks = Math.ceil(tokens / _blockSize);
+  const gb = tokens * _kvBytesPerToken / 1e9;
+  return `${formatNumber(tokens)} tokens / ${formatNumber(blocks)} blocks / ${gb.toFixed(2)} GB`;
+}
+function gbToInfo(gb) {
+  const tokens = Math.round(gb * 1e9 / _kvBytesPerToken);
+  const blocks = Math.ceil(tokens / _blockSize);
+  return `${gb.toFixed(2)} GB / ${formatNumber(tokens)} tokens / ${formatNumber(blocks)} blocks`;
+}
+
+const tooltip = d3.select('#tooltip');
+
+function updateComputedStats() {
+  const prefillTps = +document.getElementById('prefill-tps').value;
+  const kvBytesPerToken = +document.getElementById('kv-bytes-per-token').value;
+  const totalKvGb = +document.getElementById('total-kv-cache-gb').value;
+  const totalKvTokens = totalKvGb * 1e9 / kvBytesPerToken;
+  document.getElementById('computed-stats').innerHTML =
+    `Prefill TPS: <span>${formatNumber(prefillTps)}</span> tok/s &nbsp;|&nbsp; ` +
+    `Total KV capacity: <span>${totalKvGb.toFixed(0)} GB</span> ~<span>${formatNumber(Math.round(totalKvTokens))}</span> tokens`;
+}
+
+function runSimulation() {
+  const concurrency = +document.getElementById('concurrency').value;
+  const prefillTps = +document.getElementById('prefill-tps').value;
+  const decodeTps = +document.getElementById('decode-tps').value;
+  const kvBytesPerToken = +document.getElementById('kv-bytes-per-token').value;
+  const gpuKvCapacityGb = +document.getElementById('total-kv-cache-gb').value;
+
+  const blockSize = +document.getElementById('block-size').value;
+
+  const l1Tokens = $L1_TOKENS;
+  const l15Tokens = $L1_5_TOKENS;
+
+  // Set globals for tooltip conversion helpers
+  _blockSize = blockSize;
+  _kvBytesPerToken = kvBytesPerToken;
+
+  updateComputedStats();
+
+  const { timeSeries, sessionStates, maxTime, totalPrefillMs, totalDecodeMs, totalWaitMs, avgTtft, turnCount, evictionCount, missL15Blocks, missSessionBlocks, totalEvictedBlocks, cacheHitRate, totalHitTokens, totalMissTokens } =
+    simulate(SESSIONS, concurrency, prefillTps, decodeTps, kvBytesPerToken, gpuKvCapacityGb, l1Tokens, l15Tokens, blockSize);
+
+  const peakRequests = d3.max(timeSeries, d => d.active_requests);
+  const peakISL = d3.max(timeSeries, d => d.input_tokens);
+  const restartCount = SESSIONS.filter(s => s.is_restart).length;
+  document.getElementById('stats').innerHTML =
+    `Duration: <span>${formatDuration(maxTime)}</span>` +
+    ` &nbsp;|&nbsp; Sessions: <span>${SESSIONS.length}</span>` +
+    (restartCount > 0 ? ` (<span style="color:#e040fb">${restartCount} restarts</span>)` : '') +
+    ` &nbsp;|&nbsp; Turns: <span>${turnCount}</span>` +
+    ` &nbsp;|&nbsp; Peak requests: <span>${peakRequests}</span>` +
+    ` &nbsp;|&nbsp; Peak input ISL: <span>${formatNumber(peakISL)}</span>` +
+    ` &nbsp;|&nbsp; Avg TTFT: <span>${(avgTtft / 1000).toFixed(3)}s</span>` +
+    ` &nbsp;|&nbsp; Cache Hit Rate: <span>${cacheHitRate.toFixed(1)}%</span>` +
+    ` (theoretical max: ${theoreticalHitRate.toFixed(1)}%)` +
+    ` (${formatNumber(Math.round(totalHitTokens))} hit / ${formatNumber(Math.round(totalMissTokens))} miss tokens)` +
+    ` &nbsp;|&nbsp; Wall-clock breakdown: prefill <span>${formatDuration(totalPrefillMs)}</span>` +
+    ` / decode <span>${formatDuration(totalDecodeMs)}</span>` +
+    ` / wait <span>${formatDuration(totalWaitMs)}</span>`;
+
+  // KV cache stats
+  const peakKvGb = d3.max(timeSeries, d => d.kv_cache_gb) || 0;
+  const refetchBlocks = missL15Blocks + missSessionBlocks;
+  const refetchGb = refetchBlocks * blockSize * kvBytesPerToken / 1e9;
+  const hasMisses = refetchBlocks > 0;
+
+  document.getElementById('kv-stats').innerHTML =
+    `Total KV Capacity: <span>${gpuKvCapacityGb.toFixed(0)} GB</span>` +
+    ` &nbsp;|&nbsp; Peak KV Usage: <span>${peakKvGb.toFixed(1)} GB</span>` +
+    ` &nbsp;|&nbsp; LRU Evictions: <span>${evictionCount}</span> sessions` +
+    ` &nbsp;|&nbsp; Total Evicted: <span>${formatNumber(totalEvictedBlocks)}</span> blocks` +
+    ` &nbsp;|&nbsp; Re-fetched Misses: <span class="${hasMisses ? 'overflow' : ''}">${blocksToInfo(refetchBlocks)}</span>` +
+    `<br>` +
+    `L1.5 Misses (group prefix): <span class="${missL15Blocks > 0 ? 'overflow' : ''}">${blocksToInfo(missL15Blocks)}</span>` +
+    ` &nbsp;|&nbsp; Session Misses (L2+L3): <span class="${missSessionBlocks > 0 ? 'overflow' : ''}">${blocksToInfo(missSessionBlocks)}</span>`;
+
+  // Unique blocks stats
+  const peakBlocks = d3.max(timeSeries, d => d.unique_blocks) || 0;
+  const peakBlocksGb = peakBlocks * blockSize * kvBytesPerToken / 1e9;
+  const blockCapacity = gpuKvCapacityGb * 1e9 / (kvBytesPerToken * blockSize);
+  document.getElementById('block-stats').innerHTML =
+    `Peak Unique Blocks: <span>${formatNumber(peakBlocks)}</span>` +
+    ` &nbsp;|&nbsp; Peak Block Memory: <span>${peakBlocksGb.toFixed(1)} GB</span>` +
+    ` &nbsp;|&nbsp; Block Capacity: <span>${formatNumber(Math.round(blockCapacity))}</span> blocks` +
+    ` &nbsp;|&nbsp; Block Size: <span>${blockSize}</span> tokens`;
+
+  drawAreaChart('#chart-hit-rate', timeSeries, 'cache_hit_rate', 'Cache Hit %', '--green', theoreticalHitRate, 'theoretical max ' + theoreticalHitRate.toFixed(1) + '%',
+    d => `Cache Hit Rate: ${d.cache_hit_rate.toFixed(1)}%<br>Theoretical Max: ${theoreticalHitRate.toFixed(1)}%<br>Hit: ${tokensToInfo(d.cumulative_hit_tokens)}<br>Miss: ${tokensToInfo(d.cumulative_miss_tokens)}`);
+  drawAreaChart('#chart-requests', timeSeries, 'active_requests', 'Requests', '--green', concurrency, 'concurrency limit');
+  drawAreaChart('#chart-tokens', timeSeries, 'input_tokens', 'Tokens', '--blue', null, null,
+    d => `Input Tokens In-Flight: ${tokensToInfo(d.input_tokens)}`);
+  drawKvCacheChart('#chart-kv-cache', timeSeries, gpuKvCapacityGb);
+  drawAreaChart('#chart-unique-blocks', timeSeries, 'unique_blocks', 'Blocks', '--green', blockCapacity, 'block capacity',
+    d => `Unique Blocks: ${blocksToInfo(d.unique_blocks)}`);
+  drawAreaChart('#chart-evicted-blocks', timeSeries, 'total_evicted_blocks', 'Evicted Blocks', '--red', null, null,
+    d => `Evicted Blocks: ${blocksToInfo(d.total_evicted_blocks)}`);
+  drawStackedMissChart('#chart-eviction-misses', timeSeries);
+  drawGantt('#chart-gantt', sessionStates, maxTime, concurrency);
+}
+
+function drawAreaChart(selector, data, field, label, colorVar, limitLine, limitLabel, tooltipFn) {
+  const container = d3.select(selector);
+  container.selectAll('*').remove();
+
+  const margin = { top: 10, right: 20, bottom: 30, left: 60 };
+  const width = container.node().clientWidth - margin.left - margin.right;
+  const height = 180;
+
+  const svg = container.append('svg')
+    .attr('width', width + margin.left + margin.right)
+    .attr('height', height + margin.top + margin.bottom);
+
+  const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+  const x = d3.scaleLinear()
+    .domain(d3.extent(data, d => d.time_s))
+    .range([0, width]);
+
+  const yMax = d3.max(data, d => d[field]);
+  const y = d3.scaleLinear()
+    .domain([0, limitLine ? Math.max(yMax, limitLine * 1.1) : yMax * 1.1])
+    .range([height, 0])
+    .nice();
+
+  const color = getComputedStyle(document.documentElement).getPropertyValue(colorVar).trim();
+  const colorDim = color + '40';
+
+  const area = d3.area()
+    .x(d => x(d.time_s))
+    .y0(height)
+    .y1(d => y(d[field]))
+    .curve(d3.curveStepAfter);
+
+  const line = d3.line()
+    .x(d => x(d.time_s))
+    .y(d => y(d[field]))
+    .curve(d3.curveStepAfter);
+
+  g.append('path').datum(data).attr('d', area).attr('fill', colorDim);
+  g.append('path').datum(data).attr('d', line).attr('fill', 'none').attr('stroke', color).attr('stroke-width', 1.5);
+
+  if (limitLine) {
+    g.append('line')
+      .attr('x1', 0).attr('x2', width)
+      .attr('y1', y(limitLine)).attr('y2', y(limitLine))
+      .attr('stroke', color).attr('stroke-dasharray', '6,4').attr('stroke-width', 1).attr('opacity', 0.6);
+    g.append('text')
+      .attr('x', width - 4).attr('y', y(limitLine) - 4)
+      .attr('text-anchor', 'end').attr('fill', color).attr('font-size', '10px').attr('opacity', 0.8)
+      .text(limitLabel || '');
+  }
+
+  g.append('g').attr('class', 'axis').attr('transform', `translate(0,${height})`).call(d3.axisBottom(x).ticks(8).tickFormat(d => d + 's'));
+  g.append('g').attr('class', 'axis').call(d3.axisLeft(y).ticks(5).tickFormat(d => formatNumber(d)));
+
+  // Crosshair
+  const crosshairLine = g.append('line').attr('class', 'crosshair').attr('y1', 0).attr('y2', height).style('display', 'none');
+  const crosshairDot = g.append('circle').attr('r', 4).attr('fill', color).style('display', 'none');
+
+  const overlay = g.append('rect')
+    .attr('width', width).attr('height', height).attr('fill', 'none').attr('pointer-events', 'all');
+
+  overlay.on('mousemove', function(event) {
+    const [mx] = d3.pointer(event, this);
+    const xVal = x.invert(mx);
+    const bisect = d3.bisector(d => d.time_s).left;
+    const idx = Math.min(bisect(data, xVal), data.length - 1);
+    const d = data[idx];
+    crosshairLine.attr('x1', x(d.time_s)).attr('x2', x(d.time_s)).style('display', null);
+    crosshairDot.attr('cx', x(d.time_s)).attr('cy', y(d[field])).style('display', null);
+
+    const html = tooltipFn
+      ? `Time: ${d.time_s.toFixed(1)}s<br>${tooltipFn(d)}`
+      : `Time: ${d.time_s.toFixed(1)}s<br>${label}: ${formatNumber(d[field])}`;
+    tooltip.style('display', 'block')
+      .style('left', (event.clientX + 12) + 'px')
+      .style('top', (event.clientY - 30) + 'px')
+      .html(html);
+  });
+  overlay.on('mouseleave', function() {
+    crosshairLine.style('display', 'none');
+    crosshairDot.style('display', 'none');
+    tooltip.style('display', 'none');
+  });
+}
+
+function drawKvCacheChart(selector, data, capacityGb) {
+  const container = d3.select(selector);
+  container.selectAll('*').remove();
+
+  const margin = { top: 10, right: 20, bottom: 30, left: 60 };
+  const width = container.node().clientWidth - margin.left - margin.right;
+  const height = 220;
+
+  const svg = container.append('svg')
+    .attr('width', width + margin.left + margin.right)
+    .attr('height', height + margin.top + margin.bottom);
+
+  const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+  const x = d3.scaleLinear()
+    .domain(d3.extent(data, d => d.time_s))
+    .range([0, width]);
+
+  const yMax = d3.max(data, d => d.kv_cache_gb) || 1;
+  const y = d3.scaleLinear()
+    .domain([0, Math.max(yMax, capacityGb * 1.1) * 1.1])
+    .range([height, 0])
+    .nice();
+
+  const green = getComputedStyle(document.documentElement).getPropertyValue('--green').trim();
+  const red = getComputedStyle(document.documentElement).getPropertyValue('--red').trim();
+
+  // Area below capacity (green)
+  const areaBelow = d3.area()
+    .x(d => x(d.time_s))
+    .y0(height)
+    .y1(d => y(Math.min(d.kv_cache_gb, capacityGb)))
+    .curve(d3.curveStepAfter);
+
+  // Area above capacity (red overflow)
+  const areaAbove = d3.area()
+    .x(d => x(d.time_s))
+    .y0(y(capacityGb))
+    .y1(d => y(Math.max(d.kv_cache_gb, capacityGb)))
+    .curve(d3.curveStepAfter);
+
+  g.append('path').datum(data).attr('d', areaBelow).attr('fill', green + '40');
+  g.append('path').datum(data).attr('d', areaAbove).attr('fill', red + '40');
+
+  // Line
+  const line = d3.line()
+    .x(d => x(d.time_s))
+    .y(d => y(d.kv_cache_gb))
+    .curve(d3.curveStepAfter);
+
+  g.append('path').datum(data).attr('d', line)
+    .attr('fill', 'none').attr('stroke', green).attr('stroke-width', 1.5);
+
+  // Capacity line
+  g.append('line')
+    .attr('x1', 0).attr('x2', width)
+    .attr('y1', y(capacityGb)).attr('y2', y(capacityGb))
+    .attr('stroke', red).attr('stroke-dasharray', '6,4').attr('stroke-width', 1.5).attr('opacity', 0.8);
+
+  g.append('text')
+    .attr('x', width - 4).attr('y', y(capacityGb) - 4)
+    .attr('text-anchor', 'end').attr('fill', red).attr('font-size', '10px').attr('opacity', 0.9)
+    .text('Total KV capacity: ' + capacityGb.toFixed(0) + ' GB');
+
+  g.append('g').attr('class', 'axis').attr('transform', `translate(0,${height})`).call(d3.axisBottom(x).ticks(8).tickFormat(d => d + 's'));
+  g.append('g').attr('class', 'axis').call(d3.axisLeft(y).ticks(5).tickFormat(d => d.toFixed(0) + ' GB'));
+
+  // Crosshair + tooltip
+  const crosshairLine = g.append('line').attr('class', 'crosshair').attr('y1', 0).attr('y2', height).style('display', 'none');
+  const crosshairDot = g.append('circle').attr('r', 4).attr('fill', green).style('display', 'none');
+
+  const overlay = g.append('rect')
+    .attr('width', width).attr('height', height).attr('fill', 'none').attr('pointer-events', 'all');
+
+  overlay.on('mousemove', function(event) {
+    const [mx] = d3.pointer(event, this);
+    const xVal = x.invert(mx);
+    const bisect = d3.bisector(d => d.time_s).left;
+    const idx = Math.min(bisect(data, xVal), data.length - 1);
+    const d = data[idx];
+    crosshairLine.attr('x1', x(d.time_s)).attr('x2', x(d.time_s)).style('display', null);
+    crosshairDot.attr('cx', x(d.time_s)).attr('cy', y(d.kv_cache_gb)).style('display', null);
+
+    const overflow = Math.max(0, d.kv_cache_gb - capacityGb);
+    tooltip.style('display', 'block')
+      .style('left', (event.clientX + 12) + 'px')
+      .style('top', (event.clientY - 30) + 'px')
+      .html('Time: ' + d.time_s.toFixed(1) + 's<br>' +
+        'KV Cache: ' + gbToInfo(d.kv_cache_gb) + '<br>' +
+        'Capacity: ' + gbToInfo(capacityGb) + '<br>' +
+        'Overflow: ' + gbToInfo(overflow) + '<br>' +
+        'Alive Sessions: ' + d.alive_sessions + '<br>' +
+        'Evictions: ' + d.eviction_count + '<br>' +
+        'Evicted Blocks: ' + blocksToInfo(d.total_evicted_blocks || 0) + '<br>' +
+        'L1.5 Misses: ' + blocksToInfo(d.miss_l15_blocks) + '<br>' +
+        'Session Misses: ' + blocksToInfo(d.miss_session_blocks));
+  });
+  overlay.on('mouseleave', function() {
+    crosshairLine.style('display', 'none');
+    crosshairDot.style('display', 'none');
+    tooltip.style('display', 'none');
+  });
+}
+
+function drawStackedMissChart(selector, data) {
+  const container = d3.select(selector);
+  container.selectAll('*').remove();
+
+  const margin = { top: 10, right: 20, bottom: 30, left: 60 };
+  const width = container.node().clientWidth - margin.left - margin.right;
+  const height = 180;
+
+  const svg = container.append('svg')
+    .attr('width', width + margin.left + margin.right)
+    .attr('height', height + margin.top + margin.bottom);
+
+  const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+  const x = d3.scaleLinear()
+    .domain(d3.extent(data, d => d.time_s))
+    .range([0, width]);
+
+  const yMax = d3.max(data, d => (d.miss_l15_blocks || 0) + (d.miss_session_blocks || 0)) || 1;
+  const y = d3.scaleLinear()
+    .domain([0, yMax * 1.1])
+    .range([height, 0])
+    .nice();
+
+  const orange = getComputedStyle(document.documentElement).getPropertyValue('--orange').trim();
+  const red = getComputedStyle(document.documentElement).getPropertyValue('--red').trim();
+
+  // Session misses (L2+L3) - bottom layer (orange)
+  const areaSession = d3.area()
+    .x(d => x(d.time_s))
+    .y0(height)
+    .y1(d => y(d.miss_session_blocks || 0))
+    .curve(d3.curveStepAfter);
+
+  // L1.5 misses - stacked on top (red)
+  const areaL15 = d3.area()
+    .x(d => x(d.time_s))
+    .y0(d => y(d.miss_session_blocks || 0))
+    .y1(d => y((d.miss_session_blocks || 0) + (d.miss_l15_blocks || 0)))
+    .curve(d3.curveStepAfter);
+
+  g.append('path').datum(data).attr('d', areaSession).attr('fill', orange + '60');
+  g.append('path').datum(data).attr('d', areaL15).attr('fill', red + '60');
+
+  // Lines on top
+  const lineTotal = d3.line()
+    .x(d => x(d.time_s))
+    .y(d => y((d.miss_session_blocks || 0) + (d.miss_l15_blocks || 0)))
+    .curve(d3.curveStepAfter);
+  g.append('path').datum(data).attr('d', lineTotal).attr('fill', 'none').attr('stroke', red).attr('stroke-width', 1.5);
+
+  // Legend
+  g.append('rect').attr('x', width - 200).attr('y', 4).attr('width', 10).attr('height', 10).attr('fill', orange + '80');
+  g.append('text').attr('x', width - 186).attr('y', 13).attr('fill', '#e0e0e0').attr('font-size', '10px').text('Session (L2+L3)');
+  g.append('rect').attr('x', width - 100).attr('y', 4).attr('width', 10).attr('height', 10).attr('fill', red + '80');
+  g.append('text').attr('x', width - 86).attr('y', 13).attr('fill', '#e0e0e0').attr('font-size', '10px').text('L1.5 (group)');
+
+  g.append('g').attr('class', 'axis').attr('transform', `translate(0,${height})`).call(d3.axisBottom(x).ticks(8).tickFormat(d => d + 's'));
+  g.append('g').attr('class', 'axis').call(d3.axisLeft(y).ticks(5).tickFormat(d => formatNumber(d)));
+
+  // Crosshair + tooltip
+  const crosshairLine = g.append('line').attr('class', 'crosshair').attr('y1', 0).attr('y2', height).style('display', 'none');
+  const overlay = g.append('rect')
+    .attr('width', width).attr('height', height).attr('fill', 'none').attr('pointer-events', 'all');
+
+  overlay.on('mousemove', function(event) {
+    const [mx] = d3.pointer(event, this);
+    const xVal = x.invert(mx);
+    const bisect = d3.bisector(d => d.time_s).left;
+    const idx = Math.min(bisect(data, xVal), data.length - 1);
+    const d = data[idx];
+    crosshairLine.attr('x1', x(d.time_s)).attr('x2', x(d.time_s)).style('display', null);
+    const total = (d.miss_l15_blocks || 0) + (d.miss_session_blocks || 0);
+    tooltip.style('display', 'block')
+      .style('left', (event.clientX + 12) + 'px')
+      .style('top', (event.clientY - 30) + 'px')
+      .html(`Time: ${d.time_s.toFixed(1)}s<br>` +
+        `Session Misses (L2+L3): ${blocksToInfo(d.miss_session_blocks || 0)}<br>` +
+        `L1.5 Misses (group): ${blocksToInfo(d.miss_l15_blocks || 0)}<br>` +
+        `Total: ${blocksToInfo(total)}`);
+  });
+  overlay.on('mouseleave', function() {
+    crosshairLine.style('display', 'none');
+    tooltip.style('display', 'none');
+  });
+}
+
+function drawGantt(selector, sessionStates, maxTime, concurrency) {
+  const container = d3.select(selector);
+  container.selectAll('*').remove();
+
+  // Group sessions by slot
+  const slots = Array.from({length: concurrency}, () => []);
+  sessionStates.forEach((s, i) => {
+    if (s.slot !== undefined) slots[s.slot].push({...s, idx: i});
+  });
+
+  const margin = { top: 10, right: 20, bottom: 30, left: 70 };
+  const barHeight = 14;
+  const barGap = 2;
+  const width = container.node().clientWidth - margin.left - margin.right;
+  const height = concurrency * (barHeight + barGap);
+
+  const svg = container.append('svg')
+    .attr('width', width + margin.left + margin.right)
+    .attr('height', height + margin.top + margin.bottom);
+
+  const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+  const x = d3.scaleLinear().domain([0, maxTime / 1000]).range([0, width]);
+  const green = getComputedStyle(document.documentElement).getPropertyValue('--green').trim();
+  const gray = getComputedStyle(document.documentElement).getPropertyValue('--gray').trim();
+  const orange = getComputedStyle(document.documentElement).getPropertyValue('--orange').trim();
+  const magenta = getComputedStyle(document.documentElement).getPropertyValue('--magenta').trim();
+
+  slots.forEach((slotSessions, slotIdx) => {
+    const y = slotIdx * (barHeight + barGap);
+
+    // Slot label
+    g.append('text')
+      .attr('x', -4).attr('y', y + barHeight / 2 + 3)
+      .attr('text-anchor', 'end').attr('fill', '#8888aa').attr('font-size', '9px')
+      .text('Slot ' + slotIdx);
+
+    slotSessions.forEach((session, sInSlot) => {
+      const isRestart = session.isRestart;
+      // Session boundary marker
+      if (session.startTime !== null) {
+        const boundaryColor = isRestart ? magenta : '#4da6ff';
+        g.append('rect')
+          .attr('x', x(session.startTime / 1000) - 1)
+          .attr('y', y)
+          .attr('width', isRestart ? 3 : 2)
+          .attr('height', barHeight)
+          .attr('fill', boundaryColor)
+          .attr('opacity', 0.9);
+      }
+
+      session.turnEvents.forEach(evt => {
+        // Wait / delay segment (gray)
+        if (evt.prefillStart > evt.delayStart) {
+          const seg = g.append('rect')
+            .attr('x', x(evt.delayStart / 1000))
+            .attr('y', y)
+            .attr('width', Math.max(0.5, x(evt.prefillStart / 1000) - x(evt.delayStart / 1000)))
+            .attr('height', barHeight)
+            .attr('fill', gray)
+            .attr('opacity', 0.5);
+          seg.on('mousemove', function(event) {
+            const dur = (evt.prefillStart - evt.delayStart) / 1000;
+            const delayDur = Math.max(0, evt.turnReady - evt.delayStart) / 1000;
+            const waitDur = Math.max(0, evt.prefillStart - evt.turnReady) / 1000;
+            tooltip.style('display', 'block')
+              .style('left', (event.clientX + 12) + 'px')
+              .style('top', (event.clientY - 30) + 'px')
+              .html(`S${session.idx}${isRestart ? ' [restart]' : ''} Turn ${evt.turnIdx} - <b>Wait / Delay</b><br>` +
+                `Total: ${dur.toFixed(3)}s<br>` +
+                `Delay: ${delayDur.toFixed(3)}s<br>` +
+                `Scheduler wait: ${waitDur.toFixed(3)}s`);
+          }).on('mouseleave', () => tooltip.style('display', 'none'));
+        }
+
+        // Prefill segment (orange)
+        if (evt.decodeStart > evt.prefillStart) {
+          const seg = g.append('rect')
+            .attr('x', x(evt.prefillStart / 1000))
+            .attr('y', y)
+            .attr('width', Math.max(0.5, x(evt.decodeStart / 1000) - x(evt.prefillStart / 1000)))
+            .attr('height', barHeight)
+            .attr('fill', orange);
+          seg.on('mousemove', function(event) {
+            const dur = (evt.decodeStart - evt.prefillStart) / 1000;
+            tooltip.style('display', 'block')
+              .style('left', (event.clientX + 12) + 'px')
+              .style('top', (event.clientY - 30) + 'px')
+              .html(`S${session.idx}${isRestart ? ' [restart]' : ''} Turn ${evt.turnIdx} - <b>Prefill</b><br>` +
+                `Input: ${tokensToInfo(evt.input_length)}<br>` +
+                `Miss: ${tokensToInfo(evt.miss_tokens)}<br>` +
+                `Hit: ${tokensToInfo(evt.hit_tokens)}<br>` +
+                `Duration: ${dur.toFixed(3)}s`);
+          }).on('mouseleave', () => tooltip.style('display', 'none'));
+        }
+
+        // Decode segment (green)
+        const seg = g.append('rect')
+          .attr('x', x(evt.decodeStart / 1000))
+          .attr('y', y)
+          .attr('width', Math.max(0.5, x(evt.decodeEnd / 1000) - x(evt.decodeStart / 1000)))
+          .attr('height', barHeight)
+          .attr('fill', green);
+        seg.on('mousemove', function(event) {
+          const dur = (evt.decodeEnd - evt.decodeStart) / 1000;
+          tooltip.style('display', 'block')
+            .style('left', (event.clientX + 12) + 'px')
+            .style('top', (event.clientY - 30) + 'px')
+            .html(`S${session.idx}${isRestart ? ' [restart]' : ''} Turn ${evt.turnIdx} - <b>Decode</b><br>` +
+              `Output: ${formatNumber(evt.output_length)} tok<br>` +
+              `Duration: ${dur.toFixed(3)}s`);
+        }).on('mouseleave', () => tooltip.style('display', 'none'));
+      });
+    });
+  });
+
+  g.append('g').attr('class', 'axis').attr('transform', `translate(0,${height})`).call(d3.axisBottom(x).ticks(8).tickFormat(d => d + 's'));
+}
+
+// Update computed stats on any input change
+['prefill-tps', 'kv-bytes-per-token', 'total-kv-cache-gb', 'block-size'].forEach(id => {
+  document.getElementById(id).addEventListener('input', updateComputedStats);
+});
+
+// Run on load and on button click
+document.getElementById('run-btn').addEventListener('click', runSimulation);
+document.addEventListener('keydown', e => { if (e.key === 'Enter') runSimulation(); });
+updateComputedStats();
+runSimulation();
+</script>
+</body>
+</html>
