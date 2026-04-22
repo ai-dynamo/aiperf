@@ -435,7 +435,6 @@ def sample_server_metrics_results():
         hierarchy.add_record(record)
 
     return ServerMetricsResults(
-        server_metrics_data=hierarchy,
         start_ns=1_000_000_000,
         end_ns=6_000_000_000,
         endpoints_configured=[
@@ -454,7 +453,6 @@ def sample_server_metrics_results():
 def empty_server_metrics_results():
     """Create ServerMetricsResults with no data (all endpoints failed)."""
     return ServerMetricsResults(
-        server_metrics_data=ServerMetricsHierarchy(),
         start_ns=1_000_000_000,
         end_ns=2_000_000_000,
         endpoints_configured=[

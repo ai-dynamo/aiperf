@@ -1,12 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import ClassVar
 
 import msgspec
-from pydantic import Field, SerializeAsAny
+from pydantic import ConfigDict, Field
 
 from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -244,116 +244,133 @@ class ServerMetricsRecord(
 # =============================================================================
 
 
-class BaseTimeslice(AIPerfBaseModel):
-    """Base timeslice for server metrics.
+@dataclass(slots=True, kw_only=True)
+class ServerTimeslice:
+    """Single timeslice in a windowed time series.
 
-    Timeslices represent fixed-duration windows of time for analyzing metrics.
-    The `is_complete` flag indicates whether the timeslice covers a full duration
-    or is a partial slice (typically the final slice when data ends mid-window).
+    Unified dataclass replacing ``CounterTimeslice``/``GaugeTimeslice``/
+    ``HistogramTimeslice``. msgspec rejects unions of multiple dataclasses
+    when decoding, so the three legacy shapes collapse into one with
+    type-specific fields as optional. Callers select fields based on the
+    parent ``ServerMetricData.type``:
 
-    Partial timeslices should be included in exports for data completeness but
-    excluded from aggregate statistics to avoid skewing rate calculations.
-
-    For space efficiency, `is_complete` is omitted from JSON exports when True
-    (most timeslices are complete). Missing field is treated as True on deserialization.
+    - COUNTER: ``total``, ``rate``
+    - GAUGE:   ``avg``, ``min``, ``max``
+    - HISTOGRAM: ``count``, ``sum``, ``avg``, ``buckets``
     """
 
-    start_ns: int = Field(description="Timeslice start timestamp in nanoseconds")
-    end_ns: int = Field(description="Timeslice end timestamp in nanoseconds")
-    is_complete: bool | None = Field(
-        default=None,
-        description="False for partial timeslices (typically the final slice). "
-        "None or True for complete timeslices covering the full configured duration. "
-        "Partial slices should be excluded from aggregate statistics. "
-        "None by default to save space in JSON exports (treated as complete).",
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    start_ns: int
+    end_ns: int
+    is_complete: bool | None = None
+    # Counter fields
+    total: float | None = None
+    rate: float | None = None
+    # Gauge + Histogram fields (avg is shared)
+    avg: float | None = None
+    min: float | None = None
+    max: float | None = None
+    # Histogram fields
+    count: int | None = None
+    sum: float | None = None
+    buckets: dict[str, int] | None = None
+
+
+def CounterTimeslice(
+    *,
+    start_ns: int,
+    end_ns: int,
+    total: float,
+    rate: float,
+    is_complete: bool | None = None,
+) -> ServerTimeslice:
+    """Factory — builds a COUNTER-typed ``ServerTimeslice``."""
+    return ServerTimeslice(
+        start_ns=start_ns,
+        end_ns=end_ns,
+        is_complete=is_complete,
+        total=total,
+        rate=rate,
     )
 
 
-class CounterTimeslice(BaseTimeslice):
-    """Single counter timeslice in a windowed time series."""
-
-    total: float = Field(
-        description="Total increase in counter value during this timeslice"
-    )
-    rate: float = Field(
-        description="Rate of counter value increase per second during this timeslice"
-    )
-
-
-class GaugeTimeslice(BaseTimeslice):
-    """Single gauge timeslice in a windowed time series."""
-
-    avg: float = Field(description="Average value during this timeslice")
-    min: float = Field(description="Minimum value during this timeslice")
-    max: float = Field(description="Maximum value during this timeslice")
-
-
-class HistogramTimeslice(BaseTimeslice):
-    """Single histogram timeslice in a windowed time series."""
-
-    count: int = Field(
-        description="Change in count (count_delta) during this timeslice"
-    )
-    sum: float = Field(description="Change in sum (sum_delta) during this timeslice")
-    avg: float = Field(
-        description="Average value during this timeslice (sum_delta / count_delta)"
-    )
-    buckets: dict[str, int] | None = Field(
-        default=None,
-        description="Histogram bucket upper bounds to delta counts during this timeslice",
+def GaugeTimeslice(
+    *,
+    start_ns: int,
+    end_ns: int,
+    avg: float,
+    min: float,
+    max: float,
+    is_complete: bool | None = None,
+) -> ServerTimeslice:
+    """Factory — builds a GAUGE-typed ``ServerTimeslice``."""
+    return ServerTimeslice(
+        start_ns=start_ns,
+        end_ns=end_ns,
+        is_complete=is_complete,
+        avg=avg,
+        min=min,
+        max=max,
     )
 
 
-class ServerMetricsEndpointInfo(AIPerfBaseModel):
+def HistogramTimeslice(
+    *,
+    start_ns: int,
+    end_ns: int,
+    count: int,
+    sum: float,
+    avg: float,
+    buckets: dict[str, int] | None = None,
+    is_complete: bool | None = None,
+) -> ServerTimeslice:
+    """Factory — builds a HISTOGRAM-typed ``ServerTimeslice``."""
+    return ServerTimeslice(
+        start_ns=start_ns,
+        end_ns=end_ns,
+        is_complete=is_complete,
+        count=count,
+        sum=sum,
+        avg=avg,
+        buckets=buckets,
+    )
+
+
+# Aliases kept as class-style identities for backward compat with isinstance checks
+# and type hints. All three resolve to the same underlying dataclass.
+BaseTimeslice = ServerTimeslice
+
+
+@dataclass(slots=True, kw_only=True)
+class ServerMetricsEndpointInfo:
     """Metadata about a single endpoint's collection statistics."""
 
-    # Fetch statistics (all HTTP requests, including duplicates)
-    total_fetches: int = Field(
-        description="Total number of HTTP fetches from this endpoint"
-    )
-    first_fetch_ns: int = Field(description="Timestamp of first fetch in nanoseconds")
-    last_fetch_ns: int = Field(description="Timestamp of last fetch in nanoseconds")
-    avg_fetch_latency_ms: float = Field(
-        description="Average time to fetch metrics from this endpoint in milliseconds"
-    )
-    # Unique update statistics (only when metrics changed)
-    unique_updates: int = Field(
-        description="Number of fetches that returned changed metrics"
-    )
-    first_update_ns: int = Field(
-        description="Timestamp of first unique update in nanoseconds"
-    )
-    last_update_ns: int = Field(
-        description="Timestamp of last unique update in nanoseconds"
-    )
-    duration_seconds: float = Field(
-        description="Time span from first to last unique update in seconds"
-    )
-    avg_update_interval_ms: float = Field(
-        description="Average time between unique metric updates in milliseconds"
-    )
-    median_update_interval_ms: float | None = Field(
-        default=None,
-        description="Median time between unique metric updates in milliseconds. "
-        "More robust to outliers than average. None if fewer than 2 intervals.",
-    )
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    total_fetches: int
+    first_fetch_ns: int
+    last_fetch_ns: int
+    avg_fetch_latency_ms: float
+    unique_updates: int
+    first_update_ns: int
+    last_update_ns: int
+    duration_seconds: float
+    avg_update_interval_ms: float
+    median_update_interval_ms: float | None = None
 
 
-class ServerMetricsSummary(AIPerfBaseModel):
+@dataclass(slots=True, kw_only=True)
+class ServerMetricsSummary:
     """Summary information for server metrics collection."""
 
-    endpoints_configured: list[str] = Field(
-        description="List of configured endpoint identifiers (normalized)"
-    )
-    endpoints_successful: list[str] = Field(
-        description="List of successful endpoint identifiers (normalized)"
-    )
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    endpoints_configured: list[str]
+    endpoints_successful: list[str]
     start_time: datetime
     end_time: datetime
-    endpoint_info: dict[str, ServerMetricsEndpointInfo] | None = Field(
-        default=None,
-        description="Per-endpoint collection metadata keyed by normalized endpoint identifier",
-    )
+    endpoint_info: dict[str, ServerMetricsEndpointInfo] | None = None
 
 
 # =============================================================================
@@ -361,202 +378,163 @@ class ServerMetricsSummary(AIPerfBaseModel):
 # =============================================================================
 
 
-class BaseSeries(AIPerfBaseModel):
-    """Base series."""
+@dataclass(slots=True, kw_only=True)
+class ServerSeriesStats:
+    """Unified server metric series statistics.
 
-    # Note: Optional during computation, filled in for export
-    endpoint_url: str | None = Field(
-        default=None,
-        description="Full endpoint URL (e.g., 'http://localhost:8081/metrics')",
-    )
-    labels: dict[str, str] | None = Field(
-        default=None,
-        description="Metric labels. None/missing if the metric has no labels.",
-    )
+    Replaces ``GaugeStats``/``CounterStats``/``HistogramStats`` — msgspec
+    rejects unions of multiple dataclasses when decoding. Callers select
+    fields based on the parent ``ServerMetricData.type``:
 
-
-class GaugeStats(AIPerfBaseModel):
-    """Server gauge statistics."""
-
-    avg: float | None = Field(default=None, description="Average value")
-    min: float | None = Field(default=None, description="Minimum value")
-    max: float | None = Field(default=None, description="Maximum value")
-    std: float | None = Field(default=None, description="Standard deviation")
-    p1: float | None = Field(default=None, description="1st percentile")
-    p5: float | None = Field(default=None, description="5th percentile")
-    p10: float | None = Field(default=None, description="10th percentile")
-    p25: float | None = Field(default=None, description="25th percentile")
-    p50: float | None = Field(default=None, description="50th percentile (median)")
-    p75: float | None = Field(default=None, description="75th percentile")
-    p90: float | None = Field(default=None, description="90th percentile")
-    p95: float | None = Field(default=None, description="95th percentile")
-    p99: float | None = Field(default=None, description="99th percentile")
-
-
-class GaugeSeries(BaseSeries):
-    """Server gauge series."""
-
-    stats: GaugeStats | None = Field(default=None, description="Gauge statistics")
-    timeslices: list[GaugeTimeslice] | None = Field(
-        default=None,
-        description="Statistics per timeslice",
-    )
-
-
-class CounterStats(AIPerfBaseModel):
-    """Server counter statistics."""
-
-    total: float | None = Field(
-        default=None,
-        description="Total increase in counter value over collection period.",
-    )
-    rate: float | None = Field(
-        default=None,
-        description="Overall rate of counter value increase per second.",
-    )
-    rate_avg: float | None = Field(
-        default=None,
-        description="Time-weighted average rate between change points (counter)",
-    )
-    rate_min: float | None = Field(
-        default=None, description="Minimum point-to-point rate per second (counter)"
-    )
-    rate_max: float | None = Field(
-        default=None, description="Maximum point-to-point rate per second (counter)"
-    )
-    rate_std: float | None = Field(
-        default=None, description="Standard deviation of point-to-point rates (counter)"
-    )
-
-
-class CounterSeries(BaseSeries):
-    """Server counter series."""
-
-    stats: CounterStats | None = Field(
-        default=None,
-        description="Counter statistics",
-    )
-    timeslices: list[CounterTimeslice] | None = Field(
-        default=None,
-        description="Statistics per timeslice",
-    )
-
-
-class HistogramStats(AIPerfBaseModel):
-    """Server histogram statistics."""
-
-    count: int | None = Field(
-        default=None,
-        description="Total count change over collection period.",
-    )
-    sum: float | None = Field(
-        default=None,
-        description="Total sum change over collection period.",
-    )
-    avg: float | None = Field(
-        default=None,
-        description="Overall average value over collection period (sum / count)",
-    )
-    count_rate: float | None = Field(
-        default=None,
-        description="Average count change per second.",
-    )
-    sum_rate: float | None = Field(
-        default=None,
-        description="Average sum change per second.",
-    )
-    p1_estimate: float | None = Field(
-        default=None, description="Estimated 1st percentile"
-    )
-    p5_estimate: float | None = Field(
-        default=None, description="Estimated 5th percentile"
-    )
-    p10_estimate: float | None = Field(
-        default=None, description="Estimated 10th percentile"
-    )
-    p25_estimate: float | None = Field(
-        default=None, description="Estimated 25th percentile"
-    )
-    p50_estimate: float | None = Field(
-        default=None, description="Estimated 50th percentile (median)"
-    )
-    p75_estimate: float | None = Field(
-        default=None, description="Estimated 75th percentile"
-    )
-    p90_estimate: float | None = Field(
-        default=None, description="Estimated 90th percentile"
-    )
-    p95_estimate: float | None = Field(
-        default=None, description="Estimated 95th percentile"
-    )
-    p99_estimate: float | None = Field(
-        default=None, description="Estimated 99th percentile"
-    )
-
-
-class HistogramSeries(BaseSeries):
-    """Server histogram series."""
-
-    stats: HistogramStats | None = Field(
-        default=None,
-        description="Histogram statistics",
-    )
-    buckets: dict[str, int] | None = Field(
-        default=None,
-        description="Histogram bucket upper bounds to delta counts during collection period (e.g., {'0.1': 2000, '+Inf': 5000})",
-    )
-    timeslices: list[HistogramTimeslice] | None = Field(
-        default=None,
-        description="Statistics per timeslice",
-    )
-
-
-class BaseServerMetricData(AIPerfBaseModel):
-    """Base metric data with type, description, unit, and base series stats.
-
-    Used in hybrid export format where metrics are keyed by name for O(1) lookup,
-    but stats within each series are flattened for easy access.
+    - GAUGE: ``avg``, ``min``, ``max``, ``std``, ``p1``..``p99``
+    - COUNTER: ``total``, ``rate``, ``rate_avg``, ``rate_min``, ``rate_max``,
+               ``rate_std``
+    - HISTOGRAM: ``count``, ``sum``, ``avg``, ``count_rate``, ``sum_rate``,
+                 ``p1_estimate``..``p99_estimate``
     """
 
-    type: PrometheusMetricType = Field(description="Metric type")
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
-    description: str = Field(description="Metric description from HELP text")
-    unit: str | None = Field(
-        default=None,
-        description="Unit inferred from metric name suffix (_seconds, _bytes, etc.)",
+    # Gauge
+    avg: float | None = None
+    min: float | None = None
+    max: float | None = None
+    std: float | None = None
+    p1: float | None = None
+    p5: float | None = None
+    p10: float | None = None
+    p25: float | None = None
+    p50: float | None = None
+    p75: float | None = None
+    p90: float | None = None
+    p95: float | None = None
+    p99: float | None = None
+    # Counter
+    total: float | None = None
+    rate: float | None = None
+    rate_avg: float | None = None
+    rate_min: float | None = None
+    rate_max: float | None = None
+    rate_std: float | None = None
+    # Histogram
+    count: int | None = None
+    sum: float | None = None
+    count_rate: float | None = None
+    sum_rate: float | None = None
+    p1_estimate: float | None = None
+    p5_estimate: float | None = None
+    p10_estimate: float | None = None
+    p25_estimate: float | None = None
+    p50_estimate: float | None = None
+    p75_estimate: float | None = None
+    p90_estimate: float | None = None
+    p95_estimate: float | None = None
+    p99_estimate: float | None = None
+
+
+# Legacy aliases for backward compatibility — all three stats types collapse
+# into one dataclass. isinstance() checks against these aliases still work
+# because they're the same class.
+GaugeStats = ServerSeriesStats
+CounterStats = ServerSeriesStats
+HistogramStats = ServerSeriesStats
+
+
+@dataclass(slots=True, kw_only=True)
+class ServerSeries:
+    """Unified server metric series.
+
+    Replaces ``GaugeSeries``/``CounterSeries``/``HistogramSeries`` — single
+    dataclass with type-specific optional fields. Disambiguated by the
+    parent ``ServerMetricData.type``.
+    """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    endpoint_url: str | None = None
+    labels: dict[str, str] | None = None
+    stats: ServerSeriesStats | None = None
+    timeslices: list[ServerTimeslice] | None = None
+    # Histogram-only: per-series bucket counts
+    buckets: dict[str, int] | None = None
+
+
+# Legacy aliases
+BaseSeries = ServerSeries
+GaugeSeries = ServerSeries
+CounterSeries = ServerSeries
+HistogramSeries = ServerSeries
+
+
+@dataclass(slots=True, kw_only=True)
+class ServerMetricData:
+    """Unified server metric data for all three Prometheus types.
+
+    Collapses ``GaugeMetricData``/``CounterMetricData``/``HistogramMetricData``
+    into a single dataclass. msgspec rejects unions of multiple dataclasses
+    when decoding, so we carry a single dataclass and disambiguate via the
+    ``type`` field. Callers inspect ``type`` to know which series/stats
+    fields are populated.
+
+    The three legacy names (``GaugeMetricData``, ``CounterMetricData``,
+    ``HistogramMetricData``) are kept as factory functions for ergonomic
+    construction and backward compatibility at call sites.
+    """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    type: PrometheusMetricType
+    description: str
+    unit: str | None = None
+    series: list[ServerSeries] = field(default_factory=list)
+
+
+# Legacy alias — all *MetricData types are ServerMetricData.
+BaseServerMetricData = ServerMetricData
+
+
+def GaugeMetricData(
+    *,
+    description: str,
+    unit: str | None = None,
+    series: list[ServerSeries] | None = None,
+) -> ServerMetricData:
+    """Factory — builds a GAUGE-typed ``ServerMetricData``."""
+    return ServerMetricData(
+        type=PrometheusMetricType.GAUGE,
+        description=description,
+        unit=unit,
+        series=list(series) if series else [],
     )
 
 
-class GaugeMetricData(BaseServerMetricData):
-    """Server gauge metric data."""
-
-    type: PrometheusMetricType = PrometheusMetricType.GAUGE
-
-    series: list[GaugeSeries] = Field(
-        default_factory=list,
-        description="Statistics for each unique endpoint + label combination",
+def CounterMetricData(
+    *,
+    description: str,
+    unit: str | None = None,
+    series: list[ServerSeries] | None = None,
+) -> ServerMetricData:
+    """Factory — builds a COUNTER-typed ``ServerMetricData``."""
+    return ServerMetricData(
+        type=PrometheusMetricType.COUNTER,
+        description=description,
+        unit=unit,
+        series=list(series) if series else [],
     )
 
 
-class CounterMetricData(BaseServerMetricData):
-    """Server counter metric data."""
-
-    type: PrometheusMetricType = PrometheusMetricType.COUNTER
-
-    series: list[CounterSeries] = Field(
-        default_factory=list,
-        description="Statistics for each unique endpoint + label combination",
-    )
-
-
-class HistogramMetricData(BaseServerMetricData):
-    """Server histogram metric data."""
-
-    type: PrometheusMetricType = PrometheusMetricType.HISTOGRAM
-
-    series: list[HistogramSeries] = Field(
-        default_factory=list,
-        description="Statistics for each unique endpoint + label combination",
+def HistogramMetricData(
+    *,
+    description: str,
+    unit: str | None = None,
+    series: list[ServerSeries] | None = None,
+) -> ServerMetricData:
+    """Factory — builds a HISTOGRAM-typed ``ServerMetricData``."""
+    return ServerMetricData(
+        type=PrometheusMetricType.HISTOGRAM,
+        description=description,
+        unit=unit,
+        series=list(series) if series else [],
     )
 
 
@@ -587,12 +565,7 @@ class ServerMetricsExportData(AIPerfBaseModel):
         "None for legacy exports.",
     )
     summary: ServerMetricsSummary
-    metrics: SerializeAsAny[
-        dict[
-            str,
-            GaugeMetricData | CounterMetricData | HistogramMetricData,
-        ]
-    ] = Field(
+    metrics: dict[str, ServerMetricData] = Field(
         default_factory=dict,
         description="Metrics keyed by name, each with type-specific series stats",
     )
@@ -602,7 +575,8 @@ class ServerMetricsExportData(AIPerfBaseModel):
     )
 
 
-class ServerMetricsEndpointSummary(AIPerfBaseModel):
+@dataclass(slots=True, kw_only=True)
+class ServerMetricsEndpointSummary:
     """Summary of server metrics data for a single endpoint.
 
     Unified structure combining metadata and type-specific aggregated statistics:
@@ -611,65 +585,43 @@ class ServerMetricsEndpointSummary(AIPerfBaseModel):
     - Includes metric description from metadata
     """
 
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
     endpoint_url: str
-    info: ServerMetricsEndpointInfo = Field(
-        description="Collection statistics for this endpoint"
-    )
-    metrics: SerializeAsAny[
-        dict[
-            str,
-            GaugeMetricData | CounterMetricData | HistogramMetricData,
-        ]
-    ] = Field(
-        default_factory=dict,
-        description="All metrics keyed by metric name, with type-specific series stats",
-    )
+    info: ServerMetricsEndpointInfo
+    metrics: dict[str, ServerMetricData] = field(default_factory=dict)
 
 
-class ServerMetricsResults(AIPerfBaseModel):
+@dataclass(slots=True, kw_only=True)
+class ServerMetricsResults:
     """Results from server metrics collection during a profile run.
 
-    Pre-computed summaries (endpoint_summaries) are computed in the subprocess
-    and sent as JSON-serializable Pydantic models.
+    Slotted dataclass — shared between msgspec envelopes
+    (``ProcessServerMetricsResultMessage.server_metrics_result.results``) and
+    Pydantic parents.
     """
 
-    benchmark_id: str | None = Field(
-        default=None,
-        description="Unique identifier for this benchmark run (UUID), shared across all export formats. "
-        "None for legacy exports created before this field was added.",
-    )
-    endpoint_summaries: dict[str, ServerMetricsEndpointSummary] | None = Field(
-        default=None,
-        description="Pre-computed endpoint summaries ready for export (sent over ZMQ)",
-    )
-    start_ns: int = Field(
-        description="Start time of server metrics collection in nanoseconds"
-    )
-    end_ns: int = Field(
-        description="End time of server metrics collection in nanoseconds"
-    )
-    endpoints_configured: list[str] = Field(
-        default_factory=list,
-        description="List of server metrics endpoint URLs in configured scope for display",
-    )
-    endpoints_successful: list[str] = Field(
-        default_factory=list,
-        description="List of server metrics endpoint URLs that successfully provided data",
-    )
-    error_summary: list[ErrorDetailsCount] = Field(
-        default_factory=list,
-        description="A list of the unique error details and their counts",
-    )
-    # Time filter for aggregation (excludes warmup)
-    aggregation_time_filter: TimeRangeFilter | None = Field(
-        default=None,
-        description="Time filter for aggregation, excluding warmup periods",
-    )
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    start_ns: int
+    end_ns: int
+    benchmark_id: str | None = None
+    endpoint_summaries: dict[str, ServerMetricsEndpointSummary] | None = None
+    endpoints_configured: list[str] = field(default_factory=list)
+    endpoints_successful: list[str] = field(default_factory=list)
+    error_summary: list[ErrorDetailsCount] = field(default_factory=list)
+    aggregation_time_filter: TimeRangeFilter | None = None
 
 
-class ProcessServerMetricsResult(AIPerfBaseModel):
-    """Result of server metrics processing - mirrors ProcessTelemetryResult pattern."""
+@dataclass(slots=True, kw_only=True)
+class ProcessServerMetricsResult:
+    """Result of server metrics processing - mirrors ProcessTelemetryResult pattern.
 
-    results: ServerMetricsResults | None = Field(
-        default=None, description="The processed server metrics results"
-    )
+    Slotted dataclass — shared between msgspec envelopes
+    (``ProcessServerMetricsResultMessage.server_metrics_result``) and Pydantic
+    parents via ``__pydantic_config__``.
+    """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    results: ServerMetricsResults | None = None

@@ -12,6 +12,7 @@ from aiperf.common.models.server_metrics_models import (
     CounterMetricData,
     GaugeMetricData,
     HistogramMetricData,
+    ServerMetricData,
     ServerMetricsEndpointInfo,
     ServerMetricsExportData,
     ServerMetricsSummary,
@@ -139,10 +140,7 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
     def _build_hybrid_metrics(
         self,
     ) -> tuple[
-        dict[
-            str,
-            GaugeMetricData | CounterMetricData | HistogramMetricData,
-        ],
+        dict[str, ServerMetricData],
         dict[str, ServerMetricsEndpointInfo] | None,
     ]:
         """Build hybrid metrics dict from endpoint summaries for JSON export.
@@ -173,10 +171,7 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
             self.debug("No server metrics summaries available.")
             return {}, None
 
-        metrics: dict[
-            str,
-            GaugeMetricData | CounterMetricData | HistogramMetricData,
-        ] = {}
+        metrics: dict[str, ServerMetricData] = {}
         endpoint_info: dict[str, ServerMetricsEndpointInfo] = {}
 
         for endpoint_summary in endpoint_summaries.values():

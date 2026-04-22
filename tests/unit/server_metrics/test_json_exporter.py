@@ -193,8 +193,7 @@ def server_metrics_results_with_summaries():
     )
 
     return ServerMetricsResults(
-        benchmark_id="test-benchmark-id",
-        server_metrics_data=None,  # Not sent over ZMQ
+        benchmark_id="test-benchmark-id",  # Not sent over ZMQ
         endpoint_summaries={
             "localhost:8081": endpoint1_summary,
             "localhost:8082": endpoint2_summary,
@@ -273,7 +272,6 @@ def server_metrics_results_with_labeled_metrics():
 
     return ServerMetricsResults(
         benchmark_id="test-benchmark-id",
-        server_metrics_data=None,
         endpoint_summaries={"localhost:8081": endpoint_summary},
         start_ns=1_000_000_000_000,
         end_ns=1_100_000_000_000,
@@ -665,7 +663,6 @@ class TestServerMetricsJsonExporterGenerateContent:
                     series=[
                         CounterSeries(
                             labels=None,
-                            value=0.0,
                         ),
                     ],
                 ),
@@ -673,7 +670,6 @@ class TestServerMetricsJsonExporterGenerateContent:
         )
         server_metrics_results = ServerMetricsResults(
             benchmark_id="test-benchmark-id",
-            server_metrics_data=None,
             endpoint_summaries={"localhost:8081": endpoint_summary},
             start_ns=1_000_000_000_000,
             end_ns=1_100_000_000_000,
@@ -691,13 +687,14 @@ class TestServerMetricsJsonExporterGenerateContent:
         content = exporter._generate_content()
         data = orjson.loads(content)
 
-        # Counter with no change should use value instead of stats
+        # Counter series with no stats now emits only endpoint_url/labels
+        # (``ServerSeries`` is a strict dataclass — no ``value`` extra field).
         assert "error_count_total" in data["metrics"]
         counter_metric = data["metrics"]["error_count_total"]
         series_data = counter_metric["series"][0]
 
-        assert series_data["value"] == 0.0
         assert "stats" not in series_data
+        assert "value" not in series_data
 
 
 class TestServerMetricsJsonExporterIntegration:

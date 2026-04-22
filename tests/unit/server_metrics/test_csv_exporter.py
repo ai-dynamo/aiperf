@@ -22,6 +22,7 @@ from aiperf.common.models import (
     HistogramSeries,
     HistogramStats,
     ProfileResults,
+    ServerMetricData,
     ServerMetricsEndpointInfo,
     ServerMetricsEndpointSummary,
     ServerMetricsResults,
@@ -30,7 +31,7 @@ from aiperf.config import AIPerfConfig
 from aiperf.server_metrics.csv_exporter import CsvMetricInfo, ServerMetricsCsvExporter
 from tests.unit.conftest import create_exporter_config
 
-MetricDataType: TypeAlias = GaugeMetricData | CounterMetricData | HistogramMetricData
+MetricDataType: TypeAlias = ServerMetricData
 
 _BASE = dict(
     models=["test-model"],

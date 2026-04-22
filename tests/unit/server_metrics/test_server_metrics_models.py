@@ -245,17 +245,26 @@ def test_base_server_metric_data_has_no_autoroutedmodel_registry():
 
 
 def test_gauge_counter_histogram_unions_still_deserialize():
-    """Pydantic's native Union discriminates on `type` field."""
+    """All three legacy *MetricData names now collapse into ServerMetricData.
+
+    The three factories produce a single ``ServerMetricData`` dataclass
+    discriminated by the ``type`` enum — msgspec rejects unions of multiple
+    dataclasses, so the legacy Pydantic-union discrimination no longer
+    applies. Instead, verify the factory produces the correct ``type``.
+    """
     from pydantic import TypeAdapter
 
     from aiperf.common.models.server_metrics_models import (
-        CounterMetricData,
         GaugeMetricData,
-        HistogramMetricData,
+        ServerMetricData,
     )
 
     payload = {"type": "gauge", "description": "d", "series": []}
-    union_adapter = TypeAdapter(
-        GaugeMetricData | CounterMetricData | HistogramMetricData
-    )
-    assert isinstance(union_adapter.validate_python(payload), GaugeMetricData)
+    adapter = TypeAdapter(ServerMetricData)
+    got = adapter.validate_python(payload)
+    assert isinstance(got, ServerMetricData)
+    assert got.type.value == "gauge"
+    # Factory returns the same unified type
+    gm = GaugeMetricData(description="d")
+    assert isinstance(gm, ServerMetricData)
+    assert gm.type.value == "gauge"

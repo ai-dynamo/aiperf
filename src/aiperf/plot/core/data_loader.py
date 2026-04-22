@@ -23,6 +23,7 @@ import pandas as pd
 from pydantic import Field
 
 from aiperf.common.constants import STAT_KEYS
+from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.models.record_models import (
@@ -31,9 +32,6 @@ from aiperf.common.models.record_models import (
     decode_metric_record_info_json,
 )
 from aiperf.common.models.server_metrics_models import (
-    CounterTimeslice,
-    GaugeTimeslice,
-    HistogramTimeslice,
     ServerMetricsExportData,
 )
 from aiperf.plot.constants import (
@@ -1009,16 +1007,18 @@ class DataLoader(AIPerfLoggerMixin):
                                 "unit": metric_data.unit or "",
                             }
 
-                            # Add type-specific fields
-                            if isinstance(ts, GaugeTimeslice):
+                            # Add type-specific fields — dispatch on metric_data.type
+                            # because GaugeTimeslice/CounterTimeslice/HistogramTimeslice
+                            # now alias a single unified ``ServerTimeslice`` dataclass.
+                            if metric_data.type == PrometheusMetricType.GAUGE:
                                 row["value"] = ts.avg
                                 row["histogram_count"] = None
                                 row["histogram_sum"] = None
-                            elif isinstance(ts, CounterTimeslice):
+                            elif metric_data.type == PrometheusMetricType.COUNTER:
                                 row["value"] = ts.rate
                                 row["histogram_count"] = None
                                 row["histogram_sum"] = None
-                            elif isinstance(ts, HistogramTimeslice):
+                            elif metric_data.type == PrometheusMetricType.HISTOGRAM:
                                 row["value"] = ts.avg
                                 row["histogram_count"] = ts.count
                                 row["histogram_sum"] = ts.sum

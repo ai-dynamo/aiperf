@@ -69,7 +69,6 @@ def mock_server_metrics_results():
 
     return ServerMetricsResults(
         benchmark_id="test-benchmark-id",
-        server_metrics_data=None,
         endpoint_summaries=endpoint_summaries,
         start_ns=1_000_000_000_000,
         end_ns=1_100_000_000_000,

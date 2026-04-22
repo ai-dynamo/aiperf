@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import ClassVar
 
@@ -16,16 +17,23 @@ from aiperf.config import BenchmarkConfig
 # =============================================================================
 
 
-class JsonMetricResult(AIPerfBaseModel):
+@dataclass(slots=True, kw_only=True)
+class JsonMetricResult:
     """The result values of a single metric for JSON export.
 
+    Slotted dataclass — shared between Pydantic parents (``JsonExportData``
+    metric-result fields) via ``__pydantic_config__`` and msgspec wire
+    envelopes (``TelemetryExportData.endpoints[...].gpus[...].metrics``
+    carried on ``ProcessTelemetryResultMessage``).
+
     NOTE:
-    This model has been designed to mimic the structure of the GenAI-Perf JSON output
-    as closely as possible. Be careful not to add or remove fields that are not present in the
-    GenAI-Perf JSON output.
+    This model mimics the GenAI-Perf JSON output. Be careful not to add or
+    remove fields that are not present in the GenAI-Perf JSON output.
     """
 
-    unit: str = Field(description="The unit of the metric, e.g. 'ms' or 'requests/sec'")
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    unit: str
     avg: float | None = None
     p1: float | None = None
     p5: float | None = None
@@ -46,42 +54,51 @@ class JsonMetricResult(AIPerfBaseModel):
 # =============================================================================
 
 
-class TelemetrySummary(AIPerfBaseModel):
+@dataclass(slots=True, kw_only=True)
+class TelemetrySummary:
     """Summary information for telemetry collection."""
 
-    endpoints_configured: list[str] | None = None
-    endpoints_successful: list[str] | None = None
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
     start_time: datetime
     end_time: datetime
+    endpoints_configured: list[str] | None = None
+    endpoints_successful: list[str] | None = None
 
 
-class GpuSummary(AIPerfBaseModel):
+@dataclass(slots=True, kw_only=True)
+class GpuSummary:
     """Summary of GPU telemetry data."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     gpu_index: int
     gpu_name: str
     gpu_uuid: str
     hostname: str | None
+    metrics: dict[str, JsonMetricResult]
     namespace: str | None = None
     pod_name: str | None = None
-    metrics: dict[str, JsonMetricResult]  # metric_key -> {stat_key -> value}
 
 
-class EndpointData(AIPerfBaseModel):
+@dataclass(slots=True, kw_only=True)
+class EndpointData:
     """Data for a single endpoint."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     gpus: dict[str, GpuSummary]
 
 
-class TelemetryExportData(AIPerfBaseModel):
+@dataclass(slots=True, kw_only=True)
+class TelemetryExportData:
     """Telemetry data structure for JSON export."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     summary: TelemetrySummary
     endpoints: dict[str, EndpointData]
-    error_summary: list[ErrorDetailsCount] | None = Field(
-        default=None,
-        description="A list of the unique error details and their counts",
-    )
+    error_summary: list[ErrorDetailsCount] | None = None
 
 
 # =============================================================================
