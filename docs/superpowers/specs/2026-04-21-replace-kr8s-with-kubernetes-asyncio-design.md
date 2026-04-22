@@ -19,12 +19,13 @@ on the fly. Consolidating to `kubernetes_asyncio` — whose method names and
 model types match the widely-trained sync client byte-for-byte — makes the
 code maximally recognizable.
 
-Secondary driver: dependency consolidation. `kopf>=1.42.0` (operator framework,
-staying) does not share its internal client with handler code, so there is no
-operational coupling between kopf and our k8s client choice. But we already
-pull `kubernetes_asyncio` in transitively via other parts of the Python
-ecosystem — pinning it explicitly and removing `kr8s` means one library instead
-of two.
+Secondary driver: use a Kubernetes client whose API surface matches the
+widely-trained sync `kubernetes` client. `kopf>=1.42.0` (operator framework,
+staying) uses its own `aiohttp`-based internal client and neither exposes it
+to handlers nor depends on `kubernetes_asyncio`/`kr8s` transitively. That
+means there is no shared client to inherit — `kubernetes_asyncio` is a net-new
+explicit dependency that replaces `kr8s` one-for-one and has no operational
+coupling with kopf.
 
 This is **not** driven by a specific `kr8s` bug. `kr8s` works; we just want
 less code and more LLM-native code.
@@ -426,11 +427,14 @@ instead. Docstring updated accordingly.
 
 Pin rationale:
 
-- Read `kopf>=1.42.0`'s installed `kubernetes_asyncio` range (e.g.
-  `pip show kubernetes_asyncio` or inspect `uv.lock` before editing).
-- Pin to the latest minor series inside that range (e.g. if kopf allows
-  `>=24,<33`, pin `kubernetes_asyncio>=32.0,<33.0`).
-- Run `uv lock` and confirm a single resolved version exists in `uv.lock`.
+- `kubernetes_asyncio` is a fresh dep (not transitive via kopf). Pick the
+  latest stable release that aligns with kopf's known-working ecosystem
+  (kopf 1.44.x is current in the lock file).
+- Pin the major.minor floor and exclude the next major (e.g.
+  `kubernetes_asyncio>=32.0,<33.0`) to get patch fixes without surprise
+  breaking changes.
+- Run `uv lock` after editing `pyproject.toml` and confirm no conflict
+  messages with kopf / aiohttp / urllib3.
 
 `uv.lock` is regenerated in the same commit that removes `kr8s`.
 
@@ -454,14 +458,17 @@ Integration tests under `tests/kubernetes/` run at commits 4 and 7 at minimum.
 
 ## 6. Risks and open items
 
-- **kopf compat.** Confirm at lock time that `kopf>=1.42.0` co-installs
-  cleanly with the pinned `kubernetes_asyncio` version. If kopf pins a
-  different range, widen our constraint to the intersection.
+- **kopf / aiohttp cohabitation.** `kubernetes_asyncio` uses `aiohttp`
+  internally; so does kopf (its internal client). Confirm at lock time
+  that the aiohttp ranges required by both intersect — if they don't,
+  widen our `kubernetes_asyncio` pin to the intersection or bump our
+  aiohttp constraint.
 - **Config loading interaction.** kopf runs its own config loading at
-  process start; our `k8s_client()` loads config again on first call. This
-  is redundant but harmless: the underlying `Configuration` singleton is
-  cached. If we observe duplicate load warnings, add a module-level flag to
-  load once.
+  process start (using its own client); our `k8s_client()` loads config
+  independently on first call. kopf's client state is completely separate
+  from `kubernetes_asyncio.configuration.Configuration`, so there is no
+  shared mutable state to fight over; the two are loaded in parallel
+  without interference.
 - **Integration test cluster availability.** `tests/kubernetes/test_operator.py`
   and `tests/kubernetes/test_kueue_integration.py` require a live cluster.
   Gated at commit 7 (treated as blocker before merge). If no cluster is
