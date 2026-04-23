@@ -531,8 +531,20 @@ def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
         ),
     }
 
-    # Remaining operator fields (connectionsPerWorker, timeoutSeconds, etc.)
-    spec_properties.update(operator)
+    # Remaining operator fields (connectionsPerWorker, timeoutSeconds, etc.).
+    # skipEndpointCheck lives on AIPerfJobSpec (not DeploymentConfig) and is
+    # emitted as a static sibling of `cancel`, preserving insertion order.
+    for key, value in operator.items():
+        spec_properties[key] = value
+        if key == "cancel":
+            spec_properties["skipEndpointCheck"] = {
+                "type": "boolean",
+                "description": (
+                    "Skip the operator-side endpoint reachability probe "
+                    "before deploying"
+                ),
+                "default": False,
+            }
 
     return {
         "apiVersion": "apiextensions.k8s.io/v1",
