@@ -125,7 +125,7 @@ export function History() {
   };
 
   return html`
-    <div class="history-page">
+    <div class="history-page" data-testid="page-history">
       <div class="section-header" style="margin-bottom: var(--space-4)">
         <span class="section-title">History</span>
       </div>

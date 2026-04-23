@@ -12,14 +12,14 @@ export function Breadcrumb() {
 
   if (segments.length <= 1) {
     return html`
-      <div class="breadcrumb">
+      <div class="breadcrumb" data-testid="breadcrumb">
         <span class="breadcrumb-current">${segments[0]?.label ?? 'Dashboard'}</span>
       </div>
     `;
   }
 
   return html`
-    <div class="breadcrumb">
+    <div class="breadcrumb" data-testid="breadcrumb">
       ${segments.map((seg, i) => {
         const isLast = i === segments.length - 1;
         return html`

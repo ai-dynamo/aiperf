@@ -161,20 +161,21 @@ export function JobTable({ jobs, onRowClick, filter }) {
           <tr>
             ${COLUMNS.map(
               (col) => html`
-                <th key=${col.key} class="job-table-th" onclick=${() => toggleSort(col.key)}>
+                <th key=${col.key} class="job-table-th" onclick=${() => toggleSort(col.key)} data-testid=${'col-header-' + col.key}>
                   ${col.label} ${renderSortIcon(col.key)}
                 </th>
               `,
             )}
           </tr>
         </thead>
-        <tbody>
+        <tbody data-testid="job-table">
           ${sorted.map((job) => html`
             <tr
               key=${job.namespace + '/' + job.name}
               class="job-table-row"
               onclick=${() => onRowClick && onRowClick(job)}
               style=${onRowClick ? 'cursor: pointer' : ''}
+              data-testid=${'job-row-' + (job.namespace ?? '') + '-' + (job.name ?? '')}
             >
               <td class="job-table-td job-table-name">${job.name}</td>
               <td class="job-table-td text-dim">${job.namespace}</td>

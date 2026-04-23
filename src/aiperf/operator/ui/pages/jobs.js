@@ -93,7 +93,7 @@ export function Jobs() {
   const hasFilters = searchText || modelFilter || endpointFilter || activeFilter;
 
   return html`
-    <div class="jobs-page">
+    <div class="jobs-page" data-testid="page-jobs">
       <div class="section-header">
         <div class="filter-tabs">
           ${FILTERS.map((f) => html`

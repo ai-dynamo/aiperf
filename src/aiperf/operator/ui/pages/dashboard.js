@@ -308,7 +308,7 @@ export function Dashboard() {
   const maxLatency = top5.reduce((mx, j) => Math.max(mx, j.latencyP99Ms ?? 0), 0) || 1;
 
   return html`
-    <div class="dashboard">
+    <div class="dashboard" data-testid="page-dashboard">
       ${clusterError && html`<div class="cluster-warning-banner">Cluster endpoint unavailable — data may be stale.</div>`}
 
       <${StatusBar} allJobs=${allJobs} cluster=${cluster} best=${best} />

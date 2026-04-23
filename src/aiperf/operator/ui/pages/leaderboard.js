@@ -108,7 +108,7 @@ export function Leaderboard() {
   };
 
   return html`
-    <div class="leaderboard">
+    <div class="leaderboard" data-testid="page-leaderboard">
       <div class="section-header" style="margin-bottom: var(--space-4)">
         <span class="section-title">Leaderboard</span>
       </div>

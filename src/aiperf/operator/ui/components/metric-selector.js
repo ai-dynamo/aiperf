@@ -33,7 +33,7 @@ export function MetricSelector({ value, onSelect }) {
   }
 
   return html`
-    <div class="metric-selector">
+    <div class="metric-selector" data-testid="metric-selector">
       <label class="metric-selector-label" for="metric-select">Metric</label>
       <select
         id="metric-select"

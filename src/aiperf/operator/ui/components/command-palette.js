@@ -113,6 +113,7 @@ export function CommandPalette({ onClose }) {
         class="command-palette"
         onclick=${(e) => e.stopPropagation()}
         onkeydown=${handleKeyDown}
+        data-testid="command-palette"
       >
         <div class="command-palette-search">
           <svg class="command-palette-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -126,6 +127,7 @@ export function CommandPalette({ onClose }) {
             placeholder="Search pages and jobs..."
             value=${query}
             oninput=${(e) => setQuery(e.target.value)}
+            data-testid="command-palette-input"
           />
           <kbd class="command-palette-esc">Esc</kbd>
         </div>

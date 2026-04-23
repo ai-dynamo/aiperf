@@ -1528,7 +1528,7 @@ export function JobDetail({ namespace, name }) {
   }
 
   return html`
-    <div class="job-detail">
+    <div class="job-detail" data-testid="page-job-detail">
       <!-- Header -->
       <div class="card" style="margin-bottom: var(--space-4)">
         <div style="display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3)">
@@ -1562,6 +1562,7 @@ export function JobDetail({ namespace, name }) {
               class="btn btn-danger"
               onclick=${handleCancel}
               style=${'background: ' + colors.error + '22; color: ' + colors.error + '; border: 1px solid ' + colors.error + '44; padding: var(--space-2) var(--space-4); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm)'}
+              data-testid="job-detail-cancel"
             >
               Cancel
             </button>
@@ -1630,7 +1631,7 @@ export function JobDetail({ namespace, name }) {
           `}
 
           ${pods.length > 0 && html`
-            <div class="card">
+            <div class="card" data-testid="job-detail-pods">
               <div class="card-title">Pods</div>
               <${PodsBar} pods=${pods} />
             </div>

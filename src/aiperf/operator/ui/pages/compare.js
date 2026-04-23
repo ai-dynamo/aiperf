@@ -151,7 +151,7 @@ export function Compare() {
   };
 
   return html`
-    <div class="compare-page">
+    <div class="compare-page" data-testid="page-compare">
       <div class="section-header" style="margin-bottom: var(--space-4)">
         <span class="section-title">Compare Jobs</span>
       </div>
@@ -185,7 +185,7 @@ export function Compare() {
             </div>
           `}
 
-          <div style="max-height: 320px; overflow-y: auto">
+          <div style="max-height: 320px; overflow-y: auto" data-testid="compare-select">
             ${filtered.map((job) => {
               const jobId = job.job_id ?? '';
               const ns = job.namespace ?? '';

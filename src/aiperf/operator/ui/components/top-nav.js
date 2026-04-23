@@ -24,6 +24,11 @@ function isActive(itemPath, currentRoute) {
   return currentRoute.startsWith(itemPath);
 }
 
+function routeSlug(path) {
+  if (path === '/' || path === '') return 'dashboard';
+  return path.replace(/^\//, '').replace(/\//g, '-');
+}
+
 /**
  * Top navigation bar with logo, grouped tabs, and search trigger.
  * @param {{ onSearchClick: () => void }} props
@@ -32,7 +37,7 @@ export function TopNav({ onSearchClick }) {
   const currentRoute = route.value;
 
   return html`
-    <header class="topbar">
+    <header class="topbar" data-testid="top-nav">
       <div class="topbar-left">
         <div class="logo">
           <div class="logo-icon">
@@ -51,6 +56,7 @@ export function TopNav({ onSearchClick }) {
                 class=${'nav-tab' + (isActive(item.path, currentRoute) ? ' active' : '')}
                 onclick=${() => navigate(item.path)}
                 aria-current=${isActive(item.path, currentRoute) ? 'page' : undefined}
+                data-testid=${'nav-link-' + routeSlug(item.path)}
               >
                 ${item.label}
               </button>
@@ -74,6 +80,7 @@ export function TopNav({ onSearchClick }) {
           onclick=${onSearchClick}
           title="Search (Ctrl+K)"
           aria-label="Open search"
+          data-testid="nav-search"
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
