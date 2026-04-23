@@ -186,6 +186,8 @@ markers = [
     "sglang: marks tests requiring an SGLang server (deselected by default)",
     "fern: marks tests that validate Fern documentation (requires fern CLI)",
     "e2e: marks tests as browser-based end-to-end UI tests (requires playwright chromium, deselected by default)",
+    "memory_limit(mb=N): cap this test's virtual address space at N MiB (default 4096)",
+    "no_memory_limit: disable the per-test virtual address space cap entirely",
 ]
 # Better console output
 console_output_style = "progress"
