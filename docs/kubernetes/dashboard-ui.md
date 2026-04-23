@@ -74,8 +74,10 @@ Do not expose this port via an unauthenticated Ingress.
 The top bar is split into two groups with a separator, followed by an
 external link labelled "Plots" that points at `/dashboard/`. The link target
 is a Plotly Dash app built by `aiperf.operator.dashboard_mount.build_dashboard`
-— note that at HEAD this app is **not yet wired into the FastAPI results
-server**, so the "Plots" link currently 404s until a mount site is added.
+and mounted on the FastAPI results server at `/dashboard/` via
+`WSGIMiddleware(DashboardProxy(...))`. When no runs exist on the PVC yet the
+route is served by a small WSGI stub that returns `503` until the first run
+lands, so the "Plots" link is always present and friendly.
 
 ```mermaid
 flowchart LR

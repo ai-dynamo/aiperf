@@ -334,6 +334,25 @@ storage:
   storageClassName: ""             # cluster default; only used when enabled: true
 ```
 
+### Exposing Results Outside the Cluster (Ingress)
+
+By default the results server is reachable only via `ClusterIP + kubectl port-forward`. To expose it through an Ingress (e.g. for a shared dashboard link), enable `ingress.*` in the Helm values:
+
+```yaml
+ingress:
+  enabled: true
+  className: "nginx"          # empty uses the cluster default IngressClass
+  annotations: {}
+  hosts:
+    - host: aiperf.example.com
+      paths:
+        - path: /
+          pathType: Prefix    # backend port defaults to resultsServer.port (8081)
+  tls: []                     # optional: list of {hosts: [...], secretName: ...}
+```
+
+The template lives at `deploy/helm/aiperf-operator/templates/ingress.yaml` and routes to the operator Service on `resultsServer.port`. Each path may override the backend port via `portNumber`.
+
 ---
 
 ## Environment Variables
@@ -414,6 +433,28 @@ kubectl logs -n aiperf-system -l app.kubernetes.io/name=aiperf-operator -f
 ```
 
 The operator emits structured logs with job events, phase transitions, and error details.
+
+### Debugging Failed Jobs
+
+By default the operator cleans up JobSet pods once a job terminates, which makes postmortems hard. Set `keepFailedPods: true` on the AIPerfJob spec to preserve failed pod attempts for inspection:
+
+```yaml
+spec:
+  keepFailedPods: true   # default: false; retains failed JobSet pods for kubectl logs/exec
+```
+
+This changes JobSet lifecycle (completed pods still get reaped via `ttlSecondsAfterFinished`); enable it only while diagnosing, then remove for steady-state runs.
+
+### Deploying Before the Endpoint Is Reachable
+
+The operator runs a TCP/HTTP reachability probe against `spec.benchmark.endpoint` before spinning up workers. If the inference server isn't live yet at deploy time (e.g. GitOps applies the CR before the model pod is Ready), set `skipEndpointCheck: true` to bypass the probe:
+
+```yaml
+spec:
+  skipEndpointCheck: true   # default: false; skips the operator-side endpoint reachability probe
+```
+
+Workers will still fail fast if the endpoint never comes up -- this only suppresses the upfront check.
 
 ---
 

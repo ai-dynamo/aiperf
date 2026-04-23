@@ -66,6 +66,7 @@ The sidecar reads result files from the shared PVC and queries the Kubernetes AP
 | GET | `/api/v1/analytics/summary/{namespace}/{job_id}` | results-analytics | Full aggregated summary |
 | GET | `/api/v1/index` | results-analytics | Fast job index |
 | GET | `/api/v1/config/{namespace}/{job_id}` | results-analytics | Original CR spec/config |
+| GET | `/dashboard/` | dashboard (WSGI) | Plotly Dash app (returns `503` until the first run lands on the PVC) |
 
 ---
 

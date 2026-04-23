@@ -278,14 +278,20 @@ to bind IPC sockets on startup and pods will CrashLoopBackOff.
 
 ## NetworkPolicy expectations
 
-The chart does not ship a `NetworkPolicy` template — policy is
-site-specific. AIPerf's control plane relies on a small, fixed set of
-flows. When you enforce a default-deny policy in the benchmark namespace,
-allow:
+The chart ships an opt-in `NetworkPolicy` template for the operator pod
+itself (`deploy/helm/aiperf-operator/templates/networkpolicy.yaml`, enabled
+via `networkPolicy.enabled=true`) — it restricts ingress to the health
+port 8080 and the results-server port (`resultsServer.port`, default
+8081) and permits egress to DNS (kube-system UDP/TCP 53), the Kubernetes
+API server (443/6443), and the configured benchmark namespace. See
+[Operator NetworkPolicy](#operator-networkpolicy) below. For benchmark-pod
+traffic — the flows listed in the table below — the chart does not ship a
+policy; policy is site-specific. When you enforce a default-deny policy
+in the benchmark namespace, allow:
 
 | Source | Destination | Ports | Reason |
 |---|---|---|---|
-| Worker pods | Controller pod | 5557, 5564, 5661/5662, 5663/5664, 5665/5666, 5667, 5668 (TCP) | ZMQ records push/pull (5557), credit router (5564), dataset-manager proxy DEALER/ROUTER (5661/5662), event-bus XPUB/XSUB (5663/5664), raw-inference PUSH/PULL (5665/5666), control ROUTER/DEALER (5667), credit-return router (5668). See `src/aiperf/config/zmq.py:243-289,547-571`. |
+| Worker pods | Controller pod | 5557, 5564, 5661/5662, 5663/5664, 5665/5666, 5667, 5668 (TCP) | ZMQ records push/pull (5557), credit router (5564), dataset-manager proxy DEALER/ROUTER (5661/5662), event-bus XPUB/XSUB (5663/5664), raw-inference PUSH/PULL (5665/5666), control ROUTER/DEALER (5667), credit-return router (5668). See `src/aiperf/config/_zmq_tcp.py:85-130` (and the dual-bind variant in `src/aiperf/config/_zmq_dual_bind.py:161-200`). |
 | All benchmark pods | Controller pod | 8080-8088 (TCP) | Health and readiness probes (`src/aiperf/kubernetes/environment.py:180-215`) |
 | Client / ingress | API service | 9090 (TCP) | UI dispatch, progress streaming (`environment.py:195-196`) |
 | Client / ingress | Results sidecar | 9091 (TCP) | Post-run result downloads (`environment.py:197-203`) |
@@ -349,6 +355,58 @@ The final egress rule to `0.0.0.0/0:443` is the LLM endpoint reach; lock
 it down to the endpoint's `Service`/`Endpoints` selector or an
 `ipBlock.cidr` matching your inference gateway when the target is on-cluster.
 
+### Operator NetworkPolicy
+
+`deploy/helm/aiperf-operator/templates/networkpolicy.yaml` ships an opt-in
+policy that locks down the **operator pod** (not the benchmark pods).
+Enable with `networkPolicy.enabled=true`. The rendered policy:
+
+- **Ingress** — allows TCP 8080 (operator health) and TCP
+  `resultsServer.port` (default 8081) from the benchmark namespace plus any
+  namespaces listed in `networkPolicy.allowedNamespaces`. CIDR blocks in
+  `networkPolicy.allowedIngressCIDRs` are added as a second ingress rule
+  for external scrapers (e.g. Prometheus, ingress controllers) on the same
+  two ports.
+- **Egress** — allows DNS (UDP/TCP 53 to `kube-system`), the Kubernetes
+  API server (TCP 443 and 6443, no selector), and full egress to the
+  benchmark namespace plus any `allowedNamespaces` entries.
+
+Pair this with a default-deny in the operator namespace so only these
+flows are permitted. The policy's `podSelector` targets the operator
+Deployment labels (`aiperf-operator.selectorLabels`), so other workloads
+in the namespace are unaffected.
+
+### Ingress
+
+`deploy/helm/aiperf-operator/templates/ingress.yaml` ships an opt-in
+`Ingress` that exposes the operator's **results-server** (the `API_SERVICE`
+on `resultsServer.port`, default 8081) outside the cluster. Disabled by
+default — results are reachable via ClusterIP + `kubectl port-forward` or
+the `aiperf kube` CLI. Enable with `ingress.enabled=true`.
+
+Security implications:
+
+- **TLS** — set `ingress.tls` to a list of `{hosts, secretName}` entries;
+  the chart threads them straight into the Ingress `spec.tls`. Without
+  this, traffic to the results server transits the ingress controller as
+  plain HTTP.
+- **Annotations** — `ingress.annotations` is passed through verbatim. Use
+  it to wire ingress-controller-specific auth (e.g. `nginx.ingress.kubernetes.io/auth-*`,
+  OIDC annotations), rate limits, and WAF rules. The results server itself
+  has no built-in authentication; if the Ingress is reachable from
+  untrusted networks, front it with auth at the controller layer.
+- **IngressClass** — set `ingress.className` to pin the controller (e.g.
+  `nginx`, `traefik`); empty uses the cluster default. Mis-pinning to a
+  public-facing class when you meant internal-only is the most common
+  misconfiguration.
+- **Backend** — each path's default backend port is
+  `resultsServer.port`; override per-path with `portNumber` if you fan
+  multiple services behind a single host. The Ingress does not expose the
+  kopf operator's leader-election or health endpoints.
+
+Pair with `networkPolicy.enabled=true` (see above) so only the Ingress
+controller's namespace can reach the operator pod on the results port.
+
 ## Least-privilege recipe
 
 A hardened rollout checklist:
@@ -366,7 +424,7 @@ A hardened rollout checklist:
    on the AIPerfJob instead of binding to `default`.
 4. **`runAsNonRoot: true` everywhere** — the base context already enforces
    this. Do not override with `runAsUser: 0`.
-5. **`readOnlyRootFilesystem: true`** — keep the default; cover the three
+5. **`readOnlyRootFilesystem: true`** — keep the default; cover the four
    writable paths above with `emptyDir` volumes.
 6. **Drop all Linux capabilities** — the base context drops `ALL`. If a
    sidecar demands `NET_BIND_SERVICE` for a low port, add via

@@ -159,7 +159,7 @@ Attach is safe to interrupt at any time. The CR, JobSet, and pods are owned by t
 `resolve_job` is dual-mode by design:
 
 - **Operator-mode** (the default): `aiperf kube profile` creates an `AIPerfJob` CR, and the in-cluster operator reconciles it into a JobSet. `find_aiperf_job` matches the CR directly.
-- **Direct-mode**: `aiperf kube profile --direct` skips the CR and creates a JobSet. When no `AIPerfJob` exists, `resolve_job` falls back to `find_jobset` and wraps the returned `JobSetInfo` as a minimal `AIPerfJobInfo` so the rest of the attach flow is identical.
+- **Direct-mode**: `aiperf kube profile --no-operator` skips the CR and creates a JobSet. When no `AIPerfJob` exists, `resolve_job` falls back to `find_jobset` and wraps the returned `JobSetInfo` as a minimal `AIPerfJobInfo` so the rest of the attach flow is identical.
 
 You do not need to tell `attach` which mode the job was deployed in — the fallback is automatic. The only visible difference is that direct-mode jobs will never report `phase=Completed` via the CR (there is no CR), so the short-circuit branch that suggests `aiperf kube results` does not trigger for them; the attach flow detects completion via the `ALL_RECORDS_RECEIVED` WebSocket message instead.
 

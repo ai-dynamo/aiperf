@@ -140,6 +140,7 @@ phases:
 | `cancel` | bool | `false` | Set to `true` to cancel a running benchmark |
 | `keepFailedPods` | bool | `false` | Preserve pods on failure for debugging (overrides `ttlSecondsAfterFinished`) |
 | `resultsTtlDays` | int | - | Override operator-level `AIPERF_K8S_RESULTS_TTL_DAYS` for this job only |
+| `skipEndpointCheck` | bool | `false` | Skip the operator-side endpoint reachability probe before deploying |
 
 ### Pod Template (`spec.podTemplate`)
 
@@ -263,6 +264,44 @@ The default image used for benchmark jobs if not specified in the CR:
 defaults:
   image: "nvcr.io/nvidia/aiperf:latest"
   imagePullPolicy: "IfNotPresent"
+```
+
+### Ingress
+
+Expose the results-server HTTP API outside the cluster via a Kubernetes `Ingress`. Disabled by default -- results are reachable via `ClusterIP` + `kubectl port-forward`.
+
+```yaml
+ingress:
+  enabled: false
+  className: ""                    # IngressClass name (e.g. "nginx"); empty uses cluster default
+  annotations: {}                  # annotations applied to the Ingress
+  hosts:
+    - host: aiperf.example.com
+      paths:
+        - path: /
+          pathType: Prefix         # backend port defaults to resultsServer.port; override with portNumber
+  tls: []                          # optional list of {hosts, secretName}
+```
+
+### NetworkPolicy
+
+Restrict pod traffic to/from the operator. Disabled by default -- no restrictions applied. When enabled, ingress is allowed from the benchmark namespace on the health (8080) and results (`resultsServer.port`) ports, plus DNS, the K8s API server, and the benchmark namespace on egress.
+
+```yaml
+networkPolicy:
+  enabled: false
+  allowedNamespaces: []            # extra namespaces allowed to reach the operator and reachable on egress
+  allowedIngressCIDRs: []          # CIDR allow-list for external scrapers (Prometheus, ingress controllers)
+```
+
+### Kueue
+
+```yaml
+kueue:
+  # When set, the benchmark namespace is annotated with
+  # kueue.x-k8s.io/default-queue-name so all AIPerf jobs are admitted through
+  # Kueue even without an explicit --queue-name flag.
+  defaultQueueName: ""
 ```
 
 ---

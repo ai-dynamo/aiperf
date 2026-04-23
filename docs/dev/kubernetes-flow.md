@@ -84,7 +84,7 @@ CLI commands defined in `src/aiperf/cli_commands/kube/`:
 
 ## 2. Deployment Generation
 
-The deployment logic in `src/aiperf/cli_commands/kube/profile.py` auto-detects whether the AIPerfJob CRD is installed. If the operator is present, `_deploy_via_operator()` submits an `AIPerfJob` custom resource and the operator reconciles it; otherwise `_deploy_direct()` creates the manifests (ConfigMap, Role, RoleBinding, JobSet) directly. `--no-operator` forces direct mode.
+The deployment logic in `src/aiperf/cli_commands/kube/profile.py` auto-detects whether the AIPerfJob CRD is installed. If the operator is present, `deploy_via_operator()` (in `profile_deploy.py`) submits an `AIPerfJob` custom resource and the operator reconciles it; otherwise `deploy_direct()` (in `profile_deploy_direct.py`) creates the manifests (ConfigMap, Role, RoleBinding, JobSet) directly. `--no-operator` forces direct mode.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐

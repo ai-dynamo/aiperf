@@ -443,11 +443,25 @@ See `OperatorPreflightChecker._resource_mode_skip`.
 
 ## Skipping preflight
 
-### `--skip-endpoint-check` on `aiperf kube profile`
+### Skipping the endpoint reachability probe
 
-`aiperf kube profile` runs a best-effort local endpoint probe before submitting
-the CR. Pass `--skip-endpoint-check` to bypass it — useful when the endpoint is
-reachable only from inside the cluster and the CLI is running outside.
+Endpoint reachability is probed in two places, each bypassable independently:
+
+1. **CLI-side probe** — `aiperf kube profile` runs a best-effort local endpoint
+   probe before submitting the CR. Pass `--skip-endpoint-check` to bypass it —
+   useful when the endpoint is reachable only from inside the cluster and the
+   CLI is running outside.
+2. **Operator-side probe** — after the CR is admitted, the operator runs its own
+   reachability probe (`_check_endpoint_reachable` in
+   `src/aiperf/operator/handlers/create.py`) and records an
+   `EndpointReachable` condition. Set `spec.skipEndpointCheck: true` on the
+   `AIPerfJob` to early-exit this probe; the operator logs
+   `Skipping endpoint reachability probe for <url> (skipEndpointCheck=true)`
+   and proceeds without setting the condition.
+
+The CLI flag propagates into the generated CR as `spec.skipEndpointCheck`, so
+passing `--skip-endpoint-check` on `aiperf kube profile` bypasses both probes
+in one shot.
 
 ```bash
 aiperf kube profile --model Qwen/Qwen3-0.6B \
@@ -456,7 +470,10 @@ aiperf kube profile --model Qwen/Qwen3-0.6B \
     --skip-endpoint-check
 ```
 
-Source: `src/aiperf/cli_commands/kube/profile.py:178`.
+Source: `src/aiperf/cli_commands/kube/profile.py:178`,
+`src/aiperf/operator/models.py:289` (`skip_endpoint_check` field on
+`AIPerfJobSpec`), `src/aiperf/operator/handlers/create.py:86`
+(`_check_endpoint_reachable`).
 
 ### `spec.resourceMode=none`
 
