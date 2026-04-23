@@ -231,6 +231,43 @@ class PromptConfig(BaseConfig):
                 raise ValueError(f"Invalid sequence distribution format: {e}") from e
         return self
 
+    @model_validator(mode="after")
+    def validate_random_range_ratio(self) -> Self:
+        """Validate --random-range-ratio format and enforce mutual exclusion.
+
+        `--random-range-ratio` occupies the same "how are ISL/OSL sampled?" slot
+        as `--seq-dist` and as per-dimension stddev, so combining them is
+        ambiguous and rejected with a clear error.
+        """
+        if self.random_range_ratio is None:
+            return self
+
+        from aiperf.common.models.sequence_distribution import (
+            parse_random_range_ratio,
+        )
+
+        try:
+            parse_random_range_ratio(self.random_range_ratio)
+        except Exception as e:
+            raise ValueError(f"Invalid --random-range-ratio value: {e}") from e
+
+        if self.sequence_distribution is not None:
+            raise ValueError(
+                "--random-range-ratio cannot be combined with --seq-dist; "
+                "use one or the other."
+            )
+        if self.input_tokens.stddev > 0:
+            raise ValueError(
+                "--random-range-ratio cannot be combined with --isl-stddev > 0; "
+                "choose uniform (range ratio) or normal (stddev) sampling for ISL."
+            )
+        if self.output_tokens.stddev is not None and self.output_tokens.stddev > 0:
+            raise ValueError(
+                "--random-range-ratio cannot be combined with --osl-stddev > 0; "
+                "choose uniform (range ratio) or normal (stddev) sampling for OSL."
+            )
+        return self
+
     batch_size: Annotated[
         int,
         Field(
@@ -270,10 +307,51 @@ class PromptConfig(BaseConfig):
         ),
     ] = None
 
+    random_range_ratio: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Sample ISL and OSL uniformly from a symmetric window around the configured means. "
+            "Matches `vllm bench serve --random-range-ratio`: each length is drawn from "
+            "`[floor(mean * (1 - r)), ceil(mean * (1 + r))]` (inclusive, minimum 1). "
+            "Accepts a single float (applied to both ISL and OSL) or a JSON object "
+            '`{"input": 0.3, "output": 0.5}` for independent values. Values must be in `[0, 1)`. '
+            "Uses `--osl` for the OSL mean, falling back to 128 when `--osl` is not set. "
+            "Mutually exclusive with `--seq-dist`, `--isl-stddev`, and `--osl-stddev`.",
+        ),
+        CLIParameter(
+            name=("--random-range-ratio",),
+            group=Groups.INPUT_SEQUENCE_LENGTH,
+        ),
+    ] = None
+
     def get_sequence_distribution(self):
-        """Get sequence distribution object, returning None if not specified."""
+        """Get sequence distribution sampler, returning None if not specified.
+
+        Returns a ``SequenceLengthSampler`` (``SequenceLengthDistribution`` or
+        ``RangeRatioDistribution``) depending on which flag is set. Mutual
+        exclusion is enforced by the model validator.
+        """
         if self.sequence_distribution is not None:
             from aiperf.common.models.sequence_distribution import DistributionParser
 
             return DistributionParser.parse(self.sequence_distribution)
+        if self.random_range_ratio is not None:
+            from aiperf.common.models.sequence_distribution import (
+                RangeRatioDistribution,
+                parse_random_range_ratio,
+            )
+
+            input_ratio, output_ratio = parse_random_range_ratio(
+                self.random_range_ratio
+            )
+            osl_mean = (
+                128 if self.output_tokens.mean is None else self.output_tokens.mean
+            )
+            return RangeRatioDistribution(
+                isl_mean=self.input_tokens.mean,
+                osl_mean=osl_mean,
+                input_ratio=input_ratio,
+                output_ratio=output_ratio,
+            )
         return None

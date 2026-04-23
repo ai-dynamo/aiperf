@@ -56,7 +56,36 @@ aiperf profile \
 - `--output-tokens-mean`: Mean number of output tokens requested (default: None — model decides)
 - `--output-tokens-stddev`: Standard deviation for output token length (default: 0)
 - `--seq-dist`: Distribution of (ISL, OSL) pairs for mixed workload simulation (default: None). See [Sequence Length Distributions](sequence-distributions.md) for format details.
+- `--random-range-ratio`: Sample ISL and OSL uniformly from a symmetric window around the configured means, matching `vllm bench serve --random-range-ratio`. See [Uniform Range Sampling](#advanced-uniform-range-sampling-vllm-parity) below.
 - `--random-seed`: Seed for reproducible prompt generation (default: None)
+
+### Advanced: Uniform Range Sampling (vllm parity)
+
+`--random-range-ratio` draws each request's ISL and OSL uniformly from
+`[floor(mean * (1 - r)), ceil(mean * (1 + r))]` (inclusive, minimum 1). This
+matches `vllm bench serve --random-range-ratio` and is useful for simulating
+moderate, bounded variability without specifying a full `--seq-dist`.
+
+```bash
+aiperf profile \
+  --model Qwen/Qwen3-0.6B \
+  --url localhost:8000 \
+  --endpoint-type chat \
+  --isl 1024 --osl 128 \
+  --random-range-ratio 0.3 \
+  --request-count 100
+```
+
+Accepts either a plain float (applied to both ISL and OSL) or a JSON object
+for independent values:
+
+```bash
+aiperf profile ... --random-range-ratio '{"input": 0.2, "output": 0.5}'
+```
+
+Values must satisfy `0 <= r < 1`. When `--osl` is not set, OSL defaults to 128
+(matching vllm). This flag is mutually exclusive with `--seq-dist`,
+`--isl-stddev`, and `--osl-stddev`.
 
 ### Advanced: Prefix Synthesis
 

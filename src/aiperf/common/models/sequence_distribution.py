@@ -32,8 +32,10 @@ Examples:
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 import numpy as np
 import orjson
@@ -43,6 +45,19 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.utils import load_json_str
 
 logger = AIPerfLogger(__name__)
+
+
+@runtime_checkable
+class SequenceLengthSampler(Protocol):
+    """Anything that yields an (ISL, OSL) pair per call.
+
+    Implemented by SequenceLengthDistribution (probabilistic ISL/OSL pairs with
+    optional per-pair normal variance) and RangeRatioDistribution (uniform
+    sampling in a symmetric window around configured means, matching
+    `vllm bench --random-range-ratio`).
+    """
+
+    def sample(self) -> tuple[int, int]: ...
 
 
 def _validate_probability_sum(pairs: list[SequenceLengthPair]) -> None:
@@ -504,3 +519,132 @@ def create_balanced_distribution(
     seq_pairs = [SequenceLengthPair(isl, osl, prob_per_pair) for isl, osl in pairs]
 
     return SequenceLengthDistribution(seq_pairs)
+
+
+class RangeRatioDistribution:
+    """
+    Uniform ISL/OSL sampling in a symmetric window around configured means.
+
+    Matches the semantics of `vllm bench serve --random-range-ratio`:
+    lengths are drawn uniformly from integer ranges
+    ``[floor(mean * (1 - ratio)), ceil(mean * (1 + ratio))]`` (inclusive on
+    both ends), with a minimum of 1 to prevent zero-token requests.
+
+    Input and output ratios may differ, allowing callers to express
+    ``{"input": 0.3, "output": 0.5}``-style configurations.
+    """
+
+    def __init__(
+        self,
+        isl_mean: int,
+        osl_mean: int,
+        input_ratio: float,
+        output_ratio: float,
+    ) -> None:
+        if isl_mean < 1:
+            raise ValueError(f"Input sequence length mean must be >= 1, got {isl_mean}")
+        if osl_mean < 1:
+            raise ValueError(
+                f"Output sequence length mean must be >= 1, got {osl_mean}"
+            )
+        if not 0.0 <= input_ratio < 1.0:
+            raise ValueError(f"input_range_ratio must be in [0, 1), got {input_ratio}")
+        if not 0.0 <= output_ratio < 1.0:
+            raise ValueError(
+                f"output_range_ratio must be in [0, 1), got {output_ratio}"
+            )
+
+        self._rng = rng.derive("models.range_ratio.distribution")
+        self._isl_mean = int(isl_mean)
+        self._osl_mean = int(osl_mean)
+        self._input_ratio = float(input_ratio)
+        self._output_ratio = float(output_ratio)
+
+        self._input_low = max(1, math.floor(self._isl_mean * (1 - self._input_ratio)))
+        self._input_high = max(1, math.ceil(self._isl_mean * (1 + self._input_ratio)))
+        self._output_low = max(1, math.floor(self._osl_mean * (1 - self._output_ratio)))
+        self._output_high = max(1, math.ceil(self._osl_mean * (1 + self._output_ratio)))
+
+        logger.debug(
+            f"Created RangeRatioDistribution: ISL in [{self._input_low}, {self._input_high}], "
+            f"OSL in [{self._output_low}, {self._output_high}]"
+        )
+
+    def sample(self) -> tuple[int, int]:
+        """Sample a single (ISL, OSL) pair with independent uniform integers."""
+        isl = int(self._rng.integers(self._input_low, self._input_high + 1))
+        osl = int(self._rng.integers(self._output_low, self._output_high + 1))
+        return isl, osl
+
+    @property
+    def input_bounds(self) -> tuple[int, int]:
+        """Inclusive [low, high] integer bounds for ISL sampling."""
+        return self._input_low, self._input_high
+
+    @property
+    def output_bounds(self) -> tuple[int, int]:
+        """Inclusive [low, high] integer bounds for OSL sampling."""
+        return self._output_low, self._output_high
+
+    def __repr__(self) -> str:
+        return (
+            f"RangeRatioDistribution(isl_mean={self._isl_mean}, "
+            f"osl_mean={self._osl_mean}, input_ratio={self._input_ratio}, "
+            f"output_ratio={self._output_ratio})"
+        )
+
+
+def parse_random_range_ratio(value: str) -> tuple[float, float]:
+    """Parse a ``--random-range-ratio`` CLI value into (input_ratio, output_ratio).
+
+    Accepts either a plain float string (``"0.3"``) applied to both dimensions,
+    or a JSON object (``'{"input": 0.3, "output": 0.5}'``) for independent
+    values. Matches ``vllm bench serve --random-range-ratio`` semantics.
+
+    Both ratios must satisfy ``0.0 <= r < 1.0``.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("--random-range-ratio value cannot be empty")
+
+    value = value.strip()
+
+    try:
+        ratio = float(value)
+    except ValueError:
+        try:
+            data = orjson.loads(value)
+        except orjson.JSONDecodeError as e:
+            raise ValueError(
+                f"--random-range-ratio must be a float or a JSON object with "
+                f"'input' and 'output' keys, got: {value!r} ({e})"
+            ) from e
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"--random-range-ratio must be a float or a JSON object with "
+                f"'input' and 'output' keys, got: {value!r}"
+            ) from None
+        missing = {"input", "output"} - data.keys()
+        if missing:
+            raise ValueError(
+                f"--random-range-ratio JSON object missing keys: {sorted(missing)}"
+            ) from None
+        extra = data.keys() - {"input", "output"}
+        if extra:
+            raise ValueError(
+                f"--random-range-ratio JSON object has unexpected keys: {sorted(extra)}"
+            ) from None
+        input_ratio = float(data["input"])
+        output_ratio = float(data["output"])
+    else:
+        input_ratio = output_ratio = ratio
+
+    if not 0.0 <= input_ratio < 1.0:
+        raise ValueError(
+            f"--random-range-ratio input value must be in [0, 1), got {input_ratio}"
+        )
+    if not 0.0 <= output_ratio < 1.0:
+        raise ValueError(
+            f"--random-range-ratio output value must be in [0, 1), got {output_ratio}"
+        )
+
+    return input_ratio, output_ratio

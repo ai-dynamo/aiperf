@@ -483,6 +483,10 @@ Token block size for hash-based prompt caching in trace datasets (`mooncake_trac
 
 Distribution of (ISL, OSL) pairs with probabilities for mixed workload simulation. Format: `ISL,OSL:prob;ISL,OSL:prob` (semicolons separate pairs, probabilities are percentages 0-100 that must sum to 100). Supports optional stddev: `ISL|stddev,OSL|stddev:prob`. Examples: `128,64:25;512,128:50;1024,256:25` or with variance: `256|10,128|5:40;512|20,256|10:60`. Also supports bracket `[(256,128):40,(512,256):60]` and JSON formats.
 
+#### `--random-range-ratio` `<str>`
+
+Sample ISL and OSL uniformly from a symmetric window around the configured means. Matches `vllm bench serve --random-range-ratio`: each length is drawn from `[floor(mean * (1 - r)), ceil(mean * (1 + r))]` (inclusive, minimum 1). Accepts a single float (applied to both ISL and OSL) or a JSON object `{"input": 0.3, "output": 0.5}` for independent values. Values must be in `[0, 1)`. Uses `--osl` for the OSL mean, falling back to 128 when `--osl` is not set. Mutually exclusive with `--seq-dist`, `--isl-stddev`, and `--osl-stddev`.
+
 ### Output Sequence Length (OSL)
 
 #### `--prompt-output-tokens-mean`, `--output-tokens-mean`, `--osl` `<int>`

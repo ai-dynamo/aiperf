@@ -9,6 +9,7 @@ from aiperf.common.config import UserConfig
 from aiperf.common.enums import ConversationContextMode, ModelSelectionStrategy
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
+from aiperf.common.models.sequence_distribution import SequenceLengthSampler
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.generator.audio import AudioGenerator
 from aiperf.dataset.generator.image import ImageGenerator
@@ -35,8 +36,11 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
         self.turn_count = 0
 
-        # Initialize sequence distribution
-        self._seq_distribution = config.input.prompt.get_sequence_distribution()
+        # Initialize sequence distribution sampler (SequenceLengthDistribution or
+        # RangeRatioDistribution, depending on which user flag is set).
+        self._seq_distribution: SequenceLengthSampler | None = (
+            config.input.prompt.get_sequence_distribution()
+        )
 
         # Cache for turn-level sequence lengths to ensure ISL/OSL pairing consistency
         self._turn_sequence_cache: dict[int, tuple[int, int]] = {}

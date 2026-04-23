@@ -83,3 +83,98 @@ class TestSequenceLengthDistribution:
         assert abs(bucket2_count - expected_per_bucket) < tolerance, (
             f"Bucket 2 count {bucket2_count} deviates too far from expected {expected_per_bucket}"
         )
+
+
+@pytest.mark.component_integration
+class TestRandomRangeRatio:
+    """Test vllm-style --random-range-ratio uniform ISL/OSL sampling."""
+
+    def test_random_range_ratio_float_bounds_isl_and_osl(self, cli: AIPerfCLI):
+        """A single-float --random-range-ratio keeps every request's ISL/OSL in range."""
+        import math
+
+        isl_mean = 512
+        osl_mean = 128
+        ratio = 0.3
+
+        isl_low = math.floor(isl_mean * (1 - ratio))
+        isl_high = math.ceil(isl_mean * (1 + ratio))
+        osl_low = math.floor(osl_mean * (1 - ratio))
+        osl_high = math.ceil(osl_mean * (1 + ratio))
+
+        result = cli.run_sync(
+            f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --endpoint-type chat \
+                --streaming \
+                --random-seed 42 \
+                --isl {isl_mean} \
+                --osl {osl_mean} \
+                --random-range-ratio {ratio} \
+                --num-sessions 30 \
+                --workers-max {defaults.workers_max} \
+                --ui {defaults.ui}
+            """,
+            timeout=60.0,
+        )
+
+        isls, osls = [], []
+        for record in result.jsonl:
+            isl = record.metrics.get("input_sequence_length").value
+            osl = record.metrics.get("output_sequence_length").value
+            # Allow a small tokenizer rounding slack on ISL (corpus-based generation
+            # is decode-then-re-tokenize and can drift by a token or two).
+            assert isl_low - 2 <= isl <= isl_high + 2, (
+                f"ISL {isl} outside [{isl_low - 2}, {isl_high + 2}]"
+            )
+            assert osl_low <= osl <= osl_high, (
+                f"OSL {osl} outside [{osl_low}, {osl_high}]"
+            )
+            isls.append(isl)
+            osls.append(osl)
+
+        # With 30 samples across these windows, we expect real spread (not all equal).
+        assert len(set(isls)) > 1
+        assert len(set(osls)) > 1
+
+    def test_random_range_ratio_json_dict_independent_bounds(self, cli: AIPerfCLI):
+        """A JSON dict lets input and output ratios differ."""
+        import math
+
+        isl_mean = 512
+        osl_mean = 128
+        in_r = 0.1
+        out_r = 0.5
+
+        isl_low = math.floor(isl_mean * (1 - in_r))
+        isl_high = math.ceil(isl_mean * (1 + in_r))
+        osl_low = math.floor(osl_mean * (1 - out_r))
+        osl_high = math.ceil(osl_mean * (1 + out_r))
+
+        result = cli.run_sync(
+            f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --endpoint-type chat \
+                --streaming \
+                --random-seed 42 \
+                --isl {isl_mean} \
+                --osl {osl_mean} \
+                --random-range-ratio '{{"input": {in_r}, "output": {out_r}}}' \
+                --num-sessions 30 \
+                --workers-max {defaults.workers_max} \
+                --ui {defaults.ui}
+            """,
+            timeout=60.0,
+        )
+
+        for record in result.jsonl:
+            isl = record.metrics.get("input_sequence_length").value
+            osl = record.metrics.get("output_sequence_length").value
+            assert isl_low - 2 <= isl <= isl_high + 2, (
+                f"ISL {isl} outside [{isl_low - 2}, {isl_high + 2}]"
+            )
+            assert osl_low <= osl <= osl_high, (
+                f"OSL {osl} outside [{osl_low}, {osl_high}]"
+            )

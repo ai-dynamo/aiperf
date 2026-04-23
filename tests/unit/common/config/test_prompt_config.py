@@ -161,3 +161,97 @@ def test_prompt_config_sequence_distribution_none_handling():
     config = PromptConfig(sequence_distribution=None)
     assert config.sequence_distribution is None
     assert config.get_sequence_distribution() is None
+
+
+def test_prompt_config_random_range_ratio_defaults():
+    """Test that random_range_ratio defaults to None."""
+    config = PromptConfig()
+    assert config.random_range_ratio is None
+
+
+def test_prompt_config_random_range_ratio_float_builds_distribution():
+    """A plain float string produces a RangeRatioDistribution applied to both dims."""
+    import math
+
+    from aiperf.common.models.sequence_distribution import RangeRatioDistribution
+
+    config = PromptConfig(
+        random_range_ratio="0.3",
+        input_tokens=InputTokensConfig(mean=1024),
+        output_tokens=OutputTokensConfig(mean=128),
+    )
+    dist = config.get_sequence_distribution()
+    assert isinstance(dist, RangeRatioDistribution)
+    assert dist.input_bounds == (math.floor(1024 * 0.7), math.ceil(1024 * 1.3))
+    assert dist.output_bounds == (math.floor(128 * 0.7), math.ceil(128 * 1.3))
+
+
+def test_prompt_config_random_range_ratio_json_dict_builds_distribution():
+    """A JSON dict sets input and output ratios independently."""
+    from aiperf.common.models.sequence_distribution import RangeRatioDistribution
+
+    config = PromptConfig(
+        random_range_ratio='{"input": 0.2, "output": 0.5}',
+        input_tokens=InputTokensConfig(mean=1000),
+        output_tokens=OutputTokensConfig(mean=100),
+    )
+    dist = config.get_sequence_distribution()
+    assert isinstance(dist, RangeRatioDistribution)
+    assert dist.input_bounds == (800, 1200)
+    assert dist.output_bounds == (50, 150)
+
+
+def test_prompt_config_random_range_ratio_defaults_osl_to_128():
+    """When --osl is not set, OSL mean defaults to 128 (vllm parity)."""
+    from aiperf.common.models.sequence_distribution import RangeRatioDistribution
+
+    config = PromptConfig(
+        random_range_ratio="0.0",
+        input_tokens=InputTokensConfig(mean=1024),
+    )
+    dist = config.get_sequence_distribution()
+    assert isinstance(dist, RangeRatioDistribution)
+    assert dist.output_bounds == (128, 128)
+
+
+def test_prompt_config_random_range_ratio_invalid_value_rejected():
+    """Bad ratio value is rejected at validation time, not on first use."""
+    with pytest.raises(ValueError, match="Invalid --random-range-ratio value"):
+        PromptConfig(random_range_ratio="1.5")
+
+
+def test_prompt_config_random_range_ratio_conflicts_with_seq_dist():
+    """Setting both --random-range-ratio and --seq-dist is rejected."""
+    with pytest.raises(ValueError, match="cannot be combined with --seq-dist"):
+        PromptConfig(
+            random_range_ratio="0.3",
+            sequence_distribution="256,128:100",
+        )
+
+
+def test_prompt_config_random_range_ratio_conflicts_with_isl_stddev():
+    """Setting both --random-range-ratio and --isl-stddev > 0 is rejected."""
+    with pytest.raises(ValueError, match="cannot be combined with --isl-stddev"):
+        PromptConfig(
+            random_range_ratio="0.3",
+            input_tokens=InputTokensConfig(mean=1024, stddev=10.0),
+        )
+
+
+def test_prompt_config_random_range_ratio_conflicts_with_osl_stddev():
+    """Setting both --random-range-ratio and --osl-stddev > 0 is rejected."""
+    with pytest.raises(ValueError, match="cannot be combined with --osl-stddev"):
+        PromptConfig(
+            random_range_ratio="0.3",
+            output_tokens=OutputTokensConfig(mean=128, stddev=5.0),
+        )
+
+
+def test_prompt_config_random_range_ratio_zero_stddev_is_allowed():
+    """stddev=0 is the default; it must not trip the mutual-exclusion check."""
+    config = PromptConfig(
+        random_range_ratio="0.3",
+        input_tokens=InputTokensConfig(mean=1024, stddev=0.0),
+        output_tokens=OutputTokensConfig(mean=128, stddev=0.0),
+    )
+    assert config.random_range_ratio == "0.3"
