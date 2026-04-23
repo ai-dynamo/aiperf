@@ -1,14 +1,28 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Lightweight operator image for development/testing
+#
+# Multi-arch support: buildx selects python:3.13-slim-trixie for the
+# requested $TARGETPLATFORM (linux/amd64 or linux/arm64). uv and pip resolve
+# per-arch wheels automatically; there are no hardcoded arch-specific
+# downloads in this image. TARGETARCH is declared below for future per-arch
+# conditionals (e.g. kubectl, kustomize). buildx injects $TARGETPLATFORM
+# into FROM implicitly, so we don't pass --platform here (it would be
+# redundant).
 FROM python:3.13-slim-trixie
+
+# Build args populated automatically by buildx. Declared after FROM so they
+# are available in subsequent RUN layers.
+ARG TARGETPLATFORM
+ARG TARGETARCH
+ARG BUILDPLATFORM
 
 # Install build dependencies for numpy and other packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv
+# Install uv (upstream image is a multi-arch manifest; buildx picks the right arch)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
