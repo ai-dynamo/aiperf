@@ -218,7 +218,7 @@ namespace = result["namespace"]
 ./dev/kube.py run-local --json --yes -- \
   --model mock \
   --endpoint-type chat \
-  --requests 100 \
+  --request-count 100 \
   --concurrency 10 2>/dev/null
 ```
 

@@ -31,29 +31,34 @@ uv run pytest tests/kubernetes/ -v --ignore=tests/kubernetes/gpu --k8s-reuse-clu
 uv run pytest tests/kubernetes/ -v --ignore=tests/kubernetes/gpu --k8s-reuse-cluster --k8s-skip-build
 ```
 
-### GPU tests (Minikube with GPU passthrough)
+### GPU tests (Kind by default, with GPU passthrough)
 
-GPU tests always use **Minikube** (Kind does not support GPU passthrough) with `--gpus=all`.
-Set `--gpu-context` to use a pre-existing external cluster instead.
+GPU tests default to **Kind** with GPU passthrough (requires `nvidia-smi`,
+`nvidia-ctk`, and Docker configured with `nvidia` as the default runtime).
+Set `--gpu-runtime=minikube` to use Minikube, or `--gpu-context` to use a
+pre-existing external cluster instead.
 
-GPU-specific settings use `--gpu-*` flags. `GPU_TEST_*` env vars provide per-suite
-overrides. Run `uv run pytest tests/kubernetes/gpu/ --help` for the full list.
+GPU-specific settings use `--gpu-*` flags with `GPU_TEST_*` env var equivalents.
+Run `uv run pytest tests/kubernetes/gpu/ --help` for the full list.
 
 ```bash
-# Create minikube GPU cluster, deploy vLLM, run benchmarks
+# Create GPU cluster (Kind by default), deploy vLLM, run benchmarks
 ./tests/kubernetes/gpu/run_vllm_tests.sh
 
 # Same via pytest directly (with CLI options)
-uv run pytest tests/kubernetes/gpu/ -v -m gpu --k8s-stream-logs
+uv run pytest tests/kubernetes/gpu/ -v -m gpu --gpu-stream-logs
 
-# Reuse existing minikube cluster between runs
-uv run pytest tests/kubernetes/gpu/ -v -m gpu --k8s-reuse-cluster
+# Reuse existing GPU cluster between runs
+uv run pytest tests/kubernetes/gpu/ -v -m gpu --gpu-reuse-cluster
 
 # Use an existing vLLM endpoint (skip vLLM deploy)
 uv run pytest tests/kubernetes/gpu/ -v -m gpu --gpu-vllm-endpoint http://vllm:8000/v1
 
-# Use a pre-existing external cluster instead of minikube
+# Use a pre-existing external cluster instead of a local one
 uv run pytest tests/kubernetes/gpu/ -v -m gpu --gpu-context my-cluster
+
+# Use Minikube instead of Kind
+uv run pytest tests/kubernetes/gpu/ -v -m gpu --gpu-runtime=minikube
 
 # Change model and GPU memory utilization
 uv run pytest tests/kubernetes/gpu/ -v -m gpu --gpu-model facebook/opt-125m --gpu-mem-util 0.3
@@ -71,28 +76,36 @@ GPU_TEST_REUSE_CLUSTER=1 GPU_TEST_STREAM_LOGS=1 ./tests/kubernetes/gpu/run_vllm_
 - Kind (default, see https://kind.sigs.k8s.io/) or Minikube (see https://minikube.sigs.k8s.io/docs/start/)
 - kubectl
 - uv (Python package manager)
-- NVIDIA drivers + nvidia-container-toolkit (GPU tests, Minikube only)
+- NVIDIA drivers + nvidia-container-toolkit (GPU tests)
 
 ## Test Structure
 
 ```
 tests/kubernetes/
-├── conftest.py                  # Module-scoped fixtures: cluster, images, mock server
+├── conftest.py                  # Package-scoped fixtures: cluster, images, mock server, operator, helm
 ├── helpers/
-│   ├── benchmark.py             # BenchmarkConfig, BenchmarkDeployer, BenchmarkResult
+│   ├── benchmark.py             # BenchmarkConfig, BenchmarkDeployer, BenchmarkResult, BenchmarkMetrics
 │   ├── cluster.py               # Local cluster management (Kind/Minikube backends)
 │   ├── helm.py                  # HelmClient, HelmDeployer, HelmValues
 │   ├── images.py                # Docker image building (ImageManager)
 │   ├── kubectl.py               # Async kubectl wrapper (KubectlClient)
-│   └── operator.py              # AIPerfJob CR management (OperatorDeployer)
+│   ├── kueue.py                 # Kueue install/config helpers
+│   ├── log_streamer.py          # Background pod log streamer
+│   ├── operator.py              # AIPerfJob CR management (OperatorDeployer)
+│   ├── preflight.py             # Preflight checker
+│   └── watchdog.py              # Benchmark watchdog for deadlock detection
 ├── test_benchmark.py            # Benchmark execution, lifecycle, endpoints
 ├── test_cli_commands.py         # CLI kube subcommand integration
+├── test_completion_signal.py    # Completion signalling tests
 ├── test_deployment.py           # Cluster setup, pod lifecycle, config variations
 ├── test_edge_cases.py           # Validation, cleanup, diagnostics
 ├── test_helm.py                 # Helm chart install/upgrade, job lifecycle
 ├── test_kube_profile.py         # Profile/configuration tests
+├── test_kueue_gang_scheduling.py  # Kueue gang-scheduling tests
+├── test_kueue_integration.py    # Kueue admission/queue integration
 ├── test_metrics.py              # Metrics collection, validation, consistency
 ├── test_operator.py             # Operator CRD, jobs, conditions, scaling
+├── test_recipes.py              # Example recipes / config presets
 ├── test_scaling.py              # Concurrency, worker scaling, resource config
 └── gpu/
     ├── conftest.py              # Shared GPU fixtures: cluster, images, kubectl, settings
@@ -101,13 +114,25 @@ tests/kubernetes/
     ├── vllm/
     │   ├── conftest.py          # vLLM server deployment, benchmark configs
     │   ├── helpers.py           # VLLMDeployer, VLLMConfig, GPUBenchmarkDeployer
-    │   ├── test_benchmark.py    # GPU benchmark completion, lifecycle, concurrency
-    │   ├── test_endpoint_types.py  # Chat vs completions endpoint types
-    │   └── test_metrics.py      # GPU metrics collection and reasonableness
+    │   ├── test_vllm_benchmark.py       # GPU benchmark completion, lifecycle, concurrency
+    │   ├── test_vllm_endpoint_types.py  # Chat vs completions endpoint types
+    │   └── test_vllm_metrics.py         # GPU metrics collection and reasonableness
+    ├── trtllm/
+    │   ├── conftest.py
+    │   ├── helpers.py
+    │   ├── test_trtllm_benchmark.py
+    │   ├── test_trtllm_endpoint_types.py
+    │   └── test_trtllm_metrics.py
+    ├── sglang/
+    │   ├── conftest.py
+    │   ├── helpers.py
+    │   ├── test_sglang_benchmark.py
+    │   ├── test_sglang_endpoint_types.py
+    │   └── test_sglang_metrics.py
     └── dynamo/
         ├── conftest.py          # Dynamo operator install, server deployment
         ├── helpers.py           # DynamoDeployer, DynamoConfig
-        └── test_benchmark.py    # Benchmark against Dynamo inference graphs
+        └── test_dynamo_benchmark.py     # Benchmark against Dynamo inference graphs
 ```
 
 ## Environment Variables
@@ -118,8 +143,9 @@ All local settings can be set via CLI (`--k8s-*`) or env var (`K8S_TEST_*`). CLI
 
 | CLI option | Env var | Description | Default |
 |------------|---------|-------------|---------|
-| `--k8s-cluster` | `K8S_TEST_CLUSTER` | Cluster name | `aiperf-<uuid>` |
+| `--k8s-cluster` | `K8S_TEST_CLUSTER` | Cluster name | `aiperf-<uuid>` (or `aiperf-pytest` with `--k8s-reuse-cluster`) |
 | `--k8s-runtime` | `K8S_TEST_RUNTIME` | Cluster runtime: `kind` or `minikube` | `kind` |
+| `--k8s-quick` | `K8S_TEST_QUICK` | Reuse cluster, skip build/load/cleanup/preflight | `false` |
 | `--k8s-skip-build` | `K8S_TEST_SKIP_BUILD` | Skip image building | `false` |
 | `--k8s-skip-cleanup` | `K8S_TEST_SKIP_CLEANUP` | Keep cluster after tests | `false` |
 | `--k8s-reuse-cluster` | `K8S_TEST_REUSE_CLUSTER` | Reuse existing cluster | `false` |
@@ -129,34 +155,35 @@ All local settings can be set via CLI (`--k8s-*`) or env var (`K8S_TEST_*`). CLI
 | `--k8s-aiperf-image` | `K8S_TEST_AIPERF_IMAGE` | AIPerf image name | `aiperf:local` |
 | `--k8s-mock-server-image` | `K8S_TEST_MOCK_SERVER_IMAGE` | Mock server image | `aiperf-mock-server:latest` |
 | `--k8s-jobset-version` | `K8S_TEST_JOBSET_VERSION` | JobSet controller version | `v0.8.0` |
+| `--k8s-kueue-version` | `K8S_TEST_KUEUE_VERSION` | Kueue controller version | (from `dev/versions.py`) |
 | `--k8s-benchmark-timeout` | `K8S_TEST_BENCHMARK_TIMEOUT` | Benchmark timeout (seconds) | `300` |
 
-### GPU tests
+### GPU tests (`--gpu-*` / `GPU_TEST_*`)
 
-GPU tests share `--k8s-*` flags for common settings and add `--gpu-*` flags for
-GPU-specific options. `GPU_TEST_*` env vars override shared settings for GPU tests
-only (e.g., `GPU_TEST_BENCHMARK_TIMEOUT=600` overrides the K8s default of 300).
+GPU tests register their own `--gpu-*` options (not `--k8s-*`). All settings
+can be set via CLI or env var; CLI wins.
 
-**Shared settings** (from `--k8s-*`, with `GPU_TEST_*` override and GPU defaults):
-
-| `--k8s-*` CLI | GPU env override | Description | GPU default |
-|----------------|------------------|-------------|-------------|
-| `--k8s-cluster` | `GPU_TEST_CLUSTER` | Cluster name (Minikube for GPU) | `aiperf-gpu` |
-| `--k8s-quick` | `GPU_TEST_QUICK` | Reuse cluster, skip build/cleanup/preflight | `false` |
-| `--k8s-reuse-cluster` | `GPU_TEST_REUSE_CLUSTER` | Reuse existing cluster | `false` |
-| `--k8s-skip-build` | `GPU_TEST_SKIP_BUILD` | Skip building aiperf image | `false` |
-| `--k8s-skip-cleanup` | `GPU_TEST_SKIP_CLEANUP` | Keep resources/cluster after tests | `false` |
-| `--k8s-skip-preflight` | `GPU_TEST_SKIP_PREFLIGHT` | Skip preflight checks | `false` |
-| `--k8s-stream-logs` | `GPU_TEST_STREAM_LOGS` | Stream pod logs in real time | `false` |
-| `--k8s-aiperf-image` | `GPU_TEST_AIPERF_IMAGE` | AIPerf image | `aiperf:local` |
-| `--k8s-benchmark-timeout` | `GPU_TEST_BENCHMARK_TIMEOUT` | Benchmark timeout (seconds) | `600` |
-
-**GPU-specific settings** (`--gpu-*` / `GPU_TEST_*`):
+**Cluster management:**
 
 | CLI option | Env var | Description | Default |
 |------------|---------|-------------|---------|
-| `--gpu-context` | `GPU_TEST_CONTEXT` | Use external cluster (skip local cluster) | (creates Minikube) |
+| `--gpu-cluster` | `GPU_TEST_CLUSTER` | Local cluster name | `aiperf-gpu` |
+| `--gpu-runtime` | `GPU_TEST_RUNTIME` | Cluster runtime: `kind` or `minikube` | `kind` |
+| `--gpu-context` | `GPU_TEST_CONTEXT` | Use external cluster (skip local cluster) | (creates local cluster) |
 | `--gpu-kubeconfig` | `GPU_TEST_KUBECONFIG` | Path to kubeconfig | system default |
+| `--gpu-quick` | `GPU_TEST_QUICK` | Reuse cluster, skip build/cleanup/preflight | `false` |
+| `--gpu-reuse-cluster` | `GPU_TEST_REUSE_CLUSTER` | Reuse existing cluster | `false` |
+| `--gpu-skip-build` | `GPU_TEST_SKIP_BUILD` | Skip building aiperf image | `false` |
+| `--gpu-skip-cleanup` | `GPU_TEST_SKIP_CLEANUP` | Keep resources/cluster after tests | `false` |
+| `--gpu-skip-preflight` | `GPU_TEST_SKIP_PREFLIGHT` | Skip preflight checks | `false` |
+| `--gpu-stream-logs` | `GPU_TEST_STREAM_LOGS` | Stream pod logs in real time | `false` |
+| `--gpu-aiperf-image` | `GPU_TEST_AIPERF_IMAGE` | AIPerf image | `aiperf:latest` |
+| `--gpu-benchmark-timeout` | `GPU_TEST_BENCHMARK_TIMEOUT` | Benchmark timeout (seconds) | `600` |
+
+**vLLM / model:**
+
+| CLI option | Env var | Description | Default |
+|------------|---------|-------------|---------|
 | `--gpu-vllm-image` | `GPU_TEST_VLLM_IMAGE` | vLLM image | `vllm/vllm-openai:latest` |
 | `--gpu-model` | `GPU_TEST_MODEL` | Model name | `Qwen/Qwen3-0.6B` |
 | `--gpu-count` | `GPU_TEST_GPU_COUNT` | GPUs per instance | `1` |
@@ -164,13 +191,32 @@ only (e.g., `GPU_TEST_BENCHMARK_TIMEOUT=600` overrides the K8s default of 300).
 | `--gpu-mem-util` | `GPU_TEST_GPU_MEM_UTIL` | GPU memory utilization (0.0-1.0) | `0.5` |
 | `--gpu-vllm-endpoint` | `GPU_TEST_VLLM_ENDPOINT` | Skip vLLM deploy, use existing | (deploys vLLM) |
 | `--gpu-vllm-deploy-timeout` | `GPU_TEST_VLLM_DEPLOY_TIMEOUT` | vLLM deploy timeout (seconds) | `600` |
+
+**K8s scheduling:**
+
+| CLI option | Env var | Description | Default |
+|------------|---------|-------------|---------|
 | `--gpu-tolerations` | `GPU_TEST_TOLERATIONS` | JSON array of K8s tolerations | none |
 | `--gpu-node-selector` | `GPU_TEST_NODE_SELECTOR` | JSON object of node selectors | none |
 | `--gpu-hf-token-secret` | `GPU_TEST_HF_TOKEN_SECRET` | K8s secret with HF token | none |
 | `--gpu-image-pull-secret` | `GPU_TEST_IMAGE_PULL_SECRET` | Image pull secret name | none |
 | `--gpu-runtime-class` | `GPU_TEST_RUNTIME_CLASS` | RuntimeClass for GPU pods | `nvidia` |
-| `--gpu-dynamo-image` | `GPU_TEST_DYNAMO_IMAGE` | Dynamo image | `nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.9.0` |
+
+**TRT-LLM / SGLang / Dynamo:**
+
+| CLI option | Env var | Description | Default |
+|------------|---------|-------------|---------|
+| `--gpu-trtllm-image` | `GPU_TEST_TRTLLM_IMAGE` | TRT-LLM image | `nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc7` |
+| `--gpu-trtllm-endpoint` | `GPU_TEST_TRTLLM_ENDPOINT` | Skip TRT-LLM deploy, use existing | (deploys TRT-LLM) |
+| `--gpu-trtllm-deploy-timeout` | `GPU_TEST_TRTLLM_DEPLOY_TIMEOUT` | TRT-LLM deploy timeout (seconds) | `900` |
+| `--gpu-sglang-image` | `GPU_TEST_SGLANG_IMAGE` | SGLang image | `lmsysorg/sglang:latest` |
+| `--gpu-sglang-endpoint` | `GPU_TEST_SGLANG_ENDPOINT` | Skip SGLang deploy, use existing | (deploys SGLang) |
+| `--gpu-sglang-deploy-timeout` | `GPU_TEST_SGLANG_DEPLOY_TIMEOUT` | SGLang deploy timeout (seconds) | `600` |
+| `--gpu-dynamo-image` | `GPU_TEST_DYNAMO_IMAGE` | Dynamo runtime image | backend-specific default |
+| `--gpu-dynamo-backend` | `GPU_TEST_DYNAMO_BACKEND` | Dynamo backend: `vllm\|trtllm\|sglang` | `vllm` |
 | `--gpu-dynamo-mode` | `GPU_TEST_DYNAMO_MODE` | `agg\|disagg\|disagg-1gpu` | `disagg-1gpu` |
+| `--gpu-dynamo-connectors` | `GPU_TEST_DYNAMO_CONNECTORS` | Comma-separated prefill connectors | none |
+| `--gpu-dynamo-kvbm-cpu-cache-gb` | `GPU_TEST_DYNAMO_KVBM_CPU_CACHE_GB` | KVBM CPU cache GB for prefill workers | none |
 | `--gpu-dynamo-endpoint` | `GPU_TEST_DYNAMO_ENDPOINT` | Skip Dynamo deploy, use existing | (deploys Dynamo) |
 | `--gpu-dynamo-deploy-timeout` | `GPU_TEST_DYNAMO_DEPLOY_TIMEOUT` | Dynamo deploy timeout (seconds) | `600` |
 | `--gpu-dynamo-version` | `GPU_TEST_DYNAMO_VERSION` | Dynamo Helm chart version | `0.9.0` |
@@ -184,6 +230,8 @@ only (e.g., `GPU_TEST_BENCHMARK_TIMEOUT=600` overrides the K8s default of 300).
 | `k8s_slow` | No | Long-running stress/scaling tests |
 | `gpu` | All `tests/kubernetes/gpu/` tests | Requires GPU cluster |
 | `vllm` | All `tests/kubernetes/gpu/vllm/` tests | Requires vLLM server |
+| `trtllm` | All `tests/kubernetes/gpu/trtllm/` tests | Requires TRT-LLM server |
+| `sglang` | All `tests/kubernetes/gpu/sglang/` tests | Requires SGLang server |
 | `dynamo` | All `tests/kubernetes/gpu/dynamo/` tests | Requires Dynamo deployment |
 
 ```bash
@@ -199,9 +247,9 @@ uv run pytest tests/kubernetes/ -m "not k8s_slow" -v
 
 ## Fixtures
 
-All I/O fixtures are async, using `pytest_asyncio.fixture` with `scope="module"` and `loop_scope="module"`. Data-only fixtures use regular `@pytest.fixture`.
+All I/O fixtures are async, using `pytest_asyncio.fixture` with `scope="package"` and `loop_scope="package"`. Data-only fixtures use regular `@pytest.fixture`.
 
-### Module-scoped (shared across tests in a module)
+### Package-scoped (shared across an entire package, e.g. all tests under `tests/kubernetes/` or `tests/kubernetes/gpu/vllm/`)
 
 | Fixture | Suite | Description |
 |---------|-------|-------------|
@@ -226,7 +274,6 @@ All I/O fixtures are async, using `pytest_asyncio.fixture` with `scope="module"`
 | `helm_deployed` | Local | Helm chart installed |
 | `deployed_small_benchmark_module` | Local | Pre-deployed benchmark result (read-only tests) |
 | `deployed_gpu_benchmark_module` | GPU | Pre-deployed GPU benchmark result (read-only tests) |
-| `deployed_dynamo_benchmark` | GPU | Pre-deployed Dynamo benchmark result (read-only tests) |
 
 ### Function-scoped (fresh per test)
 

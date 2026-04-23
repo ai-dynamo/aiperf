@@ -13,127 +13,43 @@ import logging
 from pathlib import Path
 from types import TracebackType
 from typing import Any
+from urllib.parse import quote
 
-import aiofiles
 import aiohttp
-import zstandard as zstd
-from pydantic import Field, ValidationError
+from pydantic import ValidationError
 
 from aiperf.common.enums import CreditPhase, WorkerStartupState
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
-from aiperf.common.models import AIPerfBaseModel, WorkerStats
+from aiperf.common.models import WorkerStats
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.operator.k8s_helpers import retry_with_backoff
+from aiperf.operator.progress_download import (
+    make_decompressor,
+    save_decompressed,
+    save_transcoded_zstd,
+    save_zstd_passthrough,
+)
+from aiperf.operator.progress_models import (
+    BACKOFF_MULTIPLIER,
+    INITIAL_BACKOFF_SEC,
+    MAX_RETRIES,
+    RETRYABLE_STATUS_CODES,
+    ControllerAggregateWorkerStatus,
+    JobProgress,
+)
 from aiperf.transports.aiohttp_client import create_tcp_connector
 
+__all__ = [
+    "BACKOFF_MULTIPLIER",
+    "INITIAL_BACKOFF_SEC",
+    "MAX_RETRIES",
+    "RETRYABLE_STATUS_CODES",
+    "ControllerAggregateWorkerStatus",
+    "JobProgress",
+    "ProgressClient",
+]
+
 logger = logging.getLogger(__name__)
-
-# Retry configuration for transient failures
-MAX_RETRIES = 3
-INITIAL_BACKOFF_SEC = 0.5
-BACKOFF_MULTIPLIER = 2.0
-# HTTP status codes that are retryable (transient failures)
-RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
-
-
-class ControllerAggregateWorkerStatus(AIPerfBaseModel):
-    """Controller-authored aggregate worker status, as seen from the operator.
-
-    Wire-format mirror of
-    :class:`aiperf.controller.system_controller.AggregateWorkerStatus`
-    returned by the controller's progress API. The two classes have the same
-    shape and are intentionally distinct so that either side can add fields
-    without forcing a lockstep deploy.
-    """
-
-    ready: int = Field(default=0, description="Dispatch-ready worker count.")
-    total: int = Field(default=0, description="Declared worker count.")
-    dispatchable: int = Field(
-        default=0,
-        description="Workers eligible to receive credits.",
-    )
-    router_connected: int = Field(
-        default=0,
-        description="Workers connected to the router.",
-    )
-    ready_record_processors: int = Field(
-        default=0,
-        description="Ready record processors.",
-    )
-    declared_record_processors: int = Field(
-        default=0,
-        description="Declared record processors.",
-    )
-    ready_pods: int = Field(default=0, description="Usable worker pods.")
-    total_pods: int = Field(default=0, description="Observed worker pods.")
-    degraded_pods: int = Field(
-        default=0,
-        description="Usable but degraded worker pods.",
-    )
-
-
-class JobProgress(AIPerfBaseModel):
-    """Aggregated progress across all benchmark phases.
-
-    This model wraps phase-specific progress stats (CombinedPhaseStats) for
-    each benchmark phase (warmup, profiling), providing a complete view of
-    job execution status.
-
-    Attributes:
-        phases: Progress stats for each phase (warmup, profiling).
-        workers: Controller-authored aggregate worker status.
-        error: Error message if the job failed.
-        connection_error: Connection error message if API request failed.
-    """
-
-    phases: dict[CreditPhase, CombinedPhaseStats] = Field(
-        default_factory=dict,
-        description="Progress stats for each benchmark phase",
-    )
-    workers: ControllerAggregateWorkerStatus = Field(
-        default_factory=ControllerAggregateWorkerStatus,
-        description="Controller-authored aggregate worker status.",
-    )
-    error: str | None = Field(
-        default=None,
-        description="Error message if job failed",
-    )
-    connection_error: str | None = Field(
-        default=None,
-        description="Connection error if progress API was unreachable",
-    )
-
-    @property
-    def current_phase(self) -> CreditPhase | None:
-        """Get the most recently started phase."""
-        if not self.phases:
-            return None
-        return max(
-            self.phases.items(),
-            key=lambda x: x[1].start_ns or 0,
-        )[0]
-
-    @property
-    def is_complete(self) -> bool:
-        """Check if the profiling phase has fully completed (requests sent AND records processed)."""
-        profiling = self.phases.get("profiling")
-        if profiling is None:
-            return False
-        if not profiling.is_requests_complete:
-            return False
-        # Wait for records to finish processing too — the controller won't
-        # export results until all records are received.
-        return profiling.is_records_complete
-
-    @property
-    def profiling_stats(self) -> CombinedPhaseStats | None:
-        """Get the profiling phase stats (primary benchmark phase)."""
-        return self.phases.get("profiling")
-
-    @property
-    def warmup_stats(self) -> CombinedPhaseStats | None:
-        """Get the warmup phase stats."""
-        return self.phases.get("warmup")
 
 
 class ProgressClient:
@@ -595,6 +511,23 @@ class ProgressClient:
             logger.warning(f"Failed to fetch results list from {url}: {e}")
             return None
 
+    def _build_result_file_url(self, controller_host: str, filename: str) -> str | None:
+        """Validate filename and build the results-file URL.
+
+        Returns None if the filename is unsafe (empty, ``.``, ``..`` segments).
+        """
+        # Allow nested subpaths (e.g. checkpoints/...) but reject any segment
+        # that would escape the results dir on the server side.
+        parts = [p for p in filename.replace("\\", "/").split("/") if p]
+        if any(p in ("", ".", "..") for p in parts) or not parts:
+            logger.warning(f"Refusing unsafe filename: {filename!r}")
+            return None
+        safe_path = "/".join(parts)
+        return (
+            f"http://{controller_host}:{self._port}"
+            f"/api/results/files/{quote(safe_path, safe='/')}"
+        )
+
     async def download_result_file(
         self,
         controller_host: str,
@@ -639,61 +572,61 @@ class ProgressClient:
                 "wrap in 'async with ProgressClient(...) as pc:'"
             )
 
-        from urllib.parse import quote
-
-        # Allow nested subpaths (e.g. checkpoints/...) but reject any segment
-        # that would escape the results dir on the server side.
-        parts = [p for p in filename.replace("\\", "/").split("/") if p]
-        if any(p in ("", ".", "..") for p in parts) or not parts:
-            logger.warning(f"Refusing unsafe filename: {filename!r}")
+        url = self._build_result_file_url(controller_host, filename)
+        if url is None:
             return False
-        safe_path = "/".join(parts)
-        url = (
-            f"http://{controller_host}:{self._port}"
-            f"/api/results/files/{quote(safe_path, safe='/')}"
-        )
-        headers = {"Accept-Encoding": "zstd, gzip, identity"}
 
         try:
-            timeout = aiohttp.ClientTimeout(total=300.0)
-            # Disable auto_decompress: we handle zstd/gzip decompression manually
-            # in _download_response(). aiohttp doesn't support zstd natively and
-            # would reject the response with a 400 error.
-            connector = self._session.connector
-            async with (
-                aiohttp.ClientSession(
-                    timeout=timeout,
-                    connector=connector,
-                    connector_owner=False,
-                    auto_decompress=False,
-                ) as dl_session,
-                dl_session.get(url, headers=headers) as response,
-            ):
-                if response.status == 404:
-                    logger.debug(f"Result file not found: {filename}")
-                    return False
-
-                response.raise_for_status()
-
-                content_encoding = response.headers.get("Content-Encoding", "identity")
-                x_filename = response.headers.get("X-Filename")
-                if x_filename:
-                    safe_name = Path(x_filename).name
-                    if safe_name:
-                        dest_path = dest_path.parent / safe_name
-
-                dest_path.parent.mkdir(parents=True, exist_ok=True)
-                await self._download_response(response, dest_path, content_encoding)
-
-                logger.info(f"Downloaded {filename} -> {dest_path}")
-                return True
-
+            return await self._stream_result_file(url, filename, dest_path)
         except aiohttp.ClientError as e:
             logger.warning(f"Failed to download {filename}: {e}")
             # Remove partial file so retries don't consume corrupted data
             if dest_path.exists():
                 dest_path.unlink(missing_ok=True)
             return False
+
+    async def _stream_result_file(
+        self, url: str, filename: str, dest_path: Path
+    ) -> bool:
+        """Open a zstd-aware download session and stream the response to disk.
+
+        Returns ``True`` on success, ``False`` on HTTP 404.
+        """
+        assert self._session is not None  # noqa: S101
+        headers = {"Accept-Encoding": "zstd, gzip, identity"}
+        # Disable auto_decompress: we handle zstd/gzip decompression manually
+        # in _download_response(). aiohttp doesn't support zstd natively and
+        # would reject the response with a 400 error.
+        async with (
+            aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=300.0),
+                connector=self._session.connector,
+                connector_owner=False,
+                auto_decompress=False,
+            ) as dl_session,
+            dl_session.get(url, headers=headers) as response,
+        ):
+            if response.status == 404:
+                logger.debug(f"Result file not found: {filename}")
+                return False
+            response.raise_for_status()
+            content_encoding = response.headers.get("Content-Encoding", "identity")
+            dest_path = self._resolve_dest_path(response, dest_path)
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            await self._download_response(response, dest_path, content_encoding)
+            logger.info(f"Downloaded {filename} -> {dest_path}")
+            return True
+
+    @staticmethod
+    def _resolve_dest_path(response: aiohttp.ClientResponse, dest_path: Path) -> Path:
+        """Apply the server's ``X-Filename`` override to ``dest_path`` if present."""
+        x_filename = response.headers.get("X-Filename")
+        if not x_filename:
+            return dest_path
+        safe_name = Path(x_filename).name
+        if not safe_name:
+            return dest_path
+        return dest_path.parent / safe_name
 
     async def _download_response(
         self,
@@ -708,67 +641,20 @@ class ProgressClient:
         - gzip/identity responses are decompressed then re-compressed as .zst
         When disabled, behaves as before (decompress to raw files).
         """
-        import zlib
-
         from aiperf.operator.environment import OperatorEnvironment
 
         compress_on_disk = OperatorEnvironment.RESULTS.COMPRESS_ON_DISK
 
         if compress_on_disk and content_encoding == "zstd":
             # Save zstd bytes directly — zero processing cost
-            zst_path = dest_path.parent / (dest_path.name + ".zst")
-            async with aiofiles.open(zst_path, "wb") as f:
-                async for chunk in response.content.iter_chunked(64 * 1024):
-                    if chunk:
-                        await f.write(chunk)
+            await save_zstd_passthrough(response, dest_path)
             return
 
-        # Decompress the response
-        if content_encoding == "zstd":
-            dctx = zstd.ZstdDecompressor()
-            decompressor = dctx.decompressobj()
-        elif content_encoding == "gzip":
-            decompressor = zlib.decompressobj(wbits=31)
-        else:
-            decompressor = None
-
+        decompressor = make_decompressor(content_encoding)
         if compress_on_disk:
-            # Decompress from wire encoding, re-compress as zstd for storage
-            import zstandard
-
-            zst_path = dest_path.parent / (dest_path.name + ".zst")
-            cctx = zstandard.ZstdCompressor(level=3)
-            compressor = cctx.compressobj()
-
-            async with aiofiles.open(zst_path, "wb") as f:
-                async for chunk in response.content.iter_chunked(64 * 1024):
-                    if decompressor is not None:
-                        chunk = decompressor.decompress(chunk)
-                    if chunk:
-                        compressed = compressor.compress(chunk)
-                        if compressed:
-                            await f.write(compressed)
-                if decompressor is not None:
-                    remaining = decompressor.flush()
-                    if remaining:
-                        compressed = compressor.compress(remaining)
-                        if compressed:
-                            await f.write(compressed)
-                final = compressor.flush()
-                if final:
-                    await f.write(final)
+            await save_transcoded_zstd(response, dest_path, decompressor)
         else:
-            # Original behavior: decompress and save raw
-            async with aiofiles.open(dest_path, "wb") as f:
-                async for chunk in response.content.iter_chunked(64 * 1024):
-                    if decompressor is not None:
-                        chunk = decompressor.decompress(chunk)
-                    if chunk:
-                        await f.write(chunk)
-                if decompressor is not None:
-                    remaining = decompressor.flush()
-                    if remaining:
-                        await f.write(remaining)
+            await save_decompressed(response, dest_path, decompressor)
 
     async def download_all_results(
         self,

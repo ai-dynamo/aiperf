@@ -26,41 +26,55 @@ class AggregateSweepCsvExporter(AggregateBaseExporter):
         if not combos:
             return ""
 
-        # Collect all parameter names and metric names
-        param_names: list[str] = []
-        metric_names: list[str] = []
-        for combo in combos:
-            for k in combo.get("parameters", {}):
-                if k not in param_names:
-                    param_names.append(k)
-            for k in combo.get("metrics", {}):
-                if k not in metric_names:
-                    metric_names.append(k)
-
-        # Build header: parameters, then metric_mean, metric_std, metric_ci_low, metric_ci_high
-        header = list(param_names)
-        for m in metric_names:
-            header.extend([f"{m}_mean", f"{m}_std", f"{m}_ci_low", f"{m}_ci_high"])
+        param_names, metric_names = _collect_column_names(combos)
+        header = _build_header(param_names, metric_names)
 
         buf = io.StringIO()
         writer = csv.writer(buf)
         writer.writerow(header)
-
         for combo in combos:
-            row: list[Any] = []
-            params = combo.get("parameters", {})
-            for p in param_names:
-                row.append(params.get(p, ""))
-            metrics = combo.get("metrics", {})
-            for m in metric_names:
-                stats = metrics.get(m, {})
-                row.append(_to_native(stats.get("mean", "")))
-                row.append(_to_native(stats.get("std", "")))
-                row.append(_to_native(stats.get("ci_low", "")))
-                row.append(_to_native(stats.get("ci_high", "")))
-            writer.writerow(row)
+            writer.writerow(_build_row(combo, param_names, metric_names))
 
         return buf.getvalue()
+
+
+def _collect_column_names(
+    combos: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    param_names: list[str] = []
+    metric_names: list[str] = []
+    for combo in combos:
+        for k in combo.get("parameters", {}):
+            if k not in param_names:
+                param_names.append(k)
+        for k in combo.get("metrics", {}):
+            if k not in metric_names:
+                metric_names.append(k)
+    return param_names, metric_names
+
+
+def _build_header(param_names: list[str], metric_names: list[str]) -> list[str]:
+    header = list(param_names)
+    for m in metric_names:
+        header.extend([f"{m}_mean", f"{m}_std", f"{m}_ci_low", f"{m}_ci_high"])
+    return header
+
+
+def _build_row(
+    combo: dict[str, Any],
+    param_names: list[str],
+    metric_names: list[str],
+) -> list[Any]:
+    params = combo.get("parameters", {})
+    metrics = combo.get("metrics", {})
+    row: list[Any] = [params.get(p, "") for p in param_names]
+    for m in metric_names:
+        stats = metrics.get(m, {})
+        row.append(_to_native(stats.get("mean", "")))
+        row.append(_to_native(stats.get("std", "")))
+        row.append(_to_native(stats.get("ci_low", "")))
+        row.append(_to_native(stats.get("ci_high", "")))
+    return row
 
 
 def _to_native(val: Any) -> Any:

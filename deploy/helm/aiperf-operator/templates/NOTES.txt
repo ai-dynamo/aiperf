@@ -43,7 +43,7 @@ AIPerf Operator has been installed!
    Results are also stored on the operator PVC at: {{ .Values.storage.mountPath }}/<job-id>/
 {{- end }}
 
-6. Run preflight checks before submitting:
-   aiperf kube preflight my-config.yaml
+6. Run preflight checks against the cluster:
+   aiperf kube preflight --image {{ .Values.defaults.image }}
 
 For more information, visit: https://github.com/nvidia/aiperf

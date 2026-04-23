@@ -11,206 +11,30 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import multiprocessing
-import os
-import platform
 import uuid
-from dataclasses import dataclass
-from multiprocessing import Process
-from multiprocessing.context import ForkProcess, ForkServerProcess, SpawnProcess
 from typing import TYPE_CHECKING
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.environment import Environment
 from aiperf.common.error_queue import ErrorQueue
 from aiperf.common.logging import LogQueue
-from aiperf.common.messages.worker_messages import WorkerStatusSummaryMessage
+from aiperf.common.mp_context import _SPAWN_TIMEOUT, get_mp_context
+from aiperf.common.subprocess_models import (
+    LocalWorkerGroupManagerAdapter,
+    SubprocessInfo,
+)
 from aiperf.common.types import ServiceTypeT
 from aiperf.plugin.enums import ServiceType
-from aiperf.workers.group_runtime import GroupRuntimeRegistration
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
 
-
-@dataclass(slots=True)
-class LocalWorkerGroupManagerAdapter:
-    """Local runtime adapter that models a WorkerGroupManager boundary."""
-
-    service_id: str
-    """Stable identifier for the local worker-group manager boundary."""
-
-    declared_worker_capacity: int
-    """Declared local worker capacity exposed by the adapter."""
-
-    declared_record_processor_capacity: int
-    """Declared local record-processor capacity exposed by the adapter."""
-
-    @property
-    def group_id(self) -> str:
-        """Return the stable runtime group identifier."""
-        return self.service_id
-
-    @property
-    def declared_workers(self) -> int:
-        """Return the declared worker capacity using runtime-contract naming."""
-        return self.declared_worker_capacity
-
-    @property
-    def declared_record_processors(self) -> int:
-        """Return the declared record-processor capacity using runtime naming."""
-        return self.declared_record_processor_capacity
-
-    def build_registration(self) -> GroupRuntimeRegistration:
-        """Build the runtime registration consumed by WorkerGroupManager."""
-        return GroupRuntimeRegistration(
-            group_id=self.group_id,
-            declared_workers=self.declared_workers,
-            declared_record_processors=self.declared_record_processors,
-        )
-
-    async def publish_summary(self, summary: WorkerStatusSummaryMessage) -> None:
-        """Accept summary publication for local mode without external transport."""
-        del summary
-
-
-@dataclass(slots=True)
-class SubprocessInfo:
-    """Information about a subprocess managed by SubprocessManager."""
-
-    service_type: ServiceTypeT
-    """Type of service running in the process"""
-
-    service_id: str
-    """ID of the service running in the process"""
-
-    process: Process | SpawnProcess | ForkProcess | ForkServerProcess | None = None
-    """The underlying multiprocessing process instance"""
-
-    launch_adapter: LocalWorkerGroupManagerAdapter | None = None
-    """Optional runtime adapter associated with this subprocess entry."""
-
-    parent_service_id: str | None = None
-    """Optional parent worker-group manager service ID for local children."""
-
-    @property
-    def exitcode(self) -> int | None:
-        """Exit code of the process, or None if still running or no process."""
-        return self.process.exitcode if self.process else None
-
-    @property
-    def pid(self) -> int | None:
-        """PID of the process, or None if no process."""
-        return self.process.pid if self.process else None
-
-
-_SPAWN_TIMEOUT = 60.0
-"""Safety-net timeout for process.start(). Normal spawns complete in
-milliseconds; this guards against extreme system conditions (memory
-pressure, exhausted forkserver) blocking the event loop indefinitely."""
-
-_FORKSERVER_PRELOAD = [
-    # -- aiperf core (shared by all services) --
-    "aiperf.common.bootstrap",
-    "aiperf.config",
-    "aiperf.common.environment",
-    "aiperf.common.logging",
-    "aiperf.common.enums",
-    "aiperf.common.hooks",
-    "aiperf.common.messages",
-    "aiperf.common.models",
-    "aiperf.common.control_structs",
-    "aiperf.common.types",
-    "aiperf.plugin",
-    "aiperf.plugin.enums",
-    "aiperf.common.base_service",
-    "aiperf.common.base_component_service",
-    "aiperf.common.mixins",
-    # -- Worker (replicable: num_workers instances) --
-    "aiperf.workers.worker",
-    "aiperf.workers.inference_client",
-    "aiperf.workers.session_manager",
-    "aiperf.credit",
-    "aiperf.credit.issuer",
-    "aiperf.transports",
-    "aiperf.transports.aiohttp_client",
-    # -- RecordProcessor (replicable: num_record_processors instances) --
-    "aiperf.records.record_processor_service",
-    "aiperf.metrics",
-    "aiperf.post_processors",
-    # -- heavy third-party deps --
-    "pydantic",
-    "numpy",
-    "zmq",
-    "uvloop",
-    "orjson",
-    "msgspec",
-    "rich.console",
-    "rich.logging",
-    "aiohttp",
-    "aiofiles",
-    "psutil",
+__all__ = [
+    "LocalWorkerGroupManagerAdapter",
+    "SubprocessInfo",
+    "SubprocessManager",
+    "get_mp_context",
 ]
-
-_mp_context: multiprocessing.context.BaseContext | None = None
-
-
-def get_mp_context() -> multiprocessing.context.BaseContext:
-    """Return the forkserver (Linux) or spawn (macOS) multiprocessing context.
-
-    Lazily created on first call to avoid side-effects at import time
-    (e.g. during pytest-xdist worker collection).
-    """
-    global _mp_context
-    if _mp_context is None:
-        method = "forkserver" if platform.system() == "Linux" else "spawn"
-        _mp_context = multiprocessing.get_context(method)
-        if platform.system() == "Linux":
-            _mp_context.set_forkserver_preload(_FORKSERVER_PRELOAD)
-            # The forkserver is a long-lived helper process that inherits
-            # the parent's stdin/stdout/stderr at spawn time. If the
-            # parent aiperf process runs under captured pipes (pytest
-            # subprocess, CI harnesses), the forkserver keeps those pipe
-            # fds open even after the parent exits, preventing
-            # process.communicate() from seeing EOF. Force-start the
-            # forkserver here with stdio redirected to /dev/null so it
-            # never holds the pipes.
-            _eagerly_start_forkserver(_mp_context)
-    return _mp_context
-
-
-def _eagerly_start_forkserver(
-    ctx: multiprocessing.context.BaseContext,
-) -> None:
-    """Start the forkserver helper with stdio pointing at /dev/null.
-
-    Must run before any fork/spawn happens through ``ctx`` so the helper
-    inherits /dev/null rather than the parent's captured pipes.
-    """
-    import contextlib
-    from multiprocessing import forkserver as _fs
-
-    # If forkserver is already running, we're too late to redirect its
-    # stdio — it has already inherited whatever the parent had at
-    # startup. Nothing we can do safely here without a larger refactor.
-    if getattr(_fs, "_forkserver", None) and getattr(
-        _fs._forkserver, "_forkserver_pid", None
-    ):
-        return
-
-    devnull_fd = os.open(os.devnull, os.O_RDWR)
-    saved = [os.dup(fd) for fd in (0, 1, 2)]
-    try:
-        for fd in (0, 1, 2):
-            os.dup2(devnull_fd, fd)
-        with contextlib.suppress(Exception):
-            ctx._prepare_data = getattr(ctx, "_prepare_data", None)
-            _fs.ensure_running()
-    finally:
-        for fd, original in zip((0, 1, 2), saved, strict=False):
-            os.dup2(original, fd)
-            os.close(original)
-        os.close(devnull_fd)
 
 
 class SubprocessManager:

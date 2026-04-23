@@ -1,0 +1,51 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# AIPerf
+
+> Python 3.10+ async AI benchmarking tool for measuring LLM inference server performance. Services communicate via ZMQ message bus; optionally deployable on Kubernetes via a kopf-based operator.
+
+AIPerf drives synthetic load against LLM-serving endpoints (OpenAI-compatible chat/completions, embeddings, rankings, image/audio, etc.), collects per-request telemetry, and emits latency / throughput / token-rate / goodput metrics. It runs as a local multi-process pipeline or as a Kubernetes Custom Resource (`AIPerfJob`) managed by a kopf-based operator. Inter-service communication uses a ZMQ message bus with Pydantic-modeled messages for control traffic and tagged `msgspec.Struct` payloads for hot-path wire formats.
+
+Agents working in this repo should read `CLAUDE.md` first — it defines coding standards, build/test commands, and the three-file-sync rule that keeps Claude, Copilot, and Cursor on the same conventions. Then consult the docs below as the task requires.
+
+## Agent bootstrap
+
+- [CLAUDE.md](CLAUDE.md): Coding standards, build/test commands, pre-commit hooks, per-subsystem conventions, LLM-ergonomics floor/ceiling. Kept identical to `.github/copilot-instructions.md` and `.cursor/rules/python.mdc` by the three-file-sync rule.
+- [CONTRIBUTING.md](CONTRIBUTING.md): Dev setup, available `make` targets, DCO sign-off, contribution workflow.
+- [README.md](README.md): Install, quickstart, tutorial index.
+
+## Architecture and patterns
+
+- [docs/architecture.md](docs/architecture.md): Three-plane architecture (control, data, observability), core components, credit system, data flow, communication patterns.
+- [docs/dev/patterns.md](docs/dev/patterns.md): Canonical code patterns with reference-file paths — CLI commands, services, models, messages, plugins, kopf handlers, FastAPI routers, error handling, logging, testing, plus LLM-ergonomics exemplars. Grep this file first when adding a new piece of code.
+- [docs/dev/kubernetes-flow.md](docs/dev/kubernetes-flow.md): Operator/CR lifecycle, kopf handler module split, `aiperf kube` CLI flow.
+
+## Reference
+
+- [docs/cli-options.md](docs/cli-options.md): Auto-generated CLI command and option reference. Regenerate with `make generate-cli-docs` — do not edit by hand.
+- [docs/environment-variables.md](docs/environment-variables.md): Auto-generated `AIPERF_*` environment variable reference. Regenerate with `make generate-env-vars-docs` — do not edit by hand.
+- [docs/metrics-reference.md](docs/metrics-reference.md): Metric definitions, formulas, and requirements.
+- [docs/plugins/plugin-system.md](docs/plugins/plugin-system.md): Plugin architecture, categories (endpoint, dataset, grader, ui, service, ...), YAML registry format, creation guide.
+- [docs/plugins/creating-your-first-plugin.md](docs/plugins/creating-your-first-plugin.md): End-to-end plugin walkthrough.
+- [docs/reference/](docs/reference/): Tokenizer and other reference material.
+
+## Kubernetes
+
+- [docs/kubernetes/getting-started.md](docs/kubernetes/getting-started.md): Helm install, first `AIPerfJob`.
+- [docs/kubernetes/configuration.md](docs/kubernetes/configuration.md): CR schema, operator tunables, composite CLI flags.
+- [docs/kubernetes/production.md](docs/kubernetes/production.md): Production rollout, sizing, observability.
+- [docs/kubernetes/monitoring.md](docs/kubernetes/monitoring.md): Metrics endpoints, Prometheus scraping, Loki integration.
+- [docs/kubernetes/ai-debugging-guide.md](docs/kubernetes/ai-debugging-guide.md) / [ai-deployment-guide.md](docs/kubernetes/ai-deployment-guide.md): Agent-oriented runbooks for debugging and deploying `AIPerfJob` CRs.
+
+## Optional
+
+- [docs/tutorials/](docs/tutorials/): Feature-specific walkthroughs (arrival patterns, ramping, goodput, multi-turn, vision, audio, custom datasets, ...). Index: `README.md`.
+- [docs/benchmark-modes/](docs/benchmark-modes/): Benchmark modes, timing, traces.
+- [docs/accuracy/](docs/accuracy/): Accuracy benchmarks and graders. Note: `docs/accuracy/accuracy_stubs.md` — all accuracy loaders currently raise `NotImplementedError`; framework exists but implementations do not.
+- [docs/server-metrics/](docs/server-metrics/): Server-side metric schemas.
+- [docs/api/synthesis.md](docs/api/synthesis.md): Dataset synthesis API.
+- [docs/comprehensive-llm-benchmarking.md](docs/comprehensive-llm-benchmarking.md): End-to-end methodology walkthrough.
+- [docs/reproducibility.md](docs/reproducibility.md): How to reproduce a published benchmark run.

@@ -474,7 +474,9 @@ def _register_multi_run_only_callbacks(
     register_custom_plot_callbacks(app, runs, plot_config)
     register_multi_run_plot_edit_callbacks(app, runs)
     register_run_count_badge_callback(app)
-    register_drill_down_callbacks(app, runs, run_dirs, loader, plot_config)
+    register_drill_down_callbacks(
+        app, runs=runs, run_dirs=run_dirs, loader=loader, plot_config=plot_config
+    )
 
     # Also register single-run callbacks for drill-down support
     register_single_run_custom_plot_callbacks(app, runs, VisualizationMode.SINGLE_RUN)
@@ -483,6 +485,7 @@ def _register_multi_run_only_callbacks(
 
 def register_all_callbacks(
     app: dash.Dash,
+    *,
     runs: list[RunData],
     run_dirs: list[Path],
     mode: VisualizationMode,
@@ -512,7 +515,9 @@ def register_all_callbacks(
     register_sidebar_components_theme_callback(app)
     register_config_modal_callback(app, runs, plot_config, mode)
     register_hide_show_plot_callbacks(app)
-    register_export_png_callback(app, runs, mode, theme, plot_config)
+    register_export_png_callback(
+        app, runs=runs, mode=mode, theme=theme, plot_config=plot_config
+    )
     register_layout_control_callbacks(app, mode, plot_config, theme)
     register_context_menu_callbacks(app)
     register_toast_notifications_callbacks(app)
@@ -535,7 +540,9 @@ def register_all_callbacks(
         )
 
     # Register dynamic grid callback (unified but mode-aware)
-    register_dynamic_grid_callback(app, runs, mode, theme, plot_config)
+    register_dynamic_grid_callback(
+        app, runs=runs, mode=mode, theme=theme, plot_config=plot_config
+    )
 
 
 def register_single_run_callbacks(
@@ -1233,6 +1240,7 @@ def register_hide_show_plot_callbacks(app: dash.Dash) -> None:
 
 def register_export_png_callback(
     app: dash.Dash,
+    *,
     runs: list[RunData],
     mode: VisualizationMode,
     theme: PlotTheme,
@@ -5020,6 +5028,7 @@ def _render_single_run_plots(
 
 def register_dynamic_grid_callback(
     app: dash.Dash,
+    *,
     runs: list[RunData],
     mode: VisualizationMode,
     theme: PlotTheme,
@@ -5462,6 +5471,7 @@ def register_run_count_badge_callback(app: dash.Dash) -> None:
 
 def register_drill_down_callbacks(
     app: dash.Dash,
+    *,
     runs: list[RunData],
     run_dirs: list[Path],
     loader: DataLoader,

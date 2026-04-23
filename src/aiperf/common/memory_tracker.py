@@ -100,9 +100,9 @@ class MemoryTracker:
     Example usage::
 
         tracker = MemoryTracker()
-        tracker.record("worker_0", "worker", pid=1234,
+        tracker.record(label="worker_0", group="worker", pid=1234,
                         phase=MemoryPhase.STARTUP, reading=MemoryReading(pss=100))
-        tracker.record("worker_0", "worker", pid=1234,
+        tracker.record(label="worker_0", group="worker", pid=1234,
                         phase=MemoryPhase.SHUTDOWN, reading=MemoryReading(pss=200))
         tracker.print_summary()
     """
@@ -112,6 +112,7 @@ class MemoryTracker:
 
     def record(
         self,
+        *,
         label: str,
         group: str,
         pid: int,

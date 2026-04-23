@@ -4,15 +4,13 @@
 
 from __future__ import annotations
 
-import asyncio
+import io
 import logging
-import random
-from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import aiohttp
 import kopf
 import orjson
 import zstandard
@@ -21,9 +19,7 @@ from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.kubernetes.client import k8s_client
 from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
-from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import controller_dns_name
-from aiperf.kubernetes.results_sidecar import CHECKPOINTS_DIR_NAME
 from aiperf.operator import events
 from aiperf.operator.client_cache import (
     get_or_create_progress_client,
@@ -31,12 +27,33 @@ from aiperf.operator.client_cache import (
     job_key,
 )
 from aiperf.operator.environment import OperatorEnvironment
+from aiperf.operator.handlers._completion_fetch import (
+    _NO_PROGRESS_STAGNATION_LIMIT,  # re-exported for tests
+    _fetch_with_progress_aware_retry,  # re-exported for tests
+    _IncompleteResultsError,  # re-exported for tests/monitor
+    fetch_results_with_retry,
+)
 from aiperf.operator.job_index import index_job_completed
 from aiperf.operator.models import ControllerFetchResult, MetricsSummary
-from aiperf.operator.progress_client import ProgressClient
+from aiperf.operator.progress_client import ProgressClient  # re-exported for tests
 from aiperf.operator.status import ConditionType, Phase, StatusBuilder, parse_timestamp
 
+__all__ = [
+    "ProgressClient",
+    "_IncompleteResultsError",
+    "_NO_PROGRESS_STAGNATION_LIMIT",
+    "_fetch_with_progress_aware_retry",
+    "_parse_metrics_from_files",
+    "fetch_results_with_retry",
+    "get_or_create_progress_client",
+    "handle_completion",
+]
+
 logger = logging.getLogger(__name__)
+
+_KEY_RESULT_FILES = frozenset(
+    {"profile_export_aiperf.json", "profile_export_aiperf.csv"}
+)
 
 
 async def handle_completion(
@@ -51,33 +68,16 @@ async def handle_completion(
 ) -> None:
     """Finalize a completed AIPerfJob: fetch results, patch status, update index.
 
-    Precondition:
-        Caller MUST hold the completion claim via ``try_claim_completion``.
-        Calling this without a claim will double-fetch and double-patch.
+    Precondition: caller MUST hold the completion claim via
+    ``try_claim_completion``; without it this double-fetches and double-patches.
 
-    Side effects:
-        - Issues an HTTP GET to the controller's results API via
-          ``fetch_results_with_retry`` (unless ``result`` is supplied).
-        - Writes ``status.phase``, ``status.results``, ``status.summary``,
-          ``status.resultsPath``, and multiple status conditions on ``sb``.
-        - Calls ``index_job_completed``; on failure sets the
-          ``IndexUpdated=False`` condition and emits an IndexUpdateFailed
-          event, but does not re-raise.
-        - Emits kopf events: ``ResultsStored``, ``ResultsFailed``, and
-          ``Completed``.
-        - Deletes the backing JobSet on success (skipped on cancellation).
-        - Short-circuits with no side effects if ``on_delete`` has already
-          requested cancellation for this job.
-
-    Args:
-        body: The AIPerfJob CR body (used for kopf event emission).
-        namespace: Namespace of the CR.
-        jobset_name: Name of the JobSet backing this job.
-        job_id: Stable job identifier (``status.jobId``).
-        status: Current CR ``status`` dict (read-only view).
-        sb: StatusBuilder bound to the kopf patch for this reconciliation.
-        result: Pre-fetched result, if available (saves an HTTP round-trip
-            on the salvage path from ``_maybe_recover_terminated_controller``).
+    Side effects: fetches results (unless ``result`` is supplied), writes
+    phase/results/summary/resultsPath + conditions on ``sb``, updates the
+    job index (degrading to a condition + event on failure), emits
+    ResultsStored/ResultsFailed/Completed kopf events, and deletes the
+    backing JobSet on success. Short-circuits with no side effects if
+    ``on_delete`` has already requested cancellation for this job. The
+    ``result`` kwarg lets the salvage path skip the HTTP round-trip.
     """
     # Short-circuit if on_delete has signaled cancellation. The CR is
     # about to disappear; skipping fetch/JobSet-delete/status patches
@@ -89,7 +89,104 @@ async def handle_completion(
         )
         return
 
-    # Backfill conditions for fast-completing jobs that skipped RUNNING phase
+    _backfill_pre_completion_conditions(status, sb)
+    sb.set_completion_time()
+    duration_sec = _compute_duration_seconds(status)
+
+    if result is None:
+        host = controller_dns_name(jobset_name, namespace)
+        result = await fetch_results_with_retry(host, namespace, job_id)
+
+    flags = _compute_result_flags(result, job_id)
+
+    _record_results_on_status(
+        body=body,
+        namespace=namespace,
+        job_id=job_id,
+        result=result,
+        sb=sb,
+        has_metrics=flags.has_metrics,
+        has_files=flags.has_files,
+    )
+    _set_results_phase_and_condition(
+        body=body,
+        jobset_name=jobset_name,
+        result=result,
+        sb=sb,
+        has_metrics=flags.has_metrics,
+        has_files=flags.has_files,
+        has_error=flags.has_error,
+        success=flags.success,
+    )
+
+    sb.finalize()
+    if flags.success:
+        events.completed(body, job_id, duration_sec)
+
+    await _update_job_index_safe(
+        body=body,
+        namespace=namespace,
+        job_id=job_id,
+        result=result,
+        sb=sb,
+        success=flags.success,
+    )
+
+    await _maybe_delete_jobset_after_success(namespace, jobset_name, job_id, flags)
+
+
+async def _maybe_delete_jobset_after_success(
+    namespace: str, jobset_name: str, job_id: str, flags: _ResultFlags
+) -> None:
+    """Delete the backing JobSet to free cluster resources once results are stored.
+
+    Keep pods alive for retry on the next monitor tick if fetch failed or only
+    partial/non-authoritative artifacts were available. Skip the delete on
+    cancellation — K8s GC via ownerReferences will reap the JobSet.
+    """
+    if flags.success and not is_cancellation_requested(job_key(namespace, job_id)):
+        await _delete_backing_jobset(namespace, jobset_name)
+
+
+@dataclass(frozen=True, slots=True)
+class _ResultFlags:
+    """Derived booleans describing a ``ControllerFetchResult``."""
+
+    has_metrics: bool
+    has_files: bool
+    has_error: bool
+    success: bool
+
+
+def _compute_result_flags(result: ControllerFetchResult, job_id: str) -> _ResultFlags:
+    """Derive has_metrics/has_files/has_error/success flags and log a summary.
+
+    A partial fetch can set has_files=True but still populate result.error
+    (e.g. checkpoints saved but key export files missing). Treat error as
+    authoritative so a false-success Completed phase never overwrites the
+    real failure signal.
+    """
+    has_metrics = bool(result.metrics and result.metrics.get("metrics"))
+    has_files = bool(_KEY_RESULT_FILES & set(result.downloaded or []))
+    has_error = bool(result.error)
+    success = has_files and not has_error
+
+    logger.info(
+        f"Results for {job_id}: has_metrics={has_metrics}, has_files={has_files}, "
+        f"metrics_keys={list(result.metrics.keys()) if result.metrics else []}"
+    )
+    return _ResultFlags(
+        has_metrics=has_metrics,
+        has_files=has_files,
+        has_error=has_error,
+        success=success,
+    )
+
+
+def _backfill_pre_completion_conditions(
+    status: dict[str, Any], sb: StatusBuilder
+) -> None:
+    """Backfill conditions for fast-completing jobs that skipped RUNNING phase."""
     total_workers = status.get("workers", {}).get("total", 1)
     if not sb.conditions.is_condition_true(ConditionType.WORKERS_READY):
         sb.conditions.set_true(
@@ -104,39 +201,31 @@ async def handle_completion(
             "Job completed before running state was observed",
         )
 
-    sb.set_completion_time()
 
+def _compute_duration_seconds(status: dict[str, Any]) -> float | None:
     start_time = status.get("startTime")
-    duration_sec = None
-    if start_time:
-        try:
-            start_dt = parse_timestamp(start_time)
-            duration_sec = (datetime.now(timezone.utc) - start_dt).total_seconds()
-        except (ValueError, TypeError):
-            pass
+    if not start_time:
+        return None
+    try:
+        start_dt = parse_timestamp(start_time)
+        return (datetime.now(timezone.utc) - start_dt).total_seconds()
+    except (ValueError, TypeError):
+        return None
 
-    host = controller_dns_name(jobset_name, namespace)
-    if result is None:
-        result = await fetch_results_with_retry(host, namespace, job_id)
 
-    has_metrics = bool(result.metrics and result.metrics.get("metrics"))
-    key_result_files = {"profile_export_aiperf.json", "profile_export_aiperf.csv"}
-    has_files = bool(key_result_files & set(result.downloaded or []))
-    # A partial fetch can set has_files=True but still populate result.error
-    # (e.g. checkpoints saved but key export files missing). Treat error as
-    # authoritative so a false-success Completed phase never overwrites the
-    # real failure signal.
-    has_error = bool(result.error)
-    success = has_files and not has_error
-
-    logger.info(
-        f"Results for {job_id}: has_metrics={has_metrics}, has_files={has_files}, "
-        f"metrics_keys={list(result.metrics.keys()) if result.metrics else []}"
-    )
-
+def _record_results_on_status(
+    *,
+    body: dict[str, Any],
+    namespace: str,
+    job_id: str,
+    result: ControllerFetchResult,
+    sb: StatusBuilder,
+    has_metrics: bool,
+    has_files: bool,
+) -> None:
+    """Populate metrics/summary/resultsPath on the status patch."""
     if has_metrics:
         sb.set_results(result.metrics)
-
         summary = MetricsSummary.from_metrics(result.metrics)
         summary_dict = summary.to_status_dict()
         if summary_dict:
@@ -155,13 +244,26 @@ async def handle_completion(
         events.results_stored(body, str(dest_dir), len(result.downloaded))
         logger.info(f"Downloaded {len(result.downloaded)} result files to {dest_dir}")
 
-    # Set condition based on what was actually retrieved.
-    # Result files are the authoritative source - /api/metrics is a convenience
-    # that duplicates what's derivable from the files. Files alone = full success,
-    # but only if ControllerFetchResult.error is empty: a partial fetch can set has_files
-    # while still reporting an error for missing key artifacts.
+
+def _set_results_phase_and_condition(
+    *,
+    body: dict[str, Any],
+    jobset_name: str,
+    result: ControllerFetchResult,
+    sb: StatusBuilder,
+    has_metrics: bool,
+    has_files: bool,
+    has_error: bool,
+    success: bool,
+) -> None:
+    """Set phase + RESULTS_AVAILABLE condition; emit failure event on failure.
+
+    Result files are the authoritative source - /api/metrics is a convenience
+    that duplicates what's derivable from the files. Files alone = full success,
+    but only if ControllerFetchResult.error is empty: a partial fetch can set
+    has_files while still reporting an error for missing key artifacts.
+    """
     if success:
-        reason = "ResultsStored"
         if has_metrics:
             msg = f"Metrics and {len(result.downloaded)} result files stored"
         else:
@@ -171,41 +273,51 @@ async def handle_completion(
                 f"result files are sufficient"
             )
         sb.set_phase(Phase.COMPLETED)
-        sb.conditions.set_true(ConditionType.RESULTS_AVAILABLE, reason, msg)
+        sb.conditions.set_true(ConditionType.RESULTS_AVAILABLE, "ResultsStored", msg)
+        return
+
+    sb.set_phase(Phase.FAILED)
+    failure_msg = (
+        result.error
+        if has_error
+        else "Failed to fetch complete result files from controller"
+    )
+    sb.conditions.set_false(
+        ConditionType.RESULTS_AVAILABLE,
+        "ResultsFetchFailed",
+        failure_msg,
+    )
+    if has_files and has_error:
+        logger.warning(
+            f"Partial results for {jobset_name}: key files present but "
+            f"fetch reported error: {result.error}"
+        )
+    elif has_metrics:
+        logger.warning(
+            f"Metrics were fetched for {jobset_name}, "
+            "but complete result files were not available"
+        )
     else:
-        sb.set_phase(Phase.FAILED)
-        failure_reason = "ResultsFetchFailed"
-        failure_msg = (
-            result.error
-            if has_error
-            else "Failed to fetch complete result files from controller"
-        )
-        sb.conditions.set_false(
-            ConditionType.RESULTS_AVAILABLE,
-            failure_reason,
-            failure_msg,
-        )
-        if has_files and has_error:
-            logger.warning(
-                f"Partial results for {jobset_name}: key files present but "
-                f"fetch reported error: {result.error}"
-            )
-        elif has_metrics:
-            logger.warning(
-                f"Metrics were fetched for {jobset_name}, but complete result files were not available"
-            )
-        else:
-            logger.warning(f"No result files downloaded for {jobset_name}")
-        events.results_failed(body, failure_msg)
+        logger.warning(f"No result files downloaded for {jobset_name}")
+    events.results_failed(body, failure_msg)
 
-    sb.finalize()
-    if success:
-        events.completed(body, job_id, duration_sec)
 
-    # Update job index with completion data. Results are already persisted
-    # to disk, so a failure here only affects discoverability via the
-    # index/history API - don't retry the whole completion handler, but
-    # set a status condition and event so operators can see the gap.
+async def _update_job_index_safe(
+    *,
+    body: dict[str, Any],
+    namespace: str,
+    job_id: str,
+    result: ControllerFetchResult,
+    sb: StatusBuilder,
+    success: bool,
+) -> None:
+    """Update the job index; on failure, degrade gracefully.
+
+    Results are already persisted to disk, so a failure here only affects
+    discoverability via the index/history API - don't retry the whole
+    completion handler, but set a status condition and event so operators
+    can see the gap.
+    """
     try:
         await index_job_completed(
             namespace=namespace,
@@ -229,358 +341,23 @@ async def handle_completion(
             message=f"Job index update failed (results still on disk): {e}",
         )
 
-    # Delete the JobSet to free cluster resources after complete result files are stored.
-    # Keep pods alive for retry on the next monitor tick if fetch failed or only
-    # partial/non-authoritative artifacts were available.
-    # Skip the delete entirely if cancellation was requested — K8s GC via
-    # ownerReferences will reap the JobSet once the CR is gone.
-    if success and not is_cancellation_requested(job_key(namespace, job_id)):
-        try:
-            async with k8s_client() as api:
-                await client.CustomObjectsApi(api).delete_namespaced_custom_object(
-                    group=JOBSET_GROUP,
-                    version=JOBSET_VERSION,
-                    plural=JOBSET_PLURAL,
-                    namespace=namespace,
-                    name=jobset_name,
-                )
-            logger.info(f"Deleted JobSet {jobset_name} after results stored")
-        except ApiException as e:
-            if e.status != 404:
-                logger.warning(
-                    f"Failed to delete JobSet {jobset_name} after completion: {e}"
-                )
 
-
-# Progress-aware retry: give up after this many CONSECUTIVE attempts with
-# no new bytes/files arriving in the results dir. Tuning rationale below.
-_NO_PROGRESS_STAGNATION_LIMIT = 5
-
-
-async def _fetch_with_progress_aware_retry(
-    fetch_once: Callable[[], Awaitable[ControllerFetchResult]],
-    *,
-    dest_dir: Path,
-    job_id: str,
-    initial_delay: float,
-    description: str,
-    is_cancelled: Callable[[], bool] | None = None,
-    max_delay: float = 30.0,
-    backoff_multiplier: float = 2.0,
-    stagnation_limit: int = _NO_PROGRESS_STAGNATION_LIMIT,
-) -> ControllerFetchResult:
-    """Retry ``fetch_once`` until it returns, or until no progress has been
-    made for ``stagnation_limit`` consecutive attempts.
-
-    Unlike a plain count-based retry (``retry_with_backoff``), this tolerates
-    controllers that take minutes to finalise their export. Records-manager
-    is single-core bound on pure-Python aggregation; at high concurrency its
-    final ``summarize()`` can run longer than any fixed retry window. As long
-    as the partial checkpoint on disk is still growing or new files are
-    landing, we know the controller is still working and should keep waiting.
-    Only if nothing changes across ``stagnation_limit`` consecutive attempts
-    (wall-clock ~60s at default cap) do we give up.
-
-    Progress signal: total bytes of all files directly under ``dest_dir``
-    and its subtree. A file that grows counts as progress; a file that
-    shrinks or disappears does not.
-
-    ``is_cancelled``, if supplied, is polled between attempts and at each
-    sleep wakeup; returning True aborts the loop promptly. This avoids
-    blocking a CR deletion behind a full stagnation window.
-    """
-
-    def _snapshot_bytes() -> int:
-        total = 0
-        if not dest_dir.exists():
-            return 0
-        for entry in dest_dir.rglob("*"):
-            if entry.is_file():
-                try:
-                    total += entry.stat().st_size
-                except OSError:
-                    # File vanished between rglob and stat — skip silently.
-                    continue
-        return total
-
-    delay = initial_delay
-    attempt = 0
-    no_progress_streak = 0
-    last_bytes = _snapshot_bytes()
-    pending_exc: BaseException | None = None
-    while True:
-        if is_cancelled is not None and is_cancelled():
-            return await fetch_once()
-        attempt += 1
-        try:
-            return await fetch_once()
-        except _IncompleteResultsError as e:
-            pending_exc = e
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ApiException) as e:
-            # Transient errors (network, IO) count as no-progress attempts
-            # too; if they persist past stagnation_limit we bubble them up.
-            pending_exc = e
-            logger.debug(
-                "%s attempt %d raised %s; treating as no-progress",
-                description,
-                attempt,
-                type(e).__name__,
-            )
-        except Exception as e:  # noqa: BLE001 - progress-aware retry must tolerate any fetch error as no-progress; stagnation limit bubbles persistent errors up
-            pending_exc = e
-            logger.debug(
-                "%s attempt %d raised %s; treating as no-progress",
-                description,
-                attempt,
-                type(e).__name__,
-            )
-
-        if is_cancelled is not None and is_cancelled():
-            return await fetch_once()
-
-        bytes_now = _snapshot_bytes()
-        if bytes_now > last_bytes:
-            # Controller is still producing output — reset stagnation.
-            no_progress_streak = 0
-            logger.debug(
-                "%s attempt %d progressing: %d -> %d bytes on disk; retrying in %.1fs",
-                description,
-                attempt,
-                last_bytes,
-                bytes_now,
-                delay,
-            )
-        else:
-            no_progress_streak += 1
-            logger.debug(
-                "%s attempt %d no new bytes (%d) — stagnation %d/%d",
-                description,
-                attempt,
-                bytes_now,
-                no_progress_streak,
-                stagnation_limit,
-            )
-            if no_progress_streak >= stagnation_limit:
-                logger.warning(
-                    "%s stalled at %d bytes for %d consecutive attempts — giving up",
-                    description,
-                    bytes_now,
-                    no_progress_streak,
-                )
-                assert pending_exc is not None
-                raise pending_exc
-        last_bytes = bytes_now
-        jittered_delay = delay * random.uniform(0.8, 1.2)
-        await asyncio.sleep(jittered_delay)
-        delay = min(delay * backoff_multiplier, max_delay)
-
-
-async def fetch_results_with_retry(
-    controller_host: str,
-    namespace: str,
-    job_id: str,
-    *,
-    max_retries: int = OperatorEnvironment.RESULTS.MAX_RETRIES,
-    retry_delay: float = OperatorEnvironment.RESULTS.RETRY_DELAY,
-    dest_dir: Path | None = None,
-) -> ControllerFetchResult:
-    """Fetch results from controller pod with retry logic.
-
-    Uses the cached ProgressClient for the job. Falls back to creating
-    a temporary client if no cached one exists (e.g. after restart).
-    Args:
-        controller_host: Controller pod DNS name.
-        namespace: Kubernetes namespace (used for results directory scoping).
-        job_id: Job identifier for results directory.
-        max_retries: Maximum retry attempts.
-        retry_delay: Delay between retries (with exponential backoff).
-        dest_dir: Explicit destination directory for results. When None,
-            defaults to ``RESULTS.DIR / namespace / job_id``.
-
-    Returns:
-        ControllerFetchResult with metrics dict and list of downloaded files.
-    """
-    for label, value in [("namespace", namespace), ("job_id", job_id)]:
-        if not value or value in (".", ".."):
-            logger.error(f"Invalid {label} for results storage: {value!r}")
-            return ControllerFetchResult(
-                metrics=None, downloaded=[], error=f"Invalid {label}: {value!r}"
-            )
-        try:
-            safe = (OperatorEnvironment.RESULTS.DIR / value).resolve()
-            safe.relative_to(OperatorEnvironment.RESULTS.DIR.resolve())
-        except (ValueError, OSError):
-            logger.error(f"Path traversal detected in {label}: {value!r}")
-            return ControllerFetchResult(
-                metrics=None, downloaded=[], error=f"Path traversal in {label}"
-            )
-
-    key = job_key(namespace, job_id)
-    client = await get_or_create_progress_client(key)
-
-    if dest_dir is None:
-        dest_dir = OperatorEnvironment.RESULTS.DIR / namespace / job_id
-
-    # Mutable state shared across retry attempts so partial progress
-    # (e.g. metrics fetched but files not yet) survives retries.
-    # Use None (not yet attempted) vs [] (attempted, no files) to avoid
-    # treating a valid empty download list as "not yet fetched".
-    state: dict[str, Any] = {"metrics": None, "downloaded": None, "checkpoints": None}
-
-    # Key result files that indicate a complete export. If downloads
-    # succeed but none of these are present, export is still in progress
-    # and we should retry to capture the full set.
-    _KEY_FILES = {"profile_export_aiperf.json", "profile_export_aiperf.csv"}
-    sidecar_port = K8sEnvironment.PORTS.RESULTS_SIDECAR
-
-    def _split_downloaded(
-        paths: list[str] | None,
-    ) -> tuple[list[str], list[str]]:
-        final_files: list[str] = []
-        checkpoint_files: list[str] = []
-        for path in paths or []:
-            if path.startswith(f"{CHECKPOINTS_DIR_NAME}/"):
-                checkpoint_files.append(path)
-            else:
-                final_files.append(path)
-        return final_files, checkpoint_files
-
-    def _merge_downloaded(
-        current: list[str] | None, new: list[str] | None
-    ) -> list[str] | None:
-        if not new:
-            return current
-        if not current:
-            return list(new)
-        return sorted(set(current) | set(new))
-
-    async def _fetch_once() -> ControllerFetchResult:
-        # Short-circuit on cancellation so the outer retry_with_backoff
-        # stops immediately (returning this ControllerFetchResult is success from
-        # the retry wrapper's perspective, so no further attempts fire).
-        if is_cancellation_requested(key):
-            return ControllerFetchResult(
-                metrics=state["metrics"],
-                downloaded=state["downloaded"] or [],
-                checkpoints=state["checkpoints"] or [],
-                error="Cancelled by CR deletion",
-            )
-
-        if state["metrics"] is None:
-            state["metrics"] = await client.get_metrics(controller_host)
-
-        if OperatorEnvironment.RESULTS.DIR.exists():
-            downloaded = await client.download_all_results(controller_host, dest_dir)
-            if downloaded:
-                final_files, checkpoint_files = _split_downloaded(downloaded)
-                state["downloaded"] = _merge_downloaded(
-                    state["downloaded"], final_files
-                )
-                state["checkpoints"] = _merge_downloaded(
-                    state["checkpoints"], checkpoint_files
-                )
-
-            has_key_file = bool(_KEY_FILES & set(state["downloaded"] or []))
-            if not has_key_file and sidecar_port != K8sEnvironment.PORTS.API_SERVICE:
-                async with ProgressClient(port=sidecar_port) as sidecar_client:
-                    sidecar_downloaded = await sidecar_client.download_all_results(
-                        controller_host, dest_dir
-                    )
-                if sidecar_downloaded:
-                    final_files, checkpoint_files = _split_downloaded(
-                        sidecar_downloaded
-                    )
-                    state["downloaded"] = _merge_downloaded(
-                        state["downloaded"], final_files
-                    )
-                    state["checkpoints"] = _merge_downloaded(
-                        state["checkpoints"], checkpoint_files
-                    )
-
-        if state["metrics"] is not None and state["downloaded"] is not None:
-            has_key_file = bool(_KEY_FILES & set(state["downloaded"]))
-            if has_key_file:
-                return ControllerFetchResult(
-                    metrics=state["metrics"],
-                    downloaded=state["downloaded"],
-                    checkpoints=state["checkpoints"] or [],
-                )
-            logger.info(
-                f"Downloaded {len(state['downloaded'])} files but missing key "
-                f"export files, retrying..."
-            )
-        raise _IncompleteResultsError(
-            state["metrics"],
-            state["downloaded"] or [],
-            state["checkpoints"] or [],
-        )
-
+async def _delete_backing_jobset(namespace: str, jobset_name: str) -> None:
     try:
-        return await _fetch_with_progress_aware_retry(
-            _fetch_once,
-            dest_dir=dest_dir,
-            job_id=job_id,
-            initial_delay=retry_delay,
-            description=f"results fetch for {job_id}",
-            is_cancelled=lambda: is_cancellation_requested(key),
-            stagnation_limit=max(max_retries, 1),
-        )
-    except _IncompleteResultsError as e:
-        return e.to_fetch_result(job_id)
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ApiException) as e:
-        logger.warning(f"Results fetch failed for {job_id}: {e}")
-        return ControllerFetchResult(
-            metrics=state["metrics"],
-            downloaded=state["downloaded"] or [],
-            checkpoints=state["checkpoints"] or [],
-            error=f"Failed to fetch results: {e}",
-        )
-    except Exception as e:  # noqa: BLE001 - fetch retry is best-effort; any error returns whatever partial state we have rather than re-raising into the kopf reconcile
-        logger.warning(f"Results fetch failed for {job_id}: {e}")
-        return ControllerFetchResult(
-            metrics=state["metrics"],
-            downloaded=state["downloaded"] or [],
-            checkpoints=state["checkpoints"] or [],
-            error=f"Failed to fetch results: {e}",
-        )
-
-
-class _IncompleteResultsError(Exception):
-    """Raised when results are partially fetched (metrics or files missing)."""
-
-    def __init__(
-        self,
-        metrics: dict[str, Any] | None,
-        downloaded: list[str],
-        checkpoints: list[str],
-    ) -> None:
-        self.metrics = metrics
-        self.downloaded = downloaded
-        self.checkpoints = checkpoints
-        super().__init__("Incomplete results")
-
-    def to_fetch_result(self, job_id: str) -> ControllerFetchResult:
-        """Convert to a ControllerFetchResult with appropriate error message."""
-        error = ""
-        if not self.metrics and not self.downloaded:
-            error = "Failed to fetch results"
-            logger.warning(f"No metrics or files retrieved for {job_id}")
-        elif not self.metrics:
-            error = "Failed to fetch metrics (files downloaded)"
-            logger.warning(
-                f"Metrics fetch failed for {job_id}, "
-                f"files downloaded: {len(self.downloaded)}"
+        async with k8s_client() as api:
+            await client.CustomObjectsApi(api).delete_namespaced_custom_object(
+                group=JOBSET_GROUP,
+                version=JOBSET_VERSION,
+                plural=JOBSET_PLURAL,
+                namespace=namespace,
+                name=jobset_name,
             )
-        elif not self.downloaded:
-            error = "Failed to download result files (metrics fetched)"
-            logger.warning(f"File download failed for {job_id}, metrics retrieved")
-
-        return ControllerFetchResult(
-            metrics=self.metrics,
-            downloaded=self.downloaded,
-            checkpoints=self.checkpoints,
-            error=error,
-        )
+        logger.info(f"Deleted JobSet {jobset_name} after results stored")
+    except ApiException as e:
+        if e.status != 404:
+            logger.warning(
+                f"Failed to delete JobSet {jobset_name} after completion: {e}"
+            )
 
 
 def _parse_metrics_from_files(
@@ -593,41 +370,12 @@ def _parse_metrics_from_files(
     Looks for profile_export_aiperf.json (or .json.zst) which contains the
     full benchmark results in a format compatible with the CR status.
     """
-
     dest_dir = OperatorEnvironment.RESULTS.DIR / namespace / job_id
 
     try:
-        candidate_paths: list[Path] = []
-        for name in downloaded:
-            candidate = dest_dir / name
-            candidate_paths.append(candidate)
-        candidate_paths.extend(
-            [
-                dest_dir / "profile_export_aiperf.json.zst",
-                dest_dir / "profile_export_aiperf.json",
-            ]
-        )
-        candidate_paths.sort(key=lambda p: 0 if p.suffix == ".zst" else 1)
-
-        seen: set[Path] = set()
-        for path in candidate_paths:
-            if path in seen or not path.exists():
-                continue
-            seen.add(path)
-
-            if path.suffix == ".zst":
-                import io
-
-                raw = (
-                    zstandard.ZstdDecompressor()
-                    .stream_reader(io.BytesIO(path.read_bytes()))
-                    .read()
-                )
-                data = orjson.loads(raw)
-            else:
-                data = orjson.loads(path.read_bytes())
-
-            if not isinstance(data, dict):
+        for path in _metric_file_candidates(dest_dir, downloaded):
+            data = _load_metrics_payload(path)
+            if data is None:
                 continue
             # Newer exports wrap metrics under "metrics"; older ones put them
             # at the top level. Accept either shape and return a dict that
@@ -643,3 +391,38 @@ def _parse_metrics_from_files(
     except (OSError, ValueError, orjson.JSONDecodeError, zstandard.ZstdError) as e:
         logger.warning(f"Failed to parse metrics from {dest_dir}: {e}")
     return None
+
+
+def _metric_file_candidates(dest_dir: Path, downloaded: list[str]) -> list[Path]:
+    """Return a de-duplicated, existence-checked, .zst-first candidate list."""
+    candidates: list[Path] = [dest_dir / name for name in downloaded]
+    candidates.extend(
+        [
+            dest_dir / "profile_export_aiperf.json.zst",
+            dest_dir / "profile_export_aiperf.json",
+        ]
+    )
+    candidates.sort(key=lambda p: 0 if p.suffix == ".zst" else 1)
+
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in candidates:
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        unique.append(path)
+    return unique
+
+
+def _load_metrics_payload(path: Path) -> dict[str, Any] | None:
+    """Load + decode a metrics payload. Returns None if it isn't a dict."""
+    if path.suffix == ".zst":
+        raw = (
+            zstandard.ZstdDecompressor()
+            .stream_reader(io.BytesIO(path.read_bytes()))
+            .read()
+        )
+        data = orjson.loads(raw)
+    else:
+        data = orjson.loads(path.read_bytes())
+    return data if isinstance(data, dict) else None

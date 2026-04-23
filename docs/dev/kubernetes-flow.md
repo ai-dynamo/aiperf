@@ -8,17 +8,18 @@ This document describes the complete flow from user command to benchmark complet
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              USER WORKSTATION                               │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  $ aiperf kube profile --model Qwen/Qwen3-0.6B --workers 10                 │
+│  $ aiperf kube profile --model Qwen/Qwen3-0.6B --workers-max 10             │
 │                                    │                                        │
 │                                    ▼                                        │
-│                          ┌─────────────────┐                                │
-│                          │  Generate Job   │                                │
-│                          │  ID & Manifests │                                │
-│                          └────────┬────────┘                                │
-│                                   │                                         │
-└───────────────────────────────────┼─────────────────────────────────────────┘
-                                    │ kubectl apply
-                                    ▼
+│                          ┌──────────────────────┐                           │
+│                          │ Submit AIPerfJob CR  │                           │
+│                          │ (or direct manifests │                           │
+│                          │  if no operator)     │                           │
+│                          └──────────┬───────────┘                           │
+│                                     │                                       │
+└─────────────────────────────────────┼───────────────────────────────────────┘
+                                      │ kubernetes_asyncio API
+                                      ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           KUBERNETES CLUSTER                                │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -44,8 +45,7 @@ This document describes the complete flow from user command to benchmark complet
 │                                                                             │
 │   ┌───────────────────────┐                                               │
 │   │ ConfigMap: config     │                                               │
-│   │ - user_config.json    │                                               │
-│   │ - service_config.json │                                               │
+│   │ - run_config.json     │                                               │
 │   └───────────────────────┘                                               │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -56,7 +56,7 @@ This document describes the complete flow from user command to benchmark complet
 ## 1. CLI Entry Point
 
 ```bash
-aiperf kube profile --model Qwen/Qwen3-0.6B --url http://server:8000 --image aiperf:latest --workers 10
+aiperf kube profile --model Qwen/Qwen3-0.6B --url http://server:8000 --image aiperf:latest --workers-max 10
 ```
 
 CLI commands defined in `src/aiperf/cli_commands/kube/`:
@@ -74,27 +74,26 @@ CLI commands defined in `src/aiperf/cli_commands/kube/`:
 | `debug` | Run diagnostic analysis on a deployment |
 | `watch` | Watch a running benchmark with live status and diagnostics |
 | `preflight` | Run pre-flight checks against the target cluster |
+| `dashboard` | Open the operator results server UI in your browser |
 
 ## 2. Deployment Generation
 
-The deployment logic in `src/aiperf/cli_commands/kube/profile.py` (`_deploy_direct()`) orchestrates deployment:
+The deployment logic in `src/aiperf/cli_commands/kube/profile.py` auto-detects whether the AIPerfJob CRD is installed. If the operator is present, `_deploy_via_operator()` submits an `AIPerfJob` custom resource and the operator reconciles it; otherwise `_deploy_direct()` creates the manifests (ConfigMap, Role, RoleBinding, JobSet) directly. `--no-operator` forces direct mode.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│                         run_kubernetes_deployment()                        │
+│                         aiperf kube profile                                │
 ├────────────────────────────────────────────────────────────────────────────┤
 │                                                                            │
-│  1. Generate Job ID              job_id = uuid4().hex[:8]  → "a1b2c3d4"   │
+│  1. Resolve benchmark config    from CLI flags or AIPerfJob CR YAML        │
 │                                                                            │
-│  2. Configure ServiceConfig      service_run_type = KUBERNETES             │
-│                                  zmq_dual_bind = IPC + TCP                 │
-│                                  dataset_api_base_url = controller:9090    │
+│  2. Configure ServiceConfig     service_run_type = KUBERNETES              │
+│                                 dataset_api_base_url = controller DNS      │
 │                                                                            │
-│  3. Calculate Pod Distribution   workers=100, workers_per_pod=10 → 10 pods │
+│  3. Detect operator             query for AIPerfJob CRD                    │
 │                                                                            │
-│  4. Generate Manifests           resources.py + jobset.py                  │
-│                                                                            │
-│  5. Apply to Cluster             kubectl apply -f manifests                │
+│  4. Operator mode:              create AIPerfJob CR (operator reconciles)  │
+│     Direct mode:                create ConfigMap + RBAC + JobSet directly  │
 │                                                                            │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -120,48 +119,37 @@ ConfigMap ──────────────► JobSet
 
 ### Pod Architecture
 
+Each control-plane service runs in its own container in the controller pod
+(sibling containers, not subprocesses). Workers and record processors
+likewise each run in their own container inside a worker pod.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              CONTROLLER POD                                 │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  Container: control-plane                                                   │
-│  ┌────────────────────────────────────────────────────────────────────────┐ │
-│  │                         Subprocess Tree                                │ │
-│  │                                                                        │ │
-│  │   SystemController (main process)                                      │ │
-│  │        │                                                               │ │
-│  │        ├── WorkerManager          Manages worker lifecycle             │ │
-│  │        ├── TimingManager          Schedules requests, issues credits   │ │
-│  │        ├── DatasetManager         Generates prompts, serves dataset    │ │
-│  │        ├── RecordsManager         Aggregates results from workers      │ │
-│  │        ├── API Service            WebSocket + HTTP on port 9090        │ │
-│  │        ├── GPUTelemetryManager    GPU metrics via DCGM (optional)      │ │
-│  │        └── ServerMetricsManager   Prometheus metrics (optional)        │ │
-│  │                                                                        │ │
-│  └────────────────────────────────────────────────────────────────────────┘ │
+│  Containers (one per service):                                              │
+│    control-plane          SystemController (orchestration)                  │
+│    dataset-manager        Generates prompts, serves dataset                 │
+│    timing-manager         Schedules requests, issues credits                │
+│    records-manager        Aggregates results from workers                   │
+│    api                    WebSocket + HTTP on port 9090                     │
+│    gpu-telemetry-manager  GPU metrics via DCGM (optional)                   │
+│    server-metrics-manager Prometheus metrics (optional)                     │
+│    results-sidecar        Serves exported results after controller exit     │
+│    event-bus-proxy        XPUB/XSUB ZMQ proxy (when enabled)                │
 │                                                                             │
-│  Ports: 8080 (health), 9090 (API)                                          │
+│  Per-container health ports (8080-8088); API on 9090; results-sidecar 9091  │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              WORKER POD (x N)                               │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  Container: worker-pod-manager                                              │
-│  ┌────────────────────────────────────────────────────────────────────────┐ │
-│  │                         Subprocess Tree                                │ │
-│  │                                                                        │ │
-│  │   WorkerGroupManager (main process)                                    │ │
-│  │        │                                                               │ │
-│  │        ├── Worker[0]              Makes LLM API calls                  │ │
-│  │        ├── Worker[1]                                                   │ │
-│  │        ├── ...                                                         │ │
-│  │        ├── Worker[N]                                                   │ │
-│  │        │                                                               │ │
-│  │        └── RecordProcessor        Computes metrics per record          │ │
-│  │                                                                        │ │
-│  └────────────────────────────────────────────────────────────────────────┘ │
+│  Containers:                                                                │
+│    worker-group-manager   Group-local readiness, dataset download, proxy    │
+│    worker-0..N            Each worker makes LLM API calls (one per ctnr)    │
+│    record-processor-0..M  Each computes metrics per record (one per ctnr)   │
 │                                                                             │
-│  Port: 8080 (health)                                                        │
+│  Per-container health ports (starting at 8080)                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -383,10 +371,11 @@ Deploy ──► Running ──► Complete ──► TTL Expires ──► Dele
 # Automatic (TTL-based)
 ttlSecondsAfterFinished: 300  # Pods auto-delete after 5 minutes
 
-# Manual cleanup
-aiperf kube delete {job_id}                    # Delete JobSet + resources
-aiperf kube delete {job_id} --delete-namespace # Also delete namespace
-aiperf kube cancel {job_id}                    # Stop running benchmark
+# Manual cleanup (operator mode): delete the AIPerfJob CR
+kubectl delete aiperfjob <name> -n <namespace>
+
+# Manual cleanup (direct mode): delete the JobSet
+kubectl delete jobset <name> -n <namespace>
 ```
 
 ## 9. Configuration
@@ -397,7 +386,7 @@ aiperf kube cancel {job_id}                    # Stop running benchmark
 aiperf kube profile \
   --image myregistry.io/aiperf:latest \
   --namespace benchmarks \
-  --workers 10 \
+  --workers-max 10 \
   --ttl-seconds 300 \
   --kubeconfig ~/.kube/prod-config \
   --node-selector '{"nvidia.com/gpu": "A100"}' \
@@ -412,10 +401,10 @@ Resource limits configured via `src/aiperf/kubernetes/environment.py`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AIPERF_K8S_SYSTEM_CONTROLLER_CPU` | 250m | System controller container CPU (request and limit) |
-| `AIPERF_K8S_DATASET_MANAGER_MEMORY` | 512Mi | Dataset manager container memory (request and limit) |
-| `AIPERF_K8S_WORKER_POD_CPU` | 3350m | Worker pod CPU (request and limit) |
-| `AIPERF_K8S_WORKER_POD_MEMORY` | 6144Mi | Worker pod memory (request and limit) |
+| `AIPERF_K8S_SYSTEM_CONTROLLER_CPU` | 500m | System controller container CPU (request and limit) |
+| `AIPERF_K8S_DATASET_MANAGER_MEMORY` | 2Gi | Dataset manager container memory (request and limit) |
+| `AIPERF_K8S_WORKER_POD_CPU` | 4000m | Worker pod CPU (request and limit) |
+| `AIPERF_K8S_WORKER_POD_MEMORY` | 12Gi | Worker pod memory (request and limit) |
 | `AIPERF_K8S_PORT_API_SERVICE` | 9090 | API service port |
 | `AIPERF_K8S_JOBSET_TTL_SECONDS_AFTER_FINISHED` | 300 | TTL after completion |
 
@@ -428,4 +417,4 @@ Resource limits configured via `src/aiperf/kubernetes/environment.py`:
 | **API-based results** | Retrievable via API service or kubectl cp |
 | **Dataset HTTP API** | Avoids shared volume complexity |
 | **WebSocket streaming** | Real-time progress to local CLI |
-| **Subprocess model** | Single container per pod, multiple processes |
+| **Container-per-service** | One container per service; failure isolation and per-container resources |

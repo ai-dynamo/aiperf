@@ -503,10 +503,10 @@ To retrieve results from a specific job:
 aiperf kube results dynamo-benchmark
 ```
 
-Results are also stored on the operator's persistent volume. Even after benchmark pods are deleted, you can retrieve them:
+Results are stored on the operator's persistent volume by default, so `aiperf kube results` works even after benchmark pods are deleted. To retrieve directly from the benchmark pods instead (tries the controller API first, then falls back to `kubectl cp`):
 
 ```bash
-aiperf kube results dynamo-benchmark --from-operator
+aiperf kube results dynamo-benchmark --from-pods
 ```
 
 ### Dynamo Server Metrics

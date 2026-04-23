@@ -153,6 +153,89 @@ class HttpCoreClient(AIPerfLoggerMixin):
             )
             self.debug(lambda: f"Response complete: {len(response_text)} bytes")
 
+    async def _stream_and_collect(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        data: bytes | None,
+        record: RequestRecord,
+        *,
+        trace_data: BaseTraceData,
+        first_token_callback: "FirstTokenCallback | None",
+    ) -> None:
+        """Open the httpcore stream and populate the record with status, timing, and responses."""
+        is_sse_request = headers.get("Accept", "").startswith("text/event-stream")
+        httpcore_headers = [
+            (n.encode("utf-8"), v.encode("utf-8")) for n, v in headers.items()
+        ]
+        t = self.timeout_seconds
+        extensions: dict[str, Any] = {
+            "timeout": {"connect": t, "read": t, "write": t, "pool": 60.0}
+        }
+
+        async with self.pool.stream(
+            method=method.encode("utf-8"),
+            url=url.encode("utf-8"),
+            headers=httpcore_headers,
+            content=data,
+            extensions=extensions,
+        ) as response:
+            record.status = response.status
+            record.recv_start_perf_ns = time.perf_counter_ns()
+            self.debug(
+                lambda: (
+                    f"Response status: {record.status}, "
+                    f"HTTP version: HTTP/{response.extensions.get('http_version', b'').decode()}"
+                )
+            )
+
+            if record.status != 200:
+                await self._handle_error_response(response, record)
+                return
+
+            response_headers = {
+                n.decode("utf-8").lower(): v.decode("utf-8")
+                for n, v in response.headers
+            }
+            content_type = response_headers.get("content-type", "")
+
+            if is_sse_request and content_type.startswith("text/event-stream"):
+                self.debug("Processing SSE stream")
+                await self._consume_sse_response(
+                    response,
+                    record,
+                    trace_data=trace_data,
+                    first_token_callback=first_token_callback,
+                )
+            else:
+                self.debug("Processing regular response")
+                await self._consume_body_response(
+                    response,
+                    record,
+                    content_type=content_type,
+                    trace_data=trace_data,
+                )
+
+            if not record.end_perf_ns:
+                record.end_perf_ns = time.perf_counter_ns()
+
+    async def _handle_error_response(
+        self, response: httpcore.Response, record: RequestRecord
+    ) -> None:
+        """Drain a non-200 response body and attach an ErrorDetails to the record."""
+        error_body = bytearray()
+        async for chunk in response.aiter_stream():
+            error_body.extend(chunk)
+        error_text = error_body.decode("utf-8", errors="replace")
+        self.debug(lambda: f"HTTP error {record.status}: {error_text[:100]}")
+        record.error = ErrorDetails(
+            code=record.status,
+            type=f"HTTP {record.status}",
+            message=error_text or f"HTTP {record.status} error",
+        )
+        record.end_perf_ns = time.perf_counter_ns()
+
     async def _request(
         self,
         method: str,
@@ -191,82 +274,15 @@ class HttpCoreClient(AIPerfLoggerMixin):
         )
 
         try:
-            is_sse_request = headers.get("Accept", "").startswith("text/event-stream")
-
-            httpcore_headers = [
-                (name.encode("utf-8"), value.encode("utf-8"))
-                for name, value in headers.items()
-            ]
-
-            extensions: dict[str, Any] = {
-                "timeout": {
-                    "connect": self.timeout_seconds,
-                    "read": self.timeout_seconds,
-                    "write": self.timeout_seconds,
-                    "pool": 60.0,
-                }
-            }
-
-            async with self.pool.stream(
-                method=method.encode("utf-8"),
-                url=url.encode("utf-8"),
-                headers=httpcore_headers,
-                content=data,
-                extensions=extensions,
-            ) as response:
-                record.status = response.status
-                record.recv_start_perf_ns = time.perf_counter_ns()
-
-                self.debug(
-                    lambda: (
-                        f"Response status: {record.status}, "
-                        f"HTTP version: HTTP/{response.extensions.get('http_version', b'').decode()}"
-                    )
-                )
-
-                if record.status != 200:
-                    error_body = bytearray()
-                    async for chunk in response.aiter_stream():
-                        error_body.extend(chunk)
-
-                    error_text = error_body.decode("utf-8", errors="replace")
-                    self.debug(
-                        lambda: f"HTTP error {record.status}: {error_text[:100]}"
-                    )
-                    record.error = ErrorDetails(
-                        code=record.status,
-                        type=f"HTTP {record.status}",
-                        message=error_text or f"HTTP {record.status} error",
-                    )
-                    record.end_perf_ns = time.perf_counter_ns()
-                    return record
-
-                response_headers = {
-                    name.decode("utf-8").lower(): value.decode("utf-8")
-                    for name, value in response.headers
-                }
-                content_type = response_headers.get("content-type", "")
-
-                if is_sse_request and content_type.startswith("text/event-stream"):
-                    self.debug("Processing SSE stream")
-                    await self._consume_sse_response(
-                        response,
-                        record,
-                        trace_data=trace_data,
-                        first_token_callback=first_token_callback,
-                    )
-                else:
-                    self.debug("Processing regular response")
-                    await self._consume_body_response(
-                        response,
-                        record,
-                        content_type=content_type,
-                        trace_data=trace_data,
-                    )
-
-                if not record.end_perf_ns:
-                    record.end_perf_ns = time.perf_counter_ns()
-
+            await self._stream_and_collect(
+                method,
+                url,
+                headers,
+                data,
+                record,
+                trace_data=trace_data,
+                first_token_callback=first_token_callback,
+            )
         except (
             httpcore.ConnectTimeout,
             httpcore.ReadTimeout,
@@ -304,49 +320,24 @@ class HttpCoreClient(AIPerfLoggerMixin):
 
     def _classify_httpcore_error(self, exc: Exception, url: str) -> ErrorDetails:
         """Map an httpcore exception subclass to an ErrorDetails with a stable type label."""
-        if isinstance(exc, httpcore.ConnectTimeout):
-            return ErrorDetails(
-                type="ConnectTimeout",
-                message=f"Connection to {url} timed out after {self.timeout_seconds}s",
-            )
-        if isinstance(exc, httpcore.ReadTimeout):
-            return ErrorDetails(
-                type="ReadTimeout",
-                message=f"Reading response from {url} timed out after {self.timeout_seconds}s",
-            )
-        if isinstance(exc, httpcore.WriteTimeout):
-            return ErrorDetails(
-                type="WriteTimeout",
-                message=f"Sending request to {url} timed out after {self.timeout_seconds}s",
-            )
-        if isinstance(exc, httpcore.PoolTimeout):
-            return ErrorDetails(
-                type="PoolTimeout",
-                message=(
-                    f"No available connection in pool after 60s. "
-                    f"Consider increasing AIPERF_HTTP_CONNECTION_LIMIT (current: {Environment.HTTP.CONNECTION_LIMIT})"
-                ),
-            )
-        if isinstance(exc, httpcore.TimeoutException):
-            return ErrorDetails(
-                type="TimeoutError",
-                message=f"Request to {url} timed out: {exc!r}",
-            )
-        if isinstance(exc, httpcore.ConnectError):
-            return ErrorDetails(
-                type="ConnectError",
-                message=f"Failed to connect to {url}: {exc!r}",
-            )
-        if isinstance(exc, httpcore.RemoteProtocolError):
-            return ErrorDetails(
-                type="RemoteProtocolError",
-                message=f"Server sent invalid HTTP/2 frames: {exc!r}",
-            )
-        if isinstance(exc, httpcore.LocalProtocolError):
-            return ErrorDetails(
-                type="LocalProtocolError",
-                message=f"Client attempted invalid HTTP/2 operation: {exc!r}",
-            )
+        t = self.timeout_seconds
+        cl = Environment.HTTP.CONNECTION_LIMIT
+        # Order matters: subclasses must appear before TimeoutException.
+        # fmt: off
+        cases: tuple[tuple[type, str, str], ...] = (
+            (httpcore.ConnectTimeout, "ConnectTimeout", f"Connection to {url} timed out after {t}s"),
+            (httpcore.ReadTimeout, "ReadTimeout", f"Reading response from {url} timed out after {t}s"),
+            (httpcore.WriteTimeout, "WriteTimeout", f"Sending request to {url} timed out after {t}s"),
+            (httpcore.PoolTimeout, "PoolTimeout", f"No available connection in pool after 60s. Consider increasing AIPERF_HTTP_CONNECTION_LIMIT (current: {cl})"),
+            (httpcore.TimeoutException, "TimeoutError", f"Request to {url} timed out: {exc!r}"),
+            (httpcore.ConnectError, "ConnectError", f"Failed to connect to {url}: {exc!r}"),
+            (httpcore.RemoteProtocolError, "RemoteProtocolError", f"Server sent invalid HTTP/2 frames: {exc!r}"),
+            (httpcore.LocalProtocolError, "LocalProtocolError", f"Client attempted invalid HTTP/2 operation: {exc!r}"),
+        )
+        # fmt: on
+        for exc_cls, err_type, msg in cases:
+            if isinstance(exc, exc_cls):
+                return ErrorDetails(type=err_type, message=msg)
         return ErrorDetails(
             type="ProtocolError", message=f"HTTP/2 protocol error: {exc!r}"
         )

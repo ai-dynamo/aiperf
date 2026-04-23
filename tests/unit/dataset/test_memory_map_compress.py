@@ -188,7 +188,7 @@ class TestCompressOnlyErrors:
         await store.add_conversation("s1", _make_conversation("s1"))
         await store.finalize()
 
-        with pytest.raises(RuntimeError, match="Already finalized"):
+        with pytest.raises(RuntimeError, match="already-finalized"):
             await store.finalize()
 
         await store.stop()

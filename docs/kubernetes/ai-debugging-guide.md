@@ -359,11 +359,12 @@ print(json.dumps({
 ## Collect Results
 
 ```bash
-# Download all artifacts
+# Download all artifacts (default: fetched from operator storage,
+# which works even after pods are deleted)
 aiperf kube results <JOB_ID> --output ./artifacts
 
-# If pods are already deleted, get from operator storage
-aiperf kube results <JOB_ID> --from-operator --output ./artifacts
+# Retrieve directly from benchmark pods instead of operator storage
+aiperf kube results <JOB_ID> --from-pods --output ./artifacts
 
 # Read the summary metrics
 cat ./artifacts/profile_export_aiperf.json | python3 -c "
@@ -593,12 +594,12 @@ Output from `aiperf kube validate -o json benchmark.yaml`:
 | List all jobs (kubectl) | `kubectl get aiperfjobs -A -o json` |
 | Get pod statuses | `kubectl get pods -n <NS> -l aiperf.nvidia.com/job-id=<ID> -o json` |
 | Get controller logs | `aiperf kube logs <ID> --container control-plane --tail 50` |
-| Get worker logs | `aiperf kube logs <ID> --container worker-pod-manager --tail 50` |
+| Get worker logs | `aiperf kube logs <ID> --container worker-group-manager --tail 50` |
 | Get events | `kubectl get events -n <NS> --sort-by=.lastTimestamp -o json` |
 | Cancel a job | `kubectl patch aiperfjob <NAME> -n <NS> --type=merge -p '{"spec":{"cancel":true}}'` |
 | Delete a job | `kubectl delete aiperfjob <NAME> -n <NS>` |
-| Download results | `aiperf kube results <ID> --output ./artifacts` |
-| Download from operator | `aiperf kube results <ID> --from-operator --output ./artifacts` |
+| Download results (from operator, default) | `aiperf kube results <ID> --output ./artifacts` |
+| Download directly from pods | `aiperf kube results <ID> --from-pods --output ./artifacts` |
 
 ---
 

@@ -94,6 +94,81 @@ def _is_checkpoint_path(base_dir: Path, path: Path) -> bool:
     return bool(relative.parts) and relative.parts[0] == CHECKPOINTS_DIR_NAME
 
 
+def _collect_result_files(base_dir: Path) -> list[ResultFileInfo]:
+    """Enumerate ready top-level exports and all checkpoint artifacts."""
+    files: list[ResultFileInfo] = []
+
+    if _is_ready(base_dir):
+        files.extend(
+            ResultFileInfo(name=entry.name, size=entry.stat().st_size)
+            for entry in base_dir.iterdir()
+            if entry.is_file() and entry.name != READY_MARKER_NAME
+        )
+
+    cp_dir = checkpoints_dir(base_dir)
+    if cp_dir.is_dir():
+        files.extend(
+            ResultFileInfo(
+                name=entry.relative_to(base_dir).as_posix(),
+                size=entry.stat().st_size,
+            )
+            for entry in cp_dir.rglob("*")
+            if entry.is_file()
+        )
+
+    return sorted(files, key=lambda item: item.name)
+
+
+async def _list_results(base_dir: Path) -> ResultsListResponse:
+    if not await aio_os.path.isdir(base_dir):
+        return ResultsListResponse()
+    files = await asyncio.to_thread(_collect_result_files, base_dir)
+    return ResultsListResponse(files=files)
+
+
+async def _resolve_result_file(base_dir: Path, filename: str) -> Path:
+    """Validate, locate, and return the result file path or raise HTTPException."""
+    file_path = _safe_resolve(base_dir, filename)
+    if file_path is None or file_path.name == READY_MARKER_NAME:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid filename {filename!r}: path traversal or reserved marker name",
+        )
+    if not _is_ready(base_dir) and not _is_checkpoint_path(
+        base_dir.resolve(), file_path
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Results not ready for {base_dir.name}; marker file {READY_MARKER_NAME} not present — retry after completion",
+        )
+    if not await aio_os.path.isfile(file_path):
+        raise HTTPException(
+            status_code=404, detail=f"Result file not found: {filename}"
+        )
+    return file_path
+
+
+def _build_file_response(file_path: Path, request: Request) -> StreamingResponse:
+    accept_encoding = request.headers.get("accept-encoding")
+    encoding = select_encoding(accept_encoding, default=CompressionEncoding.IDENTITY)
+    content_type = _CONTENT_TYPES.get(
+        file_path.suffix.lower(), "application/octet-stream"
+    )
+
+    headers: dict[str, str] = {
+        "Content-Disposition": f'attachment; filename="{file_path.name}"',
+        "X-Filename": file_path.name,
+    }
+    if encoding != CompressionEncoding.IDENTITY:
+        headers["Content-Encoding"] = encoding
+
+    return StreamingResponse(
+        stream_file_compressed(file_path, encoding),
+        media_type=content_type,
+        headers=headers,
+    )
+
+
 def create_app(results_dir: Path | None = None) -> FastAPI:
     """Create the FastAPI app for serving controller-side results."""
     base_dir = results_dir or RESULTS_DIR
@@ -108,75 +183,12 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
 
     @app.get("/api/results/list", response_model=ResultsListResponse)
     async def list_results() -> ResultsListResponse:
-        if not await aio_os.path.isdir(base_dir):
-            return ResultsListResponse()
-
-        def _list_files() -> list[ResultFileInfo]:
-            files: list[ResultFileInfo] = []
-
-            if _is_ready(base_dir):
-                files.extend(
-                    ResultFileInfo(name=entry.name, size=entry.stat().st_size)
-                    for entry in base_dir.iterdir()
-                    if entry.is_file() and entry.name != READY_MARKER_NAME
-                )
-
-            cp_dir = checkpoints_dir(base_dir)
-            if cp_dir.is_dir():
-                files.extend(
-                    ResultFileInfo(
-                        name=entry.relative_to(base_dir).as_posix(),
-                        size=entry.stat().st_size,
-                    )
-                    for entry in cp_dir.rglob("*")
-                    if entry.is_file()
-                )
-
-            return sorted(files, key=lambda item: item.name)
-
-        files = await asyncio.to_thread(_list_files)
-        return ResultsListResponse(files=files)
+        return await _list_results(base_dir)
 
     @app.get("/api/results/files/{filename:path}")
     async def get_result_file(filename: str, request: Request) -> StreamingResponse:
-        file_path = _safe_resolve(base_dir, filename)
-        if file_path is None or file_path.name == READY_MARKER_NAME:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid filename {filename!r}: path traversal or reserved marker name",
-            )
-        if not _is_ready(base_dir) and not _is_checkpoint_path(
-            base_dir.resolve(), file_path
-        ):
-            raise HTTPException(
-                status_code=404,
-                detail=f"Results not ready for {base_dir.name}; marker file {READY_MARKER_NAME} not present — retry after completion",
-            )
-        if not await aio_os.path.isfile(file_path):
-            raise HTTPException(
-                status_code=404, detail=f"Result file not found: {filename}"
-            )
-
-        accept_encoding = request.headers.get("accept-encoding")
-        encoding = select_encoding(
-            accept_encoding, default=CompressionEncoding.IDENTITY
-        )
-        content_type = _CONTENT_TYPES.get(
-            file_path.suffix.lower(), "application/octet-stream"
-        )
-
-        headers: dict[str, str] = {
-            "Content-Disposition": f'attachment; filename="{file_path.name}"',
-            "X-Filename": file_path.name,
-        }
-        if encoding != CompressionEncoding.IDENTITY:
-            headers["Content-Encoding"] = encoding
-
-        return StreamingResponse(
-            stream_file_compressed(file_path, encoding),
-            media_type=content_type,
-            headers=headers,
-        )
+        file_path = await _resolve_result_file(base_dir, filename)
+        return _build_file_response(file_path, request)
 
     return app
 

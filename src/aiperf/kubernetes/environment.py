@@ -155,7 +155,7 @@ class _HealthProbeSettings(BaseSettings):
     )
 
 
-class _ZMQSettings(BaseSettings):
+class _K8sZMQSettings(BaseSettings):
     """ZMQ communication settings for Kubernetes deployments."""
 
     model_config = SettingsConfigDict(env_prefix="AIPERF_K8S_ZMQ_")
@@ -345,8 +345,8 @@ class _K8sEnvironment(BaseSettings):
         default_factory=_PortSettings,
         description="Container port assignments",
     )
-    ZMQ: _ZMQSettings = Field(
-        default_factory=_ZMQSettings,
+    ZMQ: _K8sZMQSettings = Field(
+        default_factory=_K8sZMQSettings,
         description="ZMQ communication settings",
     )
     JOBSET: _JobSetSettings = Field(

@@ -4,11 +4,14 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from cyclopts import App, Parameter
 
 from aiperf.config.kube import KubeManageOptions
+
+if TYPE_CHECKING:
+    from aiperf.kubernetes.watch_orchestrator import WatchRenderer
 
 app = App(name="watch")
 
@@ -72,29 +75,49 @@ async def watch(
         # Include log tail in JSON output
         aiperf kube watch --output json --follow-logs
     """
-    from aiperf import cli_utils
+    await _run_watch(
+        job_id=job_id,
+        manage_options=manage_options or KubeManageOptions(),
+        all_jobs=all_jobs,
+        output=output,
+        interval=interval,
+        follow_logs=follow_logs,
+    )
 
-    manage_options = manage_options or KubeManageOptions()
+
+def _build_renderer(output: str) -> WatchRenderer:
+    from aiperf.kubernetes.watch_render_json import JsonRenderer
+    from aiperf.kubernetes.watch_render_rich import RichRenderer
+    from aiperf.kubernetes.watch_render_text import TextRenderer
+
+    if output == "json":
+        return JsonRenderer()
+    if output == "text":
+        return TextRenderer()
+    return RichRenderer()
+
+
+async def _run_watch(
+    *,
+    job_id: str | None,
+    manage_options: KubeManageOptions,
+    all_jobs: bool,
+    output: str,
+    interval: float,
+    follow_logs: bool,
+) -> None:
+    from aiperf import cli_utils
 
     with cli_utils.exit_on_error(title="Error Watching Benchmark"):
         from aiperf.kubernetes.watch_orchestrator import WatchOrchestrator
-        from aiperf.kubernetes.watch_render_json import JsonRenderer
-        from aiperf.kubernetes.watch_render_rich import RichRenderer
-        from aiperf.kubernetes.watch_render_text import TextRenderer
 
-        if output == "json":
-            renderer = JsonRenderer()
-        elif output == "text":
-            renderer = TextRenderer()
-        else:
-            renderer = RichRenderer()
         orchestrator = WatchOrchestrator(
             job_id=job_id,
             namespace=manage_options.namespace,
             kubeconfig=manage_options.kubeconfig,
             kube_context=manage_options.kube_context,
             all_jobs=all_jobs,
-            renderer=renderer,
+            renderer=_build_renderer(output),
             interval=interval,
             follow_logs=follow_logs,
         )

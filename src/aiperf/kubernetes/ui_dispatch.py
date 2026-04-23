@@ -109,28 +109,36 @@ def _handle_worker_status_summary(logger: Any, data: WSProgressMessage) -> None:
     logger.info(f"[bold cyan]\\[WORKERS][/bold cyan] {healthy}/{total} healthy")
 
 
+def _handle_all_records_received(logger: Any, data: WSProgressMessage) -> None:
+    logger.info(
+        "[bold green]\\[COMPLETE][/bold green] All records received, benchmark finishing..."
+    )
+
+
+def _handle_realtime_metrics(logger: Any, data: WSProgressMessage) -> None:
+    print_realtime_metrics(data)
+
+
+_PROGRESS_HANDLERS = {
+    MessageType.CREDIT_PHASE_START: _handle_credit_phase_start,
+    MessageType.CREDIT_PHASE_PROGRESS: _handle_credit_phase_progress,
+    MessageType.CREDIT_PHASE_COMPLETE: _handle_credit_phase_complete,
+    MessageType.REALTIME_METRICS: _handle_realtime_metrics,
+    MessageType.WORKER_STATUS_SUMMARY: _handle_worker_status_summary,
+    MessageType.ALL_RECORDS_RECEIVED: _handle_all_records_received,
+}
+
+
 def print_progress_message(data: WSProgressMessage) -> None:
     """Log a progress message."""
     from aiperf.kubernetes.console import logger
 
     msg_type = data.get("message_type", "")
-
     if msg_type == "subscribed":
         return
-    if msg_type == MessageType.CREDIT_PHASE_START:
-        _handle_credit_phase_start(logger, data)
-    elif msg_type == MessageType.CREDIT_PHASE_PROGRESS:
-        _handle_credit_phase_progress(logger, data)
-    elif msg_type == MessageType.CREDIT_PHASE_COMPLETE:
-        _handle_credit_phase_complete(logger, data)
-    elif msg_type == MessageType.REALTIME_METRICS:
-        print_realtime_metrics(data)
-    elif msg_type == MessageType.WORKER_STATUS_SUMMARY:
-        _handle_worker_status_summary(logger, data)
-    elif msg_type == MessageType.ALL_RECORDS_RECEIVED:
-        logger.info(
-            "[bold green]\\[COMPLETE][/bold green] All records received, benchmark finishing..."
-        )
+    handler = _PROGRESS_HANDLERS.get(msg_type)
+    if handler is not None:
+        handler(logger, data)
 
 
 def print_realtime_metrics(data: WSProgressMessage) -> None:

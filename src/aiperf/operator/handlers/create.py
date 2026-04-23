@@ -311,6 +311,94 @@ async def _create_jobset(
     return jobset_name
 
 
+def _finalize_success(
+    *,
+    patch: kopf.Patch,
+    status: StatusBuilder,
+    body: dict[str, Any],
+    deployment: KubernetesDeployment,
+    deploy_config: Any,
+    configmap_name: str,
+    jobset_name: str,
+    job_id: str,
+    total_workers: int,
+) -> dict[str, Any]:
+    """Record success conditions/events and finalize the status patch."""
+    status.conditions.set_true(
+        ConditionType.RESOURCES_CREATED,
+        "ResourcesCreated",
+        f"Created ConfigMap/{configmap_name} and JobSet/{jobset_name}",
+    )
+    events.resources_created(body, configmap_name, jobset_name)
+    events.created(body, job_id, total_workers)
+
+    status.set_phase(Phase.PENDING)
+    patch.status["startTime"] = format_timestamp()
+    patch.status["jobId"] = job_id
+    patch.status["jobSetName"] = deployment.jobset_name
+    status.set_workers(0, total_workers)
+
+    if deploy_config.results_ttl_days:
+        patch.status["resultsTtlDays"] = deploy_config.results_ttl_days
+
+    status.finalize()
+    return {"jobSetName": deployment.jobset_name, "workers": total_workers}
+
+
+async def _create_resources(
+    *,
+    spec: dict[str, Any],
+    body: dict[str, Any],
+    name: str,
+    namespace: str,
+    uid: str,
+    job_id: str,
+    status: StatusBuilder,
+    patch: kopf.Patch,
+) -> dict[str, Any]:
+    """Build deployment, run preflight checks, and create all k8s resources."""
+    validated_spec = _validate_spec(spec, body, status)
+    await _check_endpoint_reachable(validated_spec, body, status)
+
+    deployment, total_workers = _build_deployment(spec, name, namespace, job_id)
+    deploy_config = deployment.deployment
+    config = deployment.config
+
+    owner_ref_dict = OwnerReference.for_aiperf_job(name, uid).to_k8s_dict()
+    async with k8s_client() as api:
+        await _run_preflight_checks(
+            api,
+            deployment,
+            deploy_config=deploy_config,
+            config=config,
+            total_workers=total_workers,
+            num_pods=deployment.worker_replicas,
+            body=body,
+            namespace=namespace,
+            name=name,
+            status=status,
+        )
+
+        await _create_rbac(api, deployment, namespace, owner_ref_dict)
+        configmap_name = await _create_configmap(
+            api, deployment, namespace, owner_ref_dict
+        )
+        await _persist_spec_and_index(spec, namespace, name, job_id)
+        jobset_name = await _create_jobset(api, deployment, namespace, owner_ref_dict)
+
+        return _finalize_success(
+            patch=patch,
+            status=status,
+            body=body,
+            deployment=deployment,
+            deploy_config=deploy_config,
+            configmap_name=configmap_name,
+            jobset_name=jobset_name,
+            job_id=job_id,
+            total_workers=total_workers,
+        )
+
+
 async def on_create(
     body: dict[str, Any],
     spec: dict[str, Any],
@@ -335,57 +423,16 @@ async def on_create(
     status = StatusBuilder(patch)
 
     try:
-        validated_spec = _validate_spec(spec, body, status)
-        await _check_endpoint_reachable(validated_spec, body, status)
-
-        deployment, total_workers = _build_deployment(spec, name, namespace, job_id)
-        deploy_config = deployment.deployment
-        config = deployment.config
-
-        owner_ref_dict = OwnerReference.for_aiperf_job(name, uid).to_k8s_dict()
-        async with k8s_client() as api:
-            await _run_preflight_checks(
-                api,
-                deployment,
-                deploy_config=deploy_config,
-                config=config,
-                total_workers=total_workers,
-                num_pods=deployment.worker_replicas,
-                body=body,
-                namespace=namespace,
-                name=name,
-                status=status,
-            )
-
-            await _create_rbac(api, deployment, namespace, owner_ref_dict)
-            configmap_name = await _create_configmap(
-                api, deployment, namespace, owner_ref_dict
-            )
-            await _persist_spec_and_index(spec, namespace, name, job_id)
-            jobset_name = await _create_jobset(
-                api, deployment, namespace, owner_ref_dict
-            )
-
-            status.conditions.set_true(
-                ConditionType.RESOURCES_CREATED,
-                "ResourcesCreated",
-                f"Created ConfigMap/{configmap_name} and JobSet/{jobset_name}",
-            )
-            events.resources_created(body, configmap_name, jobset_name)
-            events.created(body, job_id, total_workers)
-
-            status.set_phase(Phase.PENDING)
-            patch.status["startTime"] = format_timestamp()
-            patch.status["jobId"] = job_id
-            patch.status["jobSetName"] = deployment.jobset_name
-            status.set_workers(0, total_workers)
-
-            if deploy_config.results_ttl_days:
-                patch.status["resultsTtlDays"] = deploy_config.results_ttl_days
-
-            status.finalize()
-            return {"jobSetName": deployment.jobset_name, "workers": total_workers}
-
+        return await _create_resources(
+            spec=spec,
+            body=body,
+            name=name,
+            namespace=namespace,
+            uid=uid,
+            job_id=job_id,
+            status=status,
+            patch=patch,
+        )
     except (kopf.PermanentError, kopf.TemporaryError):
         raise
     except (ApiException, aiohttp.ClientError, ConnectionError, TimeoutError) as e:

@@ -292,7 +292,7 @@ For high-concurrency benchmarks, scale workers rather than increasing connection
 
 ## Results Server
 
-The operator includes a results server sidecar that provides HTTP access to stored results. This powers `aiperf kube results --from-operator` and provides DuckDB-powered analytics endpoints.
+The operator includes a results server sidecar that provides HTTP access to stored results. This powers `aiperf kube results` (which retrieves from the operator's PVC by default) and provides DuckDB-powered analytics endpoints.
 
 ### Available Endpoints
 
@@ -303,19 +303,19 @@ After the operator is running:
 kubectl port-forward -n aiperf-system svc/aiperf-operator 8081:8081
 
 # List stored results
-curl localhost:8081/api/results
+curl localhost:8081/api/v1/results
 
 # Get summary for a specific job
-curl localhost:8081/api/results/my-benchmark/summary
+curl localhost:8081/api/v1/analytics/summary/aiperf-benchmarks/my-benchmark
 
 # Leaderboard across all benchmarks
-curl localhost:8081/api/leaderboard
+curl localhost:8081/api/v1/analytics/leaderboard
 
 # Compare two runs
-curl localhost:8081/api/compare?jobs=run-a,run-b
+curl localhost:8081/api/v1/analytics/compare?jobs=run-a,run-b
 
 # Job history
-curl localhost:8081/api/history?model=Qwen/Qwen3-0.6B
+curl localhost:8081/api/v1/analytics/history?model=Qwen/Qwen3-0.6B
 ```
 
 ### Storage Configuration

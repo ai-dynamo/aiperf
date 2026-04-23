@@ -68,40 +68,55 @@ async def preflight(
     from aiperf import cli_utils
 
     with cli_utils.exit_on_error(title="Error Running Preflight Checks"):
-        import logging
+        await _run_preflight(
+            manage_options=manage_options or KubeManageOptions(),
+            image=image,
+            endpoint_url=endpoint_url,
+            workers=workers,
+            output=output,
+        )
 
-        import orjson
 
-        from aiperf.kubernetes.console import console
-        from aiperf.kubernetes.preflight import CLIPreflightChecker
+async def _run_preflight(
+    *,
+    manage_options: KubeManageOptions,
+    image: str | None,
+    endpoint_url: str | None,
+    workers: int,
+    output: Literal["text", "json"],
+) -> None:
+    import logging
 
-        manage_options = manage_options or KubeManageOptions()
+    import orjson
 
-        # Suppress text output in JSON mode so only clean JSON goes to stdout
-        kube_logger = logging.getLogger("aiperf.kube")
-        original_level = kube_logger.level
-        if output == "json":
-            kube_logger.setLevel(logging.WARNING)
+    from aiperf.kubernetes.console import console
+    from aiperf.kubernetes.preflight import CLIPreflightChecker
 
-        try:
-            checker = CLIPreflightChecker(
-                namespace=manage_options.namespace or "aiperf-benchmarks",
-                kubeconfig=manage_options.kubeconfig,
-                kube_context=manage_options.kube_context,
-                image=image,
-                endpoint_url=endpoint_url,
-                workers=workers,
-            )
+    # Suppress text output in JSON mode so only clean JSON goes to stdout
+    kube_logger = logging.getLogger("aiperf.kube")
+    original_level = kube_logger.level
+    if output == "json":
+        kube_logger.setLevel(logging.WARNING)
 
-            results = await checker.run_all_checks()
-        finally:
-            kube_logger.setLevel(original_level)
+    try:
+        checker = CLIPreflightChecker(
+            namespace=manage_options.namespace or "aiperf-benchmarks",
+            kubeconfig=manage_options.kubeconfig,
+            kube_context=manage_options.kube_context,
+            image=image,
+            endpoint_url=endpoint_url,
+            workers=workers,
+        )
 
-        if output == "json":
-            json_output = orjson.dumps(
-                results.to_dict(), option=orjson.OPT_INDENT_2
-            ).decode()
-            console.print(json_output, highlight=False)
+        results = await checker.run_all_checks()
+    finally:
+        kube_logger.setLevel(original_level)
 
-        if not results.passed:
-            raise SystemExit(1)
+    if output == "json":
+        json_output = orjson.dumps(
+            results.to_dict(), option=orjson.OPT_INDENT_2
+        ).decode()
+        console.print(json_output, highlight=False)
+
+    if not results.passed:
+        raise SystemExit(1)

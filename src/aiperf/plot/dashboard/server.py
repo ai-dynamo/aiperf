@@ -133,12 +133,12 @@ class DashboardServer:
         """Register all Dash callbacks."""
         register_all_callbacks(
             self.app,
-            self.runs,
-            self.run_dirs,
-            self.mode,
-            self.theme,
-            self.plot_config,
-            self.loader,
+            runs=self.runs,
+            run_dirs=self.run_dirs,
+            mode=self.mode,
+            theme=self.theme,
+            plot_config=self.plot_config,
+            loader=self.loader,
         )
 
     def run(self) -> None:

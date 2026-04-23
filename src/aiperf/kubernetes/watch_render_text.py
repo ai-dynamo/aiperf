@@ -36,51 +36,56 @@ class TextRenderer:
     def render(self, snapshot: WatchSnapshot) -> None:
         """Emit one round of status lines for the current snapshot."""
         elapsed = _fmt_duration(snapshot.elapsed_seconds)
-        phase = snapshot.phase
-        current = snapshot.current_phase or phase
+        self._render_phase(elapsed, snapshot.phase)
+        self._render_progress(elapsed, snapshot)
+        self._render_workers(elapsed, snapshot)
+        self._render_metrics(elapsed, snapshot)
+        self._render_diagnosis(elapsed, snapshot)
 
+    def _render_phase(self, elapsed: str, phase: str) -> None:
         if phase != self._prev_phase:
             logger.info(f"[{elapsed}] Phase: {phase}")
             self._prev_phase = phase
 
+    def _render_progress(self, elapsed: str, snapshot: WatchSnapshot) -> None:
         p = snapshot.progress
-        if p and p.requests_total > 0:
-            pct = p.percent
-            eta = f"  ETA: {_fmt_duration(p.eta_seconds)}" if p.eta_seconds else ""
-            if pct != self._prev_progress_pct:
-                logger.info(
-                    f"[{elapsed}] {current} {p.requests_completed}/{p.requests_total}"
-                    f" ({pct:.0f}%){eta}"
-                )
-                self._prev_progress_pct = pct
+        if not p or p.requests_total <= 0:
+            return
+        pct = p.percent
+        if pct == self._prev_progress_pct:
+            return
+        current = snapshot.current_phase or snapshot.phase
+        eta = f"  ETA: {_fmt_duration(p.eta_seconds)}" if p.eta_seconds else ""
+        logger.info(
+            f"[{elapsed}] {current} {p.requests_completed}/{p.requests_total}"
+            f" ({pct:.0f}%){eta}"
+        )
+        self._prev_progress_pct = pct
 
-        # Workers (only print when count changes)
+    def _render_workers(self, elapsed: str, snapshot: WatchSnapshot) -> None:
         w = snapshot.workers
         workers_state = (w.ready, w.total)
         if workers_state != self._prev_workers:
             logger.info(f"[{elapsed}] Workers: {w.ready}/{w.total} ready")
             self._prev_workers = workers_state
 
-        # Key metrics
+    def _render_metrics(self, elapsed: str, snapshot: WatchSnapshot) -> None:
         m = snapshot.metrics
-        if m and m.request_count > 0:
-            parts = []
-            for attr, label, unit in _KEY_METRICS:
-                val = getattr(m, attr, 0.0)
-                if val:
-                    parts.append(f"{label}: {val:.1f}{unit}")
-            if parts:
-                logger.info(f"[{elapsed}] {' | '.join(parts)}")
+        if not m or m.request_count <= 0:
+            return
+        parts = []
+        for attr, label, unit in _KEY_METRICS:
+            val = getattr(m, attr, 0.0)
+            if val:
+                parts.append(f"{label}: {val:.1f}{unit}")
+        if parts:
+            logger.info(f"[{elapsed}] {' | '.join(parts)}")
+        if m.error_count:
+            logger.info(f"[{elapsed}] Errors: {m.error_count}")
 
-            if m.error_count:
-                logger.info(f"[{elapsed}] Errors: {m.error_count}")
-
-        # Diagnosis issues
-        if snapshot.diagnosis.issues:
-            for issue in snapshot.diagnosis.issues:
-                logger.info(
-                    f"[{elapsed}] [{issue.severity}] {issue.title}: {issue.detail}"
-                )
+    def _render_diagnosis(self, elapsed: str, snapshot: WatchSnapshot) -> None:
+        for issue in snapshot.diagnosis.issues:
+            logger.info(f"[{elapsed}] [{issue.severity}] {issue.title}: {issue.detail}")
 
     def start(self) -> None:
         """Log header."""

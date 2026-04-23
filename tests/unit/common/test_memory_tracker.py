@@ -174,10 +174,18 @@ class TestMemoryTracker:
 
     def test_record_same_label_adds_phase(self, tracker: MemoryTracker):
         tracker.record(
-            "svc_0", "worker", 100, MemoryPhase.STARTUP, MemoryReading(pss=1000)
+            label="svc_0",
+            group="worker",
+            pid=100,
+            phase=MemoryPhase.STARTUP,
+            reading=MemoryReading(pss=1000),
         )
         tracker.record(
-            "svc_0", "worker", 100, MemoryPhase.SHUTDOWN, MemoryReading(pss=2000)
+            label="svc_0",
+            group="worker",
+            pid=100,
+            phase=MemoryPhase.SHUTDOWN,
+            reading=MemoryReading(pss=2000),
         )
         snap = tracker.snapshots["svc_0"]
         assert snap.startup.pss == 1000
@@ -185,36 +193,72 @@ class TestMemoryTracker:
 
     def test_record_overwrites_phase(self, tracker: MemoryTracker):
         tracker.record(
-            "svc_0", "worker", 100, MemoryPhase.STARTUP, MemoryReading(pss=1000)
+            label="svc_0",
+            group="worker",
+            pid=100,
+            phase=MemoryPhase.STARTUP,
+            reading=MemoryReading(pss=1000),
         )
         tracker.record(
-            "svc_0", "worker", 100, MemoryPhase.STARTUP, MemoryReading(pss=9999)
+            label="svc_0",
+            group="worker",
+            pid=100,
+            phase=MemoryPhase.STARTUP,
+            reading=MemoryReading(pss=9999),
         )
         assert tracker.snapshots["svc_0"].startup.pss == 9999
 
     def test_record_multiple_labels(self, tracker: MemoryTracker):
-        tracker.record("a", "g1", 1, MemoryPhase.STARTUP, MemoryReading(pss=10))
-        tracker.record("b", "g2", 2, MemoryPhase.STARTUP, MemoryReading(pss=20))
+        tracker.record(
+            label="a",
+            group="g1",
+            pid=1,
+            phase=MemoryPhase.STARTUP,
+            reading=MemoryReading(pss=10),
+        )
+        tracker.record(
+            label="b",
+            group="g2",
+            pid=2,
+            phase=MemoryPhase.STARTUP,
+            reading=MemoryReading(pss=20),
+        )
         assert len(tracker.snapshots) == 2
         assert tracker.snapshots["a"].startup.pss == 10
         assert tracker.snapshots["b"].startup.pss == 20
 
     def test_clear(self, tracker: MemoryTracker):
         tracker.record(
-            "svc_0", "worker", 100, MemoryPhase.STARTUP, MemoryReading(pss=1000)
+            label="svc_0",
+            group="worker",
+            pid=100,
+            phase=MemoryPhase.STARTUP,
+            reading=MemoryReading(pss=1000),
         )
         tracker.clear()
         assert tracker.snapshots == {}
 
     def test_record_all_three_phases(self, tracker: MemoryTracker):
         tracker.record(
-            "svc_0", "worker", 100, MemoryPhase.STARTUP, MemoryReading(pss=100)
+            label="svc_0",
+            group="worker",
+            pid=100,
+            phase=MemoryPhase.STARTUP,
+            reading=MemoryReading(pss=100),
         )
         tracker.record(
-            "svc_0", "worker", 100, MemoryPhase.POST_CONFIG, MemoryReading(pss=500)
+            label="svc_0",
+            group="worker",
+            pid=100,
+            phase=MemoryPhase.POST_CONFIG,
+            reading=MemoryReading(pss=500),
         )
         tracker.record(
-            "svc_0", "worker", 100, MemoryPhase.SHUTDOWN, MemoryReading(pss=1000)
+            label="svc_0",
+            group="worker",
+            pid=100,
+            phase=MemoryPhase.SHUTDOWN,
+            reading=MemoryReading(pss=1000),
         )
         snap = tracker.snapshots["svc_0"]
         assert snap.startup.pss == 100
@@ -223,7 +267,13 @@ class TestMemoryTracker:
 
     def test_record_preserves_full_reading(self, tracker: MemoryTracker):
         reading = MemoryReading(pss=100, rss=200, uss=50, shared=150)
-        tracker.record("svc_0", "worker", 100, MemoryPhase.STARTUP, reading)
+        tracker.record(
+            label="svc_0",
+            group="worker",
+            pid=100,
+            phase=MemoryPhase.STARTUP,
+            reading=reading,
+        )
         stored = tracker.snapshots["svc_0"].startup
         assert stored.pss == 100
         assert stored.rss == 200
@@ -243,7 +293,13 @@ class TestMemoryTracker:
         assert reading.pss > 0
 
     def test_capture_adds_phase_to_existing(self, tracker: MemoryTracker):
-        tracker.record("svc", "g", 1, MemoryPhase.STARTUP, MemoryReading(pss=10))
+        tracker.record(
+            label="svc",
+            group="g",
+            pid=1,
+            phase=MemoryPhase.STARTUP,
+            reading=MemoryReading(pss=10),
+        )
         reading = tracker.capture("svc", "g", 1, MemoryPhase.SHUTDOWN)
         assert reading is not None
         assert tracker.snapshots["svc"].startup.pss == 10
@@ -274,42 +330,84 @@ class TestMemoryTrackerPrintSummary:
 
     def test_prints_table_with_data(self, tracker: MemoryTracker):
         tracker.record(
-            "svc_a", "worker", 1, MemoryPhase.STARTUP, MemoryReading(pss=50_000_000)
+            label="svc_a",
+            group="worker",
+            pid=1,
+            phase=MemoryPhase.STARTUP,
+            reading=MemoryReading(pss=50_000_000),
         )
         tracker.record(
-            "svc_a", "worker", 1, MemoryPhase.SHUTDOWN, MemoryReading(pss=100_000_000)
+            label="svc_a",
+            group="worker",
+            pid=1,
+            phase=MemoryPhase.SHUTDOWN,
+            reading=MemoryReading(pss=100_000_000),
         )
         # Just verify it doesn't raise
         tracker.print_summary(title="Test Memory")
 
     def test_prints_with_post_config(self, tracker: MemoryTracker):
         tracker.record(
-            "svc_a", "worker", 1, MemoryPhase.STARTUP, MemoryReading(pss=10_000_000)
+            label="svc_a",
+            group="worker",
+            pid=1,
+            phase=MemoryPhase.STARTUP,
+            reading=MemoryReading(pss=10_000_000),
         )
         tracker.record(
-            "svc_a", "worker", 1, MemoryPhase.POST_CONFIG, MemoryReading(pss=50_000_000)
+            label="svc_a",
+            group="worker",
+            pid=1,
+            phase=MemoryPhase.POST_CONFIG,
+            reading=MemoryReading(pss=50_000_000),
         )
         tracker.record(
-            "svc_a", "worker", 1, MemoryPhase.SHUTDOWN, MemoryReading(pss=100_000_000)
+            label="svc_a",
+            group="worker",
+            pid=1,
+            phase=MemoryPhase.SHUTDOWN,
+            reading=MemoryReading(pss=100_000_000),
         )
         # Just verify no exception
         tracker.print_summary()
 
     def test_prints_with_missing_phases(self, tracker: MemoryTracker):
         tracker.record(
-            "svc_a", "worker", 1, MemoryPhase.SHUTDOWN, MemoryReading(pss=100_000_000)
+            label="svc_a",
+            group="worker",
+            pid=1,
+            phase=MemoryPhase.SHUTDOWN,
+            reading=MemoryReading(pss=100_000_000),
         )
         # Only shutdown, no startup — should show N/A for delta
         tracker.print_summary()
 
     def test_prints_multiple_processes_sorted(self, tracker: MemoryTracker):
-        tracker.record("z_svc", "g", 1, MemoryPhase.STARTUP, MemoryReading(pss=100))
-        tracker.record("a_svc", "g", 2, MemoryPhase.STARTUP, MemoryReading(pss=200))
+        tracker.record(
+            label="z_svc",
+            group="g",
+            pid=1,
+            phase=MemoryPhase.STARTUP,
+            reading=MemoryReading(pss=100),
+        )
+        tracker.record(
+            label="a_svc",
+            group="g",
+            pid=2,
+            phase=MemoryPhase.STARTUP,
+            reading=MemoryReading(pss=200),
+        )
         # Sorted output — a_svc before z_svc. Just verify no exception.
         tracker.print_summary()
 
     def test_custom_title(self, tracker: MemoryTracker):
-        tracker.record("svc", "g", 1, MemoryPhase.STARTUP, MemoryReading(pss=100))
+        tracker.record(
+            label="svc",
+            group="g",
+            pid=1,
+            phase=MemoryPhase.STARTUP,
+            reading=MemoryReading(pss=100),
+        )
         # Verify no exception with custom title
         tracker.print_summary(title="Custom Title")
 

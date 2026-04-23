@@ -30,36 +30,48 @@ logger = logging.getLogger(__name__)
 
 _MAX_CACHE_SIZE = 200
 
-# Per-job ProgressClient cache keyed by namespace/job_id.
-# Avoids creating a new aiohttp session every monitor tick.
-# ergonomics: module-state - kopf handler cache (process-wide): keyed by
-# namespace/job_id so every reconcile finds the same aiohttp session.
-_progress_clients: dict[str, ProgressClient] = {}
-_client_cache_lock = asyncio.Lock()
 
-# Tracks (pod_name, restart_count) pairs already warned about per job.
-# Prevents emitting the same pod restart event every monitor tick.
-# ergonomics: module-state - kopf handler cache (process-wide): per-job
-# dedup of pod-restart warning events across monitor ticks.
-_warned_pod_restarts: dict[str, set[tuple[str, int]]] = {}
+class _JobCacheState:
+    """Process-wide kopf handler caches for AIPerfJob reconcile.
 
-# In-process fast-path cache of jobs where completion has already been
-# claimed this operator process. Authoritative dedup lives on the CR as
-# the ``Annotations.COMPLETION_CLAIMED`` annotation, which survives
-# operator pod restart. This set just avoids re-doing the annotation
-# check for claims made by this same process.
-# ergonomics: module-state - kopf handler cache (process-wide): fast-path
-# dedup for completion claim; authoritative state lives on the CR
-# annotation.
-_shutdown_sent: set[str] = set()
+    Holds the per-job mutable state that every reconcile tick reads:
+    ProgressClient sessions, pod-restart dedup, completion-claim fast
+    path, and cancellation flags. Encapsulated on a class so the state
+    is discoverable in one place and the module-level names below are
+    simple aliases to the class attributes (same dict/set objects).
+    """
 
-# Per-job cancellation events set by on_delete. Long-running handler
-# paths (monitor_progress, handle_completion, fetch retries) check
-# is_cancellation_requested() at await boundaries and short-circuit so
-# CR deletion doesn't have to wait for fetch backoff + JobSet delete.
-# ergonomics: module-state - kopf handler cache (process-wide): sticky
-# cancellation flags read by long-running handlers at await boundaries.
-_cancellation_events: dict[str, asyncio.Event] = {}
+    # Per-job ProgressClient cache keyed by namespace/job_id. Avoids
+    # creating a new aiohttp session every monitor tick.
+    progress_clients: dict[str, ProgressClient] = {}
+    client_cache_lock: asyncio.Lock = asyncio.Lock()
+
+    # Tracks (pod_name, restart_count) pairs already warned about per
+    # job. Prevents emitting the same pod restart event every tick.
+    warned_pod_restarts: dict[str, set[tuple[str, int]]] = {}
+
+    # In-process fast-path cache of jobs where completion has already
+    # been claimed this operator process. Authoritative dedup lives on
+    # the CR as the ``Annotations.COMPLETION_CLAIMED`` annotation,
+    # which survives operator pod restart. This set just avoids
+    # re-doing the annotation check for claims made by this process.
+    shutdown_sent: set[str] = set()
+
+    # Per-job cancellation events set by on_delete. Long-running
+    # handler paths check ``is_cancellation_requested`` at await
+    # boundaries and short-circuit so CR deletion doesn't have to
+    # wait for fetch backoff + JobSet delete.
+    cancellation_events: dict[str, asyncio.Event] = {}
+
+
+# Module-level aliases preserve the historical import surface used by
+# operator.handlers.* modules (same dict/set objects as the class
+# attributes, so writes through either name are visible to the other).
+_progress_clients = _JobCacheState.progress_clients
+_client_cache_lock = _JobCacheState.client_cache_lock
+_warned_pod_restarts = _JobCacheState.warned_pod_restarts
+_shutdown_sent = _JobCacheState.shutdown_sent
+_cancellation_events = _JobCacheState.cancellation_events
 
 
 def request_cancellation(key: str) -> None:
@@ -198,21 +210,34 @@ async def try_claim_completion(
         _shutdown_sent.add(key)
         return False
 
-    # Slow path: attempt to durably claim by patching the annotation.
+    patch_ops = _build_claim_patch_ops(body)
+    claimed = await _submit_claim_patch(namespace, name, patch_ops)
+    if claimed is True:
+        _shutdown_sent.add(key)
+        return True
+    if claimed is False:
+        # Lost the race on a 409/422: remember so subsequent ticks skip
+        # the API call. ``None`` means an unexpected error — don't cache.
+        _shutdown_sent.add(key)
+    return False
+
+
+def _build_claim_patch_ops(body: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build the JSON-patch ops that atomically claim the completion annotation.
+
+    Using a ``test`` op means a concurrent writer that also sets the
+    annotation will cause our patch to fail with 422, and we return
+    False (losing the race, which is the safe outcome).
+    """
     from aiperf.operator.status import format_timestamp
 
     # JSON Pointer RFC 6901: escape '/' as '~1' and '~' as '~0'.
     escaped_key = Annotations.COMPLETION_CLAIMED.replace("~", "~0").replace("/", "~1")
     timestamp = format_timestamp()
-
     current_annotations = body.get("metadata", {}).get("annotations")
 
-    # If annotations dict exists we test against it; otherwise we add it.
-    # Using a `test` op means a concurrent writer that also sets the
-    # annotation will cause our patch to fail with 422, and we return
-    # False (losing the race, which is the safe outcome).
     if current_annotations is None:
-        patch_ops: list[dict[str, Any]] = [
+        return [
             {"op": "test", "path": "/metadata/annotations", "value": None},
             {"op": "add", "path": "/metadata/annotations", "value": {}},
             {
@@ -221,20 +246,26 @@ async def try_claim_completion(
                 "value": timestamp,
             },
         ]
-    else:
-        patch_ops = [
-            {
-                "op": "test",
-                "path": f"/metadata/annotations/{escaped_key}",
-                "value": None,
-            },
-            {
-                "op": "add",
-                "path": f"/metadata/annotations/{escaped_key}",
-                "value": timestamp,
-            },
-        ]
+    return [
+        {
+            "op": "test",
+            "path": f"/metadata/annotations/{escaped_key}",
+            "value": None,
+        },
+        {
+            "op": "add",
+            "path": f"/metadata/annotations/{escaped_key}",
+            "value": timestamp,
+        },
+    ]
 
+
+async def _submit_claim_patch(
+    namespace: str,
+    name: str,
+    patch_ops: list[dict[str, Any]],
+) -> bool | None:
+    """Apply the claim JSON-patch; return True on win, False on lost race, None on error."""
     try:
         async with k8s_client() as api:
             await client.CustomObjectsApi(api).patch_namespaced_custom_object(
@@ -255,7 +286,6 @@ async def try_claim_completion(
                 name,
                 status_code,
             )
-            _shutdown_sent.add(key)
             return False
         logger.warning(
             "Completion claim patch failed for %s/%s: %s (not claiming)",
@@ -263,7 +293,7 @@ async def try_claim_completion(
             name,
             e,
         )
-        return False
+        return None
     except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
         logger.warning(
             "Unexpected error claiming completion for %s/%s: %s (not claiming)",
@@ -271,7 +301,7 @@ async def try_claim_completion(
             name,
             e,
         )
-        return False
+        return None
     except Exception as e:  # noqa: BLE001 - fail-safe: any error reclaiming must NOT raise into kopf; we prefer 'not claimed' over 'double-claimed'
         logger.warning(
             "Unexpected error claiming completion for %s/%s: %s (not claiming)",
@@ -279,9 +309,7 @@ async def try_claim_completion(
             name,
             e,
         )
-        return False
-
-    _shutdown_sent.add(key)
+        return None
     return True
 
 

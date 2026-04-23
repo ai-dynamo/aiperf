@@ -8,6 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 Python 3.10+ async AI benchmarking tool for measuring LLM inference server performance. Services communicate via ZMQ message bus; optionally deployable on Kubernetes via a kopf-based operator.
 
 **Reference documentation:**
+- [`llms.txt`](llms.txt) - Agent session-bootstrap index: single-page topology of every doc in the repo with a one-line purpose for each. Start here when unsure which doc to read.
 - [`docs/architecture.md`](docs/architecture.md) - Three-plane architecture, core components, credit system, data flow, communication patterns
 - [`docs/dev/patterns.md`](docs/dev/patterns.md) - Code examples for CLI commands, services, models, messages, plugins, error handling, logging, testing
 - [`docs/cli-options.md`](docs/cli-options.md) - Complete CLI command and option reference
@@ -96,6 +97,13 @@ The Kubernetes operator and CLI layer live in `src/aiperf/operator/`, `src/aiper
 - **kubernetes_asyncio access** — Always use `async with k8s_client() as api:` from `aiperf.kubernetes.client`; never instantiate `ApiClient()` directly. The helper handles in-cluster-or-kubeconfig fallback and closure.
 - **`aiperf kube` CLI** — Subcommands live in `src/aiperf/cli_commands/kube/` and are registered in `_app.py`. Composite flags (`namespace`, `kubeconfig`, `kube-context`) pass via `KubeManageOptions` from `aiperf.config.kube`.
 - **FastAPI routers** — Two patterns: module-level `router = APIRouter(...)` in `src/aiperf/api/routers/*.py`, and factory `create_xxx_router(deps...) -> APIRouter` in `src/aiperf/operator/routers/jobs.py` when the router closes over live state.
+- **Shellouts** — Always `aiperf.kubernetes.subproc.run_command(...)` / `check_command` / `start_streaming_process` + `terminate_process`; never `asyncio.create_subprocess_exec` directly. 60 s default timeout.
+- **CLI user output** — All kube-CLI output goes through `from aiperf.kubernetes import console as kube_console`; never `print` or `rich.print`. Last-benchmark persistence (`save_last_benchmark`) lives there too — do not roll your own `last_X.json`.
+- **`--output text|json`** — Read-only CLI checks (preflight, validate) expose `Literal["text", "json"]`; in JSON mode, downshift the `aiperf.kube` logger to WARNING in a `try/finally` and print via `orjson.dumps(..., option=OPT_INDENT_2)`. Result dataclasses own the `to_dict()` schema.
+- **Watch orchestration** — `aiperf kube watch` is a three-layer split: `*Poller` classes, a `WatchOrchestrator` owning one `k8s_client()` + signal handlers, and renderers implementing the `WatchRenderer` Protocol (`start`/`render`/`stop`). New renderer = new Protocol implementor + one line in the renderer factory.
+- **Durable completion claim** — Exactly-once completion work is gated by `await try_claim_completion(...)` in `operator/client_cache.py` — a JSON-patch with a `test` op, so concurrent ticks race atomically on the apiserver. The in-process `_shutdown_sent` set is only a fast path; the CR annotation is authoritative.
+- **Cooperative cancellation** — `on_delete` calls `request_cancellation(job_key(ns, name))`; handlers poll `is_cancellation_requested(key)` at every `await` boundary and exit early. Inject the check as a `Callable[[], bool]` into helpers rather than importing the flag deep.
+- **Results-ready marker** — The controller writes `.aiperf_results_ready.json` via `write_ready_marker(base_dir)` only after all artifacts are on disk; the results sidecar refuses to serve top-level files until the marker is present (checkpoints under `checkpoints/` bypass the gate).
 
 ## Testing Conventions
 
@@ -129,6 +137,31 @@ Feature branches use `<username>/feature-name` format, forked from `main`. One P
 - Communication: `publish()` for broadcast, `@on_message` to subscribe, `send_command_and_wait_for_response()` for sync.
 - `AIPerfLifecycleMixin` for standalone components: `CREATED` -> `INITIALIZING` -> `INITIALIZED` -> `STARTING` -> `RUNNING` -> `STOPPING` -> `STOPPED`; `FAILED` terminal.
 
+## LLM-Ergonomics
+
+AIPerf treats agent-readability as a first-class quality axis. The code is expected to be mimicked by LLMs — so conventions are explicit (not tacit), exceptions self-describe, types carry domain meaning, and reference files are kept exemplary. See `docs/dev/patterns.md` for concrete good/bad examples.
+
+**Mechanical floor (enforced in CI, zero new violations allowed):**
+
+```bash
+make check-ergonomics        # 9 custom AST checks: file-size, function-size, nesting-depth, keyword-only-args, module-state, duplicate-classes, pydantic-fields, stdlib-json, exception-message
+make check-ruff-baselined    # 9 ruff rules: PLR0915, PLR0912, C901, TID251, BLE001, S110, S112, ANN201, D103
+```
+
+Baselines (`tools/ergonomics_baseline.json`, `tools/ruff_baseline.json`) grandfather pre-existing violations. New code must pass clean; do not add entries to the baselines.
+
+**Semantic ceiling (reviewed, not mechanically enforced):**
+
+- **Error messages** name the operation, the specific input, and a likely cause or next step. `raise DatasetLoadError(f"dataset '{name}' missing column 'answer_key' at row {row_idx}; add it to the config or set skip_validation=true")` — not `raise ValueError("bad input")`.
+- **Type hints** carry domain meaning: `Literal[...]` for enum-like strings, `Protocol` / `TypedDict` for structural contracts, parameterized containers (`list[ResultBundle]`, not bare `list`). Avoid `Any` on public return types. Use `X | None`, never `Optional[X]`.
+- **Docstrings** include a runnable example with realistic identifiers (`job_id="aiperf-bench-7f2a"`), not `foo`/`bar` placeholders. Side-effects (publishes, file writes, state mutations) are named in the docstring. Project-specific exceptions are listed under `Raises:`.
+- **Naming** disambiguates synonyms: if `Credit`, `Request`, and `Session` overlap in domain meaning, the docstring of the authoritative class mentions the synonyms so grep finds it.
+- **Comments** document WHY (non-local constraint, past bug, subtle invariant) — never WHAT. Rename instead of commenting when possible.
+- **New patterns** must be documented in CLAUDE.md (+ the two sync files) or `docs/dev/patterns.md` before the branch ships — agents do not reliably absorb tacit conventions from surrounding code.
+- **Reference files** (the ones cited in `docs/dev/patterns.md` via leading-comment paths like `# aiperf/kubernetes/client.py`) must stay exemplary: no `# noqa` without an explanatory comment, and no entries in the ergonomics/ruff baselines for files that teach the rule they'd be violating.
+
+Run `/aiperf-llm-ergonomics-review` before shipping a PR that touches public API, exceptions, or a reference file.
+
 ## Pre-Commit Checklist
 
 1. Review diff: all lines required?
@@ -148,6 +181,7 @@ When making changes, update the appropriate documentation files. When adding a n
 
 | Change type | Files to update |
 |---|---|
+| Adding/removing a doc file, or changing its purpose | `llms.txt` |
 | Architecture, components, data flow, communication | `docs/architecture.md` |
 | Coding standards, build commands, new patterns | `CLAUDE.md` + `.github/copilot-instructions.md` + `.cursor/rules/python.mdc` |
 | Code patterns, examples, base classes | `docs/dev/patterns.md` |

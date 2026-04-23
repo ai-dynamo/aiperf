@@ -284,10 +284,10 @@ This downloads the full results package via the controller pod's API. The result
 
 ### From the Operator Storage
 
-Even after pods are deleted, results are stored on the operator's PVC:
+Even after pods are deleted, results are stored on the operator's PVC. This is the default:
 
 ```bash
-aiperf kube results my-benchmark --from-operator
+aiperf kube results my-benchmark
 ```
 
 ### Summary Only
@@ -298,20 +298,20 @@ Download only the summary results (faster):
 aiperf kube results --summary-only
 ```
 
-### Direct Pod Copy
+### Direct From Pods
 
-If the API is unavailable, copy files directly from the pod:
+If you want to fetch results directly from the running benchmark pods (tries the controller API first, falls back to `kubectl cp`):
 
 ```bash
-aiperf kube results --from-pod
+aiperf kube results --from-pods
 ```
 
 ### Shut Down After Download
 
-Free up cluster resources by shutting down the API service after downloading:
+Free up cluster resources by shutting down the API service after downloading (only takes effect with `--from-pods`):
 
 ```bash
-aiperf kube results --shutdown
+aiperf kube results --from-pods --shutdown
 ```
 
 ### Save to Custom Directory
@@ -355,15 +355,13 @@ aiperf kube profile ... --image-pull-secrets my-registry-secret
 
 **Symptom:** Worker pods restart with `OOMKilled` status.
 
-**Fix:** Reduce concurrency per pod or increase memory limits:
+**Fix:** Reduce concurrency per worker pod so each pod uses less memory:
 ```yaml
 spec:
-  connectionsPerWorker: 5     # reduce from default 10
-  podTemplate:
-    env:
-      - name: AIPERF_WORKER_MEMORY_LIMIT
-        value: "4Gi"
+  connectionsPerWorker: 50    # reduce from default 100
 ```
+
+Increasing per-pod memory requests/limits is done on the operator deployment via the `AIPERF_K8S_*` environment variables (see `values.yaml`).
 
 ### Benchmark Timeout
 

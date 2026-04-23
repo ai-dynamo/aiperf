@@ -107,11 +107,7 @@ async def wait_for_endpoint(
     if mode in ("models", "both") and not model_names:
         raise ValueError(f"ready_check_mode={mode!r} requires at least one model name")
 
-    merged_headers: dict[str, str] = {"Content-Type": "application/json"}
-    if api_key:
-        merged_headers["Authorization"] = f"Bearer {api_key}"
-    if headers:
-        merged_headers.update(headers)
+    merged_headers = _build_headers(api_key, headers)
 
     logger.info(
         f"Waiting for endpoint readiness (mode={mode}, timeout={timeout}s, "
@@ -121,34 +117,70 @@ async def wait_for_endpoint(
     client = AioHttpClient(timeout=max(interval, _MIN_REQUEST_TIMEOUT_S))
     try:
         for url in urls:
-            if mode in ("models", "both"):
-                for model_name in model_names:
-                    await _wait_models(
-                        client,
-                        url,
-                        model_name,
-                        timeout=timeout,
-                        interval=interval,
-                        headers=merged_headers,
-                    )
-            if mode in ("inference", "both"):
-                # For the inference probe the model id is echoed back in
-                # the response but not required for "server can generate".
-                # Pick the first model (or "default") — any successful
-                # generation proves the stack is live.
-                probe_model = model_names[0] if model_names else "default"
-                await _wait_inference(
-                    client,
-                    url,
-                    endpoint_type=endpoint_type,
-                    path=path,
-                    model=probe_model,
-                    timeout=timeout,
-                    interval=interval,
-                    headers=merged_headers,
-                )
+            await _probe_url(
+                client,
+                url,
+                mode=mode,
+                model_names=model_names,
+                endpoint_type=endpoint_type,
+                path=path,
+                timeout=timeout,
+                interval=interval,
+                headers=merged_headers,
+            )
     finally:
         await client.close()
+
+
+def _build_headers(
+    api_key: str | None, headers: dict[str, str] | None
+) -> dict[str, str]:
+    merged: dict[str, str] = {"Content-Type": "application/json"}
+    if api_key:
+        merged["Authorization"] = f"Bearer {api_key}"
+    if headers:
+        merged.update(headers)
+    return merged
+
+
+async def _probe_url(
+    client: AioHttpClient,
+    url: str,
+    *,
+    mode: ReadyCheckMode,
+    model_names: list[str],
+    endpoint_type: str,
+    path: str | None,
+    timeout: float,
+    interval: float,
+    headers: dict[str, str],
+) -> None:
+    if mode in ("models", "both"):
+        for model_name in model_names:
+            await _wait_models(
+                client,
+                url,
+                model_name,
+                timeout=timeout,
+                interval=interval,
+                headers=headers,
+            )
+    if mode in ("inference", "both"):
+        # For the inference probe the model id is echoed back in the
+        # response but not required for "server can generate". Pick the
+        # first model (or "default") — any successful generation proves
+        # the stack is live.
+        probe_model = model_names[0] if model_names else "default"
+        await _wait_inference(
+            client,
+            url,
+            endpoint_type=endpoint_type,
+            path=path,
+            model=probe_model,
+            timeout=timeout,
+            interval=interval,
+            headers=headers,
+        )
 
 
 async def _wait_models(

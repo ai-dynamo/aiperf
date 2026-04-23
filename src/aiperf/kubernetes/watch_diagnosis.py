@@ -26,11 +26,7 @@ _HIGH_LATENCY_P99_MULTIPLIER = 10.0
 def diagnose(snapshot: WatchSnapshot) -> DiagnosisResult:
     """Analyze a snapshot and return health state with detected issues."""
     issues: list[DiagnosisIssue] = []
-    stalled = False
-    stall_reason: str | None = None
-    error_rate = 0.0
 
-    # --- Terminal phases ---
     if snapshot.phase == Phase.COMPLETED:
         _check_results_fetch_failed(snapshot, issues)
         return DiagnosisResult(
@@ -46,10 +42,34 @@ def diagnose(snapshot: WatchSnapshot) -> DiagnosisResult:
             error_rate=_compute_error_rate(snapshot),
         )
 
-    # --- Pod-level checks ---
+    has_oom, has_crash_loop = _check_pods(snapshot, issues)
+    stalled, stall_reason = _check_stall(snapshot, issues)
+    _check_conditions(snapshot, issues)
+    _check_results_fetch_failed(snapshot, issues)
+    error_rate = _check_metrics(snapshot, issues)
+
+    health = _determine_health(
+        snapshot=snapshot,
+        has_oom=has_oom,
+        has_crash_loop=has_crash_loop,
+        stalled=stalled,
+    )
+
+    return DiagnosisResult(
+        health=health,
+        issues=issues,
+        stalled=stalled,
+        stall_reason=stall_reason,
+        error_rate=error_rate,
+    )
+
+
+def _check_pods(
+    snapshot: WatchSnapshot, issues: list[DiagnosisIssue]
+) -> tuple[bool, bool]:
+    """Append pod-level issues and return (has_oom, has_crash_loop) flags."""
     has_oom = False
     has_crash_loop = False
-
     for pod in snapshot.pods:
         if pod.oom_killed:
             has_oom = True
@@ -63,7 +83,6 @@ def diagnose(snapshot: WatchSnapshot) -> DiagnosisResult:
                     suggested_fix="Increase memory limits in deployment config",
                 )
             )
-
         if pod.restarts > _CRASH_LOOP_RESTART_THRESHOLD:
             has_crash_loop = True
             issues.append(
@@ -76,24 +95,29 @@ def diagnose(snapshot: WatchSnapshot) -> DiagnosisResult:
                     suggested_fix=f"Check pod logs: kubectl logs {pod.name} --previous",
                 )
             )
+    return has_oom, has_crash_loop
 
-    # --- Stall detection ---
+
+def _check_stall(
+    snapshot: WatchSnapshot, issues: list[DiagnosisIssue]
+) -> tuple[bool, str | None]:
+    """Detect pending/running stalls and return (stalled, stall_reason)."""
     if (
         snapshot.phase == Phase.PENDING
         and snapshot.elapsed_seconds > _STALLED_PENDING_THRESHOLD_S
     ):
-        stalled = True
-        stall_reason = f"Pending for {snapshot.elapsed_seconds:.0f}s (threshold: {_STALLED_PENDING_THRESHOLD_S:.0f}s)"
+        reason = f"Pending for {snapshot.elapsed_seconds:.0f}s (threshold: {_STALLED_PENDING_THRESHOLD_S:.0f}s)"
         issues.append(
             DiagnosisIssue(
                 id="stalled_pending",
                 severity="warning",
                 title="Job stuck in Pending",
-                detail=stall_reason,
+                detail=reason,
                 impact="Benchmark has not started; may be waiting for resources",
                 suggested_fix="Check node resources and pod scheduling events",
             )
         )
+        return True, reason
 
     if (
         snapshot.phase == Phase.RUNNING
@@ -109,22 +133,24 @@ def diagnose(snapshot: WatchSnapshot) -> DiagnosisResult:
             snapshot.progress is not None and snapshot.progress.requests_completed > 0
         )
         if not has_throughput and not has_progress:
-            stalled = True
-            stall_reason = (
-                f"Running for {snapshot.elapsed_seconds:.0f}s with no progress"
-            )
+            reason = f"Running for {snapshot.elapsed_seconds:.0f}s with no progress"
             issues.append(
                 DiagnosisIssue(
                     id="stalled_running",
                     severity="warning",
                     title="Benchmark appears stalled",
-                    detail=stall_reason,
+                    detail=reason,
                     impact="No forward progress detected",
                     suggested_fix="Check endpoint health and worker pod logs",
                 )
             )
+            return True, reason
 
-    # --- Condition checks ---
+    return False, None
+
+
+def _check_conditions(snapshot: WatchSnapshot, issues: list[DiagnosisIssue]) -> None:
+    """Append issues for failed endpoint/preflight conditions."""
     if snapshot.conditions.get("endpoint_reachable") is False:
         issues.append(
             DiagnosisIssue(
@@ -149,9 +175,9 @@ def diagnose(snapshot: WatchSnapshot) -> DiagnosisResult:
             )
         )
 
-    _check_results_fetch_failed(snapshot, issues)
 
-    # --- Metrics checks ---
+def _check_metrics(snapshot: WatchSnapshot, issues: list[DiagnosisIssue]) -> float:
+    """Append metric-derived issues and return the computed error rate."""
     error_rate = _compute_error_rate(snapshot)
 
     if error_rate > _HIGH_ERROR_RATE_THRESHOLD:
@@ -181,21 +207,7 @@ def diagnose(snapshot: WatchSnapshot) -> DiagnosisResult:
                 )
             )
 
-    # --- Determine overall health ---
-    health = _determine_health(
-        snapshot=snapshot,
-        has_oom=has_oom,
-        has_crash_loop=has_crash_loop,
-        stalled=stalled,
-    )
-
-    return DiagnosisResult(
-        health=health,
-        issues=issues,
-        stalled=stalled,
-        stall_reason=stall_reason,
-        error_rate=error_rate,
-    )
+    return error_rate
 
 
 def _compute_error_rate(snapshot: WatchSnapshot) -> float:

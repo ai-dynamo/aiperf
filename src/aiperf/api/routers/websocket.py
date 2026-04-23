@@ -55,6 +55,70 @@ class WebSocketRouter(MessageBusClientMixin, BaseRouter):
         await self.ws_manager.close_all()
 
 
+async def _ws_send_json(websocket: WebSocket, payload: dict[str, Any]) -> None:
+    await websocket.send_text(orjson.dumps(payload).decode())
+
+
+async def _ws_send_error(websocket: WebSocket, message: str) -> None:
+    await _ws_send_json(websocket, {"type": "error", "message": message})
+
+
+def _extract_message_types(data: dict[str, Any]) -> list[str] | None:
+    """Return validated list of message type strings, or None if invalid."""
+    types = data.get("message_types", [])
+    if not isinstance(types, list) or not all(isinstance(t, str) for t in types):
+        return None
+    return types
+
+
+async def _handle_subscribe(
+    websocket: WebSocket,
+    component: WebSocketRouter,
+    client_id: str,
+    data: dict[str, Any],
+    *,
+    unsubscribe: bool,
+) -> None:
+    types = _extract_message_types(data)
+    if types is None:
+        await _ws_send_error(websocket, "message_types must be a list of strings")
+        return
+    action = "unsubscribed" if unsubscribe else "subscribed"
+    if unsubscribe:
+        component.ws_manager.unsubscribe(client_id, types)
+    else:
+        component.ws_manager.subscribe(client_id, types)
+    await _ws_send_json(websocket, {"type": action, "message_types": types})
+    component.info(f"WebSocket: Client {client_id} {action}: {types}")
+
+
+async def _dispatch_ws_message(
+    websocket: WebSocket,
+    component: WebSocketRouter,
+    client_id: str,
+    raw_text: str,
+) -> None:
+    try:
+        data = orjson.loads(raw_text)
+    except orjson.JSONDecodeError as e:
+        await _ws_send_error(websocket, f"Invalid JSON: {e}")
+        return
+
+    if not isinstance(data, dict):
+        await _ws_send_error(websocket, "Payload must be a JSON object")
+        return
+
+    msg_type = data.get("type")
+    if msg_type == "subscribe":
+        await _handle_subscribe(
+            websocket, component, client_id, data, unsubscribe=False
+        )
+    elif msg_type == "unsubscribe":
+        await _handle_subscribe(websocket, component, client_id, data, unsubscribe=True)
+    elif msg_type == "ping":
+        await websocket.send_text('{"type":"pong"}')
+
+
 @ws_router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, component: WebSocketDep) -> None:
     """WebSocket endpoint for real-time message streaming."""
@@ -72,63 +136,7 @@ async def websocket_endpoint(websocket: WebSocket, component: WebSocketDep) -> N
     try:
         while True:
             raw_text = await websocket.receive_text()
-            try:
-                data = orjson.loads(raw_text)
-            except orjson.JSONDecodeError as e:
-                err = orjson.dumps({"type": "error", "message": f"Invalid JSON: {e}"})
-                await websocket.send_text(err.decode())
-                continue
-
-            if not isinstance(data, dict):
-                err = orjson.dumps(
-                    {"type": "error", "message": "Payload must be a JSON object"}
-                )
-                await websocket.send_text(err.decode())
-                continue
-
-            msg_type = data.get("type")
-
-            if msg_type == "subscribe":
-                types = data.get("message_types", [])
-                if not isinstance(types, list) or not all(
-                    isinstance(t, str) for t in types
-                ):
-                    err = orjson.dumps(
-                        {
-                            "type": "error",
-                            "message": "message_types must be a list of strings",
-                        }
-                    )
-                    await websocket.send_text(err.decode())
-                    continue
-                component.ws_manager.subscribe(client_id, types)
-                resp = orjson.dumps({"type": "subscribed", "message_types": types})
-                await websocket.send_text(resp.decode())
-                component.info(f"WebSocket: Client {client_id} subscribed to: {types}")
-
-            elif msg_type == "unsubscribe":
-                types = data.get("message_types", [])
-                if not isinstance(types, list) or not all(
-                    isinstance(t, str) for t in types
-                ):
-                    err = orjson.dumps(
-                        {
-                            "type": "error",
-                            "message": "message_types must be a list of strings",
-                        }
-                    )
-                    await websocket.send_text(err.decode())
-                    continue
-                component.ws_manager.unsubscribe(client_id, types)
-                resp = orjson.dumps({"type": "unsubscribed", "message_types": types})
-                await websocket.send_text(resp.decode())
-                component.info(
-                    f"WebSocket: Client {client_id} unsubscribed from: {types}"
-                )
-
-            elif msg_type == "ping":
-                await websocket.send_text('{"type":"pong"}')
-
+            await _dispatch_ws_message(websocket, component, client_id, raw_text)
     except WebSocketDisconnect:
         component.info(f"WebSocket: Client {client_id} disconnected")
     except Exception as e:  # noqa: BLE001 - unexpected WS errors are logged; connection cleanup still runs in finally

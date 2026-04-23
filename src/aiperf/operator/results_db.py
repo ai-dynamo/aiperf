@@ -205,10 +205,38 @@ class ResultsDB:
         # (LIKE-style %/_ escaping would corrupt job_ids containing underscores).
         job_id_list = ", ".join("'" + j.replace("'", "''") + "'" for j in job_ids)
 
-        # First, query just the base job info to avoid missing-column errors
-        # when some jobs don't have certain metrics (e.g., non-streaming has no TTFT).
-        # Then query each metric separately to be resilient to missing columns.
-        base_sql = f"""
+        base_rows = await self._query(self._compare_base_sql(files, job_id_list))
+        if not base_rows:
+            return []
+
+        # Key by (namespace, job_id) — two jobs with the same job_id in
+        # different namespaces must not overwrite each other.
+        job_data: dict[tuple[str, str], dict[str, Any]] = {
+            (row.get("namespace", ""), row.get("job_id", "")): row for row in base_rows
+        }
+
+        # Query each metric separately to handle missing columns gracefully
+        # (e.g., non-streaming has no TTFT).
+        for m in metrics:
+            metric_rows = await self._query(
+                self._compare_metric_sql(files, job_id_list, m)
+            )
+            for row in metric_rows:
+                key = (row.get("namespace", ""), row.get("job_id", ""))
+                if key in job_data:
+                    job_data[key].update(
+                        {
+                            k: v
+                            for k, v in row.items()
+                            if k not in ("job_id", "namespace")
+                        }
+                    )
+
+        return list(job_data.values())
+
+    def _compare_base_sql(self, files: str, job_id_list: str) -> str:
+        """Base SELECT for compare(): job identity and run metadata only."""
+        return f"""
             SELECT
                 {self._extract_job_path_parts()},
                 t.start_time::VARCHAR AS start_time,
@@ -223,51 +251,26 @@ class ResultsDB:
             WHERE string_split(filename, '/')[-2] IN ({job_id_list})
         """  # noqa: S608
 
-        base_rows = await self._query(base_sql)
-        if not base_rows:
-            return []
-
-        # Key by (namespace, job_id) — two jobs with the same job_id in
-        # different namespaces must not overwrite each other.
-        job_data: dict[tuple[str, str], dict[str, Any]] = {}
-        for row in base_rows:
-            key = (row.get("namespace", ""), row.get("job_id", ""))
-            job_data[key] = row
-
-        # Query each metric separately to handle missing columns gracefully
-        for m in metrics:
-            _validate_identifier(m)
-            json_expr = f"to_json(t.{m})"
-            metric_sql = f"""
-                SELECT
-                    string_split(filename, '/')[-3] AS namespace,
-                    string_split(filename, '/')[-2] AS job_id,
-                    TRY_CAST({json_expr}->>'avg' AS DOUBLE) AS {m}_avg,
-                    TRY_CAST({json_expr}->>'p50' AS DOUBLE) AS {m}_p50,
-                    TRY_CAST({json_expr}->>'p99' AS DOUBLE) AS {m}_p99,
-                    {json_expr}->>'unit' AS {m}_unit
-                FROM (
-                    SELECT *, filename
-                    FROM read_json({files},
-                        compression='auto_detect',
-                        union_by_name=true)
-                ) t
-                WHERE string_split(filename, '/')[-2] IN ({job_id_list})
-            """  # noqa: S608
-
-            metric_rows = await self._query(metric_sql)
-            for row in metric_rows:
-                key = (row.get("namespace", ""), row.get("job_id", ""))
-                if key in job_data:
-                    job_data[key].update(
-                        {
-                            k: v
-                            for k, v in row.items()
-                            if k not in ("job_id", "namespace")
-                        }
-                    )
-
-        return list(job_data.values())
+    def _compare_metric_sql(self, files: str, job_id_list: str, metric: str) -> str:
+        """Per-metric SELECT for compare(): extracts avg/p50/p99/unit via JSON."""
+        _validate_identifier(metric)
+        json_expr = f"to_json(t.{metric})"
+        return f"""
+            SELECT
+                string_split(filename, '/')[-3] AS namespace,
+                string_split(filename, '/')[-2] AS job_id,
+                TRY_CAST({json_expr}->>'avg' AS DOUBLE) AS {metric}_avg,
+                TRY_CAST({json_expr}->>'p50' AS DOUBLE) AS {metric}_p50,
+                TRY_CAST({json_expr}->>'p99' AS DOUBLE) AS {metric}_p99,
+                {json_expr}->>'unit' AS {metric}_unit
+            FROM (
+                SELECT *, filename
+                FROM read_json({files},
+                    compression='auto_detect',
+                    union_by_name=true)
+            ) t
+            WHERE string_split(filename, '/')[-2] IN ({job_id_list})
+        """  # noqa: S608
 
     async def summary(self, namespace: str, job_id: str) -> dict[str, Any] | None:
         """Get the full aggregated summary for a single job.

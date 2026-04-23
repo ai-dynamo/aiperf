@@ -128,6 +128,79 @@ class HttpCoreTransport(BaseHTTPTransport):
             url_schemes=["http", "https"],
         )
 
+    async def _dispatch_post(
+        self,
+        *,
+        reuse_strategy: ConnectionReuseStrategy,
+        lease_manager: HttpCoreLeaseManager | None,
+        request_info: RequestInfo,
+        url: str,
+        json_bytes: bytes,
+        headers: dict[str, str],
+        first_token_callback: FirstTokenCallback | None,
+    ) -> RequestRecord:
+        """Route the POST to the correct client based on connection-reuse strategy."""
+        if reuse_strategy == ConnectionReuseStrategy.NEVER:
+            client = HttpCoreClient.create_ephemeral(
+                timeout=self.run.cfg.endpoint.timeout
+            )
+            try:
+                return await client.post_request(
+                    url,
+                    json_bytes,
+                    headers,
+                    cancel_after_ns=request_info.cancel_after_ns,
+                    first_token_callback=first_token_callback,
+                )
+            finally:
+                await client.close()
+
+        if reuse_strategy == ConnectionReuseStrategy.STICKY_USER_SESSIONS:
+            if lease_manager is None:
+                raise NotInitializedError(
+                    "HttpCoreLeaseManager not initialized for sticky-user-sessions strategy"
+                )
+            session_client = lease_manager.get_client(request_info.x_correlation_id)
+            return await session_client.post_request(
+                url,
+                json_bytes,
+                headers,
+                cancel_after_ns=request_info.cancel_after_ns,
+                first_token_callback=first_token_callback,
+            )
+
+        assert self.httpcore_client is not None
+        return await self.httpcore_client.post_request(
+            url,
+            json_bytes,
+            headers,
+            cancel_after_ns=request_info.cancel_after_ns,
+            first_token_callback=first_token_callback,
+        )
+
+    async def _maybe_release_sticky_lease(
+        self,
+        reuse_strategy: ConnectionReuseStrategy,
+        lease_manager: HttpCoreLeaseManager | None,
+        request_info: RequestInfo,
+        record: RequestRecord | None,
+    ) -> None:
+        """Release the sticky-session lease when the turn completes or fails."""
+        if (
+            reuse_strategy != ConnectionReuseStrategy.STICKY_USER_SESSIONS
+            or lease_manager is None
+        ):
+            return
+        if record is not None:
+            should_release = (
+                request_info.is_final_turn
+                or record.cancellation_perf_ns is not None
+                or record.error is not None
+            )
+            if not should_release:
+                return
+        await lease_manager.release(request_info.x_correlation_id)
+
     async def send_request(
         self,
         request_info: RequestInfo,
@@ -161,7 +234,7 @@ class HttpCoreTransport(BaseHTTPTransport):
             return await self._send_video_request_with_polling(request_info, payload)
 
         start_perf_ns = time.perf_counter_ns()
-        headers = None
+        headers: dict[str, str] | None = None
         reuse_strategy = self.run.cfg.endpoint.connection_reuse
 
         # Capture reference to avoid race with concurrent shutdown
@@ -172,67 +245,24 @@ class HttpCoreTransport(BaseHTTPTransport):
             headers = self.build_headers(request_info)
             json_bytes = orjson.dumps(payload)
 
-            match reuse_strategy:
-                case ConnectionReuseStrategy.NEVER:
-                    client = HttpCoreClient.create_ephemeral(
-                        timeout=self.run.cfg.endpoint.timeout
-                    )
-                    try:
-                        record = await client.post_request(
-                            url,
-                            json_bytes,
-                            headers,
-                            cancel_after_ns=request_info.cancel_after_ns,
-                            first_token_callback=first_token_callback,
-                        )
-                    finally:
-                        await client.close()
-
-                case ConnectionReuseStrategy.STICKY_USER_SESSIONS:
-                    if lease_manager is None:
-                        raise NotInitializedError(
-                            "HttpCoreLeaseManager not initialized for sticky-user-sessions strategy"
-                        )
-                    session_client = lease_manager.get_client(
-                        request_info.x_correlation_id
-                    )
-                    record = await session_client.post_request(
-                        url,
-                        json_bytes,
-                        headers,
-                        cancel_after_ns=request_info.cancel_after_ns,
-                        first_token_callback=first_token_callback,
-                    )
-
-                case _:
-                    record = await self.httpcore_client.post_request(
-                        url,
-                        json_bytes,
-                        headers,
-                        cancel_after_ns=request_info.cancel_after_ns,
-                        first_token_callback=first_token_callback,
-                    )
-
+            record = await self._dispatch_post(
+                reuse_strategy=reuse_strategy,
+                lease_manager=lease_manager,
+                request_info=request_info,
+                url=url,
+                json_bytes=json_bytes,
+                headers=headers,
+                first_token_callback=first_token_callback,
+            )
             record.request_headers = redact_headers(headers)
-
-            if (
-                reuse_strategy == ConnectionReuseStrategy.STICKY_USER_SESSIONS
-                and lease_manager is not None
-            ):
-                should_release = (
-                    request_info.is_final_turn
-                    or record.cancellation_perf_ns is not None
-                    or record.error is not None
-                )
-                if should_release:
-                    await lease_manager.release(request_info.x_correlation_id)
+            await self._maybe_release_sticky_lease(
+                reuse_strategy, lease_manager, request_info, record
+            )
 
         except asyncio.CancelledError:
-            if (
-                reuse_strategy == ConnectionReuseStrategy.STICKY_USER_SESSIONS
-                and lease_manager is not None
-            ):
-                await lease_manager.release(request_info.x_correlation_id)
+            await self._maybe_release_sticky_lease(
+                reuse_strategy, lease_manager, request_info, record=None
+            )
             raise
         except Exception as e:  # noqa: BLE001 - per-request; attach ErrorDetails and return record
             record = RequestRecord(
@@ -244,10 +274,8 @@ class HttpCoreTransport(BaseHTTPTransport):
                 error=ErrorDetails.from_exception(e),
             )
             self.exception(f"HTTP/2 request failed: {e!r}")
-            if (
-                reuse_strategy == ConnectionReuseStrategy.STICKY_USER_SESSIONS
-                and lease_manager is not None
-            ):
-                await lease_manager.release(request_info.x_correlation_id)
+            await self._maybe_release_sticky_lease(
+                reuse_strategy, lease_manager, request_info, record=None
+            )
 
         return record

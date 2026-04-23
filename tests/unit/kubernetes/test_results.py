@@ -159,26 +159,30 @@ class FakeSession:
 
 
 _MODULE = "aiperf.kubernetes.results"
+_OPERATOR_MODULE = "aiperf.kubernetes.results_operator"
+_ARTIFACTS_MODULE = "aiperf.kubernetes.results_artifacts"
 
 
-def _patch_find_retrievable_pod(result):
-    """Patch find_retrievable_pod import inside results module."""
+def _patch_find_retrievable_pod(result, module: str = _MODULE):
+    """Patch find_retrievable_pod import inside the given module."""
     return patch(
-        f"{_MODULE}.find_retrievable_pod", new_callable=AsyncMock, return_value=result
+        f"{module}.find_retrievable_pod", new_callable=AsyncMock, return_value=result
     )
 
 
-def _patch_find_controller_pod(result):
-    """Patch find_controller_pod import inside results module."""
+def _patch_find_controller_pod(result, module: str = _MODULE):
+    """Patch find_controller_pod import inside the given module."""
     return patch(
-        f"{_MODULE}.find_controller_pod", new_callable=AsyncMock, return_value=result
+        f"{module}.find_controller_pod", new_callable=AsyncMock, return_value=result
     )
 
 
 def _patch_find_operator_pod(result):
-    """Patch find_operator_pod import inside results module."""
+    """Patch find_operator_pod import inside the operator module."""
     return patch(
-        f"{_MODULE}.find_operator_pod", new_callable=AsyncMock, return_value=result
+        f"{_OPERATOR_MODULE}.find_operator_pod",
+        new_callable=AsyncMock,
+        return_value=result,
     )
 
 
@@ -644,7 +648,7 @@ class TestRetrieveAllArtifacts:
     @pytest.mark.asyncio
     async def test_no_retrievable_pod_returns_false(self, tmp_path: Path) -> None:
         api = _make_api()
-        with _patch_find_retrievable_pod(None):
+        with _patch_find_retrievable_pod(None, module=_ARTIFACTS_MODULE):
             result = await retrieve_all_artifacts(
                 "job-1", "ns", tmp_path, _make_jobset_info(), api, 0
             )
@@ -669,9 +673,11 @@ class TestRetrieveAllArtifacts:
         session = FakeSession(responses)
 
         with (
-            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
+            _patch_find_retrievable_pod(
+                ("pod-0", PodPhase.RUNNING), module=_ARTIFACTS_MODULE
+            ),
             patch(
-                "aiperf.kubernetes.results.port_forward_with_status",
+                "aiperf.kubernetes.results_artifacts.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
             ),
             patch("aiohttp.ClientSession", return_value=session),
@@ -703,9 +709,11 @@ class TestRetrieveAllArtifacts:
         session = FakeSession(responses)
 
         with (
-            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
+            _patch_find_retrievable_pod(
+                ("pod-0", PodPhase.RUNNING), module=_ARTIFACTS_MODULE
+            ),
             patch(
-                "aiperf.kubernetes.results.port_forward_with_status",
+                "aiperf.kubernetes.results_artifacts.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
             ),
             patch("aiohttp.ClientSession", return_value=session),
@@ -732,9 +740,11 @@ class TestRetrieveAllArtifacts:
         session = FakeSession(responses)
 
         with (
-            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
+            _patch_find_retrievable_pod(
+                ("pod-0", PodPhase.RUNNING), module=_ARTIFACTS_MODULE
+            ),
             patch(
-                "aiperf.kubernetes.results.port_forward_with_status",
+                "aiperf.kubernetes.results_artifacts.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
             ),
             patch("aiohttp.ClientSession", return_value=session),
@@ -759,9 +769,11 @@ class TestRetrieveAllArtifacts:
         session = FakeSession(responses)
 
         with (
-            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
+            _patch_find_retrievable_pod(
+                ("pod-0", PodPhase.RUNNING), module=_ARTIFACTS_MODULE
+            ),
             patch(
-                "aiperf.kubernetes.results.port_forward_with_status",
+                "aiperf.kubernetes.results_artifacts.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
             ),
             patch("aiohttp.ClientSession", return_value=session),
@@ -786,9 +798,11 @@ class TestRetrieveAllArtifacts:
             yield  # noqa: F841, RET503
 
         with (
-            _patch_find_retrievable_pod(("pod-0", PodPhase.RUNNING)),
+            _patch_find_retrievable_pod(
+                ("pod-0", PodPhase.RUNNING), module=_ARTIFACTS_MODULE
+            ),
             patch(
-                "aiperf.kubernetes.results.port_forward_with_status",
+                "aiperf.kubernetes.results_artifacts.port_forward_with_status",
                 side_effect=lambda *a, **kw: _failing_pf(),
             ),
         ):
@@ -1189,7 +1203,7 @@ class TestRetrieveResultsFromOperator:
         with (
             _patch_find_operator_pod(("operator-0", PodPhase.RUNNING)),
             patch(
-                "aiperf.kubernetes.results.port_forward_with_status",
+                "aiperf.kubernetes.results_operator.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
             ),
             patch("aiohttp.ClientSession", return_value=session),
@@ -1226,7 +1240,7 @@ class TestRetrieveResultsFromOperator:
         with (
             _patch_find_operator_pod(("operator-0", PodPhase.RUNNING)),
             patch(
-                "aiperf.kubernetes.results.port_forward_with_status",
+                "aiperf.kubernetes.results_operator.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
             ),
             patch("aiohttp.ClientSession", side_effect=session_factory),
@@ -1251,7 +1265,7 @@ class TestRetrieveResultsFromOperator:
         with (
             _patch_find_operator_pod(("operator-0", PodPhase.RUNNING)),
             patch(
-                "aiperf.kubernetes.results.port_forward_with_status",
+                "aiperf.kubernetes.results_operator.port_forward_with_status",
                 side_effect=lambda *a, **kw: _failing_pf(),
             ),
         ):
@@ -1285,7 +1299,7 @@ class TestRetrieveResultsFromOperator:
         with (
             _patch_find_operator_pod(("operator-0", PodPhase.RUNNING)),
             patch(
-                "aiperf.kubernetes.results.port_forward_with_status",
+                "aiperf.kubernetes.results_operator.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
             ),
             patch("aiohttp.ClientSession", side_effect=session_factory),

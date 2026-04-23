@@ -11,11 +11,9 @@ making invalid states unrepresentable.
 
 from __future__ import annotations
 
-import re
 from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
-    BeforeValidator,
     ConfigDict,
     Discriminator,
     Field,
@@ -25,6 +23,13 @@ from pydantic import (
 from typing_extensions import Self
 
 from aiperf.config._base import BaseConfig
+from aiperf.config._cancellation import CancellationConfig
+from aiperf.config._duration import (
+    DurationSpec,
+    _normalize_duration,
+    _parse_duration,
+)
+from aiperf.config._ramp import RampConfig, RampSpec, _normalize_ramp
 from aiperf.plugin.enums import PhaseType, PhaseTypeStr, RampType
 
 __all__ = [
@@ -32,6 +37,7 @@ __all__ = [
     "CancellationConfig",
     "ConcurrencyPhase",
     "ConstantPhase",
+    "DurationSpec",
     "FixedSchedulePhase",
     "GammaPhase",
     "PhaseConfig",
@@ -39,149 +45,14 @@ __all__ = [
     "PhaseTypeStr",
     "PoissonPhase",
     "RampConfig",
+    "RampSpec",
+    "RampType",
     "RatePhaseConfig",
     "UserCentricPhase",
+    "_normalize_duration",
+    "_normalize_ramp",
+    "_parse_duration",
 ]
-
-
-# =============================================================================
-# DURATION PARSING
-# =============================================================================
-
-_DURATION_PATTERN = re.compile(
-    r"^(\d+(?:\.\d+)?)\s*(s|sec|m|min|h|hr|hour)?$", re.IGNORECASE
-)
-
-
-def _parse_duration(v: Any) -> float | None:
-    """Parse duration from various formats to seconds.
-
-    Supports:
-        - Numbers: 30, 5.5 (interpreted as seconds)
-        - Strings: "30s", "5m", "2h", "30 sec", "5 min"
-
-    Returns:
-        Duration in seconds, or None if input is None.
-
-    Raises:
-        ValueError: If string format is invalid.
-    """
-    if v is None:
-        return None
-    if isinstance(v, int | float):
-        return float(v)
-    if isinstance(v, str):
-        match = _DURATION_PATTERN.match(v.strip())
-        if not match:
-            raise ValueError(
-                f"Invalid duration format: {v!r}. Use number or '30s', '5m', '2h'."
-            )
-        value = float(match.group(1))
-        unit = (match.group(2) or "s").lower()
-        if unit in ("s", "sec"):
-            return value
-        elif unit in ("m", "min"):
-            return value * 60
-        elif unit in ("h", "hr", "hour"):
-            return value * 3600
-    return v
-
-
-def _normalize_duration(v: Any) -> Any:
-    """Normalize duration fields to float seconds."""
-    return _parse_duration(v)
-
-
-# Type alias for duration that supports shorthand strings
-DurationSpec = Annotated[float | None, BeforeValidator(_normalize_duration)]
-
-
-# =============================================================================
-# RAMP CONFIGURATION
-# =============================================================================
-
-
-class RampConfig(BaseConfig):
-    """
-    Configuration for gradual value ramping.
-
-    Controls how a value (concurrency, rate, etc.) transitions from
-    start to target over time.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    duration: Annotated[
-        float,
-        Field(
-            gt=0.0,
-            description="Seconds to ramp from start to target value.",
-        ),
-    ]
-
-    strategy: Annotated[
-        RampType,
-        Field(
-            default=RampType.LINEAR,
-            description="Ramp curve shape: "
-            "linear (constant rate), "
-            "exponential (slow start, fast finish), "
-            "poisson (stochastic with guaranteed completion).",
-        ),
-    ]
-
-
-def _normalize_ramp(v: Any) -> Any:
-    """Normalize ramp shorthand to RampConfig dict."""
-    if v is None:
-        return None
-    if isinstance(v, int | float | str):
-        duration = _parse_duration(v)
-        return {"duration": duration}
-    if isinstance(v, dict) and "duration" in v:
-        v["duration"] = _parse_duration(v["duration"])
-    return v
-
-
-# Type alias for ramp that supports shorthand (just duration as number or string)
-RampSpec = Annotated[RampConfig | None, BeforeValidator(_normalize_ramp)]
-
-
-# =============================================================================
-# CANCELLATION CONFIGURATION
-# =============================================================================
-
-
-class CancellationConfig(BaseConfig):
-    """
-    Configuration for request cancellation testing.
-
-    Enables testing server behavior when clients cancel requests mid-flight.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    # TODO: We should add a warning for values below 1.0, to ensure the user is aware
-    # that the value is a percentage.
-    rate: Annotated[
-        float,
-        Field(
-            ge=0.0,
-            le=100.0,
-            description="Percentage of requests to cancel (0-100). "
-            "10.0 means 10%% of requests will be cancelled.",
-        ),
-    ]
-
-    delay: Annotated[
-        float,
-        Field(
-            ge=0.0,
-            default=0.0,
-            description="Seconds to wait after sending before cancelling. "
-            "0.0 means cancel immediately after send.",
-        ),
-    ]
 
 
 # =============================================================================
@@ -595,3 +466,14 @@ PhaseConfig = Annotated[
     | FixedSchedulePhase,
     Discriminator("type"),
 ]
+
+
+def __getattr__(name: str) -> Any:
+    # Preserve legacy private re-exports for callers that grabbed helpers
+    # directly from this module (e.g. `aiperf.config.artifacts`). The real
+    # definitions live in `_duration.py` / `_ramp.py`.
+    if name in {"_DURATION_PATTERN"}:
+        from aiperf.config import _duration
+
+        return getattr(_duration, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

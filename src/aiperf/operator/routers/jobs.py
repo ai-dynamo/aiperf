@@ -114,10 +114,109 @@ class CancelResponse(AIPerfBaseModel):
     cancelled: bool = Field(description="Whether cancellation was requested.")
 
 
+async def _list_jobs_impl(api: ApiClient) -> ActiveJobListResponse:
+    """Body of GET /api/v1/jobs: list every active AIPerfJob CR across all namespaces.
+
+    Queries the ``aiperf.nvidia.com`` CRD via the Kubernetes API and returns the
+    summary fields (name, namespace, phase, timestamps) for each CR. The result
+    reflects the current CR inventory - it does NOT include completed jobs whose
+    CRs have been garbage-collected; for historical runs see ``GET
+    /api/v1/results`` on the results server.
+
+    Raises:
+        HTTPException: Any non-404 ``kubernetes_asyncio.client.ApiException``
+            status code is surfaced verbatim (e.g. 401/403 on RBAC denial).
+    """
+    jobs = await list_aiperf_jobs(api, all_namespaces=True)
+    return ActiveJobListResponse(jobs=[j.model_dump(by_alias=True) for j in jobs])
+
+
+async def _get_job_impl(api: ApiClient, namespace: str, name: str) -> JobDetailResponse:
+    """Body of GET /api/v1/jobs/{namespace}/{name}: fetch a CR plus its pod roster.
+
+    Returns three things joined into one response: (1) the AIPerfJob CR summary
+    (same shape as ``list_jobs``), (2) the raw CR ``.status`` subresource
+    (phase, conditions, liveMetrics), and (3) the current pod list filtered by
+    the ``aiperf.nvidia.com/job-id=<name>`` label selector.
+
+    Args:
+        api: The kubernetes_asyncio ApiClient.
+        namespace: Kubernetes namespace containing the AIPerfJob CR.
+        name: Name of the AIPerfJob CR (also the label value matched when
+            listing pods).
+
+    Raises:
+        HTTPException: 404 if no AIPerfJob named ``name`` exists in
+            ``namespace``.
+        HTTPException: Other ``kubernetes_asyncio.client.ApiException`` status
+            codes propagate (e.g. 401/403 on RBAC denial).
+    """
+    job = await find_aiperf_job(api, name, namespace)
+    if not job:
+        raise HTTPException(404, f"Job {namespace}/{name} not found")
+
+    raw_status = await get_raw_aiperfjob_status(api, name, namespace)
+    pods_raw = await get_pods(api, namespace, f"aiperf.nvidia.com/job-id={name}")
+    return JobDetailResponse(
+        job=job.model_dump(by_alias=True),
+        status=raw_status or {},
+        pods=[_pod_summary(p) for p in pods_raw],
+    )
+
+
+async def _cancel_job_impl(api: ApiClient, namespace: str, name: str) -> CancelResponse:
+    """Body of POST /api/v1/jobs/{namespace}/{name}/cancel: set ``spec.cancel=true``.
+
+    This endpoint is *asynchronous*: it patches the AIPerfJob CR's
+    ``spec.cancel`` field to ``true`` and returns immediately. The kopf
+    operator's reconciler observes the change and drives the benchmark to a
+    stopped state (cancelling workers, tearing down pods, finalising results).
+    The endpoint does NOT wait for that reconciliation - callers that need to
+    observe the terminal phase should poll ``get_job`` until ``status.phase``
+    becomes ``Cancelled``/``Failed``/``Succeeded``.
+
+    Args:
+        api: The kubernetes_asyncio ApiClient.
+        namespace: Kubernetes namespace containing the AIPerfJob CR.
+        name: Name of the AIPerfJob CR to cancel.
+
+    Raises:
+        HTTPException: 404 if the CR does not exist (surfaced from the
+            underlying ``kubernetes_asyncio`` patch call).
+        HTTPException: Other ``kubernetes_asyncio.client.ApiException`` status
+            codes propagate (e.g. 401/403 on RBAC denial, 409 on
+            concurrent-modification conflicts).
+    """
+    await cancel_aiperf_job(api, name, namespace)
+    return CancelResponse(cancelled=True)
+
+
+async def _cluster_info_impl(api: ApiClient) -> ClusterResponse:
+    """Body of GET /api/v1/cluster: best-effort cluster-wide node and GPU totals.
+
+    Calls the core ``/version`` endpoint for the server gitVersion and
+    ``list_node`` for node count + ``nvidia.com/gpu`` allocatable totals. Both
+    calls are best-effort: failures fall back to ``"unknown"`` / ``(0, 0)``
+    rather than surfacing errors, because the UI displays this as supplementary
+    context and callers with limited RBAC should not see the page fail.
+    """
+    k8s_version = await _fetch_k8s_version(api)
+    node_count, gpu_count = await _fetch_node_gpu_totals(api)
+    return ClusterResponse(
+        nodes=node_count,
+        gpus=gpu_count,
+        kubernetes_version=k8s_version,
+    )
+
+
 def create_jobs_router(
     api_holder: list[ApiClient | None] | None = None,
 ) -> APIRouter:
     """Create the jobs/cluster API router.
+
+    All endpoints return 503 if the Kubernetes ApiClient has not been
+    initialised (set during FastAPI lifespan startup). See the ``_*_impl``
+    helpers above for per-endpoint behaviour and error semantics.
 
     Args:
         api_holder: Mutable single-element list holding the kubernetes_asyncio
@@ -135,107 +234,18 @@ def create_jobs_router(
 
     @router.get("/jobs", response_model=ActiveJobListResponse)
     async def list_jobs() -> ActiveJobListResponse:
-        """List every active AIPerfJob CR across all namespaces.
-
-        Queries the ``aiperf.nvidia.com`` CRD via the Kubernetes API and returns
-        the summary fields (name, namespace, phase, timestamps) for each CR. The
-        result reflects the current CR inventory - it does NOT include
-        completed jobs whose CRs have been garbage-collected; for historical
-        runs see ``GET /api/v1/results`` on the results server.
-
-        Raises:
-            HTTPException: 503 if the Kubernetes ApiClient has not been
-                initialised (set during FastAPI lifespan startup).
-            HTTPException: Any non-404 ``kubernetes_asyncio.client.ApiException``
-                status code is surfaced verbatim (e.g. 401/403 on RBAC denial).
-        """
-        api = _require_api()
-        jobs = await list_aiperf_jobs(api, all_namespaces=True)
-        return ActiveJobListResponse(jobs=[j.model_dump(by_alias=True) for j in jobs])
+        return await _list_jobs_impl(_require_api())
 
     @router.get("/jobs/{namespace}/{name}", response_model=JobDetailResponse)
     async def get_job(namespace: str, name: str) -> JobDetailResponse:
-        """Fetch a single AIPerfJob CR plus its pod roster.
-
-        Returns three things joined into one response: (1) the AIPerfJob CR
-        summary (same shape as ``list_jobs``), (2) the raw CR ``.status``
-        subresource (phase, conditions, liveMetrics), and (3) the current pod
-        list filtered by the ``aiperf.nvidia.com/job-id=<name>`` label selector.
-
-        Args:
-            namespace: Kubernetes namespace containing the AIPerfJob CR.
-            name: Name of the AIPerfJob CR (also the label value matched when
-                listing pods).
-
-        Raises:
-            HTTPException: 503 if the Kubernetes ApiClient is unavailable.
-            HTTPException: 404 if no AIPerfJob named ``name`` exists in
-                ``namespace``.
-            HTTPException: Other ``kubernetes_asyncio.client.ApiException``
-                status codes propagate (e.g. 401/403 on RBAC denial).
-        """
-        api = _require_api()
-        job = await find_aiperf_job(api, name, namespace)
-        if not job:
-            raise HTTPException(404, f"Job {namespace}/{name} not found")
-
-        raw_status = await get_raw_aiperfjob_status(api, name, namespace)
-        pods_raw = await get_pods(api, namespace, f"aiperf.nvidia.com/job-id={name}")
-        return JobDetailResponse(
-            job=job.model_dump(by_alias=True),
-            status=raw_status or {},
-            pods=[_pod_summary(p) for p in pods_raw],
-        )
+        return await _get_job_impl(_require_api(), namespace, name)
 
     @router.post("/jobs/{namespace}/{name}/cancel", response_model=CancelResponse)
     async def cancel_job(namespace: str, name: str) -> CancelResponse:
-        """Request cancellation of an AIPerfJob by setting ``spec.cancel=true``.
-
-        This endpoint is *asynchronous*: it patches the AIPerfJob CR's
-        ``spec.cancel`` field to ``true`` and returns immediately. The kopf
-        operator's reconciler observes the change and drives the benchmark to a
-        stopped state (cancelling workers, tearing down pods, finalising
-        results). The endpoint does NOT wait for that reconciliation - callers
-        that need to observe the terminal phase should poll ``get_job`` until
-        ``status.phase`` becomes ``Cancelled``/``Failed``/``Succeeded``.
-
-        Args:
-            namespace: Kubernetes namespace containing the AIPerfJob CR.
-            name: Name of the AIPerfJob CR to cancel.
-
-        Raises:
-            HTTPException: 503 if the Kubernetes ApiClient is unavailable.
-            HTTPException: 404 if the CR does not exist (surfaced from the
-                underlying ``kubernetes_asyncio`` patch call).
-            HTTPException: Other ``kubernetes_asyncio.client.ApiException``
-                status codes propagate (e.g. 401/403 on RBAC denial, 409 on
-                concurrent-modification conflicts).
-        """
-        api = _require_api()
-        await cancel_aiperf_job(api, name, namespace)
-        return CancelResponse(cancelled=True)
+        return await _cancel_job_impl(_require_api(), namespace, name)
 
     @router.get("/cluster", response_model=ClusterResponse)
     async def cluster_info() -> ClusterResponse:
-        """Return a best-effort snapshot of cluster-wide node and GPU totals.
-
-        Calls the core ``/version`` endpoint for the server gitVersion and
-        ``list_node`` for node count + ``nvidia.com/gpu`` allocatable totals.
-        Both calls are best-effort: failures fall back to ``"unknown"`` /
-        ``(0, 0)`` rather than surfacing errors, because the UI displays this
-        as supplementary context and callers with limited RBAC should not see
-        the page fail.
-
-        Raises:
-            HTTPException: 503 if the Kubernetes ApiClient is unavailable.
-        """
-        api = _require_api()
-        k8s_version = await _fetch_k8s_version(api)
-        node_count, gpu_count = await _fetch_node_gpu_totals(api)
-        return ClusterResponse(
-            nodes=node_count,
-            gpus=gpu_count,
-            kubernetes_version=k8s_version,
-        )
+        return await _cluster_info_impl(_require_api())
 
     return router

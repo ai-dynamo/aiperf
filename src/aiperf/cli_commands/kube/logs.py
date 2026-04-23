@@ -75,6 +75,122 @@ async def _print_pod_log(
     print(log_text.rstrip("\n") if log_text else "")
 
 
+async def _save_logs_to_directory(
+    job_id: str,
+    namespace: str,
+    output: Path,
+    manage_options: KubeManageOptions,
+) -> None:
+    """Save all pod logs for a job to an output directory."""
+    from aiperf.kubernetes import client
+    from aiperf.kubernetes import console as kube_console
+    from aiperf.kubernetes import logs as kube_logs
+
+    output.mkdir(parents=True, exist_ok=True)
+    async with client.k8s_client(
+        kubeconfig=manage_options.kubeconfig,
+        context=manage_options.kube_context,
+    ) as api:
+        await kube_logs.save_pod_logs(
+            job_id,
+            namespace,
+            output,
+            api,
+            kubeconfig=manage_options.kubeconfig,
+            kube_context=manage_options.kube_context,
+        )
+    kube_console.print_success(f"Logs saved to {output}/logs/")
+
+
+async def _emit_target_log(
+    core: Any,
+    pod: Any,
+    cont: str,
+    *,
+    namespace: str,
+    follow: bool,
+    tail: int | None,
+) -> None:
+    """Print header then stream or dump a single target's log; errors logged."""
+    from kubernetes_asyncio.client.exceptions import ApiException
+
+    from aiperf.kubernetes import console as kube_console
+
+    pod_name = pod.metadata.name
+    kube_console.print_header(f"{pod_name}/{cont}")
+    try:
+        if follow:
+            await _stream_pod_log(
+                core,
+                pod_name=pod_name,
+                namespace=namespace,
+                container=cont,
+                tail=tail,
+            )
+        else:
+            await _print_pod_log(
+                core,
+                pod_name=pod_name,
+                namespace=namespace,
+                container=cont,
+                tail=tail,
+            )
+    except ApiException as e:
+        kube_console.print_error(f"Error getting logs: {e}")
+
+
+async def _print_pod_logs(
+    job_id: str,
+    namespace: str,
+    *,
+    container: str | None,
+    follow: bool,
+    tail: int | None,
+    manage_options: KubeManageOptions,
+) -> None:
+    """Fetch pods for the job and print (or follow) logs to stdout."""
+    from kubernetes_asyncio import client as k8s_client_mod
+
+    from aiperf.kubernetes import client
+    from aiperf.kubernetes import console as kube_console
+
+    async with client.k8s_client(
+        kubeconfig=manage_options.kubeconfig,
+        context=manage_options.kube_context,
+    ) as api:
+        core = k8s_client_mod.CoreV1Api(api)
+        pods = await client.get_pods(api, namespace, client.job_selector(job_id))
+
+        if not pods:
+            kube_console.print_warning(f"No pods found for job ID: {job_id}")
+            return
+
+        targets = _collect_log_targets(pods, container)
+        if not targets:
+            kube_console.print_warning("No matching containers found")
+            return
+
+        if follow and len(targets) > 1:
+            kube_console.print_warning(
+                f"Follow mode streams one container at a time. "
+                f"Showing {targets[0][0].metadata.name}/{targets[0][1]} "
+                f"({len(targets)} targets total). "
+                f"Use --container to select a specific container."
+            )
+
+        for pod, cont in targets:
+            await _emit_target_log(
+                core,
+                pod,
+                cont,
+                namespace=namespace,
+                follow=follow,
+                tail=tail,
+            )
+            if follow:
+                break  # Only follow one target
+
+
 @app.default
 async def logs(
     job_id: Annotated[
@@ -134,19 +250,7 @@ async def logs(
     manage_options = manage_options or KubeManageOptions()
 
     with cli_utils.exit_on_error(title="Error Getting Logs"):
-        from kubernetes_asyncio import client as k8s_client_mod
-        from kubernetes_asyncio.client.exceptions import ApiException
-
-        from aiperf.kubernetes import (
-            cli_helpers,
-            client,
-        )
-        from aiperf.kubernetes import (
-            console as kube_console,
-        )
-        from aiperf.kubernetes import (
-            logs as kube_logs,
-        )
+        from aiperf.kubernetes import cli_helpers
 
         resolved = cli_helpers.resolve_job_id_and_namespace(
             job_id, manage_options.namespace
@@ -156,65 +260,14 @@ async def logs(
         job_id, namespace = resolved
 
         if output:
-            output.mkdir(parents=True, exist_ok=True)
-            async with client.k8s_client(
-                kubeconfig=manage_options.kubeconfig,
-                context=manage_options.kube_context,
-            ) as api:
-                await kube_logs.save_pod_logs(
-                    job_id,
-                    namespace,
-                    output,
-                    api,
-                    kubeconfig=manage_options.kubeconfig,
-                    kube_context=manage_options.kube_context,
-                )
-            kube_console.print_success(f"Logs saved to {output}/logs/")
+            await _save_logs_to_directory(job_id, namespace, output, manage_options)
             return
 
-        async with client.k8s_client(
-            kubeconfig=manage_options.kubeconfig,
-            context=manage_options.kube_context,
-        ) as api:
-            core = k8s_client_mod.CoreV1Api(api)
-            pods = await client.get_pods(api, namespace, client.job_selector(job_id))
-
-            if not pods:
-                kube_console.print_warning(f"No pods found for job ID: {job_id}")
-                return
-
-            targets = _collect_log_targets(pods, container)
-            if not targets:
-                kube_console.print_warning("No matching containers found")
-                return
-
-            if follow and len(targets) > 1:
-                kube_console.print_warning(
-                    f"Follow mode streams one container at a time. "
-                    f"Showing {targets[0][0].metadata.name}/{targets[0][1]} "
-                    f"({len(targets)} targets total). "
-                    f"Use --container to select a specific container."
-                )
-
-            for pod, cont in targets:
-                pod_name = pod.metadata.name
-                kube_console.print_header(f"{pod_name}/{cont}")
-                try:
-                    if follow:
-                        await _stream_pod_log(
-                            core,
-                            pod_name=pod_name,
-                            namespace=namespace,
-                            container=cont,
-                            tail=tail,
-                        )
-                        break  # Only follow one target
-                    await _print_pod_log(
-                        core,
-                        pod_name=pod_name,
-                        namespace=namespace,
-                        container=cont,
-                        tail=tail,
-                    )
-                except ApiException as e:
-                    kube_console.print_error(f"Error getting logs: {e}")
+        await _print_pod_logs(
+            job_id,
+            namespace,
+            container=container,
+            follow=follow,
+            tail=tail,
+            manage_options=manage_options,
+        )

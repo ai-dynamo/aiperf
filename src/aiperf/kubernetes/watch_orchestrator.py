@@ -93,22 +93,13 @@ class WatchOrchestrator:
 
     async def run(self) -> None:
         """Main watch loop."""
-        from aiperf.kubernetes import cli_helpers
         from aiperf.kubernetes.client import k8s_client
-        from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
-        from aiperf.kubernetes.watch_diagnosis import diagnose
         from aiperf.kubernetes.watch_pollers import CRPoller, EventPoller, PodPoller
 
-        ns = self._namespace or DEFAULT_BENCHMARK_NAMESPACE
-
-        # Resolve job_id
-        if self._job_id:
-            job_id = self._job_id
-        else:
-            resolved = cli_helpers.resolve_job_id_and_namespace(None, ns)
-            if not resolved:
-                return
-            job_id, ns = resolved
+        resolved = self._resolve_job()
+        if resolved is None:
+            return
+        job_id, ns = resolved
 
         async with k8s_client(
             kubeconfig=self._kubeconfig,
@@ -118,71 +109,108 @@ class WatchOrchestrator:
             pod_poller = PodPoller(api, job_id, ns)
             event_poller = EventPoller(api, job_id, ns)
 
-            # Handle Ctrl+C
-            loop = asyncio.get_event_loop()
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                loop.add_signal_handler(sig, self._stop)
+            self._install_signal_handlers()
 
             if self._renderer:
                 self._renderer.start()
-
-            poll_count = 0
             try:
-                while self._running:
-                    # Poll all sources concurrently
-                    tasks = [cr_poller.poll()]
-                    # Pod and event polling is slower, do it less frequently
-                    if poll_count % 3 == 0:
-                        tasks.append(pod_poller.poll())
-                        tasks.append(event_poller.poll())
-
-                    await asyncio.gather(*tasks, return_exceptions=True)
-
-                    # Build snapshot
-                    snapshot = WatchSnapshot(
-                        timestamp=datetime.now(timezone.utc),
-                        job_id=job_id,
-                        namespace=ns,
-                        phase=cr_poller.phase,
-                        current_phase=cr_poller.current_phase,
-                        elapsed_seconds=cr_poller.elapsed_seconds,
-                        progress=cr_poller.progress,
-                        metrics=cr_poller.metrics,
-                        workers=cr_poller.workers,
-                        pods=pod_poller.pods,
-                        events=event_poller.events,
-                        conditions=cr_poller.conditions,
-                        raw_metrics=cr_poller.raw_metrics,
-                        server_metrics=cr_poller.server_metrics,
-                        model=cr_poller.model,
-                        endpoint=cr_poller.endpoint,
-                        image=cr_poller.image,
-                        results=cr_poller.results,
-                        error=cr_poller.error,
-                    )
-
-                    # Run diagnosis
-                    diagnosis = diagnose(snapshot)
-                    snapshot = dataclasses.replace(snapshot, diagnosis=diagnosis)
-
-                    # Render
-                    if self._renderer:
-                        self._renderer.render(snapshot)
-
-                    # Exit on terminal phase
-                    if cr_poller.phase in (
-                        Phase.COMPLETED,
-                        Phase.FAILED,
-                        Phase.CANCELLED,
-                    ):
-                        break
-
-                    poll_count += 1
-                    await asyncio.sleep(self._interval)
-
+                await self._poll_loop(
+                    job_id=job_id,
+                    ns=ns,
+                    cr_poller=cr_poller,
+                    pod_poller=pod_poller,
+                    event_poller=event_poller,
+                )
             finally:
                 if self._renderer:
                     self._renderer.stop()
+
+    def _resolve_job(self) -> tuple[str, str] | None:
+        from aiperf.kubernetes import cli_helpers
+        from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
+
+        ns = self._namespace or DEFAULT_BENCHMARK_NAMESPACE
+        if self._job_id:
+            return self._job_id, ns
+        resolved = cli_helpers.resolve_job_id_and_namespace(None, ns)
+        if not resolved:
+            return None
+        return resolved
+
+    def _install_signal_handlers(self) -> None:
+        loop = asyncio.get_event_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, self._stop)
+
+    async def _poll_loop(
+        self,
+        *,
+        job_id: str,
+        ns: str,
+        cr_poller: object,
+        pod_poller: object,
+        event_poller: object,
+    ) -> None:
+        from aiperf.kubernetes.watch_diagnosis import diagnose
+
+        poll_count = 0
+        while self._running:
+            tasks = [cr_poller.poll()]
+            # Pod and event polling is slower, do it less frequently
+            if poll_count % 3 == 0:
+                tasks.append(pod_poller.poll())
+                tasks.append(event_poller.poll())
+
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+            snapshot = self._build_snapshot(
+                job_id=job_id,
+                ns=ns,
+                cr_poller=cr_poller,
+                pod_poller=pod_poller,
+                event_poller=event_poller,
+            )
+            snapshot = dataclasses.replace(snapshot, diagnosis=diagnose(snapshot))
+
+            if self._renderer:
+                self._renderer.render(snapshot)
+
+            if cr_poller.phase in (Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED):
+                break
+
+            poll_count += 1
+            await asyncio.sleep(self._interval)
+
+    @staticmethod
+    def _build_snapshot(
+        *,
+        job_id: str,
+        ns: str,
+        cr_poller: object,
+        pod_poller: object,
+        event_poller: object,
+    ) -> WatchSnapshot:
+        return WatchSnapshot(
+            timestamp=datetime.now(timezone.utc),
+            job_id=job_id,
+            namespace=ns,
+            phase=cr_poller.phase,
+            current_phase=cr_poller.current_phase,
+            elapsed_seconds=cr_poller.elapsed_seconds,
+            progress=cr_poller.progress,
+            metrics=cr_poller.metrics,
+            workers=cr_poller.workers,
+            pods=pod_poller.pods,
+            events=event_poller.events,
+            conditions=cr_poller.conditions,
+            raw_metrics=cr_poller.raw_metrics,
+            server_metrics=cr_poller.server_metrics,
+            model=cr_poller.model,
+            endpoint=cr_poller.endpoint,
+            image=cr_poller.image,
+            results=cr_poller.results,
+            error=cr_poller.error,
+        )
 
     def _stop(self) -> None:
         self._running = False

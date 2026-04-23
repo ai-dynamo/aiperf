@@ -14,6 +14,43 @@ from cyclopts import App, Parameter
 
 app = App(name="proxy")
 
+_KIND_TO_FLAGS: dict[str, dict[str, bool]] = {
+    "event_bus": {
+        "enable_event_bus": True,
+        "enable_dataset_manager": False,
+        "enable_raw_inference": False,
+    },
+}
+
+
+async def _run_proxy(run: object, flags: dict[str, bool]) -> None:
+    import asyncio
+    import signal
+
+    from aiperf.common.environment import Environment
+    from aiperf.common.health_server import HealthServer
+    from aiperf.controller.proxy_manager import ProxyManager
+
+    manager = ProxyManager(run=run, **flags)
+    health: HealthServer | None = None
+    if Environment.SERVICE.HEALTH_ENABLED:
+        health = HealthServer(port=Environment.SERVICE.HEALTH_PORT)
+        await health.start()
+
+    await manager.initialize_and_start()
+
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, stop_event.set)
+
+    try:
+        await stop_event.wait()
+    finally:
+        await manager.stop()
+        if health is not None:
+            await health.stop()
+
 
 @app.default
 def proxy(
@@ -55,14 +92,11 @@ def proxy(
 
     with exit_on_error(title=f"Error Running AIPerf Proxy ({kind})"):
         import asyncio
-        import signal
 
         import orjson
 
         from aiperf.common.environment import Environment
-        from aiperf.common.health_server import HealthServer
         from aiperf.config.benchmark import BenchmarkRun
-        from aiperf.controller.proxy_manager import ProxyManager
 
         run = BenchmarkRun.model_validate(orjson.loads(benchmark_run_file.read_bytes()))
 
@@ -70,38 +104,9 @@ def proxy(
             Environment.SERVICE.HEALTH_ENABLED = True
             Environment.SERVICE.HEALTH_PORT = health_port
 
-        kind_to_flags = {
-            "event_bus": {
-                "enable_event_bus": True,
-                "enable_dataset_manager": False,
-                "enable_raw_inference": False,
-            },
-        }
-        if kind not in kind_to_flags:
+        if kind not in _KIND_TO_FLAGS:
             raise ValueError(
-                f"Unsupported proxy kind {kind!r}; valid: {sorted(kind_to_flags)}"
+                f"Unsupported proxy kind {kind!r}; valid: {sorted(_KIND_TO_FLAGS)}"
             )
-        flags = kind_to_flags[kind]
 
-        async def _run() -> None:
-            manager = ProxyManager(run=run, **flags)
-            health: HealthServer | None = None
-            if Environment.SERVICE.HEALTH_ENABLED:
-                health = HealthServer(port=Environment.SERVICE.HEALTH_PORT)
-                await health.start()
-
-            await manager.initialize_and_start()
-
-            stop_event = asyncio.Event()
-            loop = asyncio.get_running_loop()
-            for sig in (signal.SIGTERM, signal.SIGINT):
-                loop.add_signal_handler(sig, stop_event.set)
-
-            try:
-                await stop_event.wait()
-            finally:
-                await manager.stop()
-                if health is not None:
-                    await health.stop()
-
-        asyncio.run(_run())
+        asyncio.run(_run_proxy(run, _KIND_TO_FLAGS[kind]))

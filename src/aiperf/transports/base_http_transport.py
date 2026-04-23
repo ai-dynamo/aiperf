@@ -312,6 +312,62 @@ class BaseHTTPTransport(BaseTransport):
                 code=500,
             )
 
+    async def _run_video_pipeline(
+        self,
+        request_info: RequestInfo,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        responses: list[TextResponse | BinaryResponse],
+    ) -> ErrorDetails | None:
+        """Submit, poll, and optionally download video content.
+
+        Appends produced responses to *responses* in place. Returns ErrorDetails on
+        failure, or None on success.
+        """
+        submit_url = self.build_url(request_info)
+        use_form_data = (
+            self.run.cfg.endpoint.request_content_type
+            == RequestContentType.MULTIPART_FORM_DATA
+        )
+
+        result = await self._submit_video_job(
+            submit_url, payload, headers, use_form_data=use_form_data
+        )
+        if isinstance(result, ErrorDetails):
+            return result
+        job_id, submit_response = result
+        responses.append(submit_response)
+
+        poll_url = f"{submit_url.rstrip('/')}/{job_id}"
+        poll_result = await self._poll_video_job(
+            job_id,
+            poll_url,
+            headers,
+            timeout=self.run.cfg.endpoint.timeout,
+            poll_interval=Environment.HTTP.VIDEO_POLL_INTERVAL,
+        )
+        if isinstance(poll_result, ErrorDetails):
+            return poll_result
+
+        data, _ = poll_result
+        responses.append(
+            TextResponse(
+                perf_ns=time.perf_counter_ns(),
+                content_type="application/json",
+                text=orjson.dumps(data).decode(),
+            )
+        )
+
+        if self.run.cfg.endpoint.download_video_content:
+            content_url = data.get("url") or f"{poll_url}/content"
+            download_result = await self._download_video_content(
+                job_id, content_url, headers
+            )
+            if isinstance(download_result, ErrorDetails):
+                return download_result
+
+        return None
+
     async def _send_video_request_with_polling(
         self,
         request_info: RequestInfo,
@@ -338,58 +394,13 @@ class BaseHTTPTransport(BaseTransport):
                 status=status,
             )
 
-        # Use build_url to respect custom endpoints and plugin metadata
-        submit_url = self.build_url(request_info)
-
-        # Check if video download is enabled via --download-video-content
-        download_content = self.run.cfg.endpoint.download_video_content
-        use_form_data = (
-            self.run.cfg.endpoint.request_content_type
-            == RequestContentType.MULTIPART_FORM_DATA
-        )
-
         try:
-            # Submit job
-            result = await self._submit_video_job(
-                submit_url, payload, headers, use_form_data=use_form_data
+            error = await self._run_video_pipeline(
+                request_info, payload, headers, responses
             )
-            if isinstance(result, ErrorDetails):
-                return make_record(error=result)
-            job_id, submit_response = result
-            responses.append(submit_response)
-
-            # Poll for completion -- derive poll URL from submit URL + job ID
-            poll_url = f"{submit_url.rstrip('/')}/{job_id}"
-            poll_result = await self._poll_video_job(
-                job_id,
-                poll_url,
-                headers,
-                timeout=self.run.cfg.endpoint.timeout,
-                poll_interval=Environment.HTTP.VIDEO_POLL_INTERVAL,
-            )
-            if isinstance(poll_result, ErrorDetails):
-                return make_record(error=poll_result)
-
-            data, _ = poll_result
-            responses.append(
-                TextResponse(
-                    perf_ns=time.perf_counter_ns(),
-                    content_type="application/json",
-                    text=orjson.dumps(data).decode(),
-                )
-            )
-
-            # Optional: download video content if requested
-            if download_content:
-                content_url = data.get("url") or f"{poll_url}/content"
-                download_result = await self._download_video_content(
-                    job_id, content_url, headers
-                )
-                if isinstance(download_result, ErrorDetails):
-                    return make_record(error=download_result)
-
+            if error is not None:
+                return make_record(error=error)
             return make_record(status=200)
-
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 - per-request; convert to ErrorDetails and return

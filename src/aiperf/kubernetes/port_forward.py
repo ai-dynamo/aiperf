@@ -4,13 +4,18 @@
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import aiohttp
-import orjson
 
 from aiperf.kubernetes.console import print_info, print_warning
+
+# Re-exported for backward compatibility; see progress_stream.py for implementation.
+from aiperf.kubernetes.progress_stream import (
+    _consume_ws_messages,  # noqa: F401
+    stream_progress_from_api,  # noqa: F401
+)
 
 # Port-forward configuration
 _PORT_FORWARD_TIMEOUT = 60.0  # seconds to wait for kubectl port-forward
@@ -18,11 +23,6 @@ _API_INITIAL_DELAY = 0.5  # seconds before first API health check
 _API_RETRY_DELAY = 2.0  # seconds between port-forward restart attempts
 _API_MAX_RETRIES = 10  # max times to restart port-forward when API isn't ready
 _PROCESS_CLEANUP_TIMEOUT = 5.0  # seconds to wait for graceful termination
-
-# WebSocket reconnection parameters (exponential backoff)
-_WS_INITIAL_BACKOFF = 1.0  # seconds
-_WS_MAX_BACKOFF = 30.0  # seconds
-_WS_HEARTBEAT = 30  # seconds between WebSocket heartbeats
 
 
 async def _monitor_pod_liveness(
@@ -195,6 +195,70 @@ async def _start_port_forward_process(
     return proc, actual_port
 
 
+async def _verify_api_with_retries(
+    proc: asyncio.subprocess.Process,
+    actual_port: int,
+    *,
+    namespace: str,
+    pod_name: str,
+    local_port: int,
+    remote_port: int,
+    timeout: float,
+    start_time: float,
+    kubeconfig: str | None,
+    kube_context: str | None,
+) -> tuple[asyncio.subprocess.Process, int]:
+    """Probe the forwarded API, restarting the port-forward on failure.
+
+    Returns the (possibly new) process and port once the API responds, or
+    raises ``RuntimeError`` once the retry budget or time budget is exhausted.
+    """
+    for attempt in range(_API_MAX_RETRIES + 1):
+        elapsed = asyncio.get_running_loop().time() - start_time
+        remaining_timeout = max(timeout - elapsed, 0.0)
+        if remaining_timeout <= 0:
+            await cleanup_port_forward(proc)
+            raise RuntimeError(
+                f"Port-forward API verification exceeded budget ({timeout}s) "
+                f"after {attempt} attempts."
+            )
+        try:
+            await asyncio.wait_for(
+                _wait_for_api_ready(actual_port, proc),
+                timeout=remaining_timeout,
+            )
+            return proc, actual_port
+        except (RuntimeError, asyncio.TimeoutError) as err:
+            await cleanup_port_forward(proc)
+            if attempt >= _API_MAX_RETRIES:
+                raise RuntimeError(
+                    f"Port-forward failed after {_API_MAX_RETRIES} retries. "
+                    f"The API service may not be listening on port {remote_port}."
+                ) from err
+            print_info(
+                f"API not ready, restarting port-forward... "
+                f"({attempt + 1}/{_API_MAX_RETRIES})"
+            )
+            await asyncio.sleep(_API_RETRY_DELAY)
+            elapsed = asyncio.get_running_loop().time() - start_time
+            remaining_timeout = max(timeout - elapsed, 0.0)
+            if remaining_timeout <= 0:
+                raise RuntimeError(
+                    f"Port-forward API verification exceeded budget ({timeout}s)."
+                ) from err
+            proc, actual_port = await _start_port_forward_process(
+                namespace,
+                pod_name,
+                local_port,
+                remote_port,
+                timeout=remaining_timeout,
+                kubeconfig=kubeconfig,
+                kube_context=kube_context,
+            )
+    # Unreachable: loop either returns or raises.
+    return proc, actual_port
+
+
 async def start_port_forward(
     namespace: str,
     pod_name: str,
@@ -241,51 +305,19 @@ async def start_port_forward(
         kube_context=kube_context,
     )
 
-    # Optionally verify the API is actually responding (not just that kubectl is forwarding)
     if verify_api:
-        for attempt in range(_API_MAX_RETRIES + 1):
-            elapsed = asyncio.get_running_loop().time() - start_time
-            remaining_timeout = max(timeout - elapsed, 0.0)
-            if remaining_timeout <= 0:
-                await cleanup_port_forward(proc)
-                raise RuntimeError(
-                    f"Port-forward API verification exceeded budget ({timeout}s) "
-                    f"after {attempt} attempts."
-                )
-            try:
-                await asyncio.wait_for(
-                    _wait_for_api_ready(actual_port, proc),
-                    timeout=remaining_timeout,
-                )
-                break
-            except (RuntimeError, asyncio.TimeoutError) as err:
-                # Port-forward died or API did not respond; restart port-forward.
-                await cleanup_port_forward(proc)
-                if attempt >= _API_MAX_RETRIES:
-                    raise RuntimeError(
-                        f"Port-forward failed after {_API_MAX_RETRIES} retries. "
-                        f"The API service may not be listening on port {remote_port}."
-                    ) from err
-                print_info(
-                    f"API not ready, restarting port-forward... "
-                    f"({attempt + 1}/{_API_MAX_RETRIES})"
-                )
-                await asyncio.sleep(_API_RETRY_DELAY)
-                elapsed = asyncio.get_running_loop().time() - start_time
-                remaining_timeout = max(timeout - elapsed, 0.0)
-                if remaining_timeout <= 0:
-                    raise RuntimeError(
-                        f"Port-forward API verification exceeded budget ({timeout}s)."
-                    ) from err
-                proc, actual_port = await _start_port_forward_process(
-                    namespace,
-                    pod_name,
-                    local_port,
-                    remote_port,
-                    timeout=remaining_timeout,
-                    kubeconfig=kubeconfig,
-                    kube_context=kube_context,
-                )
+        proc, actual_port = await _verify_api_with_retries(
+            proc,
+            actual_port,
+            namespace=namespace,
+            pod_name=pod_name,
+            local_port=local_port,
+            remote_port=remote_port,
+            timeout=timeout,
+            start_time=start_time,
+            kubeconfig=kubeconfig,
+            kube_context=kube_context,
+        )
 
     return proc, actual_port
 
@@ -369,122 +401,6 @@ async def _wait_for_port_forward_ready(
         match = re.search(r"Forwarding from 127\.0\.0\.1:(\d+)", line_str)
         if match:
             return int(match.group(1))
-
-
-async def _consume_ws_messages(
-    ws: aiohttp.ClientWebSocketResponse,
-    on_message: Callable[[dict], Awaitable[bool]],
-) -> bool:
-    """Iterate a WebSocket's frames, returning True if streaming should end.
-
-    Returns:
-        True on graceful completion (``on_message`` requested stop, or server
-        closed the connection). False on transport error signalling a reconnect.
-    """
-    async for msg in ws:
-        if msg.type == aiohttp.WSMsgType.TEXT:
-            data = orjson.loads(msg.data)
-            should_stop = await on_message(data)
-            if should_stop:
-                return True
-        elif msg.type == aiohttp.WSMsgType.ERROR:
-            return False  # Reconnect
-        elif msg.type == aiohttp.WSMsgType.CLOSED:
-            return True  # Server closed
-    return False
-
-
-async def stream_progress_from_api(
-    ws_url: str,
-    on_message: Callable[[dict], Awaitable[bool]],
-    message_types: list[str],
-    max_retries: int = 10,
-) -> None:
-    """Stream progress messages from the controller API WebSocket with auto-reconnection.
-
-    Opens a WebSocket to ``ws_url``, sends a ``{"type": "subscribe",
-    "message_types": [...]}`` frame, then invokes ``on_message`` for every
-    received text frame. On network error or timeout the connection is
-    retried with exponential backoff up to ``max_retries`` attempts.
-
-    The ``on_message`` callback receives a decoded message dict. Its return
-    value is load-bearing: returning ``True`` stops streaming (graceful
-    completion); returning ``False`` continues receiving.
-
-    Message dicts carry a ``"type"`` field drawn from the controller's
-    progress protocol. Common values include:
-      - ``"subscribed"`` — initial subscription ack.
-      - ``"realtime_metrics"`` — periodic metric snapshots.
-      - ``"progress"`` — credit/phase progress updates.
-      - ``"benchmark_complete"`` — terminal marker; callers typically stop here.
-      - ``"error"`` — controller-reported error payload.
-
-    Args:
-        ws_url: WebSocket URL, e.g. ``"ws://localhost:9090/ws"``.
-        on_message: Async callback invoked per received message dict.
-            Return ``True`` to stop streaming, ``False`` to continue.
-        message_types: List of message-type strings to subscribe to.
-        max_retries: Maximum reconnection attempts on transport errors.
-
-    Raises:
-        ConnectionError: Transport failed after ``max_retries`` attempts.
-            The original ``aiohttp.ClientError`` / ``asyncio.TimeoutError``
-            is preserved as ``__cause__``.
-
-    Example:
-        >>> async def on_msg(msg: dict) -> bool:
-        ...     if msg["type"] == "realtime_metrics":
-        ...         print(msg.get("rps"), msg.get("p99_ms"))
-        ...     return msg["type"] == "benchmark_complete"
-        >>> await stream_progress_from_api(
-        ...     "ws://localhost:9090/ws",
-        ...     on_msg,
-        ...     message_types=["realtime_metrics", "progress", "benchmark_complete"],
-        ... )
-    """
-    from aiperf.transports.aiohttp_client import create_tcp_connector
-
-    retry_count = 0
-    backoff = _WS_INITIAL_BACKOFF
-    max_backoff = _WS_MAX_BACKOFF
-
-    while retry_count < max_retries:
-        try:
-            connector = create_tcp_connector()
-            async with (
-                aiohttp.ClientSession(connector=connector) as session,
-                session.ws_connect(ws_url, heartbeat=_WS_HEARTBEAT) as ws,
-            ):
-                # Subscribe to message types
-                await ws.send_json(
-                    {"type": "subscribe", "message_types": message_types}
-                )
-
-                # Wait for subscription confirmation
-                sub_msg = await ws.receive_json()
-                if sub_msg.get("type") == "subscribed":
-                    retry_count = 0  # Reset retry count on success
-                    backoff = _WS_INITIAL_BACKOFF  # Reset backoff for next reconnect
-
-                if await _consume_ws_messages(ws, on_message):
-                    return
-
-        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            retry_count += 1
-            if retry_count >= max_retries:
-                msg = (
-                    f"Failed to connect to API after {max_retries} attempts. "
-                    "The controller pod may not be running or "
-                    "API service may be unavailable."
-                )
-                raise ConnectionError(msg) from exc
-
-            print_info(
-                f"Connection lost, retrying in {backoff:.1f}s... "
-                f"({retry_count}/{max_retries})"
-            )
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, max_backoff)
 
 
 async def cleanup_port_forward(

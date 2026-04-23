@@ -44,7 +44,7 @@ spec:
   image: "nvcr.io/nvidia/aiperf:latest"
 
   # Pod resource mode
-  resourceMode: guaranteed       # or "none" to omit CPU/memory requests+limits
+  resourceMode: guaranteed       # "guaranteed", "burstable", or "none"
 
   # Worker scaling
   connectionsPerWorker: 100       # max concurrent connections per worker process
@@ -96,7 +96,7 @@ The `benchmark` section mirrors the standard AIPerf YAML config. Any field you u
 | `models` | list[string] | Model name(s) served by the endpoint |
 | `endpoint.urls` | list[string] | Inference server URLs |
 | `endpoint.streaming` | bool | Enable streaming responses |
-| `endpoint.type` | string | Endpoint type (default: `openai_chat`) |
+| `endpoint.type` | string | Endpoint type (default: `chat`) |
 | `datasets` | map | Named dataset configurations |
 | `phases` | map | Named load phases (warmup, profiling, etc.) |
 
@@ -121,7 +121,7 @@ phases:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `type` | string | required | Load type: `concurrency`, `throughput`, or `rate` |
+| `type` | string | required | Load type: `concurrency`, `constant`, `poisson`, `gamma`, `user_centric`, or `fixed_schedule` |
 | `concurrency` | int | - | Number of concurrent requests |
 | `requests` | int | - | Total requests to send |
 | `duration` | float | - | Phase duration in seconds (alternative to `requests`) |
@@ -133,7 +133,7 @@ phases:
 |-------|------|---------|-------------|
 | `image` | string | required | AIPerf container image |
 | `imagePullPolicy` | string | - | `Always`, `IfNotPresent`, or `Never` (Helm default: `IfNotPresent`) |
-| `resourceMode` | string | `guaranteed` | Pod CPU/memory mode. `guaranteed` keeps requests==limits; `none` omits CPU/memory requests and limits for both controller and worker pods. |
+| `resourceMode` | string | `guaranteed` | Pod CPU/memory mode. `guaranteed` keeps requests==limits (Guaranteed QoS); `burstable` sets requests only, no limits (Burstable QoS); `none` omits CPU/memory requests and limits for both controller and worker pods. |
 | `connectionsPerWorker` | int | 100 | Max concurrent connections per worker process |
 | `ttlSecondsAfterFinished` | int | 300 | Seconds to keep pods after completion |
 | `timeoutSeconds` | int | 0 | Benchmark timeout in seconds (0 = no timeout) |
@@ -206,7 +206,8 @@ operator:
   replicas: 1
   resources:
     requests: { cpu: 250m, memory: 256Mi }
-    limits: { cpu: 500m, memory: 512Mi }
+    # No limits set by default (burstable QoS) so the operator can scale
+    # memory/CPU with high-concurrency runs.
   env:
     monitorInterval: "10.0"         # seconds between status checks
     monitorInitialDelay: "5.0"      # delay before first status check
@@ -225,7 +226,7 @@ Results are stored on a PVC so they survive pod deletion:
 
 ```yaml
 storage:
-  enabled: true
+  enabled: false
   size: 1Ti
   storageClassName: ""    # empty = cluster default
   accessMode: "ReadWriteOnce"
@@ -233,14 +234,14 @@ storage:
 
 ### Results Server
 
-A sidecar that serves stored results via HTTP (used by `aiperf kube results --from-operator`):
+A sidecar that serves stored results via HTTP (used by `aiperf kube results` by default):
 
 ```yaml
 resultsServer:
   port: 8081
   resources:
-    requests: { cpu: 100m, memory: 128Mi }
-    limits: { cpu: 250m, memory: 256Mi }
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { cpu: 500m, memory: 1Gi }
 ```
 
 ### Benchmark Namespace

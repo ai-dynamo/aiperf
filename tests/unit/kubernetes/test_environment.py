@@ -11,9 +11,9 @@ from aiperf.kubernetes.environment import (
     K8sEnvironment,
     _HealthProbeSettings,
     _JobSetSettings,
+    _K8sZMQSettings,
     _PortSettings,
     _resource_settings,
-    _ZMQSettings,
 )
 
 
@@ -402,7 +402,7 @@ class TestEnvironmentVariableOverrides:
         monkeypatch.setenv("AIPERF_K8S_ZMQ_CONTROLLER_HOST", "controller.default.svc")
         monkeypatch.setenv("AIPERF_K8S_ZMQ_IPC_PATH", "/tmp/zmq")
 
-        settings = _ZMQSettings()
+        settings = _K8sZMQSettings()
         assert settings.CONTROLLER_HOST == "controller.default.svc"
         assert settings.IPC_PATH == "/tmp/zmq"
 

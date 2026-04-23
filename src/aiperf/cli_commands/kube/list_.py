@@ -77,13 +77,36 @@ async def list_jobs(
         # Get status of a specific job
         aiperf kube list abc123
     """
-    import asyncio
-
     from aiperf import cli_utils
     from aiperf.kubernetes import client as kube_client_mod
-    from aiperf.kubernetes import console as kube_console
 
     manage_options = manage_options or KubeManageOptions()
+    status_filter = _resolve_status_filter(
+        running=running, completed=completed, failed=failed
+    )
+    search_all = all_namespaces and manage_options.namespace is None
+
+    with cli_utils.exit_on_error(title="Error Listing Kubernetes Jobs"):
+        async with kube_client_mod.k8s_client(
+            kubeconfig=manage_options.kubeconfig,
+            context=manage_options.kube_context,
+        ) as api:
+            await _run_list_loop(
+                api,
+                manage_options=manage_options,
+                search_all=search_all,
+                status_filter=status_filter,
+                job_id=job_id,
+                wide=wide,
+                watch=watch,
+                interval=interval,
+            )
+
+
+def _resolve_status_filter(
+    *, running: bool, completed: bool, failed: bool
+) -> str | None:
+    from aiperf.kubernetes import console as kube_console
 
     active_filters = [
         ("Running", running),
@@ -96,44 +119,51 @@ async def list_jobs(
             f"Only one status filter can be used at a time, got: {', '.join(f'--{s.lower()}' for s in selected)}"
         )
         raise SystemExit(1)
-    status_filter = selected[0] if selected else None
+    return selected[0] if selected else None
 
-    search_all = all_namespaces and manage_options.namespace is None
 
-    with cli_utils.exit_on_error(title="Error Listing Kubernetes Jobs"):
-        async with kube_client_mod.k8s_client(
-            kubeconfig=manage_options.kubeconfig,
-            context=manage_options.kube_context,
-        ) as api:
-            while True:
-                jobs = await _fetch_jobs(
-                    api,
-                    manage_options=manage_options,
-                    search_all=search_all,
-                    status_filter=status_filter,
-                    job_id=job_id,
-                )
+async def _run_list_loop(
+    api: object,
+    *,
+    manage_options: KubeManageOptions,
+    search_all: bool,
+    status_filter: str | None,
+    job_id: str | None,
+    wide: bool,
+    watch: bool,
+    interval: int,
+) -> None:
+    import asyncio
 
-                if not jobs:
-                    filter_msg = (
-                        f" with phase '{status_filter}'" if status_filter else ""
-                    )
-                    kube_console.print_info(f"No AIPerf jobs found{filter_msg}")
-                    if not watch:
-                        return
-                else:
-                    if watch:
-                        # Clear screen for live refresh
-                        print("\033[2J\033[H", end="", flush=True)
-                    kube_console.print_aiperfjob_table(jobs, wide=wide)
+    from aiperf.kubernetes import console as kube_console
 
-                if not watch:
-                    return
+    while True:
+        jobs = await _fetch_jobs(
+            api,
+            manage_options=manage_options,
+            search_all=search_all,
+            status_filter=status_filter,
+            job_id=job_id,
+        )
 
-                try:
-                    await asyncio.sleep(interval)
-                except (KeyboardInterrupt, asyncio.CancelledError):
-                    return
+        if not jobs:
+            filter_msg = f" with phase '{status_filter}'" if status_filter else ""
+            kube_console.print_info(f"No AIPerf jobs found{filter_msg}")
+            if not watch:
+                return
+        else:
+            if watch:
+                # Clear screen for live refresh
+                print("\033[2J\033[H", end="", flush=True)
+            kube_console.print_aiperfjob_table(jobs, wide=wide)
+
+        if not watch:
+            return
+
+        try:
+            await asyncio.sleep(interval)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            return
 
 
 async def _fetch_jobs(
