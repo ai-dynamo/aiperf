@@ -42,6 +42,11 @@ _watchdog_state: dict = {
 # Exposed as a module attribute so tests can monkeypatch it cleanly.
 _watchdog_kill_action: Callable[[str, int, int], None] | None = None
 
+# Per-test RSS tracker for --memory-report. nodeid -> {start, peak, end} in
+# bytes. Populated by the hookwrapper and watchdog loop; summarized in
+# pytest_terminal_summary.
+_per_test_rss: dict[str, dict[str, int | None]] = {}
+
 # Path prefix -> markers to auto-enable (remove from default exclusions).
 # When a user targets a path starting with the prefix, the listed markers are
 # stripped from the ``-m 'not X and not Y ...'`` expression in addopts so the
@@ -157,9 +162,12 @@ def _watchdog_loop() -> None:
         rss = _read_rss_bytes()
         if rss is None:
             continue
+        nodeid = _watchdog_state["nodeid"] or "<unknown>"
+        entry = _per_test_rss.get(nodeid)
+        if entry is not None and (entry["peak"] is None or rss > entry["peak"]):
+            entry["peak"] = rss
         threshold = _watchdog_state["threshold_bytes"]
         if rss > threshold:
-            nodeid = _watchdog_state["nodeid"] or "<unknown>"
             # Deactivate before killing so test overrides (which swap
             # _watchdog_kill_action) don't re-trigger on the next tick.
             _watchdog_state["active"] = False
@@ -206,6 +214,12 @@ def pytest_runtest_call(item: pytest.Item):
     if threshold_mb is None:
         yield
         return
+    rss_start = _read_rss_bytes()
+    _per_test_rss[item.nodeid] = {
+        "start": rss_start,
+        "peak": rss_start,
+        "end": None,
+    }
     _watchdog_state["threshold_bytes"] = threshold_mb * 1024 * 1024
     _watchdog_state["nodeid"] = item.nodeid
     _watchdog_state["active"] = True
@@ -214,3 +228,85 @@ def pytest_runtest_call(item: pytest.Item):
     finally:
         _watchdog_state["active"] = False
         _watchdog_state["nodeid"] = None
+        rss_end = _read_rss_bytes()
+        entry = _per_test_rss[item.nodeid]
+        entry["end"] = rss_end
+        if rss_end is not None and (entry["peak"] is None or rss_end > entry["peak"]):
+            entry["peak"] = rss_end
+        # Forward RSS data to the controller via user_properties so that
+        # pytest_terminal_summary (which only runs in the controller under
+        # xdist) can read it from the test report.
+        item.user_properties.append(
+            (
+                "memory_rss",
+                {
+                    "start": entry["start"],
+                    "peak": entry["peak"],
+                    "end": entry["end"],
+                },
+            )
+        )
+
+
+# Controller-side aggregation of RSS data forwarded via user_properties.
+_collected_rss: dict[str, dict[str, int | None]] = {}
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    if report.when != "call":
+        return
+    for name, value in report.user_properties:
+        if name == "memory_rss":
+            _collected_rss[report.nodeid] = value
+            break
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--memory-report",
+        action="store_true",
+        default=False,
+        help=(
+            "Print per-test peak RSS and start->end delta at end of session "
+            "(guarded suites only: tests/unit/, tests/component_integration/)."
+        ),
+    )
+    parser.addoption(
+        "--memory-report-top",
+        type=int,
+        default=25,
+        help="Number of tests to include in --memory-report (sorted by peak RSS). Default 25.",
+    )
+
+
+def pytest_terminal_summary(
+    terminalreporter, exitstatus: int, config: pytest.Config
+) -> None:
+    if not config.getoption("--memory-report"):
+        return
+    if not _collected_rss:
+        return
+    top_n = config.getoption("--memory-report-top")
+    rows = sorted(
+        _collected_rss.items(),
+        key=lambda kv: (kv[1]["peak"] or 0),
+        reverse=True,
+    )[:top_n]
+    mib = 1024 * 1024
+    terminalreporter.section(f"memory report (top {len(rows)} by peak RSS)")
+    terminalreporter.write_line(
+        f"  {'peak':>8}  {'delta':>8}  {'start':>8}  {'end':>8}  test"
+    )
+    for nodeid, entry in rows:
+        start = entry["start"] or 0
+        peak = entry["peak"] or 0
+        end = entry["end"] or 0
+        delta = (
+            (end - start)
+            if (entry["start"] is not None and entry["end"] is not None)
+            else 0
+        )
+        terminalreporter.write_line(
+            f"  {peak // mib:>5d}MiB  {delta // mib:>+5d}MiB  "
+            f"{start // mib:>5d}MiB  {end // mib:>5d}MiB  {nodeid}"
+        )
