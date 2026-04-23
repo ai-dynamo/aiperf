@@ -68,9 +68,7 @@ async def test_dashboard_shows_running_kpi(
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_dashboard_empty_state(
-    live_operator_app, fake_k8s_client, page
-) -> None:
+async def test_dashboard_empty_state(live_operator_app, fake_k8s_client, page) -> None:
     """Empty ``results_dir`` still renders the dashboard without crashing.
 
     Running / Completed KPIs remain populated from the k8s fixture; the
@@ -104,3 +102,50 @@ async def test_dashboard_renders_top_nav_and_breadcrumb(
     await dash.goto()
     await expect(page.get_by_test_id("top-nav")).to_be_visible()
     await expect(page.get_by_test_id("breadcrumb")).to_be_visible()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_dashboard_hero_visible_for_running_job(
+    live_operator_app,
+    seeded_results_dir,
+    fake_k8s_client,
+    page,
+) -> None:
+    """HeroStrip appears on the dashboard when a running CR exists.
+
+    The golden ``jobs.json`` carries a single ``live-run`` CR in phase
+    ``Running``; the dashboard should mount a ``dashboard-hero`` wrapper
+    whose text at least references the running job's name.
+
+    We drop a minimal ``job_spec.json`` for ``live-run`` so the hero's
+    config fetch returns 200 (otherwise Chrome logs the 404 as
+    ``console.error`` and the ``page`` fixture fails teardown).
+    """
+    import orjson
+
+    live_dir = live_operator_app.results_dir / "aiperf-bench" / "live-run"
+    live_dir.mkdir(parents=True, exist_ok=True)
+    (live_dir / "job_spec.json").write_bytes(orjson.dumps({"benchmark": {}}))
+
+    dash = DashboardPage(page, live_operator_app.base_url)
+    await dash.goto()
+    hero = page.get_by_test_id("dashboard-hero")
+    await expect(hero).to_be_visible()
+    await expect(hero).to_contain_text("live-run")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_dashboard_hero_absent_when_no_running_job(
+    live_operator_app,
+    fake_k8s_client,
+    page,
+) -> None:
+    """With no Running CR and an empty results tree, no hero is rendered."""
+    fake_k8s_client.jobs_raw = [
+        j for j in fake_k8s_client.jobs_raw if j["status"].get("phase") != "Running"
+    ]
+    build_empty(live_operator_app.results_dir)
+    dash = DashboardPage(page, live_operator_app.base_url)
+    await dash.goto()
+    hero = page.get_by_test_id("dashboard-hero")
+    await expect(hero).to_have_count(0)

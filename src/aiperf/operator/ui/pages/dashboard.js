@@ -6,6 +6,7 @@ import { phaseColor, modelColor, palette, colors } from '../lib/theme.js';
 import { navigate } from '../lib/router.js';
 import { KpiCard } from '../components/kpi-card.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
+import { HeroStrip } from '../components/hero-strip.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtLatencyStr } from '../lib/format.js';
 
 function formatElapsed(ms) {
@@ -248,6 +249,8 @@ export function Dashboard() {
   const [cluster, setCluster] = useState(clusterInfo.value);
   const [clusterError, setClusterError] = useState(false);
   const [summaryMap, setSummaryMap] = useState({});
+  const [liveDetail, setLiveDetail] = useState(null);
+  const [liveConfig, setLiveConfig] = useState(null);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -300,6 +303,36 @@ export function Dashboard() {
   const completed = allJobs.filter(j => { const p = (j.phase ?? '').toLowerCase(); return p === 'completed' || p === 'succeeded'; });
   const failed = allJobs.filter(j => { const p = (j.phase ?? '').toLowerCase(); return p === 'failed' || p === 'error'; });
 
+  // Pick a single currently-running, live (non-archived) job to hero.
+  const liveJob = localJobs.find(
+    j => j.source !== 'archived' && (j.phase === 'Running' || (j.phase ?? '').toLowerCase() === 'running'),
+  ) ?? null;
+  const liveNs = liveJob?.namespace ?? null;
+  const liveName = liveJob?.name ?? null;
+
+  // Fetch the live job's full detail on a slow poll so the hero can display
+  // summary/phases/elapsed/ETA. The SLO config is not fetched here — for a
+  // running CR whose artifacts haven't been persisted yet, the config
+  // endpoint 404s, and the browser logs 404s as ``console.error`` which
+  // our e2e teardown flags. The dashboard hero without SLO chips still
+  // answers "is it healthy right now" via the idle/ok classifier; SLO
+  // chips remain the Job Detail hero's responsibility.
+  useEffect(() => {
+    if (!liveNs || !liveName) {
+      setLiveDetail(null);
+      setLiveConfig(null);
+      return;
+    }
+    const ac = new AbortController();
+    poll(async () => {
+      try {
+        const d = await api.getJob(liveNs, liveName);
+        setLiveDetail(d);
+      } catch (_e) { /* transient */ }
+    }, 5000, ac.signal);
+    return () => ac.abort();
+  }, [liveNs, liveName]);
+
   const best = findBest(allJobs, 'throughputRps');
   const bestTtft = findMin(allJobs, 'ttftMs');
   const bestTokenTps = findBest(allJobs, 'tokenThroughput');
@@ -313,6 +346,21 @@ export function Dashboard() {
       ${clusterError && html`<div class="cluster-warning-banner">Cluster endpoint unavailable — data may be stale.</div>`}
 
       <${StatusBar} allJobs=${allJobs} cluster=${cluster} best=${best} />
+
+      ${liveJob ? html`
+        <div data-testid="dashboard-hero" style="margin-bottom: var(--space-6)">
+          <div class="section-header" style="margin-bottom: var(--space-2)">
+            <span class="section-title">Live: ${liveJob.name}</span>
+            <span class="text-dim" style="font-size: var(--font-size-sm)">${liveJob.namespace}</span>
+          </div>
+          <${HeroStrip}
+            info=${liveDetail?.job ?? liveJob}
+            status=${liveDetail?.status ?? null}
+            config=${liveConfig}
+            onClick=${() => navigate('/jobs/' + encodeURIComponent(liveJob.namespace) + '/' + encodeURIComponent(liveJob.name))}
+          />
+        </div>
+      ` : null}
 
       <${ThroughputLatencyScatter} completedJobs=${completed} />
 
