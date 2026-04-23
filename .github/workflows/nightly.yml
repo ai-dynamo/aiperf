@@ -583,13 +583,17 @@ jobs:
             "s3://${S3_BUCKET}/aiperf/nightly/${WHEEL_VERSION}/${WHEEL_FILENAME}" \
             "${TMPDIR}/${WHEEL_FILENAME}"
 
+          # Artifactory PyPI deploy URL: <repo-base>/nightly. ARTIFACTORY_URL
+          # secret holds the repo base (…/api/pypi/<repo>); the sub-path is
+          # appended here so rc.yml can use the same base with /release.
+          REPOSITORY_URL="${ARTIFACTORY_URL%/}/nightly"
           TWINE_NON_INTERACTIVE=1 uvx twine upload \
-            --repository-url "${ARTIFACTORY_URL}" \
+            --repository-url "${REPOSITORY_URL}" \
             --username        "${ARTIFACTORY_USER}" \
             --password        "${ARTIFACTORY_TOKEN}" \
             --disable-progress-bar \
             "${TMPDIR}/${WHEEL_FILENAME}"
-          echo "Wheel staged to Artifactory: ${WHEEL_VERSION}"
+          echo "Wheel staged to Artifactory: ${REPOSITORY_URL}/${WHEEL_FILENAME}"
 
   # ============================================================================
   # PHASE 6: TRIGGER GITLAB SECURITY SCAN

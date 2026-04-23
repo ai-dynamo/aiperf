@@ -481,12 +481,17 @@ jobs:
           aws s3 cp \
             "s3://${S3_BUCKET}/aiperf/rc/${WHEEL_VERSION}/${WHEEL_FILENAME}" \
             "${TMPDIR}/${WHEEL_FILENAME}"
+          # Artifactory PyPI deploy URL: <repo-base>/release. ARTIFACTORY_URL
+          # secret holds the repo base (…/api/pypi/<repo>); the sub-path is
+          # appended here so nightly.yml can use the same base with /nightly.
+          REPOSITORY_URL="${ARTIFACTORY_URL%/}/release"
           uvx twine upload \
-            --repository-url "${ARTIFACTORY_URL}" \
+            --repository-url "${REPOSITORY_URL}" \
             --username "${ARTIFACTORY_USER}" \
             --password "${ARTIFACTORY_TOKEN}" \
             --disable-progress-bar \
             "${TMPDIR}/${WHEEL_FILENAME}"
+          echo "Wheel staged to Artifactory: ${REPOSITORY_URL}/${WHEEL_FILENAME}"
 
   # ============================================================================
   # TRIGGER GITLAB RELEASE AUTOMATION
