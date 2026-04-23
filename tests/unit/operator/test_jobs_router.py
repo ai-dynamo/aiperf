@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import orjson
 import pytest
 from httpx import ASGITransport, AsyncClient
 from kubernetes_asyncio.client.exceptions import ApiException
@@ -13,13 +15,13 @@ from kubernetes_asyncio.client.exceptions import ApiException
 from aiperf.operator.routers.jobs import create_jobs_router
 
 
-def _make_app(api=None):
+def _make_app(api=None, results_dir: Path | None = None):
     """Create a minimal FastAPI app with the jobs router for testing."""
     from fastapi import FastAPI
 
     app = FastAPI()
     holder = [api]
-    router = create_jobs_router(holder)
+    router = create_jobs_router(holder, results_dir or Path("/tmp/aiperf-test-empty"))
     app.include_router(router)
     return app
 
@@ -200,7 +202,11 @@ class TestCancel:
     async def test_cancel_job(self):
         mock_api = MagicMock()
         mock_patch = AsyncMock(return_value={})
-        mock_custom = MagicMock(patch_namespaced_custom_object=mock_patch)
+        mock_get = AsyncMock(return_value=_aiperf_job_cr())
+        mock_custom = MagicMock(
+            patch_namespaced_custom_object=mock_patch,
+            get_namespaced_custom_object=mock_get,
+        )
         app = _make_app(mock_api)
 
         with patch(
@@ -221,3 +227,75 @@ class TestCancel:
         assert kwargs["body"] == {"spec": {"cancel": True}}
         assert kwargs["namespace"] == "aiperf-benchmarks"
         assert kwargs["name"] == "test-bench"
+
+    @pytest.mark.asyncio
+    async def test_cancel_archived_job_returns_400(self, tmp_path: Path):
+        """Archived (PVC-only) jobs cannot be cancelled — should return 400."""
+        from fastapi import FastAPI
+
+        d = tmp_path / "ns" / "ghost"
+        d.mkdir(parents=True)
+        (d / "profile_export_aiperf.json").write_bytes(
+            orjson.dumps({"status": "Succeeded"})
+        )
+
+        mock_api = MagicMock()
+        mock_custom = MagicMock()
+        # No CR for this job — 404 on direct lookup, empty on cluster scan
+        mock_custom.get_namespaced_custom_object = AsyncMock(
+            side_effect=ApiException(status=404)
+        )
+        mock_custom.list_cluster_custom_object = AsyncMock(return_value={"items": []})
+
+        app = FastAPI()
+        app.include_router(create_jobs_router([mock_api], tmp_path))
+
+        with patch(
+            "aiperf.kubernetes.client.client.CustomObjectsApi",
+            return_value=mock_custom,
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post("/api/v1/jobs/ns/ghost/cancel")
+
+        assert resp.status_code == 400
+        assert "archived" in resp.text.lower()
+
+
+def test_list_jobs_includes_archived_only_entry(tmp_path: Path, monkeypatch):
+    """GET /api/v1/jobs returns a PVC-only entry when no CR exists for it."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from aiperf.operator import job_union as ju
+    from aiperf.operator.routers.jobs import create_jobs_router
+
+    d = tmp_path / "aiperf-bench" / "archive-only"
+    d.mkdir(parents=True)
+    (d / "profile_export_aiperf.json").write_bytes(
+        orjson.dumps(
+            {
+                "status": "Succeeded",
+                "request_throughput": {"avg": 50.0, "unit": "requests/sec"},
+            }
+        )
+    )
+
+    async def fake_list(api, *, all_namespaces=True, namespace=None, **_):
+        return []
+
+    monkeypatch.setattr(ju, "list_aiperf_jobs", fake_list)
+
+    api_holder = [object()]
+    router = create_jobs_router(api_holder, tmp_path)
+
+    app = FastAPI()
+    app.include_router(router)
+    with TestClient(app) as client:
+        resp = client.get("/api/v1/jobs")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    names = {j["name"]: j for j in body["jobs"]}
+    assert "archive-only" in names
+    assert names["archive-only"]["source"] == "archived"

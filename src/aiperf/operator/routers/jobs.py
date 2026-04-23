@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
@@ -17,11 +18,10 @@ from aiperf.common.models import AIPerfBaseModel
 from aiperf.kubernetes.client import (
     cancel_aiperf_job,
     cluster_version,
-    find_aiperf_job,
     get_pods,
     get_raw_aiperfjob_status,
-    list_aiperf_jobs,
 )
+from aiperf.operator.job_union import find_any_job, list_all_jobs
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client.models import V1Node, V1Pod
@@ -128,46 +128,64 @@ class CancelResponse(AIPerfBaseModel):
     cancelled: bool = Field(description="Whether cancellation was requested.")
 
 
-async def _list_jobs_impl(api: ApiClient) -> ActiveJobListResponse:
-    """Body of GET /api/v1/jobs: list every active AIPerfJob CR across all namespaces.
+async def _list_jobs_impl(api: ApiClient, results_dir: Path) -> ActiveJobListResponse:
+    """Body of GET /api/v1/jobs: union of active CRs + archived PVC directories.
 
-    Queries the ``aiperf.nvidia.com`` CRD via the Kubernetes API and returns the
-    summary fields (name, namespace, phase, timestamps) for each CR. The result
-    reflects the current CR inventory - it does NOT include completed jobs whose
-    CRs have been garbage-collected; for historical runs see ``GET
-    /api/v1/results`` on the results server.
+    Returns the unified view from :func:`aiperf.operator.job_union.list_all_jobs`:
+    live CRs (``source="live"``), PVC-only historical runs (``source="archived"``),
+    and CRs that also have a persisted summary (``source="both"``). Keyed by
+    ``(namespace, name)``; overlap entries prefer CR values on live fields and
+    backfill from PVC on historical-only fields.
 
     Raises:
         HTTPException: Any non-404 ``kubernetes_asyncio.client.ApiException``
-            status code is surfaced verbatim (e.g. 401/403 on RBAC denial).
+            status code from the CR half is surfaced verbatim (e.g. 401/403 on
+            RBAC denial). The PVC half is tolerant and falls back to an empty
+            list on filesystem errors.
     """
-    jobs = await list_aiperf_jobs(api, all_namespaces=True)
+    jobs = await list_all_jobs(api, results_dir, all_namespaces=True)
     return ActiveJobListResponse(jobs=[j.model_dump(by_alias=True) for j in jobs])
 
 
-async def _get_job_impl(api: ApiClient, namespace: str, name: str) -> JobDetailResponse:
+async def _get_job_impl(
+    api: ApiClient,
+    results_dir: Path,
+    namespace: str,
+    name: str,
+) -> JobDetailResponse:
     """Body of GET /api/v1/jobs/{namespace}/{name}: fetch a CR plus its pod roster.
 
-    Returns three things joined into one response: (1) the AIPerfJob CR summary
+    Returns three things joined into one response: (1) the AIPerfJob summary
     (same shape as ``list_jobs``), (2) the raw CR ``.status`` subresource
     (phase, conditions, liveMetrics), and (3) the current pod list filtered by
     the ``aiperf.nvidia.com/job-id=<name>`` label selector.
 
+    Archived (PVC-only) jobs have no cluster CR, so the response returns an
+    empty ``status`` dict and empty ``pods`` list alongside the archived job
+    summary.
+
     Args:
         api: The kubernetes_asyncio ApiClient.
-        namespace: Kubernetes namespace containing the AIPerfJob CR.
+        results_dir: Base directory on the results PVC.
+        namespace: Kubernetes namespace containing the AIPerfJob CR or PVC dir.
         name: Name of the AIPerfJob CR (also the label value matched when
-            listing pods).
+            listing pods, and the PVC subdirectory name).
 
     Raises:
-        HTTPException: 404 if no AIPerfJob named ``name`` exists in
-            ``namespace``.
+        HTTPException: 404 if neither a live CR nor a PVC directory exists.
         HTTPException: Other ``kubernetes_asyncio.client.ApiException`` status
             codes propagate (e.g. 401/403 on RBAC denial).
     """
-    job = await find_aiperf_job(api, name, namespace)
-    if not job:
+    job = await find_any_job(api, results_dir, namespace, name)
+    if job is None:
         raise HTTPException(404, f"Job {namespace}/{name} not found")
+
+    if job.source == "archived":
+        return JobDetailResponse(
+            job=job.model_dump(by_alias=True),
+            status={},
+            pods=[],
+        )
 
     raw_status = await get_raw_aiperfjob_status(api, name, namespace)
     pods_raw = await get_pods(api, namespace, f"aiperf.nvidia.com/job-id={name}")
@@ -178,7 +196,12 @@ async def _get_job_impl(api: ApiClient, namespace: str, name: str) -> JobDetailR
     )
 
 
-async def _cancel_job_impl(api: ApiClient, namespace: str, name: str) -> CancelResponse:
+async def _cancel_job_impl(
+    api: ApiClient,
+    results_dir: Path,
+    namespace: str,
+    name: str,
+) -> CancelResponse:
     """Body of POST /api/v1/jobs/{namespace}/{name}/cancel: set ``spec.cancel=true``.
 
     This endpoint is *asynchronous*: it patches the AIPerfJob CR's
@@ -189,18 +212,32 @@ async def _cancel_job_impl(api: ApiClient, namespace: str, name: str) -> CancelR
     observe the terminal phase should poll ``get_job`` until ``status.phase``
     becomes ``Cancelled``/``Failed``/``Succeeded``.
 
+    Archived (PVC-only) jobs cannot be cancelled — their Kubernetes resource no
+    longer exists — so the endpoint returns 400 instead of attempting the patch.
+
     Args:
         api: The kubernetes_asyncio ApiClient.
+        results_dir: Base directory on the results PVC (used to detect
+            archived-only jobs that have no CR to cancel).
         namespace: Kubernetes namespace containing the AIPerfJob CR.
         name: Name of the AIPerfJob CR to cancel.
 
     Raises:
-        HTTPException: 404 if the CR does not exist (surfaced from the
-            underlying ``kubernetes_asyncio`` patch call).
+        HTTPException: 404 if neither a live CR nor a PVC directory exists.
+        HTTPException: 400 if the job is archived-only (no CR on the cluster).
         HTTPException: Other ``kubernetes_asyncio.client.ApiException`` status
             codes propagate (e.g. 401/403 on RBAC denial, 409 on
             concurrent-modification conflicts).
     """
+    job = await find_any_job(api, results_dir, namespace, name)
+    if job is None:
+        raise HTTPException(404, f"Job {namespace}/{name} not found")
+    if job.source == "archived":
+        raise HTTPException(
+            400,
+            f"Cannot cancel archived job {namespace}/{name}: "
+            "the Kubernetes resource no longer exists.",
+        )
     await cancel_aiperf_job(api, name, namespace)
     return CancelResponse(cancelled=True)
 
@@ -225,6 +262,7 @@ async def _cluster_info_impl(api: ApiClient) -> ClusterResponse:
 
 def create_jobs_router(
     api_holder: list[ApiClient | None] | None = None,
+    results_dir: Path | None = None,
 ) -> APIRouter:
     """Create the jobs/cluster API router.
 
@@ -236,27 +274,35 @@ def create_jobs_router(
         api_holder: Mutable single-element list holding the kubernetes_asyncio
             ApiClient. The client is set during app lifespan startup. If the
             list is empty or contains None, endpoints return 503.
+        results_dir: Base directory on the results PVC; passed to the union
+            helpers so ``GET /jobs`` and ``GET /jobs/{ns}/{name}`` can surface
+            archived (CR-deleted) runs alongside live ones.
     """
     _holder = api_holder if api_holder is not None else [None]
+    _results_dir = results_dir if results_dir is not None else Path("/data")
     router = APIRouter(prefix="/api/v1", tags=["jobs"])
 
     def _require_api() -> ApiClient:
         api = _holder[0] if _holder else None
         if api is None:
-            raise HTTPException(503, "Kubernetes API unavailable")
+            raise HTTPException(
+                503,
+                "Kubernetes API client not yet initialized by FastAPI lifespan; "
+                "retry in a few seconds or check /healthz",
+            )
         return api
 
     @router.get("/jobs", response_model=ActiveJobListResponse)
     async def list_jobs() -> ActiveJobListResponse:
-        return await _list_jobs_impl(_require_api())
+        return await _list_jobs_impl(_require_api(), _results_dir)
 
     @router.get("/jobs/{namespace}/{name}", response_model=JobDetailResponse)
     async def get_job(namespace: str, name: str) -> JobDetailResponse:
-        return await _get_job_impl(_require_api(), namespace, name)
+        return await _get_job_impl(_require_api(), _results_dir, namespace, name)
 
     @router.post("/jobs/{namespace}/{name}/cancel", response_model=CancelResponse)
     async def cancel_job(namespace: str, name: str) -> CancelResponse:
-        return await _cancel_job_impl(_require_api(), namespace, name)
+        return await _cancel_job_impl(_require_api(), _results_dir, namespace, name)
 
     @router.get("/cluster", response_model=ClusterResponse)
     async def cluster_info() -> ClusterResponse:

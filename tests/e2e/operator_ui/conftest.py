@@ -296,13 +296,16 @@ def fake_k8s_client(
 
     # Patch both the source module and the router's local re-imports, because
     # the router does ``from aiperf.kubernetes.client import ...`` which binds
-    # the names into its own module namespace.
+    # the names into its own module namespace. Also patch ``job_union`` which
+    # now owns the list_aiperf_jobs/find_aiperf_job callsites for the list+get
+    # endpoints (it produces the unified CR+PVC view consumed by the router).
     import aiperf.kubernetes.client as kc_mod
     import aiperf.kubernetes.client_jobs as kc_jobs_mod
     import aiperf.kubernetes.client_pods as kc_pods_mod
+    import aiperf.operator.job_union as job_union_mod
     import aiperf.operator.routers.jobs as jobs_router
 
-    patch_targets = (kc_mod, kc_jobs_mod, kc_pods_mod, jobs_router)
+    patch_targets = (kc_mod, kc_jobs_mod, kc_pods_mod, jobs_router, job_union_mod)
     for target in patch_targets:
         monkeypatch.setattr(target, "list_aiperf_jobs", _list, raising=False)
         monkeypatch.setattr(target, "find_aiperf_job", _find, raising=False)

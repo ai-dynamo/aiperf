@@ -66,32 +66,17 @@ RESULTS_DIR = Path(os.environ.get("AIPERF_RESULTS_DIR", "/data"))
 SERVER_PORT = int(os.environ.get("AIPERF_RESULTS_SERVER_PORT", "8081"))
 
 
-def create_app(results_dir: Path | None = None) -> FastAPI:
-    """Create the FastAPI application with results and analytics routes.
-
-    Args:
-        results_dir: Base directory for stored results. Defaults to RESULTS_DIR.
-    """
-    from aiperf.operator.results_db import ResultsDB
-
-    base_dir = results_dir or RESULTS_DIR
-    db: ResultsDB | None = None
-
-    # Mutable holder for Kubernetes ApiClient - populated during lifespan,
-    # read by router. Typed as list to match create_jobs_router signature.
+def _build_lifespan(base_dir: Path, api_holder: list, db_holder: list):
+    """Build the FastAPI lifespan context manager for DB + k8s client setup/teardown."""
     from kubernetes_asyncio.client import ApiClient
 
-    api_holder: list[ApiClient | None] = [None]
+    from aiperf.operator.results_db import ResultsDB
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        nonlocal db
-        db = ResultsDB(base_dir)
+        db_holder[0] = ResultsDB(base_dir)
         logger.info(f"DuckDB analytics engine initialized (results_dir={base_dir})")
 
-        # Initialize kubernetes_asyncio client for live job/cluster endpoints.
-        # Load config (in-cluster first, kubeconfig fallback) and build an
-        # ApiClient that lives for the process lifetime.
         try:
             from kubernetes_asyncio import config
 
@@ -116,7 +101,7 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
 
         yield
 
-        db.close()
+        db_holder[0].close()
         logger.info("DuckDB analytics engine closed")
 
         api = api_holder[0]
@@ -127,15 +112,12 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
                 logger.warning(f"Error closing kubernetes_asyncio client: {e}")
             api_holder[0] = None
 
-    app = FastAPI(
-        title="AIPerf Operator Results API",
-        description="Serves benchmark results and analytics from the operator PVC.",
-        version="1.0.0",
-        lifespan=lifespan,
-    )
+    return lifespan
 
-    # Surface kubernetes_asyncio errors verbatim instead of masking them as 500s;
-    # router docstrings document this contract (e.g. RBAC 403 stays 403).
+
+def _register_k8s_exception_handler(app: FastAPI) -> None:
+    """Surface kubernetes_asyncio errors verbatim instead of masking them as 500s."""
+
     @app.exception_handler(ApiException)
     async def _k8s_api_exception_handler(
         request: Request, exc: ApiException
@@ -149,30 +131,9 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
             content={"detail": str(exc.body or exc.reason or "Kubernetes API error")},
         )
 
-    # Register live jobs/cluster router (client populated during lifespan)
-    from aiperf.operator.routers.jobs import create_jobs_router
-    from aiperf.operator.routers.results_analytics import (
-        create_results_analytics_router,
-    )
 
-    app.include_router(create_jobs_router(api_holder))
-    app.include_router(create_results_files_router(base_dir))
-
-    def _get_db() -> ResultsDB:
-        if db is None:
-            raise HTTPException(503, "Analytics engine not initialized")
-        return db
-
-    app.include_router(create_results_analytics_router(_get_db, base_dir))
-
-    @app.get("/healthz")
-    async def healthz() -> dict[str, str]:
-        return {"status": "ok"}
-
-    # Mount the Plotly Dash dashboard at /dashboard/. DashboardProxy is mutable
-    # so the inner WSGI app can be hot-swapped when new runs land on the PVC
-    # without disturbing the outer route. If no runs exist yet, mount a
-    # placeholder that returns 503 until build_dashboard succeeds.
+def _mount_dashboard(app: FastAPI, base_dir: Path) -> None:
+    """Mount the Plotly Dash dashboard at /dashboard/, with a 503 placeholder if no runs yet."""
     dash_app, run_count = build_dashboard(base_dir)
     if dash_app is not None:
         logger.info(
@@ -193,7 +154,51 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
 
     app.mount("/dashboard", WSGIMiddleware(dashboard_proxy))
 
-    # Mount UI static files last (catch-all for SPA routing)
+
+def create_app(results_dir: Path | None = None) -> FastAPI:
+    """Create the FastAPI application with results and analytics routes.
+
+    Args:
+        results_dir: Base directory for stored results. Defaults to RESULTS_DIR.
+    """
+    from kubernetes_asyncio.client import ApiClient
+
+    from aiperf.operator.results_db import ResultsDB
+    from aiperf.operator.routers.jobs import create_jobs_router
+    from aiperf.operator.routers.results_analytics import (
+        create_results_analytics_router,
+    )
+
+    base_dir = results_dir or RESULTS_DIR
+    api_holder: list[ApiClient | None] = [None]
+    db_holder: list[ResultsDB | None] = [None]
+
+    app = FastAPI(
+        title="AIPerf Operator Results API",
+        description="Serves benchmark results and analytics from the operator PVC.",
+        version="1.0.0",
+        lifespan=_build_lifespan(base_dir, api_holder, db_holder),
+    )
+
+    _register_k8s_exception_handler(app)
+
+    app.include_router(create_jobs_router(api_holder, base_dir))
+    app.include_router(create_results_files_router(base_dir))
+
+    def _get_db() -> ResultsDB:
+        db = db_holder[0]
+        if db is None:
+            raise HTTPException(503, "Analytics engine not initialized")
+        return db
+
+    app.include_router(create_results_analytics_router(_get_db, base_dir))
+
+    @app.get("/healthz")
+    async def healthz() -> dict[str, str]:
+        return {"status": "ok"}
+
+    _mount_dashboard(app, base_dir)
+
     ui_dir = Path(__file__).parent / "ui"
     if ui_dir.is_dir():
         app.mount("/", StaticFiles(directory=str(ui_dir), html=True), name="ui")
