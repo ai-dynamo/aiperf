@@ -48,6 +48,8 @@ async def signal_benchmark_complete() -> bool:
         return False
 
     try:
+        from kubernetes_asyncio import client
+
         from aiperf.kubernetes.client import k8s_client
 
         patch_body: dict[str, Any] = {
@@ -59,15 +61,15 @@ async def signal_benchmark_complete() -> bool:
         }
 
         async with k8s_client() as api:
-            async with api.call_api(
-                "PATCH",
-                base=f"/apis/{AIPERF_GROUP}",
+            await client.CustomObjectsApi(api).patch_namespaced_custom_object(
+                group=AIPERF_GROUP,
                 version=AIPERF_VERSION,
-                url=f"namespaces/{namespace}/{AIPERF_PLURAL}/{job_id}",
-                json=patch_body,
-                headers={"Content-Type": "application/merge-patch+json"},
-            ) as resp:
-                resp.raise_for_status()
+                plural=AIPERF_PLURAL,
+                namespace=namespace,
+                name=job_id,
+                body=patch_body,
+                _content_type="application/merge-patch+json",
+            )
 
         logger.info(f"Signaled benchmark completion on AIPerfJob {namespace}/{job_id}")
         return True

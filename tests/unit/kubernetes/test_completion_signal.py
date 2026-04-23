@@ -88,44 +88,49 @@ class TestEnvironmentGating:
 
 
 class TestPatchRequest:
-    """With env vars set, the function issues a merge-patch on the CR."""
+    """With env vars set, the function patches the CR via CustomObjectsApi."""
 
     @pytest.fixture
     def patched_api(self, monkeypatch):
-        """Install AIPerf env vars and stub ``client.k8s_client`` to record calls."""
+        """Install env vars + stub ``CustomObjectsApi.patch_namespaced_custom_object``."""
         monkeypatch.setenv("AIPERF_JOB_ID", "my-job")
         monkeypatch.setenv("AIPERF_NAMESPACE", "bench")
 
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
+        # The production code does:
+        #   async with k8s_client() as api:
+        #       await client.CustomObjectsApi(api).patch_namespaced_custom_object(...)
+        # We intercept the CustomObjectsApi constructor so we can assert on the
+        # patch call without caring about the ApiClient instance it wraps.
+        mock_patch_call = AsyncMock()
+        mock_custom_api = MagicMock()
+        mock_custom_api.patch_namespaced_custom_object = mock_patch_call
 
-        @asynccontextmanager
-        async def _call_api(*args, **kwargs):
-            _call_api.calls.append((args, kwargs))
-            yield mock_resp
-
-        _call_api.calls = []
-
-        mock_api = MagicMock()
-        mock_api.call_api = _call_api
-
-        with patch(
-            "aiperf.kubernetes.client.k8s_client",
-            new=_k8s_client_contextmanager(mock_api),
+        with (
+            patch(
+                "aiperf.kubernetes.client.k8s_client",
+                new=_k8s_client_contextmanager(MagicMock()),
+            ),
+            patch(
+                "kubernetes_asyncio.client.CustomObjectsApi",
+                return_value=mock_custom_api,
+            ),
         ):
-            yield _call_api
+            yield mock_patch_call
 
     @pytest.mark.asyncio
     async def test_returns_true_on_successful_patch(self, patched_api) -> None:
         assert await completion_signal.signal_benchmark_complete() is True
 
     @pytest.mark.asyncio
-    async def test_patch_targets_correct_crd_path(self, patched_api) -> None:
-        """URL path must reference the AIPerfJob CR by namespace and name."""
+    async def test_patch_targets_correct_crd(self, patched_api) -> None:
+        """Patch must address the AIPerfJob CR by group/version/plural + name."""
         await completion_signal.signal_benchmark_complete()
 
-        _args, kwargs = patched_api.calls[-1]
-        assert kwargs["url"] == "namespaces/bench/aiperfjobs/my-job"
+        _args, kwargs = patched_api.call_args
+        assert kwargs["group"] == "aiperf.nvidia.com"
+        assert kwargs["plural"] == "aiperfjobs"
+        assert kwargs["namespace"] == "bench"
+        assert kwargs["name"] == "my-job"
 
     @pytest.mark.asyncio
     async def test_patch_body_sets_benchmark_complete_annotation(
@@ -133,8 +138,8 @@ class TestPatchRequest:
     ) -> None:
         await completion_signal.signal_benchmark_complete()
 
-        _args, kwargs = patched_api.calls[-1]
-        annotations = kwargs["json"]["metadata"]["annotations"]
+        _args, kwargs = patched_api.call_args
+        annotations = kwargs["body"]["metadata"]["annotations"]
         assert annotations == {Annotations.BENCHMARK_COMPLETE: "true"}
 
     @pytest.mark.asyncio
@@ -142,15 +147,8 @@ class TestPatchRequest:
         """Strategic-merge-patch would require a schema; merge-patch is correct."""
         await completion_signal.signal_benchmark_complete()
 
-        _args, kwargs = patched_api.calls[-1]
-        assert kwargs["headers"]["Content-Type"] == "application/merge-patch+json"
-
-    @pytest.mark.asyncio
-    async def test_patch_uses_patch_http_method(self, patched_api) -> None:
-        await completion_signal.signal_benchmark_complete()
-
-        args, _kwargs = patched_api.calls[-1]
-        assert args[0] == "PATCH"
+        _args, kwargs = patched_api.call_args
+        assert kwargs["_content_type"] == "application/merge-patch+json"
 
 
 class TestErrorSwallowing:
