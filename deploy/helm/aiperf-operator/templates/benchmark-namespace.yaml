@@ -13,7 +13,11 @@ metadata:
     # across `helm uninstall`, matching the CRD's resource-policy so an uninstall
     # does not drop running jobs.
     helm.sh/resource-policy: keep
-    {{- if .Values.kueue.defaultQueueName }}
-    kueue.x-k8s.io/default-queue-name: {{ .Values.kueue.defaultQueueName | quote }}
+    {{- $defaultQueue := .Values.kueue.defaultQueueName }}
+    {{- if and (not $defaultQueue) .Values.kueue.createQueues }}
+    {{- $defaultQueue = .Values.kueue.localQueueName }}
+    {{- end }}
+    {{- if $defaultQueue }}
+    kueue.x-k8s.io/default-queue-name: {{ $defaultQueue | quote }}
     {{- end }}
 {{- end }}
