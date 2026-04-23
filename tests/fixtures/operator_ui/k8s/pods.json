@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "metadata": {
+        "name": "live-run-controller-0",
+        "namespace": "aiperf-bench",
+        "labels": {
+          "aiperf.nvidia.com/job-id": "live-run"
+        }
+      },
+      "status": {
+        "phase": "Running",
+        "containerStatuses": [
+          {
+            "ready": true,
+            "restartCount": 0
+          }
+        ]
+      }
+    }
+  ]
+}

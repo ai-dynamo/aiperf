@@ -1,0 +1,73 @@
+{
+  "schema_version": "1.0.0",
+  "aiperf_version": "0.0.0-e2e",
+  "benchmark_id": "aiperf-bench/aiperf-llama3-c256",
+  "request_throughput": {
+    "unit": "requests/sec",
+    "avg": 78.4,
+    "p50": 74.48,
+    "p90": 86.24000000000001,
+    "p99": 101.92000000000002,
+    "min": 54.88,
+    "max": 117.60000000000001
+  },
+  "request_latency": {
+    "unit": "ms",
+    "avg": 410.0,
+    "p50": 389.5,
+    "p90": 451.00000000000006,
+    "p99": 533.0,
+    "min": 287.0,
+    "max": 615.0
+  },
+  "time_to_first_token": {
+    "unit": "ms",
+    "avg": 220.0,
+    "p50": 209.0,
+    "p90": 242.00000000000003,
+    "p99": 286.0,
+    "min": 154.0,
+    "max": 330.0
+  },
+  "inter_token_latency": {
+    "unit": "ms",
+    "avg": 32.0,
+    "p50": 30.4,
+    "p90": 35.2,
+    "p99": 41.6,
+    "min": 22.4,
+    "max": 48.0
+  },
+  "output_token_throughput": {
+    "unit": "tokens/sec",
+    "avg": 10035.2,
+    "p50": 9533.44,
+    "p90": 11038.720000000001,
+    "p99": 13045.760000000002,
+    "min": 7024.64,
+    "max": 15052.800000000001
+  },
+  "start_time": "2026-04-22T10:10:00Z",
+  "end_time": "2026-04-22T10:15:00Z",
+  "input_config": {
+    "models": {
+      "strategy": "round_robin",
+      "items": [
+        {
+          "name": "llama3-8b"
+        }
+      ]
+    },
+    "endpoint": {
+      "urls": [
+        "http://llama3.svc:8000/v1"
+      ],
+      "type": "chat",
+      "streaming": true
+    },
+    "runtime": {
+      "concurrency": 256
+    }
+  },
+  "status": "Succeeded"
+}

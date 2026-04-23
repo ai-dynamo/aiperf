@@ -1,0 +1,73 @@
+{
+  "schema_version": "1.0.0",
+  "aiperf_version": "0.0.0-e2e",
+  "benchmark_id": "ml-lab/mistral-7b-run1",
+  "request_throughput": {
+    "unit": "requests/sec",
+    "avg": 28.9,
+    "p50": 27.455,
+    "p90": 31.790000000000003,
+    "p99": 37.57,
+    "min": 20.229999999999997,
+    "max": 43.349999999999994
+  },
+  "request_latency": {
+    "unit": "ms",
+    "avg": 340.0,
+    "p50": 323.0,
+    "p90": 374.00000000000006,
+    "p99": 442.0,
+    "min": 237.99999999999997,
+    "max": 510.0
+  },
+  "time_to_first_token": {
+    "unit": "ms",
+    "avg": 180.0,
+    "p50": 171.0,
+    "p90": 198.00000000000003,
+    "p99": 234.0,
+    "min": 125.99999999999999,
+    "max": 270.0
+  },
+  "inter_token_latency": {
+    "unit": "ms",
+    "avg": 28.0,
+    "p50": 26.599999999999998,
+    "p90": 30.800000000000004,
+    "p99": 36.4,
+    "min": 19.599999999999998,
+    "max": 42.0
+  },
+  "output_token_throughput": {
+    "unit": "tokens/sec",
+    "avg": 3699.2,
+    "p50": 3514.24,
+    "p90": 4069.1200000000003,
+    "p99": 4808.96,
+    "min": 2589.4399999999996,
+    "max": 5548.799999999999
+  },
+  "start_time": "2026-04-22T11:00:00Z",
+  "end_time": "2026-04-22T11:04:00Z",
+  "input_config": {
+    "models": {
+      "strategy": "round_robin",
+      "items": [
+        {
+          "name": "mistral-7b"
+        }
+      ]
+    },
+    "endpoint": {
+      "urls": [
+        "http://mistral.svc:8000/v1"
+      ],
+      "type": "chat",
+      "streaming": true
+    },
+    "runtime": {
+      "concurrency": 64
+    }
+  },
+  "status": "Succeeded"
+}

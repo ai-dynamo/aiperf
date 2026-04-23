@@ -11,6 +11,7 @@ monkeypatch the k8s helpers — no respawn.
 from __future__ import annotations
 
 import asyncio
+import shutil
 import socket
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -23,6 +24,13 @@ import uvicorn
 from fastapi import FastAPI
 
 from aiperf.operator.results_server import create_app
+
+GOLDEN_RESULTS = (
+    Path(__file__).parent.parent.parent / "fixtures" / "operator_ui" / "results"
+)
+GOLDEN_K8S = (
+    Path(__file__).parent.parent.parent / "fixtures" / "operator_ui" / "k8s"
+)
 
 
 def _free_port() -> int:
@@ -94,3 +102,22 @@ async def live_operator_app(tmp_path_factory) -> AsyncIterator[LiveApp]:
             app=app,
             results_dir=results_dir,
         )
+
+
+@pytest.fixture
+def seeded_results_dir(live_operator_app: LiveApp) -> Path:
+    """Clear the session results dir and copy the golden tree into it.
+
+    The session-scoped ``results_dir`` persists across tests, so we wipe it
+    first to keep each test hermetic. Returns the (now-seeded) ``results_dir``.
+    """
+    target = live_operator_app.results_dir
+    for child in target.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+    for ns_dir in GOLDEN_RESULTS.iterdir():
+        if ns_dir.is_dir():
+            shutil.copytree(ns_dir, target / ns_dir.name)
+    return target
