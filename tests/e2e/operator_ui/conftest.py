@@ -114,6 +114,25 @@ async def live_operator_app(tmp_path_factory) -> AsyncIterator[LiveApp]:
         )
 
 
+def write_archived_job(results_dir: Path, namespace: str, name: str) -> None:
+    """Drop a PVC-only (no CR) job directory into the results dir."""
+    import orjson
+    d = results_dir / namespace / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "profile_export_aiperf.json").write_bytes(orjson.dumps({
+        "status": "Succeeded",
+        "start_time": "2026-04-20T10:00:00Z",
+        "end_time": "2026-04-20T10:45:00Z",
+        "request_throughput": {"avg": 55.5, "unit": "requests/sec"},
+        "request_latency": {"p99": 421.0, "unit": "ms"},
+        "input_config": {
+            "models": {"items": [{"name": "mistral-7b"}]},
+            "endpoint": {"urls": ["http://mistral.svc:8000/v1"], "type": "chat"},
+        },
+    }))
+    (d / ".aiperf_results_ready.json").write_bytes(orjson.dumps({"ready": True}))
+
+
 @pytest.fixture
 def seeded_results_dir(live_operator_app: LiveApp) -> Path:
     """Clear the session results dir and copy the golden tree into it.
