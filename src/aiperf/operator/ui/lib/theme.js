@@ -1,4 +1,7 @@
-// AIPerf dark theme - NVIDIA design system
+// AIPerf dark theme - CONSOLE palette (amber-dominant, cyan secondary).
+// Legacy color keys (blue/peach/teal/mauve/...) collapse onto the two-tone
+// CONSOLE palette so pages that haven't been re-keyed still render amber/cyan
+// rather than the pre-CONSOLE blue/orange/teal fan-out.
 export const palette = {
   // Base layers (neutral grays, no blue tint)
   bg: '#0c0c0c',
@@ -17,21 +20,22 @@ export const palette = {
   text: '#eeeeee',
   white: '#ffffff',
 
-  // Accent (NVIDIA green)
-  accent: '#76b900',
-  accentDim: 'rgba(118,185,0,0.15)',
+  // Accent — CONSOLE amber replaces NVIDIA green as the primary accent.
+  accent: '#ff9f1c',
+  accentDim: 'rgba(255,159,28,0.15)',
 
-  // Semantic
-  blue: '#3b82f6',
-  cyan: '#26c6da',
-  green: '#76b900',
-  amber: '#ffc107',
-  red: '#ef5350',
-  pink: '#ab47bc',
-  orange: '#fb923c',
-  teal: '#26c6da',
-  indigo: '#6366f1',
-  mauve: '#ab47bc',
+  // Semantic — primary = amber, secondary = cyan. All other named colors
+  // collapse onto the same two-tone palette.
+  blue: '#ff9f1c',     // formerly #3b82f6 — now amber (CONSOLE primary)
+  cyan: '#3ad8e3',     // CONSOLE secondary data signal
+  green: '#7ccf5e',    // SLO pass only
+  amber: '#ff9f1c',
+  red: '#ff5c5c',
+  pink: '#ff9f1c',
+  orange: '#ff9f1c',
+  teal: '#3ad8e3',
+  indigo: '#3ad8e3',
+  mauve: '#3ad8e3',
 
   // Compatibility aliases (used by other pages not being rewritten)
   base: '#0c0c0c',
@@ -45,14 +49,14 @@ export const palette = {
   overlay2: '#a7a7a7',
   subtext0: '#a7a7a7',
   subtext1: '#eeeeee',
-  yellow: '#ffc107',
-  peach: '#fb923c',
-  maroon: '#ef5350',
-  sapphire: '#26c6da',
-  sky: '#26c6da',
-  lavender: '#76b900',
-  flamingo: '#ab47bc',
-  rosewater: '#ab47bc',
+  yellow: '#ff9f1c',
+  peach: '#ff9f1c',
+  maroon: '#ff5c5c',
+  sapphire: '#3ad8e3',
+  sky: '#3ad8e3',
+  lavender: '#3ad8e3',
+  flamingo: '#ff9f1c',
+  rosewater: '#ff9f1c',
 };
 
 // Semantic mappings
@@ -77,11 +81,12 @@ export const colors = {
   error: palette.red,
   info: palette.blue,
 
-  // Job phase colors
-  phaseRunning: palette.blue,
+  // Job phase colors — CONSOLE: live = amber (peak/attention),
+  // completed = green (pass), failed = red, pending/initializing = paper-faint.
+  phaseRunning: palette.amber,
   phaseCompleted: palette.green,
   phaseFailed: palette.red,
-  phasePending: palette.amber,
+  phasePending: 'rgba(244, 240, 225, 0.36)',
   phaseUnknown: palette.muted,
 };
 
@@ -95,11 +100,12 @@ export function phaseColor(phase) {
   return colors.phaseUnknown;
 }
 
-// Stable model-color assignment via string hash
+// Stable model-color assignment — CONSOLE: amber-first, then cyan.
+// Downstream tints cycle through the two-tone palette plus red/green for
+// outlier signals; no blue, no purple.
 const MODEL_COLORS = [
-  palette.blue, '#76b900', palette.amber, palette.pink,
-  palette.cyan, palette.teal, palette.orange, palette.indigo,
-  palette.red,
+  '#ff9f1c', '#3ad8e3', '#7ccf5e', '#ff5c5c',
+  '#ffb547', '#f4f0e1',
 ];
 
 /**

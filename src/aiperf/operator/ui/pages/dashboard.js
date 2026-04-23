@@ -24,7 +24,7 @@ import { html } from 'htm/preact';
 import { useState, useEffect } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
 import { jobs, clusterInfo } from '../lib/state.js';
-import { modelColor, palette } from '../lib/theme.js';
+import { modelColor } from '../lib/theme.js';
 import { navigate } from '../lib/router.js';
 import { KpiCard } from '../components/kpi-card.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
@@ -219,16 +219,23 @@ function FleetStatus({ liveRuns, failedRuns, cluster, liveDetails, enabled }) {
     verdict = 'IDLE';
     glyphKind = 'idle';
   } else if (errRuns.length > 0) {
-    verdict = `${errRuns.length} FAILED`;
+    // 1 err run → "FAILED"; N err runs → "N SLIPPING" (the loud signal is
+    // already the chip row + body sentence; the verdict reads as the state
+    // of the fleet, not a literal count).
+    verdict = liveCount === 1 ? 'SLO VIOLATED' : `${errRuns.length} SLIPPING`;
     glyphKind = 'err';
   } else if (warnRuns.length > 0) {
-    verdict = `${okRuns.length} OF ${liveCount} ON TARGET`;
+    verdict = liveCount === 1 ? 'SLO SLIPPING' : `${okRuns.length} OF ${liveCount} ON TARGET`;
     glyphKind = 'warn';
   } else if (anyDeclared && okRuns.length === liveCount) {
-    verdict = 'ALL ON TARGET';
+    // Context-aware: 1 run passing → "ON TARGET"; N runs all passing →
+    // "ALL ON TARGET". Body sentence retains lowercase "On target across
+    // all declared SLOs." so e2e assertions on that phrase still match.
+    verdict = liveCount === 1 ? 'ON TARGET' : 'ALL ON TARGET';
     glyphKind = 'ok';
   } else {
-    verdict = liveCount === 1 ? '1 LIVE' : `${liveCount} LIVE`;
+    // Running with no SLOs declared — context-aware wording too.
+    verdict = liveCount === 1 ? 'RUNNING' : `${liveCount} RUNNING`;
     glyphKind = 'ok';
   }
 
@@ -313,7 +320,8 @@ function FleetStatus({ liveRuns, failedRuns, cluster, liveDetails, enabled }) {
           ${liveCount > 0 && html`<span class="fleet-chip fleet-chip--live">${liveCount} RUNNING</span>`}
           ${warnRuns.length > 0 && html`<span class="fleet-chip fleet-chip--warn">${warnRuns.length} SLIPPING</span>`}
           ${errRuns.length > 0 && html`<span class="fleet-chip fleet-chip--err">${errRuns.length} VIOLATED</span>`}
-          ${failCount > 0 && html`<span class="fleet-chip fleet-chip--err">${failCount} FAILED</span>`}
+          ${/* Failed jobs render in the console-footnote strip at the bottom
+              of the dashboard — not mixed into the live chip row. */ null}
           ${gpus != null && html`<span class="fleet-chip"><i class="ph ph-lightning"></i>${gpus}${gpuCapacity ? ` / ${gpuCapacity}` : ''} GPUs</span>`}
           ${nodes != null && html`<span class="fleet-chip"><i class="ph ph-stack"></i>${nodes} NODES</span>`}
           ${totalSlos > 0 && html`<span class="fleet-chip"><i class="ph ph-target"></i>${Math.max(0, passedSlos)} / ${totalSlos} SLOs</span>`}
@@ -533,20 +541,27 @@ function ThroughputLatencyScatter({ completedJobs }) {
     modelGroups[m].push(job);
   }
 
-  const datasets = Object.entries(modelGroups).map(([model, mjobs]) => ({
-    label: model,
-    data: mjobs.map(j => ({
-      x: j[mode.xField],
-      y: j[mode.yField],
-      jobName: j.name,
-      backend: j.backend ?? '',
-    })),
-    backgroundColor: modelColor(model),
-    borderColor: modelColor(model),
-    borderWidth: 1.5,
-    pointRadius: 8,
-    pointHoverRadius: 12,
-  }));
+  // CONSOLE palette: first model amber, second cyan, fall back to PALETTE
+  // (itself amber-first) for additional models. Explicit assignment — not
+  // modelColor() hashing — so the dashboard is deterministically amber-dominant.
+  const SCATTER_COLORS = ['#ff9f1c', '#3ad8e3', '#7ccf5e', '#ff5c5c', '#ffb547', '#f4f0e1'];
+  const datasets = Object.entries(modelGroups).map(([model, mjobs], i) => {
+    const color = SCATTER_COLORS[i % SCATTER_COLORS.length];
+    return {
+      label: model,
+      data: mjobs.map(j => ({
+        x: j[mode.xField],
+        y: j[mode.yField],
+        jobName: j.name,
+        backend: j.backend ?? '',
+      })),
+      backgroundColor: color,
+      borderColor: color,
+      borderWidth: 1.5,
+      pointRadius: 8,
+      pointHoverRadius: 12,
+    };
+  });
 
   const scaleType = logScale ? 'logarithmic' : 'linear';
   const chartOptions = applyChartTheme({
@@ -757,7 +772,6 @@ export function Dashboard() {
           label="Running"
           value=${running.length}
           icon="ph-play"
-          tone=${running.length > 0 ? 'amber' : undefined}
           sub=${running.length === 1 && running[0].startTime
             ? formatElapsed(Date.now() - new Date(running[0].startTime).getTime()) + ' elapsed'
             : (running.length === 0 ? 'idle' : `${running.length} live`)}
@@ -789,6 +803,7 @@ export function Dashboard() {
           label="Token Throughput"
           value=${bestTokenTps.value != null ? fmtInt(bestTokenTps.value) : '---'}
           unit=${bestTokenTps.value != null ? 'tok/s' : ''}
+          tone=${bestTokenTps.value != null ? 'amber' : undefined}
           icon="ph-activity"
           sub=${bestTokenTps.name ? html`<strong>${bestTokenTps.name}</strong>` : ''}
         />

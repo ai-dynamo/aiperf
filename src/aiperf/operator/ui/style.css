@@ -149,29 +149,32 @@ body {
   --accent-dim: var(--accent-green-dim);
   --accent-alt: var(--accent-blue);
 
-  /* Semantic colors */
-  --blue: var(--accent-blue);
+  /* Semantic colors — CONSOLE: amber dominant, cyan for the single secondary
+     data signal. Legacy semantic aliases (peach/teal/mauve/etc.) collapse onto
+     this two-tone palette so pages not yet re-keyed still render amber/cyan
+     rather than the pre-CONSOLE blue/orange/teal fan-out. */
+  --blue: var(--amber);
   --green: var(--accent-green);
   --amber: var(--accent-amber);
   --red: var(--accent-red);
-  --cyan: #22d3ee;
-  --pink: #f472b6;
-  --mauve: #c084fc;
+  --cyan: #3ad8e3;
+  --pink: var(--amber);
+  --mauve: var(--cyan);
   --yellow: var(--accent-amber);
-  --lavender: #c084fc;
-  --sapphire: #22d3ee;
-  --sky: #38bdf8;
-  --teal: #2dd4bf;
-  --peach: #fb923c;
+  --lavender: var(--cyan);
+  --sapphire: var(--cyan);
+  --sky: var(--cyan);
+  --teal: var(--cyan);
+  --peach: var(--amber);
   --maroon: var(--accent-red);
-  --flamingo: #f472b6;
-  --rosewater: #f472b6;
+  --flamingo: var(--amber);
+  --rosewater: var(--amber);
 
   /* Semantic */
   --success: var(--accent-green);
   --warning: var(--accent-amber);
   --error: var(--accent-red);
-  --info: var(--accent-blue);
+  --info: var(--amber);
 
   /* Legacy font-size aliases */
   --font-size-xs: var(--fs-xs);
@@ -2191,22 +2194,22 @@ body::after {
 .fleet-verdict {
   font-family: var(--f-display);
   font-weight: 800;
-  font-size: 72px;
-  line-height: 0.9;
-  letter-spacing: -0.04em;
+  font-size: clamp(56px, 8vw, 88px);
+  line-height: 0.88;
+  letter-spacing: -0.045em;
   color: var(--paper);
   display: flex;
   align-items: baseline;
-  gap: 18px;
+  gap: 20px;
   margin: 0;
 }
 .fleet-verdict .mark-glyph {
   display: inline-block;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   background: var(--amber);
-  box-shadow: 0 0 22px var(--amber-glow);
-  transform: translateY(-6px);
+  box-shadow: 0 0 24px var(--amber-glow);
+  transform: translateY(-8px);
 }
 .fleet-verdict .mark-glyph--warn { animation: console-mark-pulse 1.4s ease-in-out infinite; }
 .fleet-verdict .mark-glyph--err {
@@ -2653,7 +2656,7 @@ body::after {
   font-family: var(--f-mono);
   font-size: 24px;
   font-weight: 700;
-  color: var(--paper-ghost);
+  color: var(--paper-faint);
   letter-spacing: 0.04em;
 }
 .ldr-row--top .ldr-rank {
