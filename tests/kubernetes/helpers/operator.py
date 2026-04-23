@@ -326,6 +326,7 @@ class OperatorDeployer:
         operator_image: str = "aiperf:local",
         default_job_namespace: str = "default",
         share_process_namespace: bool = False,
+        controller_http_url_override: str | None = None,
     ) -> None:
         """Initialize operator deployer.
 
@@ -339,12 +340,19 @@ class OperatorDeployer:
                 it spawns sets ``spec.shareProcessNamespace=true``. Chaos
                 scenarios flip this on to enable cross-container kubectl exec
                 kills; keep off for normal e2e coverage.
+            controller_http_url_override: When set, configures the operator
+                with ``AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE=<url>`` so
+                every controller HTTP call routes through this URL instead of
+                per-CR JobSet pod DNS. Used by chaos scenario C16 to front
+                operator -> controller traffic with toxiproxy. NEVER use in
+                production-shaped tests; it collapses multi-job isolation.
         """
         self.kubectl = kubectl
         self.project_root = project_root
         self.operator_image = operator_image
         self.default_job_namespace = default_job_namespace
         self.share_process_namespace = share_process_namespace
+        self.controller_http_url_override = controller_http_url_override
         self._deployed_jobs: list[OperatorJobResult] = []
 
     async def install_crd(self) -> None:
@@ -507,6 +515,10 @@ class OperatorDeployer:
         ]
         if self.share_process_namespace:
             env_pairs.append("AIPERF_K8S_SHARE_PROCESS_NAMESPACE=true")
+        if self.controller_http_url_override:
+            env_pairs.append(
+                f"AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE={self.controller_http_url_override}"
+            )
         await self.kubectl.run(
             "set",
             "env",

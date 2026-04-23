@@ -118,6 +118,18 @@ podTemplate:
   # Keep false in production — it weakens process isolation.
   shareProcessNamespace: false
 
+# chaos is a catch-all for test-only operator overrides. Not for production use —
+# each knob intentionally breaks production invariants to enable fault injection.
+chaos:
+  # chaos.controllerHttpUrlOverride rewrites the operator's controller HTTP
+  # base URL to a single fixed value (e.g. a toxiproxy Service URL). When
+  # set, the progress-client ignores per-CR JobSet pod DNS and sends every
+  # controller request here. Used by chaos scenario C16 to blackhole
+  # operator -> controller traffic through a fault-injecting proxy.
+  # NOT FOR PRODUCTION USE: collapses multi-job isolation (every CR's
+  # traffic funnels through the same URL). Leave empty ("") in production.
+  controllerHttpUrlOverride: ""
+
 # resultsServer is the sidecar container that serves stored results via HTTP
 resultsServer:
   # resultsServer.port is the HTTP port for the results API

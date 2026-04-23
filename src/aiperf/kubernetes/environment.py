@@ -345,6 +345,18 @@ class _K8sEnvironment(BaseSettings):
         "fixtures flip it on via AIPERF_K8S_SHARE_PROCESS_NAMESPACE=true.",
     )
 
+    CONTROLLER_HTTP_URL_OVERRIDE: str | None = Field(
+        default=None,
+        description="Chaos-test hook: when set, the operator's progress-client "
+        "uses this base URL (scheme+host+port, e.g. "
+        "http://toxiproxy.aiperf-chaos-toxiproxy.svc:20002) instead of the "
+        "per-CR JobSet pod DNS + API_SERVICE port for controller HTTP calls. "
+        "Production MUST leave unset — it collapses multi-job isolation "
+        "because every CR funnels through the same URL. Chaos fixtures set "
+        "it via AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE to steer traffic "
+        "through toxiproxy for latency/blackhole injection.",
+    )
+
     # Non-resource settings
     HEALTH: _HealthProbeSettings = Field(
         default_factory=_HealthProbeSettings,

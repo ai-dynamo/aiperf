@@ -85,6 +85,10 @@ spec:
           value: {{ .Values.operator.env.resultsCompressOnDisk | default "true" | quote }}
         - name: AIPERF_K8S_SHARE_PROCESS_NAMESPACE
           value: {{ .Values.podTemplate.shareProcessNamespace | default false | quote }}
+        {{- with .Values.chaos.controllerHttpUrlOverride }}
+        - name: AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE
+          value: {{ . | quote }}
+        {{- end }}
         livenessProbe:
           httpGet:
             path: /healthz

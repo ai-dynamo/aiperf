@@ -7,30 +7,24 @@ Covers scenarios C15 and C16 from the chaos-expansion design doc
 
 Both scenarios require toxiproxy to front a live connection between
 the operator and either the apiserver (C15) or the SystemController
-HTTP API (C16). The operator's routing for both paths is hard-coded:
+HTTP API (C16).
 
-* **Apiserver:** ``kubernetes_asyncio`` auto-configures from the
+* **Apiserver (C15):** ``kubernetes_asyncio`` auto-configures from the
   in-cluster env vars (``KUBERNETES_SERVICE_HOST`` /
   ``KUBERNETES_SERVICE_PORT``) which the kubelet injects into every
   pod. Redirecting that traffic through toxiproxy requires
   re-deploying the operator Deployment with those env vars pointed at
   the toxiproxy Service. That is a cross-cutting infra change this
-  test file deliberately avoids.
+  test file deliberately avoids. C15 still ships as
+  ``xfail(strict=False)`` with reproduction steps in the docstring.
 
-* **SystemController HTTP:** ``src/aiperf/operator/progress_client.py``
-  resolves the controller URL from the JobSet pod DNS
-  ``<jobset>-controller-0-0.<jobset>.<namespace>.svc.cluster.local``
-  per-CR — there is no Service indirection we can patch. A redirect
-  would require teaching the operator to consult a
-  ``AIPERF_K8S_CONTROLLER_HTTP_URL`` override env, which is out of
-  scope here.
-
-Both tests therefore ship as ``xfail(strict=False)`` with reproduction
-steps embedded in the docstrings. They remain runnable against a kind
-cluster for manual investigation (they do create a real CR and drive a
-toxiproxy proxy, so the test body is not a stub) — they are simply
-expected to surface as incomplete coverage rather than a green pass
-until the infra hook lands.
+* **SystemController HTTP (C16):** landed. The operator honors
+  ``AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE`` (chaos-only env var)
+  which swaps the per-CR JobSet pod DNS for a fixed URL in every
+  :class:`ProgressClient` call. The
+  ``operator_ready_controller_http_override`` fixture below redeploys
+  the operator once with the override pointed at toxiproxy and
+  restores a plain operator on teardown.
 
 All tests force-delete their CR in ``finally`` and call
 ``toxiproxy_injector.reset()`` to clear proxies/toxics across tests.
@@ -39,15 +33,36 @@ All tests force-delete their CR in ``finally`` and call
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
+import pytest_asyncio
 
 from tests.kubernetes.chaos.chaos_injector import ChaosInjector
-from tests.kubernetes.chaos.toxiproxy import ToxiproxyInjector
+from tests.kubernetes.chaos.toxiproxy import (
+    TOXIPROXY_NAMESPACE,
+    TOXIPROXY_SERVICE,
+    ToxiproxyInjector,
+)
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.k8s_slow]
+
+
+# Toxiproxy listen port reserved for the operator -> controller HTTP proxy
+# (generic slot from fixtures/toxiproxy.yaml). Kept separate from the
+# mock-server slot (20010) so fault-injection targets do not collide.
+_CONTROLLER_PROXY_LISTEN_PORT = 20002
+_CONTROLLER_PROXY_NAME = "controller"
+
+# URL the operator uses via AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE. The
+# toxiproxy Service exposes every reserved listen port as a ClusterIP.
+_CONTROLLER_OVERRIDE_URL = (
+    f"http://{TOXIPROXY_SERVICE}.{TOXIPROXY_NAMESPACE}.svc.cluster.local:"
+    f"{_CONTROLLER_PROXY_LISTEN_PORT}"
+)
 
 
 async def _force_delete(kubectl: KubectlClient, namespace: str, name: str) -> None:
@@ -62,6 +77,52 @@ async def _force_delete(kubectl: KubectlClient, namespace: str, name: str) -> No
         "--wait=false",
         check=False,
     )
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="package")
+async def operator_ready_controller_http_override(
+    kubectl: KubectlClient,
+    project_root: Path,
+    loaded_images,  # noqa: ANN001 - session-scoped helper, not typed in test surface
+    jobset_controller: None,
+    mock_server: None,
+    k8s_settings,  # noqa: ANN001 - test-fixture dataclass
+    operator_job_namespace: str,
+) -> AsyncIterator[OperatorDeployer]:
+    """Redeploy the operator with ``controller_http_url_override`` set.
+
+    The default ``operator_ready`` fixture leaves
+    ``AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE`` unset, so every CR
+    funnels its controller HTTP calls directly to per-CR JobSet pod
+    DNS. For C16 we need the operator's traffic to traverse toxiproxy
+    so a toxic can blackhole it. This fixture redeploys the operator
+    once with the override pointed at the chaos-namespace toxiproxy
+    Service, then restores a plain operator at teardown so sibling
+    package tests run with production-shaped routing.
+    """
+    deployer = OperatorDeployer(
+        kubectl=kubectl,
+        project_root=project_root,
+        operator_image=k8s_settings.aiperf_image,
+        default_job_namespace=operator_job_namespace,
+        controller_http_url_override=_CONTROLLER_OVERRIDE_URL,
+    )
+    await deployer.install_crd()
+    await kubectl.run("create", "namespace", operator_job_namespace, check=False)
+    await deployer.deploy_operator()
+    try:
+        yield deployer
+    finally:
+        if not k8s_settings.skip_cleanup:
+            await deployer.cleanup_all()
+            restore = OperatorDeployer(
+                kubectl=kubectl,
+                project_root=project_root,
+                operator_image=k8s_settings.aiperf_image,
+                default_job_namespace=operator_job_namespace,
+                controller_http_url_override=None,
+            )
+            await restore.deploy_operator()
 
 
 @pytest.mark.xfail(
@@ -167,21 +228,9 @@ async def test_c15_pause_apiserver_30s_recovers(
         await toxiproxy_injector.reset()
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "C16 requires redirecting operator -> controller HTTP traffic "
-        "through toxiproxy. The operator resolves controller URLs "
-        "directly from per-JobSet pod DNS (see "
-        "src/aiperf/operator/progress_client.py: controller_host is "
-        "a JobSet pod FQDN), so there is no Service to patch. A real "
-        "redirect needs an AIPERF_K8S_CONTROLLER_HTTP_URL operator-env "
-        "override, which is out of scope for this test file. "
-        "Shipping as xfail(strict=False) with repro steps documented."
-    ),
-)
+@pytest.mark.timeout(600)
 async def test_c16_block_operator_controller_http_falls_back(
-    operator_ready: OperatorDeployer,
+    operator_ready_controller_http_override: OperatorDeployer,
     chaos_injector: ChaosInjector,
     toxiproxy_injector: ToxiproxyInjector,
     operator_job_namespace: str,
@@ -191,27 +240,28 @@ async def test_c16_block_operator_controller_http_falls_back(
     """Block operator->controller HTTP; salvage path still Completes the CR.
 
     Exercises ``src/aiperf/operator/handlers/monitor.py::
-    _maybe_recover_terminated_controller`` — when every
-    ``_fetch_progress`` call times out, the operator cannot observe
-    controller-side progress but ``_maybe_recover_terminated_controller``
-    polls JobSet pod status and fires once the control-plane container
-    exits (controller completes the benchmark internally after its
-    own duration timer fires). That salvage path then drives the CR to
-    Completed.
+    _maybe_recover_terminated_controller`` — once every ``_fetch_progress``
+    call hangs on a ``timeout`` toxic, the operator can no longer observe
+    controller-side progress, but the salvage path polls JobSet pod status
+    and fires when the control-plane container exits on its own (which
+    happens once the benchmark_duration timer elapses inside the
+    controller). The salvage path then drives the CR to Completed without
+    relying on controller HTTP.
 
-    Repro steps for the landed variant (post infra):
+    Flow:
 
-    1. Discover controller pod IP via
-       ``chaos_injector.get_controller_pod_name`` +
-       ``kubectl get pod -o jsonpath={.status.podIP}``.
-    2. ``await toxiproxy_injector.add_proxy("controller", "0.0.0.0:20001",
-       f"{pod_ip}:19090")``
-    3. Set operator env ``AIPERF_K8S_CONTROLLER_HTTP_URL=
-       http://toxiproxy.aiperf-chaos-toxiproxy.svc:20001`` (requires
-       the override env to exist in the operator).
-    4. ``await toxiproxy_injector.add_toxic("controller", "timeout",
-       {"timeout": 0})`` to make every ``_fetch_progress`` hang.
-    5. Assert ``phase=Completed`` within 300 s via the salvage path.
+    1. ``operator_ready_controller_http_override`` redeploys the operator
+       with ``AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE`` pointing at
+       ``toxiproxy.aiperf-chaos-toxiproxy.svc:20002``.
+    2. We create the toxiproxy proxy first with a placeholder upstream —
+       the controller pod's IP is not known until the JobSet spawns. The
+       operator's initial progress calls will simply fail-and-retry
+       against the unroutable placeholder until step 4 fixes it.
+    3. Create the CR; once the controller pod has an IP, swap the proxy's
+       upstream to the real ``<pod-ip>:19090`` so the operator can
+       observe progress and drive the CR to Running/profiling.
+    4. Add a ``timeout`` toxic. Operator HTTP now blackholes; salvage
+       path must carry the CR to Completed.
     """
     name = "chaos-c16"
     longrun_config = AIPerfJobConfig(
@@ -222,9 +272,58 @@ async def test_c16_block_operator_controller_http_falls_back(
         image=k8s_settings.aiperf_image,
     )
     try:
-        await operator_ready.create_job(
+        # Placeholder upstream: the real controller pod IP is not known
+        # until the JobSet spawns. This keeps the proxy definition stable
+        # while the operator retries against an unroutable peer.
+        await toxiproxy_injector.add_proxy(
+            name=_CONTROLLER_PROXY_NAME,
+            listen=f"0.0.0.0:{_CONTROLLER_PROXY_LISTEN_PORT}",
+            upstream="127.0.0.1:1",
+        )
+
+        await operator_ready_controller_http_override.create_job(
             config=longrun_config, name=name, namespace=operator_job_namespace
         )
+
+        controller_pod = await chaos_injector.get_controller_pod_name(
+            operator_job_namespace, name
+        )
+        # Wait for the pod to get an IP (it takes a few seconds after
+        # scheduling). Poll kubectl rather than sleeping blindly.
+        pod_ip = ""
+        deadline = asyncio.get_event_loop().time() + 120.0
+        while asyncio.get_event_loop().time() < deadline:
+            res = await kubectl.run(
+                "get",
+                "pod",
+                controller_pod,
+                "-n",
+                operator_job_namespace,
+                "-o",
+                "jsonpath={.status.podIP}",
+                check=False,
+            )
+            pod_ip = res.stdout.strip()
+            if pod_ip:
+                break
+            await asyncio.sleep(2.0)
+
+        assert pod_ip, (
+            f"C16: controller pod {operator_job_namespace}/{controller_pod} "
+            "never received an IP within 120s; cannot rewrite toxiproxy proxy."
+        )
+
+        # Swap the proxy upstream to the real controller. Toxiproxy does
+        # not support in-place upstream updates, so delete+add.
+        await toxiproxy_injector.remove_proxy(_CONTROLLER_PROXY_NAME)
+        await toxiproxy_injector.add_proxy(
+            name=_CONTROLLER_PROXY_NAME,
+            listen=f"0.0.0.0:{_CONTROLLER_PROXY_LISTEN_PORT}",
+            upstream=f"{pod_ip}:19090",
+        )
+
+        # The operator can now observe controller progress. Wait until
+        # the CR reaches Running/profiling before we blackhole the link.
         await chaos_injector.wait_for_phase(
             operator_job_namespace,
             name,
@@ -233,39 +332,16 @@ async def test_c16_block_operator_controller_http_falls_back(
             timeout=180.0,
         )
 
-        # Protocol-parity: wire up the proxy even though the operator
-        # will not traverse it. Keeps the test body exercising the
-        # toxiproxy admin API so the xfail is a true "infra hook
-        # missing" signal, not "we never tried".
-        controller_pod = await chaos_injector.get_controller_pod_name(
-            operator_job_namespace, name
-        )
-        pod_ip_res = await kubectl.run(
-            "get",
-            "pod",
-            controller_pod,
-            "-n",
-            operator_job_namespace,
-            "-o",
-            "jsonpath={.status.podIP}",
-            check=False,
-        )
-        pod_ip = pod_ip_res.stdout.strip() or "127.0.0.1"
-        await toxiproxy_injector.add_proxy(
-            name="controller",
-            listen="0.0.0.0:20001",
-            upstream=f"{pod_ip}:19090",
-        )
+        # Blackhole every subsequent controller HTTP call. The salvage
+        # path (_maybe_recover_terminated_controller) must drive the CR
+        # to Completed once the controller pod exits on its own at the
+        # benchmark_duration boundary.
         await toxiproxy_injector.add_toxic(
-            "controller",
+            _CONTROLLER_PROXY_NAME,
             "timeout",
-            {"timeout": 0},
+            {"timeout": 30000},
         )
 
-        # Would-be assertion: CR reaches Completed via salvage path
-        # despite HTTP being blackholed. Xfail above handles the
-        # "operator is still talking to controller directly, so this
-        # will just pass naturally" false-positive case (strict=False).
         phase = await chaos_injector.wait_for_phase(
             operator_job_namespace,
             name,
