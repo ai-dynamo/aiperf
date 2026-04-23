@@ -29,6 +29,7 @@ async def _monitor_pod_liveness(
     namespace: str,
     pod_name: str,
     proc: asyncio.subprocess.Process,
+    *,
     check_interval: float = 10.0,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
@@ -64,8 +65,10 @@ async def _monitor_pod_liveness(
                     )
                     proc.terminate()
                     return
-            except Exception:
-                pass
+            except (OSError, asyncio.TimeoutError):  # noqa: BLE001 - watchdog must never die on a single-check failure
+                # Transient subprocess/OS error on the probe path; drop this
+                # check and try again on the next interval.
+                continue
     except asyncio.CancelledError:
         pass
 
@@ -76,6 +79,7 @@ async def port_forward_to_controller(
     pod_name: str,
     local_port: int = 0,
     remote_port: int = 9090,
+    *,
     verify_api: bool = True,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
@@ -126,6 +130,7 @@ async def _start_port_forward_process(
     pod_name: str,
     local_port: int,
     remote_port: int,
+    *,
     timeout: float,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
@@ -169,7 +174,7 @@ async def _start_port_forward_process(
             raise RuntimeError(
                 f"Port-forward exited unexpectedly: {stderr.strip() or 'no error output'}"
             )
-    except asyncio.TimeoutError:
+    except asyncio.TimeoutError as exc:
         stderr = ""
         if proc.stderr:
             try:
@@ -185,7 +190,7 @@ async def _start_port_forward_process(
             f"Port-forward did not become ready within {timeout}s.{detail}\n"
             f"  Check that the pod is running: kubectl get pod {pod_name} -n {namespace}\n"
             f"  Check that port {local_port} is not already in use"
-        ) from None
+        ) from exc
 
     return proc, actual_port
 
@@ -195,6 +200,7 @@ async def start_port_forward(
     pod_name: str,
     local_port: int = 0,
     remote_port: int = 9090,
+    *,
     timeout: float = _PORT_FORWARD_TIMEOUT,
     verify_api: bool = True,
     kubeconfig: str | None = None,
@@ -365,23 +371,76 @@ async def _wait_for_port_forward_ready(
             return int(match.group(1))
 
 
+async def _consume_ws_messages(
+    ws: aiohttp.ClientWebSocketResponse,
+    on_message: Callable[[dict], Awaitable[bool]],
+) -> bool:
+    """Iterate a WebSocket's frames, returning True if streaming should end.
+
+    Returns:
+        True on graceful completion (``on_message`` requested stop, or server
+        closed the connection). False on transport error signalling a reconnect.
+    """
+    async for msg in ws:
+        if msg.type == aiohttp.WSMsgType.TEXT:
+            data = orjson.loads(msg.data)
+            should_stop = await on_message(data)
+            if should_stop:
+                return True
+        elif msg.type == aiohttp.WSMsgType.ERROR:
+            return False  # Reconnect
+        elif msg.type == aiohttp.WSMsgType.CLOSED:
+            return True  # Server closed
+    return False
+
+
 async def stream_progress_from_api(
     ws_url: str,
     on_message: Callable[[dict], Awaitable[bool]],
     message_types: list[str],
     max_retries: int = 10,
 ) -> None:
-    """Stream progress messages from API WebSocket with auto-reconnection.
+    """Stream progress messages from the controller API WebSocket with auto-reconnection.
+
+    Opens a WebSocket to ``ws_url``, sends a ``{"type": "subscribe",
+    "message_types": [...]}`` frame, then invokes ``on_message`` for every
+    received text frame. On network error or timeout the connection is
+    retried with exponential backoff up to ``max_retries`` attempts.
+
+    The ``on_message`` callback receives a decoded message dict. Its return
+    value is load-bearing: returning ``True`` stops streaming (graceful
+    completion); returning ``False`` continues receiving.
+
+    Message dicts carry a ``"type"`` field drawn from the controller's
+    progress protocol. Common values include:
+      - ``"subscribed"`` — initial subscription ack.
+      - ``"realtime_metrics"`` — periodic metric snapshots.
+      - ``"progress"`` — credit/phase progress updates.
+      - ``"benchmark_complete"`` — terminal marker; callers typically stop here.
+      - ``"error"`` — controller-reported error payload.
 
     Args:
-        ws_url: WebSocket URL (e.g., ws://localhost:9090/ws)
-        on_message: Async callback that receives message dict.
-                   Return True to stop streaming, False to continue.
-        message_types: List of message types to subscribe to
-        max_retries: Maximum reconnection attempts
+        ws_url: WebSocket URL, e.g. ``"ws://localhost:9090/ws"``.
+        on_message: Async callback invoked per received message dict.
+            Return ``True`` to stop streaming, ``False`` to continue.
+        message_types: List of message-type strings to subscribe to.
+        max_retries: Maximum reconnection attempts on transport errors.
 
     Raises:
-        ConnectionError: If connection fails after all retries
+        ConnectionError: Transport failed after ``max_retries`` attempts.
+            The original ``aiohttp.ClientError`` / ``asyncio.TimeoutError``
+            is preserved as ``__cause__``.
+
+    Example:
+        >>> async def on_msg(msg: dict) -> bool:
+        ...     if msg["type"] == "realtime_metrics":
+        ...         print(msg.get("rps"), msg.get("p99_ms"))
+        ...     return msg["type"] == "benchmark_complete"
+        >>> await stream_progress_from_api(
+        ...     "ws://localhost:9090/ws",
+        ...     on_msg,
+        ...     message_types=["realtime_metrics", "progress", "benchmark_complete"],
+        ... )
     """
     from aiperf.transports.aiohttp_client import create_tcp_connector
 
@@ -407,23 +466,10 @@ async def stream_progress_from_api(
                     retry_count = 0  # Reset retry count on success
                     backoff = _WS_INITIAL_BACKOFF  # Reset backoff for next reconnect
 
-                # Stream messages
-                async for msg in ws:
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        data = orjson.loads(msg.data)
+                if await _consume_ws_messages(ws, on_message):
+                    return
 
-                        # Call handler, stop if returns True
-                        should_stop = await on_message(data)
-                        if should_stop:
-                            return  # Graceful completion
-
-                    elif msg.type == aiohttp.WSMsgType.ERROR:
-                        break  # Reconnect
-
-                    elif msg.type == aiohttp.WSMsgType.CLOSED:
-                        return  # Server closed
-
-        except (aiohttp.ClientError, asyncio.TimeoutError):
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             retry_count += 1
             if retry_count >= max_retries:
                 msg = (
@@ -431,7 +477,7 @@ async def stream_progress_from_api(
                     "The controller pod may not be running or "
                     "API service may be unavailable."
                 )
-                raise ConnectionError(msg) from None
+                raise ConnectionError(msg) from exc
 
             print_info(
                 f"Connection lost, retrying in {backoff:.1f}s... "

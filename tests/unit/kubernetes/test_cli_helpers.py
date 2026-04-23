@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.kubernetes.cli_helpers import ResolvedJob, format_age, resolve_job
-from aiperf.kubernetes.constants import Labels
+from aiperf.kubernetes.constants import AIPerfLabels
 from aiperf.kubernetes.models import AIPerfJobInfo, JobSetInfo
 
 
@@ -125,12 +125,12 @@ class TestLabelConstants:
     """Tests for label constants."""
 
     def test_aiperf_label_format(self) -> None:
-        """Test Labels.SELECTOR constant format."""
-        assert Labels.SELECTOR == "app=aiperf"
+        """Test AIPerfLabels.SELECTOR constant format."""
+        assert AIPerfLabels.SELECTOR == "app=aiperf"
 
     def test_aiperf_job_id_label_format(self) -> None:
-        """Test Labels.JOB_ID constant format."""
-        assert Labels.JOB_ID == "aiperf.nvidia.com/job-id"
+        """Test AIPerfLabels.JOB_ID constant format."""
+        assert AIPerfLabels.JOB_ID == "aiperf.nvidia.com/job-id"
 
 
 class TestJobSetInfo:

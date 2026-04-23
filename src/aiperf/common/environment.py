@@ -32,6 +32,10 @@ Examples:
     # In code:
     print(f"Buffer: {Environment.HTTP.SO_RCVBUF}")
     print(f"Workers: {Environment.WORKER.CPU_UTILIZATION_FACTOR}")
+
+See also: ``aiperf.kubernetes.environment.K8sEnvironment`` (K8s-specific cluster
+defaults) and ``aiperf.operator.environment.OperatorEnvironment`` (operator-process
+tunables).
 """
 
 import platform

@@ -14,6 +14,67 @@ from aiperf.config.kube import KubeManageOptions
 app = App(name="logs")
 
 
+def _collect_log_targets(
+    pods: list[Any], container: str | None
+) -> list[tuple[Any, str]]:
+    """Build the list of (pod, container) pairs to fetch logs for."""
+    targets: list[tuple[Any, str]] = []
+    for pod in pods:
+        containers = (pod.spec.containers if pod.spec else []) or []
+        container_names = [c.name for c in containers]
+        target_containers = [container] if container else container_names
+        for cont in target_containers:
+            if cont in container_names:
+                targets.append((pod, cont))
+    return targets
+
+
+async def _stream_pod_log(
+    core: Any,
+    *,
+    pod_name: str,
+    namespace: str,
+    container: str,
+    tail: int | None,
+) -> None:
+    """Follow a single pod/container's log to stdout until the stream ends."""
+    tail_kwargs = {"tail_lines": tail} if tail is not None else {}
+    raw = await core.read_namespaced_pod_log(
+        name=pod_name,
+        namespace=namespace,
+        container=container,
+        follow=True,
+        _preload_content=False,
+        **tail_kwargs,
+    )
+    try:
+        async for line in raw.content:
+            print(line.decode("utf-8", errors="replace").rstrip("\n"))
+    finally:
+        await raw.release()
+
+
+async def _print_pod_log(
+    core: Any,
+    *,
+    pod_name: str,
+    namespace: str,
+    container: str,
+    tail: int | None,
+) -> None:
+    """Print one pod/container's buffered logs to stdout."""
+    log_kwargs: dict[str, Any] = {}
+    if tail is not None:
+        log_kwargs["tail_lines"] = tail
+    log_text = await core.read_namespaced_pod_log(
+        name=pod_name,
+        namespace=namespace,
+        container=container,
+        **log_kwargs,
+    )
+    print(log_text.rstrip("\n") if log_text else "")
+
+
 @app.default
 async def logs(
     job_id: Annotated[
@@ -122,16 +183,7 @@ async def logs(
                 kube_console.print_warning(f"No pods found for job ID: {job_id}")
                 return
 
-            # Build list of (pod, container_name) targets
-            targets: list[tuple[Any, str]] = []
-            for pod in pods:
-                containers = (pod.spec.containers if pod.spec else []) or []
-                container_names = [c.name for c in containers]
-                target_containers = [container] if container else container_names
-                for cont in target_containers:
-                    if cont in container_names:
-                        targets.append((pod, cont))
-
+            targets = _collect_log_targets(pods, container)
             if not targets:
                 kube_console.print_warning("No matching containers found")
                 return
@@ -147,35 +199,22 @@ async def logs(
             for pod, cont in targets:
                 pod_name = pod.metadata.name
                 kube_console.print_header(f"{pod_name}/{cont}")
-
                 try:
                     if follow:
-                        raw = await core.read_namespaced_pod_log(
-                            name=pod_name,
+                        await _stream_pod_log(
+                            core,
+                            pod_name=pod_name,
                             namespace=namespace,
                             container=cont,
-                            follow=True,
-                            _preload_content=False,
-                            **({"tail_lines": tail} if tail is not None else {}),
+                            tail=tail,
                         )
-                        try:
-                            async for line in raw.content:
-                                print(
-                                    line.decode("utf-8", errors="replace").rstrip("\n")
-                                )
-                        finally:
-                            await raw.release()
                         break  # Only follow one target
-                    else:
-                        log_kwargs: dict[str, Any] = {}
-                        if tail is not None:
-                            log_kwargs["tail_lines"] = tail
-                        log_text = await core.read_namespaced_pod_log(
-                            name=pod_name,
-                            namespace=namespace,
-                            container=cont,
-                            **log_kwargs,
-                        )
-                        print(log_text.rstrip("\n") if log_text else "")
+                    await _print_pod_log(
+                        core,
+                        pod_name=pod_name,
+                        namespace=namespace,
+                        container=cont,
+                        tail=tail,
+                    )
                 except ApiException as e:
                     kube_console.print_error(f"Error getting logs: {e}")

@@ -11,7 +11,7 @@ import traceback
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import orjson
 from msgspec import Struct
@@ -593,7 +593,9 @@ class SystemController(SignalHandlerMixin, BaseService):
                     self._all_configured_event.set()
                     return
                 break  # success
-            except Exception as e:
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 - service cmd dispatch boundary
                 is_stream_error = (
                     "stream" in str(e).lower() or "closed" in str(e).lower()
                 )
@@ -1043,7 +1045,9 @@ class SystemController(SignalHandlerMixin, BaseService):
                 )
 
             self._telemetry_results = telemetry_results
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - on_message handler boundary, must not crash bus
             self.exception(f"Error processing telemetry results message: {e!r}")
         finally:
             self._should_wait_for_telemetry = False
@@ -1083,7 +1087,9 @@ class SystemController(SignalHandlerMixin, BaseService):
                 )
 
             self._server_metrics_results = server_metrics_results
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - on_message handler boundary, must not crash bus
             self.exception(f"Error processing server metrics results message: {e!r}")
         finally:
             self._should_wait_for_server_metrics = False
@@ -1311,9 +1317,11 @@ class SystemController(SignalHandlerMixin, BaseService):
                         self._profile_results = result
                         self._profile_results_received = True
                         break
-                    except Exception as e:
+                    except (orjson.JSONDecodeError, ValueError) as e:
                         self.warning(f"Failed to parse cancel response payload: {e}")
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - cancel path must always reach stop()
             self.warning(f"Exception during cancel command (proceeding to stop): {e!r}")
 
         if should_call_stop:
@@ -1356,7 +1364,9 @@ class SystemController(SignalHandlerMixin, BaseService):
                         cmd=CommandType.SHUTDOWN,
                     ),
                 )
-            except Exception as e:
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 - shutdown is best-effort per service
                 self.debug(f"Failed to send shutdown to {sid}: {e}")
 
         # Brief delay for messages to propagate before tearing down services
@@ -1385,11 +1395,15 @@ class SystemController(SignalHandlerMixin, BaseService):
         # because Textual's driver waits on a terminal that never arrives.
         try:
             await asyncio.wait_for(self.ui.stop(), timeout=5.0)
-        except (asyncio.TimeoutError, Exception) as e:
+        except asyncio.CancelledError:
+            raise
+        except (asyncio.TimeoutError, Exception) as e:  # noqa: BLE001 - UI stop must not block controller teardown
             self.warning(f"UI stop did not complete cleanly: {e!r}")
         try:
             await asyncio.wait_for(self.ui.wait_for_tasks(), timeout=5.0)
-        except (asyncio.TimeoutError, Exception) as e:
+        except asyncio.CancelledError:
+            raise
+        except (asyncio.TimeoutError, Exception) as e:  # noqa: BLE001 - UI wait must not block controller teardown
             self.warning(f"UI task drain did not complete cleanly: {e!r}")
         await asyncio.sleep(0.1)
 
@@ -1604,6 +1618,17 @@ class SystemController(SignalHandlerMixin, BaseService):
     # Control channel: command dispatch and sending helpers
     # -------------------------------------------------------------------------
 
+    @staticmethod
+    def _encode_command_payload(result: Any) -> bytes:
+        """Encode a command-hook result to a payload byte-string."""
+        from pydantic import BaseModel
+
+        if isinstance(result, BaseModel):
+            return result.model_dump_json().encode()
+        if isinstance(result, bytes):
+            return result
+        return orjson.dumps(result)
+
     async def _dispatch_control_command(
         self, identity: str, message: Command
     ) -> Struct | None:
@@ -1613,35 +1638,31 @@ class SystemController(SignalHandlerMixin, BaseService):
         """
         for hook in self.get_hooks(AIPerfHook.ON_COMMAND):
             resolved = hook.resolve_params(self)
-            if isinstance(resolved, Iterable) and message.cmd in resolved:
-                try:
-                    result = await hook.func(message)
-                    if result is None:
-                        return CommandAck(cid=message.cid, sid=self.service_id)
-                    from pydantic import BaseModel
+            if not (isinstance(resolved, Iterable) and message.cmd in resolved):
+                continue
+            try:
+                result = await hook.func(message)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 - service cmd dispatch boundary
+                tb = traceback.format_exc()
+                self.error(
+                    f"Failed to handle command {message.cmd} from {identity}: {e}"
+                )
+                return CommandErr(
+                    cid=message.cid,
+                    sid=self.service_id,
+                    error=str(e),
+                    traceback=tb,
+                )
 
-                    if isinstance(result, BaseModel):
-                        payload = result.model_dump_json().encode()
-                    elif isinstance(result, bytes):
-                        payload = result
-                    elif isinstance(result, dict):
-                        payload = orjson.dumps(result)
-                    else:
-                        payload = orjson.dumps(result)
-                    return CommandOk(
-                        cid=message.cid, sid=self.service_id, payload=payload
-                    )
-                except Exception as e:
-                    tb = traceback.format_exc()
-                    self.error(
-                        f"Failed to handle command {message.cmd} from {identity}: {e}"
-                    )
-                    return CommandErr(
-                        cid=message.cid,
-                        sid=self.service_id,
-                        error=str(e),
-                        traceback=tb,
-                    )
+            if result is None:
+                return CommandAck(cid=message.cid, sid=self.service_id)
+            return CommandOk(
+                cid=message.cid,
+                sid=self.service_id,
+                payload=self._encode_command_payload(result),
+            )
 
         self.debug(f"No handler for command {message.cmd} from {identity}")
         return CommandAck(cid=message.cid, sid=self.service_id)
@@ -1682,7 +1703,9 @@ class SystemController(SignalHandlerMixin, BaseService):
                         message=f"Command {cmd} timed out for {sid}",
                     )
                 )
-            except Exception as e:
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 - service cmd dispatch boundary
                 results.append(ErrorDetails.from_exception(e))
         return results
 
@@ -1719,7 +1742,9 @@ class SystemController(SignalHandlerMixin, BaseService):
                         )
                     )
                     break
-                except Exception as e:
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:  # noqa: BLE001 - service cmd dispatch boundary
                     results.append(ErrorDetails.from_exception(e))
                     break
         finally:
@@ -1820,7 +1845,9 @@ class SystemController(SignalHandlerMixin, BaseService):
                     svc.service_id,
                     Command(cid=uuid.uuid4().hex, cmd=CommandType.SHUTDOWN),
                 )
-            except Exception as e:
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 - shutdown is best-effort per WGM
                 self.debug(f"Failed to send shutdown to {svc.service_id}: {e}")
 
         raw_records_dir = (

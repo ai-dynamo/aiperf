@@ -71,7 +71,7 @@ class SessionIDGenerator:
         else:
             return str(uuid.uuid4())
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset the internal counter to 0.
 
         Only affects deterministic mode (when seed is provided).

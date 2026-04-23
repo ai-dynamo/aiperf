@@ -31,6 +31,7 @@ class BaseZMQClient(AIPerfLifecycleMixin):
         address: str,
         bind: bool,
         socket_ops: dict | None = None,
+        *,
         client_id: str | None = None,
         additional_bind_address: str | None = None,
         **kwargs,
@@ -176,6 +177,47 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             if addr and addr.startswith("ipc://"):
                 Path(addr.removeprefix("ipc://")).unlink(missing_ok=True)
 
+    def _apply_common_socket_options(self) -> None:
+        """Apply default socket options shared between initial setup and socket recreation."""
+        self.socket.setsockopt(zmq.RCVTIMEO, ZMQSocketDefaults.RCVTIMEO)
+        self.socket.setsockopt(zmq.SNDTIMEO, ZMQSocketDefaults.SNDTIMEO)
+        self.socket.setsockopt(zmq.SNDHWM, ZMQSocketDefaults.SNDHWM)
+        self.socket.setsockopt(zmq.RCVHWM, ZMQSocketDefaults.RCVHWM)
+        self.socket.setsockopt(zmq.TCP_KEEPALIVE, ZMQSocketDefaults.TCP_KEEPALIVE)
+        self.socket.setsockopt(
+            zmq.TCP_KEEPALIVE_IDLE, ZMQSocketDefaults.TCP_KEEPALIVE_IDLE
+        )
+        self.socket.setsockopt(
+            zmq.TCP_KEEPALIVE_INTVL, ZMQSocketDefaults.TCP_KEEPALIVE_INTVL
+        )
+        self.socket.setsockopt(
+            zmq.TCP_KEEPALIVE_CNT, ZMQSocketDefaults.TCP_KEEPALIVE_CNT
+        )
+        self.socket.setsockopt(zmq.IMMEDIATE, ZMQSocketDefaults.IMMEDIATE)
+        self.socket.setsockopt(zmq.LINGER, ZMQSocketDefaults.LINGER)
+
+        if self.socket_type == zmq.ROUTER:
+            self.socket.setsockopt(zmq.ROUTER_HANDOVER, 1)
+
+        if not self.bind:
+            self.socket.setsockopt(zmq.RECONNECT_IVL, 100)
+            self.socket.setsockopt(zmq.RECONNECT_IVL_MAX, 5000)
+
+        for key, val in self.socket_ops.items():
+            self.socket.setsockopt(key, val)
+
+    def _close_old_socket_for_recreate(self, old_socket: zmq.asyncio.Socket) -> None:
+        """Unbind + close an existing socket as part of recreation."""
+        if self.bind:
+            for addr in (self.address, self.additional_bind_address):
+                if not addr:
+                    continue
+                try:
+                    old_socket.unbind(addr)
+                except (zmq.ZMQError, OSError):
+                    self.debug(f"Unbind failed for {addr}, continuing teardown")
+        old_socket.close(linger=0)
+
     async def _recreate_socket(self) -> None:
         """Close and recreate the socket with the same configuration.
 
@@ -185,16 +227,7 @@ class BaseZMQClient(AIPerfLifecycleMixin):
         async with self._socket_recreate_lock:
             old_socket = self.socket
             if old_socket:
-                if self.bind:
-                    for addr in (self.address, self.additional_bind_address):
-                        if addr:
-                            try:
-                                old_socket.unbind(addr)
-                            except Exception:
-                                self.debug(
-                                    f"Unbind failed for {addr}, continuing teardown"
-                                )
-                old_socket.close(linger=0)
+                self._close_old_socket_for_recreate(old_socket)
 
             self.socket = None
             self.socket = self.context.socket(self.socket_type)
@@ -209,32 +242,7 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             else:
                 self.socket.connect(self.address)
 
-            self.socket.setsockopt(zmq.RCVTIMEO, ZMQSocketDefaults.RCVTIMEO)
-            self.socket.setsockopt(zmq.SNDTIMEO, ZMQSocketDefaults.SNDTIMEO)
-            self.socket.setsockopt(zmq.SNDHWM, ZMQSocketDefaults.SNDHWM)
-            self.socket.setsockopt(zmq.RCVHWM, ZMQSocketDefaults.RCVHWM)
-            self.socket.setsockopt(zmq.TCP_KEEPALIVE, ZMQSocketDefaults.TCP_KEEPALIVE)
-            self.socket.setsockopt(
-                zmq.TCP_KEEPALIVE_IDLE, ZMQSocketDefaults.TCP_KEEPALIVE_IDLE
-            )
-            self.socket.setsockopt(
-                zmq.TCP_KEEPALIVE_INTVL, ZMQSocketDefaults.TCP_KEEPALIVE_INTVL
-            )
-            self.socket.setsockopt(
-                zmq.TCP_KEEPALIVE_CNT, ZMQSocketDefaults.TCP_KEEPALIVE_CNT
-            )
-            self.socket.setsockopt(zmq.IMMEDIATE, ZMQSocketDefaults.IMMEDIATE)
-            self.socket.setsockopt(zmq.LINGER, ZMQSocketDefaults.LINGER)
-
-            if self.socket_type == zmq.ROUTER:
-                self.socket.setsockopt(zmq.ROUTER_HANDOVER, 1)
-
-            if not self.bind:
-                self.socket.setsockopt(zmq.RECONNECT_IVL, 100)
-                self.socket.setsockopt(zmq.RECONNECT_IVL_MAX, 5000)
-
-            for key, val in self.socket_ops.items():
-                self.socket.setsockopt(key, val)
+            self._apply_common_socket_options()
 
             self.debug(
                 lambda: f"Recreated {self.socket_type_name} socket, {'bound' if self.bind else 'connected'} to {self.address} ({self.client_id})"
@@ -254,9 +262,9 @@ class BaseZMQClient(AIPerfLifecycleMixin):
                 lambda: f"ZMQ context already terminated, skipping socket close ({self.client_id})"
             )
             return
-        except Exception as e:
+        except zmq.ZMQError as e:
             self.exception(
-                f"Uncaught exception shutting down ZMQ socket: {e} ({self.client_id})"
+                f"Uncaught ZMQ error shutting down ZMQ socket: {e} ({self.client_id})"
             )
         finally:
             self._cleanup_ipc_file()

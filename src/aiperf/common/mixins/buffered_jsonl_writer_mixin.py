@@ -92,7 +92,8 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
             if buffer_to_flush:
                 self.execute_async(self._flush_buffer(buffer_to_flush))
 
-        except Exception as e:
+        except (OSError, TypeError, ValueError, msgspec.EncodeError) as e:
+            # OSError from file I/O; Type/Value/EncodeError from serializing the record.
             self.error(f"Failed to write record: {e!r}")
 
     def _serialize_record(self, record: Any) -> bytes:
@@ -134,7 +135,7 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 await self._file_handle.write(bulk_data)
                 await self._file_handle.flush()
                 self._last_flush_monotonic = time.monotonic()
-            except Exception as e:
+            except OSError as e:
                 self.exception(f"Failed to flush buffer: {e!r}")
 
     @background_task(interval=lambda self: self._flush_interval, immediate=False)
@@ -179,7 +180,7 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
             if buffer_to_flush:
                 try:
                     await self._flush_buffer(buffer_to_flush)
-                except Exception as e:
+                except OSError as e:
                     self.error(f"Failed to flush remaining buffer during shutdown: {e}")
 
         async with self._file_lock:
@@ -187,7 +188,7 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 try:
                     await self._file_handle.close()
                     self.debug(lambda: f"File handle closed: {self.output_file}")
-                except Exception as e:
+                except OSError as e:
                     self.exception(f"Failed to close file handle during shutdown: {e}")
                 finally:
                     self._file_handle = None

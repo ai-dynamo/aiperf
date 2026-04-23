@@ -83,7 +83,7 @@ class CommunicationError(AIPerfError):
     """Generic communication error."""
 
 
-class ConfigurationError(AIPerfError):
+class AIPerfConfigurationError(AIPerfError):
     """Exception raised when something fails to configure, or there is a configuration error."""
 
 

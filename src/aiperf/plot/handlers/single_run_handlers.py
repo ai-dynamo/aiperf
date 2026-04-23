@@ -441,7 +441,11 @@ class TimeSliceHandler(BaseSingleRunHandler):
         # Handle SERVER_METRICS source
         if y_metric.source == DataSource.SERVER_METRICS:
             return self._create_server_metrics_plot(
-                spec, data, available_metrics, x_metric, y_metric
+                spec,
+                data,
+                available_metrics=available_metrics,
+                x_metric=x_metric,
+                y_metric=y_metric,
             )
 
         # Handle TIMESLICES source (existing logic)
@@ -533,6 +537,7 @@ class TimeSliceHandler(BaseSingleRunHandler):
         self,
         spec: PlotSpec,
         data: RunData,
+        *,
         available_metrics: dict,
         x_metric: MetricSpec,
         y_metric: MetricSpec,
@@ -582,7 +587,13 @@ class TimeSliceHandler(BaseSingleRunHandler):
         # If multiple series and no explicit filter, create multi-series plot
         if len(series_list) > 1 and endpoint_filter is None and labels_filter is None:
             return self._create_multi_series_server_metrics_plot(
-                df, spec, metric_name, series_list, unit, available_metrics, x_metric
+                df,
+                spec,
+                metric_name=metric_name,
+                series_list=series_list,
+                unit=unit,
+                available_metrics=available_metrics,
+                x_metric=x_metric,
             )
 
         # Single series - use existing plot logic
@@ -616,6 +627,7 @@ class TimeSliceHandler(BaseSingleRunHandler):
         self,
         df,
         spec: PlotSpec,
+        *,
         metric_name: str,
         series_list: list[tuple[str, str]],
         unit: str,
@@ -668,7 +680,11 @@ class TimeSliceHandler(BaseSingleRunHandler):
 
             # Create legend label (with smart filtering)
             trace_name = create_series_legend_label(
-                metric_name, endpoint_url, labels_json, total_series, all_series_labels
+                metric_name,
+                endpoint_url=endpoint_url,
+                labels_json=labels_json,
+                total_series=total_series,
+                all_series_labels=all_series_labels,
             )
 
             # Add scatter trace
@@ -1323,7 +1339,7 @@ class PercentileBandsHandler(BaseSingleRunHandler):
                             row["p50"] = ts.avg
                             row["p95"] = ts.avg
                             row["p99"] = ts.avg
-                    except Exception as e:
+                    except (ValueError, TypeError, ZeroDivisionError) as e:
                         _logger.warning(
                             "Failed to compute percentiles for metric '%s' "
                             "at timestamp %s: %r, falling back to avg",

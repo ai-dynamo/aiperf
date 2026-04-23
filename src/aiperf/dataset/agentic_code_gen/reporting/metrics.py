@@ -91,6 +91,14 @@ def extract_metrics(
     prefill_tps: float = 20_000,
     decode_tps: float = 60,
 ) -> dict[str, np.ndarray]:
+    """Compute per-session metric arrays from parsed Agentic Code sessions.
+
+    Aggregates initial context length, per-turn new tokens, generation lengths,
+    inter-turn delays, session lengths, cache hit rates, and derived timing
+    (prefill/decode seconds using the provided TPS assumptions) across all turns
+    of all sessions. Returned arrays line up by position with the session /
+    turn order provided in ``sessions``.
+    """
     initial_context: list[float] = []
     new_tokens_per_turn: list[float] = []
     generation_length: list[float] = []
@@ -254,6 +262,13 @@ def build_report_data(
     metrics: dict[str, np.ndarray],
     manifest: DatasetManifest | None = None,
 ) -> ReportData:
+    """Assemble a ``ReportData`` bundle comparing observed metrics to targets.
+
+    Takes the metric arrays produced by ``extract_metrics`` and the dataset
+    ``manifest`` (defining target means/medians). Computes percentile statistics
+    and percent error for each tracked metric and returns the merged structure
+    used by the report renderers.
+    """
     comparisons: list[TargetComparison] = []
     for key, target_mean, target_median, display in _target_table(manifest):
         arr = metrics.get(key)

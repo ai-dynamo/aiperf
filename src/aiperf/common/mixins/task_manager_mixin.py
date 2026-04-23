@@ -62,6 +62,7 @@ class TaskManagerMixin(AIPerfLoggerMixin):
     def start_background_task(
         self,
         method: Callable,
+        *,
         interval: float | Callable[[TaskManagerProtocol], float] | None = None,
         immediate: bool = False,
         stop_on_error: bool = False,
@@ -70,13 +71,18 @@ class TaskManagerMixin(AIPerfLoggerMixin):
         """Run a task in the background, in a loop until cancelled."""
         self.execute_async(
             self._background_task_loop(
-                method, interval, immediate, stop_on_error, stop_event
+                method,
+                interval=interval,
+                immediate=immediate,
+                stop_on_error=stop_on_error,
+                stop_event=stop_event,
             )
         )
 
     async def _background_task_loop(
         self,
         method: Callable,
+        *,
         interval: float | Callable[[TaskManagerProtocol], float] | None = None,
         immediate: bool = False,
         stop_on_error: bool = False,
@@ -110,7 +116,7 @@ class TaskManagerMixin(AIPerfLoggerMixin):
             except asyncio.CancelledError:
                 self.debug(f"Background task {method.__name__} cancelled")
                 break
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - background task loop must survive any user-supplied task failure
                 self.exception(f"Error in background task {method.__name__}: {e}")
                 if stop_on_error:
                     self.exception(

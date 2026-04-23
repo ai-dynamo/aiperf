@@ -103,7 +103,7 @@ class ArtifactDirResolver:
 
             metadata = plugins.get_endpoint_metadata(cfg.endpoint.type)
             parts.append(f"{metadata.service_kind}-{cfg.endpoint.type}")
-        except Exception:
+        except Exception:  # noqa: BLE001 - missing/partial plugin registry must not fail artifact-dir naming; falls back to str(endpoint.type)
             parts.append(str(cfg.endpoint.type))
 
         # 3. Stimulus from the first non-warmup phase
@@ -356,7 +356,6 @@ class DatasetResolver:
         For multi-turn datasets, sessions are identified by session_id or
         chat_id fields. For single-turn, each record is its own session.
         """
-        from aiperf.common.utils import load_json_str
         from aiperf.plugin.enums import CustomDatasetType
 
         is_multi_turn = dataset_type in (
@@ -373,13 +372,7 @@ class DatasetResolver:
                         continue
                     record_count += 1
                     if is_multi_turn:
-                        try:
-                            data = load_json_str(line)
-                            sid = data.get("session_id") or data.get("chat_id")
-                            if sid is not None:
-                                session_ids.add(str(sid))
-                        except (ValueError, TypeError):
-                            pass
+                        _add_session_id(line, session_ids)
         except OSError:
             return 0, 0
 
@@ -511,3 +504,16 @@ def _get_aiperf_logger() -> object:
     from aiperf.common.aiperf_logger import AIPerfLogger
 
     return AIPerfLogger(__name__)
+
+
+def _add_session_id(line: str, session_ids: set[str]) -> None:
+    """Parse a JSONL line and add its session_id/chat_id to the set."""
+    from aiperf.common.utils import load_json_str
+
+    try:
+        data = load_json_str(line)
+    except (ValueError, TypeError):
+        return
+    sid = data.get("session_id") or data.get("chat_id")
+    if sid is not None:
+        session_ids.add(str(sid))

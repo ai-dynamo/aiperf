@@ -111,6 +111,7 @@ class _ServiceRegistry(AIPerfLoggerMixin):
         self,
         service_id: str,
         service_type: ServiceTypeT,
+        *,
         first_seen_ns: int,
         state: LifecycleState,
         pod_name: str | None = None,

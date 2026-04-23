@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 import traceback
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -197,7 +197,7 @@ class EventLoopMonitor(AIPerfLoggerMixin):
         self._stack_collector = StackTraceCollector()
 
     @contextmanager
-    def activity(self, label: str):
+    def activity(self, label: str) -> Iterator[None]:
         """Label the current event-loop operation for watchdog diagnostics.
 
         The watchdog thread reads this label when it detects a block, so it can

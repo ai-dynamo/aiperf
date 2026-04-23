@@ -159,7 +159,7 @@ class SelectableRichLog(ScrollableContainer):
             self._log_lines.append(formatted_log)
             self._update_display()
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - best-effort log formatting; fall back to plain error line
             self._log_lines.append(Text(f"ERROR formatting log: {e}"))
             self._update_display()
 
@@ -257,6 +257,6 @@ class LogConsumer(AIPerfLifecycleMixin):
                 log_data = self.log_queue.get_nowait()
                 self.app.log_viewer.display_log_record(log_data)
                 await yield_to_event_loop()
-            except Exception:
+            except Exception:  # noqa: BLE001 - queue.Empty races and display errors must not crash the log pump
                 # Silently ignore queue errors to avoid recursion
                 break

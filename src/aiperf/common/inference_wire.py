@@ -15,6 +15,7 @@ import orjson
 from msgspec import Struct
 
 from aiperf.common.enums import MessageType
+from aiperf.common.metric_records_wire import WireErrorDetails
 from aiperf.common.models import ErrorDetails, RequestInfo, RequestRecord, Turn
 from aiperf.common.models.dataset_models import Image, Text
 from aiperf.common.models.record_models import (
@@ -39,28 +40,6 @@ def _json_safe(value: Any) -> Any:
     if value is None:
         return None
     return orjson.loads(orjson.dumps(value))
-
-
-class WireErrorDetails(Struct, frozen=True, kw_only=True, omit_defaults=True):
-    """Wire-format error details for the worker->record-processor channel."""
-
-    code: int | None = None
-    """HTTP status code or application error code, when available."""
-
-    type: str | None = None
-    """Error type classifier string."""
-
-    message: str
-    """Human-readable error message."""
-
-    cause: str | None = None
-    """Root cause description, when available."""
-
-    cause_chain: tuple[str, ...] | None = None
-    """Chain of exception causes for nested errors."""
-
-    details: Any | None = None
-    """Arbitrary JSON-safe error detail payload."""
 
 
 class WireText(Struct, frozen=True, kw_only=True, omit_defaults=True):

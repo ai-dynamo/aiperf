@@ -4,9 +4,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+import aiohttp
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client.exceptions import ApiException
 
@@ -49,6 +51,7 @@ async def _fetch_and_print_pod_logs(
     api: ApiClient,
     namespace: str,
     job_id: str,
+    *,
     tail: int = 30,
 ) -> None:
     """Best-effort fetch and display of controller pod logs.
@@ -75,8 +78,10 @@ async def _fetch_and_print_pod_logs(
             logger.info(f"[dim]Last {tail} lines from controller pod {pod_name}:[/dim]")
             for line in log_text.strip().splitlines():
                 logger.info(f"[dim]  {line}[/dim]")
-    except Exception:
-        pass
+    except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError):
+        # Best-effort diagnostic: never fail the caller because logs are
+        # unavailable (pod deleted mid-read, API unreachable, etc.).
+        return
 
 
 async def attach_to_benchmark(
@@ -134,17 +139,101 @@ async def attach_to_benchmark(
         await stream_progress(ws_url)
 
 
+async def _poll_cr_status(
+    custom: client.CustomObjectsApi,
+    namespace: str,
+    job_id: str,
+) -> dict | None:
+    """Fetch AIPerfJob CR, returning None on 404 (caller should retry)."""
+    try:
+        return await custom.get_namespaced_custom_object(
+            group=AIPERF_JOB_GROUP,
+            version=AIPERF_JOB_VERSION,
+            plural=AIPERF_JOB_PLURAL,
+            namespace=namespace,
+            name=job_id,
+        )
+    except ApiException as e:
+        if e.status == 404:
+            return None
+        raise
+
+
+def _log_new_conditions(
+    cli_logger: Any,
+    conditions: list[dict],
+    prev_count: int,
+    elapsed: float,
+) -> int:
+    """Log conditions appended since the previous poll; return new count."""
+    if len(conditions) <= prev_count:
+        return prev_count
+    for cond in conditions[prev_count:]:
+        icon = (
+            "[green]PASS[/green]" if cond.get("status") == "True" else "[red]FAIL[/red]"
+        )
+        cli_logger.info(
+            f"  [{elapsed:>3.0f}s] {icon} {cond.get('type', '')}: "
+            f"{cond.get('message', '')[:100]}"
+        )
+    return len(conditions)
+
+
 async def watch_job(
     namespace: str,
     job_id: str,
+    *,
     timeout: int = 600,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
 ) -> dict:
-    """Watch an AIPerfJob CR until terminal, with full watchdog monitoring.
+    """Watch an AIPerfJob CR until it reaches a terminal phase.
 
-    Runs the production watchdog in the background while polling the CR
-    for phase transitions. Returns the final CR status dict.
+    Runs the production :class:`BenchmarkWatchdog` as a background task
+    while polling the AIPerfJob CR every 2s for ``status.phase``,
+    ``status.conditions``, and ``status.workers``. Newly-observed
+    conditions are logged incrementally; a phase/worker heartbeat is
+    logged every 10s. Returns when the phase is ``"Completed"``,
+    ``"Failed"``, or ``"Cancelled"``.
+
+    Side effects:
+        - Writes progress lines to the ``aiperf.kubernetes.console`` logger.
+        - Calls ``print_success``/``print_error`` on terminal phase.
+        - Starts and tears down a :class:`BenchmarkWatchdog` background task.
+
+    Args:
+        namespace: Kubernetes namespace containing the AIPerfJob CR.
+        job_id: The AIPerfJob CR name (same as the job id).
+        timeout: Maximum seconds to wait for a terminal phase before
+            raising ``TimeoutError``.
+        kubeconfig: Path to kubeconfig file (falls back to in-cluster /
+            default kubeconfig resolution via :func:`k8s_client`).
+        kube_context: Kubernetes context name.
+
+    Returns:
+        The terminal ``status`` dict from the AIPerfJob CR. Common keys:
+
+        - ``phase`` (``str``): ``"Completed"``, ``"Failed"``, ``"Cancelled"``.
+        - ``conditions`` (``list[dict]``): CR condition entries with
+          ``type``, ``status``, ``message``.
+        - ``workers`` (``dict``): ``{"ready": int, "total": int}``.
+        - ``error`` (``str``): present when phase is ``"Failed"``.
+        - ``jobId`` (``str``): echoed job id.
+
+    Raises:
+        TimeoutError: ``timeout`` seconds elapsed without a terminal phase.
+        ApiException: Non-404 Kubernetes API error while polling the CR.
+
+    Example:
+        >>> status = await watch_job(
+        ...     namespace="aiperf-bench",
+        ...     job_id="aiperf-bench-7f2a",
+        ...     timeout=600,
+        ... )
+        >>> status["phase"]
+        'Completed'
+        >>> status["workers"]
+        {'ready': 8, 'total': 8}
     """
     import asyncio
 
@@ -169,48 +258,29 @@ async def watch_job(
         ):
             start = asyncio.get_running_loop().time()
             last_status_log = 0.0
+            last_poll_error: Exception | None = None
 
             while True:
                 elapsed = asyncio.get_running_loop().time() - start
 
-                # Poll CR status
                 try:
-                    try:
-                        raw = await custom.get_namespaced_custom_object(
-                            group=AIPERF_JOB_GROUP,
-                            version=AIPERF_JOB_VERSION,
-                            plural=AIPERF_JOB_PLURAL,
-                            namespace=namespace,
-                            name=job_id,
-                        )
-                    except ApiException as e:
-                        if e.status == 404:
-                            if elapsed > 30:
-                                cli_logger.warning(
-                                    f"[{elapsed:.0f}s] AIPerfJob {job_id} not found"
-                                )
-                            await asyncio.sleep(5)
-                            continue
-                        raise
+                    raw = await _poll_cr_status(custom, namespace, job_id)
+                    if raw is None:
+                        if elapsed > 30:
+                            cli_logger.warning(
+                                f"[{elapsed:.0f}s] AIPerfJob {job_id} not found"
+                            )
+                        await asyncio.sleep(5)
+                        continue
 
                     cr_status = raw.get("status", {})
                     phase = cr_status.get("phase", "Pending")
                     conditions = cr_status.get("conditions", [])
                     workers = cr_status.get("workers", {})
 
-                    # Print new conditions as they appear
-                    if len(conditions) > prev_cond_count:
-                        for cond in conditions[prev_cond_count:]:
-                            icon = (
-                                "[green]PASS[/green]"
-                                if cond.get("status") == "True"
-                                else "[red]FAIL[/red]"
-                            )
-                            cli_logger.info(
-                                f"  [{elapsed:>3.0f}s] {icon} {cond.get('type', '')}: "
-                                f"{cond.get('message', '')[:100]}"
-                            )
-                        prev_cond_count = len(conditions)
+                    prev_cond_count = _log_new_conditions(
+                        cli_logger, conditions, prev_cond_count, elapsed
+                    )
 
                     # Phase/worker status every 10s
                     if elapsed - last_status_log >= 10:
@@ -222,7 +292,6 @@ async def watch_job(
                         )
                         last_status_log = elapsed
 
-                    # Terminal?
                     if phase in terminal_phases:
                         if phase == "Completed":
                             print_success(f"Benchmark completed ({elapsed:.0f}s)")
@@ -231,14 +300,21 @@ async def watch_job(
                             print_error(f"Benchmark failed: {error}")
                         return cr_status
 
-                except Exception as e:
+                except (
+                    ApiException,
+                    aiohttp.ClientError,
+                    asyncio.TimeoutError,
+                    OSError,
+                ) as e:
+                    last_poll_error = e
                     cli_logger.warning(f"[{elapsed:.0f}s] CR poll error: {e}")
 
                 if elapsed > timeout:
                     raise TimeoutError(
-                        f"Benchmark did not complete after {timeout}s. "
+                        f"Benchmark {job_id} in {namespace} did not complete "
+                        f"after {timeout}s (last CR poll error: {last_poll_error!r}). "
                         f"Check: kubectl get pods -n {namespace}"
-                    )
+                    ) from last_poll_error
 
                 await asyncio.sleep(2)
 
@@ -247,15 +323,64 @@ async def auto_attach_workflow(
     job_id: str,
     namespace: str,
     attach_port: int,
+    *,
     wait_for_ready: bool = True,
     stream_ws: bool = False,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
 ) -> None:
-    """Execute auto-attach workflow after deployment.
+    """Execute the post-deploy auto-attach workflow: wait, stream, retrieve results.
 
-    Waits for controller pod, then streams progress via WebSocket or
-    controller logs to the terminal. Retrieves results on completion.
+    After ``aiperf kube profile`` creates the AIPerfJob CR, this helper:
+
+    1. Optionally waits for the controller pod to reach ``Running``
+       (``wait_for_ready=True``).
+    2. Streams live progress to the terminal — via the controller's
+       WebSocket if ``stream_ws=True``, otherwise by tailing the
+       controller pod's stdout.
+    3. On benchmark completion, prints the completion banner and
+       downloads all result artifacts into ``./artifacts/<job_id>/``.
+
+    Side effects:
+        - Creates the directory ``./artifacts/<job_id>/`` in the caller's cwd.
+        - Writes progress / status lines to the ``aiperf.kubernetes.console``
+          CLI logger (``print_info``, ``print_success``, ``print_action``).
+        - Opens a ``kubectl port-forward`` subprocess when ``stream_ws=True``.
+        - Downloads result files and pod-logs archives into the artifacts dir.
+
+    Args:
+        job_id: AIPerfJob CR name to attach to.
+        namespace: Namespace containing the AIPerfJob.
+        attach_port: Local port for the port-forward (pass ``0`` for an
+            ephemeral port).
+        wait_for_ready: If True, wait up to 300s for the controller pod to
+            reach ``Running``. If False and no pod exists yet, raises
+            ``RuntimeError``.
+        stream_ws: If True, stream progress via the controller's WebSocket
+            (requires port-forward). If False, tail controller pod logs.
+        kubeconfig: Path to kubeconfig file (falls back to in-cluster /
+            default kubeconfig resolution via :func:`k8s_client`).
+        kube_context: Kubernetes context name.
+
+    Raises:
+        RuntimeError: ``wait_for_ready=False`` and no controller pod found.
+        TimeoutError: ``wait_for_ready=True`` and the controller pod did
+            not reach ``Running`` within 300s.
+        ConnectionError: WebSocket streaming failed after all retries
+            (raised from :func:`stream_progress_from_api`).
+        ApiException: Underlying Kubernetes API error.
+
+    Example:
+        >>> await auto_attach_workflow(
+        ...     job_id="aiperf-bench-7f2a",
+        ...     namespace="aiperf-bench",
+        ...     attach_port=0,
+        ...     wait_for_ready=True,
+        ...     stream_ws=False,
+        ... )
+        # ...live controller logs stream to terminal...
+        # Benchmark complete. Retrieving results...
+        # Results saved to ./artifacts/aiperf-bench-7f2a/
     """
     kube_creds = {"kubeconfig": kubeconfig, "kube_context": kube_context}
 
@@ -295,6 +420,7 @@ async def retrieve_and_display_results(
     job_id: str,
     namespace: str,
     api: ApiClient,
+    *,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
 ) -> None:

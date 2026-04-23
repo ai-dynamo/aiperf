@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for PreflightChecker.run_quick_checks()."""
+"""Unit tests for CLIPreflightChecker.run_quick_checks()."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from kubernetes_asyncio.client.models import (
     VersionInfo,
 )
 
-from aiperf.kubernetes.preflight import CheckStatus, PreflightChecker
+from aiperf.kubernetes.preflight import CheckStatus, CLIPreflightChecker
 
 # =============================================================================
 # Fixtures
@@ -60,7 +60,7 @@ def mock_kube_env():
     """Fixture that provides a factory for patching kubernetes_asyncio calls.
 
     Returns a context-manager factory that patches k8s_client + the typed
-    V1 API constructors used by PreflightChecker.
+    V1 API constructors used by CLIPreflightChecker.
     """
 
     @asynccontextmanager
@@ -136,13 +136,13 @@ def mock_kube_env():
 
 
 class TestQuickChecks:
-    """Tests for PreflightChecker.run_quick_checks()."""
+    """Tests for CLIPreflightChecker.run_quick_checks()."""
 
     @pytest.mark.asyncio
     async def test_quick_checks_passes_healthy_cluster(self, mock_kube_env) -> None:
         """Test quick checks pass on a healthy cluster."""
         async with mock_kube_env():
-            checker = PreflightChecker(namespace="default")
+            checker = CLIPreflightChecker(namespace="default")
             results = await checker.run_quick_checks()
 
         assert results.passed is True
@@ -154,7 +154,7 @@ class TestQuickChecks:
         async with mock_kube_env(
             connectivity_error=Exception("connection refused"),
         ):
-            checker = PreflightChecker(namespace="default")
+            checker = CLIPreflightChecker(namespace="default")
             results = await checker.run_quick_checks()
 
         assert results.passed is False
@@ -166,7 +166,7 @@ class TestQuickChecks:
     async def test_quick_checks_fails_on_jobset_crd(self, mock_kube_env) -> None:
         """Test quick checks fail when JobSet CRD is missing."""
         async with mock_kube_env(jobset_crd_error=ApiException(status=404)):
-            checker = PreflightChecker(namespace="default")
+            checker = CLIPreflightChecker(namespace="default")
             results = await checker.run_quick_checks()
 
         assert results.passed is False
@@ -177,7 +177,7 @@ class TestQuickChecks:
     async def test_quick_checks_only_runs_three_checks(self, mock_kube_env) -> None:
         """Test that quick checks run exactly 3 checks on success."""
         async with mock_kube_env():
-            checker = PreflightChecker(namespace="default")
+            checker = CLIPreflightChecker(namespace="default")
             results = await checker.run_quick_checks()
 
         assert len(results.checks) == 3
@@ -192,7 +192,7 @@ class TestQuickChecks:
     async def test_quick_checks_fails_on_rbac(self, mock_kube_env) -> None:
         """Test quick checks fail when RBAC permissions are denied."""
         async with mock_kube_env(rbac_allowed=False):
-            checker = PreflightChecker(namespace="default")
+            checker = CLIPreflightChecker(namespace="default")
             results = await checker.run_quick_checks()
 
         assert results.passed is False
@@ -205,7 +205,7 @@ class TestQuickChecks:
     ) -> None:
         """Test that quick checks include endpoint when endpoint_url is set."""
         async with mock_kube_env():
-            checker = PreflightChecker(
+            checker = CLIPreflightChecker(
                 namespace="default", endpoint_url="http://llm:8000/v1"
             )
             results = await checker.run_quick_checks()
@@ -223,7 +223,7 @@ class TestQuickChecks:
     async def test_check_results_have_duration(self, mock_kube_env) -> None:
         """Test that all check results have duration_ms populated."""
         async with mock_kube_env():
-            checker = PreflightChecker(namespace="default")
+            checker = CLIPreflightChecker(namespace="default")
             results = await checker.run_quick_checks()
 
         for check in results.checks:
@@ -234,7 +234,7 @@ class TestQuickChecks:
     async def test_quick_checks_does_not_print(self, mock_kube_env, capsys) -> None:
         """Test that quick checks do not print anything to stdout by default."""
         async with mock_kube_env():
-            checker = PreflightChecker(namespace="default")
+            checker = CLIPreflightChecker(namespace="default")
             await checker.run_quick_checks()
 
         captured = capsys.readouterr()
@@ -246,7 +246,7 @@ class TestQuickChecks:
     ) -> None:
         """Test that quick checks print compact results when show_progress=True."""
         async with mock_kube_env():
-            checker = PreflightChecker(namespace="default")
+            checker = CLIPreflightChecker(namespace="default")
             await checker.run_quick_checks(show_progress=True)
 
         captured = capsys.readouterr()

@@ -624,6 +624,7 @@ def _estimate_dataset_manager(
 def _estimate_worker(
     concurrency_per_worker: int,
     avg_osl: int,
+    *,
     streaming: bool,
     max_turns: int,
     avg_isl: int,
@@ -681,6 +682,7 @@ def _estimate_worker(
 
 def _estimate_record_processor(
     num_models: int,
+    *,
     avg_isl: int = 512,
     avg_osl: int = 128,
     streaming: bool = True,
@@ -803,6 +805,7 @@ def _estimate_server_metrics(
     num_endpoints: int,
     duration_s: float,
     scrape_interval_s: float,
+    *,
     unique_series: int,
     histogram_count: int,
     histogram_buckets: int,
@@ -937,9 +940,9 @@ class MemoryEstimator:
                 p.num_server_metrics_endpoints,
                 p.total_benchmark_duration_s,
                 p.server_metrics_scrape_interval_s,
-                p.est_unique_metric_series,
-                p.est_histogram_metrics,
-                p.est_histogram_buckets,
+                unique_series=p.est_unique_metric_series,
+                histogram_count=p.est_histogram_metrics,
+                histogram_buckets=p.est_histogram_buckets,
             ),
             _estimate_fixed_service("results_sidecar", "Results Sidecar"),
         ]
@@ -1001,20 +1004,19 @@ class MemoryEstimator:
         worker = _estimate_worker(
             conc_per_worker,
             p.avg_osl_tokens,
-            p.streaming,
-            p.max_turns,
-            p.avg_isl_tokens,
-            p.connections_per_worker,
+            streaming=p.streaming,
+            max_turns=p.max_turns,
+            avg_isl=p.avg_isl_tokens,
+            connections_per_worker=p.connections_per_worker,
         )
         rp = _estimate_record_processor(
             p.num_models,
-            p.avg_isl_tokens,
-            p.avg_osl_tokens,
-            p.streaming,
-            rp_queue_depth,
+            avg_isl=p.avg_isl_tokens,
+            avg_osl=p.avg_osl_tokens,
+            streaming=p.streaming,
+            concurrency_per_rp=rp_queue_depth,
         )
 
-        # Scale by count
         workers_total = ComponentEstimate(
             name=f"Workers (x{p.workers_per_pod})",
             base_mib=worker.base_mib * p.workers_per_pod,
@@ -1065,7 +1067,6 @@ class MemoryEstimator:
         warnings = []
         recommendations = []
 
-        # Controller headroom
         if est.controller.at_risk:
             warnings.append(
                 f"Controller pod peak ({est.controller.total_peak_mib:.0f} MiB) is within "
@@ -1093,7 +1094,6 @@ class MemoryEstimator:
                 f"{est.worker_pod.headroom_pct:.1f}% of limit ({est.worker_pod.current_limit_mib:.0f} MiB)."
             )
 
-        # High request count
         if p.total_requests > 500_000:
             warnings.append(
                 f"Total requests ({p.total_requests:,}) will create significant metric array storage. "

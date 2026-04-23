@@ -100,7 +100,7 @@ async def cleanup_global_log_queue() -> None:
                     asyncio.to_thread(_global_log_queue.join_thread), timeout=1.0
                 )
                 _logger.debug("Cleaned up global log queue")
-            except Exception as e:
+            except (OSError, asyncio.TimeoutError, ValueError) as e:
                 _logger.debug(f"Error cleaning up log queue: {e}")
             finally:
                 from aiperf.common.resource_tracker import unregister_queue_semaphores
@@ -208,7 +208,7 @@ class StructuredLogHandler(logging.Handler):
                 log_entry["extra"] = record.extra
 
             print(orjson.dumps(log_entry).decode(), flush=True)
-        except Exception:
+        except Exception:  # noqa: BLE001 - logging.Handler.emit contract: delegate any failure to handleError
             self.handleError(record)
 
 
@@ -483,6 +483,6 @@ class MultiProcessLogHandler(RichHandler):
         except queue.Full:
             # Drop logs if queue is full to prevent blocking. Do not log to prevent recursion.
             pass
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - log handler emit path must never re-raise or recurse
             # Do not log to prevent recursion
             pass

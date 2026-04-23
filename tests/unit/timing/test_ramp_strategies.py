@@ -12,23 +12,23 @@ from aiperf.timing.ramping import (
     ExponentialStrategy,
     LinearStrategy,
     PoissonStrategy,
-    RampConfig,
+    TimingRampConfig,
 )
 
 
-def cfg(t: RampType, s: float, tg: float, d: float, **kw) -> RampConfig:
-    return RampConfig(ramp_type=t, start=s, target=tg, duration_sec=d, **kw)
+def cfg(t: RampType, s: float, tg: float, d: float, **kw) -> TimingRampConfig:
+    return TimingRampConfig(ramp_type=t, start=s, target=tg, duration_sec=d, **kw)
 
 
-def lin(s: float, t: float, d: float, step: float | None = None) -> RampConfig:
+def lin(s: float, t: float, d: float, step: float | None = None) -> TimingRampConfig:
     return cfg(RampType.LINEAR, s, t, d, step_size=step)
 
 
-def exp(s: float, t: float, d: float, e: float = 2.0) -> RampConfig:
+def exp(s: float, t: float, d: float, e: float = 2.0) -> TimingRampConfig:
     return cfg(RampType.EXPONENTIAL, s, t, d, exponent=e)
 
 
-def poi(s: float, t: float, d: float) -> RampConfig:
+def poi(s: float, t: float, d: float) -> TimingRampConfig:
     return cfg(RampType.POISSON, s, t, d)
 
 
@@ -400,7 +400,7 @@ class TestEdgeCasesAndFactory:
             (poi(1, 100, 10.0), PoissonStrategy),
         ],
     )
-    def test_plugin(self, config: RampConfig, cls: type) -> None:
+    def test_plugin(self, config: TimingRampConfig, cls: type) -> None:
         RampClass = plugins.get_class(PluginType.RAMP, config.ramp_type)
         s = RampClass(config=config)
         assert isinstance(s, cls)

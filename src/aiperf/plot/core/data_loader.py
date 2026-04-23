@@ -581,7 +581,7 @@ class DataLoader(AIPerfLoggerMixin):
                 if result is not None:
                     aggregated[metric_name] = result
                     metrics_added.append(metric_name)
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, ZeroDivisionError) as e:
                 self.warning(f"Failed to calculate derived metric '{metric_name}': {e}")
 
         if metrics_added:
@@ -664,7 +664,12 @@ class DataLoader(AIPerfLoggerMixin):
                     try:
                         record = parse_func(line)
                         records.append(record)
-                    except (orjson.JSONDecodeError, Exception) as e:
+                    except (
+                        orjson.JSONDecodeError,
+                        ValueError,
+                        TypeError,
+                        KeyError,
+                    ) as e:
                         corrupted_lines += 1
                         self.warning(
                             f"Skipping invalid line {line_num} in {jsonl_path}: {e}"
@@ -823,7 +828,7 @@ class DataLoader(AIPerfLoggerMixin):
                 for tag, metric_data in data["metrics"].items():
                     try:
                         parsed_metrics[tag] = MetricResult(**metric_data)
-                    except Exception as e:
+                    except (ValueError, TypeError, KeyError) as e:
                         self.warning(f"Failed to parse metric {tag}: {e}")
                         parsed_metrics[tag] = metric_data
                 data["metrics"] = parsed_metrics
@@ -994,36 +999,17 @@ class DataLoader(AIPerfLoggerMixin):
 
                     # Build time series rows from timeslices (if present)
                     if series.timeslices:
-                        for ts in series.timeslices:
-                            # Use midpoint of timeslice as timestamp
-                            timestamp_ns = (ts.start_ns + ts.end_ns) // 2
-
-                            row = {
-                                "timestamp_ns": timestamp_ns,
-                                "endpoint_url": endpoint_url,
-                                "metric_name": metric_name,
-                                "metric_type": metric_data.type.value,
-                                "labels_json": labels_key,
-                                "unit": metric_data.unit or "",
-                            }
-
-                            # Add type-specific fields — dispatch on metric_data.type
-                            # because GaugeTimeslice/CounterTimeslice/HistogramTimeslice
-                            # now alias a single unified ``ServerTimeslice`` dataclass.
-                            if metric_data.type == PrometheusMetricType.GAUGE:
-                                row["value"] = ts.avg
-                                row["histogram_count"] = None
-                                row["histogram_sum"] = None
-                            elif metric_data.type == PrometheusMetricType.COUNTER:
-                                row["value"] = ts.rate
-                                row["histogram_count"] = None
-                                row["histogram_sum"] = None
-                            elif metric_data.type == PrometheusMetricType.HISTOGRAM:
-                                row["value"] = ts.avg
-                                row["histogram_count"] = ts.count
-                                row["histogram_sum"] = ts.sum
-
-                            rows.append(row)
+                        rows.extend(
+                            self._timeslice_to_row(
+                                ts,
+                                endpoint_url=endpoint_url,
+                                metric_name=metric_name,
+                                metric_type=metric_data.type,
+                                labels_key=labels_key,
+                                unit=metric_data.unit or "",
+                            )
+                            for ts in series.timeslices
+                        )
 
             # Create DataFrame from rows
             df = pd.DataFrame(rows) if rows else None
@@ -1038,10 +1024,47 @@ class DataLoader(AIPerfLoggerMixin):
             raise DataLoadError(
                 f"Failed to parse server metrics JSON: {e}", path=str(json_path)
             ) from e
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - ServerMetricsExportData.model_validate + orjson across many shapes; wrap once into DataLoadError
             raise DataLoadError(
                 f"Failed to load server metrics from JSON: {e}", path=str(json_path)
             ) from e
+
+    @staticmethod
+    def _timeslice_to_row(
+        ts: Any,
+        *,
+        endpoint_url: str,
+        metric_name: str,
+        metric_type: PrometheusMetricType,
+        labels_key: str,
+        unit: str,
+    ) -> dict[str, Any]:
+        """Convert a ServerTimeslice into a tidy DataFrame row dict.
+
+        Dispatches on metric_type because GaugeTimeslice/CounterTimeslice/HistogramTimeslice
+        now alias a single unified ``ServerTimeslice`` dataclass.
+        """
+        # Use midpoint of timeslice as timestamp
+        timestamp_ns = (ts.start_ns + ts.end_ns) // 2
+        row: dict[str, Any] = {
+            "timestamp_ns": timestamp_ns,
+            "endpoint_url": endpoint_url,
+            "metric_name": metric_name,
+            "metric_type": metric_type.value,
+            "labels_json": labels_key,
+            "unit": unit,
+            "histogram_count": None,
+            "histogram_sum": None,
+        }
+        if metric_type == PrometheusMetricType.GAUGE:
+            row["value"] = ts.avg
+        elif metric_type == PrometheusMetricType.COUNTER:
+            row["value"] = ts.rate
+        elif metric_type == PrometheusMetricType.HISTOGRAM:
+            row["value"] = ts.avg
+            row["histogram_count"] = ts.count
+            row["histogram_sum"] = ts.sum
+        return row
 
     def _load_server_metrics_parquet(
         self, parquet_path: Path

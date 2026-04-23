@@ -11,6 +11,7 @@ app = App(name="plot")
 
 @app.default
 def plot(
+    *,
     paths: Annotated[
         list[str] | None,
         Parameter(

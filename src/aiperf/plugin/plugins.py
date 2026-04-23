@@ -219,7 +219,7 @@ class _PluginRegistry:
                 self.load_manifest(registry_path, plugin_name=ep.name, dist=ep.dist)
                 loaded_count += 1
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - failed plugin loads are collected into a summary and don't abort discovery
                 # Collect error for summary
                 failed_plugins.append((ep.name, str(e)))
                 _logger.debug(
@@ -615,7 +615,7 @@ class _PluginRegistry:
                 importlib.resources.files("aiperf.plugin") / "categories.yaml"
             )
             content = categories_path.read_text(encoding="utf-8")
-        except Exception:
+        except Exception:  # noqa: BLE001 - fallback to relative path on any resources/read error
             # Fallback to relative path
             fallback = Path(__file__).parent / "categories.yaml"
             if not fallback.exists():

@@ -946,6 +946,7 @@ _RAW_RECORD_INFO_ENCODER = msgspec.json.Encoder(enc_hook=_record_info_enc_hook)
 
 
 def decode_metric_record_info_json(data: str | bytes) -> MetricRecordInfo:
+    """Decode a JSON-encoded ``MetricRecordInfo`` (as written by the JSONL exporter)."""
     from aiperf.common.metric_records_wire import metric_record_metadata_from_model
 
     payload = orjson.loads(data)
@@ -963,6 +964,7 @@ def decode_metric_record_info_json(data: str | bytes) -> MetricRecordInfo:
 
 
 def decode_raw_record_info_json(data: str | bytes) -> RawRecordInfo:
+    """Decode a JSON-encoded ``RawRecordInfo`` (as written by the raw-record JSONL exporter)."""
     from aiperf.common.metric_records_wire import metric_record_metadata_from_model
 
     payload = orjson.loads(data)

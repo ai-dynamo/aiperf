@@ -268,7 +268,7 @@ class AioHttpTransport(BaseHTTPTransport):
             ):
                 await lease_manager.release_lease(request_info.x_correlation_id)
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - per-request; attach ErrorDetails and return record
             record = RequestRecord(
                 request_headers=redact_headers(
                     headers or request_info.endpoint_headers

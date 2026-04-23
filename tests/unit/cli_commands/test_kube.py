@@ -459,6 +459,7 @@ class TestAttachCommand:
         """Test attach on failed job."""
         mock_kube_client.find_job.return_value = _sample_job_info(phase="Failed")
         mock_kube_client.find_jobset.return_value = failed_jobset_info
+        mock_kube_client.find_controller_pod.return_value = None
         await attach(job_id="abc123", manage_options=manage_options)
 
         captured = capsys.readouterr()

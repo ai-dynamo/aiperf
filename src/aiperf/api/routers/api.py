@@ -12,49 +12,13 @@ from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel, Field
 
 from aiperf.api.depends import ServiceDep
 from aiperf.api.metrics_utils import format_metrics_json
+from aiperf.api.models.responses import ProgressResponse, WorkersResponse
 from aiperf.api.prometheus_formatter import format_as_prometheus
-from aiperf.common.enums import CreditPhase
-from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
-from aiperf.common.models import WorkerStats
-from aiperf.common.models.record_models import ProcessRecordsResult
 
 api_router = APIRouter()
-
-
-class ProgressResponse(BaseModel):
-    """Benchmark progress response."""
-
-    phases: dict[CreditPhase, CombinedPhaseStats] = Field(
-        default_factory=dict, description="Per-phase progress stats"
-    )
-
-
-class WorkersResponse(BaseModel):
-    """Worker status response."""
-
-    workers: dict[str, WorkerStats] = Field(description="Per-worker stats")
-
-
-class HealthResponse(BaseModel):
-    """Health check response."""
-
-    status: str = Field(default="ok", description="Health status")
-    websocket_clients: int = Field(default=0, description="Connected clients")
-
-
-class BenchmarkResultsResponse(BaseModel):
-    """Final benchmark results response."""
-
-    status: str = Field(
-        description="Benchmark status: 'running', 'complete', or 'cancelled'"
-    )
-    results: ProcessRecordsResult | None = Field(
-        default=None, description="Final benchmark results if complete"
-    )
 
 
 # Metrics Endpoints

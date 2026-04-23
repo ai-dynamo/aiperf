@@ -45,6 +45,7 @@ def _enable_hf_offline_mode() -> None:
 
 def bootstrap_and_run_service(
     service_type: ServiceType,
+    *,
     run: BenchmarkRun | None = None,
     config: AIPerfConfig | None = None,
     service_id: str | None = None,
@@ -196,7 +197,7 @@ def bootstrap_and_run_service(
             await service.initialize()
             await service.start()
             await service.stopped_event.wait()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - top-level service entry must log and surface any unhandled exception
             service.exception(f"Unhandled exception in service: {e}")
         finally:
             if error_queue is not None and service._exit_errors:

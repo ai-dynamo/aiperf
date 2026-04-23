@@ -10,7 +10,7 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import ArrivalPattern, PluginType, RampType, TimingMode
 from aiperf.plugin.types import TypeNotFoundError
 from aiperf.timing.intervals import IntervalGeneratorConfig
-from aiperf.timing.ramping import RampConfig
+from aiperf.timing.ramping import TimingRampConfig
 from aiperf.timing.strategies.core import TimingStrategyProtocol
 from tests.unit.timing.conftest import make_phase_config
 
@@ -112,7 +112,7 @@ def mk_int_cfg(pattern, rate=10.0, smooth=None):
 
 
 def mk_ramp_cfg(rtype, start=1.0, target=10.0, dur=5.0, exp=None, step=None):
-    return RampConfig(
+    return TimingRampConfig(
         ramp_type=rtype,
         start=start,
         target=target,
@@ -128,7 +128,7 @@ def create_interval_generator(cfg: IntervalGeneratorConfig):
     return GeneratorClass(config=cfg)
 
 
-def create_ramp_strategy(cfg: RampConfig):
+def create_ramp_strategy(cfg: TimingRampConfig):
     """Helper to create ramp strategy via plugin system."""
     RampClass = plugins.get_class(PluginType.RAMP, cfg.ramp_type)
     return RampClass(config=cfg)

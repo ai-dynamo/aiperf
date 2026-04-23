@@ -66,6 +66,7 @@ def _cache_tokenizer(
 
 def _prefetch_tokenizers(
     names: set[str],
+    *,
     trust_remote_code: bool,
     revision: str,
     logger: AIPerfLogger,
@@ -101,7 +102,7 @@ def _prefetch_tokenizers(
             try:
                 _, elapsed = future.result()
                 logger.info(f"  Cached {name} ({elapsed:.2f}s)")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - tokenizer prefetch may raise arbitrary HF/network/subprocess errors; surface via rich panel
                 details = ErrorDetails.from_exception(e)
                 display_tokenizer_validation_error(
                     getattr(e, "tokenizer_name", None) or name,
@@ -146,7 +147,7 @@ def _resolve_aliases(
     for name in names:
         try:
             result = Tokenizer.resolve_alias(name)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - validator must surface any HF/network failure to the user as a startup error
             logger.error(f"Failed to validate tokenizer '{name}': {e}")
             sys.exit(1)
 

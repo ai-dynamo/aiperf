@@ -13,6 +13,7 @@ import asyncio
 import logging
 from typing import Any
 
+import aiohttp
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client.exceptions import ApiException
 
@@ -31,11 +32,15 @@ _MAX_CACHE_SIZE = 200
 
 # Per-job ProgressClient cache keyed by namespace/job_id.
 # Avoids creating a new aiohttp session every monitor tick.
+# ergonomics: module-state - kopf handler cache (process-wide): keyed by
+# namespace/job_id so every reconcile finds the same aiohttp session.
 _progress_clients: dict[str, ProgressClient] = {}
 _client_cache_lock = asyncio.Lock()
 
 # Tracks (pod_name, restart_count) pairs already warned about per job.
 # Prevents emitting the same pod restart event every monitor tick.
+# ergonomics: module-state - kopf handler cache (process-wide): per-job
+# dedup of pod-restart warning events across monitor ticks.
 _warned_pod_restarts: dict[str, set[tuple[str, int]]] = {}
 
 # In-process fast-path cache of jobs where completion has already been
@@ -43,12 +48,17 @@ _warned_pod_restarts: dict[str, set[tuple[str, int]]] = {}
 # the ``Annotations.COMPLETION_CLAIMED`` annotation, which survives
 # operator pod restart. This set just avoids re-doing the annotation
 # check for claims made by this same process.
+# ergonomics: module-state - kopf handler cache (process-wide): fast-path
+# dedup for completion claim; authoritative state lives on the CR
+# annotation.
 _shutdown_sent: set[str] = set()
 
 # Per-job cancellation events set by on_delete. Long-running handler
 # paths (monitor_progress, handle_completion, fetch retries) check
 # is_cancellation_requested() at await boundaries and short-circuit so
 # CR deletion doesn't have to wait for fetch backoff + JobSet delete.
+# ergonomics: module-state - kopf handler cache (process-wide): sticky
+# cancellation flags read by long-running handlers at await boundaries.
 _cancellation_events: dict[str, asyncio.Event] = {}
 
 
@@ -148,15 +158,33 @@ async def try_claim_completion(
 ) -> bool:
     """Try to claim the completion branch durably via a CR annotation.
 
-    Returns True if the claim was newly acquired (caller should proceed
-    with handle_completion). Returns False if the annotation is already
-    present (another handler or a previous operator run claimed it) or
-    if the claim attempt fails for any reason (fail-safe: don't double
-    complete).
-
     Uses a JSON-patch with a ``test`` op so two concurrent handlers cannot
     both acquire the claim: only the first patch succeeds, the second
     gets a 422/409 and returns False.
+
+    Args:
+        namespace: Namespace of the AIPerfJob CR.
+        name: Name of the AIPerfJob CR.
+        body: The CR body (checked for an existing claim annotation to
+            avoid an unnecessary API round-trip on the slow path).
+
+    Returns:
+        True iff this call newly won the race and the caller should
+        proceed with ``handle_completion``. False if the annotation was
+        already present (another handler or a previous operator run
+        claimed it) or if the claim attempt fails for any reason
+        (fail-safe: don't double complete).
+
+    Raises:
+        No exceptions escape — unexpected errors are logged and return
+        False. The ``_shutdown_sent`` in-process set is updated on lost
+        races so subsequent ticks skip the API call entirely.
+
+    Example:
+        >>> if await try_claim_completion(namespace, name, body):
+        ...     await handle_completion(
+        ...         body, namespace, jobset_name, job_id, status, sb
+        ...     )
     """
     key = job_key(namespace, name)
 
@@ -236,7 +264,15 @@ async def try_claim_completion(
             e,
         )
         return False
-    except Exception as e:
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+        logger.warning(
+            "Unexpected error claiming completion for %s/%s: %s (not claiming)",
+            namespace,
+            name,
+            e,
+        )
+        return False
+    except Exception as e:  # noqa: BLE001 - fail-safe: any error reclaiming must NOT raise into kopf; we prefer 'not claimed' over 'double-claimed'
         logger.warning(
             "Unexpected error claiming completion for %s/%s: %s (not claiming)",
             namespace,

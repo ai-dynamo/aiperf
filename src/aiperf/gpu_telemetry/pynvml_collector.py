@@ -132,7 +132,7 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
 
         try:
             return await asyncio.to_thread(self._probe_nvml_devices)
-        except Exception:
+        except (pynvml.NVMLError, RuntimeError, OSError):
             return False
 
     def _probe_nvml_devices(self) -> bool:
@@ -293,7 +293,7 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
 
             try:
                 pynvml.nvmlShutdown()
-            except Exception as e:
+            except (pynvml.NVMLError, RuntimeError, OSError) as e:
                 self.warning(f"Error during NVML shutdown: {e!r}")
             finally:
                 # Always clear state regardless of shutdown success
@@ -330,11 +330,11 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
             records = await asyncio.to_thread(self._collect_gpu_metrics)
             if records and self._record_callback:
                 await self._record_callback(records, self.id)
-        except Exception as e:
+        except (pynvml.NVMLError, RuntimeError, OSError) as e:
             if self._error_callback:
                 try:
                     await self._error_callback(ErrorDetails.from_exception(e), self.id)
-                except Exception as callback_error:
+                except Exception as callback_error:  # noqa: BLE001 - best-effort error reporting
                     self.error(f"Failed to send error via callback: {callback_error}")
             else:
                 self.error(f"Metrics collection error: {e}")

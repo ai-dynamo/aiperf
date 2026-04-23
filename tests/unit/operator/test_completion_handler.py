@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.operator.handlers.completion import handle_completion
-from aiperf.operator.models import FetchResult
+from aiperf.operator.models import ControllerFetchResult
 from aiperf.operator.status import ConditionType, Phase, StatusBuilder
 
 
@@ -16,7 +16,7 @@ async def test_handle_completion_without_result_files_marks_failed() -> None:
     patch_obj.status = {}
     sb = StatusBuilder(patch_obj, existing_status={"workers": {"total": 90}})
 
-    result = FetchResult(
+    result = ControllerFetchResult(
         metrics={
             "aiperf_version": "0.6.0",
             "benchmark_id": "bench-1",
@@ -55,7 +55,7 @@ async def test_handle_completion_without_result_files_marks_failed() -> None:
 
 @pytest.mark.asyncio
 async def test_handle_completion_has_files_with_error_marks_failed() -> None:
-    """M3: FetchResult with has_files=True AND error set should NOT be Completed.
+    """M3: ControllerFetchResult with has_files=True AND error set should NOT be Completed.
 
     A partial fetch can download some files (e.g. checkpoints) while still
     missing the key export artifacts. The error field is authoritative.
@@ -64,7 +64,7 @@ async def test_handle_completion_has_files_with_error_marks_failed() -> None:
     patch_obj.status = {}
     sb = StatusBuilder(patch_obj, existing_status={"workers": {"total": 1}})
 
-    result = FetchResult(
+    result = ControllerFetchResult(
         metrics=None,
         downloaded=["profile_export_aiperf.json", "checkpoints/aggregator-0.parquet"],
         error="key artifact write interrupted; retry needed",
@@ -123,7 +123,7 @@ async def test_handle_completion_index_failure_sets_condition_and_event() -> Non
     patch_obj.status = {}
     sb = StatusBuilder(patch_obj, existing_status={"workers": {"total": 1}})
 
-    result = FetchResult(
+    result = ControllerFetchResult(
         metrics={"metrics": {"latency": 1.0}},
         downloaded=["profile_export_aiperf.json"],
         error="",

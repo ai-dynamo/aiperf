@@ -76,7 +76,7 @@ class ExporterManager(AIPerfLoggerMixin):
                     f"Data exporter {exporter_entry.name} is disabled and will not be used"
                 )
                 continue
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-exporter; skip bad plugin and continue
                 self.error(f"Error creating data exporter: {e!r}")
                 continue
 
@@ -107,7 +107,7 @@ class ExporterManager(AIPerfLoggerMixin):
                     f"Data exporter {exporter_entry.name} is disabled and will not be used"
                 )
                 continue
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-exporter; skip bad plugin and continue
                 self.error(f"Error creating data exporter: {e!r}")
                 continue
 
@@ -136,7 +136,7 @@ class ExporterManager(AIPerfLoggerMixin):
                     f"Console exporter {exporter_entry.name} is disabled and will not be used"
                 )
                 continue
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-exporter; skip bad plugin and continue
                 self.error(f"Error creating console exporter: {e!r}")
                 continue
 
@@ -171,5 +171,5 @@ class ExporterManager(AIPerfLoggerMixin):
             ansi_path.write_text(ansi_text, encoding="utf-8")
 
             self.debug(f"Console export written to {txt_path} and {ansi_path}")
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.warning(f"Failed to write console export files: {e}")

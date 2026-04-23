@@ -57,7 +57,7 @@ class ProgressBar:
         self.update_threshold = Environment.UI.MIN_UPDATE_PERCENT
         self.last_percent = 0.0
 
-    def update(self, progress: int):
+    def update(self, progress: int) -> None:
         """Update the progress bar with a new progress percentage."""
         if self.bar.disable:
             return
@@ -78,7 +78,7 @@ class ProgressBar:
             self.last_percent = pct
             self.bar.refresh()
 
-    def disable(self):
+    def disable(self) -> None:
         """Disable the progress bar."""
         # NOTE: Closing the progress bar can cause a deadlock from the tqdm library randomly,
         # so we just disable it instead.
@@ -152,7 +152,7 @@ class TQDMProgressUI(BaseAIPerfUI):
                 if value is not None:
                     bar = self._bars[key]
                     bar.update(value)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - best-effort tqdm update; any error is logged and the bar skipped
                 _logger.error(f"Error updating progress bar {key}: {e!r}")
                 _logger.error(stats)
 

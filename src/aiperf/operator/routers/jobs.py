@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
 from kubernetes_asyncio import client
@@ -22,11 +22,70 @@ from aiperf.kubernetes.client import (
     list_aiperf_jobs,
 )
 
+if TYPE_CHECKING:
+    from kubernetes_asyncio.client.models import V1Node, V1Pod
+
 logger = logging.getLogger("aiperf.operator.ui")
 
 
-class JobListResponse(AIPerfBaseModel):
-    """Response for GET /api/v1/jobs."""
+class JobPodSummary(AIPerfBaseModel):
+    """Pod identity + lifecycle summary returned in JobDetailResponse.
+
+    Distinct from ``aiperf.kubernetes.models.PodSummary`` (an aggregate
+    ``ready/total/restarts`` snapshot of a JobSet): this model is per-pod and
+    includes the pod name / phase.
+    """
+
+    name: str = Field(description="Pod name.")
+    phase: str = Field(description="Pod phase (Running, Pending, Succeeded, ...).")
+    ready: bool = Field(description="True iff at least one container is ready.")
+    restarts: int = Field(description="Sum of restart counts across containers.")
+
+
+def _pod_summary(pod: V1Pod) -> JobPodSummary:
+    """Extract pod name, phase, readiness, and restart count for the UI."""
+    meta = pod.metadata
+    status = pod.status
+    container_statuses = (status.container_statuses or []) if status else []
+    return JobPodSummary(
+        name=(meta.name if meta else "") or "",
+        phase=(status.phase if status else None) or "Unknown",
+        ready=any(bool(c.ready) for c in container_statuses),
+        restarts=sum(int(c.restart_count or 0) for c in container_statuses),
+    )
+
+
+def _node_gpu_count(node: V1Node) -> int:
+    """Return the number of nvidia.com/gpu resources allocatable on a node."""
+    alloc = (node.status.allocatable or {}) if node.status else {}
+    try:
+        return int(alloc.get("nvidia.com/gpu", 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+async def _fetch_k8s_version(api: ApiClient) -> str:
+    """Return the cluster gitVersion, or 'unknown' if the call fails."""
+    try:
+        version_info = await cluster_version(api)
+    except Exception:  # noqa: BLE001 - best-effort; UI tolerates 'unknown'
+        return "unknown"
+    return version_info.get("gitVersion", "unknown")
+
+
+async def _fetch_node_gpu_totals(api: ApiClient) -> tuple[int, int]:
+    """Return (node_count, total_nvidia_gpus). Returns (0, 0) on failure."""
+    try:
+        node_list = await client.CoreV1Api(api).list_node()
+    except Exception as e:  # noqa: BLE001 - UI tolerates missing cluster-wide query
+        logger.warning(f"Failed to query nodes: {e}")
+        return 0, 0
+    nodes = node_list.items
+    return len(nodes), sum(_node_gpu_count(n) for n in nodes)
+
+
+class ActiveJobListResponse(AIPerfBaseModel):
+    """Response for GET /api/v1/jobs: active AIPerfJob CRs in the cluster."""
 
     jobs: list[dict[str, Any]] = Field(description="List of AIPerfJob summaries.")
 
@@ -38,7 +97,7 @@ class JobDetailResponse(AIPerfBaseModel):
     status: dict[str, Any] = Field(
         description="Raw CR status (phases, conditions, liveMetrics)."
     )
-    pods: list[dict[str, Any]] = Field(description="Pod summaries for this job.")
+    pods: list[JobPodSummary] = Field(description="Pod summaries for this job.")
 
 
 class ClusterResponse(AIPerfBaseModel):
@@ -74,16 +133,47 @@ def create_jobs_router(
             raise HTTPException(503, "Kubernetes API unavailable")
         return api
 
-    @router.get("/jobs", response_model=JobListResponse)
-    async def list_jobs() -> JobListResponse:
-        """List all AIPerfJob CRs across namespaces."""
+    @router.get("/jobs", response_model=ActiveJobListResponse)
+    async def list_jobs() -> ActiveJobListResponse:
+        """List every active AIPerfJob CR across all namespaces.
+
+        Queries the ``aiperf.nvidia.com`` CRD via the Kubernetes API and returns
+        the summary fields (name, namespace, phase, timestamps) for each CR. The
+        result reflects the current CR inventory - it does NOT include
+        completed jobs whose CRs have been garbage-collected; for historical
+        runs see ``GET /api/v1/results`` on the results server.
+
+        Raises:
+            HTTPException: 503 if the Kubernetes ApiClient has not been
+                initialised (set during FastAPI lifespan startup).
+            HTTPException: Any non-404 ``kubernetes_asyncio.client.ApiException``
+                status code is surfaced verbatim (e.g. 401/403 on RBAC denial).
+        """
         api = _require_api()
         jobs = await list_aiperf_jobs(api, all_namespaces=True)
-        return JobListResponse(jobs=[j.model_dump(by_alias=True) for j in jobs])
+        return ActiveJobListResponse(jobs=[j.model_dump(by_alias=True) for j in jobs])
 
     @router.get("/jobs/{namespace}/{name}", response_model=JobDetailResponse)
     async def get_job(namespace: str, name: str) -> JobDetailResponse:
-        """Get detailed status for a single AIPerfJob."""
+        """Fetch a single AIPerfJob CR plus its pod roster.
+
+        Returns three things joined into one response: (1) the AIPerfJob CR
+        summary (same shape as ``list_jobs``), (2) the raw CR ``.status``
+        subresource (phase, conditions, liveMetrics), and (3) the current pod
+        list filtered by the ``aiperf.nvidia.com/job-id=<name>`` label selector.
+
+        Args:
+            namespace: Kubernetes namespace containing the AIPerfJob CR.
+            name: Name of the AIPerfJob CR (also the label value matched when
+                listing pods).
+
+        Raises:
+            HTTPException: 503 if the Kubernetes ApiClient is unavailable.
+            HTTPException: 404 if no AIPerfJob named ``name`` exists in
+                ``namespace``.
+            HTTPException: Other ``kubernetes_asyncio.client.ApiException``
+                status codes propagate (e.g. 401/403 on RBAC denial).
+        """
         api = _require_api()
         job = await find_aiperf_job(api, name, namespace)
         if not job:
@@ -91,61 +181,57 @@ def create_jobs_router(
 
         raw_status = await get_raw_aiperfjob_status(api, name, namespace)
         pods_raw = await get_pods(api, namespace, f"aiperf.nvidia.com/job-id={name}")
-        pods = [
-            {
-                "name": (p.metadata.name if p.metadata else "") or "",
-                "phase": (p.status.phase if p.status else None) or "Unknown",
-                "ready": any(
-                    bool(c.ready)
-                    for c in ((p.status.container_statuses or []) if p.status else [])
-                ),
-                "restarts": sum(
-                    int(c.restart_count or 0)
-                    for c in ((p.status.container_statuses or []) if p.status else [])
-                ),
-            }
-            for p in pods_raw
-        ]
-
         return JobDetailResponse(
             job=job.model_dump(by_alias=True),
             status=raw_status or {},
-            pods=pods,
+            pods=[_pod_summary(p) for p in pods_raw],
         )
 
     @router.post("/jobs/{namespace}/{name}/cancel", response_model=CancelResponse)
     async def cancel_job(namespace: str, name: str) -> CancelResponse:
-        """Cancel a running AIPerfJob."""
+        """Request cancellation of an AIPerfJob by setting ``spec.cancel=true``.
+
+        This endpoint is *asynchronous*: it patches the AIPerfJob CR's
+        ``spec.cancel`` field to ``true`` and returns immediately. The kopf
+        operator's reconciler observes the change and drives the benchmark to a
+        stopped state (cancelling workers, tearing down pods, finalising
+        results). The endpoint does NOT wait for that reconciliation - callers
+        that need to observe the terminal phase should poll ``get_job`` until
+        ``status.phase`` becomes ``Cancelled``/``Failed``/``Succeeded``.
+
+        Args:
+            namespace: Kubernetes namespace containing the AIPerfJob CR.
+            name: Name of the AIPerfJob CR to cancel.
+
+        Raises:
+            HTTPException: 503 if the Kubernetes ApiClient is unavailable.
+            HTTPException: 404 if the CR does not exist (surfaced from the
+                underlying ``kubernetes_asyncio`` patch call).
+            HTTPException: Other ``kubernetes_asyncio.client.ApiException``
+                status codes propagate (e.g. 401/403 on RBAC denial, 409 on
+                concurrent-modification conflicts).
+        """
         api = _require_api()
         await cancel_aiperf_job(api, name, namespace)
         return CancelResponse(cancelled=True)
 
     @router.get("/cluster", response_model=ClusterResponse)
     async def cluster_info() -> ClusterResponse:
-        """Get cluster node and GPU information."""
+        """Return a best-effort snapshot of cluster-wide node and GPU totals.
+
+        Calls the core ``/version`` endpoint for the server gitVersion and
+        ``list_node`` for node count + ``nvidia.com/gpu`` allocatable totals.
+        Both calls are best-effort: failures fall back to ``"unknown"`` /
+        ``(0, 0)`` rather than surfacing errors, because the UI displays this
+        as supplementary context and callers with limited RBAC should not see
+        the page fail.
+
+        Raises:
+            HTTPException: 503 if the Kubernetes ApiClient is unavailable.
+        """
         api = _require_api()
-        try:
-            version_info = await cluster_version(api)
-            k8s_version = version_info.get("gitVersion", "unknown")
-        except Exception:
-            k8s_version = "unknown"
-
-        try:
-            node_list = await client.CoreV1Api(api).list_node()
-            nodes = node_list.items
-            node_count = len(nodes)
-            gpu_count = 0
-            for n in nodes:
-                alloc = (n.status.allocatable or {}) if n.status else {}
-                try:
-                    gpu_count += int(alloc.get("nvidia.com/gpu", 0))
-                except (TypeError, ValueError):
-                    continue
-        except Exception as e:
-            logger.warning(f"Failed to query nodes: {e}")
-            node_count = 0
-            gpu_count = 0
-
+        k8s_version = await _fetch_k8s_version(api)
+        node_count, gpu_count = await _fetch_node_gpu_totals(api)
         return ClusterResponse(
             nodes=node_count,
             gpus=gpu_count,

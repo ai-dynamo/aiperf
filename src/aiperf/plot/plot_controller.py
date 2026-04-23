@@ -39,6 +39,7 @@ class PlotController:
         self,
         paths: list[Path],
         output_dir: Path,
+        *,
         mode: PlotMode = PlotMode.PNG,
         theme: PlotTheme = PlotTheme.LIGHT,
         config_path: Path | None = None,
@@ -164,7 +165,7 @@ class PlotController:
             try:
                 run_data = self.loader.load_run(run_dir, load_per_request_data=False)
                 runs.append(run_data)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - loader wraps disk/JSON errors in DataLoadError but can surface pandas/pyarrow errors too; skip the bad run, keep going
                 logger.warning(f"Failed to load run from {run_dir}: {e}")
 
         if not runs:
@@ -217,7 +218,7 @@ class PlotController:
                         run_dir, load_per_request_data=False
                     )
                     runs.append(run_data)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - loader wraps disk/JSON errors in DataLoadError but can surface pandas/pyarrow errors too; skip the bad run, keep going
                     logger.warning(f"Failed to load run from {run_dir}: {e}")
 
             if not runs:

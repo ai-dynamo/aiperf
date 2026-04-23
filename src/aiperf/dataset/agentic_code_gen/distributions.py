@@ -53,6 +53,7 @@ def fit_from_samples(samples: np.ndarray) -> LognormalParams:
 def sample_lognormal(
     params: LognormalParams,
     rng: Generator,
+    *,
     size: int = 1,
     clip_min: float | None = None,
     max_attempts: int = 100,

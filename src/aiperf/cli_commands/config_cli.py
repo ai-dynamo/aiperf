@@ -317,14 +317,16 @@ def show_config(
         aiperf config show benchmark.yaml --no-interpolate
     """
     with exit_on_error(title="Error Loading Configuration"):
-        import json
+        import orjson
 
         from aiperf.config import dump_config, load_config
 
         config = load_config(path, substitute_env=interpolate)
 
         if format == "json":
-            output = json.dumps(config.model_dump(mode="json"), indent=2)
+            output = orjson.dumps(
+                config.model_dump(mode="json"), option=orjson.OPT_INDENT_2
+            ).decode()
         else:
             output = dump_config(config)
         print(output)
@@ -353,12 +355,12 @@ def show_schema(
         aiperf config schema --output aiperf-schema.json
     """
     with exit_on_error(title="Error Generating Schema"):
-        import json
+        import orjson
 
         from aiperf.config import AIPerfConfig
 
         schema = AIPerfConfig.model_json_schema()
-        schema_json = json.dumps(schema, indent=2)
+        schema_json = orjson.dumps(schema, option=orjson.OPT_INDENT_2).decode()
 
         if output:
             output.write_text(schema_json)
@@ -387,7 +389,7 @@ def diff_configs(
         # Compare with JSON output
         aiperf config diff baseline.yaml experiment.yaml --format json
     """
-    import json
+    import orjson
 
     from aiperf.config import load_config
 
@@ -408,21 +410,53 @@ def diff_configs(
             return
 
         if format == "json":
-            print(json.dumps(differences, indent=2))
+            print(orjson.dumps(differences, option=orjson.OPT_INDENT_2).decode())
         else:
             print(f"Comparing: {config1} vs {config2}")
             print(f"Found {len(differences)} difference(s):\n")
             for diff in differences:
-                path = diff["path"]
-                if diff["type"] == "changed":
-                    print(f"  {path}:")
-                    print(f"    - {config1.name}: {diff['old']}")
-                    print(f"    + {config2.name}: {diff['new']}")
-                elif diff["type"] == "added":
-                    print(f"  + {path}: {diff['value']} (only in {config2.name})")
-                elif diff["type"] == "removed":
-                    print(f"  - {path}: {diff['value']} (only in {config1.name})")
+                _print_diff_entry(diff, config1.name, config2.name)
                 print()
+
+
+def _print_diff_entry(diff: dict, config1_name: str, config2_name: str) -> None:
+    """Print a single diff entry in text format."""
+    path = diff["path"]
+    if diff["type"] == "changed":
+        print(f"  {path}:")
+        print(f"    - {config1_name}: {diff['old']}")
+        print(f"    + {config2_name}: {diff['new']}")
+    elif diff["type"] == "added":
+        print(f"  + {path}: {diff['value']} (only in {config2_name})")
+    elif diff["type"] == "removed":
+        print(f"  - {path}: {diff['value']} (only in {config1_name})")
+
+
+def _compare_values(val1: object, val2: object, current_path: str) -> list[dict]:
+    """Compare two same-keyed values and return zero-or-more difference entries."""
+    if isinstance(val1, dict) and isinstance(val2, dict):
+        return _find_differences(val1, val2, current_path)
+    if isinstance(val1, list) and isinstance(val2, list):
+        if val1 != val2:
+            return [
+                {
+                    "type": "changed",
+                    "path": current_path,
+                    "old": val1,
+                    "new": val2,
+                }
+            ]
+        return []
+    if val1 != val2:
+        return [
+            {
+                "type": "changed",
+                "path": current_path,
+                "old": val1,
+                "new": val2,
+            }
+        ]
+    return []
 
 
 def _find_differences(dict1: dict, dict2: dict, path: str = "") -> list[dict]:
@@ -454,30 +488,7 @@ def _find_differences(dict1: dict, dict2: dict, path: str = "") -> list[dict]:
                 }
             )
         else:
-            val1 = dict1[key]
-            val2 = dict2[key]
-
-            if isinstance(val1, dict) and isinstance(val2, dict):
-                differences.extend(_find_differences(val1, val2, current_path))
-            elif isinstance(val1, list) and isinstance(val2, list):
-                if val1 != val2:
-                    differences.append(
-                        {
-                            "type": "changed",
-                            "path": current_path,
-                            "old": val1,
-                            "new": val2,
-                        }
-                    )
-            elif val1 != val2:
-                differences.append(
-                    {
-                        "type": "changed",
-                        "path": current_path,
-                        "old": val1,
-                        "new": val2,
-                    }
-                )
+            differences.extend(_compare_values(dict1[key], dict2[key], current_path))
 
     return differences
 
@@ -511,7 +522,7 @@ def generate_config(
         aiperf config generate --model llama-3.1-8B --url localhost:8000 \\
             --format json
     """
-    import json
+    import orjson
 
     from aiperf.config.cli_converter import build_aiperf_config
     from aiperf.config.loader import dump_config
@@ -520,7 +531,9 @@ def generate_config(
         aiperf_config = build_aiperf_config(cli_model)
 
         if format == "json":
-            config_output = json.dumps(aiperf_config.model_dump(mode="json"), indent=2)
+            config_output = orjson.dumps(
+                aiperf_config.model_dump(mode="json"), option=orjson.OPT_INDENT_2
+            ).decode()
         else:
             config_output = dump_config(aiperf_config)
 

@@ -314,6 +314,7 @@ SINGLE_RUN_TITLE_SUFFIXES = {
 
 def build_single_run_plot_config(
     plot_type: str,
+    *,
     x_axis: str,
     y_metric: str,
     y_stat: str | None,

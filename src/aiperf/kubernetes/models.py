@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import Field, field_validator
 
-from aiperf.kubernetes.constants import Annotations, Labels, ProgressAnnotations
+from aiperf.kubernetes.constants import AIPerfLabels, Annotations, ProgressAnnotations
 from aiperf.kubernetes.enums import JobSetStatus
 from aiperf.kubernetes.k8s_models import K8sCamelModel
 
@@ -56,7 +56,7 @@ class JobSetInfo:
             namespace=metadata["namespace"],
             jobset=raw,
             status=cls._parse_status(raw),
-            custom_name=labels.get(Labels.NAME),
+            custom_name=labels.get(AIPerfLabels.NAME),
             model=annotations.get(Annotations.MODEL),
             endpoint=annotations.get(Annotations.ENDPOINT),
         )
@@ -67,7 +67,7 @@ class JobSetInfo:
     def job_id(self) -> str:
         """AIPerf job ID (falls back to the JobSet name)."""
         labels = self.jobset.get("metadata", {}).get("labels", {})
-        return labels.get(Labels.JOB_ID, self.name)
+        return labels.get(AIPerfLabels.JOB_ID, self.name)
 
     @property
     def created(self) -> str:

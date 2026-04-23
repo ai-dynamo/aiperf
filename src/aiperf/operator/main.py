@@ -16,6 +16,10 @@ Handles AIPerfJob CRD lifecycle with:
 
 Run: kopf run -m aiperf.operator.main --verbose
 
+Handler categories dispatched below, in order: startup (configure),
+lifecycle (on_create / on_delete / on_cancel / on_benchmark_complete),
+and timers (monitor_progress, cleanup_old_results).
+
 All kopf decorators live here so handler modules stay decorator-free
 and are independently testable.
 """
@@ -39,21 +43,11 @@ from aiperf.operator.handlers import cleanup, create, lifecycle, monitor
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Startup
-# ---------------------------------------------------------------------------
-
-
 @kopf.on.startup()
 def configure(settings: kopf.OperatorSettings, **_: Any) -> None:
     """Configure operator settings."""
     settings.persistence.finalizer = f"{AIPERF_GROUP}/finalizer"
     settings.posting.level = logging.INFO
-
-
-# ---------------------------------------------------------------------------
-# Create / Delete / Cancel / Completion signal
-# ---------------------------------------------------------------------------
 
 
 @kopf.on.create(AIPERF_GROUP, AIPERF_VERSION, AIPERF_PLURAL)
@@ -114,11 +108,6 @@ async def on_benchmark_complete(
     await lifecycle.on_benchmark_complete(
         body=body, status=status, name=name, namespace=namespace, patch=patch
     )
-
-
-# ---------------------------------------------------------------------------
-# Timers
-# ---------------------------------------------------------------------------
 
 
 @kopf.timer(

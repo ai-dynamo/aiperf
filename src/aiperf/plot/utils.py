@@ -232,6 +232,7 @@ def detect_server_metric_series(df) -> list[tuple[str, str]]:
 
 def create_series_legend_label(
     metric_name: str,
+    *,
     endpoint_url: str,
     labels_json: str,
     total_series: int,

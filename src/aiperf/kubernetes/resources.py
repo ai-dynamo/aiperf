@@ -18,11 +18,11 @@ from aiperf.config.benchmark import BenchmarkRun
 from aiperf.config.deployment import DeploymentConfig
 from aiperf.kubernetes.constants import (
     DEFAULT_BENCHMARK_NAMESPACE,
+    AIPerfLabels,
     Annotations,
-    Labels,
 )
 from aiperf.kubernetes.cr_refs import AIPERF_GROUP
-from aiperf.kubernetes.jobset import JobSetSpec
+from aiperf.kubernetes.jobset import AIPerfJobSetSpec
 
 # Kubernetes ConfigMap size limit is 1 MiB (1,048,576 bytes)
 CONFIGMAP_MAX_SIZE_BYTES = 1_048_576
@@ -52,7 +52,10 @@ def validate_dns_label(
         ValueError: If the value is not a valid DNS label.
     """
     if not value:
-        raise ValueError(f"{field_name} cannot be empty")
+        raise ValueError(
+            f"{field_name} cannot be empty; expected a non-empty DNS label "
+            f"(lowercase alphanumeric or '-', up to {max_length} chars)"
+        )
 
     if len(value) > max_length:
         raise ValueError(
@@ -75,7 +78,7 @@ class ConfigMapSpec(AIPerfBaseModel):
     name: str = Field(description="ConfigMap name")
     namespace: str = Field(default="default", description="Kubernetes namespace")
     data: dict[str, str] = Field(default_factory=dict, description="ConfigMap data")
-    labels: dict[str, str] = Field(default_factory=dict, description="Labels")
+    labels: dict[str, str] = Field(default_factory=dict, description="AIPerfLabels")
 
     def get_data_size_bytes(self) -> int:
         """Calculate the total size of the ConfigMap data in bytes."""
@@ -143,8 +146,8 @@ class ConfigMapSpec(AIPerfBaseModel):
             namespace=namespace,
             data={"run_config.json": run_json},
             labels={
-                Labels.APP_KEY: Labels.APP_VALUE,
-                Labels.JOB_ID: job_id,
+                AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
+                AIPerfLabels.JOB_ID: job_id,
             },
         )
         spec.validate_size()
@@ -155,7 +158,7 @@ class NamespaceSpec(AIPerfBaseModel):
     """Specification for a Kubernetes Namespace."""
 
     name: str = Field(description="Namespace name")
-    labels: dict[str, str] = Field(default_factory=dict, description="Labels")
+    labels: dict[str, str] = Field(default_factory=dict, description="AIPerfLabels")
 
     def to_k8s_manifest(self) -> dict[str, Any]:
         """Generate the Namespace Kubernetes manifest."""
@@ -231,8 +234,8 @@ class RBACSpec(AIPerfBaseModel):
     @property
     def _labels(self) -> dict[str, str]:
         return {
-            Labels.APP_KEY: Labels.APP_VALUE,
-            Labels.JOB_ID: self.job_id,
+            AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
+            AIPerfLabels.JOB_ID: self.job_id,
         }
 
     def to_role_manifest(self) -> dict[str, Any]:
@@ -360,7 +363,7 @@ class KubernetesDeployment(AIPerfBaseModel):
         return NamespaceSpec(
             name=self.effective_namespace,
             labels={
-                Labels.APP_KEY: Labels.APP_VALUE,
+                AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
                 "aiperf.nvidia.com/auto-generated": "true",
             },
         )
@@ -374,7 +377,7 @@ class KubernetesDeployment(AIPerfBaseModel):
             job_id=self.job_id,
         )
         if self.name:
-            spec.labels[Labels.NAME] = self.name
+            spec.labels[AIPerfLabels.NAME] = self.name
         return spec
 
     def get_rbac_spec(self) -> RBACSpec:
@@ -385,7 +388,7 @@ class KubernetesDeployment(AIPerfBaseModel):
             job_id=self.job_id,
         )
 
-    def get_jobset_spec(self) -> JobSetSpec:
+    def get_jobset_spec(self) -> AIPerfJobSetSpec:
         """Get the JobSet spec."""
         extra_annotations: dict[str, str] = {}
         if self.model_names:
@@ -393,7 +396,7 @@ class KubernetesDeployment(AIPerfBaseModel):
         if self.endpoint_url:
             extra_annotations[Annotations.ENDPOINT] = self.endpoint_url
 
-        return JobSetSpec(
+        return AIPerfJobSetSpec(
             name=self.jobset_name,
             namespace=self.effective_namespace,
             job_id=self.job_id,

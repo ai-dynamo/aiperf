@@ -459,7 +459,7 @@ class TestClassifierMatchesSynthesizer:
         prev_set: set[int] | None = None
         for i, turn in enumerate(session.turns):
             blocks = _classify_turn_blocks(
-                turn.hash_ids, prev_set, l1_blocks, l15_blocks, turn_index=i
+                turn.hash_ids, prev_set, l1_blocks, l15_blocks=l15_blocks, turn_index=i
             )
             assert len(blocks) == len(turn.hash_ids)
             assert [b["pos"] for b in blocks] == list(range(len(turn.hash_ids)))

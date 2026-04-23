@@ -450,20 +450,20 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
                     PrometheusMetricType.COUNTER,
                 ):
                     rows = self._collect_scalar_rows(
-                        endpoint_url,
-                        metric_key.name,
-                        metric_entry,
-                        labels_dict,
-                        label_keys,
+                        endpoint=endpoint_url,
+                        metric_name=metric_key.name,
+                        metric_entry=metric_entry,
+                        labels_dict=labels_dict,
+                        label_keys=label_keys,
                     )
                     yield from rows
                 elif metric_type == PrometheusMetricType.HISTOGRAM:
                     rows = self._collect_histogram_rows(
-                        endpoint_url,
-                        metric_key.name,
-                        metric_entry,
-                        labels_dict,
-                        label_keys,
+                        endpoint=endpoint_url,
+                        metric_name=metric_key.name,
+                        metric_entry=metric_entry,
+                        labels_dict=labels_dict,
+                        label_keys=label_keys,
                     )
                     yield from rows
 
@@ -500,27 +500,28 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
                 ):
                     rows.extend(
                         self._collect_scalar_rows(
-                            endpoint_url,
-                            metric_key.name,
-                            metric_entry,
-                            labels_dict,
-                            label_keys,
+                            endpoint=endpoint_url,
+                            metric_name=metric_key.name,
+                            metric_entry=metric_entry,
+                            labels_dict=labels_dict,
+                            label_keys=label_keys,
                         )
                     )
                 elif metric_type == PrometheusMetricType.HISTOGRAM:
                     rows.extend(
                         self._collect_histogram_rows(
-                            endpoint_url,
-                            metric_key.name,
-                            metric_entry,
-                            labels_dict,
-                            label_keys,
+                            endpoint=endpoint_url,
+                            metric_name=metric_key.name,
+                            metric_entry=metric_entry,
+                            labels_dict=labels_dict,
+                            label_keys=label_keys,
                         )
                     )
         return rows
 
     def _collect_scalar_rows(
         self,
+        *,
         endpoint: str,
         metric_name: str,
         metric_entry: ServerMetricEntry,
@@ -622,6 +623,7 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
 
     def _collect_histogram_rows(
         self,
+        *,
         endpoint: str,
         metric_name: str,
         metric_entry: ServerMetricEntry,

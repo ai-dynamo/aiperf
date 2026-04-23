@@ -15,7 +15,7 @@ from pydantic.alias_generators import to_camel
 from aiperf.common.environment import Environment
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.config.deployment import PodTemplateConfig, SchedulingConfig
-from aiperf.kubernetes.constants import Containers, KueueLabels, Labels
+from aiperf.kubernetes.constants import AIPerfLabels, Containers, KueueLabels
 from aiperf.kubernetes.cr_refs import (
     JOBSET_API_VERSION,
 )
@@ -103,7 +103,7 @@ def controller_dns_name(jobset_name: str, namespace: str) -> str:
     return f"{jobset_name}-controller-0-0.{jobset_name}.{namespace}.svc.cluster.local"
 
 
-class ContainerSpec(AIPerfBaseModel):
+class AIPerfContainerSpec(AIPerfBaseModel):
     """Specification for a container within a pod."""
 
     model_config = ConfigDict(
@@ -152,12 +152,12 @@ class ContainerSpec(AIPerfBaseModel):
         )
 
 
-class ReplicatedJobSpec(AIPerfBaseModel):
+class AIPerfReplicatedJobSpec(AIPerfBaseModel):
     """Specification for a replicated job within a JobSet."""
 
     name: str = Field(description="Replicated job name")
     replicas: int = Field(default=1, description="Number of replicas")
-    containers: list[ContainerSpec] = Field(
+    containers: list[AIPerfContainerSpec] = Field(
         default_factory=list, description="Containers in the pod"
     )
     volumes: list[dict[str, Any]] = Field(
@@ -221,9 +221,9 @@ class ReplicatedJobSpec(AIPerfBaseModel):
             pod_metadata["annotations"] = annotations
 
         # Build pod labels: base AIPerf labels + custom labels
-        pod_labels: dict[str, str] = {Labels.APP_KEY: Labels.APP_VALUE}
+        pod_labels: dict[str, str] = {AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE}
         if self.job_id:
-            pod_labels[Labels.JOB_ID] = self.job_id
+            pod_labels[AIPerfLabels.JOB_ID] = self.job_id
         if self.pod_template and self.pod_template.labels:
             pod_labels.update(self.pod_template.labels)
         pod_metadata["labels"] = pod_labels
@@ -249,7 +249,7 @@ class ReplicatedJobSpec(AIPerfBaseModel):
         }
 
 
-class JobSetSpec(AIPerfBaseModel):
+class AIPerfJobSetSpec(AIPerfBaseModel):
     """Specification for a complete JobSet deployment.
 
     Resource settings, ports, and health probe configuration are loaded from
@@ -536,7 +536,11 @@ class JobSetSpec(AIPerfBaseModel):
         allocated = [manager_port, *worker_ports, *record_processor_ports]
         if allocated and max(allocated) > 65535:
             raise ValueError(
-                "Not enough port space to allocate unique worker-container health ports"
+                f"Not enough port space to allocate unique worker-container health ports: "
+                f"manager_port={manager_port}, worker_count={len(worker_ports)}, "
+                f"record_processor_count={len(record_processor_ports)}, "
+                f"max allocated port {max(allocated)} exceeds 65535. "
+                f"Reduce --workers or lower base health port."
             )
         return manager_port, worker_ports, record_processor_ports
 
@@ -646,6 +650,7 @@ class JobSetSpec(AIPerfBaseModel):
         service_type: str,
         health_port: int | None,
         resources: dict[str, dict[str, str]] | None,
+        *,
         api_port: int | None = None,
         controller_host: str | None = None,
         service_id: str | None = None,
@@ -654,7 +659,7 @@ class JobSetSpec(AIPerfBaseModel):
         skip_readiness_probe: bool = False,
         skip_startup_probe: bool = False,
         skip_liveness_probe: bool = False,
-    ) -> ContainerSpec:
+    ) -> AIPerfContainerSpec:
         """Create a container spec with standard AIPerf configuration.
 
         Args:
@@ -714,7 +719,7 @@ class JobSetSpec(AIPerfBaseModel):
             else self._create_health_probe(probe_port, path="/readyz")
         )
 
-        return ContainerSpec(
+        return AIPerfContainerSpec(
             name=name,
             image=self.image,
             image_pull_policy=self.image_pull_policy,
@@ -730,7 +735,7 @@ class JobSetSpec(AIPerfBaseModel):
             security_context=self._create_security_context(),
         )
 
-    def _create_event_bus_proxy_container(self) -> ContainerSpec:
+    def _create_event_bus_proxy_container(self) -> AIPerfContainerSpec:
         """Sidecar that runs the XPUB/XSUB event-bus proxy.
 
         Placed first in the controller pod's container list so the kubelet
@@ -763,7 +768,7 @@ class JobSetSpec(AIPerfBaseModel):
             {"containerPort": 5664, "name": "sub-backend"},
         ]
 
-        return ContainerSpec(
+        return AIPerfContainerSpec(
             name=Containers.EVENT_BUS_PROXY,
             image=self.image,
             image_pull_policy=self.image_pull_policy,
@@ -779,7 +784,7 @@ class JobSetSpec(AIPerfBaseModel):
             security_context=self._create_security_context(),
         )
 
-    def _create_controller_containers(self) -> list[ContainerSpec]:
+    def _create_controller_containers(self) -> list[AIPerfContainerSpec]:
         """Create one container per control-plane service in the controller pod.
 
         A small results sidecar shares /results and can continue serving
@@ -793,7 +798,7 @@ class JobSetSpec(AIPerfBaseModel):
 
         sidecar_resources = self._resolve_pod_resources("RESULTS_SIDECAR")
 
-        results_sidecar = ContainerSpec(
+        results_sidecar = AIPerfContainerSpec(
             name=Containers.RESULTS_SIDECAR,
             image=self.image,
             image_pull_policy=self.image_pull_policy,
@@ -902,7 +907,9 @@ class JobSetSpec(AIPerfBaseModel):
 
         return containers
 
-    def _create_worker_containers(self, controller_dns: str) -> list[ContainerSpec]:
+    def _create_worker_containers(
+        self, controller_dns: str
+    ) -> list[AIPerfContainerSpec]:
         """Create worker-pod containers with one container per runtime service.
 
         The worker pod keeps a lightweight worker-group-manager for shared pod
@@ -919,7 +926,7 @@ class JobSetSpec(AIPerfBaseModel):
             worker_count, record_processor_count
         )
 
-        containers: list[ContainerSpec] = [
+        containers: list[AIPerfContainerSpec] = [
             self._create_container(
                 name="worker-group-manager",
                 service_type="worker_group_manager",
@@ -983,7 +990,7 @@ class JobSetSpec(AIPerfBaseModel):
 
         # Controller replicated job
         api_port = K8sEnvironment.PORTS.API_SERVICE
-        controller_job = ReplicatedJobSpec(
+        controller_job = AIPerfReplicatedJobSpec(
             name="controller",
             replicas=1,
             containers=self._create_controller_containers(),
@@ -999,7 +1006,7 @@ class JobSetSpec(AIPerfBaseModel):
             },
         )
 
-        worker_job = ReplicatedJobSpec(
+        worker_job = AIPerfReplicatedJobSpec(
             name="workers",
             replicas=self.worker_replicas,
             containers=self._create_worker_containers(controller_dns),
@@ -1015,11 +1022,11 @@ class JobSetSpec(AIPerfBaseModel):
 
         # Build JobSet manifest
         labels: dict[str, str] = {
-            Labels.APP_KEY: Labels.APP_VALUE,
-            Labels.JOB_ID: self.job_id,
+            AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
+            AIPerfLabels.JOB_ID: self.job_id,
         }
         if self.name_label:
-            labels[Labels.NAME] = self.name_label
+            labels[AIPerfLabels.NAME] = self.name_label
         if self.scheduling.queue_name:
             labels[KueueLabels.QUEUE_NAME] = self.scheduling.queue_name
         if self.scheduling.priority_class:

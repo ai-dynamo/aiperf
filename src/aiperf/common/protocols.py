@@ -68,6 +68,7 @@ class TaskManagerProtocol(AIPerfLoggerProtocol, Protocol):
     def start_background_task(
         self,
         method: Callable,
+        *,
         interval: float | Callable[[TaskManagerProtocol], float] | None = None,
         immediate: bool = False,
         stop_on_error: bool = False,
@@ -263,6 +264,7 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         self,
         client_type: CommClientType,
         address: CommAddressType,
+        *,
         bind: bool = False,
         socket_ops: dict | None = None,
         max_pull_concurrency: int | None = None,
@@ -306,6 +308,7 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
     def create_pull_client(
         self,
         address: CommAddressType,
+        *,
         bind: bool = False,
         socket_ops: dict | None = None,
         max_pull_concurrency: int | None = None,
@@ -340,6 +343,7 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
     def create_streaming_router_client(
         self,
         address: CommAddressType,
+        *,
         bind: bool = True,
         socket_ops: dict | None = None,
         additional_bind_address: str | None = None,
@@ -363,6 +367,7 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         self,
         address: CommAddressType,
         identity: str,
+        *,
         bind: bool = False,
         socket_ops: dict | None = None,
         decode_type: Any = None,

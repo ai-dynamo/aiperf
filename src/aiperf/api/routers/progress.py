@@ -14,9 +14,9 @@ import os
 from typing import Annotated
 
 from fastapi import APIRouter
-from pydantic import Field
 from starlette.requests import HTTPConnection
 
+from aiperf.api.models.responses import ProgressResponse
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
 from aiperf.common.enums import CreditPhase
 from aiperf.common.hooks import background_task
@@ -24,7 +24,6 @@ from aiperf.common.mixins.progress_tracker_mixin import (
     CombinedPhaseStats,
     ProgressTrackerMixin,
 )
-from aiperf.common.models import AIPerfBaseModel
 from aiperf.controller.system_controller import AggregateWorkerStatus
 
 ProgressDep = Annotated["ProgressRouter", component_dependency("progress")]
@@ -86,18 +85,6 @@ def _build_progress_annotations(
     return annotations
 
 
-class ProgressResponse(AIPerfBaseModel):
-    """Benchmark progress response."""
-
-    phases: dict[CreditPhase, CombinedPhaseStats] = Field(
-        default_factory=dict, description="Per-phase progress stats"
-    )
-    workers: AggregateWorkerStatus = Field(
-        default_factory=AggregateWorkerStatus,
-        description="Controller-authored aggregate worker-pod status.",
-    )
-
-
 class ProgressRouter(ProgressTrackerMixin, BaseRouter):
     """Owns benchmark progress state and exposes /api/progress.
 
@@ -135,7 +122,7 @@ class ProgressRouter(ProgressTrackerMixin, BaseRouter):
                 annotations=annotations,
             )
             self._last_patched_annotations = annotations
-        except Exception:
+        except Exception:  # noqa: BLE001 - periodic JobSet annotation patch is best-effort; k8s API flakes must not crash the background task
             self.debug("Failed to patch JobSet progress annotations")
 
 

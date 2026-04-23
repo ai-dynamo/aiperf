@@ -14,7 +14,7 @@ from unittest.mock import mock_open, patch
 import pytest
 
 from aiperf.common.exceptions import (
-    ConfigurationError,
+    AIPerfConfigurationError,
     InvalidStateError,
     NotInitializedError,
 )
@@ -255,7 +255,7 @@ class TestPromptGeneratorComprehensive:
         generator = PromptGenerator(_make_run(config), tokenizer)
 
         if should_raise:
-            with pytest.raises(ConfigurationError) as exc_info:
+            with pytest.raises(AIPerfConfigurationError) as exc_info:
                 generator._generate_cached_prompt(
                     num_tokens=num_tokens, hash_ids=hash_ids, block_size=block_size
                 )
@@ -789,5 +789,5 @@ class TestPromptGeneratorComprehensive:
         generator = PromptGenerator(_make_run(config), tokenizer)
 
         # This should raise same error as _generate_cached_prompt
-        with pytest.raises(ConfigurationError):
+        with pytest.raises(AIPerfConfigurationError):
             generator._build_token_sequence(10, [1, 2, 3], 5)  # final_block_size = 0

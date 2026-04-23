@@ -243,4 +243,7 @@ class AIPerfLogger:
 # This is required to avoid it appearing as all logs are coming from this file.
 # NOTE: Using similar logic to logging._srcfile
 _srcfile = os.path.normcase(AIPerfLogger.find_caller.__code__.co_filename)
-_ignored_files = [logging._srcfile, _srcfile]
+_ignored_files = [
+    logging._srcfile,
+    _srcfile,
+]  # process-wide registry of source files to skip when attributing caller frames

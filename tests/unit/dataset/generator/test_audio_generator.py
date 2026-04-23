@@ -11,7 +11,7 @@ import soundfile as sf
 
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import AudioFormat
-from aiperf.common.exceptions import ConfigurationError
+from aiperf.common.exceptions import AIPerfConfigurationError
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.dataset.generator import (
     AudioGenerator,
@@ -101,7 +101,7 @@ def test_negative_length_raises_error(base_config):
     audio_generator = AudioGenerator(_make_run(base_config))
     audio_generator.audio_config.length.mean = -1.0
 
-    with pytest.raises(ConfigurationError):
+    with pytest.raises(AIPerfConfigurationError):
         audio_generator.generate()
 
 
@@ -161,7 +161,7 @@ def test_unsupported_bit_depth(base_config):
     audio_generator = AudioGenerator(_make_run(base_config))
     audio_generator.audio_config.depths = [12]  # Unsupported bit depth
 
-    with pytest.raises(ConfigurationError) as exc_info:
+    with pytest.raises(AIPerfConfigurationError) as exc_info:
         audio_generator.generate()
 
     assert "Supported bit depths are:" in str(exc_info.value)
@@ -225,7 +225,7 @@ def test_audio_validation_errors(base_config, config_changes, expected_error):
         else:
             setattr(audio_generator.audio_config, key, value)
 
-    with pytest.raises(ConfigurationError, match=expected_error):
+    with pytest.raises(AIPerfConfigurationError, match=expected_error):
         audio_generator.generate()
 
 

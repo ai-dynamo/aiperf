@@ -121,6 +121,7 @@ class ResultsDB:
 
     async def history(
         self,
+        *,
         model: str | None = None,
         endpoint: str | None = None,
         metric: str = "request_throughput",
@@ -328,7 +329,10 @@ _VALID_IDENTIFIER_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz_0123456789")
 def _validate_identifier(name: str) -> None:
     """Validate that a name is a safe SQL identifier (lowercase alpha + underscore)."""
     if not name or not all(c in _VALID_IDENTIFIER_CHARS for c in name.lower()):
-        raise ValueError(f"Invalid identifier: {name!r}")
+        raise ValueError(
+            f"Invalid SQL identifier {name!r}: must be non-empty and contain only "
+            "lowercase a-z, 0-9, or underscore"
+        )
 
 
 def _escape_like(value: str) -> str:

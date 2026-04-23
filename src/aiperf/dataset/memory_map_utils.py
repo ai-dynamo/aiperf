@@ -585,7 +585,7 @@ class MemoryMapDatasetClient:
             if resource is not None:
                 try:
                     resource.close()
-                except Exception as e:
+                except (OSError, ValueError, BufferError) as e:
                     _logger.warning(f"Error closing {attr_name}: {e}")
                 finally:
                     setattr(self, attr_name, None)

@@ -41,6 +41,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         self,
         client_type: CommClientType,
         address: CommAddressType,
+        *,
         bind: bool = False,
         socket_ops: dict | None = None,
         max_pull_concurrency: int | None = None,
@@ -67,7 +68,9 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
     ) -> PubClientProtocol:
         return cast(
             PubClientProtocol,
-            self.create_client(CommClientType.PUB, address, bind, socket_ops),
+            self.create_client(
+                CommClientType.PUB, address, bind=bind, socket_ops=socket_ops
+            ),
         )
 
     def create_sub_client(
@@ -78,7 +81,9 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
     ) -> SubClientProtocol:
         return cast(
             SubClientProtocol,
-            self.create_client(CommClientType.SUB, address, bind, socket_ops),
+            self.create_client(
+                CommClientType.SUB, address, bind=bind, socket_ops=socket_ops
+            ),
         )
 
     def create_push_client(
@@ -93,8 +98,8 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
             self.create_client(
                 CommClientType.PUSH,
                 address,
-                bind,
-                socket_ops,
+                bind=bind,
+                socket_ops=socket_ops,
                 codec=codec,
             ),
         )
@@ -102,6 +107,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
     def create_pull_client(
         self,
         address: CommAddressType,
+        *,
         bind: bool = False,
         socket_ops: dict | None = None,
         max_pull_concurrency: int | None = None,
@@ -113,8 +119,8 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
             self.create_client(
                 CommClientType.PULL,
                 address,
-                bind,
-                socket_ops,
+                bind=bind,
+                socket_ops=socket_ops,
                 max_pull_concurrency=max_pull_concurrency,
                 additional_bind_address=additional_bind_address,
                 codec=codec,
@@ -129,7 +135,9 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
     ) -> RequestClientProtocol:
         return cast(
             RequestClientProtocol,
-            self.create_client(CommClientType.REQUEST, address, bind, socket_ops),
+            self.create_client(
+                CommClientType.REQUEST, address, bind=bind, socket_ops=socket_ops
+            ),
         )
 
     def create_reply_client(
@@ -144,8 +152,8 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
             self.create_client(
                 CommClientType.REPLY,
                 address,
-                bind,
-                socket_ops,
+                bind=bind,
+                socket_ops=socket_ops,
                 additional_bind_address=additional_bind_address,
             ),
         )
@@ -153,6 +161,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
     def create_streaming_router_client(
         self,
         address: CommAddressType,
+        *,
         bind: bool = True,
         socket_ops: dict | None = None,
         additional_bind_address: str | None = None,
@@ -163,8 +172,8 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
             self.create_client(
                 CommClientType.STREAMING_ROUTER,
                 address,
-                bind,
-                socket_ops,
+                bind=bind,
+                socket_ops=socket_ops,
                 additional_bind_address=additional_bind_address,
                 decode_type=decode_type,
             ),
@@ -174,6 +183,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         self,
         address: CommAddressType,
         identity: str,
+        *,
         bind: bool = False,
         socket_ops: dict | None = None,
         decode_type: Any = None,
@@ -184,8 +194,8 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
             self.create_client(
                 CommClientType.STREAMING_DEALER,
                 address,
-                bind,
-                socket_ops,
+                bind=bind,
+                socket_ops=socket_ops,
                 identity=identity,
                 decode_type=decode_type,
             ),

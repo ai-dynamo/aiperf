@@ -162,34 +162,110 @@ class JsonExportData(AIPerfBaseModel):
         default=None,
         description="Unique identifier for this benchmark run (for backward compatibility)",
     )
-    request_throughput: JsonMetricResult | None = None
-    request_latency: JsonMetricResult | None = None
-    request_count: JsonMetricResult | None = None
-    time_to_first_token: JsonMetricResult | None = None
-    time_to_second_token: JsonMetricResult | None = None
-    inter_token_latency: JsonMetricResult | None = None
-    output_token_throughput: JsonMetricResult | None = None
-    output_token_throughput_per_user: JsonMetricResult | None = None
-    output_sequence_length: JsonMetricResult | None = None
-    input_sequence_length: JsonMetricResult | None = None
-    goodput: JsonMetricResult | None = None
-    good_request_count: JsonMetricResult | None = None
-    output_token_count: JsonMetricResult | None = None
-    reasoning_token_count: JsonMetricResult | None = None
-    min_request_timestamp: JsonMetricResult | None = None
-    max_response_timestamp: JsonMetricResult | None = None
-    inter_chunk_latency: JsonMetricResult | None = None
-    total_output_tokens: JsonMetricResult | None = None
-    total_reasoning_tokens: JsonMetricResult | None = None
-    benchmark_duration: JsonMetricResult | None = None
-    total_isl: JsonMetricResult | None = None
-    total_osl: JsonMetricResult | None = None
-    error_request_count: JsonMetricResult | None = None
-    error_isl: JsonMetricResult | None = None
-    total_error_isl: JsonMetricResult | None = None
-    telemetry_data: TelemetryExportData | None = None
-    input_config: BenchmarkConfig | None = None
-    was_cancelled: bool | None = None
-    error_summary: list[ErrorDetailsCount] | None = None
-    start_time: datetime | None = None
-    end_time: datetime | None = None
+    request_throughput: JsonMetricResult | None = Field(
+        default=None,
+        description="Requests per second aggregated over the benchmark window.",
+    )
+    request_latency: JsonMetricResult | None = Field(
+        default=None, description="End-to-end request latency distribution (ns)."
+    )
+    request_count: JsonMetricResult | None = Field(
+        default=None,
+        description="Total number of completed requests counted for metrics.",
+    )
+    time_to_first_token: JsonMetricResult | None = Field(
+        default=None, description="Time from request send to first streamed token (ns)."
+    )
+    time_to_second_token: JsonMetricResult | None = Field(
+        default=None, description="Time from first to second streamed token (ns)."
+    )
+    inter_token_latency: JsonMetricResult | None = Field(
+        default=None, description="Latency between consecutive generated tokens (ns)."
+    )
+    output_token_throughput: JsonMetricResult | None = Field(
+        default=None, description="Generated tokens per second across all requests."
+    )
+    output_token_throughput_per_user: JsonMetricResult | None = Field(
+        default=None, description="Per-user generated tokens per second."
+    )
+    output_sequence_length: JsonMetricResult | None = Field(
+        default=None,
+        description="Distribution of generated output token counts per request.",
+    )
+    input_sequence_length: JsonMetricResult | None = Field(
+        default=None,
+        description="Distribution of input prompt token counts per request.",
+    )
+    goodput: JsonMetricResult | None = Field(
+        default=None,
+        description="Requests per second meeting the user-specified SLO thresholds.",
+    )
+    good_request_count: JsonMetricResult | None = Field(
+        default=None, description="Count of requests that met SLO thresholds."
+    )
+    output_token_count: JsonMetricResult | None = Field(
+        default=None, description="Distribution of output token counts per request."
+    )
+    reasoning_token_count: JsonMetricResult | None = Field(
+        default=None,
+        description="Distribution of reasoning-trace token counts per request.",
+    )
+    min_request_timestamp: JsonMetricResult | None = Field(
+        default=None,
+        description="Earliest request-send timestamp seen in this run (ns).",
+    )
+    max_response_timestamp: JsonMetricResult | None = Field(
+        default=None,
+        description="Latest response-complete timestamp seen in this run (ns).",
+    )
+    inter_chunk_latency: JsonMetricResult | None = Field(
+        default=None,
+        description="Latency between consecutive streamed response chunks (ns).",
+    )
+    total_output_tokens: JsonMetricResult | None = Field(
+        default=None, description="Sum of all output tokens generated in the benchmark."
+    )
+    total_reasoning_tokens: JsonMetricResult | None = Field(
+        default=None,
+        description="Sum of all reasoning-trace tokens generated in the benchmark.",
+    )
+    benchmark_duration: JsonMetricResult | None = Field(
+        default=None,
+        description="Wall-clock duration of the measured benchmark window (ns).",
+    )
+    total_isl: JsonMetricResult | None = Field(
+        default=None, description="Sum of all input-sequence tokens across requests."
+    )
+    total_osl: JsonMetricResult | None = Field(
+        default=None, description="Sum of all output-sequence tokens across requests."
+    )
+    error_request_count: JsonMetricResult | None = Field(
+        default=None, description="Count of requests that returned an error."
+    )
+    error_isl: JsonMetricResult | None = Field(
+        default=None,
+        description="Distribution of input token counts for errored requests.",
+    )
+    total_error_isl: JsonMetricResult | None = Field(
+        default=None, description="Sum of input tokens across errored requests."
+    )
+    telemetry_data: TelemetryExportData | None = Field(
+        default=None,
+        description="Server-side telemetry (DCGM/Prometheus) captured during the run.",
+    )
+    input_config: BenchmarkConfig | None = Field(
+        default=None, description="Resolved benchmark configuration used for this run."
+    )
+    was_cancelled: bool | None = Field(
+        default=None,
+        description="True if the benchmark was cancelled before natural completion.",
+    )
+    error_summary: list[ErrorDetailsCount] | None = Field(
+        default=None, description="Aggregated count of errors grouped by root cause."
+    )
+    start_time: datetime | None = Field(
+        default=None, description="Wall-clock benchmark start time."
+    )
+    end_time: datetime | None = Field(
+        default=None, description="Wall-clock benchmark end time."
+    )

@@ -280,7 +280,7 @@ class AIPerfTextualApp(App):
                 total=100,
             )
 
-    async def on_worker_update(self, worker_id: str, worker_stats: WorkerStats):
+    async def on_worker_update(self, worker_id: str, worker_stats: WorkerStats) -> None:
         """Forward worker updates to the Textual App."""
         if self.worker_dashboard:
             async with self.worker_dashboard.batch():

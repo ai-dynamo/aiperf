@@ -329,6 +329,7 @@ def print_cr_submission_summary(
     name: str,
     namespace: str,
     image: str,
+    *,
     endpoint_url: str | None = None,
     model_names: list[str] | None = None,
     connections_per_worker: int | None = None,

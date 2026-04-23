@@ -12,7 +12,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import aiohttp
 import kopf
+import orjson
+import zstandard
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client.exceptions import ApiException
 
@@ -29,7 +32,7 @@ from aiperf.operator.client_cache import (
 )
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.job_index import index_job_completed
-from aiperf.operator.models import FetchResult, MetricsSummary
+from aiperf.operator.models import ControllerFetchResult, MetricsSummary
 from aiperf.operator.progress_client import ProgressClient
 from aiperf.operator.status import ConditionType, Phase, StatusBuilder, parse_timestamp
 
@@ -41,11 +44,41 @@ async def handle_completion(
     namespace: str,
     jobset_name: str,
     job_id: str,
+    *,
     status: dict[str, Any],
     sb: StatusBuilder,
-    result: FetchResult | None = None,
+    result: ControllerFetchResult | None = None,
 ) -> None:
-    """Handle job completion: fetch results and update status."""
+    """Finalize a completed AIPerfJob: fetch results, patch status, update index.
+
+    Precondition:
+        Caller MUST hold the completion claim via ``try_claim_completion``.
+        Calling this without a claim will double-fetch and double-patch.
+
+    Side effects:
+        - Issues an HTTP GET to the controller's results API via
+          ``fetch_results_with_retry`` (unless ``result`` is supplied).
+        - Writes ``status.phase``, ``status.results``, ``status.summary``,
+          ``status.resultsPath``, and multiple status conditions on ``sb``.
+        - Calls ``index_job_completed``; on failure sets the
+          ``IndexUpdated=False`` condition and emits an IndexUpdateFailed
+          event, but does not re-raise.
+        - Emits kopf events: ``ResultsStored``, ``ResultsFailed``, and
+          ``Completed``.
+        - Deletes the backing JobSet on success (skipped on cancellation).
+        - Short-circuits with no side effects if ``on_delete`` has already
+          requested cancellation for this job.
+
+    Args:
+        body: The AIPerfJob CR body (used for kopf event emission).
+        namespace: Namespace of the CR.
+        jobset_name: Name of the JobSet backing this job.
+        job_id: Stable job identifier (``status.jobId``).
+        status: Current CR ``status`` dict (read-only view).
+        sb: StatusBuilder bound to the kopf patch for this reconciliation.
+        result: Pre-fetched result, if available (saves an HTTP round-trip
+            on the salvage path from ``_maybe_recover_terminated_controller``).
+    """
     # Short-circuit if on_delete has signaled cancellation. The CR is
     # about to disappear; skipping fetch/JobSet-delete/status patches
     # keeps the delete from blocking on retry backoff.
@@ -73,7 +106,6 @@ async def handle_completion(
 
     sb.set_completion_time()
 
-    # Calculate duration
     start_time = status.get("startTime")
     duration_sec = None
     if start_time:
@@ -83,7 +115,6 @@ async def handle_completion(
         except (ValueError, TypeError):
             pass
 
-    # Fetch results with retry
     host = controller_dns_name(jobset_name, namespace)
     if result is None:
         result = await fetch_results_with_retry(host, namespace, job_id)
@@ -127,7 +158,7 @@ async def handle_completion(
     # Set condition based on what was actually retrieved.
     # Result files are the authoritative source - /api/metrics is a convenience
     # that duplicates what's derivable from the files. Files alone = full success,
-    # but only if FetchResult.error is empty: a partial fetch can set has_files
+    # but only if ControllerFetchResult.error is empty: a partial fetch can set has_files
     # while still reporting an error for missing key artifacts.
     if success:
         reason = "ResultsStored"
@@ -227,7 +258,7 @@ _NO_PROGRESS_STAGNATION_LIMIT = 5
 
 
 async def _fetch_with_progress_aware_retry(
-    fetch_once: Callable[[], Awaitable[FetchResult]],
+    fetch_once: Callable[[], Awaitable[ControllerFetchResult]],
     *,
     dest_dir: Path,
     job_id: str,
@@ -237,7 +268,7 @@ async def _fetch_with_progress_aware_retry(
     max_delay: float = 30.0,
     backoff_multiplier: float = 2.0,
     stagnation_limit: int = _NO_PROGRESS_STAGNATION_LIMIT,
-) -> FetchResult:
+) -> ControllerFetchResult:
     """Retry ``fetch_once`` until it returns, or until no progress has been
     made for ``stagnation_limit`` consecutive attempts.
 
@@ -285,9 +316,17 @@ async def _fetch_with_progress_aware_retry(
             return await fetch_once()
         except _IncompleteResultsError as e:
             pending_exc = e
-        except Exception as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ApiException) as e:
             # Transient errors (network, IO) count as no-progress attempts
             # too; if they persist past stagnation_limit we bubble them up.
+            pending_exc = e
+            logger.debug(
+                "%s attempt %d raised %s; treating as no-progress",
+                description,
+                attempt,
+                type(e).__name__,
+            )
+        except Exception as e:  # noqa: BLE001 - progress-aware retry must tolerate any fetch error as no-progress; stagnation limit bubbles persistent errors up
             pending_exc = e
             logger.debug(
                 "%s attempt %d raised %s; treating as no-progress",
@@ -340,10 +379,11 @@ async def fetch_results_with_retry(
     controller_host: str,
     namespace: str,
     job_id: str,
+    *,
     max_retries: int = OperatorEnvironment.RESULTS.MAX_RETRIES,
     retry_delay: float = OperatorEnvironment.RESULTS.RETRY_DELAY,
     dest_dir: Path | None = None,
-) -> FetchResult:
+) -> ControllerFetchResult:
     """Fetch results from controller pod with retry logic.
 
     Uses the cached ProgressClient for the job. Falls back to creating
@@ -358,12 +398,12 @@ async def fetch_results_with_retry(
             defaults to ``RESULTS.DIR / namespace / job_id``.
 
     Returns:
-        FetchResult with metrics dict and list of downloaded files.
+        ControllerFetchResult with metrics dict and list of downloaded files.
     """
     for label, value in [("namespace", namespace), ("job_id", job_id)]:
         if not value or value in (".", ".."):
             logger.error(f"Invalid {label} for results storage: {value!r}")
-            return FetchResult(
+            return ControllerFetchResult(
                 metrics=None, downloaded=[], error=f"Invalid {label}: {value!r}"
             )
         try:
@@ -371,7 +411,7 @@ async def fetch_results_with_retry(
             safe.relative_to(OperatorEnvironment.RESULTS.DIR.resolve())
         except (ValueError, OSError):
             logger.error(f"Path traversal detected in {label}: {value!r}")
-            return FetchResult(
+            return ControllerFetchResult(
                 metrics=None, downloaded=[], error=f"Path traversal in {label}"
             )
 
@@ -414,12 +454,12 @@ async def fetch_results_with_retry(
             return list(new)
         return sorted(set(current) | set(new))
 
-    async def _fetch_once() -> FetchResult:
+    async def _fetch_once() -> ControllerFetchResult:
         # Short-circuit on cancellation so the outer retry_with_backoff
-        # stops immediately (returning this FetchResult is success from
+        # stops immediately (returning this ControllerFetchResult is success from
         # the retry wrapper's perspective, so no further attempts fire).
         if is_cancellation_requested(key):
-            return FetchResult(
+            return ControllerFetchResult(
                 metrics=state["metrics"],
                 downloaded=state["downloaded"] or [],
                 checkpoints=state["checkpoints"] or [],
@@ -460,7 +500,7 @@ async def fetch_results_with_retry(
         if state["metrics"] is not None and state["downloaded"] is not None:
             has_key_file = bool(_KEY_FILES & set(state["downloaded"]))
             if has_key_file:
-                return FetchResult(
+                return ControllerFetchResult(
                     metrics=state["metrics"],
                     downloaded=state["downloaded"],
                     checkpoints=state["checkpoints"] or [],
@@ -487,9 +527,17 @@ async def fetch_results_with_retry(
         )
     except _IncompleteResultsError as e:
         return e.to_fetch_result(job_id)
-    except Exception as e:
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ApiException) as e:
         logger.warning(f"Results fetch failed for {job_id}: {e}")
-        return FetchResult(
+        return ControllerFetchResult(
+            metrics=state["metrics"],
+            downloaded=state["downloaded"] or [],
+            checkpoints=state["checkpoints"] or [],
+            error=f"Failed to fetch results: {e}",
+        )
+    except Exception as e:  # noqa: BLE001 - fetch retry is best-effort; any error returns whatever partial state we have rather than re-raising into the kopf reconcile
+        logger.warning(f"Results fetch failed for {job_id}: {e}")
+        return ControllerFetchResult(
             metrics=state["metrics"],
             downloaded=state["downloaded"] or [],
             checkpoints=state["checkpoints"] or [],
@@ -511,8 +559,8 @@ class _IncompleteResultsError(Exception):
         self.checkpoints = checkpoints
         super().__init__("Incomplete results")
 
-    def to_fetch_result(self, job_id: str) -> FetchResult:
-        """Convert to a FetchResult with appropriate error message."""
+    def to_fetch_result(self, job_id: str) -> ControllerFetchResult:
+        """Convert to a ControllerFetchResult with appropriate error message."""
         error = ""
         if not self.metrics and not self.downloaded:
             error = "Failed to fetch results"
@@ -527,7 +575,7 @@ class _IncompleteResultsError(Exception):
             error = "Failed to download result files (metrics fetched)"
             logger.warning(f"File download failed for {job_id}, metrics retrieved")
 
-        return FetchResult(
+        return ControllerFetchResult(
             metrics=self.metrics,
             downloaded=self.downloaded,
             checkpoints=self.checkpoints,
@@ -545,7 +593,6 @@ def _parse_metrics_from_files(
     Looks for profile_export_aiperf.json (or .json.zst) which contains the
     full benchmark results in a format compatible with the CR status.
     """
-    import orjson
 
     dest_dir = OperatorEnvironment.RESULTS.DIR / namespace / job_id
 
@@ -571,8 +618,6 @@ def _parse_metrics_from_files(
             if path.suffix == ".zst":
                 import io
 
-                import zstandard
-
                 raw = (
                     zstandard.ZstdDecompressor()
                     .stream_reader(io.BytesIO(path.read_bytes()))
@@ -595,6 +640,6 @@ def _parse_metrics_from_files(
                     "metrics": data,
                     **{k: v for k, v in data.items() if k != "metrics"},
                 }
-    except Exception as e:
+    except (OSError, ValueError, orjson.JSONDecodeError, zstandard.ZstdError) as e:
         logger.warning(f"Failed to parse metrics from {dest_dir}: {e}")
     return None

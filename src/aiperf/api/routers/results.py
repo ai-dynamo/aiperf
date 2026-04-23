@@ -12,19 +12,19 @@ import aiofiles
 from aiofiles import os as aio_os
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import Field
 
+from aiperf.api.models.responses import BenchmarkResultsResponse, BenchmarkStatus
+from aiperf.api.models.results import ResultFileInfo, ResultsListResponse
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
 from aiperf.common.compression import (
     CompressionEncoding,
     select_encoding,
     stream_file_compressed,
 )
-from aiperf.common.enums import CaseInsensitiveStrEnum, MessageType
+from aiperf.common.enums import MessageType
 from aiperf.common.hooks import on_message
 from aiperf.common.messages import ProcessRecordsResultMessage
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
-from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.models.record_models import ProcessRecordsResult
 from aiperf.config.defaults import OutputDefaults
 from aiperf.kubernetes.results_sidecar import READY_MARKER_NAME
@@ -32,40 +32,6 @@ from aiperf.kubernetes.results_sidecar import READY_MARKER_NAME
 ResultsDep = Annotated["ResultsRouter", component_dependency("results")]
 
 results_router = APIRouter(tags=["Results"])
-
-
-class BenchmarkStatus(CaseInsensitiveStrEnum):
-    """Status of a benchmark run."""
-
-    RUNNING = "running"
-    COMPLETE = "complete"
-    CANCELLED = "cancelled"
-
-
-class BenchmarkResultsResponse(AIPerfBaseModel):
-    """Final benchmark results response."""
-
-    status: BenchmarkStatus = Field(
-        description="Benchmark status: running, complete, or cancelled"
-    )
-    results: ProcessRecordsResult | None = Field(
-        default=None, description="Final benchmark results if complete"
-    )
-
-
-class ResultFileInfo(AIPerfBaseModel):
-    """Metadata for a single result file."""
-
-    name: str = Field(description="Filename of the result artifact")
-    size: int = Field(description="File size in bytes")
-
-
-class ResultsListResponse(AIPerfBaseModel):
-    """Response for listing available result files."""
-
-    files: list[ResultFileInfo] = Field(
-        default_factory=list, description="Available result files"
-    )
 
 
 _CONTENT_TYPES: dict[str, str] = {

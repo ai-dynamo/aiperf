@@ -91,6 +91,13 @@ class ConditionManager:
 
     Conditions follow the Kubernetes convention of tracking specific aspects
     of resource state with timestamps for state transitions.
+
+    Invariants:
+        - ``lastTransitionTime`` is preserved across calls where the condition's
+          ``status`` field does NOT change — only updated when the transition
+          actually occurs. This matches upstream k8s condition semantics.
+        - Condition ``status`` is stored as the string ``"True"``/``"False"``
+          (not Python bool) to match the kubectl-visible serialized form.
     """
 
     __slots__ = ("_conditions",)
@@ -220,10 +227,21 @@ WORKER_AGGREGATE_STATUS_CRD_KEYS = {
 
 
 class StatusBuilder:
-    """Builder for constructing AIPerfJob status updates.
+    """Builder for AIPerfJob ``.status`` patches via the fluent
+    ``sb.set_phase(...).set_error(...).finalize()`` pattern.
 
-    Provides a fluent interface for building status patches with
-    proper condition management.
+    Invariants:
+        - ``finalize()`` MUST be called exactly once before the kopf handler
+          returns; otherwise condition updates are never applied to the patch
+          (condition writes queue in the ConditionManager until finalized).
+        - Safe to construct from an existing ``status`` dict to preserve
+          prior conditions across a handler invocation.
+
+    Example:
+        >>> sb = StatusBuilder(patch, existing_status=body.get("status"))
+        >>> sb.set_phase(Phase.RUNNING).set_workers(ready=32, total=32)
+        >>> sb.conditions.set_true(ConditionType.WORKERS_READY, "AllUp")
+        >>> sb.finalize()
     """
 
     __slots__ = ("_patch", "_conditions")

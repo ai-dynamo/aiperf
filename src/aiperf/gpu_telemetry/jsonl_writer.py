@@ -66,7 +66,7 @@ class GPUTelemetryJSONLWriter(
         """
         try:
             await self.buffered_write(record)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - per-record; skip bad record and continue
             self.error(f"Failed to write GPU telemetry record: {e}")
 
     async def summarize(self) -> list[MetricResult]:

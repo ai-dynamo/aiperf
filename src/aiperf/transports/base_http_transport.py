@@ -227,6 +227,7 @@ class BaseHTTPTransport(BaseTransport):
         job_id: str,
         poll_url: str,
         headers: dict[str, str],
+        *,
         timeout: float,
         poll_interval: float,
     ) -> tuple[dict[str, Any], float] | ErrorDetails:
@@ -304,7 +305,7 @@ class BaseHTTPTransport(BaseTransport):
                 message=f"No content returned for video {job_id}",
                 code=500,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - per-request; convert to ErrorDetails and return
             return ErrorDetails(
                 type="VideoDownloadError",
                 message=f"Failed to download video {job_id}: {e!r}",
@@ -391,6 +392,6 @@ class BaseHTTPTransport(BaseTransport):
 
         except asyncio.CancelledError:
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - per-request; convert to ErrorDetails and return
             self.exception(f"Video generation failed: {e!r}")
             return make_record(error=ErrorDetails.from_exception(e))

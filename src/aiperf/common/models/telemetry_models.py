@@ -329,6 +329,7 @@ class GpuMetricTimeSeries:
         tag: str,
         header: str,
         unit: str,
+        *,
         time_filter: TimeRangeFilter | None = None,
         is_counter: bool = False,
     ) -> MetricResult:
@@ -453,6 +454,7 @@ class GpuTelemetryData(msgspec.Struct, kw_only=True):
         tag: str,
         header: str,
         unit: str,
+        *,
         time_filter: TimeRangeFilter | None = None,
         is_counter: bool = False,
     ) -> MetricResult:
@@ -471,7 +473,12 @@ class GpuTelemetryData(msgspec.Struct, kw_only=True):
         """
         if time_filter is not None or is_counter:
             return self.time_series.to_metric_result_filtered(
-                metric_name, tag, header, unit, time_filter, is_counter
+                metric_name,
+                tag,
+                header,
+                unit,
+                time_filter=time_filter,
+                is_counter=is_counter,
             )
         return self.time_series.to_metric_result(metric_name, tag, header, unit)
 

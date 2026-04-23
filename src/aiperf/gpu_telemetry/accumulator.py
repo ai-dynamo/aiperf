@@ -191,7 +191,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                             f"No data available for metric '{metric_name}' on GPU {gpu_uuid[:12]} from {dcgm_url}"
                         )
                         continue
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001 - per-metric; skip bad record and continue
                         self.exception(
                             f"Unexpected error generating metric result for '{metric_name}' on GPU {gpu_uuid[:12]} from {dcgm_url}: {e}"
                         )
@@ -280,7 +280,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                             metrics_dict[metric_key] = metric_result.to_json_result()
                         except NoMetricValue:
                             continue
-                        except Exception as e:
+                        except Exception as e:  # noqa: BLE001 - per-metric; skip bad record and continue
                             self.warning(
                                 f"Failed to compute metric '{metric_key}' for GPU {gpu_uuid[:12]}: {e}"
                             )

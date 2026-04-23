@@ -99,6 +99,6 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
             data = self.make_text_response_data(text)
             return ParsedResponse(perf_ns=response.perf_ns, data=data)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - TGI event parsing must never crash the stream; malformed events are logged and skipped
             self.debug(lambda e=e: f"Error parsing TGI stream: {e!r}")
             return None

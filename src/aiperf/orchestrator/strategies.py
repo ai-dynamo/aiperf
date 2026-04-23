@@ -145,6 +145,7 @@ class FixedTrialsStrategy(ExecutionStrategy):
     def __init__(
         self,
         num_trials: int,
+        *,
         cooldown_seconds: float = 0.0,
         auto_set_seed: bool = True,
         disable_warmup_after_first: bool = True,
@@ -367,6 +368,7 @@ class AdaptiveStrategy(ExecutionStrategy):
     def __init__(
         self,
         criterion: ConvergenceCriterion,
+        *,
         min_runs: int = 3,
         max_runs: int = 10,
         cooldown_seconds: float = 0.0,

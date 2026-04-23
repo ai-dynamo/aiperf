@@ -52,6 +52,7 @@ class ZMQPullClient(BaseZMQClient):
         address: str,
         bind: bool,
         socket_ops: dict | None = None,
+        *,
         max_pull_concurrency: int | None = None,
         additional_bind_address: str | None = None,
         codec: MessageCodecProtocol | None = None,
@@ -118,11 +119,15 @@ class ZMQPullClient(BaseZMQClient):
                 self.trace("Pull client receiver task timed out")
                 self.semaphore.release()  # release the semaphore as it was not used
                 await yield_to_event_loop()
-            except (asyncio.CancelledError, zmq.ContextTerminated):
+            except asyncio.CancelledError:
                 self.debug("Pull client receiver task cancelled")
                 self.semaphore.release()  # release the semaphore as it was not used
+                raise
+            except zmq.ContextTerminated:
+                self.debug("Pull client receiver task stopped (ZMQ context terminated)")
+                self.semaphore.release()  # release the semaphore as it was not used
                 break
-            except Exception as e:
+            except (zmq.ZMQError, asyncio.TimeoutError) as e:
                 self.exception(f"Exception receiving data from pull socket: {e}")
                 self.semaphore.release()  # release the semaphore as it was not used
                 await yield_to_event_loop()

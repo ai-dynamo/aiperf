@@ -681,7 +681,14 @@ class TestPrintReport:
             patch("aiperf.kubernetes.console.print_header"),
             patch("aiperf.kubernetes.console.print_info"),
         ):
-            _print_report("default", [], [], [], {}, verbose=False)
+            _print_report(
+                "default",
+                pod_infos=[],
+                events=[],
+                node_resources=[],
+                pod_logs={},
+                verbose=False,
+            )
             mock_warn.assert_any_call("No pods found")
 
     def test_no_problems_prints_success(self) -> None:
@@ -694,7 +701,14 @@ class TestPrintReport:
             patch("aiperf.kubernetes.console.print_header"),
             patch("aiperf.kubernetes.console.print_info"),
         ):
-            _print_report("default", pod_infos, [], [], {}, verbose=False)
+            _print_report(
+                "default",
+                pod_infos=pod_infos,
+                events=[],
+                node_resources=[],
+                pod_logs={},
+                verbose=False,
+            )
             mock_success.assert_called_once_with("No problems detected")
 
     def test_verbose_shows_pod_logs(self) -> None:
@@ -713,7 +727,14 @@ class TestPrintReport:
             patch("aiperf.kubernetes.console.print_info"),
             patch("aiperf.kubernetes.console.print_error"),
         ):
-            _print_report("default", pod_infos, [], [], pod_logs, verbose=True)
+            _print_report(
+                "default",
+                pod_infos=pod_infos,
+                events=[],
+                node_resources=[],
+                pod_logs=pod_logs,
+                verbose=True,
+            )
             header_calls = [str(c) for c in mock_header.call_args_list]
             assert any("Problem Pod Logs" in c for c in header_calls)
 
@@ -733,7 +754,14 @@ class TestPrintReport:
             patch("aiperf.kubernetes.console.print_info"),
             patch("aiperf.kubernetes.console.print_error"),
         ):
-            _print_report("default", pod_infos, [], [], pod_logs, verbose=False)
+            _print_report(
+                "default",
+                pod_infos=pod_infos,
+                events=[],
+                node_resources=[],
+                pod_logs=pod_logs,
+                verbose=False,
+            )
             header_calls = [str(c) for c in mock_header.call_args_list]
             assert not any("Problem Pod Logs" in c for c in header_calls)
 
@@ -764,7 +792,14 @@ class TestPrintReport:
             patch("aiperf.kubernetes.console.print_success"),
             patch("aiperf.kubernetes.console.print_warning"),
         ):
-            _print_report("default", [], events, [], {}, verbose=False)
+            _print_report(
+                "default",
+                pod_infos=[],
+                events=events,
+                node_resources=[],
+                pod_logs={},
+                verbose=False,
+            )
             header_calls = [str(c) for c in mock_header.call_args_list]
             assert any("Warning Events" in c for c in header_calls)
 
@@ -976,7 +1011,7 @@ class TestDebugCommand:
 
             mock_logs.assert_called_once()
             report_kwargs = mock_report.call_args
-            pod_logs = report_kwargs[0][4]
+            pod_logs = report_kwargs.kwargs["pod_logs"]
             assert pod_logs == {"crash": {"main": "logs"}}
 
     @pytest.mark.asyncio

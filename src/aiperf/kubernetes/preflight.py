@@ -8,12 +8,14 @@ before deploying AIPerf benchmarks.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, TypedDict
 
+import aiohttp
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client import ApiClient
 from kubernetes_asyncio.client.exceptions import ApiException
@@ -104,6 +106,14 @@ class CheckResult:
     """Wall-clock time the check took, in milliseconds."""
 
 
+class PreflightResultsDict(TypedDict):
+    """Machine-parseable shape returned by ``PreflightResults.to_dict``."""
+
+    passed: bool
+    has_warnings: bool
+    checks: list[dict[str, Any]]
+
+
 @dataclass
 class PreflightResults:
     """Aggregated results of all pre-flight checks."""
@@ -125,7 +135,7 @@ class PreflightResults:
         """Add a check result."""
         self.checks.append(result)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> PreflightResultsDict:
         """Convert results to a machine-parseable dict."""
         return {
             "passed": self.passed,
@@ -209,12 +219,17 @@ def _print_check_result_compact(result: CheckResult) -> None:
     )
 
 
-class PreflightChecker:
-    """Runs pre-flight checks for Kubernetes deployment."""
+class CLIPreflightChecker:
+    """Runs pre-flight checks for Kubernetes deployment.
+
+    Sibling: ``aiperf.operator.preflight.OperatorPreflightChecker`` handles
+    operator-side reconcile-time preflight.
+    """
 
     def __init__(
         self,
         namespace: str,
+        *,
         kubeconfig: str | None = None,
         kube_context: str | None = None,
         image: str | None = None,
@@ -268,7 +283,7 @@ class PreflightChecker:
             if show_status:
                 logger.info(f"[cyan]... Checking {name}[/cyan]")
             result = await check_fn()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - preflight dispatcher must never die on a single check failure
             result = CheckResult(
                 name=name,
                 status=CheckStatus.FAIL,
@@ -361,7 +376,13 @@ class PreflightChecker:
                 status=CheckStatus.PASS,
                 message="Connected to Kubernetes cluster",
             )
-        except Exception as e:
+        except (
+            ApiException,
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+            OSError,
+            RuntimeError,
+        ) as e:
             return CheckResult(
                 name="Cluster Connectivity",
                 status=CheckStatus.FAIL,
@@ -397,7 +418,13 @@ class PreflightChecker:
                     message=f"Kubernetes {git_version} is below minimum 1.24",
                     hints=["Upgrade your Kubernetes cluster to version 1.24 or later"],
                 )
-        except Exception as e:
+        except (
+            ApiException,
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+            OSError,
+            RuntimeError,
+        ) as e:
             return CheckResult(
                 name="Kubernetes Version",
                 status=CheckStatus.WARN,
@@ -410,7 +437,11 @@ class PreflightChecker:
         Delegates to the shared utility in ``preflight_utils``.
         """
         return await _shared_check_rbac_access(
-            self._api, verb, resource, group, self.namespace
+            self._api,
+            verb=verb,
+            resource=resource,
+            group=group,
+            namespace=self.namespace,
         )
 
     async def _check_namespace(self) -> CheckResult:
@@ -441,7 +472,13 @@ class PreflightChecker:
                                 f"Ask an admin to create namespace '{self.namespace}'"
                             ],
                         )
-                except Exception as perm_err:
+                except (
+                    ApiException,
+                    aiohttp.ClientError,
+                    asyncio.TimeoutError,
+                    OSError,
+                    RuntimeError,
+                ) as perm_err:
                     return CheckResult(
                         name="Namespace",
                         status=CheckStatus.WARN,
@@ -468,7 +505,13 @@ class PreflightChecker:
                     passed.append(f"{verb} {display}")
                 else:
                     missing.append(f"{verb} {display}")
-            except Exception as e:
+            except (
+                ApiException,
+                aiohttp.ClientError,
+                asyncio.TimeoutError,
+                OSError,
+                RuntimeError,
+            ) as e:
                 display = f"{group}/{resource}" if group else resource
                 missing.append(f"{verb} {display} (check failed: {e})")
 
@@ -764,7 +807,13 @@ class PreflightChecker:
                 message=f"Cluster has sufficient resources ({ready_nodes} nodes)",
                 details=details,
             )
-        except Exception as e:
+        except (
+            ApiException,
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+            OSError,
+            RuntimeError,
+        ) as e:
             return CheckResult(
                 name="Node Resources",
                 status=CheckStatus.WARN,
@@ -972,7 +1021,13 @@ class PreflightChecker:
                     message="CoreDNS not found in kube-system",
                     hints=["Verify your cluster has a working DNS service"],
                 )
-        except Exception as e:
+        except (
+            ApiException,
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+            OSError,
+            RuntimeError,
+        ) as e:
             return CheckResult(
                 name="DNS Resolution",
                 status=CheckStatus.WARN,
@@ -1019,7 +1074,12 @@ class PreflightChecker:
                         message=f"Cluster service '{svc_name}' found in namespace '{svc_ns}'",
                         details=details,
                     )
-                except Exception:
+                except (
+                    ApiException,
+                    aiohttp.ClientError,
+                    asyncio.TimeoutError,
+                    OSError,
+                ):
                     return CheckResult(
                         name="Endpoint Connectivity",
                         status=CheckStatus.FAIL,
@@ -1041,7 +1101,7 @@ class PreflightChecker:
                 ],
             )
 
-        except Exception as e:
+        except (ValueError, TypeError, AttributeError) as e:
             return CheckResult(
                 name="Endpoint Connectivity",
                 status=CheckStatus.WARN,

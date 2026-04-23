@@ -136,7 +136,7 @@ class GPUTelemetryManager(BaseComponentService):
                 self.debug(
                     f"GPU telemetry processor {entry.name} is disabled and will not be used"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-plugin; skip bad processor and continue
                 self.error(
                     f"Failed to create GPU telemetry processor {entry.name}: {e}"
                 )
@@ -297,7 +297,7 @@ class GPUTelemetryManager(BaseComponentService):
                     self.debug(
                         f"GPU Telemetry: DCGM endpoint {dcgm_url} is not reachable"
                     )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-endpoint; skip unreachable and continue
                 self.error(f"GPU Telemetry: Exception testing {dcgm_url}: {e}")
 
         # Determine which defaults are reachable for display filtering
@@ -326,7 +326,7 @@ class GPUTelemetryManager(BaseComponentService):
                 await collector.initialize()
                 await collector.collect_and_process_metrics()
                 self.debug(f"GPU Telemetry: Captured baseline from {dcgm_url}")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-endpoint; skip baseline failure and continue
                 self.warning(
                     f"GPU Telemetry: Failed to capture baseline from {dcgm_url}: {e}"
                 )
@@ -396,7 +396,7 @@ class GPUTelemetryManager(BaseComponentService):
                 self.debug(
                     lambda url=source_url: f"GPU Telemetry: Captured boundary state from {url}"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-endpoint; skip boundary failure and continue
                 self.warning(
                     f"GPU Telemetry: Failed to capture boundary state from {source_url}: {e}"
                 )
@@ -431,7 +431,7 @@ class GPUTelemetryManager(BaseComponentService):
                 try:
                     await collector.collect_and_process_metrics()
                     self.debug(f"GPU Telemetry: Captured final state from {dcgm_url}")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - per-endpoint; skip final scrape failure and continue
                     self.warning(
                         f"GPU Telemetry: Failed to capture final state from {dcgm_url}: {e}"
                     )
@@ -451,7 +451,7 @@ class GPUTelemetryManager(BaseComponentService):
             try:
                 parsed = orjson.loads(message.payload)
                 start_ns = parsed.get("start_ns")
-            except Exception as e:
+            except (orjson.JSONDecodeError, AttributeError, TypeError) as e:
                 self.warning(
                     f"Failed to parse PROFILE_COMPLETE payload ({e!r}); "
                     "using start_ns=0 (full-history export)"
@@ -604,5 +604,5 @@ class GPUTelemetryManager(BaseComponentService):
                     endpoints_reachable=tuple(endpoints_reachable or []),
                 )
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - best-effort status publish
             self.error(f"Failed to send telemetry status message: {e}")

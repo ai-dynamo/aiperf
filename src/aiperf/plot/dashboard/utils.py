@@ -57,6 +57,7 @@ def create_plot_container_component(
     plot_id: str,
     figure,
     theme: PlotTheme,
+    *,
     resizable: bool = True,
     size: int = 400,
     size_class: str = "half",
@@ -217,57 +218,70 @@ def add_run_idx_to_figure(fig: go.Figure, df: pd.DataFrame) -> go.Figure:
             continue
 
         # Create customdata from scratch if it doesn't exist
-        new_customdata = []
-
-        # Match each trace point to DataFrame row by coordinates
-        for i, (x_val, y_val) in enumerate(zip(trace.x, trace.y, strict=True)):
-            # Find matching row in DataFrame (with tolerance for float comparison)
-            matches = df[
-                (abs(df[x_metric] - x_val) < 0.001)
-                & (abs(df[y_metric] - y_val) < 0.001)
-            ]
-
-            if not matches.empty:
-                run_idx = int(matches.iloc[0]["run_idx"])
-
-                # Check if existing customdata needs to be preserved
-                if (
-                    hasattr(trace, "customdata")
-                    and trace.customdata is not None
-                    and i < len(trace.customdata)
-                ):
-                    existing_data = trace.customdata[i]
-
-                    # Enrich existing customdata with run_idx
-                    if isinstance(existing_data, str):
-                        new_customdata.append(
-                            {"text": existing_data, "run_idx": run_idx}
-                        )
-                    elif isinstance(existing_data, dict):
-                        existing_data["run_idx"] = run_idx
-                        new_customdata.append(existing_data)
-                    else:
-                        new_customdata.append({"run_idx": run_idx})
-                else:
-                    # Create new customdata with just run_idx
-                    new_customdata.append({"run_idx": run_idx})
-            else:
-                # No match found
-                if (
-                    hasattr(trace, "customdata")
-                    and trace.customdata is not None
-                    and i < len(trace.customdata)
-                ):
-                    # Keep original customdata if it exists
-                    new_customdata.append(trace.customdata[i])
-                else:
-                    # Create empty customdata
-                    new_customdata.append({})
+        new_customdata = [
+            _match_trace_point_to_run_idx(
+                trace,
+                i,
+                x_val,
+                y_val,
+                df=df,
+                x_metric=x_metric,
+                y_metric=y_metric,
+            )
+            for i, (x_val, y_val) in enumerate(zip(trace.x, trace.y, strict=True))
+        ]
 
         if new_customdata:
             trace.customdata = new_customdata
 
     return fig
+
+
+def _match_trace_point_to_run_idx(
+    trace: Any,
+    i: int,
+    x_val: float,
+    y_val: float,
+    *,
+    df: pd.DataFrame,
+    x_metric: str,
+    y_metric: str,
+) -> dict:
+    """Build a single customdata entry for a trace point by matching it to a DataFrame row.
+
+    Uses coordinate-based matching with float tolerance so both single-trace and
+    multi-trace (grouped) plots resolve back to the correct run_idx.
+    """
+    matches = df[
+        (abs(df[x_metric] - x_val) < 0.001) & (abs(df[y_metric] - y_val) < 0.001)
+    ]
+
+    if matches.empty:
+        # No match — keep original customdata if present, else empty.
+        if (
+            hasattr(trace, "customdata")
+            and trace.customdata is not None
+            and i < len(trace.customdata)
+        ):
+            return trace.customdata[i]
+        return {}
+
+    run_idx = int(matches.iloc[0]["run_idx"])
+
+    existing_data = None
+    if (
+        hasattr(trace, "customdata")
+        and trace.customdata is not None
+        and i < len(trace.customdata)
+    ):
+        existing_data = trace.customdata[i]
+
+    if isinstance(existing_data, str):
+        return {"text": existing_data, "run_idx": run_idx}
+    if isinstance(existing_data, dict):
+        existing_data["run_idx"] = run_idx
+        return existing_data
+    return {"run_idx": run_idx}
 
 
 def _convert_to_numeric(value: Any, context: str = "") -> float | int | None:
@@ -304,7 +318,12 @@ def _convert_to_numeric(value: Any, context: str = "") -> float | int | None:
 
 
 def runs_to_dataframe(
-    runs: list, x_metric: str, x_stat: str, y_metric: str, y_stat: str
+    runs: list,
+    *,
+    x_metric: str,
+    x_stat: str,
+    y_metric: str,
+    y_stat: str,
 ) -> dict:
     """
     Convert list of RunData to DataFrame for plotting.

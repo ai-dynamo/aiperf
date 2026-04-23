@@ -28,11 +28,11 @@ from aiperf.kubernetes.watchdog import (
     EventInfo,
     K8sWatchdogSource,
     NodeResources,
-    PodInfo,
     PodMetrics,
     PodTimeline,
     ProblemSeverity,
     WatchdogDataSource,
+    WatchdogPodSnapshot,
     WatchdogProblem,
     WatchdogReport,
     _fmt_duration,
@@ -171,14 +171,14 @@ class FakeDataSource:
     """In-memory WatchdogDataSource for testing BenchmarkWatchdog logic."""
 
     def __init__(self) -> None:
-        self.pods: list[PodInfo] = []
+        self.pods: list[WatchdogPodSnapshot] = []
         self.events: list[EventInfo] = []
         self.nodes: list[NodeResources] = []
         self.namespaces: list[str] = []
         self.pod_logs: dict[str, str] = {}
         self.get_pods_error: Exception | None = None
 
-    async def get_pods(self, namespace: str) -> list[PodInfo]:
+    async def get_pods(self, namespace: str) -> list[WatchdogPodSnapshot]:
         if self.get_pods_error:
             raise self.get_pods_error
         return list(self.pods)
@@ -212,9 +212,9 @@ def _make_pod(
     ready: bool = True,
     restarts: int = 0,
     containers: list[ContainerInfo] | None = None,
-) -> PodInfo:
-    """Build a PodInfo with sensible defaults."""
-    return PodInfo(
+) -> WatchdogPodSnapshot:
+    """Build a WatchdogPodSnapshot with sensible defaults."""
+    return WatchdogPodSnapshot(
         name=name,
         namespace=namespace,
         phase=phase,

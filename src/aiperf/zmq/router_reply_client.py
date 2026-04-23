@@ -120,7 +120,9 @@ class ZMQRouterReplyClient(BaseZMQClient):
             _, handler, _ = self._request_handlers[message_type]
             response = await handler(request)
 
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - request handler boundary, errors surfaced via ErrorMessage
             self.exception(f"Exception calling handler for {message_type}: {e}")
             response = ErrorMessage(
                 request_id=request_id,
@@ -129,7 +131,7 @@ class ZMQRouterReplyClient(BaseZMQClient):
 
         try:
             self._response_futures[request_id].set_result(response)
-        except Exception as e:
+        except (KeyError, asyncio.InvalidStateError) as e:
             self.exception(
                 f"Exception setting response future for request {request_id}: {e}"
             )
@@ -141,7 +143,9 @@ class ZMQRouterReplyClient(BaseZMQClient):
         try:
             _, handler, _ = self._request_handlers[message_type]
             await handler(request)
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - fire-and-forget handler boundary, no response channel
             self.exception(
                 f"Exception calling fire-and-forget handler for {message_type}: {e}"
             )
@@ -159,7 +163,9 @@ class ZMQRouterReplyClient(BaseZMQClient):
         )
         try:
             await self.socket.send_multipart([*routing_envelope, error.to_json_bytes()])
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except (zmq.ZMQError, asyncio.TimeoutError) as e:
             self.exception(f"Failed to send duplicate-request error: {e}")
 
     async def _wait_for_response(
@@ -190,7 +196,9 @@ class ZMQRouterReplyClient(BaseZMQClient):
             await self.socket.send_multipart(
                 [*routing_envelope, response.to_json_bytes()]
             )
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except (zmq.ZMQError, asyncio.TimeoutError, KeyError) as e:
             self.exception(
                 f"Exception waiting for response for request {request_id}: {e}"
             )
@@ -258,9 +266,14 @@ class ZMQRouterReplyClient(BaseZMQClient):
                 ):
                     await yield_to_event_loop()
 
-            except (asyncio.CancelledError, zmq.ContextTerminated):
+            except asyncio.CancelledError:
                 self.debug("Router reply client receiver task cancelled")
+                raise
+            except zmq.ContextTerminated:
+                self.debug(
+                    "Router reply client receiver task stopped (ZMQ context terminated)"
+                )
                 break
-            except Exception as e:
+            except (zmq.ZMQError, asyncio.TimeoutError) as e:
                 self.exception(f"Exception receiving request: {e}")
                 await yield_to_event_loop()

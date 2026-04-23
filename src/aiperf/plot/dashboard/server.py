@@ -12,6 +12,7 @@ import os
 import signal
 import webbrowser
 from pathlib import Path
+from typing import Any
 
 import dash
 import dash_bootstrap_components as dbc
@@ -49,6 +50,7 @@ class DashboardServer:
         self,
         runs: list[RunData],
         run_dirs: list[Path],
+        *,
         mode: VisualizationMode,
         theme: PlotTheme,
         plot_config: PlotConfig,
@@ -116,7 +118,7 @@ class DashboardServer:
         print("\n\nShutting down dashboard...")
         exit(0)
 
-    def build_layout(self):
+    def build_layout(self) -> Any:
         """Build dashboard layout using DashboardBuilder."""
         builder = DashboardBuilder(
             runs=self.runs,
@@ -127,7 +129,7 @@ class DashboardServer:
 
         return builder.build()
 
-    def register_callbacks(self):
+    def register_callbacks(self) -> None:
         """Register all Dash callbacks."""
         register_all_callbacks(
             self.app,
@@ -139,7 +141,7 @@ class DashboardServer:
             self.loader,
         )
 
-    def run(self):
+    def run(self) -> None:
         """
         Start the Dash server.
 
@@ -176,7 +178,8 @@ class DashboardServer:
                     # Restore stderr
                     os.dup2(old_stderr, 2)
                     os.close(old_stderr)
-        except Exception:
+        except Exception:  # noqa: BLE001 - browser auto-open is best-effort across platforms/WSL; any failure must fall back to a manual URL print rather than crash the server
+            # Browser auto-open is best-effort; fall back to manual instructions.
             print(f"Please open {url} manually in your browser\n")
 
         # Start server (this blocks until Ctrl+C)

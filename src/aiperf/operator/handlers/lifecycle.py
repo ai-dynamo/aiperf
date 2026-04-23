@@ -35,7 +35,20 @@ logger = logging.getLogger(__name__)
 async def on_delete(
     name: str, namespace: str, status: dict[str, Any], **_: Any
 ) -> None:
-    """Handle deletion - clean up cached ProgressClient and let K8s GC handle resources."""
+    """Handle AIPerfJob CR deletion.
+
+    Side effects:
+        - Sets a sticky in-process cancellation flag for this job so any
+          in-flight monitor/completion coroutines short-circuit at their
+          next await boundary (avoids blocking delete on fetch backoff).
+        - Closes the cached ProgressClient (releases aiohttp session).
+        - Relies on Kubernetes ownerReferences GC to reap the JobSet,
+          ConfigMap, Role, and RoleBinding — this handler does NOT delete
+          them directly.
+
+    The cancellation flag is set BEFORE closing the client so concurrent
+    observers see the flag before the client-cache entry disappears.
+    """
     job_id = status.get("jobId", name)
     key = job_key(namespace, job_id)
     # Request cancellation FIRST so any concurrent monitor/completion work
@@ -55,7 +68,23 @@ async def on_cancel(
     patch: kopf.Patch,
     **_: Any,
 ) -> None:
-    """Handle cancellation request via spec.cancel field."""
+    """Handle cancellation request via ``spec.cancel`` field.
+
+    Fires on every ``spec.cancel`` update; no-ops unless ``spec.cancel`` is
+    truthy and the CR is not already terminal.
+
+    Side effects:
+        - Deletes the JobSet custom object (logs a warning on non-404
+          failures but does not re-raise).
+        - Closes the cached ProgressClient for this job.
+        - Patches ``status.phase`` to ``Cancelled`` and sets completion time.
+        - Emits a ``Cancelled`` kopf event on the CR.
+
+    Unlike ``on_delete`` this does NOT set the in-process cancellation
+    flag — the CR is staying around in ``Cancelled`` phase for user
+    inspection; there are no in-flight completion paths to abort because
+    the monitor handler will see the terminal phase on its next tick.
+    """
     if not spec.get("cancel"):
         return
 
@@ -102,8 +131,19 @@ async def on_benchmark_complete(
     """Handle benchmark completion signal from controller pod.
 
     The controller pod patches the ``benchmark-complete`` annotation after
-    results are exported.  This handler fires immediately via kopf's watch
+    results are exported. This handler fires immediately via kopf's watch
     mechanism, bypassing the 10-second monitor poll cycle.
+
+    Side effects:
+        - Attempts to claim completion via ``try_claim_completion`` (durable
+          CR annotation); returns silently if another handler already won.
+        - Delegates to ``handle_completion`` (fetches results, patches CR
+          status, updates the job index, emits ``Completed``/``ResultsStored``
+          events, deletes the JobSet on success).
+        - Sends a shutdown signal to the controller pod's HTTP API so it
+          exits cleanly; on failure emits a ``ShutdownSignalFailed`` warning
+          event but does not re-raise (results are already stored).
+        - Closes the cached ProgressClient.
     """
     current_phase = status.get("phase", Phase.PENDING)
     if current_phase in (Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED):
@@ -123,7 +163,7 @@ async def on_benchmark_complete(
     )
 
     sb = StatusBuilder(patch, status)
-    await handle_completion(body, namespace, jobset_name, job_id, status, sb)
+    await handle_completion(body, namespace, jobset_name, job_id, status=status, sb=sb)
 
     host = controller_dns_name(jobset_name, namespace)
     try:

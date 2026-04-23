@@ -4,7 +4,7 @@
 
 These tests verify end-to-end flows from CLI options through manifest generation
 to operator handling. They use mocks for actual k8s API calls but test real code
-paths through KubernetesDeployment, JobSetSpec, and operator handlers.
+paths through KubernetesDeployment, AIPerfJobSetSpec, and operator handlers.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from pytest import param
 from aiperf.config import AIPerfConfig
 from aiperf.config.deployment import DeploymentConfig, SchedulingConfig
 from aiperf.config.kube import KubeOptions
-from aiperf.kubernetes.constants import KueueLabels, Labels
+from aiperf.kubernetes.constants import AIPerfLabels, KueueLabels
 from aiperf.kubernetes.resources import KubernetesDeployment
 from aiperf.operator.spec_converter import AIPerfJobSpecConverter
 from aiperf.operator.status import Phase
@@ -281,7 +281,7 @@ class TestKueueOperatorFlow:
             "metadata": {
                 "labels": {
                     KueueLabels.QUEUE_NAME: "test-queue",
-                    Labels.APP_KEY: Labels.APP_VALUE,
+                    AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
                 },
             },
             "spec": {"suspend": True},
@@ -330,7 +330,7 @@ class TestKueueOperatorFlow:
             "metadata": {
                 "labels": {
                     KueueLabels.QUEUE_NAME: "test-queue",
-                    Labels.APP_KEY: Labels.APP_VALUE,
+                    AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
                 },
             },
             "spec": {"suspend": False},
@@ -390,7 +390,7 @@ class TestKueueOperatorFlow:
         jobset_raw = {
             "metadata": {
                 "labels": {
-                    Labels.APP_KEY: Labels.APP_VALUE,
+                    AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
                 },
             },
             "spec": {"suspend": True},

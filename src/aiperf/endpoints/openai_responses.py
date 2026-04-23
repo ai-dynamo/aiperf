@@ -267,28 +267,7 @@ class ResponsesEndpoint(BaseEndpoint):
         """
         output = json_obj.get("output")
         if isinstance(output, list):
-            text_parts: list[str] = []
-            reasoning_parts: list[str] = []
-
-            for item in output:
-                if not isinstance(item, dict):
-                    continue
-
-                item_type = item.get("type")
-
-                if item_type == "reasoning":
-                    for part in item.get("summary", []):
-                        if not isinstance(part, dict):
-                            continue
-                        if part.get("type") == "summary_text" and part.get("text"):
-                            reasoning_parts.append(part["text"])
-
-                elif item_type == "message":
-                    for part in item.get("content", []):
-                        if not isinstance(part, dict):
-                            continue
-                        if part.get("type") == "output_text" and part.get("text"):
-                            text_parts.append(part["text"])
+            text_parts, reasoning_parts = _collect_output_parts(output)
 
             if reasoning_parts:
                 return ReasoningResponseData(
@@ -304,3 +283,35 @@ class ResponsesEndpoint(BaseEndpoint):
             return TextResponseData(text=output_text)
 
         return None
+
+
+def _collect_output_parts(output: list[Any]) -> tuple[list[str], list[str]]:
+    """Collect text and reasoning text parts from a Responses API output list."""
+    text_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        if item_type == "reasoning":
+            reasoning_parts.extend(
+                _extract_typed_text(item.get("summary"), "summary_text")
+            )
+        elif item_type == "message":
+            text_parts.extend(_extract_typed_text(item.get("content"), "output_text"))
+    return text_parts, reasoning_parts
+
+
+def _extract_typed_text(parts: Any, expected_type: str) -> list[str]:
+    """Return the ``text`` field of every dict part matching ``expected_type``."""
+    if not isinstance(parts, list):
+        return []
+    out: list[str] = []
+    for part in parts:
+        if (
+            isinstance(part, dict)
+            and part.get("type") == expected_type
+            and part.get("text")
+        ):
+            out.append(part["text"])
+    return out

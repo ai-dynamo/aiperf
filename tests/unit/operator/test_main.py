@@ -38,8 +38,8 @@ from aiperf.operator.handlers.monitor import (
 )
 from aiperf.operator.health import check_endpoint_health as _check_endpoint_health
 from aiperf.operator.main import configure
-from aiperf.operator.models import FetchResult, OwnerReference
-from aiperf.operator.progress_client import AggregateWorkerStatus, JobProgress
+from aiperf.operator.models import ControllerFetchResult, OwnerReference
+from aiperf.operator.progress_client import ControllerAggregateWorkerStatus, JobProgress
 from aiperf.operator.status import Phase
 
 # =============================================================================
@@ -1362,7 +1362,7 @@ class TestMonitorProgressAdvanced:
                     last_update_ns=2,
                 )
             },
-            workers=AggregateWorkerStatus(
+            workers=ControllerAggregateWorkerStatus(
                 ready=1,
                 total=2,
                 dispatchable=1,
@@ -1775,7 +1775,7 @@ class TestHandleCompletion:
                 job_id="job-123",
                 status={"workers": {"total": 2}},
                 sb=sb,
-                result=FetchResult(
+                result=ControllerFetchResult(
                     metrics=mock_metrics, downloaded=["profile_export_aiperf.json"]
                 ),
             )
@@ -1827,7 +1827,7 @@ class TestHandleCompletion:
                 job_id="job-123",
                 status={"workers": {"total": 2}},
                 sb=sb,
-                result=FetchResult(
+                result=ControllerFetchResult(
                     metrics={"metrics": [{"tag": "request_throughput", "avg": 100.0}]},
                     downloaded=["inputs.json"],
                 ),
@@ -1883,7 +1883,7 @@ class TestHandleCompletion:
                 job_id="job-123",
                 status={"workers": {"total": 2}},
                 sb=sb,
-                result=FetchResult(
+                result=ControllerFetchResult(
                     metrics=None,
                     downloaded=["profile_export_aiperf.json"],
                 ),
@@ -1933,7 +1933,7 @@ class TestHandleCompletion:
                 job_id="job-123",
                 status={"workers": {"total": 1}, "startTime": start_time},
                 sb=sb,
-                result=FetchResult(
+                result=ControllerFetchResult(
                     metrics={"metrics": {}},
                     downloaded=["profile_export_aiperf.json"],
                 ),
@@ -1965,7 +1965,7 @@ class TestFetchProgress:
                     last_update_ns=2,
                 )
             },
-            workers=AggregateWorkerStatus(
+            workers=ControllerAggregateWorkerStatus(
                 ready=1,
                 total=2,
                 dispatchable=1,
@@ -2019,7 +2019,7 @@ class TestFetchProgress:
             )
         }
         mock_progress.current_phase = None
-        mock_progress.workers = AggregateWorkerStatus(
+        mock_progress.workers = ControllerAggregateWorkerStatus(
             ready=1,
             total=2,
             dispatchable=1,
@@ -2459,7 +2459,7 @@ class TestCheckPodRestarts:
             mock_patch("aiperf.operator.events.pod_restarts") as mock_event,
         ):
             await _check_pod_restarts(
-                AsyncMock(), {}, "default", "test-jobset", "job-1"
+                AsyncMock(), {}, "default", "test-jobset", key="job-1"
             )
 
         mock_event.assert_called_once_with({}, "worker-0-0", 5, "OOMKilled")
@@ -2485,7 +2485,7 @@ class TestCheckPodRestarts:
             mock_patch("aiperf.operator.events.pod_restarts") as mock_event,
         ):
             await _check_pod_restarts(
-                AsyncMock(), {}, "default", "test-jobset", "job-1"
+                AsyncMock(), {}, "default", "test-jobset", key="job-1"
             )
 
         mock_event.assert_not_called()
@@ -2517,7 +2517,7 @@ class TestCheckPodRestarts:
             mock_patch("aiperf.operator.events.pod_restarts") as mock_event,
         ):
             await _check_pod_restarts(
-                AsyncMock(), {}, "default", "test-jobset", "job-1"
+                AsyncMock(), {}, "default", "test-jobset", key="job-1"
             )
 
         mock_event.assert_called_once_with({}, "worker-0-0", 4, "CrashLoopBackOff")
@@ -2537,7 +2537,7 @@ class TestCheckPodRestarts:
         ):
             # Should not raise
             await _check_pod_restarts(
-                AsyncMock(), {}, "default", "test-jobset", "job-1"
+                AsyncMock(), {}, "default", "test-jobset", key="job-1"
             )
 
     @pytest.mark.asyncio
@@ -2567,10 +2567,10 @@ class TestCheckPodRestarts:
             mock_patch("aiperf.operator.events.pod_restarts") as mock_event,
         ):
             await _check_pod_restarts(
-                AsyncMock(), {}, "default", "test-jobset", "job-1"
+                AsyncMock(), {}, "default", "test-jobset", key="job-1"
             )
             await _check_pod_restarts(
-                AsyncMock(), {}, "default", "test-jobset", "job-1"
+                AsyncMock(), {}, "default", "test-jobset", key="job-1"
             )
 
         mock_event.assert_called_once()
@@ -2607,12 +2607,12 @@ class TestCheckPodRestarts:
             mock_patch("aiperf.operator.events.pod_restarts") as mock_event,
         ):
             await _check_pod_restarts(
-                AsyncMock(), {}, "default", "test-jobset", "job-1"
+                AsyncMock(), {}, "default", "test-jobset", key="job-1"
             )
             # Increase restart count
             restart_counts["count"] = 10
             await _check_pod_restarts(
-                AsyncMock(), {}, "default", "test-jobset", "job-1"
+                AsyncMock(), {}, "default", "test-jobset", key="job-1"
             )
 
         assert mock_event.call_count == 2
@@ -2670,7 +2670,7 @@ class TestRecoverTerminatedController:
             mock_patch(
                 "aiperf.operator.handlers.monitor.fetch_results_with_retry",
                 new_callable=AsyncMock,
-                return_value=FetchResult(
+                return_value=ControllerFetchResult(
                     metrics=None,
                     downloaded=["profile_export_aiperf.json"],
                 ),
@@ -2686,9 +2686,9 @@ class TestRecoverTerminatedController:
                 "default",
                 "test-jobset",
                 "job-1",
-                {"workers": {"total": 1}},
-                sb,
-                "default/job-1",
+                status={"workers": {"total": 1}},
+                sb=sb,
+                key="default/job-1",
             )
 
         assert handled is True
@@ -2735,7 +2735,7 @@ class TestRecoverTerminatedController:
             mock_patch(
                 "aiperf.operator.handlers.monitor.fetch_results_with_retry",
                 new_callable=AsyncMock,
-                return_value=FetchResult(metrics=None, downloaded=[]),
+                return_value=ControllerFetchResult(metrics=None, downloaded=[]),
             ),
             mock_patch("aiperf.operator.events.failed") as mock_failed_event,
             mock_patch(
@@ -2749,9 +2749,9 @@ class TestRecoverTerminatedController:
                 "default",
                 "test-jobset",
                 "job-1",
-                {"workers": {"total": 1}},
-                sb,
-                "default/job-1",
+                status={"workers": {"total": 1}},
+                sb=sb,
+                key="default/job-1",
             )
 
         assert handled is True
@@ -2806,7 +2806,7 @@ class TestRecoverTerminatedController:
             mock_patch(
                 "aiperf.operator.handlers.monitor.fetch_results_with_retry",
                 new_callable=AsyncMock,
-                return_value=FetchResult(
+                return_value=ControllerFetchResult(
                     metrics=None,
                     downloaded=[],
                     checkpoints=["checkpoints/profile_export_aiperf_partial.json"],
@@ -2826,9 +2826,9 @@ class TestRecoverTerminatedController:
                 "default",
                 "test-jobset",
                 "job-1",
-                {"workers": {"total": 1}},
-                sb,
-                "default/job-1",
+                status={"workers": {"total": 1}},
+                sb=sb,
+                key="default/job-1",
             )
 
         assert handled is True
@@ -3048,7 +3048,7 @@ class TestHandleCompletionBackfill:
                 job_id="job-backfill",
                 status={"workers": {"total": 3}},
                 sb=sb,
-                result=FetchResult(metrics=None, downloaded=[]),
+                result=ControllerFetchResult(metrics=None, downloaded=[]),
             )
 
         # Find the WorkersReady condition
@@ -3088,7 +3088,7 @@ class TestHandleCompletionBackfill:
                 job_id="job-backfill",
                 status={"workers": {"total": 1}},
                 sb=sb,
-                result=FetchResult(metrics=None, downloaded=[]),
+                result=ControllerFetchResult(metrics=None, downloaded=[]),
             )
 
         conditions = kopf_patch.status.get("conditions", [])
@@ -3662,7 +3662,7 @@ class TestFetchProgressServerMetricsLogging:
                     last_update_ns=2,
                 )
             },
-            workers=AggregateWorkerStatus(
+            workers=ControllerAggregateWorkerStatus(
                 ready=1,
                 total=2,
                 dispatchable=1,

@@ -79,11 +79,86 @@ class HttpCoreClient(AIPerfLoggerMixin):
             self.pool = None
             self.debug(lambda: "httpcore connection pool closed")
 
+    @staticmethod
+    async def _tracked_stream(raw_stream, trace_data: BaseTraceData):
+        """Yield chunks while tracking timing and byte counts for trace data."""
+        awaiting_first_chunk = True
+        async for chunk in raw_stream:
+            chunk_ns = time.perf_counter_ns()
+            chunk_len = len(chunk)
+            trace_data.response_chunks_count += 1
+            trace_data.response_bytes_total += chunk_len
+            if awaiting_first_chunk:
+                trace_data.response_receive_start_perf_ns = chunk_ns
+                awaiting_first_chunk = False
+            trace_data.response_receive_end_perf_ns = chunk_ns
+            yield chunk
+
+    async def _consume_sse_response(
+        self,
+        response: httpcore.Response,
+        record: RequestRecord,
+        *,
+        trace_data: BaseTraceData,
+        first_token_callback: "FirstTokenCallback | None",
+    ) -> None:
+        """Parse httpcore SSE stream into record.responses."""
+        first_token_acquired = not first_token_callback
+        async for message in AsyncSSEStreamReader(
+            self._tracked_stream(response.aiter_stream(), trace_data)
+        ):
+            AsyncSSEStreamReader.inspect_message_for_error(message)
+            record.responses.append(message)
+            if not first_token_acquired:
+                ttft_ns = message.perf_ns - record.start_perf_ns
+                first_token_acquired = await first_token_callback(ttft_ns, message)
+        record.end_perf_ns = time.perf_counter_ns()
+        self.debug(lambda: f"Parsed {len(record.responses)} SSE messages")
+
+    async def _consume_body_response(
+        self,
+        response: httpcore.Response,
+        record: RequestRecord,
+        *,
+        content_type: str,
+        trace_data: BaseTraceData,
+    ) -> None:
+        """Collect non-SSE response body into record.responses."""
+        response_body = bytearray()
+        async for chunk in self._tracked_stream(response.aiter_stream(), trace_data):
+            response_body.extend(chunk)
+
+        record.end_perf_ns = time.perf_counter_ns()
+        is_binary = (
+            content_type.startswith(("video/", "image/", "audio/"))
+            or content_type == "application/octet-stream"
+        )
+        if is_binary:
+            record.responses.append(
+                BinaryResponse(
+                    perf_ns=record.end_perf_ns,
+                    content_type=content_type,
+                    raw_bytes=bytes(response_body),
+                )
+            )
+            self.debug(lambda: f"Binary response complete: {len(response_body)} bytes")
+        else:
+            response_text = response_body.decode("utf-8", errors="replace")
+            record.responses.append(
+                TextResponse(
+                    perf_ns=record.end_perf_ns,
+                    content_type=content_type,
+                    text=response_text,
+                )
+            )
+            self.debug(lambda: f"Response complete: {len(response_text)} bytes")
+
     async def _request(
         self,
         method: str,
         url: str,
         headers: dict[str, str],
+        *,
         data: bytes | None = None,
         first_token_callback: "FirstTokenCallback | None" = None,
         trace_data: BaseTraceData | None = None,
@@ -172,164 +247,44 @@ class HttpCoreClient(AIPerfLoggerMixin):
                 }
                 content_type = response_headers.get("content-type", "")
 
-                async def tracked_stream(raw_stream):
-                    """Yield chunks while tracking timing and byte counts for trace data."""
-                    awaiting_first_chunk = True
-                    async for chunk in raw_stream:
-                        chunk_ns = time.perf_counter_ns()
-                        chunk_len = len(chunk)
-                        trace_data.response_chunks_count += 1
-                        trace_data.response_bytes_total += chunk_len
-                        if awaiting_first_chunk:
-                            trace_data.response_receive_start_perf_ns = chunk_ns
-                            awaiting_first_chunk = False
-                        trace_data.response_receive_end_perf_ns = chunk_ns
-                        yield chunk
-
                 if is_sse_request and content_type.startswith("text/event-stream"):
                     self.debug("Processing SSE stream")
-                    if first_token_callback:
-                        first_token_acquired = False
-                        async for message in AsyncSSEStreamReader(
-                            tracked_stream(response.aiter_stream())
-                        ):
-                            AsyncSSEStreamReader.inspect_message_for_error(message)
-                            record.responses.append(message)
-                            if not first_token_acquired:
-                                ttft_ns = message.perf_ns - record.start_perf_ns
-                                first_token_acquired = await first_token_callback(
-                                    ttft_ns, message
-                                )
-                    else:
-                        async for message in AsyncSSEStreamReader(
-                            tracked_stream(response.aiter_stream())
-                        ):
-                            AsyncSSEStreamReader.inspect_message_for_error(message)
-                            record.responses.append(message)
-                    record.end_perf_ns = time.perf_counter_ns()
-                    self.debug(lambda: f"Parsed {len(record.responses)} SSE messages")
+                    await self._consume_sse_response(
+                        response,
+                        record,
+                        trace_data=trace_data,
+                        first_token_callback=first_token_callback,
+                    )
                 else:
                     self.debug("Processing regular response")
-                    response_body = bytearray()
-                    async for chunk in tracked_stream(response.aiter_stream()):
-                        response_body.extend(chunk)
-
-                    record.end_perf_ns = time.perf_counter_ns()
-                    is_binary = (
-                        content_type.startswith("video/")
-                        or content_type.startswith("image/")
-                        or content_type.startswith("audio/")
-                        or content_type == "application/octet-stream"
+                    await self._consume_body_response(
+                        response,
+                        record,
+                        content_type=content_type,
+                        trace_data=trace_data,
                     )
-                    if is_binary:
-                        record.responses.append(
-                            BinaryResponse(
-                                perf_ns=record.end_perf_ns,
-                                content_type=content_type,
-                                raw_bytes=bytes(response_body),
-                            )
-                        )
-                        self.debug(
-                            lambda: (
-                                f"Binary response complete: {len(response_body)} bytes"
-                            )
-                        )
-                    else:
-                        response_text = response_body.decode("utf-8", errors="replace")
-                        record.responses.append(
-                            TextResponse(
-                                perf_ns=record.end_perf_ns,
-                                content_type=content_type,
-                                text=response_text,
-                            )
-                        )
-                        self.debug(
-                            lambda: f"Response complete: {len(response_text)} bytes"
-                        )
 
                 if not record.end_perf_ns:
                     record.end_perf_ns = time.perf_counter_ns()
 
-        except httpcore.ConnectTimeout as e:
+        except (
+            httpcore.ConnectTimeout,
+            httpcore.ReadTimeout,
+            httpcore.WriteTimeout,
+            httpcore.PoolTimeout,
+            httpcore.TimeoutException,
+            httpcore.ConnectError,
+            httpcore.RemoteProtocolError,
+            httpcore.LocalProtocolError,
+            httpcore.ProtocolError,
+        ) as e:
             record.end_perf_ns = time.perf_counter_ns()
-            self.error(f"Connection timeout: {e!r}")
-            record.error = ErrorDetails(
-                type="ConnectTimeout",
-                message=f"Connection to {url} timed out after {self.timeout_seconds}s",
-            )
-
-        except httpcore.ReadTimeout as e:
-            record.end_perf_ns = time.perf_counter_ns()
-            self.error(f"Read timeout: {e!r}")
-            record.error = ErrorDetails(
-                type="ReadTimeout",
-                message=f"Reading response from {url} timed out after {self.timeout_seconds}s",
-            )
-
-        except httpcore.WriteTimeout as e:
-            record.end_perf_ns = time.perf_counter_ns()
-            self.error(f"Write timeout: {e!r}")
-            record.error = ErrorDetails(
-                type="WriteTimeout",
-                message=f"Sending request to {url} timed out after {self.timeout_seconds}s",
-            )
-
-        except httpcore.PoolTimeout as e:
-            record.end_perf_ns = time.perf_counter_ns()
-            self.error(f"Pool timeout: {e!r}")
-            record.error = ErrorDetails(
-                type="PoolTimeout",
-                message=(
-                    f"No available connection in pool after 60s. "
-                    f"Consider increasing AIPERF_HTTP_CONNECTION_LIMIT (current: {Environment.HTTP.CONNECTION_LIMIT})"
-                ),
-            )
-
-        except httpcore.TimeoutException as e:
-            record.end_perf_ns = time.perf_counter_ns()
-            self.error(f"Request timeout: {e!r}")
-            record.error = ErrorDetails(
-                type="TimeoutError",
-                message=f"Request to {url} timed out: {e!r}",
-            )
-
-        except httpcore.ConnectError as e:
-            record.end_perf_ns = time.perf_counter_ns()
-            self.error(f"Connection error: {e!r}")
-            record.error = ErrorDetails(
-                type="ConnectError",
-                message=f"Failed to connect to {url}: {e!r}",
-            )
-
-        except httpcore.RemoteProtocolError as e:
-            record.end_perf_ns = time.perf_counter_ns()
-            self.error(f"Remote protocol error: {e!r}")
-            record.error = ErrorDetails(
-                type="RemoteProtocolError",
-                message=f"Server sent invalid HTTP/2 frames: {e!r}",
-            )
-
-        except httpcore.LocalProtocolError as e:
-            record.end_perf_ns = time.perf_counter_ns()
-            self.error(f"Local protocol error: {e!r}")
-            record.error = ErrorDetails(
-                type="LocalProtocolError",
-                message=f"Client attempted invalid HTTP/2 operation: {e!r}",
-            )
-
-        except httpcore.ProtocolError as e:
-            record.end_perf_ns = time.perf_counter_ns()
-            self.error(f"Protocol error: {e!r}")
-            record.error = ErrorDetails(
-                type="ProtocolError",
-                message=f"HTTP/2 protocol error: {e!r}",
-            )
-
+            record.error = self._classify_httpcore_error(e, url)
+            self.error(f"{record.error.type}: {e!r}")
         except SSEResponseError as e:
             record.end_perf_ns = time.perf_counter_ns()
             self.error(f"Error in SSE response: {e!r}")
             record.error = ErrorDetails.from_exception(e)
-
         except asyncio.CancelledError:
             record.end_perf_ns = time.perf_counter_ns()
             record.cancellation_perf_ns = record.end_perf_ns
@@ -340,13 +295,61 @@ class HttpCoreClient(AIPerfLoggerMixin):
             )
             self.debug("Request cancelled by external signal")
             raise
-
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - per-request; attach ErrorDetails and return record
             record.end_perf_ns = time.perf_counter_ns()
             self.error(f"Unexpected error in HTTP request: {e!r}")
             record.error = ErrorDetails.from_exception(e)
 
         return record
+
+    def _classify_httpcore_error(self, exc: Exception, url: str) -> ErrorDetails:
+        """Map an httpcore exception subclass to an ErrorDetails with a stable type label."""
+        if isinstance(exc, httpcore.ConnectTimeout):
+            return ErrorDetails(
+                type="ConnectTimeout",
+                message=f"Connection to {url} timed out after {self.timeout_seconds}s",
+            )
+        if isinstance(exc, httpcore.ReadTimeout):
+            return ErrorDetails(
+                type="ReadTimeout",
+                message=f"Reading response from {url} timed out after {self.timeout_seconds}s",
+            )
+        if isinstance(exc, httpcore.WriteTimeout):
+            return ErrorDetails(
+                type="WriteTimeout",
+                message=f"Sending request to {url} timed out after {self.timeout_seconds}s",
+            )
+        if isinstance(exc, httpcore.PoolTimeout):
+            return ErrorDetails(
+                type="PoolTimeout",
+                message=(
+                    f"No available connection in pool after 60s. "
+                    f"Consider increasing AIPERF_HTTP_CONNECTION_LIMIT (current: {Environment.HTTP.CONNECTION_LIMIT})"
+                ),
+            )
+        if isinstance(exc, httpcore.TimeoutException):
+            return ErrorDetails(
+                type="TimeoutError",
+                message=f"Request to {url} timed out: {exc!r}",
+            )
+        if isinstance(exc, httpcore.ConnectError):
+            return ErrorDetails(
+                type="ConnectError",
+                message=f"Failed to connect to {url}: {exc!r}",
+            )
+        if isinstance(exc, httpcore.RemoteProtocolError):
+            return ErrorDetails(
+                type="RemoteProtocolError",
+                message=f"Server sent invalid HTTP/2 frames: {exc!r}",
+            )
+        if isinstance(exc, httpcore.LocalProtocolError):
+            return ErrorDetails(
+                type="LocalProtocolError",
+                message=f"Client attempted invalid HTTP/2 operation: {exc!r}",
+            )
+        return ErrorDetails(
+            type="ProtocolError", message=f"HTTP/2 protocol error: {exc!r}"
+        )
 
     async def _request_with_cancellation(
         self,
@@ -354,6 +357,7 @@ class HttpCoreClient(AIPerfLoggerMixin):
         payload: bytes,
         headers: dict[str, str],
         cancel_after_ns: int,
+        *,
         first_token_callback: "FirstTokenCallback | None" = None,
     ) -> RequestRecord:
         """Send POST request with cancellation after specified delay.

@@ -12,6 +12,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 import orjson
+import zmq
 
 from aiperf.common.base_service import BaseService
 from aiperf.common.control_structs import (
@@ -256,9 +257,10 @@ class BaseComponentService(BaseService):
                 )
                 await asyncio.sleep(Environment.SERVICE.HEARTBEAT_INTERVAL)
         except asyncio.CancelledError:
-            pass
-        except Exception:
-            pass
+            raise
+        except zmq.ZMQError as e:
+            # ZMQ socket teardown races shutdown; swallow so the service can exit cleanly.
+            self.debug(f"Early heartbeat loop saw ZMQ error during shutdown: {e!r}")
 
     @background_task(interval=Environment.SERVICE.HEARTBEAT_INTERVAL, immediate=True)
     async def _heartbeat_task(self) -> None:
@@ -389,7 +391,7 @@ class BaseComponentService(BaseService):
                 await self.control_client.send(
                     CommandOk(cid=message.cid, sid=self.service_id, payload=payload)
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - command dispatcher must surface any handler error over the control channel
             tb = traceback.format_exc()
             self.error(f"Failed to handle command {message.cmd}: {e}")
             await self.control_client.send(

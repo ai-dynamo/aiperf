@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 import aiohttp
 import kopf
 from kubernetes_asyncio import client
-from kubernetes_asyncio.client import ApiClient
+from kubernetes_asyncio.client import ApiClient, CustomObjectsApi
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.kubernetes.client import k8s_client
@@ -97,7 +97,7 @@ def _apply_controller_progress_status(
     patch: kopf.Patch,
     sb: StatusBuilder,
     progress: Any,
-    current_phase: str,
+    current_phase: Phase,
 ) -> None:
     """Apply controller-authored progress to CR status."""
     sb.set_worker_aggregate_status(progress.workers.model_dump())
@@ -118,6 +118,75 @@ def _apply_controller_progress_status(
         sb.set_phase(Phase.INITIALIZING)
 
 
+async def _delete_jobset_on_timeout(
+    custom: CustomObjectsApi, namespace: str, jobset_name: str
+) -> None:
+    """Delete the JobSet after a CR timeout, ignoring 404."""
+    try:
+        await custom.delete_namespaced_custom_object(
+            group=JOBSET_GROUP,
+            version=JOBSET_VERSION,
+            plural=JOBSET_PLURAL,
+            namespace=namespace,
+            name=jobset_name,
+        )
+        logger.info(f"Deleted JobSet {jobset_name} after timeout")
+    except ApiException as e:
+        if e.status != 404:
+            logger.warning(f"Failed to delete JobSet on timeout: {e}")
+
+
+async def _reconcile_missing_jobset(
+    custom: CustomObjectsApi,
+    *,
+    namespace: str,
+    name: str,
+    jobset_name: str,
+    current_phase: Phase,
+    sb: StatusBuilder,
+) -> bool:
+    """Reconcile the "JobSet not found" case with a fresh CR re-read.
+
+    Returns True if the caller should short-circuit (terminal phase already
+    reached by the completion handler); False if the caller should mark FAILED.
+    """
+    if current_phase in (Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED):
+        logger.debug(
+            f"JobSet {jobset_name} not found but phase is already "
+            f"{current_phase} - skipping"
+        )
+        return True
+
+    # Re-read the CR to catch completion handler's update
+    # (it may have set phase=Completed and deleted the JobSet
+    # between our phase read and the JobSet lookup).
+    await asyncio.sleep(2)
+
+    try:
+        fresh = await custom.get_namespaced_custom_object(
+            group=AIPERF_JOB_GROUP,
+            version=AIPERF_JOB_VERSION,
+            plural=AIPERF_JOB_PLURAL,
+            namespace=namespace,
+            name=name,
+        )
+        fresh_phase = fresh.get("status", {}).get("phase", "")
+        if fresh_phase in (Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED):
+            logger.debug(
+                f"JobSet {jobset_name} not found but fresh phase is "
+                f"{fresh_phase} - skipping"
+            )
+            return True
+    except Exception:
+        logger.exception(
+            f"Stale-read recovery failed while reconciling "
+            f"{namespace}/{name} after JobSet {jobset_name} not found"
+        )
+    sb.set_phase(Phase.FAILED).set_error("JobSet not found")
+    sb.finalize()
+    return False
+
+
 async def monitor_progress(
     body: dict[str, Any],
     status: dict[str, Any],
@@ -128,7 +197,7 @@ async def monitor_progress(
     **_: Any,
 ) -> None:
     """Monitor job progress and update status."""
-    current_phase = status.get("phase", Phase.PENDING)
+    current_phase: Phase = status.get("phase", Phase.PENDING)
 
     # Stop monitoring terminal jobs
     if current_phase in (Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED):
@@ -168,22 +237,8 @@ async def monitor_progress(
                     sb.set_completion_time()
                     sb.finalize()
                     events.job_timeout(body, job_id, elapsed)
-                    # Delete JobSet to free resources (like cancel does)
                     if jobset_name:
-                        try:
-                            await custom.delete_namespaced_custom_object(
-                                group=JOBSET_GROUP,
-                                version=JOBSET_VERSION,
-                                plural=JOBSET_PLURAL,
-                                namespace=namespace,
-                                name=jobset_name,
-                            )
-                            logger.info(f"Deleted JobSet {jobset_name} after timeout")
-                        except ApiException as e:
-                            if e.status != 404:
-                                logger.warning(
-                                    f"Failed to delete JobSet on timeout: {e}"
-                                )
+                        await _delete_jobset_on_timeout(custom, namespace, jobset_name)
                     await close_progress_client(key)
                     return
 
@@ -201,44 +256,14 @@ async def monitor_progress(
                     raise
                 # JobSet may have been deleted by the completion handler after
                 # successful results fetch. Don't overwrite a terminal phase.
-                if current_phase in (Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED):
-                    logger.debug(
-                        f"JobSet {jobset_name} not found but phase is already "
-                        f"{current_phase} - skipping"
-                    )
-                else:
-                    # Re-read the CR to catch completion handler's update
-                    # (it may have set phase=Completed and deleted the JobSet
-                    # between our phase read and the JobSet lookup).
-                    await asyncio.sleep(2)
-
-                    try:
-                        fresh = await custom.get_namespaced_custom_object(
-                            group=AIPERF_JOB_GROUP,
-                            version=AIPERF_JOB_VERSION,
-                            plural=AIPERF_JOB_PLURAL,
-                            namespace=namespace,
-                            name=name,
-                        )
-                        fresh_phase = fresh.get("status", {}).get("phase", "")
-                        if fresh_phase in (
-                            Phase.COMPLETED,
-                            Phase.FAILED,
-                            Phase.CANCELLED,
-                        ):
-                            logger.debug(
-                                f"JobSet {jobset_name} not found but fresh phase is "
-                                f"{fresh_phase} - skipping"
-                            )
-                            await close_progress_client(key)
-                            return
-                    except Exception:
-                        logger.exception(
-                            f"Stale-read recovery failed while reconciling "
-                            f"{namespace}/{name} after JobSet {jobset_name} not found"
-                        )
-                    sb.set_phase(Phase.FAILED).set_error("JobSet not found")
-                    sb.finalize()
+                await _reconcile_missing_jobset(
+                    custom,
+                    namespace=namespace,
+                    name=name,
+                    jobset_name=jobset_name,
+                    current_phase=current_phase,
+                    sb=sb,
+                )
                 await close_progress_client(key)
                 return
 
@@ -272,7 +297,7 @@ async def monitor_progress(
                     # the same process short-circuits without hitting the API.
                     if await try_claim_completion(namespace, name, body):
                         await handle_completion(
-                            body, namespace, jobset_name, job_id, status, sb
+                            body, namespace, jobset_name, job_id, status=status, sb=sb
                         )
                     await close_progress_client(key)
                     return
@@ -357,10 +382,10 @@ async def monitor_progress(
             effective_phase = sb.get_phase() or current_phase
 
             # Check for pod restarts (CrashLoopBackOff detection)
-            await _check_pod_restarts(api, body, namespace, jobset_name, key)
+            await _check_pod_restarts(api, body, namespace, jobset_name, key=key)
 
             if await _maybe_recover_terminated_controller(
-                api, body, namespace, jobset_name, job_id, status, sb, key
+                api, body, namespace, jobset_name, job_id, status=status, sb=sb, key=key
             ):
                 await close_progress_client(key)
                 return
@@ -404,7 +429,7 @@ async def monitor_progress(
                     )
                     host = controller_dns_name(jobset_name, namespace)
                     await handle_completion(
-                        body, namespace, jobset_name, job_id, status, sb
+                        body, namespace, jobset_name, job_id, status=status, sb=sb
                     )
                     # Shutdown controller after results are fetched
                     await progress_client.send_shutdown(host)
@@ -433,6 +458,7 @@ async def _check_pod_restarts(
     body: dict[str, Any],
     namespace: str,
     jobset_name: str,
+    *,
     key: str,
 ) -> None:
     """Check for excessive pod restarts and emit warning events (deduplicated)."""
@@ -466,7 +492,9 @@ async def _check_pod_restarts(
                 if cs.state and cs.state.waiting:
                     reason = cs.state.waiting.reason or reason
                 events.pod_restarts(body, pod_name, restart_count, reason)
-    except Exception as e:
+    except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+        logger.warning(f"Failed to check pod restarts: {e}")
+    except Exception as e:  # noqa: BLE001 - best-effort event emission; restart-scan failure must not abort the monitor tick
         logger.warning(f"Failed to check pod restarts: {e}")
 
 
@@ -484,6 +512,7 @@ async def _maybe_recover_terminated_controller(
     namespace: str,
     jobset_name: str,
     job_id: str,
+    *,
     status: dict[str, Any],
     sb: StatusBuilder,
     key: str,
@@ -507,7 +536,10 @@ async def _maybe_recover_terminated_controller(
             ),
         )
         pods = pod_list.items
-    except Exception as e:
+    except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+        logger.warning(f"Failed to inspect controller pod for salvage: {e}")
+        return False
+    except Exception as e:  # noqa: BLE001 - salvage path must not raise; skipping recovery is preferred over aborting the monitor tick
         logger.warning(f"Failed to inspect controller pod for salvage: {e}")
         return False
 
@@ -555,8 +587,8 @@ async def _maybe_recover_terminated_controller(
             namespace,
             jobset_name,
             job_id,
-            status,
-            sb,
+            status=status,
+            sb=sb,
             result=result,
         )
         return True
@@ -645,7 +677,7 @@ async def _fetch_progress(
     sb: StatusBuilder,
     progress_client: Any,
     key: str,
-    current_phase: str = Phase.RUNNING,
+    current_phase: Phase = Phase.RUNNING,
     *,
     body: dict[str, Any] | None = None,
 ) -> bool:
@@ -681,7 +713,10 @@ async def _fetch_progress(
         # Fetch live metrics
         try:
             metrics = await progress_client.get_metrics(host)
-        except Exception as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+            logger.warning(f"Live metrics fetch failed for {jobset_name}: {e}")
+            metrics = None
+        except Exception as e:  # noqa: BLE001 - live metrics are optional; any parse/transport failure downgrades to 'no live metrics this tick'
             logger.warning(f"Live metrics fetch failed for {jobset_name}: {e}")
             metrics = None
 
@@ -700,7 +735,12 @@ async def _fetch_progress(
                 "endpoint_summaries"
             ):
                 patch.status["serverMetrics"] = server_metrics
-        except Exception as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+            logger.debug(
+                f"Server metrics unavailable for {jobset_name} "
+                f"(endpoint may not be ready yet): {e}"
+            )
+        except Exception as e:  # noqa: BLE001 - server-metrics endpoint is optional and may return any shape during startup; debug-log and continue
             logger.debug(
                 f"Server metrics unavailable for {jobset_name} "
                 f"(endpoint may not be ready yet): {e}"
@@ -715,7 +755,14 @@ async def _fetch_progress(
                 return False
             return True
 
-    except Exception as e:
+    except (
+        ApiException,
+        aiohttp.ClientError,
+        asyncio.TimeoutError,
+        OSError,
+    ) as e:
+        logger.warning(f"Failed to fetch progress for {jobset_name}: {e}")
+    except Exception as e:  # noqa: BLE001 - best-effort progress polling; no error here must abort the monitor tick
         logger.warning(f"Failed to fetch progress for {jobset_name}: {e}")
 
     return False

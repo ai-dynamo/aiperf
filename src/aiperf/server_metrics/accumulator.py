@@ -279,7 +279,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                 series_stats = compute_stats(
                     metric_entry.metric_type,
                     metric_entry.data,
-                    time_filter,
+                    time_filter=time_filter,
                     labels=metric_key.labels_dict,
                     slice_duration=slice_duration,
                     fast_histogram_percentiles=fast_histogram_percentiles,
@@ -388,7 +388,9 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             self.debug(f"Parquet export disabled: {e}")
         except ImportError as e:
             self.warning(f"Failed to import Parquet exporter dependencies: {e}")
-        except Exception as e:
+        except (OSError, ValueError) as e:
+            self.error(f"Failed to export server metrics to Parquet: {e!r}")
+        except Exception as e:  # noqa: BLE001 - best-effort parquet export; pyarrow.lib.ArrowInvalid lives behind optional import
             self.error(f"Failed to export server metrics to Parquet: {e!r}")
 
     async def summarize(self) -> list[MetricResult]:

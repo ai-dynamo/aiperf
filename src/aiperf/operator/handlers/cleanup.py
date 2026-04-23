@@ -66,5 +66,5 @@ async def cleanup_old_results(
                 f"Cleaned up old results for {job_id} (age: {age_days:.0f} days)"
             )
             events.results_cleaned(body, job_id, int(age_days))
-    except Exception as e:
+    except (OSError, shutil.Error) as e:
         logger.warning(f"Failed to clean up results for {job_id}: {e}")

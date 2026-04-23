@@ -152,7 +152,7 @@ class ServerMetricsManager(BaseComponentService):
                 self.debug(
                     f"Server metrics processor {entry.name} is disabled and will not be used"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-plugin; skip bad processor and continue
                 self.error(
                     f"Failed to create server metrics processor {entry.name}: {e}"
                 )
@@ -217,7 +217,7 @@ class ServerMetricsManager(BaseComponentService):
                     self.debug(
                         lambda url=endpoint_url: f"Server Metrics: Prometheus endpoint {url} is not reachable"
                     )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-endpoint; skip unreachable and continue
                 self.error(f"Server Metrics: Exception testing {endpoint_url}: {e}")
 
         reachable_endpoints = list(self._collectors.keys())
@@ -241,7 +241,7 @@ class ServerMetricsManager(BaseComponentService):
                 self.debug(
                     lambda url=endpoint_url: f"Server Metrics: Captured baseline from {url}"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-endpoint; skip baseline failure and continue
                 self.warning(
                     f"Server Metrics: Failed to capture baseline from {endpoint_url}: {e}"
                 )
@@ -278,7 +278,7 @@ class ServerMetricsManager(BaseComponentService):
             try:
                 await collector.start()
                 started_count += 1
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-collector; skip start failure and continue
                 self.error(f"Failed to start collector for {endpoint_url}: {e}")
 
         total_collectors = len(self._collectors)
@@ -324,7 +324,7 @@ class ServerMetricsManager(BaseComponentService):
                 self.debug(
                     lambda url=endpoint_url: f"Server Metrics: Captured boundary state from {url}"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-endpoint; skip boundary failure and continue
                 self.warning(
                     f"Server Metrics: Failed to capture boundary state from {endpoint_url}: {e}"
                 )
@@ -361,7 +361,7 @@ class ServerMetricsManager(BaseComponentService):
                     self.debug(
                         lambda url=endpoint_url: f"Server Metrics: Captured final state from {url}"
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - per-endpoint; skip final scrape failure and continue
                     self.warning(
                         f"Server Metrics: Failed to capture final state from {endpoint_url}: {e}"
                     )
@@ -384,7 +384,7 @@ class ServerMetricsManager(BaseComponentService):
                 parsed = orjson.loads(message.payload)
                 start_ns = parsed.get("start_ns")
                 end_ns = parsed.get("end_ns")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - best-effort payload parse; fall back to current time
                 self.warning(
                     f"Failed to parse PROFILE_COMPLETE payload ({e!r}); "
                     "using current time for start_ns/end_ns"
@@ -474,7 +474,7 @@ class ServerMetricsManager(BaseComponentService):
         for endpoint_url, collector in collectors:
             try:
                 await collector.stop()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-collector; continue shutting others down
                 self.error(f"Failed to stop collector for {endpoint_url}: {e}")
 
     async def _delayed_shutdown(self) -> None:
@@ -565,7 +565,7 @@ class ServerMetricsManager(BaseComponentService):
                     endpoints_reachable=tuple(endpoints_reachable or []),
                 )
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - best-effort status publish
             self.error(f"Failed to send server metrics status message: {e}")
 
     def _build_server_metrics_endpoints(
@@ -630,7 +630,7 @@ class ServerMetricsManager(BaseComponentService):
                     namespace=self._discovery.namespace,
                     label_selector=self._discovery.label_selector,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - discovery is best-effort; fall through
                 self.warning(f"Server Metrics: Kubernetes discovery failed: {e}")
                 return []
 
@@ -651,7 +651,7 @@ class ServerMetricsManager(BaseComponentService):
                     namespace=ns,
                     label_selector=self._discovery.label_selector,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - discovery is best-effort; fall through
                 self.warning(f"Server Metrics: Kubernetes auto-discovery failed: {e}")
                 return []
 
@@ -675,6 +675,6 @@ class ServerMetricsManager(BaseComponentService):
                 parts = host.split(".")
                 if len(parts) >= 3 and parts[2] == "svc":
                     return parts[1]
-            except Exception:
+            except (ValueError, AttributeError):
                 continue
         return None

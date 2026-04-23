@@ -64,7 +64,8 @@ async def cleanup_global_error_queue() -> None:
                     asyncio.to_thread(_global_error_queue.join_thread), timeout=1.0
                 )
                 _logger.debug("Cleaned up global error queue")
-            except Exception as e:
+            except (OSError, asyncio.TimeoutError, ValueError) as e:
+                # OSError from close()/join_thread on dead handles; ValueError from closed queue.
                 _logger.debug(f"Error cleaning up error queue: {e}")
             finally:
                 from aiperf.common.resource_tracker import unregister_queue_semaphores
@@ -90,7 +91,7 @@ def drain_error_queue(
             errors.append(msgspec.convert(data, ExitErrorInfo))
         except queue.Empty:
             break
-        except Exception as e:
+        except (msgspec.ValidationError, msgspec.DecodeError, TypeError) as e:
             _logger.debug(f"Failed to deserialize error queue item: {e}")
     return errors
 
@@ -112,8 +113,9 @@ def report_errors(
             error_queue.put_nowait(msgspec.to_builtins(error_info))
         except queue.Full:
             break
-        except Exception:
-            pass
+        except (OSError, ValueError) as e:
+            # Queue handle closed/broken during shutdown; drop silently per docstring contract.
+            _logger.debug(f"Failed to enqueue error info: {e}")
 
 
 # ---------------------------------------------------------------------------

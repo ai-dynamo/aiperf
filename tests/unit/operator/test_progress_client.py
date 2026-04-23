@@ -177,7 +177,7 @@ class TestProgressClientGetProgress:
     async def test_get_progress_not_in_context(self) -> None:
         """Test get_progress raises error when not in context."""
         client = ProgressClient()
-        with pytest.raises(RuntimeError, match="must be used as async context manager"):
+        with pytest.raises(RuntimeError, match="called outside async context"):
             await client.get_progress("host.example.com")
 
     @pytest.mark.asyncio
@@ -429,7 +429,7 @@ class TestProgressClientCheckHealth:
     async def test_check_health_not_in_context(self) -> None:
         """Test check_health raises error when not in context."""
         client = ProgressClient()
-        with pytest.raises(RuntimeError, match="must be used as async context manager"):
+        with pytest.raises(RuntimeError, match="called outside async context"):
             await client.check_health("host.example.com")
 
     @pytest.mark.asyncio
@@ -504,7 +504,7 @@ class TestProgressClientGetMetrics:
     async def test_get_metrics_not_in_context(self) -> None:
         """Test get_metrics raises error when not in context."""
         client = ProgressClient()
-        with pytest.raises(RuntimeError, match="must be used as async context manager"):
+        with pytest.raises(RuntimeError, match="called outside async context"):
             await client.get_metrics("host.example.com")
 
     @pytest.mark.asyncio
@@ -1091,7 +1091,7 @@ class TestDownloadResultFile:
     async def test_download_result_file_not_in_context(self) -> None:
         """Test download_result_file raises error when not in context."""
         client = ProgressClient()
-        with pytest.raises(RuntimeError, match="must be used as async context manager"):
+        with pytest.raises(RuntimeError, match="called outside async context"):
             await client.download_result_file(
                 "host.example.com",
                 "metrics.json",

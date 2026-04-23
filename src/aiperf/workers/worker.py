@@ -10,6 +10,8 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import zmq
+
 from aiperf.common.base_component_service import BaseComponentService
 
 if TYPE_CHECKING:
@@ -613,7 +615,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     f"Sent WorkerShutdown for graceful disconnect ({self.service_id})"
                 )
             )
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except (zmq.ZMQError, asyncio.TimeoutError, ConnectionError) as e:
             self.warning(
                 f"Failed to send shutdown message (already disconnected?): {e!r}"
             )
@@ -831,7 +835,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         except asyncio.CancelledError:
             self.debug(lambda: f"Credit {credit_id} cancelled")
             credit_context.cancelled = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - per-credit boundary, must not crash worker loop
             self.exception(f"Error occurred while processing credit {credit_id}: {e!r}")
         finally:
             # ALWAYS return the credit here to ensure accurate tracking
@@ -947,7 +951,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             # Mark cancelled before re-raising so finally can evict session
             credit_context.cancelled = True
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - per-credit boundary, error captured for CreditReturn
             credit_context.error = ErrorDetails.from_exception(e)
             self.exception(f"Error processing credit: {e!r}")
         finally:

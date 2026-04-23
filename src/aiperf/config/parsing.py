@@ -173,6 +173,12 @@ def parse_str_or_dict_as_tuple_list(input: Any | None) -> list[tuple[str, Any]] 
 
 
 def print_str_or_list(input: Any) -> str:
+    """Convert a list, Enum, or scalar to a display string.
+
+    Lists become comma-separated strings; Enums return their lowercased value;
+    other types are returned unchanged. Used for rendering config values in
+    user-facing CLI output.
+    """
     if isinstance(input, list):
         return ", ".join(map(str, input))
     elif isinstance(input, Enum):

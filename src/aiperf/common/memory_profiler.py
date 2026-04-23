@@ -24,6 +24,7 @@ Example:
 
 import linecache
 import tracemalloc
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
@@ -35,7 +36,7 @@ _logger = AIPerfLogger(__name__)
 
 
 @dataclass
-class MemorySnapshot:
+class TracemallocSnapshot:
     """A snapshot of memory state at a point in time."""
 
     label: str
@@ -101,7 +102,7 @@ class MemoryProfiler:
         """
         self.service_id = service_id
         self.top_n = top_n or Environment.DEV.MEMORY_PROFILE_TOP_N
-        self._snapshots: dict[str, MemorySnapshot] = {}
+        self._snapshots: dict[str, TracemallocSnapshot] = {}
         self._started = False
         self._request_count = 0
         self._baseline_snapshot: tracemalloc.Snapshot | None = None
@@ -138,14 +139,14 @@ class MemoryProfiler:
         self._started = False
         _logger.info(f"[{self.service_id}] Memory profiling stopped")
 
-    def snapshot(self, label: str) -> MemorySnapshot | None:
+    def snapshot(self, label: str) -> TracemallocSnapshot | None:
         """Take a memory snapshot with the given label.
 
         Args:
             label: Identifier for this snapshot.
 
         Returns:
-            MemorySnapshot or None if profiling not enabled.
+            TracemallocSnapshot or None if profiling not enabled.
         """
         if not self._started:
             return None
@@ -164,7 +165,7 @@ class MemoryProfiler:
 
         top_stats = snap.statistics("lineno")[: self.top_n]
 
-        snapshot = MemorySnapshot(
+        snapshot = TracemallocSnapshot(
             label=label,
             current_bytes=current,
             peak_bytes=peak,
@@ -278,7 +279,7 @@ class MemoryProfiler:
         )
 
     @contextmanager
-    def track(self, operation: str):
+    def track(self, operation: str) -> Iterator[None]:
         """Context manager to track memory for a specific operation.
 
         Args:

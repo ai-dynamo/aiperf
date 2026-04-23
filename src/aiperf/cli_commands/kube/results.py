@@ -165,7 +165,7 @@ async def results(
                     output_dir,
                     jobset_info,
                     api,
-                    port,
+                    local_port=port,
                     **kube_creds,
                 )
                 used_api = True

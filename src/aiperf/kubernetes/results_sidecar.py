@@ -19,14 +19,13 @@ import uvicorn
 from aiofiles import os as aio_os
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import Field
 
+from aiperf.api.models.results import ResultFileInfo, ResultsListResponse
 from aiperf.common.compression import (
     CompressionEncoding,
     select_encoding,
     stream_file_compressed,
 )
-from aiperf.common.models import AIPerfBaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -42,21 +41,6 @@ _CONTENT_TYPES: dict[str, str] = {
     ".parquet": "application/vnd.apache.parquet",
     ".txt": "text/plain",
 }
-
-
-class ResultFileInfo(AIPerfBaseModel):
-    """Metadata for a single result file."""
-
-    name: str = Field(description="Filename of the result artifact")
-    size: int = Field(description="File size in bytes")
-
-
-class ResultsListResponse(AIPerfBaseModel):
-    """Response for listing available sidecar result files."""
-
-    files: list[ResultFileInfo] = Field(
-        default_factory=list, description="Available result files"
-    )
 
 
 def ready_marker_path(base_dir: Path) -> Path:
@@ -157,11 +141,17 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     async def get_result_file(filename: str, request: Request) -> StreamingResponse:
         file_path = _safe_resolve(base_dir, filename)
         if file_path is None or file_path.name == READY_MARKER_NAME:
-            raise HTTPException(status_code=400, detail="Invalid filename")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid filename {filename!r}: path traversal or reserved marker name",
+            )
         if not _is_ready(base_dir) and not _is_checkpoint_path(
             base_dir.resolve(), file_path
         ):
-            raise HTTPException(status_code=404, detail="Results not ready")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Results not ready for {base_dir.name}; marker file {READY_MARKER_NAME} not present — retry after completion",
+            )
         if not await aio_os.path.isfile(file_path):
             raise HTTPException(
                 status_code=404, detail=f"Result file not found: {filename}"

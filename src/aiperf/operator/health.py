@@ -4,15 +4,17 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import aiohttp
 
 from aiperf.operator.environment import OperatorEnvironment
-from aiperf.operator.models import HealthCheckResult
+from aiperf.operator.models import EndpointHealthResult
 
 
 async def check_endpoint_health(
     url: str, timeout: float = OperatorEnvironment.ENDPOINT_CHECK_TIMEOUT
-) -> HealthCheckResult:
+) -> EndpointHealthResult:
     """Check if LLM endpoint is reachable.
 
     Tries a single canonical health path first, falling back to alternatives
@@ -23,7 +25,7 @@ async def check_endpoint_health(
         timeout: Per-request timeout in seconds.
 
     Returns:
-        HealthCheckResult with reachability status and error message.
+        EndpointHealthResult with reachability status and error message.
     """
     from aiperf.transports.aiohttp_client import create_tcp_connector
 
@@ -38,12 +40,18 @@ async def check_endpoint_health(
                 check_url = url.rstrip("/") + path
                 async with session.get(check_url) as response:
                     if response.status < 500:
-                        return HealthCheckResult(reachable=True, error="")
+                        return EndpointHealthResult(reachable=True, error="")
             except aiohttp.ClientError:
                 continue
-            except Exception as e:
-                return HealthCheckResult(
+            except (asyncio.TimeoutError, OSError) as e:
+                return EndpointHealthResult(
+                    reachable=False, error=f"Unexpected error: {e}"
+                )
+            except Exception as e:  # noqa: BLE001 - defensive: any unexpected error must surface as a reachable=False result, never as a raise into the kopf on_create handler
+                return EndpointHealthResult(
                     reachable=False, error=f"Unexpected error: {e}"
                 )
 
-    return HealthCheckResult(reachable=False, error="All health endpoints unreachable")
+    return EndpointHealthResult(
+        reachable=False, error="All health endpoints unreachable"
+    )

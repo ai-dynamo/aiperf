@@ -1064,5 +1064,7 @@ class WorkerGroupManagerBase(BaseComponentService):
                         f"Failed to upload {file_path.name}: "
                         f"HTTP {resp.status} - {body}"
                     )
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
             self.warning(f"Error uploading {file_path.name}: {e!r}")

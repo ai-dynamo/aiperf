@@ -53,11 +53,99 @@ class AioHttpClient(AIPerfLoggerMixin):
             await self.tcp_connector.close()
             self.tcp_connector = None
 
+    async def _consume_sse_response(
+        self,
+        response: aiohttp.ClientResponse,
+        record: RequestRecord,
+        *,
+        collect_chunks: bool,
+        first_token_callback: "FirstTokenCallback | None",
+    ) -> None:
+        """Parse an SSE content stream into record.responses with chunk timing."""
+
+        # iter_any() yields raw bytes as they arrive; manually track chunks because
+        # it bypasses aiohttp's trace callback system.
+        async def tracked_content_stream():
+            _trace = record.trace_data
+            _chunks_append = _trace.response_chunks.append if collect_chunks else None
+            awaiting_first_chunk = True
+            async for chunk in response.content.iter_any():
+                chunk_ns = time.perf_counter_ns()
+                chunk_len = len(chunk)
+                _trace.response_chunks_count += 1
+                _trace.response_bytes_total += chunk_len
+                if _chunks_append is not None:
+                    _chunks_append((chunk_ns, chunk_len))
+                if awaiting_first_chunk:
+                    _trace.response_receive_start_perf_ns = chunk_ns
+                    awaiting_first_chunk = False
+                _trace.response_receive_end_perf_ns = chunk_ns
+                yield chunk
+
+        if first_token_callback:
+            first_token_acquired = False
+            async for message in AsyncSSEStreamReader(tracked_content_stream()):
+                AsyncSSEStreamReader.inspect_message_for_error(message)
+                record.responses.append(message)
+                if not first_token_acquired:
+                    ttft_ns = message.perf_ns - record.start_perf_ns
+                    first_token_acquired = await first_token_callback(ttft_ns, message)
+        else:
+            # Fast path: no callback, just collect responses
+            async for message in AsyncSSEStreamReader(tracked_content_stream()):
+                AsyncSSEStreamReader.inspect_message_for_error(message)
+                record.responses.append(message)
+        record.end_perf_ns = time.perf_counter_ns()
+
+    async def _consume_non_sse_response(
+        self,
+        response: aiohttp.ClientResponse,
+        record: RequestRecord,
+    ) -> None:
+        """Read a non-SSE response (JSON/text or binary) into record.responses."""
+        response_start_ns = time.perf_counter_ns()
+
+        content_type = response.content_type or ""
+        is_binary = (
+            content_type.startswith("video/")
+            or content_type.startswith("image/")
+            or content_type.startswith("audio/")
+            or content_type == "application/octet-stream"
+        )
+
+        if is_binary:
+            raw_bytes = await response.read()
+            record.end_perf_ns = time.perf_counter_ns()
+            record.responses.append(
+                BinaryResponse(
+                    perf_ns=record.end_perf_ns,
+                    content_type=content_type,
+                    raw_bytes=raw_bytes,
+                )
+            )
+        else:
+            raw_response = await response.text()
+            record.end_perf_ns = time.perf_counter_ns()
+            record.responses.append(
+                TextResponse(
+                    perf_ns=record.end_perf_ns,
+                    content_type=content_type,
+                    text=raw_response,
+                )
+            )
+
+        if record.trace_data.response_receive_start_perf_ns is None:
+            record.trace_data.response_receive_start_perf_ns = response_start_ns
+        # Note: response.text()/read() should trigger aiohttp trace callbacks,
+        # but we set response_receive_end_perf_ns explicitly for consistency
+        record.trace_data.response_receive_end_perf_ns = record.end_perf_ns
+
     async def _request(
         self,
         method: str,
         url: str,
         headers: dict[str, str],
+        *,
         data: bytes | aiohttp.FormData | None = None,
         on_request_sent: asyncio.Event | None = None,
         first_token_callback: "FirstTokenCallback | None" = None,
@@ -149,102 +237,14 @@ class AioHttpClient(AIPerfLoggerMixin):
                         method == "POST"
                         and response.content_type == "text/event-stream"
                     ):
-                        # Parse SSE stream with optimal performance
-                        # Wrap the content stream to track chunks for trace data
-                        async def tracked_content_stream():
-                            """Wrapper that tracks chunk timing while yielding chunks for SSE parsing."""
-                            # iter_any() yields raw bytes immediately as they arrive from the network,
-                            # unlike default iteration which buffers until newlines. Critical for
-                            # accurate chunk timing measurements.
-                            #
-                            # Note: We manually track chunks here because iter_any() bypasses aiohttp's
-                            # trace callback system. We also set response_receive_start/end_perf_ns
-                            # since on_response_chunk_received won't be called.
-                            _trace = record.trace_data
-                            _collect = collect_chunks
-                            _chunks_append = (
-                                _trace.response_chunks.append if _collect else None
-                            )
-                            awaiting_first_chunk = True
-                            async for chunk in response.content.iter_any():
-                                chunk_ns = time.perf_counter_ns()
-                                chunk_len = len(chunk)
-                                _trace.response_chunks_count += 1
-                                _trace.response_bytes_total += chunk_len
-                                if _chunks_append is not None:
-                                    _chunks_append((chunk_ns, chunk_len))
-                                if awaiting_first_chunk:
-                                    _trace.response_receive_start_perf_ns = chunk_ns
-                                    awaiting_first_chunk = False
-                                _trace.response_receive_end_perf_ns = chunk_ns
-                                yield chunk
-
-                        # Separate code paths for performance: avoid callback checks
-                        # when no callback is registered
-                        if first_token_callback:
-                            first_token_acquired = False
-                            async for message in AsyncSSEStreamReader(
-                                tracked_content_stream()
-                            ):
-                                AsyncSSEStreamReader.inspect_message_for_error(message)
-                                record.responses.append(message)
-                                # Fire callback until it returns True (meaningful content found)
-                                if not first_token_acquired:
-                                    ttft_ns = message.perf_ns - record.start_perf_ns
-                                    first_token_acquired = await first_token_callback(
-                                        ttft_ns, message
-                                    )
-                        else:
-                            # Fast path: no callback, just collect responses
-                            async for message in AsyncSSEStreamReader(
-                                tracked_content_stream()
-                            ):
-                                AsyncSSEStreamReader.inspect_message_for_error(message)
-                                record.responses.append(message)
-                        record.end_perf_ns = time.perf_counter_ns()
+                        await self._consume_sse_response(
+                            response,
+                            record,
+                            collect_chunks=collect_chunks,
+                            first_token_callback=first_token_callback,
+                        )
                     else:
-                        # Non-SSE response (e.g., JSON or binary)
-                        response_start_ns = time.perf_counter_ns()
-
-                        # Check if content type is binary (video, image, audio, octet-stream)
-                        content_type = response.content_type or ""
-                        is_binary = (
-                            content_type.startswith("video/")
-                            or content_type.startswith("image/")
-                            or content_type.startswith("audio/")
-                            or content_type == "application/octet-stream"
-                        )
-
-                        if is_binary:
-                            raw_bytes = await response.read()
-                            record.end_perf_ns = time.perf_counter_ns()
-                            record.responses.append(
-                                BinaryResponse(
-                                    perf_ns=record.end_perf_ns,
-                                    content_type=content_type,
-                                    raw_bytes=raw_bytes,
-                                )
-                            )
-                        else:
-                            raw_response = await response.text()
-                            record.end_perf_ns = time.perf_counter_ns()
-                            record.responses.append(
-                                TextResponse(
-                                    perf_ns=record.end_perf_ns,
-                                    content_type=content_type,
-                                    text=raw_response,
-                                )
-                            )
-
-                        if record.trace_data.response_receive_start_perf_ns is None:
-                            record.trace_data.response_receive_start_perf_ns = (
-                                response_start_ns
-                            )
-                        # Note: response.text()/read() should trigger aiohttp trace callbacks,
-                        # but we set response_receive_end_perf_ns explicitly for consistency
-                        record.trace_data.response_receive_end_perf_ns = (
-                            record.end_perf_ns
-                        )
+                        await self._consume_non_sse_response(response, record)
 
                     self.debug(
                         lambda: (
@@ -267,7 +267,7 @@ class AioHttpClient(AIPerfLoggerMixin):
             )
             self.debug("Request cancelled by external signal")
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - per-request; attach ErrorDetails and return record
             record.end_perf_ns = time.perf_counter_ns()
             self.error(f"Error in aiohttp request: {e!r}")
             record.error = ErrorDetails.from_exception(e)
@@ -329,6 +329,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         payload: bytes | aiohttp.FormData,
         headers: dict[str, str],
         cancel_after_ns: int,
+        *,
         first_token_callback: "FirstTokenCallback | None" = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,

@@ -216,18 +216,60 @@ class TestWorkerEstimate:
         assert est.base_mib > 0
 
     def test_streaming_more_memory(self) -> None:
-        non_stream = _estimate_worker(50, 128, False, 1, 512, 500)
-        stream = _estimate_worker(50, 128, True, 1, 512, 500)
+        non_stream = _estimate_worker(
+            50,
+            128,
+            streaming=False,
+            max_turns=1,
+            avg_isl=512,
+            connections_per_worker=500,
+        )
+        stream = _estimate_worker(
+            50,
+            128,
+            streaming=True,
+            max_turns=1,
+            avg_isl=512,
+            connections_per_worker=500,
+        )
         assert stream.variable_mib > non_stream.variable_mib
 
     def test_multi_turn_adds_sessions(self) -> None:
-        single = _estimate_worker(50, 128, False, 1, 512, 500)
-        multi = _estimate_worker(50, 128, False, 5, 512, 500)
+        single = _estimate_worker(
+            50,
+            128,
+            streaming=False,
+            max_turns=1,
+            avg_isl=512,
+            connections_per_worker=500,
+        )
+        multi = _estimate_worker(
+            50,
+            128,
+            streaming=False,
+            max_turns=5,
+            avg_isl=512,
+            connections_per_worker=500,
+        )
         assert multi.variable_mib > single.variable_mib
 
     def test_high_concurrency(self) -> None:
-        low = _estimate_worker(10, 128, True, 1, 512, 500)
-        high = _estimate_worker(500, 128, True, 1, 512, 500)
+        low = _estimate_worker(
+            10,
+            128,
+            streaming=True,
+            max_turns=1,
+            avg_isl=512,
+            connections_per_worker=500,
+        )
+        high = _estimate_worker(
+            500,
+            128,
+            streaming=True,
+            max_turns=1,
+            avg_isl=512,
+            connections_per_worker=500,
+        )
         assert high.variable_mib > low.variable_mib
 
 
@@ -273,16 +315,24 @@ class TestGpuTelemetryEstimate:
 
 class TestServerMetricsEstimate:
     def test_disabled(self) -> None:
-        est = _estimate_server_metrics(0, 300, 5.0, 200, 20, 10)
+        est = _estimate_server_metrics(
+            0, 300, 5.0, unique_series=200, histogram_count=20, histogram_buckets=10
+        )
         assert est.variable_mib == 0
 
     def test_enabled(self) -> None:
-        est = _estimate_server_metrics(2, 300, 5.0, 200, 20, 10)
+        est = _estimate_server_metrics(
+            2, 300, 5.0, unique_series=200, histogram_count=20, histogram_buckets=10
+        )
         assert est.variable_mib > 0
 
     def test_scales_with_endpoints(self) -> None:
-        one = _estimate_server_metrics(1, 300, 5.0, 200, 20, 10)
-        four = _estimate_server_metrics(4, 300, 5.0, 200, 20, 10)
+        one = _estimate_server_metrics(
+            1, 300, 5.0, unique_series=200, histogram_count=20, histogram_buckets=10
+        )
+        four = _estimate_server_metrics(
+            4, 300, 5.0, unique_series=200, histogram_count=20, histogram_buckets=10
+        )
         assert four.variable_mib > one.variable_mib * 3
 
 

@@ -183,7 +183,7 @@ class InferenceResultParser(CommunicationMixin):
                     )
                     return record
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-request parser errors are attached as ErrorDetails on the record, not raised
                 # TODO: We should add an ErrorDetails to the response record and not the request record.
                 self.exception(f"Error processing valid record: {e}")
                 request_record.error = ErrorDetails.from_exception(e)

@@ -102,7 +102,7 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
             import setproctitle
 
             setproctitle.setproctitle(f"aiperf {self.service_id}")
-        except Exception:
+        except (ImportError, OSError):
             # setproctitle is not available on all platforms, so we ignore the error
             self.debug("Failed to set process title, ignoring")
 
@@ -119,7 +119,7 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
 
         try:
             await self.stop()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - shutdown path must force-kill on any stop failure, regardless of cause
             self.exception(
                 f"Failed to stop service {self} ({self.service_id}) after receiving shutdown command: {e}. Killing."
             )

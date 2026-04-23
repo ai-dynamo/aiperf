@@ -178,6 +178,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
 
     def __init__(
         self,
+        *,
         endpoint_url: str,
         collection_interval: float,
         reachability_timeout: float,
@@ -428,14 +429,14 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         """
         try:
             await self._collect_and_process_metrics()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - collection loop must survive any collector failure to keep running across intervals
             if self._error_callback:
                 try:
                     await self._error_callback(
                         ErrorDetails.from_exception(e),
                         self.id,
                     )
-                except Exception as callback_error:
+                except Exception as callback_error:  # noqa: BLE001 - user-provided callback may raise; must not crash the loop
                     self.error(f"Failed to send error via callback: {callback_error}")
             else:
                 self.error(f"Metrics collection error: {e}")
@@ -521,5 +522,5 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         if records and self._record_callback:
             try:
                 await self._record_callback(records, self.id)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - user-provided callback may raise anything; log and continue
                 self.error(f"Failed to send records via callback: {e!r}", exc_info=True)

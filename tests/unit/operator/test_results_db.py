@@ -145,7 +145,7 @@ class TestValidateIdentifier:
         ],
     )  # fmt: skip
     def test_invalid_identifiers_raise_value_error(self, name: str) -> None:
-        with pytest.raises(ValueError, match="Invalid identifier"):
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
             _validate_identifier(name)
 
 
@@ -297,7 +297,7 @@ class TestLeaderboard:
         self, results_dir: Path, db: ResultsDB
     ) -> None:
         _write_summary(results_dir, "ns", "job-1")
-        with pytest.raises(ValueError, match="Invalid identifier"):
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await db.leaderboard(metric="'; DROP TABLE t; --")
 
     @pytest.mark.asyncio
@@ -305,7 +305,7 @@ class TestLeaderboard:
         self, results_dir: Path, db: ResultsDB
     ) -> None:
         _write_summary(results_dir, "ns", "job-1")
-        with pytest.raises(ValueError, match="Invalid identifier"):
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await db.leaderboard(stat="avg; DROP TABLE")
 
     @pytest.mark.asyncio
@@ -382,7 +382,7 @@ class TestHistory:
         self, results_dir: Path, db: ResultsDB
     ) -> None:
         _write_summary(results_dir, "ns", "job-1")
-        with pytest.raises(ValueError, match="Invalid identifier"):
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await db.history(metric="'; DROP TABLE t;--")
 
     @pytest.mark.asyncio
@@ -470,7 +470,7 @@ class TestCompare:
         self, results_dir: Path, db: ResultsDB
     ) -> None:
         _write_summary(results_dir, "ns", "job-1")
-        with pytest.raises(ValueError, match="Invalid identifier"):
+        with pytest.raises(ValueError, match="Invalid SQL identifier"):
             await db.compare(job_ids=["job-1"], metrics=["'; DROP TABLE"])
 
 

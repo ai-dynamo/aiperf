@@ -227,10 +227,10 @@ def resolve_alias(name: str) -> AliasResolutionResult:
                 (m.id, getattr(m, "downloads", 0) or 0) for m in sorted_models[:5]
             ]
             return AliasResolutionResult(resolved_name=name, suggestions=suggestions)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - HF search may raise arbitrary errors; we must fall back gracefully
             _logger.debug(f"Alias search failed for '{name}': {e!r}")
             return AliasResolutionResult(resolved_name=name)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - HF lookup may raise arbitrary errors; we must fall back gracefully
         _logger.debug(f"Alias resolution failed for '{name}': {e!r}")
         return AliasResolutionResult(resolved_name=name)
 

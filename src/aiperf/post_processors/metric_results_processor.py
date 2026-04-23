@@ -133,7 +133,7 @@ class MetricResultsProcessor(BaseMetricsProcessor):
                 self.trace(
                     lambda tag=tag, e=e: f"No metric value for metric '{tag}': {e!r}"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-metric; skip bad processing and continue
                 self.warning(f"Error processing metric '{tag}': {e!r}")
 
         if self.is_trace_enabled:
@@ -166,7 +166,7 @@ class MetricResultsProcessor(BaseMetricsProcessor):
                 self._results[tag] = derive_func(self._results)
             except NoMetricValue as e:
                 self.debug(f"No metric value for derived metric '{tag}': {e!r}")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-metric; skip bad derivation and continue
                 self.warning(f"Error deriving metric '{tag}': {e!r}")
 
     def _should_include_in_summary(self, tag: str) -> bool:

@@ -168,7 +168,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             await self.pod_lifecycle_dealer_client.send(
                 GroupPeerCommandAck(cid=message.cid, service_id=self.service_id)
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - ABORT-path ack is best-effort; peer is already shutting down and we os._exit() next
             self.debug(
                 f"Failed to ack group-local command (peer already disconnected?): {e!r}"
             )
@@ -199,7 +199,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                     service_type=str(self.service_type),
                 )
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - shutdown notify is best-effort; WGM already left the group-local channel
             self.warning(
                 f"Failed to send GroupPeerShutdown (peer already disconnected?): {e!r}"
             )
@@ -438,6 +438,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
 
 
 def main() -> None:
+    """Bootstrap the record processor service as a standalone process entry point."""
     from aiperf.common.bootstrap import bootstrap_and_run_service
     from aiperf.plugin.enums import ServiceType
 

@@ -200,7 +200,7 @@ class PluginEntry(BaseModel):
                 return False, f"Module not found: {module_path}"
         except ModuleNotFoundError as e:
             return False, f"Module not found: {module_path} ({e})"
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - importlib can raise arbitrary errors during spec discovery; report as validation failure
             return False, f"Error checking module {module_path}: {e}"
 
         # Optionally verify class exists via AST (no code execution)
@@ -211,36 +211,11 @@ class PluginEntry(BaseModel):
                     source = source_path.read_text(encoding="utf-8")
                     tree = ast.parse(source)
 
-                    # Look for class definition, import, or module-level assignment
-                    class_found = False
-                    for node in ast.walk(tree):
-                        if isinstance(node, ast.ClassDef) and node.name == class_name:
-                            class_found = True
-                            break
-                        # Check for imports that might bring in the class
-                        if isinstance(node, ast.ImportFrom) and node.names:
-                            for alias in node.names:
-                                if (
-                                    alias.name == class_name
-                                    or alias.asname == class_name
-                                ):
-                                    class_found = True
-                                    break
-                        # Check for module-level assignments (dynamically generated classes)
-                        if isinstance(node, ast.Assign):
-                            for target in node.targets:
-                                if (
-                                    isinstance(target, ast.Name)
-                                    and target.id == class_name
-                                ):
-                                    class_found = True
-                                    break
-
-                    if not class_found:
+                    if not _ast_defines_name(tree, class_name):
                         return False, f"Class '{class_name}' not found in {module_path}"
             except SyntaxError as e:
                 return False, f"Syntax error in {module_path}: {e}"
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - AST verification is advisory; any read/parse failure is logged and tolerated
                 # AST parsing failed, but module exists - don't fail validation
                 _logger.debug(lambda err=e: f"Could not verify class via AST: {err}")
 
@@ -259,3 +234,30 @@ class PluginEntry(BaseModel):
             ValidationError: If metadata doesn't match the schema.
         """
         return metadata_class.model_validate(self.metadata)
+
+
+def _ast_defines_name(tree: ast.Module, class_name: str) -> bool:
+    """Return True if the AST module tree defines ``class_name`` at top level.
+
+    Matches class definitions, ``from ... import`` aliases (original or aliased
+    name), and module-level simple assignments. Used by ``PluginEntry.validate``
+    to check class presence without executing the module.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            return True
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.names
+            and any(
+                alias.name == class_name or alias.asname == class_name
+                for alias in node.names
+            )
+        ):
+            return True
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == class_name
+            for target in node.targets
+        ):
+            return True
+    return False

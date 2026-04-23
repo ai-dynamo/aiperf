@@ -10,7 +10,7 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
-from aiperf.operator.models import AIPerfJobSpec, EndpointConfig, MetricsSummary
+from aiperf.operator.models import AIPerfJobSpec, K8sEndpointConfig, MetricsSummary
 
 # =============================================================================
 # Test MetricsSummary
@@ -139,26 +139,26 @@ class TestMetricsSummary:
 
 
 # =============================================================================
-# Test EndpointConfig
+# Test K8sEndpointConfig
 # =============================================================================
 
 
 class TestEndpointConfig:
-    """Tests for EndpointConfig model."""
+    """Tests for K8sEndpointConfig model."""
 
     def test_creates_with_valid_url(self) -> None:
         """Verify creates with valid HTTP URL."""
-        config = EndpointConfig(url="http://localhost:8000")
+        config = K8sEndpointConfig(url="http://localhost:8000")
         assert config.url == "http://localhost:8000"
 
     def test_creates_with_https_url(self) -> None:
         """Verify creates with HTTPS URL."""
-        config = EndpointConfig(url="https://api.example.com/v1")
+        config = K8sEndpointConfig(url="https://api.example.com/v1")
         assert config.url == "https://api.example.com/v1"
 
     def test_creates_with_model_and_api_type(self) -> None:
         """Verify creates with optional fields."""
-        config = EndpointConfig(
+        config = K8sEndpointConfig(
             url="http://localhost:8000",
             model="gpt-4",
             api_type="openai",
@@ -168,7 +168,7 @@ class TestEndpointConfig:
 
     def test_default_api_type(self) -> None:
         """Verify default api_type is openai."""
-        config = EndpointConfig(url="http://localhost:8000")
+        config = K8sEndpointConfig(url="http://localhost:8000")
         assert config.api_type == "openai"
 
     @pytest.mark.parametrize(
@@ -182,7 +182,7 @@ class TestEndpointConfig:
     def test_rejects_invalid_url(self, url: str, error_msg: str) -> None:
         """Verify rejects invalid URLs."""
         with pytest.raises(ValidationError) as exc_info:
-            EndpointConfig(url=url)
+            K8sEndpointConfig(url=url)
         assert error_msg in str(exc_info.value)
 
 
@@ -273,7 +273,7 @@ class TestAIPerfJobSpec:
                     "benchmark": {},
                 }
             )
-        assert "endpoint is required" in str(exc_info.value)
+        assert "endpoint.url or endpoint.urls is required" in str(exc_info.value)
 
     def test_rejects_missing_endpoint_url(self) -> None:
         """Verify rejects endpoint without url or urls."""

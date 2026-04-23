@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 from pytest import param
 
-from aiperf.kubernetes.constants import Annotations, Labels, ProgressAnnotations
+from aiperf.kubernetes.constants import AIPerfLabels, Annotations, ProgressAnnotations
 from aiperf.kubernetes.enums import JobSetStatus
 from aiperf.kubernetes.models import AIPerfJobCR, JobSetInfo, PodSummary
 
@@ -72,7 +72,7 @@ class TestJobSetInfoFromRaw:
         assert info.jobset is raw
 
     def test_from_raw_extracts_custom_name_from_label(self) -> None:
-        raw = _make_raw_jobset(labels={Labels.NAME: "nightly-gpt4"})
+        raw = _make_raw_jobset(labels={AIPerfLabels.NAME: "nightly-gpt4"})
         info = JobSetInfo.from_raw(raw)
         assert info.custom_name == "nightly-gpt4"
 
@@ -196,7 +196,7 @@ class TestJobSetInfoJobId:
     """Verify job_id property falls back to name."""
 
     def test_job_id_from_label(self) -> None:
-        raw = _make_raw_jobset(labels={Labels.JOB_ID: "uuid-123"})
+        raw = _make_raw_jobset(labels={AIPerfLabels.JOB_ID: "uuid-123"})
         info = JobSetInfo.from_raw(raw)
         assert info.job_id == "uuid-123"
 

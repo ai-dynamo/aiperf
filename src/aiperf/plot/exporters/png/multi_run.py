@@ -72,7 +72,7 @@ class MultiRunPNGExporter(BasePNGExporter):
                 self.debug(f"Generated {spec.filename}")
                 generated_files.append(path)
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - PNG export aggregates across heterogeneous plot specs; one bad spec shouldn't block the rest — log and continue
                 self.error(f"Failed to generate {spec.name}: {e}")
 
         self._create_summary_file(generated_files)
@@ -174,69 +174,9 @@ class MultiRunPNGExporter(BasePNGExporter):
             # Extract server metrics from server_metrics_aggregated
             if run.server_metrics_aggregated:
                 for metric_name, endpoint_data in run.server_metrics_aggregated.items():
-                    # Aggregate across ALL endpoints and label combinations
-                    # This ensures consistent behavior regardless of label cardinality
-                    values = []
-                    metric_type = None
-                    total_combinations = 0
-
-                    for _endpoint_url, labels_dict in endpoint_data.items():
-                        for _labels_key, series_data in labels_dict.items():
-                            total_combinations += 1
-                            stats = series_data.get("stats")
-
-                            if stats is None:
-                                # Static value (no variation) - use the value directly
-                                static_value = series_data.get("value")
-                                if static_value is not None:
-                                    values.append(static_value)
-                                continue
-
-                            # Extract metric type (same for all series)
-                            if metric_type is None:
-                                metric_type = series_data.get(
-                                    "type", PrometheusMetricType.UNKNOWN
-                                )
-
-                            # Extract appropriate stat based on metric type
-                            if metric_type == PrometheusMetricType.COUNTER:
-                                # Use rate for counters
-                                if hasattr(stats, "rate") and stats.rate is not None:
-                                    values.append(stats.rate)
-                                elif (
-                                    isinstance(stats, dict)
-                                    and stats.get("rate") is not None
-                                ):
-                                    values.append(stats["rate"])
-                            else:
-                                # Use avg for gauge/histogram
-                                if hasattr(stats, "avg") and stats.avg is not None:
-                                    values.append(stats.avg)
-                                elif (
-                                    isinstance(stats, dict)
-                                    and stats.get("avg") is not None
-                                ):
-                                    values.append(stats["avg"])
-
-                    # Aggregate all values
-                    if values:
-                        # Use sum for counters (total rate), average for others
-                        if metric_type == PrometheusMetricType.COUNTER:
-                            row[metric_name] = sum(
-                                values
-                            )  # Sum rates across all labels/endpoints
-                        else:
-                            row[metric_name] = sum(values) / len(
-                                values
-                            )  # Average across labels/endpoints
-
-                        # Warn if multiple combinations exist (potential semantic issue)
-                        if total_combinations > 1:
-                            self.debug(
-                                f"Server metric '{metric_name}' has {total_combinations} "
-                                f"endpoint+label combinations - aggregated to single value "
-                                f"({'sum' if metric_type == PrometheusMetricType.COUNTER else 'average'})"
-                            )
+                    self._aggregate_server_metric_into_row(
+                        row, metric_name, endpoint_data
+                    )
 
             rows.append(row)
 
@@ -265,3 +205,68 @@ class MultiRunPNGExporter(BasePNGExporter):
             )
 
         return df
+
+    def _aggregate_server_metric_into_row(
+        self,
+        row: dict,
+        metric_name: str,
+        endpoint_data: dict,
+    ) -> None:
+        """Aggregate one server metric across all endpoint+label combinations into `row`.
+
+        Sums rates for counters, averages avg for gauges/histograms. Falls back to the
+        static ``value`` field when ``stats`` isn't present.
+        """
+        values: list[float] = []
+        metric_type: PrometheusMetricType | str | None = None
+        total_combinations = 0
+
+        for labels_dict in endpoint_data.values():
+            for series_data in labels_dict.values():
+                total_combinations += 1
+                stats = series_data.get("stats")
+
+                if stats is None:
+                    # Static value (no variation) - use the value directly
+                    static_value = series_data.get("value")
+                    if static_value is not None:
+                        values.append(static_value)
+                    continue
+
+                if metric_type is None:
+                    metric_type = series_data.get("type", PrometheusMetricType.UNKNOWN)
+
+                extracted = _extract_stat_value(stats, metric_type)
+                if extracted is not None:
+                    values.append(extracted)
+
+        if not values:
+            return
+
+        # Use sum for counters (total rate), average for others
+        if metric_type == PrometheusMetricType.COUNTER:
+            row[metric_name] = sum(values)
+        else:
+            row[metric_name] = sum(values) / len(values)
+
+        if total_combinations > 1:
+            self.debug(
+                f"Server metric '{metric_name}' has {total_combinations} "
+                f"endpoint+label combinations - aggregated to single value "
+                f"({'sum' if metric_type == PrometheusMetricType.COUNTER else 'average'})"
+            )
+
+
+def _extract_stat_value(stats, metric_type) -> float | None:
+    """Pull the appropriate scalar (rate for counter, avg otherwise) from a stats object or dict."""
+    if metric_type == PrometheusMetricType.COUNTER:
+        if hasattr(stats, "rate") and stats.rate is not None:
+            return stats.rate
+        if isinstance(stats, dict) and stats.get("rate") is not None:
+            return stats["rate"]
+        return None
+    if hasattr(stats, "avg") and stats.avg is not None:
+        return stats.avg
+    if isinstance(stats, dict) and stats.get("avg") is not None:
+        return stats["avg"]
+    return None

@@ -41,6 +41,13 @@ def render_plot_report(
     sessions: dict[str, list[ParsedTurn]],
     output_dir: Path,
 ) -> Path:
+    """Render an HTML plot-report for the Agentic Code dataset.
+
+    Generates distribution histograms for the configured metric keys, plus
+    context-growth and cache-evolution time-series figures sampled from the
+    first few sessions. The composed report is written under ``output_dir``
+    and the resulting path is returned.
+    """
     figures: list[tuple[go.Figure, str]] = []
 
     for key, title in _HISTOGRAM_PLOTS:

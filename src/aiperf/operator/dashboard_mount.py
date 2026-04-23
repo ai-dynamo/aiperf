@@ -10,9 +10,14 @@ Provides:
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    import dash
+    from _typeshed.wsgi import StartResponse, WSGIApplication, WSGIEnvironment
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +32,16 @@ class DashboardProxy:
         app: Initial WSGI callable (e.g. ``dash_app.server``).
     """
 
-    def __init__(self, app: Callable) -> None:
+    def __init__(self, app: WSGIApplication) -> None:
         self.app = app
 
-    def __call__(self, environ: dict[str, Any], start_response: Callable) -> Any:
+    def __call__(
+        self, environ: WSGIEnvironment, start_response: StartResponse
+    ) -> Iterable[bytes]:
         return self.app(environ, start_response)
 
 
-def build_dashboard(results_dir: Path) -> tuple[Any | None, int]:
+def build_dashboard(results_dir: Path) -> tuple[dash.Dash | None, int]:
     """Build a Dash app from PVC results.
 
     Scans ``results_dir`` recursively for run directories (supporting
@@ -78,7 +85,7 @@ def build_dashboard(results_dir: Path) -> tuple[Any | None, int]:
             load_detail = viz_mode == VisualizationMode.SINGLE_RUN
             run_data = loader.load_run(run_dir, load_per_request_data=load_detail)
             runs.append(run_data)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - best-effort: one bad run must not abort dashboard build
             logger.warning(f"Failed to load run from {run_dir}: {e}")
 
     if not runs:

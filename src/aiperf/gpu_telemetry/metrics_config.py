@@ -207,7 +207,7 @@ class MetricsConfigLoader(AIPerfLoggerMixin):
             custom_metrics = self.parse_custom_metrics_csv(custom_csv_path)
         except FileNotFoundError:
             raise
-        except Exception as e:
+        except (OSError, ValueError, UnicodeDecodeError) as e:
             self.error(f"Failed to parse {custom_csv_path}: {e}")
             return ([], {})
 

@@ -52,6 +52,7 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         identity: str,
         bind: bool = False,
         socket_ops: dict | None = None,
+        *,
         decode_type: Any = None,
         **kwargs,
     ) -> None:
@@ -192,10 +193,15 @@ class ZMQStreamingDealerClient(BaseZMQClient):
             except zmq.Again:
                 self.trace("No data on dealer socket received, yielding to event loop")
                 await yield_to_event_loop()
-            except (asyncio.CancelledError, zmq.ContextTerminated):
+            except asyncio.CancelledError:
                 self.debug("Streaming DEALER receiver task cancelled")
+                raise
+            except zmq.ContextTerminated:
+                self.debug(
+                    "Streaming DEALER receiver task stopped (ZMQ context terminated)"
+                )
                 break
-            except Exception as e:
+            except (zmq.ZMQError, asyncio.TimeoutError, msgspec.DecodeError) as e:
                 self.exception(
                     f"Exception receiving messages for client {self.client_id}: {e!r}"
                 )

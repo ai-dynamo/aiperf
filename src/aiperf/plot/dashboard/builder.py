@@ -1047,7 +1047,11 @@ class DashboardBuilder:
 
             # Create DataFrame
             result = runs_to_dataframe(
-                self.runs, x_metric_spec.name, x_stat, y_metric_spec.name, y_stat
+                self.runs,
+                x_metric=x_metric_spec.name,
+                x_stat=x_stat,
+                y_metric=y_metric_spec.name,
+                y_stat=y_stat,
             )
             df = result["df"]
 

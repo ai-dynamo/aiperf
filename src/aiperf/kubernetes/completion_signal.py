@@ -18,6 +18,9 @@ import logging
 import os
 from typing import Any
 
+import aiohttp
+from kubernetes_asyncio.client.exceptions import ApiException
+
 from aiperf.kubernetes.constants import Annotations
 from aiperf.kubernetes.cr_refs import (
     AIPERF_GROUP,
@@ -70,6 +73,6 @@ async def signal_benchmark_complete() -> bool:
         logger.info(f"Signaled benchmark completion on AIPerfJob {namespace}/{job_id}")
         return True
 
-    except Exception as e:
+    except (ApiException, aiohttp.ClientError, OSError) as e:
         logger.warning(f"Failed to signal benchmark completion: {e}")
         return False

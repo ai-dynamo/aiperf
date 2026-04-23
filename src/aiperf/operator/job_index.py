@@ -46,7 +46,7 @@ def _read_index() -> dict[str, Any]:
         return {}
     try:
         return orjson.loads(path.read_bytes())
-    except Exception as e:
+    except (OSError, orjson.JSONDecodeError) as e:
         logger.warning(f"Failed to read job index: {e}")
         return {}
 
@@ -127,6 +127,7 @@ async def index_job_completed(
     namespace: str,
     job_id: str,
     phase: str,
+    *,
     metrics: dict[str, Any] | None = None,
     downloaded_files: list[str] | None = None,
     error: str | None = None,

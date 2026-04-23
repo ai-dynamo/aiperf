@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from aiperf.common import random_generator as rng
 from aiperf.common.exceptions import (
-    ConfigurationError,
+    AIPerfConfigurationError,
     InvalidStateError,
     NotInitializedError,
 )
@@ -241,7 +241,7 @@ class PromptGenerator(BaseGenerator):
             str: A synthetic prompt as a string.
 
         Raises:
-            ConfigurationError: If the input parameters are not compatible.
+            AIPerfConfigurationError: If the input parameters are not compatible.
         """
         # Check decoded string cache first to avoid redundant decode calls
         cache_key = (tuple(hash_ids), num_tokens, block_size)
@@ -278,7 +278,7 @@ class PromptGenerator(BaseGenerator):
             list[int]: A list of token IDs.
 
         Raises:
-            ConfigurationError: If the input parameters are not compatible.
+            AIPerfConfigurationError: If the input parameters are not compatible.
         """
         final_prompt: list[int] = []
         current_block_size = block_size
@@ -286,7 +286,7 @@ class PromptGenerator(BaseGenerator):
         # Sanity check the final block size
         final_block_size = num_tokens - ((len(hash_ids) - 1) * block_size)
         if final_block_size <= 0 or block_size < final_block_size:
-            raise ConfigurationError(
+            raise AIPerfConfigurationError(
                 f"Input length: {num_tokens}, Hash IDs: {hash_ids}, Block size: {block_size} "
                 f"are not compatible. The final hash block size: {final_block_size} must be "
                 f"greater than 0 and less than or equal to {block_size}."

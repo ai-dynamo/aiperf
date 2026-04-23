@@ -28,6 +28,14 @@ Usage with custom data source (e.g. for testing)::
 
     async with BenchmarkWatchdog(my_source, namespace) as wd:
         ...
+
+This module is the production in-cluster monitor invoked by the operator;
+the sibling module ``aiperf.kubernetes.watch_models`` has parallel domain
+models (PodSnapshot, DiagnosisIssue, WorkersSnapshot) used by the
+``aiperf kube watch`` CLI TUI. The two vocabularies are similar but
+intentionally distinct: watchdog drives autonomous in-cluster monitoring
+and logs findings, while watch_models backs the interactive user-facing
+status display.
 """
 
 from __future__ import annotations
@@ -38,10 +46,15 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+import aiohttp
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client import ApiClient
+from kubernetes_asyncio.client.exceptions import ApiException
+
+if TYPE_CHECKING:
+    from kubernetes_asyncio.client.models import V1ContainerStatus, V1Pod
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
@@ -78,8 +91,14 @@ class ContainerInfo:
 
 
 @dataclass(slots=True)
-class PodInfo:
-    """Snapshot of a Kubernetes pod's status."""
+class WatchdogPodSnapshot:
+    """Snapshot of a Kubernetes pod's status.
+
+    Distinct from ``aiperf.controller.kubernetes_service_manager.PodInfo``
+    (service-manager bookkeeping) and
+    ``aiperf.kubernetes.watch_models.PodSnapshot`` (CLI TUI); this model
+    is the watchdog's internal pod view.
+    """
 
     name: str
     """Pod name from Kubernetes metadata."""
@@ -302,7 +321,7 @@ class WatchdogDataSource(Protocol):
     Implementations can use kubernetes_asyncio, kubectl subprocess, or mocks.
     """
 
-    async def get_pods(self, namespace: str) -> list[PodInfo]: ...
+    async def get_pods(self, namespace: str) -> list[WatchdogPodSnapshot]: ...
 
     async def get_events(self, namespace: str, limit: int = 20) -> list[EventInfo]: ...
 
@@ -321,7 +340,28 @@ class WatchdogDataSource(Protocol):
 
 
 class K8sWatchdogSource:
-    """WatchdogDataSource backed by kubernetes_asyncio."""
+    """WatchdogDataSource backed by kubernetes_asyncio.
+
+    Implements the seven ``get_*`` methods required by the
+    ``WatchdogDataSource`` protocol:
+
+    - ``get_pods`` -- list pods in a namespace
+    - ``get_events`` -- list recent events in a namespace
+    - ``get_node_resources`` -- list node allocatable CPU/memory/GPU
+    - ``get_namespaces`` -- list namespace names, optionally filtered
+    - ``get_pod_logs`` -- fetch tail of pod logs (best-effort)
+    - ``get_pod_metrics`` -- fetch pod CPU/memory via metrics.k8s.io
+
+    Contract: these methods swallow transient/configuration errors (API
+    server unreachable, pod deleted mid-read, metrics-server not
+    installed, etc.) and return an empty value (``[]`` or ``""``) rather
+    than raising. The watchdog loop treats missing data as "not
+    available yet" and retries on the next tick. Callers needing strict
+    error surfaces should wrap the ``kubernetes_asyncio`` client
+    directly.
+
+    See the module docstring for an end-to-end usage example.
+    """
 
     def __init__(self, api: ApiClient) -> None:
         self._api = api
@@ -347,7 +387,7 @@ class K8sWatchdogSource:
             await config.load_kube_config(config_file=kubeconfig, context=kube_context)
         return cls(ApiClient())
 
-    async def get_pods(self, namespace: str) -> list[PodInfo]:
+    async def get_pods(self, namespace: str) -> list[WatchdogPodSnapshot]:
         """List pods in a namespace via CoreV1Api."""
         core = client.CoreV1Api(self._api)
         pod_list = await core.list_namespaced_pod(namespace)
@@ -417,7 +457,12 @@ class K8sWatchdogSource:
         ]
 
     async def get_pod_logs(self, name: str, namespace: str, tail: int = 50) -> str:
-        """Fetch pod logs via CoreV1Api."""
+        """Fetch pod logs via CoreV1Api (best-effort).
+
+        The pod may have been deleted mid-read, or the API server may be
+        transiently unreachable; in those cases this returns ``""``
+        instead of raising, so the watchdog loop can continue.
+        """
         core = client.CoreV1Api(self._api)
         try:
             return await core.read_namespaced_pod_log(
@@ -425,13 +470,18 @@ class K8sWatchdogSource:
                 namespace=namespace,
                 tail_lines=tail,
             )
-        except Exception:
-            # Best-effort log fetch: swallow both ApiException and any other
-            # client error (network, serialization, pod-deleted-mid-read).
+        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError):
+            # Best-effort log fetch: the pod may have been deleted mid-read, or
+            # the API server may be unreachable; return empty rather than fail.
             return ""
 
     async def get_pod_metrics(self, namespace: str) -> list[PodMetrics]:
-        """Fetch pod metrics via metrics.k8s.io API."""
+        """Fetch pod metrics via metrics.k8s.io API (best-effort).
+
+        The ``metrics.k8s.io`` aggregated API may not be installed on the
+        cluster, and freshly-created pods may not have usage samples
+        yet. In either case this returns ``[]`` instead of raising.
+        """
         try:
             resp = await self._api.call_api(
                 f"/apis/metrics.k8s.io/v1beta1/namespaces/{namespace}/pods",
@@ -441,43 +491,26 @@ class K8sWatchdogSource:
                 _return_http_data_only=True,
             )
             data = resp if isinstance(resp, dict) else {}
-            result: list[PodMetrics] = []
-            for item in data.get("items", []):
-                name = item.get("metadata", {}).get("name", "")
-                total_cpu = 0
-                total_mem = 0
-                for container in item.get("containers", []):
-                    usage = container.get("usage", {})
-                    cpu_str = usage.get("cpu", "0")
-                    mem_str = usage.get("memory", "0")
-                    if cpu_str.endswith("n"):
-                        total_cpu += int(cpu_str[:-1]) // 1_000_000
-                    elif cpu_str.endswith("m"):
-                        total_cpu += int(cpu_str[:-1])
-                    else:
-                        total_cpu += int(float(cpu_str) * 1000)
-                    if mem_str.endswith("Ki"):
-                        total_mem += int(mem_str[:-2]) // 1024
-                    elif mem_str.endswith("Mi"):
-                        total_mem += int(mem_str[:-2])
-                    elif mem_str.endswith("Gi"):
-                        total_mem += int(mem_str[:-2]) * 1024
-                    else:
-                        total_mem += int(mem_str) // (1024 * 1024)
-                result.append(
-                    PodMetrics(
-                        name=name, cpu_millicores=total_cpu, memory_mib=total_mem
-                    )
-                )
-            return result
-        except Exception:
+            return [
+                _metrics_item_to_pod_metrics(item) for item in data.get("items", [])
+            ]
+        except (
+            ApiException,
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+            KeyError,
+            TypeError,
+            ValueError,
+            OSError,
+        ):
+            # metrics.k8s.io may not be installed, or pods may lack metrics yet.
             return []
 
     # -- Helpers -----------------------------------------------------------
 
     @staticmethod
-    def _pod_to_info(pod: Any) -> PodInfo:
-        """Convert a V1Pod into a PodInfo dataclass."""
+    def _pod_to_info(pod: V1Pod) -> WatchdogPodSnapshot:
+        """Convert a V1Pod into a WatchdogPodSnapshot dataclass."""
         status = pod.status
         phase = status.phase if status and status.phase else "Unknown"
 
@@ -540,7 +573,7 @@ class K8sWatchdogSource:
                         str(ts).replace("Z", "+00:00")
                     )
 
-        return PodInfo(
+        return WatchdogPodSnapshot(
             name=(metadata.name if metadata and metadata.name else ""),
             namespace=(metadata.namespace if metadata and metadata.namespace else ""),
             phase=phase,
@@ -551,8 +584,40 @@ class K8sWatchdogSource:
         )
 
 
+def _parse_metrics_cpu(cpu_str: str) -> int:
+    """Parse a metrics.k8s.io CPU usage quantity into millicores."""
+    if cpu_str.endswith("n"):
+        return int(cpu_str[:-1]) // 1_000_000
+    if cpu_str.endswith("m"):
+        return int(cpu_str[:-1])
+    return int(float(cpu_str) * 1000)
+
+
+def _parse_metrics_memory(mem_str: str) -> int:
+    """Parse a metrics.k8s.io memory usage quantity into MiB."""
+    if mem_str.endswith("Ki"):
+        return int(mem_str[:-2]) // 1024
+    if mem_str.endswith("Mi"):
+        return int(mem_str[:-2])
+    if mem_str.endswith("Gi"):
+        return int(mem_str[:-2]) * 1024
+    return int(mem_str) // (1024 * 1024)
+
+
+def _metrics_item_to_pod_metrics(item: dict[str, Any]) -> PodMetrics:
+    """Convert one metrics.k8s.io pod entry into a PodMetrics dataclass."""
+    name = item.get("metadata", {}).get("name", "")
+    total_cpu = 0
+    total_mem = 0
+    for container in item.get("containers", []):
+        usage = container.get("usage", {})
+        total_cpu += _parse_metrics_cpu(usage.get("cpu", "0"))
+        total_mem += _parse_metrics_memory(usage.get("memory", "0"))
+    return PodMetrics(name=name, cpu_millicores=total_cpu, memory_mib=total_mem)
+
+
 def _state_from_container_status(
-    cs: Any,
+    cs: V1ContainerStatus,
 ) -> tuple[str, str | None, str | None, int | None]:
     """Extract (state, reason, message, exit_code) from a V1ContainerStatus.
 
@@ -686,13 +751,14 @@ class BenchmarkWatchdog:
         self,
         source: WatchdogDataSource,
         namespace: str,
+        *,
         timeout: float | None = None,
         poll_interval: float = 5.0,
         status_interval: float = 10.0,
         pending_threshold: float = 30.0,
         pending_critical_threshold: float = 90.0,
         crashloop_threshold: int = 2,
-        log: Any | None = None,
+        log: AIPerfLogger | None = None,
     ) -> None:
         self._log = log or logger
         self._source = source
@@ -712,7 +778,7 @@ class BenchmarkWatchdog:
         self._stopped = False
         self._tick_count: int = 0
         self._last_status_time: float = 0.0
-        self._last_pod_snapshot: list[PodInfo] = []
+        self._last_pod_snapshot: list[WatchdogPodSnapshot] = []
         self._completed_pods: set[str] = set()
         self._event_check_interval: int = 3  # Check events every Nth tick
         self._resource_check_interval: int = (
@@ -782,10 +848,6 @@ class BenchmarkWatchdog:
             stale_ns_count=self._stale_ns_count,
         )
 
-    # ------------------------------------------------------------------
-    # Main loop
-    # ------------------------------------------------------------------
-
     async def _monitor_loop(self) -> None:
         """Main monitoring loop."""
         try:
@@ -822,25 +884,21 @@ class BenchmarkWatchdog:
 
                 except asyncio.CancelledError:
                     raise
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - watchdog must never die on a single-check failure
                     self._log.debug(lambda e=e: f"[WATCHDOG] Monitor error: {e}")
                 await asyncio.sleep(self.poll_interval)
         except asyncio.CancelledError:
             pass
 
-    async def _fetch_pods(self) -> list[PodInfo] | None:
+    async def _fetch_pods(self) -> list[WatchdogPodSnapshot] | None:
         """Fetch pods, returning None on failure."""
         try:
             return await self._source.get_pods(self.namespace)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - watchdog must never die on a single-check failure
             self._log.debug(lambda e=e: f"[WATCHDOG] Failed to fetch pods: {e}")
             return None
 
-    # ------------------------------------------------------------------
-    # Pod analysis
-    # ------------------------------------------------------------------
-
-    def _analyze_pods(self, pods: list[PodInfo]) -> None:
+    def _analyze_pods(self, pods: list[WatchdogPodSnapshot]) -> None:
         """Run all pod checks."""
         for pod in pods:
             tl = self._get_or_create_timeline(pod)
@@ -851,7 +909,7 @@ class BenchmarkWatchdog:
             self._check_pod_completion(pod)
             tl.ready = pod.ready
 
-    def _get_or_create_timeline(self, pod: PodInfo) -> PodTimeline:
+    def _get_or_create_timeline(self, pod: WatchdogPodSnapshot) -> PodTimeline:
         """Get existing timeline or create a new one for a pod."""
         if pod.name not in self._pod_timelines:
             self._pod_timelines[pod.name] = PodTimeline(
@@ -860,7 +918,9 @@ class BenchmarkWatchdog:
             )
         return self._pod_timelines[pod.name]
 
-    def _track_phase_transition(self, pod: PodInfo, tl: PodTimeline) -> None:
+    def _track_phase_transition(
+        self, pod: WatchdogPodSnapshot, tl: PodTimeline
+    ) -> None:
         """Record phase changes with timing."""
         if pod.phase == tl.last_phase:
             return
@@ -884,7 +944,9 @@ class BenchmarkWatchdog:
 
         tl.last_phase = pod.phase
 
-    def _check_pending_too_long(self, pod: PodInfo, tl: PodTimeline) -> None:
+    def _check_pending_too_long(
+        self, pod: WatchdogPodSnapshot, tl: PodTimeline
+    ) -> None:
         """Escalating warnings for pods stuck in Pending."""
         if pod.phase != "Pending":
             return
@@ -926,7 +988,7 @@ class BenchmarkWatchdog:
                 ),
             )
 
-    def _check_crash_loop(self, pod: PodInfo, tl: PodTimeline) -> None:
+    def _check_crash_loop(self, pod: WatchdogPodSnapshot, tl: PodTimeline) -> None:
         """Detect restart count increases and crash loops."""
         if pod.restarts <= tl.last_restart_count:
             tl.last_restart_count = pod.restarts
@@ -951,7 +1013,7 @@ class BenchmarkWatchdog:
                 suggestion=(f"kubectl -n {self.namespace} logs {pod.name} --previous"),
             )
 
-    def _check_container_states(self, pod: PodInfo) -> None:
+    def _check_container_states(self, pod: WatchdogPodSnapshot) -> None:
         """Detect problematic container states."""
         for c in pod.container_statuses:
             if c.state == "waiting" and c.reason in (
@@ -1033,7 +1095,7 @@ class BenchmarkWatchdog:
                         f"(reason: {c.reason or 'Completed'})"
                     )
 
-    def _check_pod_completion(self, pod: PodInfo) -> None:
+    def _check_pod_completion(self, pod: WatchdogPodSnapshot) -> None:
         """Log when a pod reaches terminal state for the first time."""
         if pod.name in self._completed_pods:
             return
@@ -1075,12 +1137,10 @@ class BenchmarkWatchdog:
                         f"[WATCHDOG] Last logs from {pod_name}:\n{logs}"
                     )
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - watchdog must never die on a single-check failure
+            # Best-effort: logs already swallowed to empty by get_pod_logs in
+            # normal paths; this is a defensive net for unexpected failures.
             pass
-
-    # ------------------------------------------------------------------
-    # Event analysis
-    # ------------------------------------------------------------------
 
     async def _check_events(self) -> None:
         """Watch K8s events for scheduling/resource problems."""
@@ -1088,7 +1148,7 @@ class BenchmarkWatchdog:
             events = await self._source.get_events(self.namespace)
             for event in events:
                 self._process_event(event)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - watchdog must never die on a single-check failure
             pass
 
     def _process_event(self, event: EventInfo) -> None:
@@ -1099,23 +1159,7 @@ class BenchmarkWatchdog:
             return
 
         if event.reason == "FailedScheduling":
-            self._event_fingerprints.add(fp)
-            severity = (
-                ProblemSeverity.CRITICAL
-                if "Insufficient" in event.message
-                else ProblemSeverity.WARNING
-            )
-            self._add_problem(
-                severity,
-                "scheduling-failure",
-                f"{event.involved_object}: FailedScheduling - {event.message[:120]}",
-                pod_name=event.involved_object,
-                suggestion=(
-                    "kubectl get ns | grep aiperf- | wc -l  "
-                    "(clean up stale namespaces if > 5)"
-                ),
-            )
-
+            self._handle_failed_scheduling_event(event, fp)
         elif event.reason in ("FailedMount", "FailedAttachVolume"):
             self._event_fingerprints.add(fp)
             self._add_problem(
@@ -1124,7 +1168,6 @@ class BenchmarkWatchdog:
                 f"{event.involved_object}: {event.reason} - {event.message[:120]}",
                 pod_name=event.involved_object,
             )
-
         elif event.reason == "BackOff" and event.type == "Warning":
             self._event_fingerprints.add(fp)
             self._add_problem(
@@ -1133,7 +1176,6 @@ class BenchmarkWatchdog:
                 f"{event.involved_object}: BackOff - {event.message[:120]}",
                 pod_name=event.involved_object,
             )
-
         elif event.reason == "Evicted":
             self._event_fingerprints.add(fp)
             self._add_problem(
@@ -1146,30 +1188,47 @@ class BenchmarkWatchdog:
                     "Reduce worker count or pod memory limits."
                 ),
             )
-
         elif event.reason == "Killing":
             self._event_fingerprints.add(fp)
             self._log.info(
                 f"[WATCHDOG] Event: {event.involved_object} being killed "
                 f"- {event.message[:100]}"
             )
-
         elif event.reason == "Unhealthy" and event.type == "Warning":
-            self._event_fingerprints.add(fp)
-            short = (
-                event.involved_object.split("-")[-1]
-                if "-" in event.involved_object
-                else event.involved_object
-            )
-            self._log.debug(
-                lambda short=short, msg=event.message: (
-                    f"[WATCHDOG] Probe failure on {short}: {msg[:80]}"
-                )
-            )
+            self._handle_unhealthy_event(event, fp)
 
-    # ------------------------------------------------------------------
-    # Cluster-level checks
-    # ------------------------------------------------------------------
+    def _handle_failed_scheduling_event(self, event: EventInfo, fp: str) -> None:
+        """Record a FailedScheduling event with severity based on cause."""
+        self._event_fingerprints.add(fp)
+        severity = (
+            ProblemSeverity.CRITICAL
+            if "Insufficient" in event.message
+            else ProblemSeverity.WARNING
+        )
+        self._add_problem(
+            severity,
+            "scheduling-failure",
+            f"{event.involved_object}: FailedScheduling - {event.message[:120]}",
+            pod_name=event.involved_object,
+            suggestion=(
+                "kubectl get ns | grep aiperf- | wc -l  "
+                "(clean up stale namespaces if > 5)"
+            ),
+        )
+
+    def _handle_unhealthy_event(self, event: EventInfo, fp: str) -> None:
+        """Log a debug message for a Warning-type Unhealthy probe event."""
+        self._event_fingerprints.add(fp)
+        short = (
+            event.involved_object.split("-")[-1]
+            if "-" in event.involved_object
+            else event.involved_object
+        )
+        self._log.debug(
+            lambda short=short, msg=event.message: (
+                f"[WATCHDOG] Probe failure on {short}: {msg[:80]}"
+            )
+        )
 
     def _check_elapsed_time(self) -> None:
         """Escalating timeout warnings (only when timeout is set)."""
@@ -1213,7 +1272,7 @@ class BenchmarkWatchdog:
                     f"[WATCHDOG] Cluster GPUs: {total_gpu} allocatable "
                     f"across {len(nodes)} node(s)"
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - watchdog must never die on a single-check failure
             pass
 
     async def _check_stale_namespaces(self) -> None:
@@ -1246,7 +1305,7 @@ class BenchmarkWatchdog:
                 )
             else:
                 self._log.info("[WATCHDOG] Cluster clean - no stale namespaces")
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - watchdog must never die on a single-check failure
             pass
 
     async def _check_pod_resources(self) -> None:
@@ -1270,14 +1329,10 @@ class BenchmarkWatchdog:
                             pod_name=pm.name,
                             suggestion="Check for memory leaks. Consider increasing memory limits.",
                         )
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - watchdog must never die on a single-check failure
             pass
 
-    # ------------------------------------------------------------------
-    # Status dashboard (structured log output)
-    # ------------------------------------------------------------------
-
-    def _log_status_dashboard(self, pods: list[PodInfo]) -> None:
+    def _log_status_dashboard(self, pods: list[WatchdogPodSnapshot]) -> None:
         """Log a formatted status dashboard."""
         elapsed = time.time() - self._start_time
 
@@ -1341,15 +1396,12 @@ class BenchmarkWatchdog:
         lines.append(_DLINE)
         self._log.info(lambda: "[WATCHDOG]\n" + "\n".join(lines))
 
-    # ------------------------------------------------------------------
-    # Problem tracking
-    # ------------------------------------------------------------------
-
     def _add_problem(
         self,
         severity: ProblemSeverity,
         category: str,
         message: str,
+        *,
         pod_name: str | None = None,
         suggestion: str | None = None,
     ) -> None:
@@ -1373,10 +1425,6 @@ class BenchmarkWatchdog:
 
         if suggestion:
             self._log.info(f"[WATCHDOG]  -> {suggestion}")
-
-    # ------------------------------------------------------------------
-    # Final report
-    # ------------------------------------------------------------------
 
     def _log_final_report(self) -> None:
         """Log a comprehensive final watchdog report."""

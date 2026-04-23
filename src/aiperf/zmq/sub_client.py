@@ -204,13 +204,17 @@ class ZMQSubClient(BaseZMQClient):
                         await call_all_functions(self._subscribers[topic], message)
                 else:
                     await call_all_functions(self._subscribers[topic], message)
-            except Exception:
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - subscriber handler boundary, must not crash SUB loop
                 self.exception(f"Error in subscription handler for topic {topic}")
 
         if self._wildcard_subscriber is not None:
             try:
                 await self._wildcard_subscriber(message)
-            except Exception:
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - wildcard handler boundary, must not crash SUB loop
                 self.exception(
                     f"Error in wildcard subscription handler for topic {topic}"
                 )
@@ -246,10 +250,15 @@ class ZMQSubClient(BaseZMQClient):
             except zmq.Again:
                 self.trace(f"Sub client {self.client_id} receiver task timed out")
                 await yield_to_event_loop()
-            except (asyncio.CancelledError, zmq.ContextTerminated):
+            except asyncio.CancelledError:
                 self.debug(f"Sub client {self.client_id} receiver task cancelled")
+                raise
+            except zmq.ContextTerminated:
+                self.debug(
+                    f"Sub client {self.client_id} receiver task stopped (ZMQ context terminated)"
+                )
                 break
-            except Exception as e:
+            except (zmq.ZMQError, asyncio.TimeoutError) as e:
                 self.exception(
                     f"Exception receiving message from subscription: {e}, {type(e)}"
                 )

@@ -1,3 +1,7 @@
+---
+description: AIPerf project rules and coding standards
+alwaysApply: true
+---
 <!--
 SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
@@ -5,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # AIPerf
 
-Python 3.10+ async AI benchmarking tool for measuring LLM inference server performance. 9 services communicate via ZMQ message bus.
+Python 3.10+ async AI benchmarking tool for measuring LLM inference server performance. Services communicate via ZMQ message bus; optionally deployable on Kubernetes via a kopf-based operator.
 
 **Reference documentation:**
 - [`docs/architecture.md`](docs/architecture.md) - Three-plane architecture, core components, credit system, data flow, communication patterns
@@ -14,6 +18,7 @@ Python 3.10+ async AI benchmarking tool for measuring LLM inference server perfo
 - [`docs/environment-variables.md`](docs/environment-variables.md) - All `AIPERF_*` environment variables by subsystem
 - [`docs/metrics-reference.md`](docs/metrics-reference.md) - Metric definitions, formulas, and requirements
 - [`docs/plugins/plugin-system.md`](docs/plugins/plugin-system.md) - Plugin architecture, categories, creation guide
+- [`docs/dev/kubernetes-flow.md`](docs/dev/kubernetes-flow.md) and [`docs/kubernetes/`](docs/kubernetes/) - Kubernetes operator, CRD lifecycle, cluster deployment
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) - Development setup, available commands, pre-commit hooks, DCO
 
 ## Coding Standards
@@ -87,6 +92,15 @@ Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large
 3. Validate with `make validate-plugin-schemas`
 4. Use via `plugins.get_class(PluginType.X, 'name')`
 
+## Kubernetes
+
+The Kubernetes operator and CLI layer live in `src/aiperf/operator/`, `src/aiperf/kubernetes/`, and `src/aiperf/cli_commands/kube/`. Key patterns:
+
+- **kopf handlers** — The operator entry point is `src/aiperf/operator/main.py`. All `@kopf.on.*` decorators live there; handler bodies are decorator-free functions in `src/aiperf/operator/handlers/{create,cleanup,completion,lifecycle,monitor}.py`. Raise `kopf.PermanentError` to stop retrying, `kopf.TemporaryError(..., delay=N)` to retry after delay — generic exceptions retry forever. kopf calls handlers with a fixed kwarg set (`body, spec, name, namespace, patch, uid, **_: Any`); these signatures are baselined against `keyword-only-args` because kopf owns the calling convention.
+- **kubernetes_asyncio access** — Always use `async with k8s_client() as api:` from `aiperf.kubernetes.client`; never instantiate `ApiClient()` directly. The helper handles in-cluster-or-kubeconfig fallback and closure.
+- **`aiperf kube` CLI** — Subcommands live in `src/aiperf/cli_commands/kube/` and are registered in `_app.py`. Composite flags (`namespace`, `kubeconfig`, `kube-context`) pass via `KubeManageOptions` from `aiperf.config.kube`.
+- **FastAPI routers** — Two patterns: module-level `router = APIRouter(...)` in `src/aiperf/api/routers/*.py`, and factory `create_xxx_router(deps...) -> APIRouter` in `src/aiperf/operator/routers/jobs.py` when the router closes over live state.
+
 ## Testing Conventions
 
 - `@pytest.mark.asyncio` for async tests, `@pytest.mark.parametrize` for data-driven
@@ -130,7 +144,7 @@ Feature branches use `<username>/feature-name` format, forked from `main`. One P
 
 ## Three-File Sync Rule
 
-`CLAUDE.md`, `.github/copilot-instructions.md`, and `.cursor/rules/python.mdc` must contain identical content (only headers/frontmatter differ). When updating one, update all three. Always diff them after editing to confirm sync.
+`CLAUDE.md`, `.github/copilot-instructions.md`, and `.cursor/rules/python.mdc` must contain identical content (only file-specific headers/frontmatter differ; the cursor file's `alwaysApply: true` frontmatter is required and must be preserved). When updating one, update all three. Always diff them after editing to confirm sync.
 
 ## Documentation Updates
 
@@ -153,6 +167,9 @@ When making changes, update the appropriate documentation files. When adding a n
 | Dev setup, make targets, pre-commit | `CONTRIBUTING.md` |
 | Contribution process, DCO | `CONTRIBUTING.md` |
 | New services, message types, plugin types | `docs/architecture.md` + `docs/dev/patterns.md` |
+| Kubernetes operator, handlers, CR lifecycle | `docs/dev/kubernetes-flow.md` |
+| Kubernetes deployment, Helm chart, cluster setup | `docs/kubernetes/getting-started.md` + `docs/kubernetes/configuration.md` + `docs/kubernetes/production.md` |
+| Kube CLI commands | `docs/cli-options.md` (auto-generated via `make generate-cli-docs`) |
 | Tutorials and feature guides | `docs/tutorials/` + `README.md` tutorial index |
 
 **A feature is incomplete until documentation is updated.**

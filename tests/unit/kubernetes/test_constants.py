@@ -17,17 +17,17 @@ import pytest
 from pytest import param
 
 from aiperf.kubernetes.constants import (
+    AIPerfLabels,
     Annotations,
     Containers,
     JobSetLabels,
     KueueLabels,
-    Labels,
     ProgressAnnotations,
 )
 
 _ALL_CONSTANT_CLASSES = [
     param(JobSetLabels, id="JobSetLabels"),
-    param(Labels, id="Labels"),
+    param(AIPerfLabels, id="AIPerfLabels"),
     param(Annotations, id="Annotations"),
     param(ProgressAnnotations, id="ProgressAnnotations"),
     param(Containers, id="Containers"),
@@ -63,10 +63,10 @@ class TestConstantIntegrity:
 
 
 class TestLabelsConsistency:
-    """Verify internal consistency of the Labels dataclass."""
+    """Verify internal consistency of the AIPerfLabels dataclass."""
 
     def test_selector_matches_app_key_and_value(self) -> None:
-        labels = Labels()
+        labels = AIPerfLabels()
         expected = f"{labels.APP_KEY}={labels.APP_VALUE}"
         assert expected == labels.SELECTOR
 
@@ -77,8 +77,8 @@ class TestNamespacePrefixes:
     @pytest.mark.parametrize(
         "cls,field_name",
         [
-            param(Labels, "JOB_ID", id="Labels.JOB_ID"),
-            param(Labels, "NAME", id="Labels.NAME"),
+            param(AIPerfLabels, "JOB_ID", id="AIPerfLabels.JOB_ID"),
+            param(AIPerfLabels, "NAME", id="AIPerfLabels.NAME"),
             param(Annotations, "MODEL", id="Annotations.MODEL"),
             param(Annotations, "ENDPOINT", id="Annotations.ENDPOINT"),
             param(ProgressAnnotations, "PHASE", id="ProgressAnnotations.PHASE"),

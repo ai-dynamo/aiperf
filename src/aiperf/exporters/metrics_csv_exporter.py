@@ -231,17 +231,18 @@ class MetricsCsvExporter(MetricsBaseExporter):
 
                     self._write_gpu_metric_row_from_summary(
                         writer,
-                        endpoint_display,
-                        gpu_summary,
-                        optional_fields,
-                        metric_key,
-                        metric_display,
-                        unit_enum.value,
+                        endpoint_display=endpoint_display,
+                        gpu_summary=gpu_summary,
+                        optional_fields=optional_fields,
+                        metric_key=metric_key,
+                        metric_display=metric_display,
+                        unit=unit_enum.value,
                     )
 
     def _write_gpu_metric_row_from_summary(
         self,
         writer: csv.writer,
+        *,
         endpoint_display: str,
         gpu_summary: GpuSummary,
         optional_fields: list[str],
@@ -286,7 +287,7 @@ class MetricsCsvExporter(MetricsBaseExporter):
                 row.append(str(value))
 
             writer.writerow(row)
-        except Exception as e:
+        except (AttributeError, KeyError, ValueError, OSError) as e:
             self.warning(
                 f"Failed to write metric row for GPU {gpu_summary.gpu_uuid}, metric {metric_key}: {e}"
             )

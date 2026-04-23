@@ -587,30 +587,34 @@ class PlotConfig:
         if source_override:
             source = DataSource(source_override)
         else:
-            # Auto-detect source from metric name
-            if base_name in get_aggregated_metrics():
-                source = DataSource.AGGREGATED
-            elif base_name in get_request_metrics():
-                source = DataSource.REQUESTS
-            elif base_name in get_timeslice_metrics():
-                source = DataSource.TIMESLICES
-            elif base_name in get_gpu_metrics():
-                source = DataSource.GPU_TELEMETRY
-            elif self._is_server_metric(base_name):
-                # Server metrics (Prometheus-style names like "vllm:kv_cache_usage_perc")
-                source = DataSource.SERVER_METRICS
-            else:
-                all_known = (
-                    get_aggregated_metrics()
-                    + get_request_metrics()
-                    + get_timeslice_metrics()
-                    + get_gpu_metrics()
-                )
-                raise ValueError(
-                    f"Unknown metric: '{base_name}' (from shortcut '{metric_value}'). "
-                    f"Known metrics: {all_known}. For server metrics, use Prometheus-style names like 'vllm:metric_name'."
-                )
+            source = self._auto_detect_source(base_name, metric_value)
         if stat_override:
             stat = stat_override
 
         return MetricSpec(name=base_name, source=source, axis=axis, stat=stat)
+
+    def _auto_detect_source(
+        self, base_name: str, metric_value: str | dict
+    ) -> DataSource:
+        """Infer the DataSource for a metric name via registered metric catalogs."""
+        if base_name in get_aggregated_metrics():
+            return DataSource.AGGREGATED
+        if base_name in get_request_metrics():
+            return DataSource.REQUESTS
+        if base_name in get_timeslice_metrics():
+            return DataSource.TIMESLICES
+        if base_name in get_gpu_metrics():
+            return DataSource.GPU_TELEMETRY
+        if self._is_server_metric(base_name):
+            # Server metrics (Prometheus-style names like "vllm:kv_cache_usage_perc")
+            return DataSource.SERVER_METRICS
+        all_known = (
+            get_aggregated_metrics()
+            + get_request_metrics()
+            + get_timeslice_metrics()
+            + get_gpu_metrics()
+        )
+        raise ValueError(
+            f"Unknown metric: '{base_name}' (from shortcut '{metric_value}'). "
+            f"Known metrics: {all_known}. For server metrics, use Prometheus-style names like 'vllm:metric_name'."
+        )

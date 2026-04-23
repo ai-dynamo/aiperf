@@ -200,7 +200,7 @@ class GPUTelemetryConsoleExporter(AIPerfLoggerMixin):
                     row.append(self._format_number(value))
 
                 metrics_table.add_row(*row)
-            except Exception as e:
+            except (AttributeError, KeyError, ValueError) as e:
                 self.debug(
                     f"Failed to retrieve metric {metric_key} for GPU {gpu_index}: {e}"
                 )

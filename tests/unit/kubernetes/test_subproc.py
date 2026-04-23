@@ -75,6 +75,7 @@ def _make_mock_process(
     proc = AsyncMock(spec=asyncio.subprocess.Process)
     proc.communicate = AsyncMock(return_value=(stdout, stderr))
     proc.returncode = returncode
+    proc.pid = 12345
     proc.wait = AsyncMock()
     proc.terminate = MagicMock()
     proc.kill = MagicMock()

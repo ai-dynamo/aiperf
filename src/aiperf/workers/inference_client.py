@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -132,7 +133,9 @@ class InferenceClient(AIPerfLifecycleMixin):
                     f"pre_send_perf_ns to start_perf_ns latency: {result.start_perf_ns - pre_send_perf_ns} ns"
                 )
             return result
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - transport error boundary; all errors captured as ErrorDetails in RequestRecord
             self.error(
                 f"Error calling inference server API at {self.run.cfg.endpoint.urls[0]}: {e!r}"
             )

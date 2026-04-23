@@ -22,7 +22,7 @@ from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.common.noisy_loggers import suppress_noisy_http_loggers
 from aiperf.kubernetes.console import print_info, print_success, print_warning
-from aiperf.kubernetes.constants import JobSetLabels, Labels
+from aiperf.kubernetes.constants import AIPerfLabels, JobSetLabels
 from aiperf.kubernetes.cr_refs import (
     AIPERF_JOB_GROUP,
     AIPERF_JOB_PLURAL,
@@ -51,9 +51,29 @@ async def k8s_client(
     kubeconfig: str | None = None,
     context: str | None = None,
 ) -> AsyncIterator[ApiClient]:
-    """Load k8s config and yield an ApiClient.
+    """Load k8s config and yield an ``ApiClient``.
 
-    In-cluster first, kubeconfig fallback. The ApiClient is closed on exit.
+    Tries ``load_incluster_config()`` first (pod-mounted service account), then
+    falls back to ``load_kube_config()`` on the given ``kubeconfig``/``context``.
+    The ``ApiClient`` is guaranteed to be closed on scope exit.
+
+    Args:
+        kubeconfig: Path to a kubeconfig file. ``None`` means use the default
+            resolution (``$KUBECONFIG`` or ``~/.kube/config``). Only consulted
+            when the in-cluster load fails.
+        context: Kubeconfig context name to activate. ``None`` means use the
+            current-context from the kubeconfig.
+
+    Raises:
+        kubernetes_asyncio.config.ConfigException: If both the in-cluster and
+            kubeconfig loaders fail (e.g. no service account mounted AND no
+            readable kubeconfig / unknown context).
+
+    Example:
+        >>> async with k8s_client() as api:
+        ...     jobs = await list_aiperf_jobs(api, namespace="aiperf-bench")
+        ...     for job in jobs:
+        ...         print(job.name, job.phase)
     """
     suppress_noisy_http_loggers()
     try:
@@ -71,14 +91,28 @@ async def k8s_client(
 
 
 def job_selector(job_id: str) -> str:
-    """Label selector for all AIPerf resources belonging to a job."""
-    return f"{Labels.SELECTOR},{Labels.JOB_ID}={job_id}"
+    """Build the label selector for all AIPerf resources belonging to a job.
+
+    Combines the repo-wide ``AIPerfLabels.SELECTOR`` (``app.kubernetes.io/part-of=aiperf``)
+    with the per-job ``AIPerfLabels.JOB_ID`` into a single comma-separated selector
+    string consumable by any ``list_*`` / ``delete_*`` k8s API.
+
+    Args:
+        job_id: AIPerf job ID (the value stored on ``metadata.labels[aiperf.nvidia.com/job-id]``).
+
+    Returns:
+        A selector string like ``"app.kubernetes.io/part-of=aiperf,aiperf.nvidia.com/job-id=<job_id>"``.
+
+    Raises:
+        Never raises — pure string construction.
+    """
+    return f"{AIPerfLabels.SELECTOR},{AIPerfLabels.JOB_ID}={job_id}"
 
 
 def controller_selector(job_id: str) -> str:
     """Label selector for the controller pod of a job."""
     return (
-        f"{Labels.SELECTOR},{Labels.JOB_ID}={job_id},"
+        f"{AIPerfLabels.SELECTOR},{AIPerfLabels.JOB_ID}={job_id},"
         f"{JobSetLabels.REPLICATED_JOB_NAME}=controller"
     )
 
@@ -92,7 +126,32 @@ async def list_aiperf_jobs(
     all_namespaces: bool = False,
     status_filter: str | None = None,
 ) -> list[AIPerfJobInfo]:
-    """List AIPerfJob CRs, sorted newest-first."""
+    """List AIPerfJob CRs, sorted newest-first.
+
+    Args:
+        api: Open ``ApiClient`` from :func:`k8s_client`. Callers own its lifecycle.
+        namespace: Namespace to list in. Ignored when ``all_namespaces=True``.
+            ``None`` resolves to ``"default"``.
+        all_namespaces: If ``True``, lists across the cluster instead of a
+            single namespace. Requires cluster-wide list permission on
+            ``aiperfjobs.aiperf.nvidia.com``.
+        status_filter: If set, keep only jobs whose ``phase`` equals this string
+            (e.g. ``"Running"``, ``"Succeeded"``).
+
+    Returns:
+        List of :class:`AIPerfJobInfo` sorted by ``created`` descending.
+        Empty list if no jobs match or if the CRD is not installed (404 is
+        suppressed so fresh clusters look empty, not broken).
+
+    Raises:
+        kubernetes_asyncio.client.exceptions.ApiException: On any non-404 API
+            failure (403 forbidden, 500, transport error, etc.).
+
+    Example:
+        >>> async with k8s_client() as api:
+        ...     running = await list_aiperf_jobs(api, all_namespaces=True, status_filter="Running")
+        ...     print(f"{len(running)} running jobs")
+    """
     custom = client.CustomObjectsApi(api)
     try:
         if all_namespaces:
@@ -128,7 +187,36 @@ async def find_aiperf_job(
     name: str,
     namespace: str | None = None,
 ) -> AIPerfJobInfo | None:
-    """Find an AIPerfJob by resource name, with fallback to jobId match."""
+    """Find an AIPerfJob by resource name, with fallback to jobId match.
+
+    Resolution order:
+
+    1. If ``namespace`` is given, direct ``get_namespaced_custom_object`` by name.
+    2. Otherwise (or on 404 from step 1), cluster-wide list filtered by
+       ``metadata.name=<name>``, then match either ``metadata.name`` or
+       ``status.jobId`` against the input. This lets callers look up a job by
+       either its Kubernetes resource name or its generated ``jobId``.
+
+    Args:
+        api: Open ``ApiClient`` from :func:`k8s_client`.
+        name: Either the AIPerfJob resource name (``metadata.name``) or the
+            generated ``status.jobId``.
+        namespace: Namespace to look in. ``None`` scans all namespaces.
+
+    Returns:
+        The matching :class:`AIPerfJobInfo`, or ``None`` if no match found.
+        404 is suppressed (treated as "not found").
+
+    Raises:
+        kubernetes_asyncio.client.exceptions.ApiException: On any non-404
+            failure from either the direct ``get`` or the cluster-wide ``list``.
+
+    Example:
+        >>> async with k8s_client() as api:
+        ...     job = await find_aiperf_job(api, "my-bench-run", namespace="aiperf-bench")
+        ...     if job:
+        ...         print(job.phase)
+    """
     custom = client.CustomObjectsApi(api)
 
     # Direct lookup by name — most common path.
@@ -171,7 +259,25 @@ async def get_raw_aiperfjob_status(
     name: str,
     namespace: str,
 ) -> dict[str, Any]:
-    """Return the raw ``status`` dict of an AIPerfJob by name (empty on miss)."""
+    """Return the raw ``status`` dict of an AIPerfJob by name (empty on miss).
+
+    Unlike :func:`find_aiperf_job`, this bypasses the :class:`AIPerfJobCR`
+    model and returns the unparsed ``status`` subobject — useful for reading
+    controller-written fields that are not yet promoted into the typed model.
+
+    Args:
+        api: Open ``ApiClient`` from :func:`k8s_client`.
+        name: AIPerfJob resource name (``metadata.name``).
+        namespace: Namespace containing the AIPerfJob.
+
+    Returns:
+        The raw ``status`` mapping from the CR (arbitrary keys controller-defined),
+        or ``{}`` if the CR is missing, has no status yet, or on any API error.
+
+    Raises:
+        Never raises: any :class:`ApiException` is suppressed and returns ``{}``.
+        This is intentional — status polling is best-effort.
+    """
     custom = client.CustomObjectsApi(api)
     try:
         raw = await custom.get_namespaced_custom_object(
@@ -187,7 +293,30 @@ async def get_raw_aiperfjob_status(
 
 
 async def cancel_aiperf_job(api: ApiClient, name: str, namespace: str) -> None:
-    """Cancel an AIPerfJob by setting ``spec.cancel=true`` (merge patch)."""
+    """Cancel an AIPerfJob by setting ``spec.cancel=true`` (merge patch).
+
+    The operator watches this field and triggers graceful teardown (controller
+    shutdown, JobSet deletion, phase transition to ``Cancelled``). This call
+    returns as soon as the patch is acknowledged; actual cancellation is async.
+
+    Args:
+        api: Open ``ApiClient`` from :func:`k8s_client`.
+        name: AIPerfJob resource name (``metadata.name``).
+        namespace: Namespace containing the AIPerfJob.
+
+    Returns:
+        ``None``. The patch is accepted by the apiserver; the operator handles
+        the rest of the cancellation workflow.
+
+    Raises:
+        kubernetes_asyncio.client.exceptions.ApiException: On any API failure
+            (404 if the CR does not exist, 403 forbidden, 409 conflict, etc.).
+            Nothing is suppressed — callers decide how to react.
+
+    Example:
+        >>> async with k8s_client() as api:
+        ...     await cancel_aiperf_job(api, "my-bench-run", namespace="aiperf-bench")
+    """
     custom = client.CustomObjectsApi(api)
     await custom.patch_namespaced_custom_object(
         group=AIPERF_JOB_GROUP,
@@ -234,15 +363,38 @@ async def _list_jobsets_raw(
 
 async def list_jobsets(
     api: ApiClient,
+    *,
     namespace: str | None = None,
     all_namespaces: bool = False,
     job_id: str | None = None,
     status_filter: str | None = None,
 ) -> list[JobSetInfo]:
-    """List AIPerf-owned JobSets, sorted newest-first."""
-    label_selector = Labels.SELECTOR
+    """List AIPerf-owned JobSets, sorted newest-first.
+
+    Always filters by ``AIPerfLabels.SELECTOR`` (``app.kubernetes.io/part-of=aiperf``)
+    so third-party JobSets never appear. ``job_id`` narrows further to a single
+    job's JobSet.
+
+    Args:
+        api: Open ``ApiClient`` from :func:`k8s_client`.
+        namespace: Namespace to list in. Ignored when ``all_namespaces=True``.
+            ``None`` resolves to ``"default"``.
+        all_namespaces: If ``True``, lists cluster-wide.
+        job_id: If set, AND the selector with ``aiperf.nvidia.com/job-id=<job_id>``.
+        status_filter: If set, keep only JobSets whose ``status`` equals this
+            string (e.g. ``"Completed"``, ``"Failed"``).
+
+    Returns:
+        List of :class:`JobSetInfo` sorted by ``created`` descending. Empty list
+        on 404 (JobSet CRD not installed).
+
+    Raises:
+        kubernetes_asyncio.client.exceptions.ApiException: On any non-404 API
+            failure.
+    """
+    label_selector = AIPerfLabels.SELECTOR
     if job_id:
-        label_selector += f",{Labels.JOB_ID}={job_id}"
+        label_selector += f",{AIPerfLabels.JOB_ID}={job_id}"
 
     ns = None if all_namespaces else (namespace or "default")
     try:
@@ -264,7 +416,26 @@ async def find_jobset(
     job_id: str,
     namespace: str | None = None,
 ) -> JobSetInfo | None:
-    """Find a JobSet by AIPerf job ID label, falling back to resource name."""
+    """Find a JobSet by AIPerf job ID label, falling back to resource name.
+
+    Tries label-selector lookup first (``aiperf.nvidia.com/job-id=<job_id>``);
+    if nothing matches, retries with a ``metadata.name=<job_id>`` field
+    selector so callers can pass either the labelled job ID or the raw
+    JobSet resource name.
+
+    Args:
+        api: Open ``ApiClient`` from :func:`k8s_client`.
+        job_id: AIPerf job ID, or a JobSet resource name as a fallback.
+        namespace: Namespace to scope the search. ``None`` searches cluster-wide.
+
+    Returns:
+        The first matching :class:`JobSetInfo`, or ``None`` if nothing matches
+        in either pass. 404 is suppressed.
+
+    Raises:
+        kubernetes_asyncio.client.exceptions.ApiException: On any non-404 API
+            failure in either the label-selector or field-selector pass.
+    """
     try:
         raws = await _list_jobsets_raw(api, job_selector(job_id), namespace)
     except ApiException as e:
@@ -277,7 +448,7 @@ async def find_jobset(
     try:
         raws = await _list_jobsets_raw(
             api,
-            Labels.SELECTOR,
+            AIPerfLabels.SELECTOR,
             namespace,
             field_selector=f"metadata.name={job_id}",
         )
@@ -289,7 +460,42 @@ async def find_jobset(
 
 
 async def delete_jobset(api: ApiClient, name: str, namespace: str) -> None:
-    """Delete a JobSet and its associated ConfigMap/Role/RoleBinding."""
+    """Delete a JobSet and its associated ConfigMap/Role/RoleBinding.
+
+    AIPerf provisions four resources per job, all named by suffix off the
+    JobSet name. This function deletes all four in order, best-effort:
+
+    1. ``JobSet/<name>``                          (``jobset.x-k8s.io``)
+    2. ``ConfigMap/<name>-config``                (``core``)
+    3. ``Role/<name>-role``                       (``rbac.authorization.k8s.io``)
+    4. ``RoleBinding/<name>-binding``             (``rbac.authorization.k8s.io``)
+
+    Each deletion logs success via :func:`print_success`. ``404 Not Found`` and
+    ``409 Conflict`` (namespace terminating) are suppressed per-resource so a
+    partially-torn-down job can still be fully cleaned up. Any other failure
+    on resources 2-4 is logged via :func:`print_warning` and skipped — only
+    an unexpected failure on the JobSet delete itself raises.
+
+    Args:
+        api: Open ``ApiClient`` from :func:`k8s_client`.
+        name: JobSet resource name. The three auxiliary resources are derived
+            as ``f"{name}-config"``, ``f"{name}-role"``, ``f"{name}-binding"``.
+        namespace: Namespace containing all four resources.
+
+    Returns:
+        ``None``. Side effects: up to four ``DELETE`` calls and up to four
+        console log lines. Does not wait for finalizers — returns as soon as
+        the apiserver accepts the deletion.
+
+    Raises:
+        kubernetes_asyncio.client.exceptions.ApiException: Only from the
+            JobSet delete itself, and only for non-404 statuses. Failures on
+            the ConfigMap/Role/RoleBinding deletes are logged-and-swallowed.
+
+    Example:
+        >>> async with k8s_client() as api:
+        ...     await delete_jobset(api, "my-bench-run", namespace="aiperf-bench")
+    """
     custom = client.CustomObjectsApi(api)
     core = client.CoreV1Api(api)
     rbac = client.RbacAuthorizationV1Api(api)
@@ -391,7 +597,25 @@ async def find_controller_pod(
     namespace: str,
     job_id: str,
 ) -> tuple[str, PodPhase] | None:
-    """Find the controller pod for a job; returns (name, phase) or None."""
+    """Find the controller pod for a job; returns (name, phase) or None.
+
+    Uses :func:`controller_selector` to filter for the single pod from the
+    ``controller`` replicated-job in the JobSet. If the JobSet spec ever
+    scales the controller beyond one replica, this returns the first one.
+
+    Args:
+        api: Open ``ApiClient`` from :func:`k8s_client`.
+        namespace: Namespace containing the job's pods.
+        job_id: AIPerf job ID (``aiperf.nvidia.com/job-id`` label value).
+
+    Returns:
+        ``(pod_name, pod_phase)`` for the controller, or ``None`` if no pod
+        matches the selector yet.
+
+    Raises:
+        kubernetes_asyncio.client.exceptions.ApiException: On any API failure
+            from ``list_namespaced_pod`` (not suppressed — callers decide).
+    """
     core = client.CoreV1Api(api)
     pod_list = await core.list_namespaced_pod(
         namespace,
@@ -459,7 +683,32 @@ async def get_pods(
     namespace: str,
     label_selector: str,
 ) -> list[Any]:
-    """Return list of V1Pod matching label selector (typed access)."""
+    """Return list of ``V1Pod`` matching label selector (typed access).
+
+    Thin wrapper over ``CoreV1Api(api).list_namespaced_pod(...).items`` —
+    exposed so callers that need full typed pod access (containers, conditions,
+    annotations, etc.) don't re-create a ``CoreV1Api`` instance.
+
+    Args:
+        api: Open ``ApiClient`` from :func:`k8s_client`.
+        namespace: Namespace to list pods in.
+        label_selector: Comma-separated label selector (see :func:`job_selector`
+            / :func:`controller_selector` for canonical AIPerf selectors).
+
+    Returns:
+        List of ``kubernetes_asyncio.client.V1Pod`` instances. Empty list if
+        no pods match. Return type is ``list[Any]`` because the k8s-asyncio
+        ``V1Pod`` class is not a stable import path across versions.
+
+    Raises:
+        kubernetes_asyncio.client.exceptions.ApiException: On any API failure
+            (not suppressed).
+
+    Example:
+        >>> async with k8s_client() as api:
+        ...     pods = await get_pods(api, "aiperf-bench", job_selector("job-abc"))
+        ...     print([p.metadata.name for p in pods])
+    """
     core = client.CoreV1Api(api)
     return (
         await core.list_namespaced_pod(namespace, label_selector=label_selector)
@@ -467,7 +716,20 @@ async def get_pods(
 
 
 async def cluster_version(api: ApiClient) -> dict[str, Any]:
-    """Return Kubernetes cluster version info as a dict."""
+    """Return Kubernetes cluster version info as a dict.
+
+    Args:
+        api: Open ``ApiClient`` from :func:`k8s_client`.
+
+    Returns:
+        Dict with keys ``major``, ``minor``, ``gitVersion``, ``gitCommit``,
+        ``platform`` — all strings sourced from ``/version`` on the apiserver.
+
+    Raises:
+        kubernetes_asyncio.client.exceptions.ApiException: On any API failure
+            (not suppressed — this endpoint is cheap and failure usually means
+            the apiserver is unreachable, which callers want to see).
+    """
     vinfo = await client.VersionApi(api).get_code()
     return {
         "major": vinfo.major,

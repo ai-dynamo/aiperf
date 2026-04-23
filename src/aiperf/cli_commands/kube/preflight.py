@@ -73,7 +73,7 @@ async def preflight(
         import orjson
 
         from aiperf.kubernetes.console import console
-        from aiperf.kubernetes.preflight import PreflightChecker
+        from aiperf.kubernetes.preflight import CLIPreflightChecker
 
         manage_options = manage_options or KubeManageOptions()
 
@@ -84,7 +84,7 @@ async def preflight(
             kube_logger.setLevel(logging.WARNING)
 
         try:
-            checker = PreflightChecker(
+            checker = CLIPreflightChecker(
                 namespace=manage_options.namespace or "aiperf-benchmarks",
                 kubeconfig=manage_options.kubeconfig,
                 kube_context=manage_options.kube_context,

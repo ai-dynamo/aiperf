@@ -20,6 +20,7 @@ async def save_pod_logs(
     namespace: str,
     output_dir: Path,
     api: ApiClient,
+    *,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
 ) -> None:

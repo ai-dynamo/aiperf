@@ -33,6 +33,7 @@ class PullClientMixin(CommunicationMixin, ABC):
         self,
         run: BenchmarkRun,
         pull_client_address: CommAddress,
+        *,
         pull_client_bind: bool = False,
         max_pull_concurrency: int | None = None,
         pull_client_additional_bind_address: str | None = None,

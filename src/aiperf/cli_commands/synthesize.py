@@ -18,6 +18,7 @@ def synthesize(
         Literal["agentic-code"],
         Parameter(help="Dataset workload to synthesize"),
     ],
+    *,
     num_sessions: int = 1000,
     output: Path = Path("."),
     config: str | None = None,

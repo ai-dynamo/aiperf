@@ -28,6 +28,7 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         self,
         run: BenchmarkRun,
         hf_dataset_name: str,
+        *,
         hf_split: str = "train",
         hf_subset: str | None = None,
         streaming: bool = False,

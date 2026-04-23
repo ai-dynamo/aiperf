@@ -594,6 +594,7 @@ class FakeCommunication(BaseCommunication):
         self,
         client_type: CommClientType,
         address: CommAddressType,
+        *,
         bind: bool = False,
         socket_ops: dict | None = None,  # noqa: ARG002
         max_pull_concurrency: int | None = None,  # noqa: ARG002

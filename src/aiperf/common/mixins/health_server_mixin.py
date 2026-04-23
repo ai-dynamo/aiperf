@@ -34,6 +34,7 @@ from aiperf.plugin.enums import ServiceType
 # Maps (host, port) -> service_id that owns it. When multiple services run in
 # the same process (component-integration tests, Kubernetes controller pod),
 # only the first service to initialize starts the health server.
+# Genuine process-wide registry — scope matches the (host, port) binding domain.
 _active_health_servers: dict[tuple[str, int], str] = {}
 
 
@@ -182,7 +183,7 @@ class HealthServerMixin(HealthCheckMixin, AIPerfLifecycleMixin):
 
         except TimeoutError:
             self.warning("Health request timed out")
-        except Exception as e:
+        except (OSError, ConnectionError) as e:
             self.error(f"Health server error: {e!r}")
         finally:
             writer.close()

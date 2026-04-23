@@ -50,7 +50,7 @@ def main() -> None:
     except orjson.JSONDecodeError as e:
         print(f"Error: Invalid JSON in config file: {e}", file=sys.stderr)
         sys.exit(1)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - subprocess entry point: final safety net so the parent orchestrator gets a nonzero exit + traceback rather than an opaque crash
         print(f"Error: Failed to run benchmark: {e}", file=sys.stderr)
         import traceback
 

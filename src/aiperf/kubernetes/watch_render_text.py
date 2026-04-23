@@ -43,7 +43,6 @@ class TextRenderer:
             logger.info(f"[{elapsed}] Phase: {phase}")
             self._prev_phase = phase
 
-        # Progress
         p = snapshot.progress
         if p and p.requests_total > 0:
             pct = p.percent

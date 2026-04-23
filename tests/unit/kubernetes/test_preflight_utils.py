@@ -66,7 +66,9 @@ class TestCheckRbacAccess:
         """Verify True is returned when the SelfSubjectAccessReview says allowed."""
         api = MagicMock(spec=ApiClient)
         with _patch_authz(_make_authz(_mock_review(True))):
-            result = await check_rbac_access(api, "create", "pods", "", "test-ns")
+            result = await check_rbac_access(
+                api, verb="create", resource="pods", group="", namespace="test-ns"
+            )
 
         assert result is True
 
@@ -75,7 +77,9 @@ class TestCheckRbacAccess:
         """Verify False is returned when the SelfSubjectAccessReview says not allowed."""
         api = MagicMock(spec=ApiClient)
         with _patch_authz(_make_authz(_mock_review(False))):
-            result = await check_rbac_access(api, "delete", "pods", "", "test-ns")
+            result = await check_rbac_access(
+                api, verb="delete", resource="pods", group="", namespace="test-ns"
+            )
 
         assert result is False
 
@@ -84,7 +88,9 @@ class TestCheckRbacAccess:
         """Verify False is returned when the review has no status field."""
         api = MagicMock(spec=ApiClient)
         with _patch_authz(_make_authz(_mock_review(None))):
-            result = await check_rbac_access(api, "get", "pods", "", "test-ns")
+            result = await check_rbac_access(
+                api, verb="get", resource="pods", group="", namespace="test-ns"
+            )
 
         assert result is False
 
@@ -96,7 +102,9 @@ class TestCheckRbacAccess:
         review.status = MagicMock()
         review.status.allowed = None
         with _patch_authz(_make_authz(review)):
-            result = await check_rbac_access(api, "get", "pods", "", "test-ns")
+            result = await check_rbac_access(
+                api, verb="get", resource="pods", group="", namespace="test-ns"
+            )
 
         assert result is False
 
@@ -108,7 +116,9 @@ class TestCheckRbacAccess:
             _patch_authz(_make_authz(side_effect=RuntimeError("network failure"))),
             pytest.raises(RuntimeError, match="network failure"),
         ):
-            await check_rbac_access(api, "create", "pods", "", "test-ns")
+            await check_rbac_access(
+                api, verb="create", resource="pods", group="", namespace="test-ns"
+            )
 
     @pytest.mark.asyncio
     async def test_includes_group_when_nonempty(self) -> None:
@@ -125,7 +135,11 @@ class TestCheckRbacAccess:
         api = MagicMock(spec=ApiClient)
         with _patch_authz(authz):
             await check_rbac_access(
-                api, "create", "jobsets", "jobset.x-k8s.io", "test-ns"
+                api,
+                verb="create",
+                resource="jobsets",
+                group="jobset.x-k8s.io",
+                namespace="test-ns",
             )
 
         body = captured["body"]
@@ -145,7 +159,9 @@ class TestCheckRbacAccess:
 
         api = MagicMock(spec=ApiClient)
         with _patch_authz(authz):
-            await check_rbac_access(api, "get", "pods", "", "test-ns")
+            await check_rbac_access(
+                api, verb="get", resource="pods", group="", namespace="test-ns"
+            )
 
         body = captured["body"]
         assert body.spec.resource_attributes.group is None
@@ -164,7 +180,13 @@ class TestCheckRbacAccess:
 
         api = MagicMock(spec=ApiClient)
         with _patch_authz(authz):
-            await check_rbac_access(api, "list", "configmaps", "", "my-namespace")
+            await check_rbac_access(
+                api,
+                verb="list",
+                resource="configmaps",
+                group="",
+                namespace="my-namespace",
+            )
 
         body = captured["body"]
         assert body.spec.resource_attributes.namespace == "my-namespace"
@@ -183,7 +205,9 @@ class TestCheckRbacAccess:
 
         api = MagicMock(spec=ApiClient)
         with _patch_authz(authz):
-            await check_rbac_access(api, "delete", "secrets", "", "ns")
+            await check_rbac_access(
+                api, verb="delete", resource="secrets", group="", namespace="ns"
+            )
 
         body = captured["body"]
         assert body.spec.resource_attributes.verb == "delete"

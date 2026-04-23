@@ -11,6 +11,9 @@ Examples:
     AIPERF_K8S_DATASET_MANAGER_MEMORY=512Mi
     AIPERF_K8S_WORKER_POD_MEMORY=4Gi
     AIPERF_K8S_HEALTH_INITIAL_DELAY_SECONDS=10
+
+See also: ``aiperf.operator.environment.OperatorEnvironment`` (operator-process
+tunables) and ``aiperf.common.environment.Environment`` (shared AIPerf runtime).
 """
 
 from pydantic import Field
@@ -46,11 +49,6 @@ CONTROLLER_RESOURCE_KEYS = (
     "RESULTS_SIDECAR",
 )
 """All controller-pod container resource settings, including the results sidecar."""
-
-
-# ---------------------------------------------------------------------------
-# Resource settings: one base class, instances created via _resource_settings()
-# ---------------------------------------------------------------------------
 
 
 class ResourceSettings(BaseSettings):
@@ -108,11 +106,6 @@ def _resource_settings(
         },
     )
     return cls()
-
-
-# ---------------------------------------------------------------------------
-# Non-resource settings
-# ---------------------------------------------------------------------------
 
 
 class _HealthProbeSettings(BaseSettings):
@@ -276,11 +269,6 @@ class _JobSetSettings(BaseSettings):
     )
 
 
-# ---------------------------------------------------------------------------
-# Root configuration
-# ---------------------------------------------------------------------------
-
-
 class _K8sEnvironment(BaseSettings):
     """Root Kubernetes environment configuration.
 
@@ -296,7 +284,6 @@ class _K8sEnvironment(BaseSettings):
         extra="allow",
     )
 
-    # ---------------------------------------------------------------------------
     # Pod-level resource settings (user-facing).
     #
     # These are the container-level requests/limits applied to K8s manifests.
@@ -314,11 +301,6 @@ class _K8sEnvironment(BaseSettings):
     #   Measured per-RP: 389m CPU / 200+ MiB (tokenizer-dependent).
     #   Default 3.3 cores / 6 GiB covers typical 10-worker pods with record-processing
     #   overhead. Increase via AIPERF_K8S_WORKER_POD_{CPU,MEMORY} for heavier workloads.
-    # ---------------------------------------------------------------------------
-    # Pod-level resource settings (user-facing).
-    # Guaranteed QoS: requests == limits (no throttling, dedicated resources).
-    # Calibrated via scripts/measure_cpu_usage.py and scripts/calibrate_memory_estimates.py.
-    # ---------------------------------------------------------------------------
     # fmt: off
     SYSTEM_CONTROLLER: ResourceSettings = Field(default_factory=lambda: _resource_settings("SYSTEM_CONTROLLER_", "500m", "1Gi"), description="SystemController container resources")
     WORKER_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("WORKER_MANAGER_", "500m", "1Gi"), description="WorkerManager container resources")

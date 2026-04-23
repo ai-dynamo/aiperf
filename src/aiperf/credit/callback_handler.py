@@ -112,6 +112,7 @@ class CreditCallbackHandler:
 
     def register_phase(
         self,
+        *,
         phase: CreditPhase,
         progress: PhaseProgressTracker,
         lifecycle: PhaseLifecycle,
@@ -206,11 +207,11 @@ class CreditCallbackHandler:
         # 3. Release concurrency slots
         self._release_slots_for_return(
             phase,
-            credit,
-            credit_return,
-            is_final_returned,
-            disposition.session_ended,
-            handler,
+            credit=credit,
+            credit_return=credit_return,
+            is_final_returned=is_final_returned,
+            session_ended=disposition.session_ended,
+            handler=handler,
         )
 
         # 4. Signal completion if this was the final return
@@ -271,6 +272,7 @@ class CreditCallbackHandler:
     def _release_slots_for_return(
         self,
         phase: CreditPhase,
+        *,
         credit: Credit,
         credit_return: CreditReturn,
         is_final_returned: bool,

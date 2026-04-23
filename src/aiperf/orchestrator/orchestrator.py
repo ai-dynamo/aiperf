@@ -321,6 +321,6 @@ class MultiRunOrchestrator:
 
             return metrics
 
-        except Exception:
-            logger.exception(f"Error extracting metrics from {json_file}")
+        except (OSError, ValueError, orjson.JSONDecodeError) as e:
+            logger.warning(f"Error extracting metrics from {json_file}: {e}")
             return {}

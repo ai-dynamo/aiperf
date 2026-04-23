@@ -12,7 +12,7 @@ import soundfile as sf
 
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import AudioFormat
-from aiperf.common.exceptions import ConfigurationError
+from aiperf.common.exceptions import AIPerfConfigurationError
 from aiperf.dataset.generator.base import BaseGenerator, generate_noise_signal
 
 if TYPE_CHECKING:
@@ -74,14 +74,14 @@ class AudioGenerator(BaseGenerator):
             audio_format: Audio format
 
         Raises:
-            ConfigurationError: If sampling rate is not supported for the given format
+            AIPerfConfigurationError: If sampling rate is not supported for the given format
         """
         if (
             audio_format == AudioFormat.MP3
             and sampling_rate_hz not in MP3_SUPPORTED_SAMPLE_RATES
         ):
             supported_rates = sorted(MP3_SUPPORTED_SAMPLE_RATES)
-            raise ConfigurationError(
+            raise AIPerfConfigurationError(
                 f"MP3 format only supports the following sample rates (in Hz): {supported_rates}. "
                 f"Got {sampling_rate_hz} Hz. Please choose a supported rate from the list."
             )
@@ -94,11 +94,11 @@ class AudioGenerator(BaseGenerator):
             bit_depth: Bit depth in bits
 
         Raises:
-            ConfigurationError: If bit depth is not supported
+            AIPerfConfigurationError: If bit depth is not supported
         """
         if bit_depth not in SUPPORTED_BIT_DEPTHS:
             supported_depths = sorted(SUPPORTED_BIT_DEPTHS.keys())
-            raise ConfigurationError(
+            raise AIPerfConfigurationError(
                 f"Unsupported bit depth: {bit_depth}. "
                 f"Supported bit depths are: {supported_depths}"
             )
@@ -110,7 +110,7 @@ class AudioGenerator(BaseGenerator):
             Data URI containing base64-encoded audio data with format specification
 
         Raises:
-            ConfigurationError: If any of the following conditions are met:
+            AIPerfConfigurationError: If any of the following conditions are met:
                 - audio length is less than 0.01 seconds
                 - channels is not 1 (mono) or 2 (stereo)
                 - sampling rate is not supported for MP3 format
@@ -122,13 +122,15 @@ class AudioGenerator(BaseGenerator):
 
         num_channels = self.audio_config.channels
         if num_channels not in (1, 2):
-            raise ConfigurationError(
+            raise AIPerfConfigurationError(
                 "Only mono (1) and stereo (2) channels are supported"
             )
 
         length_config = self.audio_config.length
         if length_config.mean < 0.01:
-            raise ConfigurationError("Audio length must be greater than 0.01 seconds")
+            raise AIPerfConfigurationError(
+                "Audio length must be greater than 0.01 seconds"
+            )
 
         audio_length = max(0.01, length_config.sample(self._duration_rng))
 
@@ -163,7 +165,7 @@ class AudioGenerator(BaseGenerator):
         elif audio_format == AudioFormat.WAV:
             _, subtype = SUPPORTED_BIT_DEPTHS[bit_depth]
         else:
-            raise ConfigurationError(
+            raise AIPerfConfigurationError(
                 f"Unsupported audio format: {audio_format}. "
                 f"Supported formats are: {AudioFormat.WAV.name}, {AudioFormat.MP3.name}"
             )

@@ -524,6 +524,7 @@ def accumulate_bucket_statistics(
     counts: np.ndarray,
     bucket_les: tuple[str, ...],
     bucket_counts: np.ndarray,
+    *,
     start_idx: int = 0,
 ) -> dict[str, BucketStatistics]:
     """Learn per-bucket mean positions from single-bucket scrape intervals.
@@ -830,6 +831,7 @@ def _estimate_inf_bucket_observations(
 
 def _generate_f3_observations(
     count: int,
+    *,
     lower: float,
     upper: float,
     mean: float,
@@ -903,6 +905,7 @@ def _generate_f3_observations(
 
 def _generate_variance_aware_observations(
     count: int,
+    *,
     lower: float,
     upper: float,
     mean: float,
@@ -972,6 +975,7 @@ def _generate_variance_aware_observations(
 
 def _generate_blended_observations(
     count: int,
+    *,
     lower: float,
     upper: float,
     mean: float,
@@ -1025,7 +1029,9 @@ def _generate_blended_observations(
     uniform_obs = np.clip(lower + bucket_width * fractions + shift, lower, upper)
 
     # Generate variance-aware
-    variance_obs = _generate_variance_aware_observations(count, lower, upper, mean, std)
+    variance_obs = _generate_variance_aware_observations(
+        count, lower=lower, upper=upper, mean=mean, std=std
+    )
 
     # Blend
     blended = (1 - blend_factor) * uniform_obs + blend_factor * variance_obs
@@ -1178,10 +1184,10 @@ def _generate_observations_with_sum_constraint(
                 # Path 1: F3 two-point mass for extremely tight variance (< 1%)
                 bucket_obs = _generate_f3_observations(
                     bucket_count,
-                    lower_bound,
-                    upper_bound,
-                    learned_mean,
-                    learned_variance,
+                    lower=lower_bound,
+                    upper=upper_bound,
+                    mean=learned_mean,
+                    variance=learned_variance,
                 )
                 observations[write_idx : write_idx + bucket_count] = bucket_obs
                 generated = True
@@ -1189,7 +1195,12 @@ def _generate_observations_with_sum_constraint(
             elif spread_coverage < 0.2 and mean_offset < 0.3:
                 # Path 2: Blended for tight variance (< 20%) near center
                 bucket_obs = _generate_blended_observations(
-                    bucket_count, lower_bound, upper_bound, learned_mean, std, 0.5
+                    bucket_count,
+                    lower=lower_bound,
+                    upper=upper_bound,
+                    mean=learned_mean,
+                    std=std,
+                    blend_factor=0.5,
                 )
                 observations[write_idx : write_idx + bucket_count] = bucket_obs
                 generated = True
@@ -1197,7 +1208,11 @@ def _generate_observations_with_sum_constraint(
             else:
                 # Path 3: Variance-aware for moderate variance
                 bucket_obs = _generate_variance_aware_observations(
-                    bucket_count, lower_bound, upper_bound, learned_mean, std
+                    bucket_count,
+                    lower=lower_bound,
+                    upper=upper_bound,
+                    mean=learned_mean,
+                    std=std,
                 )
                 observations[write_idx : write_idx + bucket_count] = bucket_obs
                 generated = True

@@ -4,7 +4,34 @@
 
 from __future__ import annotations
 
+from typing import Any, TypedDict
+
 from aiperf.common.enums import MessageType
+
+
+class WSProgressMessage(TypedDict, total=False):
+    """Shape of a progress-streaming WebSocket payload.
+
+    All fields are optional (``total=False``) because the server emits
+    different subsets per ``message_type``. The values below are every key
+    this module inspects via ``data.get(...)`` or ``data[...]``; other keys
+    may be present and are ignored.
+    """
+
+    # One of ``MessageType.*`` values (serialized as the enum's str value) or
+    # the sentinel string ``"subscribed"`` sent on WS handshake.
+    message_type: str
+    # Populated on ``CREDIT_PHASE_START`` / ``_PROGRESS`` / ``_COMPLETE``.
+    # Keys observed here: ``phase``, ``requests_completed``,
+    # ``total_expected_requests``.
+    stats: dict[str, Any]
+    # Populated on ``WORKER_STATUS_SUMMARY``. Maps worker id -> worker dict
+    # containing at least ``status``.
+    workers: dict[str, Any]
+    # Populated on ``REALTIME_METRICS``. List of metric dicts with keys
+    # ``tag``, ``value``/``avg``/``current``, ``display_unit``/``unit``.
+    metrics: list[dict[str, Any]]
+
 
 # WebSocket subscription message types for progress streaming
 WS_MESSAGE_TYPES = [
@@ -35,7 +62,7 @@ async def stream_progress(ws_url: str) -> None:
     print_step("Streaming progress...")
     logger.info("")
 
-    async def handle_message(data: dict) -> bool:
+    async def handle_message(data: WSProgressMessage) -> bool:
         print_progress_message(data)
         return data.get("message_type") == MessageType.ALL_RECORDS_RECEIVED
 
@@ -47,7 +74,42 @@ async def stream_progress(ws_url: str) -> None:
     )
 
 
-def print_progress_message(data: dict) -> None:
+def _handle_credit_phase_start(logger: Any, data: WSProgressMessage) -> None:
+    stats = data.get("stats", {})
+    phase = stats.get("phase", "unknown")
+    logger.info(f"[bold cyan]\\[PHASE][/bold cyan] Starting {phase} phase")
+
+
+def _handle_credit_phase_progress(logger: Any, data: WSProgressMessage) -> None:
+    stats = data.get("stats", {})
+    phase = stats.get("phase", "")
+    completed = stats.get("requests_completed", 0)
+    total = stats.get("total_expected_requests", 0)
+    percent = (completed / total * 100) if total > 0 else 0
+    logger.info(
+        f"[bold cyan]\\[PROGRESS][/bold cyan] {phase} "
+        f"{completed}/{total} requests ({percent:.1f}%)"
+    )
+
+
+def _handle_credit_phase_complete(logger: Any, data: WSProgressMessage) -> None:
+    stats = data.get("stats", {})
+    phase = stats.get("phase", "unknown")
+    logger.info(f"[bold cyan]\\[PHASE][/bold cyan] Completed {phase} phase")
+
+
+def _handle_worker_status_summary(logger: Any, data: WSProgressMessage) -> None:
+    workers = data.get("workers", {})
+    total = len(workers)
+    healthy = sum(
+        1
+        for w in workers.values()
+        if isinstance(w, dict) and w.get("status", "").upper() == "HEALTHY"
+    )
+    logger.info(f"[bold cyan]\\[WORKERS][/bold cyan] {healthy}/{total} healthy")
+
+
+def print_progress_message(data: WSProgressMessage) -> None:
     """Log a progress message."""
     from aiperf.kubernetes.console import logger
 
@@ -55,48 +117,23 @@ def print_progress_message(data: dict) -> None:
 
     if msg_type == "subscribed":
         return
-
     if msg_type == MessageType.CREDIT_PHASE_START:
-        stats = data.get("stats", {})
-        phase = stats.get("phase", "unknown")
-        logger.info(f"[bold cyan]\\[PHASE][/bold cyan] Starting {phase} phase")
-
+        _handle_credit_phase_start(logger, data)
     elif msg_type == MessageType.CREDIT_PHASE_PROGRESS:
-        stats = data.get("stats", {})
-        phase = stats.get("phase", "")
-        completed = stats.get("requests_completed", 0)
-        total = stats.get("total_expected_requests", 0)
-        percent = (completed / total * 100) if total > 0 else 0
-        logger.info(
-            f"[bold cyan]\\[PROGRESS][/bold cyan] {phase} "
-            f"{completed}/{total} requests ({percent:.1f}%)"
-        )
-
+        _handle_credit_phase_progress(logger, data)
     elif msg_type == MessageType.CREDIT_PHASE_COMPLETE:
-        stats = data.get("stats", {})
-        phase = stats.get("phase", "unknown")
-        logger.info(f"[bold cyan]\\[PHASE][/bold cyan] Completed {phase} phase")
-
+        _handle_credit_phase_complete(logger, data)
     elif msg_type == MessageType.REALTIME_METRICS:
         print_realtime_metrics(data)
-
     elif msg_type == MessageType.WORKER_STATUS_SUMMARY:
-        workers = data.get("workers", {})
-        total = len(workers)
-        healthy = sum(
-            1
-            for w in workers.values()
-            if isinstance(w, dict) and w.get("status", "").upper() == "HEALTHY"
-        )
-        logger.info(f"[bold cyan]\\[WORKERS][/bold cyan] {healthy}/{total} healthy")
-
+        _handle_worker_status_summary(logger, data)
     elif msg_type == MessageType.ALL_RECORDS_RECEIVED:
         logger.info(
             "[bold green]\\[COMPLETE][/bold green] All records received, benchmark finishing..."
         )
 
 
-def print_realtime_metrics(data: dict) -> None:
+def print_realtime_metrics(data: WSProgressMessage) -> None:
     """Log key metrics from realtime metrics message."""
     from aiperf.kubernetes.console import logger
 

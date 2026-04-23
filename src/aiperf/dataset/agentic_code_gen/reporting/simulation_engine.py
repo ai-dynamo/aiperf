@@ -160,6 +160,7 @@ def _compute_dedup_tokens(
     active_groups: dict[int, int],
     l1_tokens: int,
     l1_5_tokens: int,
+    *,
     cached_sessions: int | None = None,
     cached_groups: dict[int, int] | None = None,
 ) -> int:
@@ -174,6 +175,62 @@ def _compute_dedup_tokens(
     l1_dedup = max(0, session_count - 1) * l1_tokens
     l15_dedup = sum(max(0, cnt - 1) * l1_5_tokens for cnt in group_counts.values())
     return max(0, cached_tokens - l1_dedup - l15_dedup)
+
+
+def _register_turn_blocks(
+    *,
+    hids: list[int],
+    session_blocks: set[int],
+    evicted_blocks: set[int],
+    block_refcount: dict[int, int],
+    l1_block_count: int,
+    session_region_base: int,
+) -> tuple[int, int]:
+    """Add a turn's block hashes to the session set, counting evicted-block misses by layer."""
+    miss_l15_delta = 0
+    miss_session_delta = 0
+    for bid in hids:
+        if bid in session_blocks:
+            continue
+        if bid in evicted_blocks:
+            layer = _classify_block(bid, l1_block_count, session_region_base)
+            if layer == "l15":
+                miss_l15_delta += 1
+            elif layer != "l1":
+                miss_session_delta += 1
+            evicted_blocks.discard(bid)
+        session_blocks.add(bid)
+        block_refcount[bid] += 1
+    return miss_l15_delta, miss_session_delta
+
+
+def _rehydrate_evicted_session(
+    *,
+    sessions: list[dict],
+    s_idx: int,
+    t_idx: int,
+    session_blocks: set[int],
+    evicted_blocks: set[int],
+    block_refcount: dict[int, int],
+    l1_block_count: int,
+    session_region_base: int,
+) -> tuple[int, int]:
+    """Replay all prior turns' block hashes for an evicted session, tallying layered misses."""
+    miss_l15_delta = 0
+    miss_session_delta = 0
+    for t in range(t_idx):
+        prev_hids = sessions[s_idx]["turns"][t].get("hash_ids", [])
+        delta_l15, delta_session = _register_turn_blocks(
+            hids=prev_hids,
+            session_blocks=session_blocks,
+            evicted_blocks=evicted_blocks,
+            block_refcount=block_refcount,
+            l1_block_count=l1_block_count,
+            session_region_base=session_region_base,
+        )
+        miss_l15_delta += delta_l15
+        miss_session_delta += delta_session
+    return miss_l15_delta, miss_session_delta
 
 
 def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult:
@@ -403,22 +460,18 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
             if session_evicted[s_idx]:
                 session_evicted[s_idx] = False
                 session_cache_tokens[s_idx] = 0
-                s_blocks = session_blocks[s_idx]
-                for t in range(t_idx):
-                    prev_hids = sessions[s_idx]["turns"][t].get("hash_ids", [])
-                    for bid in prev_hids:
-                        if bid not in s_blocks:
-                            if bid in evicted_blocks:
-                                layer = _classify_block(
-                                    bid, l1_block_count, session_region_base
-                                )
-                                if layer == "l15":
-                                    miss_l15_blocks += 1
-                                elif layer != "l1":
-                                    miss_session_blocks += 1
-                                evicted_blocks.discard(bid)
-                            s_blocks.add(bid)
-                            block_refcount[bid] += 1
+                miss_l15_add, miss_session_add = _rehydrate_evicted_session(
+                    sessions=sessions,
+                    s_idx=s_idx,
+                    t_idx=t_idx,
+                    session_blocks=session_blocks[s_idx],
+                    evicted_blocks=evicted_blocks,
+                    block_refcount=block_refcount,
+                    l1_block_count=l1_block_count,
+                    session_region_base=session_region_base,
+                )
+                miss_l15_blocks += miss_l15_add
+                miss_session_blocks += miss_session_add
 
             # Cache: allocate tokens for this turn
             prev_cache = session_cache_tokens[s_idx]
@@ -430,21 +483,16 @@ def simulate(sessions: list[dict], config: SimulationConfig) -> SimulationResult
                 active_groups[gid] = active_groups.get(gid, 0) + 1
 
             # Unique blocks: add hash_ids and detect misses
-            hids = turn.get("hash_ids", [])
-            s_blocks = session_blocks[s_idx]
-            for bid in hids:
-                if bid not in s_blocks:
-                    if bid in evicted_blocks:
-                        layer = _classify_block(
-                            bid, l1_block_count, session_region_base
-                        )
-                        if layer == "l15":
-                            miss_l15_blocks += 1
-                        elif layer != "l1":
-                            miss_session_blocks += 1
-                        evicted_blocks.discard(bid)
-                    s_blocks.add(bid)
-                    block_refcount[bid] += 1
+            miss_l15_add, miss_session_add = _register_turn_blocks(
+                hids=turn.get("hash_ids", []),
+                session_blocks=session_blocks[s_idx],
+                evicted_blocks=evicted_blocks,
+                block_refcount=block_refcount,
+                l1_block_count=l1_block_count,
+                session_region_base=session_region_base,
+            )
+            miss_l15_blocks += miss_l15_add
+            miss_session_blocks += miss_session_add
 
             evict_lru()
 

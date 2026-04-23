@@ -38,6 +38,7 @@ class HFInstructionResponseDatasetLoader(BaseHFDatasetLoader):
         self,
         run: BenchmarkRun,
         prompt_column: str,
+        *,
         image_column: str | None = None,
         video_column: str | None = None,
         prompt_template: str | None = None,

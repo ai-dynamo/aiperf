@@ -9,6 +9,10 @@ Examples:
     AIPERF_OPERATOR_MONITOR_INTERVAL=10.0
     AIPERF_RESULTS_DIR=/data
     AIPERF_DEFAULT_IMAGE=nvcr.io/nvidia/aiperf:latest
+
+See also: ``aiperf.kubernetes.environment.K8sEnvironment`` (cluster defaults
+baked into pod manifests) and ``aiperf.common.environment.Environment``
+(shared AIPerf runtime).
 """
 
 from pathlib import Path

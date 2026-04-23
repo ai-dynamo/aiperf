@@ -95,7 +95,8 @@ class BufferedCSVWriterMixin(AIPerfLifecycleMixin):
             if buffer_to_flush:
                 self.execute_async(self._csv_flush_buffer(buffer_to_flush))
 
-        except Exception as e:
+        except (OSError, TypeError, ValueError) as e:
+            # OSError from underlying file I/O; Type/Value from encoding a malformed row.
             self.error(f"Failed to write CSV row: {e!r}")
 
     async def _csv_flush_buffer(self, buffer_to_flush: list[bytes]) -> None:
@@ -122,7 +123,7 @@ class BufferedCSVWriterMixin(AIPerfLifecycleMixin):
                 bulk_data = b"\n".join(parts) + b"\n"
                 await self._csv_file_handle.write(bulk_data)
                 await self._csv_file_handle.flush()
-            except Exception as e:
+            except OSError as e:
                 self.exception(f"Failed to flush CSV buffer: {e!r}")
 
     @on_stop
@@ -156,7 +157,7 @@ class BufferedCSVWriterMixin(AIPerfLifecycleMixin):
             if buffer_to_flush:
                 try:
                     await self._csv_flush_buffer(buffer_to_flush)
-                except Exception as e:
+                except OSError as e:
                     self.error(
                         f"Failed to flush remaining CSV buffer during shutdown: {e}"
                     )
@@ -166,7 +167,7 @@ class BufferedCSVWriterMixin(AIPerfLifecycleMixin):
                 try:
                     await self._csv_file_handle.close()
                     self.debug(lambda: f"CSV file handle closed: {self.output_file}")
-                except Exception as e:
+                except OSError as e:
                     self.exception(
                         f"Failed to close CSV file handle during shutdown: {e}"
                     )

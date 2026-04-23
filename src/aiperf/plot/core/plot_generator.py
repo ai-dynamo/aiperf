@@ -198,6 +198,7 @@ class PlotGenerator:
         title: str,
         x_label: str,
         y_label: str,
+        *,
         hovermode: str | None = None,
         autoscale: str = "none",
     ) -> dict:
@@ -423,7 +424,7 @@ class PlotGenerator:
                 if metric_class.has_flags(MetricFlags.LARGER_IS_BETTER):
                     return PlotMetricDirection.HIGHER
                 return PlotMetricDirection.LOWER
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - registry lookup can surface plugin loader errors beyond MetricTypeError; fall through to derived-registry lookup on any failure
                 pass
 
             if tag in DERIVED_METRIC_DIRECTIONS:
@@ -531,6 +532,7 @@ class PlotGenerator:
         df: pd.DataFrame,
         x_metric: str,
         y_metric: str,
+        *,
         label_by: str = "concurrency",
         group_by: str | None = "model",
         title: str | None = None,
@@ -712,6 +714,7 @@ class PlotGenerator:
         df: pd.DataFrame,
         x_metric: str,
         y_metric: str,
+        *,
         label_by: str = "concurrency",
         group_by: str | None = "model",
         title: str | None = None,
@@ -825,6 +828,7 @@ class PlotGenerator:
         df: pd.DataFrame,
         x_metric: str,
         y_metric: str,
+        *,
         group_by: str | None = None,
         title: str | None = None,
         x_label: str | None = None,
@@ -895,8 +899,7 @@ class PlotGenerator:
 
         # Apply NVIDIA branding layout
         layout = self._get_base_layout(title, x_label, y_label)
-        layout["bargap"] = 0.15
-        layout["bargroupgap"] = 0.1
+        layout["bargap"], layout["bargroupgap"] = 0.15, 0.1
         fig.update_layout(layout)
 
         return fig
@@ -906,6 +909,7 @@ class PlotGenerator:
         df: pd.DataFrame,
         x_col: str,
         y_metric: str,
+        *,
         title: str | None = None,
         x_label: str | None = None,
         y_label: str | None = None,
@@ -959,6 +963,7 @@ class PlotGenerator:
         df: pd.DataFrame,
         x_col: str,
         y_metric: str,
+        *,
         title: str | None = None,
         x_label: str | None = None,
         y_label: str | None = None,
@@ -1018,6 +1023,7 @@ class PlotGenerator:
         df: pd.DataFrame,
         x_col: str,
         y_col: str,
+        *,
         title: str | None = None,
         x_label: str | None = None,
         y_label: str | None = None,
@@ -1223,6 +1229,7 @@ class PlotGenerator:
         x_col: str,
         y_col: str,
         metric_name: str,
+        *,
         title: str | None = None,
         x_label: str | None = None,
         y_label: str | None = None,
@@ -1546,6 +1553,7 @@ class PlotGenerator:
         x_col_secondary: str,
         y1_metric: str,
         y2_metric: str,
+        *,
         primary_style: Style | None = None,
         secondary_style: Style | None = None,
         active_count_col: str | None = None,
@@ -1714,6 +1722,7 @@ class PlotGenerator:
         x_col: str,
         y_metric: str,
         percentile_cols: list[str],
+        *,
         title: str | None = None,
         x_label: str | None = None,
         y_label: str | None = None,
@@ -1801,6 +1810,7 @@ class PlotGenerator:
         self,
         df: pd.DataFrame,
         y_metric: str,
+        *,
         title: str | None = None,
         x_label: str | None = None,
         y_label: str | None = None,
@@ -1904,6 +1914,7 @@ class PlotGenerator:
         self,
         df: pd.DataFrame,
         x_col: str,
+        *,
         percentile_cols: list[str],
         lower_col: str | None,
         metric_name: str,
@@ -2028,6 +2039,7 @@ class PlotGenerator:
         self,
         buckets: dict[str, int],
         metric_name: str,
+        *,
         title: str,
         x_label: str,
         y_label: str,

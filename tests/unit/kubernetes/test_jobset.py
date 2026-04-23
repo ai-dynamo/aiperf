@@ -23,9 +23,9 @@ from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import (
     JOBSET_FALLBACK_VERSION,
     JOBSET_GITHUB_REPO,
-    ContainerSpec,
-    JobSetSpec,
-    ReplicatedJobSpec,
+    AIPerfContainerSpec,
+    AIPerfJobSetSpec,
+    AIPerfReplicatedJobSpec,
     get_jobset_install_hint,
     get_jobset_manifest_url,
     get_latest_jobset_version,
@@ -48,11 +48,11 @@ class TestJobSetAPIConstants:
 
 
 class TestContainerSpec:
-    """Tests for ContainerSpec model."""
+    """Tests for AIPerfContainerSpec model."""
 
     def test_minimal_container(self) -> None:
         """Test creating a minimal container spec."""
-        container = ContainerSpec(name="test", image="nginx:latest")
+        container = AIPerfContainerSpec(name="test", image="nginx:latest")
         assert container.name == "test"
         assert container.image == "nginx:latest"
         assert container.command == []
@@ -60,7 +60,7 @@ class TestContainerSpec:
 
     def test_container_to_k8s_spec(self) -> None:
         """Test converting container spec to Kubernetes format."""
-        container = ContainerSpec(
+        container = AIPerfContainerSpec(
             name="worker",
             image="aiperf:latest",
             command=["aiperf"],
@@ -80,7 +80,7 @@ class TestContainerSpec:
 
     def test_container_to_k8s_spec_with_probes(self) -> None:
         """Test container spec with health probes."""
-        container = ContainerSpec(
+        container = AIPerfContainerSpec(
             name="test",
             image="nginx:latest",
             liveness_probe={"httpGet": {"path": "/healthz", "port": 8080}},
@@ -94,7 +94,7 @@ class TestContainerSpec:
 
     def test_container_to_k8s_spec_excludes_empty(self) -> None:
         """Test that empty fields are excluded from Kubernetes spec."""
-        container = ContainerSpec(name="test", image="nginx:latest")
+        container = AIPerfContainerSpec(name="test", image="nginx:latest")
         spec = container.to_k8s_spec()
         assert "command" not in spec
         assert "args" not in spec
@@ -103,11 +103,11 @@ class TestContainerSpec:
 
 
 class TestReplicatedJobSpec:
-    """Tests for ReplicatedJobSpec model."""
+    """Tests for AIPerfReplicatedJobSpec model."""
 
     def test_default_values(self) -> None:
-        """Test ReplicatedJobSpec has expected defaults."""
-        job = ReplicatedJobSpec(name="test")
+        """Test AIPerfReplicatedJobSpec has expected defaults."""
+        job = AIPerfReplicatedJobSpec(name="test")
         assert job.name == "test"
         assert job.replicas == 1
         assert job.restart_policy == "OnFailure"
@@ -115,8 +115,8 @@ class TestReplicatedJobSpec:
 
     def test_to_k8s_spec_basic(self) -> None:
         """Test converting replicated job to Kubernetes format."""
-        container = ContainerSpec(name="worker", image="nginx:latest")
-        job = ReplicatedJobSpec(
+        container = AIPerfContainerSpec(name="worker", image="nginx:latest")
+        job = AIPerfReplicatedJobSpec(
             name="workers",
             replicas=3,
             containers=[container],
@@ -134,7 +134,7 @@ class TestReplicatedJobSpec:
 
     def test_to_k8s_spec_with_customization(self) -> None:
         """Test replicated job with pod customization."""
-        container = ContainerSpec(name="worker", image="nginx:latest")
+        container = AIPerfContainerSpec(name="worker", image="nginx:latest")
         custom = PodTemplateConfig(
             node_selector={"gpu": "true"},
             tolerations=[{"key": "gpu", "operator": "Exists"}],
@@ -143,7 +143,7 @@ class TestReplicatedJobSpec:
             image_pull_secrets=["my-registry"],
             service_account_name="my-sa",
         )
-        job = ReplicatedJobSpec(
+        job = AIPerfReplicatedJobSpec(
             name="workers",
             replicas=2,
             containers=[container],
@@ -164,16 +164,16 @@ class TestReplicatedJobSpec:
 
     def test_to_k8s_spec_has_base_labels(self) -> None:
         """Test that pods always have base AIPerf labels."""
-        container = ContainerSpec(name="worker", image="nginx:latest")
-        job = ReplicatedJobSpec(name="workers", containers=[container])
+        container = AIPerfContainerSpec(name="worker", image="nginx:latest")
+        job = AIPerfReplicatedJobSpec(name="workers", containers=[container])
         spec = job.to_k8s_spec()
         pod_meta = spec["template"]["spec"]["template"]["metadata"]
         assert pod_meta["labels"]["app"] == "aiperf"
 
     def test_to_k8s_spec_with_job_id_label(self) -> None:
         """Test that job_id is added to pod labels when set."""
-        container = ContainerSpec(name="worker", image="nginx:latest")
-        job = ReplicatedJobSpec(
+        container = AIPerfContainerSpec(name="worker", image="nginx:latest")
+        job = AIPerfReplicatedJobSpec(
             name="workers", containers=[container], job_id="my-benchmark"
         )
         spec = job.to_k8s_spec()
@@ -183,9 +183,9 @@ class TestReplicatedJobSpec:
 
     def test_to_k8s_spec_custom_labels_override(self) -> None:
         """Test that custom labels can override base labels."""
-        container = ContainerSpec(name="worker", image="nginx:latest")
+        container = AIPerfContainerSpec(name="worker", image="nginx:latest")
         custom = PodTemplateConfig(labels={"app": "custom-app", "team": "platform"})
-        job = ReplicatedJobSpec(
+        job = AIPerfReplicatedJobSpec(
             name="workers",
             containers=[container],
             pod_template=custom,
@@ -200,12 +200,12 @@ class TestReplicatedJobSpec:
 
 
 class TestJobSetSpec:
-    """Tests for JobSetSpec model."""
+    """Tests for AIPerfJobSetSpec model."""
 
     @pytest.fixture
-    def basic_jobset_spec(self) -> JobSetSpec:
-        """Create a basic JobSetSpec for testing."""
-        return JobSetSpec(
+    def basic_jobset_spec(self) -> AIPerfJobSetSpec:
+        """Create a basic AIPerfJobSetSpec for testing."""
+        return AIPerfJobSetSpec(
             name="aiperf-test",
             namespace="default",
             job_id="test-123",
@@ -215,15 +215,17 @@ class TestJobSetSpec:
             record_processors_per_pod=1,
         )
 
-    def test_create_basic_jobset(self, basic_jobset_spec: JobSetSpec) -> None:
-        """Test creating a basic JobSetSpec."""
+    def test_create_basic_jobset(self, basic_jobset_spec: AIPerfJobSetSpec) -> None:
+        """Test creating a basic AIPerfJobSetSpec."""
         assert basic_jobset_spec.name == "aiperf-test"
         assert basic_jobset_spec.namespace == "default"
         assert basic_jobset_spec.job_id == "test-123"
         assert basic_jobset_spec.image == "aiperf:latest"
         assert basic_jobset_spec.worker_replicas == 2
 
-    def test_to_k8s_manifest_structure(self, basic_jobset_spec: JobSetSpec) -> None:
+    def test_to_k8s_manifest_structure(
+        self, basic_jobset_spec: AIPerfJobSetSpec
+    ) -> None:
         """Test JobSet manifest has correct structure."""
         manifest = basic_jobset_spec.to_k8s_manifest()
         assert manifest["apiVersion"] == "jobset.x-k8s.io/v1alpha2"
@@ -234,7 +236,7 @@ class TestJobSetSpec:
         assert manifest["metadata"]["labels"]["aiperf.nvidia.com/job-id"] == "test-123"
 
     def test_to_k8s_manifest_has_controller_and_workers(
-        self, basic_jobset_spec: JobSetSpec
+        self, basic_jobset_spec: AIPerfJobSetSpec
     ) -> None:
         """Test JobSet manifest contains controller and worker jobs."""
         manifest = basic_jobset_spec.to_k8s_manifest()
@@ -245,7 +247,7 @@ class TestJobSetSpec:
         assert "workers" in job_names
 
     def test_to_k8s_manifest_controller_replicas(
-        self, basic_jobset_spec: JobSetSpec
+        self, basic_jobset_spec: AIPerfJobSetSpec
     ) -> None:
         """Test controller has exactly 1 replica."""
         manifest = basic_jobset_spec.to_k8s_manifest()
@@ -255,7 +257,7 @@ class TestJobSetSpec:
         assert controller_job["replicas"] == 1
 
     def test_to_k8s_manifest_worker_replicas(
-        self, basic_jobset_spec: JobSetSpec
+        self, basic_jobset_spec: AIPerfJobSetSpec
     ) -> None:
         """Test workers have correct replica count."""
         manifest = basic_jobset_spec.to_k8s_manifest()
@@ -265,7 +267,7 @@ class TestJobSetSpec:
         assert worker_job["replicas"] == 2
 
     def test_to_k8s_manifest_success_policy(
-        self, basic_jobset_spec: JobSetSpec
+        self, basic_jobset_spec: AIPerfJobSetSpec
     ) -> None:
         """Test JobSet has correct success policy."""
         manifest = basic_jobset_spec.to_k8s_manifest()
@@ -275,7 +277,7 @@ class TestJobSetSpec:
         ]
 
     def test_to_k8s_manifest_no_failure_policy(
-        self, basic_jobset_spec: JobSetSpec
+        self, basic_jobset_spec: AIPerfJobSetSpec
     ) -> None:
         """Test JobSet has no explicit failurePolicy (default fast-fail behavior).
 
@@ -287,14 +289,14 @@ class TestJobSetSpec:
         manifest = basic_jobset_spec.to_k8s_manifest()
         assert "failurePolicy" not in manifest["spec"]
 
-    def test_to_k8s_manifest_ttl(self, basic_jobset_spec: JobSetSpec) -> None:
+    def test_to_k8s_manifest_ttl(self, basic_jobset_spec: AIPerfJobSetSpec) -> None:
         """Test JobSet TTL is set from environment default."""
         manifest = basic_jobset_spec.to_k8s_manifest()
         assert "ttlSecondsAfterFinished" in manifest["spec"]
 
     def test_worker_job_ttl_is_zero_for_immediate_gc(self) -> None:
         """Worker jobs must GC immediately; the outer JobSet carries the real TTL."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="aiperf-test",
             namespace="default",
             job_id="test-123",
@@ -309,7 +311,7 @@ class TestJobSetSpec:
 
     def test_to_k8s_manifest_custom_ttl(self) -> None:
         """Test JobSet with custom TTL."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="aiperf-test",
             namespace="default",
             job_id="test-123",
@@ -328,7 +330,7 @@ class TestJobSetSpec:
         retry on transient startup failures (e.g., ConfigMap mount races) even
         when pods are being retained for debugging.
         """
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="aiperf-test",
             namespace="default",
             job_id="test-123",
@@ -353,7 +355,7 @@ class TestJobSetSpec:
         Worker jobs are forced to ttl=0 for immediate GC; the benchmark-wide TTL
         lives on the JobSet itself.
         """
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="aiperf-test",
             namespace="default",
             job_id="test-123",
@@ -380,7 +382,7 @@ class TestJobSetSpec:
         drops the override entirely; WORKER_BACKOFF_LIMIT absorbs transient
         startup failures via container restarts, not in-process retries.
         """
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="aiperf-test",
             namespace="default",
             job_id="test-123",
@@ -403,7 +405,7 @@ class TestJobSetSpec:
             )
 
     def test_to_k8s_manifest_controller_containers(
-        self, basic_jobset_spec: JobSetSpec
+        self, basic_jobset_spec: AIPerfJobSetSpec
     ) -> None:
         """Test controller pod has expected containers.
 
@@ -433,7 +435,7 @@ class TestJobSetSpec:
         assert container_names[0] == "event-bus-proxy"
 
     def test_to_k8s_manifest_worker_containers(
-        self, basic_jobset_spec: JobSetSpec
+        self, basic_jobset_spec: AIPerfJobSetSpec
     ) -> None:
         """Test worker pod has expected containers.
 
@@ -454,7 +456,7 @@ class TestJobSetSpec:
 
     def test_worker_group_manager_container_uses_new_service_type(self) -> None:
         """Worker JobSet wiring should use the group-manager service naming."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="aiperf-test",
             namespace="default",
             job_id="test-123",
@@ -487,7 +489,7 @@ class TestJobSetSpec:
         ]
 
     def test_to_k8s_manifest_containers_have_image(
-        self, basic_jobset_spec: JobSetSpec
+        self, basic_jobset_spec: AIPerfJobSetSpec
     ) -> None:
         """Test all containers have the correct image."""
         manifest = basic_jobset_spec.to_k8s_manifest()
@@ -503,7 +505,7 @@ class TestJobSetSpec:
             annotations={"prometheus.io/scrape": "true"},
             env=[{"name": "DEBUG", "value": "true"}],
         )
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="aiperf-test",
             namespace="default",
             job_id="test-123",
@@ -517,7 +519,7 @@ class TestJobSetSpec:
         pod_spec = controller_job["template"]["spec"]["template"]["spec"]
         assert pod_spec["nodeSelector"] == {"accelerator": "gpu"}
 
-    def test_to_k8s_manifest_volumes(self, basic_jobset_spec: JobSetSpec) -> None:
+    def test_to_k8s_manifest_volumes(self, basic_jobset_spec: AIPerfJobSetSpec) -> None:
         """Test JobSet pods have required volumes."""
         manifest = basic_jobset_spec.to_k8s_manifest()
         controller_job = next(
@@ -531,12 +533,12 @@ class TestJobSetSpec:
 
 
 class TestJobSetSpecContainerDetails:
-    """Tests for JobSetSpec container configuration details."""
+    """Tests for AIPerfJobSetSpec container configuration details."""
 
     @pytest.fixture
     def jobset_manifest(self) -> dict[str, Any]:
         """Create a JobSet manifest for testing."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="aiperf-test",
             namespace="default",
             job_id="test-123",
@@ -588,7 +590,7 @@ class TestJobSetSpecContainerDetails:
 
     def test_resource_mode_none_omits_resources(self) -> None:
         """Test that resourceMode=none omits the container resources block."""
-        manifest = JobSetSpec(
+        manifest = AIPerfJobSetSpec(
             name="aiperf-test",
             namespace="default",
             job_id="test-123",
@@ -605,7 +607,7 @@ class TestJobSetSpecContainerDetails:
 
     def test_resource_mode_burstable_has_requests_only(self) -> None:
         """Test that resourceMode=burstable emits requests without limits."""
-        manifest = JobSetSpec(
+        manifest = AIPerfJobSetSpec(
             name="aiperf-test",
             namespace="default",
             job_id="test-123",
@@ -845,7 +847,7 @@ class TestJobSetSpecContainerDetails:
 
 
 class TestJobSetSpecImagePullPolicy:
-    """Tests for JobSetSpec image pull policy handling."""
+    """Tests for AIPerfJobSetSpec image pull policy handling."""
 
     @pytest.mark.parametrize(
         "policy,expected",
@@ -857,7 +859,7 @@ class TestJobSetSpecImagePullPolicy:
     )
     def test_image_pull_policy_is_set(self, policy: str, expected: str) -> None:
         """Test image pull policy is correctly set on containers."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="test",
             namespace="default",
             job_id="test-123",
@@ -873,7 +875,7 @@ class TestJobSetSpecImagePullPolicy:
     def test_invalid_image_pull_policy_raises(self) -> None:
         """Test invalid image pull policy raises ValueError."""
         with pytest.raises(ValueError, match="image_pull_policy"):
-            JobSetSpec(
+            AIPerfJobSetSpec(
                 name="test",
                 namespace="default",
                 job_id="test-123",
@@ -883,7 +885,7 @@ class TestJobSetSpecImagePullPolicy:
 
     def test_none_image_pull_policy_valid(self) -> None:
         """Test None image pull policy is valid (uses Kubernetes default)."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="test",
             namespace="default",
             job_id="test-123",
@@ -894,12 +896,12 @@ class TestJobSetSpecImagePullPolicy:
 
 
 class TestContainerSpecImagePullPolicy:
-    """Tests for ContainerSpec image pull policy validation."""
+    """Tests for AIPerfContainerSpec image pull policy validation."""
 
     @pytest.mark.parametrize("policy", ["Always", "Never", "IfNotPresent"])
     def test_valid_image_pull_policy(self, policy: str) -> None:
         """Test valid image pull policies are accepted."""
-        container = ContainerSpec(
+        container = AIPerfContainerSpec(
             name="test",
             image="aiperf:latest",
             image_pull_policy=policy,
@@ -909,7 +911,7 @@ class TestContainerSpecImagePullPolicy:
     def test_invalid_image_pull_policy_raises(self) -> None:
         """Test invalid image pull policy raises ValueError."""
         with pytest.raises(ValueError, match="image_pull_policy"):
-            ContainerSpec(
+            AIPerfContainerSpec(
                 name="test",
                 image="aiperf:latest",
                 image_pull_policy="BadValue",
@@ -917,7 +919,7 @@ class TestContainerSpecImagePullPolicy:
 
 
 class TestJobSetSpecDNSConfiguration:
-    """Tests for JobSetSpec DNS naming and configuration."""
+    """Tests for AIPerfJobSetSpec DNS naming and configuration."""
 
     def test_controller_dns_format_includes_full_fqdn(self) -> None:
         """Test that controller DNS includes .svc.cluster.local suffix.
@@ -927,7 +929,7 @@ class TestJobSetSpecDNSConfiguration:
 
         This ensures proper DNS resolution across the cluster.
         """
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="my-jobset",
             namespace="test-ns",
             job_id="test-123",
@@ -960,7 +962,7 @@ class TestJobSetSpecDNSConfiguration:
 
     def test_controller_dns_format_correct_structure(self) -> None:
         """Test controller DNS has correct structure: pod.service.namespace.svc.cluster.local"""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="aiperf-abc123",
             namespace="my-namespace",
             job_id="abc123",
@@ -994,7 +996,7 @@ class TestJobSetSpecDNSConfiguration:
     )
     def test_controller_dns_with_various_namespaces(self, namespace: str) -> None:
         """Test controller DNS is correct with various namespaces."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="test-jobset",
             namespace=namespace,
             job_id="test-123",
@@ -1023,12 +1025,12 @@ class TestJobSetSpecDNSConfiguration:
 
 
 class TestJobSetSpecSecurityContext:
-    """Tests for JobSetSpec security context generation."""
+    """Tests for AIPerfJobSetSpec security context generation."""
 
     @pytest.fixture
     def jobset_manifest(self) -> dict[str, Any]:
         """Create a JobSet manifest for testing."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="security-test",
             namespace="default",
             job_id="test-security",
@@ -1101,12 +1103,12 @@ class TestJobSetSpecSecurityContext:
 
 
 class TestJobSetSpecStartupProbes:
-    """Tests for JobSetSpec startup probe generation."""
+    """Tests for AIPerfJobSetSpec startup probe generation."""
 
     @pytest.fixture
     def jobset_manifest(self) -> dict[str, Any]:
         """Create a JobSet manifest for testing."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="startup-test",
             namespace="default",
             job_id="test-startup",
@@ -1210,12 +1212,12 @@ class TestJobSetSpecStartupProbes:
 
 
 class TestJobSetSpecResourceAggregation:
-    """Tests for JobSetSpec resource aggregation methods."""
+    """Tests for AIPerfJobSetSpec resource aggregation methods."""
 
     @pytest.fixture
-    def jobset_spec(self) -> JobSetSpec:
-        """Create a JobSetSpec for testing."""
-        return JobSetSpec(
+    def jobset_spec(self) -> AIPerfJobSetSpec:
+        """Create a AIPerfJobSetSpec for testing."""
+        return AIPerfJobSetSpec(
             name="resource-test",
             namespace="default",
             job_id="test-resources",
@@ -1259,7 +1261,7 @@ class TestJobSetSpecResourceAggregation:
         assert result == expected
 
     def test_split_worker_resources_preserve_total_budget(
-        self, jobset_spec: JobSetSpec
+        self, jobset_spec: AIPerfJobSetSpec
     ) -> None:
         """Split worker-container resources should sum back to WORKER_POD totals."""
         split = jobset_spec._split_worker_pod_resources(
@@ -1280,12 +1282,12 @@ class TestJobSetSpecResourceAggregation:
 
 
 class TestJobSetSpecEnvVars:
-    """Tests for JobSetSpec environment variable configuration."""
+    """Tests for AIPerfJobSetSpec environment variable configuration."""
 
     @pytest.fixture
     def jobset_manifest(self) -> dict[str, Any]:
         """Create a JobSet manifest for testing."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="env-test",
             namespace="test-namespace",
             job_id="test-env-123",
@@ -1354,12 +1356,12 @@ class TestJobSetSpecEnvVars:
 
 
 class TestJobSetSpecVolumes:
-    """Tests for JobSetSpec volume configuration."""
+    """Tests for AIPerfJobSetSpec volume configuration."""
 
     @pytest.fixture
     def jobset_manifest(self) -> dict[str, Any]:
         """Create a JobSet manifest for testing."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="volume-test",
             namespace="default",
             job_id="test-volumes",
@@ -1415,11 +1417,11 @@ class TestJobSetSpecVolumes:
 
 
 class TestJobSetSpecNetworkConfig:
-    """Tests for JobSetSpec network configuration."""
+    """Tests for AIPerfJobSetSpec network configuration."""
 
     def test_jobset_enables_dns_hostnames(self) -> None:
         """Test JobSet enables DNS hostnames for pod communication."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="network-test",
             namespace="default",
             job_id="test-network",
@@ -1432,7 +1434,7 @@ class TestJobSetSpecNetworkConfig:
 
     def test_jobset_success_policy_targets_controller(self) -> None:
         """Test JobSet success policy only targets controller job."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="policy-test",
             namespace="default",
             job_id="test-policy",
@@ -1446,7 +1448,7 @@ class TestJobSetSpecNetworkConfig:
 
     def test_controller_has_never_restart_policy(self) -> None:
         """Test controller pod has Never restart policy."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="restart-test",
             namespace="default",
             job_id="test-restart",
@@ -1464,7 +1466,7 @@ class TestJobSetSpecNetworkConfig:
 
     def test_workers_have_on_failure_restart_policy(self) -> None:
         """Test worker pods have OnFailure restart policy."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="restart-test",
             namespace="default",
             job_id="test-restart",
@@ -1482,12 +1484,12 @@ class TestJobSetSpecNetworkConfig:
 
 
 class TestJobSetSpecWorkerReplicas:
-    """Tests for JobSetSpec worker replica configuration."""
+    """Tests for AIPerfJobSetSpec worker replica configuration."""
 
     @pytest.mark.parametrize("replicas", [1, 2, 5, 10, 50])
     def test_worker_replicas_set_correctly(self, replicas: int) -> None:
         """Test worker replica count is set correctly in manifest."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="replicas-test",
             namespace="default",
             job_id="test-replicas",
@@ -1503,7 +1505,7 @@ class TestJobSetSpecWorkerReplicas:
 
     def test_controller_always_has_one_replica(self) -> None:
         """Test controller always has exactly 1 replica regardless of workers."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="replicas-test",
             namespace="default",
             job_id="test-replicas",
@@ -1532,13 +1534,17 @@ class TestImagePullPolicy:
         ],
     )  # fmt: skip
     def test_valid_values(self, value: str) -> None:
-        """Test valid image pull policies are accepted by ContainerSpec."""
-        spec = ContainerSpec(name="test", image="img:latest", image_pull_policy=value)
+        """Test valid image pull policies are accepted by AIPerfContainerSpec."""
+        spec = AIPerfContainerSpec(
+            name="test", image="img:latest", image_pull_policy=value
+        )
         assert spec.image_pull_policy is not None
 
     def test_none_value(self) -> None:
         """Test None image pull policy is accepted."""
-        spec = ContainerSpec(name="test", image="img:latest", image_pull_policy=None)
+        spec = AIPerfContainerSpec(
+            name="test", image="img:latest", image_pull_policy=None
+        )
         assert spec.image_pull_policy is None
 
     @pytest.mark.parametrize(
@@ -1551,7 +1557,9 @@ class TestImagePullPolicy:
     def test_invalid_values_raise(self, value: str) -> None:
         """Test invalid image pull policies raise ValidationError."""
         with pytest.raises(ValueError):
-            ContainerSpec(name="test", image="img:latest", image_pull_policy=value)
+            AIPerfContainerSpec(
+                name="test", image="img:latest", image_pull_policy=value
+            )
 
     def test_enum_values(self) -> None:
         """Test ImagePullPolicy contains expected values."""
@@ -1563,11 +1571,11 @@ class TestImagePullPolicy:
 
 
 class TestContainerSpecExtended:
-    """Extended tests for ContainerSpec model."""
+    """Extended tests for AIPerfContainerSpec model."""
 
     def test_container_with_all_fields(self) -> None:
-        """Test ContainerSpec with all fields set."""
-        container = ContainerSpec(
+        """Test AIPerfContainerSpec with all fields set."""
+        container = AIPerfContainerSpec(
             name="full-container",
             image="aiperf:v1.0.0",
             image_pull_policy="Always",
@@ -1606,7 +1614,7 @@ class TestContainerSpecExtended:
 
     def test_container_to_k8s_spec_with_startup_probe(self) -> None:
         """Test container spec includes startup probe when set."""
-        container = ContainerSpec(
+        container = AIPerfContainerSpec(
             name="test",
             image="nginx:latest",
             startup_probe={
@@ -1622,7 +1630,7 @@ class TestContainerSpecExtended:
 
     def test_container_none_image_pull_policy_excluded(self) -> None:
         """Test None image pull policy is excluded from spec."""
-        container = ContainerSpec(
+        container = AIPerfContainerSpec(
             name="test",
             image="nginx:latest",
             image_pull_policy=None,
@@ -1632,12 +1640,12 @@ class TestContainerSpecExtended:
 
 
 class TestReplicatedJobSpecExtended:
-    """Extended tests for ReplicatedJobSpec model."""
+    """Extended tests for AIPerfReplicatedJobSpec model."""
 
     def test_to_k8s_spec_with_backoff_limit(self) -> None:
         """Test replicated job spec includes backoff limit."""
-        container = ContainerSpec(name="worker", image="nginx:latest")
-        job = ReplicatedJobSpec(
+        container = AIPerfContainerSpec(name="worker", image="nginx:latest")
+        job = AIPerfReplicatedJobSpec(
             name="workers",
             replicas=3,
             containers=[container],
@@ -1649,10 +1657,10 @@ class TestReplicatedJobSpecExtended:
     def test_to_k8s_spec_with_multiple_containers(self) -> None:
         """Test replicated job spec with multiple containers."""
         containers = [
-            ContainerSpec(name="main", image="main:latest"),
-            ContainerSpec(name="sidecar", image="sidecar:latest"),
+            AIPerfContainerSpec(name="main", image="main:latest"),
+            AIPerfContainerSpec(name="sidecar", image="sidecar:latest"),
         ]
-        job = ReplicatedJobSpec(
+        job = AIPerfReplicatedJobSpec(
             name="multi-container",
             containers=containers,
         )
@@ -1665,8 +1673,8 @@ class TestReplicatedJobSpecExtended:
 
     def test_to_k8s_spec_pod_security_context(self) -> None:
         """Test replicated job has pod-level security context."""
-        container = ContainerSpec(name="worker", image="nginx:latest")
-        job = ReplicatedJobSpec(name="secure-job", containers=[container])
+        container = AIPerfContainerSpec(name="worker", image="nginx:latest")
+        job = AIPerfReplicatedJobSpec(name="secure-job", containers=[container])
         spec = job.to_k8s_spec()
         pod_spec = spec["template"]["spec"]["template"]["spec"]
         assert "securityContext" in pod_spec
@@ -1677,8 +1685,8 @@ class TestReplicatedJobSpecExtended:
 
     def test_to_k8s_spec_without_customization(self) -> None:
         """Test replicated job spec without pod customization."""
-        container = ContainerSpec(name="worker", image="nginx:latest")
-        job = ReplicatedJobSpec(
+        container = AIPerfContainerSpec(name="worker", image="nginx:latest")
+        job = AIPerfReplicatedJobSpec(
             name="minimal",
             containers=[container],
             pod_template=None,
@@ -1693,9 +1701,9 @@ class TestReplicatedJobSpecExtended:
 
     def test_to_k8s_spec_without_annotations(self) -> None:
         """Test replicated job spec without annotations in customization."""
-        container = ContainerSpec(name="worker", image="nginx:latest")
+        container = AIPerfContainerSpec(name="worker", image="nginx:latest")
         custom = PodTemplateConfig(node_selector={"zone": "a"})  # No annotations
-        job = ReplicatedJobSpec(
+        job = AIPerfReplicatedJobSpec(
             name="no-annotations",
             containers=[container],
             pod_template=custom,
@@ -1708,19 +1716,19 @@ class TestReplicatedJobSpecExtended:
 
 
 class TestJobSetSpecPrivateMethods:
-    """Tests for JobSetSpec private methods."""
+    """Tests for AIPerfJobSetSpec private methods."""
 
     @pytest.fixture
-    def jobset_spec(self) -> JobSetSpec:
-        """Create a JobSetSpec for testing private methods."""
-        return JobSetSpec(
+    def jobset_spec(self) -> AIPerfJobSetSpec:
+        """Create a AIPerfJobSetSpec for testing private methods."""
+        return AIPerfJobSetSpec(
             name="test-private",
             namespace="default",
             job_id="test-123",
             image="aiperf:latest",
         )
 
-    def test_create_health_probe(self, jobset_spec: JobSetSpec) -> None:
+    def test_create_health_probe(self, jobset_spec: AIPerfJobSetSpec) -> None:
         """Test _create_health_probe generates correct probe config."""
         probe = jobset_spec._create_health_probe(port=8080)
         assert probe["httpGet"]["path"] == "/healthz"
@@ -1730,13 +1738,15 @@ class TestJobSetSpecPrivateMethods:
         assert "timeoutSeconds" in probe
         assert "failureThreshold" in probe
 
-    def test_create_health_probe_custom_path(self, jobset_spec: JobSetSpec) -> None:
+    def test_create_health_probe_custom_path(
+        self, jobset_spec: AIPerfJobSetSpec
+    ) -> None:
         """Test _create_health_probe with custom path."""
         probe = jobset_spec._create_health_probe(port=9090, path="/custom/health")
         assert probe["httpGet"]["path"] == "/custom/health"
         assert probe["httpGet"]["port"] == 9090
 
-    def test_create_startup_probe(self, jobset_spec: JobSetSpec) -> None:
+    def test_create_startup_probe(self, jobset_spec: AIPerfJobSetSpec) -> None:
         """Test _create_startup_probe generates correct probe config."""
         probe = jobset_spec._create_startup_probe(port=8080)
         assert probe["httpGet"]["path"] == "/healthz"
@@ -1745,12 +1755,14 @@ class TestJobSetSpecPrivateMethods:
         assert probe["periodSeconds"] == 5
         assert probe["failureThreshold"] == 30  # Allow 150s startup time
 
-    def test_create_startup_probe_custom_path(self, jobset_spec: JobSetSpec) -> None:
+    def test_create_startup_probe_custom_path(
+        self, jobset_spec: AIPerfJobSetSpec
+    ) -> None:
         """Test _create_startup_probe with custom path."""
         probe = jobset_spec._create_startup_probe(port=8080, path="/startup")
         assert probe["httpGet"]["path"] == "/startup"
 
-    def test_create_security_context(self, jobset_spec: JobSetSpec) -> None:
+    def test_create_security_context(self, jobset_spec: AIPerfJobSetSpec) -> None:
         """Test _create_security_context generates correct context."""
         ctx = jobset_spec._create_security_context()
         assert ctx["runAsNonRoot"] is True
@@ -1762,7 +1774,7 @@ class TestJobSetSpecPrivateMethods:
         assert ctx["seccompProfile"]["type"] == "RuntimeDefault"
 
     def test_create_env_vars_without_controller_host(
-        self, jobset_spec: JobSetSpec
+        self, jobset_spec: AIPerfJobSetSpec
     ) -> None:
         """Test _create_env_vars without controller_host."""
         env = jobset_spec._create_env_vars()
@@ -1780,7 +1792,7 @@ class TestJobSetSpecPrivateMethods:
         )
 
     def test_create_env_vars_with_controller_host(
-        self, jobset_spec: JobSetSpec
+        self, jobset_spec: AIPerfJobSetSpec
     ) -> None:
         """Test _create_env_vars with controller_host."""
         env = jobset_spec._create_env_vars(controller_host="controller.default.svc")
@@ -1798,7 +1810,7 @@ class TestJobSetSpecPrivateMethods:
         custom = PodTemplateConfig(
             env=[{"name": "CUSTOM_VAR", "value": "custom_value"}]
         )
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="test",
             namespace="default",
             job_id="test-123",
@@ -1809,7 +1821,7 @@ class TestJobSetSpecPrivateMethods:
         env_dict = {e["name"]: e.get("value") for e in env}
         assert env_dict["CUSTOM_VAR"] == "custom_value"
 
-    def test_get_volume_mounts(self, jobset_spec: JobSetSpec) -> None:
+    def test_get_volume_mounts(self, jobset_spec: AIPerfJobSetSpec) -> None:
         """Test _get_volume_mounts returns correct mounts."""
         mounts = jobset_spec._get_volume_mounts()
         mount_names = [m["name"] for m in mounts]
@@ -1836,7 +1848,7 @@ class TestJobSetSpecPrivateMethods:
                 }
             ],
         )
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="test",
             namespace="default",
             job_id="test-123",
@@ -1849,12 +1861,12 @@ class TestJobSetSpecPrivateMethods:
 
 
 class TestJobSetSpecCreateContainer:
-    """Tests for JobSetSpec._create_container method."""
+    """Tests for AIPerfJobSetSpec._create_container method."""
 
     @pytest.fixture
-    def jobset_spec(self) -> JobSetSpec:
-        """Create a JobSetSpec for testing."""
-        return JobSetSpec(
+    def jobset_spec(self) -> AIPerfJobSetSpec:
+        """Create a AIPerfJobSetSpec for testing."""
+        return AIPerfJobSetSpec(
             name="container-test",
             namespace="default",
             job_id="test-456",
@@ -1862,7 +1874,7 @@ class TestJobSetSpecCreateContainer:
             image_pull_policy="Never",
         )
 
-    def test_create_container_basic(self, jobset_spec: JobSetSpec) -> None:
+    def test_create_container_basic(self, jobset_spec: AIPerfJobSetSpec) -> None:
         """Test _create_container creates correct container spec."""
         resources = {"requests": {"cpu": "100m"}, "limits": {"cpu": "500m"}}
         container = jobset_spec._create_container(
@@ -1881,7 +1893,9 @@ class TestJobSetSpecCreateContainer:
         assert "--health-port" in container.args
         assert "8080" in container.args
 
-    def test_create_container_with_api_port(self, jobset_spec: JobSetSpec) -> None:
+    def test_create_container_with_api_port(
+        self, jobset_spec: AIPerfJobSetSpec
+    ) -> None:
         """Test _create_container with API port and no health port."""
         resources = {"requests": {"cpu": "100m"}, "limits": {"cpu": "500m"}}
         container = jobset_spec._create_container(
@@ -1899,7 +1913,7 @@ class TestJobSetSpecCreateContainer:
         assert "api" in port_names
 
     def test_create_container_with_controller_host(
-        self, jobset_spec: JobSetSpec
+        self, jobset_spec: AIPerfJobSetSpec
     ) -> None:
         """Test _create_container with controller_host adds env var."""
         resources = {"requests": {"cpu": "100m"}, "limits": {"cpu": "500m"}}
@@ -1913,7 +1927,9 @@ class TestJobSetSpecCreateContainer:
         env_dict = {e["name"]: e.get("value") for e in container.env}
         assert env_dict.get("AIPERF_K8S_ZMQ_CONTROLLER_HOST") == "controller.svc"
 
-    def test_create_container_with_extra_env(self, jobset_spec: JobSetSpec) -> None:
+    def test_create_container_with_extra_env(
+        self, jobset_spec: AIPerfJobSetSpec
+    ) -> None:
         """Test _create_container with extra environment variables."""
         resources = {"requests": {"cpu": "100m"}, "limits": {"cpu": "500m"}}
         extra_env = [{"name": "EXTRA_VAR", "value": "extra_value"}]
@@ -1928,7 +1944,7 @@ class TestJobSetSpecCreateContainer:
         assert env_dict.get("EXTRA_VAR") == "extra_value"
 
     def test_create_container_skip_readiness_probe(
-        self, jobset_spec: JobSetSpec
+        self, jobset_spec: AIPerfJobSetSpec
     ) -> None:
         """Test _create_container with skip_readiness_probe=True."""
         resources = {"requests": {"cpu": "100m"}, "limits": {"cpu": "500m"}}
@@ -1943,7 +1959,9 @@ class TestJobSetSpecCreateContainer:
         assert container.liveness_probe is not None
         assert container.startup_probe is not None
 
-    def test_create_container_skip_startup_probe(self, jobset_spec: JobSetSpec) -> None:
+    def test_create_container_skip_startup_probe(
+        self, jobset_spec: AIPerfJobSetSpec
+    ) -> None:
         """Test _create_container with skip_startup_probe=True."""
         resources = {"requests": {"cpu": "100m"}, "limits": {"cpu": "500m"}}
         container = jobset_spec._create_container(
@@ -1957,7 +1975,7 @@ class TestJobSetSpecCreateContainer:
         assert container.liveness_probe is not None
 
     def test_create_container_has_security_context(
-        self, jobset_spec: JobSetSpec
+        self, jobset_spec: AIPerfJobSetSpec
     ) -> None:
         """Test _create_container sets security context."""
         resources = {"requests": {"cpu": "100m"}, "limits": {"cpu": "500m"}}
@@ -1972,7 +1990,7 @@ class TestJobSetSpecCreateContainer:
 
 
 class TestJobSetSpecResourceParsing:
-    """Extended tests for JobSetSpec resource parsing methods."""
+    """Extended tests for AIPerfJobSetSpec resource parsing methods."""
 
     @pytest.mark.parametrize(
         "cpu_value,expected",
@@ -2004,11 +2022,11 @@ class TestJobSetSpecResourceParsing:
 
 
 class TestJobSetSpecTTLEdgeCases:
-    """Tests for JobSetSpec TTL handling edge cases."""
+    """Tests for AIPerfJobSetSpec TTL handling edge cases."""
 
     def test_ttl_zero(self) -> None:
         """Test JobSet with TTL of 0 (immediate cleanup)."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="ttl-zero",
             namespace="default",
             job_id="test-ttl-zero",
@@ -2020,7 +2038,7 @@ class TestJobSetSpecTTLEdgeCases:
 
     def test_ttl_explicit_none(self) -> None:
         """Test JobSet with explicit None TTL uses environment default."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="ttl-none",
             namespace="default",
             job_id="test-ttl-none",
@@ -2033,7 +2051,7 @@ class TestJobSetSpecTTLEdgeCases:
 
 
 class TestJobSetSpecVolumesWithCustomization:
-    """Tests for JobSetSpec volumes with pod customization."""
+    """Tests for AIPerfJobSetSpec volumes with pod customization."""
 
     def test_volumes_include_custom_secrets(self) -> None:
         """Test JobSet volumes include custom secret volumes."""
@@ -2047,7 +2065,7 @@ class TestJobSetSpecVolumesWithCustomization:
                 {"name": "secret-api-keys", "mountPath": "/etc/keys", "readOnly": True},
             ],
         )
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="volumes-test",
             namespace="default",
             job_id="test-volumes",
@@ -2072,11 +2090,11 @@ class TestJobSetSpecVolumesWithCustomization:
 
 
 class TestJobSetSpecConfigMapReference:
-    """Tests for JobSetSpec ConfigMap reference in volumes."""
+    """Tests for AIPerfJobSetSpec ConfigMap reference in volumes."""
 
     def test_config_volume_references_configmap(self) -> None:
         """Test config volume references correct ConfigMap name."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="my-benchmark",
             namespace="default",
             job_id="test-cm",
@@ -2095,11 +2113,11 @@ class TestJobSetSpecConfigMapReference:
 
 
 class TestJobSetSpecBackoffLimits:
-    """Tests for JobSetSpec backoff limit configuration."""
+    """Tests for AIPerfJobSetSpec backoff limit configuration."""
 
     def test_controller_backoff_limit(self) -> None:
         """Test controller job uses environment backoff limit."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="backoff-test",
             namespace="default",
             job_id="test-backoff",
@@ -2115,7 +2133,7 @@ class TestJobSetSpecBackoffLimits:
 
     def test_worker_backoff_limit(self) -> None:
         """Test worker job uses environment backoff limit."""
-        spec = JobSetSpec(
+        spec = AIPerfJobSetSpec(
             name="backoff-test",
             namespace="default",
             job_id="test-backoff",
@@ -2195,13 +2213,13 @@ class TestGetLatestJobsetVersion:
 
 
 class TestJobSetSpecAlwaysBenchmarkRun:
-    """Verify JobSetSpec always uses --benchmark-run with run_config.json."""
+    """Verify AIPerfJobSetSpec always uses --benchmark-run with run_config.json."""
 
     @staticmethod
-    def _make_spec() -> "JobSetSpec":
-        from aiperf.kubernetes.jobset import JobSetSpec
+    def _make_spec() -> "AIPerfJobSetSpec":
+        from aiperf.kubernetes.jobset import AIPerfJobSetSpec
 
-        return JobSetSpec(
+        return AIPerfJobSetSpec(
             name="aiperf-test",
             namespace="default",
             job_id="test-001",

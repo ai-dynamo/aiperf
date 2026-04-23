@@ -1,9 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Kubernetes event helpers for AIPerfJob operator.
+"""Kubernetes events posted via the Events API for the AIPerfJob operator.
 
-This module provides a clean interface for emitting Kubernetes events
-during the AIPerfJob lifecycle.
+NOT related to the AIPerf internal message-bus enums (see ``aiperf.common.enums``).
+The ``EventType`` and ``EventReason`` names in this module refer to
+Kubernetes Event resource fields (``type``, ``reason``) that surface in
+``kubectl describe`` and ``kubectl get events``.
 """
 
 from __future__ import annotations
@@ -83,7 +85,7 @@ def post_event(
             kopf.info(body, reason=str(reason), message=message)
     except LookupError:
         logger.warning("Could not post event: kopf context unavailable")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - kopf event posting is best-effort; must not raise into handler bodies
         logger.warning(f"Failed to post event {reason}: {e}")
 
 

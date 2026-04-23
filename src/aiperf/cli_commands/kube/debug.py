@@ -219,7 +219,7 @@ async def _get_namespace_events(
     try:
         core = k8s_client_mod.CoreV1Api(api)
         event_list = await core.list_namespaced_event(namespace)
-    except Exception:
+    except Exception:  # noqa: BLE001 - diagnostics best-effort; return [] on any API/serializer error
         return []
 
     serializer = _get_serializer()
@@ -256,7 +256,7 @@ async def _get_node_resources(api: Any) -> list[dict[str, Any]]:
     try:
         core = k8s_client_mod.CoreV1Api(api)
         node_list = await core.list_node()
-    except Exception:
+    except Exception:  # noqa: BLE001 - diagnostics best-effort; return [] on any API/serializer error
         return []
 
     serializer = _get_serializer()
@@ -341,7 +341,7 @@ async def _get_problem_pod_logs(
                     container_logs[container_name] = log_text.rstrip("\n")
             except ApiException:
                 container_logs[container_name] = "<logs unavailable>"
-            except Exception:
+            except Exception:  # noqa: BLE001 - diagnostic log fetch best-effort; any k8s client error is recorded as placeholder
                 container_logs[container_name] = "<error fetching logs>"
 
         if container_logs:
@@ -352,6 +352,7 @@ async def _get_problem_pod_logs(
 
 def _print_report(
     namespace: str,
+    *,
     pod_infos: list[dict[str, Any]],
     events: list[dict[str, Any]],
     node_resources: list[dict[str, Any]],
@@ -527,6 +528,48 @@ def _print_report(
         )
 
 
+async def _resolve_target_namespaces(
+    api: Any,
+    *,
+    namespace: str | None,
+    job_id: str | None,
+    all_namespaces: bool,
+) -> list[str] | None:
+    """Resolve the list of namespaces to inspect for `debug`.
+
+    Returns None when the user-facing error/warning has already been printed
+    and the caller should exit silently.
+    """
+    from aiperf.kubernetes import client as kube_client_mod
+    from aiperf.kubernetes import console as kube_console
+
+    if all_namespaces:
+        jobsets = await kube_client_mod.list_jobsets(api, all_namespaces=True)
+        target = list({js.namespace for js in jobsets})
+        if not target:
+            kube_console.print_warning("No AIPerf deployments found in any namespace")
+            return None
+        return target
+
+    if job_id:
+        jobset_info = await kube_client_mod.find_jobset(api, job_id, namespace)
+        if jobset_info:
+            return [jobset_info.namespace]
+        kube_console.print_error(f"No AIPerf job found with ID: {job_id}")
+        return None
+
+    if namespace:
+        return [namespace]
+
+    from aiperf.kubernetes.cli_helpers import resolve_job_id_and_namespace
+
+    resolved = resolve_job_id_and_namespace(None, None)
+    if not resolved:
+        return None
+    _, ns = resolved
+    return [ns or "default"]
+
+
 @app.default
 async def debug(
     *,
@@ -572,56 +615,61 @@ async def debug(
 
     with cli_utils.exit_on_error(title="Error Running Diagnostics"):
         from aiperf.kubernetes import client as kube_client_mod
-        from aiperf.kubernetes import console as kube_console
-        from aiperf.kubernetes.constants import Labels
 
         async with kube_client_mod.k8s_client(
             kubeconfig=kubeconfig,
             context=context,
         ) as api:
-            target_namespaces: list[str] = []
-
-            if all_namespaces:
-                jobsets = await kube_client_mod.list_jobsets(api, all_namespaces=True)
-                target_namespaces = list({js.namespace for js in jobsets})
-                if not target_namespaces:
-                    kube_console.print_warning(
-                        "No AIPerf deployments found in any namespace"
-                    )
-                    return
-            elif job_id:
-                jobset_info = await kube_client_mod.find_jobset(api, job_id, namespace)
-                if jobset_info:
-                    target_namespaces = [jobset_info.namespace]
-                else:
-                    kube_console.print_error(f"No AIPerf job found with ID: {job_id}")
-                    return
-            elif namespace:
-                target_namespaces = [namespace]
-            else:
-                from aiperf.kubernetes.cli_helpers import resolve_job_id_and_namespace
-
-                resolved = resolve_job_id_and_namespace(None, None)
-                if resolved:
-                    _, ns = resolved
-                    target_namespaces = [ns or "default"]
-                else:
-                    return
+            target_namespaces = await _resolve_target_namespaces(
+                api,
+                namespace=namespace,
+                job_id=job_id,
+                all_namespaces=all_namespaces,
+            )
+            if target_namespaces is None:
+                return
 
             node_resources = await _get_node_resources(api)
 
             for ns in sorted(target_namespaces):
-                label_selector = Labels.SELECTOR
-                if job_id:
-                    label_selector = kube_client_mod.job_selector(job_id)
+                await _debug_namespace(
+                    api,
+                    ns=ns,
+                    job_id=job_id,
+                    verbose=verbose,
+                    node_resources=node_resources,
+                )
 
-                pods = await kube_client_mod.get_pods(api, ns, label_selector)
-                pod_infos = [_extract_pod_info(pod) for pod in pods]
 
-                events = await _get_namespace_events(api, ns)
+async def _debug_namespace(
+    api: Any,
+    *,
+    ns: str,
+    job_id: str | None,
+    verbose: bool,
+    node_resources: Any,
+) -> None:
+    """Collect and print the diagnostic report for a single namespace."""
+    from aiperf.kubernetes import client as kube_client_mod
+    from aiperf.kubernetes.constants import AIPerfLabels
 
-                pod_logs: dict[str, dict[str, str]] = {}
-                if verbose:
-                    pod_logs = await _get_problem_pod_logs(api, pod_infos)
+    label_selector = (
+        kube_client_mod.job_selector(job_id) if job_id else AIPerfLabels.SELECTOR
+    )
 
-                _print_report(ns, pod_infos, events, node_resources, pod_logs, verbose)
+    pods = await kube_client_mod.get_pods(api, ns, label_selector)
+    pod_infos = [_extract_pod_info(pod) for pod in pods]
+    events = await _get_namespace_events(api, ns)
+
+    pod_logs: dict[str, dict[str, str]] = {}
+    if verbose:
+        pod_logs = await _get_problem_pod_logs(api, pod_infos)
+
+    _print_report(
+        ns,
+        pod_infos=pod_infos,
+        events=events,
+        node_resources=node_resources,
+        pod_logs=pod_logs,
+        verbose=verbose,
+    )

@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 import aiofiles
+import aiohttp
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -67,7 +68,7 @@ class JobEntry(AIPerfBaseModel):
     total_size_bytes: int = Field(description="Total size of stored files in bytes")
 
 
-class JobListResponse(AIPerfBaseModel):
+class ResultsHistoryListResponse(AIPerfBaseModel):
     """Response for listing all jobs with stored results."""
 
     jobs: list[JobEntry] = Field(
@@ -252,7 +253,12 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
                 await config.load_kube_config()
             api_holder[0] = ApiClient()
             logger.info("kubernetes_asyncio client initialized for UI endpoints")
-        except Exception as e:
+        except (
+            config.ConfigException,
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+            OSError,
+        ) as e:
             logger.warning(
                 f"Kubernetes client unavailable, live job endpoints disabled: {e}"
             )
@@ -266,7 +272,7 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
         if api is not None:
             try:
                 await api.close()
-            except Exception as e:
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
                 logger.warning(f"Error closing kubernetes_asyncio client: {e}")
             api_holder[0] = None
 
@@ -299,11 +305,11 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     # File serving endpoints
     # ---------------------------------------------------------------
 
-    @app.get("/api/v1/results", response_model=JobListResponse)
-    async def list_jobs() -> JobListResponse:
+    @app.get("/api/v1/results", response_model=ResultsHistoryListResponse)
+    async def list_jobs() -> ResultsHistoryListResponse:
         """List all namespaces and jobs with stored results."""
         if not base_dir.exists():
-            return JobListResponse()
+            return ResultsHistoryListResponse()
 
         def _scan() -> list[JobEntry]:
             found: list[JobEntry] = []
@@ -326,7 +332,7 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
             return found
 
         jobs = await asyncio.to_thread(_scan)
-        return JobListResponse(jobs=jobs)
+        return ResultsHistoryListResponse(jobs=jobs)
 
     @app.get("/api/v1/results/{namespace}/{job_id}", response_model=FileListResponse)
     async def list_job_files(namespace: str, job_id: str) -> FileListResponse:
@@ -406,6 +412,7 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
 
     @app.get("/api/v1/analytics/history", response_model=HistoryResponse)
     async def history(
+        *,
         metric: str = Query(
             default="request_throughput",
             description="Metric to track over time",

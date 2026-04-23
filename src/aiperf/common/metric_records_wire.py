@@ -227,6 +227,7 @@ def _wire_to_error(error: WireErrorDetails | None) -> ErrorDetails | None:
 def metric_record_metadata_from_model(
     metadata: Any,
 ) -> MetricRecordMetadata:
+    """Coerce a metadata model, dict, or struct into a ``MetricRecordMetadata``."""
     if isinstance(metadata, MetricRecordMetadata):
         return metadata
     if isinstance(metadata, dict):
@@ -259,6 +260,7 @@ def build_metric_records_data(
     trace_data: BaseTraceData | None,
     error: ErrorDetails | None,
 ) -> MetricRecordsData:
+    """Build a ``MetricRecordsData`` payload from domain-model inputs."""
     return MetricRecordsData(
         metadata=metric_record_metadata_from_model(metadata),
         metrics=metrics,
@@ -275,6 +277,7 @@ def build_metric_records_wire_message(
     trace_data: BaseTraceData | None,
     error: ErrorDetails | None,
 ) -> MetricRecordsWireMessage:
+    """Build a single-record wire message for the record-processor channel."""
     metadata_struct = metric_record_metadata_from_model(metadata)
     return MetricRecordsWireMessage(
         service_id=service_id,
@@ -290,10 +293,12 @@ def build_metric_records_batch_wire_message(
     service_id: str,
     records: list[MetricRecordsData],
 ) -> MetricRecordsBatchWireMessage:
+    """Build a batched wire message carrying multiple metric records."""
     return MetricRecordsBatchWireMessage(service_id=service_id, records=records)
 
 
 def wire_message_to_record_data(message: MetricRecordsWireMessage) -> MetricRecordsData:
+    """Project a ``MetricRecordsWireMessage`` back into a ``MetricRecordsData``."""
     return MetricRecordsData(
         metadata=message.metadata,
         metrics=message.metrics,

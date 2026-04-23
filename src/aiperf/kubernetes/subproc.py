@@ -64,7 +64,9 @@ async def run_command(
         await terminate_process(proc)
         raise
     if proc.returncode is None:
-        raise RuntimeError("Process exited without a return code after communicate()")
+        raise RuntimeError(
+            f"Process {cmd!r} exited without a return code after communicate() (pid={proc.pid})"
+        )
     return CommandResult(
         returncode=proc.returncode,
         stdout=raw_stdout.decode(errors="replace"),

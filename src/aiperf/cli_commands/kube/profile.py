@@ -5,13 +5,22 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from cyclopts import App, Parameter
 
 from aiperf.config.cli_model import CLIModel
 from aiperf.config.kube import KubeOptions
 from aiperf.kubernetes.cr_refs import AIPERF_API_VERSION
+
+if TYPE_CHECKING:
+    from kubernetes_asyncio.client import (
+        CoreV1Api,
+        CustomObjectsApi,
+        RbacAuthorizationV1Api,
+    )
+
+    from aiperf.config import AIPerfConfig
 
 app = App(name="profile")
 
@@ -28,7 +37,7 @@ def _try_load_aiperfjob_cr(path: Any) -> dict | None:
 
     try:
         raw = yaml.safe_load(path.read_text())
-    except Exception:
+    except Exception:  # noqa: BLE001 - any YAML/IO failure means "not an AIPerfJob CR"; caller handles other paths
         return None
     if (
         isinstance(raw, dict)
@@ -69,7 +78,7 @@ def _build_cr_spec_and_config(raw: dict, kube_options: Any) -> tuple[dict, Any]:
     return spec, config
 
 
-def generate_benchmark_name(config: Any) -> str:
+def generate_benchmark_name(config: AIPerfConfig) -> str:
     """Generate a short benchmark name from config.
 
     Used by both profile and generate commands.
@@ -236,10 +245,10 @@ async def profile(
                 config,
                 name,
                 namespace,
-                dry_run,
-                detach,
-                no_wait,
-                attach_port,
+                dry_run=dry_run,
+                detach=detach,
+                no_wait=no_wait,
+                attach_port=attach_port,
             )
         else:
             await _deploy_direct(
@@ -247,10 +256,10 @@ async def profile(
                 kube_options,
                 name,
                 namespace,
-                dry_run,
-                detach,
-                no_wait,
-                attach_port,
+                dry_run=dry_run,
+                detach=detach,
+                no_wait=no_wait,
+                attach_port=attach_port,
             )
 
 
@@ -258,6 +267,7 @@ async def _wait_or_detach(
     name: str,
     namespace: str,
     kube_options: KubeOptions,
+    *,
     detach: bool,
     no_wait: bool,
     attach_port: int,
@@ -335,11 +345,63 @@ async def _operator_available(kube_options: KubeOptions) -> bool:
             "AIPerfJob CRD not found, deploying directly (no operator)"
         )
         return False
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - any unrecognized error falls back to direct-deploy mode with a user-facing message
         kube_console.print_info(
             f"AIPerfJob CRD not found, deploying directly (no operator) [{type(e).__name__}: {e}]"
         )
         return False
+
+
+async def _replace_existing_cr_if_complete(
+    custom: CustomObjectsApi,
+    *,
+    name: str,
+    namespace: str,
+    kube_context: str | None,
+) -> None:
+    """Delete a prior AIPerfJob CR with matching name if it finished.
+
+    Raises ``SystemExit`` if the CR is still Running or Pending; returns
+    silently when there is no prior CR (404).
+    """
+    from kubernetes_asyncio.client.exceptions import ApiException
+
+    from aiperf.kubernetes import console as kube_console
+    from aiperf.kubernetes.cr_refs import (
+        AIPERF_JOB_GROUP,
+        AIPERF_JOB_PLURAL,
+        AIPERF_JOB_VERSION,
+    )
+
+    try:
+        existing = await custom.get_namespaced_custom_object(
+            group=AIPERF_JOB_GROUP,
+            version=AIPERF_JOB_VERSION,
+            plural=AIPERF_JOB_PLURAL,
+            namespace=namespace,
+            name=name,
+        )
+    except ApiException as e:
+        if e.status == 404:
+            return
+        raise
+
+    phase = (existing.get("status") or {}).get("phase", "")
+    if phase in ("Running", "Pending"):
+        ctx_flag = f" --context {kube_context}" if kube_context else ""
+        raise SystemExit(
+            f"AIPerfJob {name} is already {phase}. "
+            f"Delete it first: kubectl{ctx_flag} delete aiperfjob {name} -n {namespace}"
+        )
+    kube_console.print_info(f"Replacing completed AIPerfJob {name}")
+    await custom.delete_namespaced_custom_object(
+        group=AIPERF_JOB_GROUP,
+        version=AIPERF_JOB_VERSION,
+        plural=AIPERF_JOB_PLURAL,
+        namespace=namespace,
+        name=name,
+    )
+    await asyncio.sleep(2)
 
 
 async def _deploy_via_operator(
@@ -348,6 +410,7 @@ async def _deploy_via_operator(
     config: Any,
     name: str,
     namespace: str,
+    *,
     dry_run: bool,
     detach: bool,
     no_wait: bool,
@@ -393,38 +456,12 @@ async def _deploy_via_operator(
             if e.status != 409:
                 raise
 
-        # Check for existing CR with same name
-        try:
-            existing = await custom.get_namespaced_custom_object(
-                group=AIPERF_JOB_GROUP,
-                version=AIPERF_JOB_VERSION,
-                plural=AIPERF_JOB_PLURAL,
-                namespace=namespace,
-                name=name,
-            )
-            phase = (existing.get("status") or {}).get("phase", "")
-            if phase in ("Running", "Pending"):
-                ctx_flag = (
-                    f" --context {kube_options.kube_context}"
-                    if kube_options.kube_context
-                    else ""
-                )
-                raise SystemExit(
-                    f"AIPerfJob {name} is already {phase}. "
-                    f"Delete it first: kubectl{ctx_flag} delete aiperfjob {name} -n {namespace}"
-                )
-            kube_console.print_info(f"Replacing completed AIPerfJob {name}")
-            await custom.delete_namespaced_custom_object(
-                group=AIPERF_JOB_GROUP,
-                version=AIPERF_JOB_VERSION,
-                plural=AIPERF_JOB_PLURAL,
-                namespace=namespace,
-                name=name,
-            )
-            await asyncio.sleep(2)
-        except ApiException as e:
-            if e.status != 404:
-                raise
+        await _replace_existing_cr_if_complete(
+            custom,
+            name=name,
+            namespace=namespace,
+            kube_context=kube_options.kube_context,
+        )
 
         try:
             await custom.create_namespaced_custom_object(
@@ -444,7 +481,9 @@ async def _deploy_via_operator(
                     detail = body.get("message", "")
                 except (orjson.JSONDecodeError, TypeError):
                     detail = e.body[:200] if e.body else ""
-            raise SystemExit(f"Failed to create AIPerfJob: {detail}") from e
+            raise SystemExit(
+                f"Failed to create AIPerfJob {namespace}/{name}: {detail}"
+            ) from e
 
     kube_console.print_cr_submission_summary(
         name=name,
@@ -479,11 +518,68 @@ async def _deploy_via_operator(
     )
 
 
+async def _apply_manifest(
+    manifest: dict[str, Any],
+    *,
+    core: CoreV1Api,
+    rbac: RbacAuthorizationV1Api,
+    custom: CustomObjectsApi,
+    default_namespace: str,
+) -> str | None:
+    """Create one K8s resource from a manifest.
+
+    Returns the ``"Kind/name"`` label on success (so the caller can log it),
+    or None if the kind is not recognised. 409 AlreadyExists is not handled
+    here; the caller catches and distinguishes it.
+    """
+    kind = manifest["kind"]
+    res_name = manifest["metadata"]["name"]
+    manifest_ns = manifest["metadata"].get("namespace") or default_namespace
+    label = f"{kind}/{res_name}"
+
+    from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
+
+    if kind == "Namespace":
+        await core.create_namespace(body=manifest)
+    elif kind == "ConfigMap":
+        await core.create_namespaced_config_map(namespace=manifest_ns, body=manifest)
+    elif kind == "Role":
+        await rbac.create_namespaced_role(namespace=manifest_ns, body=manifest)
+    elif kind == "RoleBinding":
+        await rbac.create_namespaced_role_binding(namespace=manifest_ns, body=manifest)
+    elif kind == "JobSet":
+        await custom.create_namespaced_custom_object(
+            group=JOBSET_GROUP,
+            version=JOBSET_VERSION,
+            plural=JOBSET_PLURAL,
+            namespace=manifest_ns,
+            body=manifest,
+        )
+    else:
+        return None
+    return label
+
+
+def _print_manifests_yaml(manifests: list[dict[str, Any]]) -> None:
+    """Emit all manifests as a multi-document YAML stream to stdout."""
+    import sys
+
+    import ruamel.yaml
+
+    yaml = ruamel.yaml.YAML()
+    yaml.default_flow_style = False
+    for i, manifest in enumerate(manifests):
+        if i > 0:
+            sys.stdout.write("---\n")
+        yaml.dump(manifest, sys.stdout)
+
+
 async def _deploy_direct(
     config: Any,
     kube_options: KubeOptions,
     name: str,
     namespace: str,
+    *,
     dry_run: bool,
     detach: bool,
     no_wait: bool,
@@ -491,7 +587,6 @@ async def _deploy_direct(
 ) -> None:
     """Deploy directly without the operator (creates all K8s resources)."""
     import math
-    import sys
 
     from aiperf.kubernetes import console as kube_console
     from aiperf.kubernetes.resources import KubernetesDeployment
@@ -547,21 +642,13 @@ async def _deploy_direct(
     manifests = deployment.get_all_manifests()
 
     if dry_run:
-        import ruamel.yaml
-
-        yaml = ruamel.yaml.YAML()
-        yaml.default_flow_style = False
-        for i, manifest in enumerate(manifests):
-            if i > 0:
-                sys.stdout.write("---\n")
-            yaml.dump(manifest, sys.stdout)
+        _print_manifests_yaml(manifests)
         return
 
     from kubernetes_asyncio import client as k8s_client_mod
     from kubernetes_asyncio.client.exceptions import ApiException
 
     from aiperf.kubernetes.client import k8s_client
-    from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
 
     async with k8s_client(
         kubeconfig=kube_options.kubeconfig,
@@ -574,41 +661,23 @@ async def _deploy_direct(
         for manifest in manifests:
             kind = manifest["kind"]
             res_name = manifest["metadata"]["name"]
-            manifest_ns = manifest["metadata"].get("namespace") or effective_ns
             try:
-                if kind == "Namespace":
-                    await core.create_namespace(body=manifest)
-                elif kind == "ConfigMap":
-                    await core.create_namespaced_config_map(
-                        namespace=manifest_ns, body=manifest
-                    )
-                elif kind == "Role":
-                    await rbac.create_namespaced_role(
-                        namespace=manifest_ns, body=manifest
-                    )
-                elif kind == "RoleBinding":
-                    await rbac.create_namespaced_role_binding(
-                        namespace=manifest_ns, body=manifest
-                    )
-                elif kind == "JobSet":
-                    await custom.create_namespaced_custom_object(
-                        group=JOBSET_GROUP,
-                        version=JOBSET_VERSION,
-                        plural=JOBSET_PLURAL,
-                        namespace=manifest_ns,
-                        body=manifest,
-                    )
-                else:
-                    kube_console.print_warning(
-                        f"Unknown resource kind: {kind}, skipping"
-                    )
-                    continue
-                kube_console.print_success(f"Created {kind}/{res_name}")
+                label = await _apply_manifest(
+                    manifest,
+                    core=core,
+                    rbac=rbac,
+                    custom=custom,
+                    default_namespace=effective_ns,
+                )
             except ApiException as exc:
                 if exc.status == 409:
                     kube_console.print_info(f"{kind}/{res_name} already exists")
-                else:
-                    raise
+                    continue
+                raise
+            if label is None:
+                kube_console.print_warning(f"Unknown resource kind: {kind}, skipping")
+                continue
+            kube_console.print_success(f"Created {label}")
 
     kube_console.print_cr_submission_summary(
         name=name,
@@ -625,8 +694,8 @@ async def _deploy_direct(
         name,
         effective_ns,
         kube_options,
-        detach,
-        no_wait,
-        attach_port,
+        detach=detach,
+        no_wait=no_wait,
+        attach_port=attach_port,
         hint="Retrieve results: aiperf kube results --shutdown",
     )

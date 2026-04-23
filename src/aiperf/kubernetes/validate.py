@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import pydantic
 import yaml
 
 from aiperf.kubernetes import console as kube_console
@@ -155,7 +156,7 @@ def validate_aiperf_config(
     try:
         converter = AIPerfJobSpecConverter(spec=spec, name=name, namespace="default")
         config = converter.to_aiperf_config()
-    except Exception as e:
+    except (pydantic.ValidationError, ValueError, TypeError, KeyError) as e:
         result.errors.append(f"Config validation failed: {e}")
         return
 
@@ -179,7 +180,7 @@ def validate_deployment_config(
     try:
         converter = AIPerfJobSpecConverter(spec=spec, name=name, namespace="default")
         converter.to_deployment_config()
-    except Exception as e:
+    except (pydantic.ValidationError, ValueError, TypeError, KeyError) as e:
         result.errors.append(f"DeploymentConfig validation failed: {e}")
 
 
@@ -194,7 +195,7 @@ def validate_worker_count(
             result.errors.append(
                 f"Worker count calculation returned {workers}, expected >= 1"
             )
-    except Exception as e:
+    except (pydantic.ValidationError, ValueError, TypeError, KeyError) as e:
         result.errors.append(f"Worker calculation failed: {e}")
 
 

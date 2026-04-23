@@ -149,7 +149,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 self.debug(
                     f"Results processor {entry.name} is disabled and will not be used"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - one bad results processor must not abort the whole records manager; error is surfaced via self.error
                 self.error(f"Failed to create results processor {entry.name}: {e}")
 
     async def _process_metric_record_data(self, record_data: MetricRecordsData) -> None:
@@ -436,7 +436,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         metrics to display units before publishing. This ensures all consumers
         receive consistent, pre-processed metrics.
         """
-        from aiperf.metrics.metric_registry import MetricRegistry
+        from aiperf.metrics.metric_registry import MetricRegistry, MetricTypeError
 
         raw_metrics = await self._generate_realtime_metrics()
         if not raw_metrics:
@@ -450,7 +450,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 metric_cls = MetricRegistry.get_class(m.tag)
                 if metric_cls.flags.has_any_flags(hidden_flags):
                     continue
-            except Exception:
+            except MetricTypeError:
+                # Unregistered tag (plugin/external metric): include it in output as-is
                 pass
             display_metrics.append(m)
 
@@ -641,13 +642,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             JsonExportData ready for serialization to ConfigMap
         """
         from datetime import datetime
+        from importlib.metadata import PackageNotFoundError
         from importlib.metadata import version as get_version
 
         from aiperf.common.models.export_models import JsonExportData
 
         try:
             aiperf_version = get_version("aiperf")
-        except Exception:
+        except PackageNotFoundError:
             aiperf_version = "unknown"
 
         # Calculate timestamps

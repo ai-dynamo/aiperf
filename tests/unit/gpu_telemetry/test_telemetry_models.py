@@ -522,7 +522,7 @@ class TestGpuMetricTimeSeries:
 
         time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=5_000_000_000)
         result = time_series.to_metric_result_filtered(
-            "power", "tag", "header", "W", time_filter, is_counter=False
+            "power", "tag", "header", "W", time_filter=time_filter, is_counter=False
         )
 
         # Stats should only include values 100, 120, 80 (not 50)
@@ -537,7 +537,7 @@ class TestGpuMetricTimeSeries:
         """Test counter delta computed from baseline before start_ns."""
         time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=5_000_000_000)
         result = counter_time_series.to_metric_result_filtered(
-            "energy", "tag", "header", "MJ", time_filter, is_counter=True
+            "energy", "tag", "header", "MJ", time_filter=time_filter, is_counter=True
         )
 
         # Delta: final (1800) - baseline (1000) = 800
@@ -557,7 +557,7 @@ class TestGpuMetricTimeSeries:
         # Filter starts before any data
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=5_000_000_000)
         result = time_series.to_metric_result_filtered(
-            "energy", "tag", "header", "MJ", time_filter, is_counter=True
+            "energy", "tag", "header", "MJ", time_filter=time_filter, is_counter=True
         )
 
         # No baseline: delta = final (1600) - first filtered (1000) = 600
@@ -573,7 +573,7 @@ class TestGpuMetricTimeSeries:
 
         time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=5_000_000_000)
         result = time_series.to_metric_result_filtered(
-            "energy", "tag", "header", "MJ", time_filter, is_counter=True
+            "energy", "tag", "header", "MJ", time_filter=time_filter, is_counter=True
         )
 
         # Raw delta: 300 - 5000 = -4700, clamped to 0
@@ -590,7 +590,7 @@ class TestGpuMetricTimeSeries:
 
         with pytest.raises(NoMetricValue) as exc_info:
             time_series.to_metric_result_filtered(
-                "power", "tag", "header", "W", time_filter, is_counter=False
+                "power", "tag", "header", "W", time_filter=time_filter, is_counter=False
             )
         assert "No data in time range" in str(exc_info.value)
 

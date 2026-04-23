@@ -19,6 +19,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import aiohttp
 from kubernetes_asyncio import config
 from kubernetes_asyncio.client import ApiClient
 
@@ -132,9 +133,21 @@ class KubernetesServiceManager(MultiProcessServiceManager):
     ) -> None:
         """Register expectations for an externally managed Kubernetes service.
 
-        Kubernetes manifests launch control-plane services as sibling containers
-        and workers/record processors via worker pods, so the service manager
-        only records how many instances must register.
+        For service types listed in ``EXTERNAL_K8S_SERVICES`` (``API``,
+        ``DATASET_MANAGER``, ``GPU_TELEMETRY_MANAGER``, ``RECORDS_MANAGER``,
+        ``SERVER_METRICS_MANAGER``, ``TIMING_MANAGER``, ``WORKER``,
+        ``WORKER_MANAGER``, ``RECORD_PROCESSOR``, ``WORKER_GROUP_MANAGER``),
+        this is a no-op for process spawning: Kubernetes manifests launch
+        control-plane services as sibling containers and workers/record
+        processors via worker pods. We only record how many instances must
+        register with ``ServiceRegistry``.
+
+        For any other (non-external) service types, delegates to the parent
+        ``MultiProcessServiceManager.run_service`` which spawns a subprocess.
+
+        Raises:
+            (Non-external services only) Propagates any exceptions from the
+            parent's subprocess spawn path.
         """
         if self._is_external_service(service_type):
             self.debug(
@@ -150,8 +163,21 @@ class KubernetesServiceManager(MultiProcessServiceManager):
     ) -> list[BaseException | None]:
         """Stop a service, either local subprocess or external Kubernetes runtime.
 
-        Externally managed Kubernetes services receive shutdown over the control
-        channel and exit on their own, so there is no subprocess to stop here.
+        For service types listed in ``EXTERNAL_K8S_SERVICES`` (``API``,
+        ``DATASET_MANAGER``, ``GPU_TELEMETRY_MANAGER``, ``RECORDS_MANAGER``,
+        ``SERVER_METRICS_MANAGER``, ``TIMING_MANAGER``, ``WORKER``,
+        ``WORKER_MANAGER``, ``RECORD_PROCESSOR``, ``WORKER_GROUP_MANAGER``),
+        this is a no-op: externally managed Kubernetes services receive
+        shutdown over the control channel and exit on their own. Returns an
+        empty list.
+
+        For any other (non-external) service types, delegates to the parent
+        ``MultiProcessServiceManager.stop_service`` which stops the local
+        subprocess and returns a list of exception results.
+
+        Raises:
+            (Non-external services only) Propagates any exceptions from the
+            parent's subprocess stop path (e.g. ``ServiceProcessDiedError``).
         """
         if self._is_external_service(service_type):
             self.debug(
@@ -195,7 +221,7 @@ class KubernetesServiceManager(MultiProcessServiceManager):
         if api is not None:
             try:
                 await api.close()
-            except Exception as e:
+            except (OSError, RuntimeError, aiohttp.ClientError) as e:
                 self.debug(f"Error closing Kubernetes ApiClient: {e!r}")
 
         return results
@@ -331,7 +357,9 @@ class KubernetesServiceManager(MultiProcessServiceManager):
                     ServiceRegistry._raise_on_failure()
         except ServiceProcessDiedError:
             raise
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - pod health check is advisory, must not raise
             self.warning(f"Pod health check before PROFILE_START failed: {e!r}")
 
     # -- Kubernetes pod health monitoring --
@@ -537,7 +565,9 @@ class KubernetesServiceManager(MultiProcessServiceManager):
 
             self._check_pod_failure_threshold()
 
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - pod monitoring loop must not crash on transient k8s errors
             self.warning(f"Failed to query Kubernetes pod statuses: {e!r}")
 
 

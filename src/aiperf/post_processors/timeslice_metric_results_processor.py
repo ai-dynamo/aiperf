@@ -52,7 +52,7 @@ class TimesliceMetricResultsProcessor(MetricResultsProcessor):
             MetricResultsDict
         )
 
-    async def get_timeslice_index(self, request_start_ns: int):
+    async def get_timeslice_index(self, request_start_ns: int) -> int:
         return int(request_start_ns / self._slice_duration_ns)
 
     async def get_instances_map(
@@ -91,7 +91,7 @@ class TimesliceMetricResultsProcessor(MetricResultsProcessor):
                     timeslice_results[tag] = derive_func(timeslice_results)
                 except NoMetricValue as e:
                     self.debug(f"No metric value for derived metric '{tag}': {e!r}")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - per-metric; skip bad derivation and continue
                     self.warning(f"Error deriving metric '{tag}': {e!r}")
 
     async def summarize(self) -> dict[TimeSliceT, list[MetricResult]]:

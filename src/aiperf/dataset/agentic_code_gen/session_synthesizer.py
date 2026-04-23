@@ -383,6 +383,7 @@ class SessionSynthesizer:
 
     def _synthesize_continuation(
         self,
+        *,
         session_index: int,
         group_id: int,
         prev_input: int,

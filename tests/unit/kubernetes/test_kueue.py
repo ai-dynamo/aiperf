@@ -4,7 +4,7 @@
 
 Tests cover:
 - KueueLabels constants integrity
-- JobSetSpec Kueue label injection and suspend behavior
+- AIPerfJobSetSpec Kueue label injection and suspend behavior
 - KubernetesDeployment passthrough of queue_name / priority_class
 """
 
@@ -18,7 +18,7 @@ from pytest import param
 
 from aiperf.config.deployment import DeploymentConfig, SchedulingConfig
 from aiperf.kubernetes.constants import KueueLabels
-from aiperf.kubernetes.jobset import JobSetSpec
+from aiperf.kubernetes.jobset import AIPerfJobSetSpec
 from aiperf.kubernetes.resources import KubernetesDeployment
 
 # ---------------------------------------------------------------------------
@@ -71,12 +71,12 @@ class TestKueueLabels:
 
 
 # ---------------------------------------------------------------------------
-# Helpers to build a minimal JobSetSpec
+# Helpers to build a minimal AIPerfJobSetSpec
 # ---------------------------------------------------------------------------
 
 
-def _make_jobset_spec(**overrides: Any) -> JobSetSpec:
-    """Create a minimal JobSetSpec with optional overrides."""
+def _make_jobset_spec(**overrides: Any) -> AIPerfJobSetSpec:
+    """Create a minimal AIPerfJobSetSpec with optional overrides."""
     queue_name = overrides.pop("queue_name", None)
     priority_class = overrides.pop("priority_class", None)
     scheduling_kwargs: dict[str, Any] = {}
@@ -93,16 +93,16 @@ def _make_jobset_spec(**overrides: Any) -> JobSetSpec:
         "image": "test:latest",
     }
     defaults.update(overrides)
-    return JobSetSpec(**defaults)
+    return AIPerfJobSetSpec(**defaults)
 
 
 # ---------------------------------------------------------------------------
-# JobSetSpec Kueue integration
+# AIPerfJobSetSpec Kueue integration
 # ---------------------------------------------------------------------------
 
 
 class TestJobSetSpecKueue:
-    """Tests for Kueue-related behavior in JobSetSpec.to_k8s_manifest()."""
+    """Tests for Kueue-related behavior in AIPerfJobSetSpec.to_k8s_manifest()."""
 
     def test_to_k8s_manifest_without_queue_name_has_no_kueue_labels(self) -> None:
         spec = _make_jobset_spec()
@@ -180,7 +180,7 @@ class TestJobSetSpecKueue:
 
 
 class TestKubernetesDeploymentKueue:
-    """Tests that KubernetesDeployment passes Kueue fields to JobSetSpec."""
+    """Tests that KubernetesDeployment passes Kueue fields to AIPerfJobSetSpec."""
 
     @pytest.fixture
     def _deployment_kwargs(self, sample_config) -> dict[str, Any]:
@@ -237,7 +237,7 @@ class TestKubernetesDeploymentKueue:
     def test_manifest_includes_kueue_labels_when_set(
         self, _deployment_kwargs: dict[str, Any]
     ) -> None:
-        """End-to-end: KubernetesDeployment -> JobSetSpec -> manifest labels."""
+        """End-to-end: KubernetesDeployment -> AIPerfJobSetSpec -> manifest labels."""
         _deployment_kwargs["deployment"] = DeploymentConfig(
             image="aiperf:latest",
             scheduling=SchedulingConfig(

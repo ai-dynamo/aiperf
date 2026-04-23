@@ -8,14 +8,45 @@ import asyncio
 import dataclasses
 import signal
 from datetime import datetime, timezone
-from typing import Any
+from typing import Protocol
 
 from aiperf.kubernetes.watch_models import WatchSnapshot
 from aiperf.operator.status import Phase
 
 
+class WatchRenderer(Protocol):
+    """Structural type for a ``WatchOrchestrator`` renderer.
+
+    Any object that exposes the three methods below (text, Rich, JSON, test
+    double, ...) satisfies this protocol. ``start()`` and ``stop()`` bracket
+    the watch session, and ``render()`` is called once per poll cycle with
+    the latest snapshot.
+    """
+
+    def start(self) -> None: ...
+    def render(self, snapshot: WatchSnapshot) -> None: ...
+    def stop(self) -> None: ...
+
+
 class WatchOrchestrator:
-    """Coordinates K8s polling, diagnosis, and rendering into a refresh loop."""
+    """Single-use driver that polls K8s, diagnoses state, and renders frames.
+
+    ``run()`` owns the full lifecycle: it installs ``SIGINT``/``SIGTERM``
+    handlers on the running event loop, polls the CR/pods/events on a fixed
+    interval, produces a ``WatchSnapshot`` + ``Diagnosis``, hands each frame
+    to the renderer, and exits when the job reaches a terminal phase
+    (``Completed``/``Failed``/``Cancelled``) or the process receives a signal.
+    Instances are **single-use** -- create a new one per watch session.
+
+    Example:
+        >>> orch = WatchOrchestrator(
+        ...     job_id="aiperf-bench-7f2a",
+        ...     namespace="aiperf-bench",
+        ...     renderer=RichRenderer(),
+        ...     interval=2.0,
+        ... )
+        >>> await orch.run()
+    """
 
     def __init__(
         self,
@@ -25,10 +56,31 @@ class WatchOrchestrator:
         kubeconfig: str | None = None,
         kube_context: str | None = None,
         all_jobs: bool = False,
-        renderer: Any = None,
+        renderer: WatchRenderer | None = None,
         interval: float = 2.0,
         follow_logs: bool = False,
     ) -> None:
+        """Configure the orchestrator.
+
+        Args:
+            job_id: Target ``AIPerfJob`` CR name. If ``None``, the job is
+                resolved via ``cli_helpers.resolve_job_id_and_namespace``
+                (single-job convenience path).
+            namespace: Kubernetes namespace for the CR. Falls back to
+                ``DEFAULT_BENCHMARK_NAMESPACE`` when ``None``.
+            kubeconfig: Optional path to a kubeconfig file; ``None`` uses the
+                default kubeconfig discovery (``KUBECONFIG`` env, in-cluster,
+                ``~/.kube/config``).
+            kube_context: Optional kubeconfig context name to select.
+            all_jobs: Reserved for future multi-job watch support; currently
+                unused but preserved for CLI parity.
+            renderer: Object matching the ``WatchRenderer`` protocol. When
+                ``None``, the orchestrator runs silently (useful for tests).
+            interval: Seconds between CR polls. Pod/event polls run every 3rd
+                iteration.
+            follow_logs: Reserved for future log-tailing support; currently
+                unused but preserved for CLI parity.
+        """
         self._job_id = job_id
         self._namespace = namespace
         self._kubeconfig = kubeconfig

@@ -218,7 +218,7 @@ class RecordExportCSVProcessor(BaseMetricsProcessor, BufferedCSVWriterMixin):
             row = self._build_row(metadata_row, display_metrics)
             await self.buffered_csv_write(row)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - per-record; skip bad record and continue
             self.error(f"Failed to write CSV record metrics: {e}")
 
     async def summarize(self) -> list[MetricResult]:

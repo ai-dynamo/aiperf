@@ -21,6 +21,7 @@ T = TypeVar("T")
 
 async def retry_with_backoff(
     coro_factory: Callable[[], Awaitable[T]],
+    *,
     max_retries: int = 3,
     initial_delay: float = 2.0,
     max_delay: float = 30.0,
@@ -70,6 +71,7 @@ async def retry_with_backoff(
 
 async def create_idempotent_custom_object(
     api: ApiClient,
+    *,
     group: str,
     version: str,
     plural: str,

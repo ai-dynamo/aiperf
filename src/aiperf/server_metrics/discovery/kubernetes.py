@@ -15,11 +15,15 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from kubernetes_asyncio import client
+from kubernetes_asyncio.client import ApiClient
 
 from aiperf.kubernetes.client import k8s_client
+
+if TYPE_CHECKING:
+    from kubernetes_asyncio.client import V1Pod
 
 _logger = logging.getLogger(__name__)
 
@@ -61,16 +65,16 @@ async def discover_kubernetes_endpoints(
             for pod in pods:
                 urls.update(_pod_to_urls(pod, label_selector))
             return sorted(urls)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - defensive: unexpected errors must not crash metrics discovery
         _logger.warning("Failed to discover Kubernetes endpoints: %s", e)
         return []
 
 
 async def _list_running_pods(
-    api: Any,
+    api: ApiClient,
     namespace: str | None,
     label_selector: str | None,
-) -> list[Any]:
+) -> list[V1Pod]:
     """List Running pods, optionally filtered by namespace and labels."""
     try:
         core = client.CoreV1Api(api)
@@ -83,12 +87,12 @@ async def _list_running_pods(
         else:
             pod_list = await core.list_namespaced_pod(namespace=namespace, **kwargs)
         return pod_list.items
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - defensive: discovery must not crash initialization
         _logger.warning("Kubernetes pod list failed: %s", e)
         return []
 
 
-def _pod_to_urls(pod: Any, label_selector: str | None) -> list[str]:
+def _pod_to_urls(pod: V1Pod, label_selector: str | None) -> list[str]:
     """Build scrape URL(s) from pod if eligible, else empty list.
 
     When ``aiperf.nvidia.com/metrics-paths`` annotation is present, generates
@@ -143,7 +147,7 @@ def _normalize_path(path: str) -> str:
     return path if path.startswith("/") else f"/{path}"
 
 
-def _resolve_port(pod: Any, annotation_port: str | None) -> int | None:
+def _resolve_port(pod: V1Pod, annotation_port: str | None) -> int | None:
     """Resolve port: annotation → named 'metrics' port → first container port."""
     if annotation_port:
         try:

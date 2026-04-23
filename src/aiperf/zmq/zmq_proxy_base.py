@@ -36,6 +36,7 @@ class ProxySocketClient(BaseZMQClient):
         address: str,
         end_type: ProxyEndType,
         socket_ops: dict | None = None,
+        *,
         proxy_uuid: str | None = None,
         **kwargs,
     ) -> None:

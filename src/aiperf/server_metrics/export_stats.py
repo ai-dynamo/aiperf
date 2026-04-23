@@ -43,6 +43,7 @@ _logger = AIPerfLogger(__name__)
 def compute_stats(
     metric_type: PrometheusMetricType,
     time_series: ScalarTimeSeries | HistogramTimeSeries,
+    *,
     time_filter: TimeRangeFilter | None = None,
     labels: dict[str, str] | None = None,
     slice_duration: float | None = None,
@@ -111,7 +112,7 @@ def compute_stats(
                 time_filter,
                 labels,
                 slice_duration,
-                fast_histogram_percentiles,
+                fast_histogram_percentiles=fast_histogram_percentiles,
             )
         case _:
             raise ValueError(f"Unsupported metric type: {metric_type}")
@@ -690,6 +691,7 @@ def _compute_histogram_stats(
     time_filter: TimeRangeFilter | None,
     labels: dict[str, str] | None = None,
     slice_duration: float | None = None,
+    *,
     fast_histogram_percentiles: bool = False,
 ) -> HistogramSeries | None:
     """Compute histogram statistics from a HistogramTimeSeries.

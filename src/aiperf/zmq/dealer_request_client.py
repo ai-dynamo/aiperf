@@ -87,10 +87,15 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
             except zmq.Again:
                 self.trace("No data on dealer socket received, yielding to event loop")
                 await yield_to_event_loop()
-            except (asyncio.CancelledError, zmq.ContextTerminated):
+            except asyncio.CancelledError:
                 self.debug("Dealer request client receiver task cancelled")
+                raise
+            except zmq.ContextTerminated:
+                self.debug(
+                    "Dealer request client receiver task stopped (ZMQ context terminated)"
+                )
                 break
-            except Exception as e:
+            except (zmq.ZMQError, asyncio.TimeoutError) as e:
                 self.exception(
                     f"Exception receiving responses for client {self.client_id}: {e!r}"
                 )

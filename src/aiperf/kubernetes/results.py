@@ -72,11 +72,58 @@ def _kubectl_kube_args(kubeconfig: str | None, kube_context: str | None) -> list
 RESULTS_SERVER_PORT = 8081
 
 
+async def _download_operator_file(
+    session: aiohttp.ClientSession,
+    *,
+    api_base: str,
+    namespace: str,
+    job_id: str,
+    file_info: dict,
+    output_dir: Path,
+) -> tuple[str, int] | None:
+    """Download a single file from the operator's results server.
+
+    Returns ``(safe_name, size_bytes)`` on success, ``None`` if skipped or
+    the download failed.
+    """
+    display_name = file_info["name"]
+    # Defend against a compromised/buggy controller returning a traversal
+    # path like ``../../etc/foo``. Strip to the basename and skip empty /
+    # dotfile results.
+    safe_name = Path(display_name).name
+    if not safe_name or safe_name.startswith("."):
+        print_warning(f"Refusing unsafe filename: {display_name!r}")
+        return None
+    quoted_name = quote(safe_name, safe="")
+    download_url = f"{api_base}/api/v1/results/{namespace}/{job_id}/{quoted_name}"
+    headers = {"Accept-Encoding": "zstd, gzip, identity"}
+
+    try:
+        async with session.get(download_url, headers=headers) as resp:
+            if resp.status == 404:
+                print_warning(f"File not found: {safe_name}")
+                return None
+            resp.raise_for_status()
+
+            dest_path = output_dir / safe_name
+            content_encoding = resp.headers.get("Content-Encoding", "identity")
+
+            await _download_and_decompress(resp, dest_path, content_encoding)
+
+            file_size = dest_path.stat().st_size
+            print_success(f"Downloaded: {safe_name} ({_human_size(file_size)})")
+            return (safe_name, file_size)
+    except aiohttp.ClientError as e:
+        print_warning(f"Failed to download {safe_name}: {e}")
+        return None
+
+
 async def retrieve_results_from_operator(
     job_id: str,
     namespace: str,
     output_dir: Path,
     api: ApiClient,
+    *,
     local_port: int = 0,
     operator_namespace: str = "aiperf-system",
     results_port: int = RESULTS_SERVER_PORT,
@@ -161,44 +208,16 @@ async def retrieve_results_from_operator(
                 print_step(f"Downloading {len(available)} files...")
 
                 for file_info in available:
-                    display_name = file_info["name"]
-                    # Defend against a compromised/buggy controller returning
-                    # a traversal path like ``../../etc/foo``. Strip to the
-                    # basename and skip empty / dotfile results.
-                    safe_name = Path(display_name).name
-                    if not safe_name or safe_name.startswith("."):
-                        print_warning(f"Refusing unsafe filename: {display_name!r}")
-                        continue
-                    quoted_name = quote(safe_name, safe="")
-                    download_url = (
-                        f"{api_base}/api/v1/results/{namespace}/{job_id}/{quoted_name}"
+                    result = await _download_operator_file(
+                        session,
+                        api_base=api_base,
+                        namespace=namespace,
+                        job_id=job_id,
+                        file_info=file_info,
+                        output_dir=output_dir,
                     )
-                    headers = {"Accept-Encoding": "zstd, gzip, identity"}
-
-                    try:
-                        async with session.get(download_url, headers=headers) as resp:
-                            if resp.status == 404:
-                                print_warning(f"File not found: {safe_name}")
-                                continue
-                            resp.raise_for_status()
-
-                            dest_path = output_dir / safe_name
-                            content_encoding = resp.headers.get(
-                                "Content-Encoding", "identity"
-                            )
-
-                            # Decompress if needed
-                            await _download_and_decompress(
-                                resp, dest_path, content_encoding
-                            )
-
-                            file_size = dest_path.stat().st_size
-                            downloaded_files.append((safe_name, file_size))
-                            print_success(
-                                f"Downloaded: {safe_name} ({_human_size(file_size)})"
-                            )
-                    except aiohttp.ClientError as e:
-                        print_warning(f"Failed to download {safe_name}: {e}")
+                    if result is not None:
+                        downloaded_files.append(result)
 
             if downloaded_files:
                 print_file_table(downloaded_files)
@@ -208,7 +227,7 @@ async def retrieve_results_from_operator(
                 print_error("No files downloaded")
                 return False
 
-    except Exception as e:
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, RuntimeError) as e:
         print_error(f"Error connecting to operator: {e!r}")
         return False
 
@@ -241,12 +260,94 @@ async def _download_and_decompress(
                 await f.write(remaining)
 
 
+async def _write_api_response(
+    response: aiohttp.ClientResponse,
+    filename: str,
+    output_dir: Path,
+    *,
+    attempt: int,
+    max_retries: int,
+) -> bool | None:
+    """Write a 200-response body to disk and emit a metric summary if relevant.
+
+    Returns:
+        True on success, False after exhausted retries on incomplete body,
+        None to signal "retry this attempt" (incomplete body, retries remain).
+    """
+    content = await response.read()
+    expected = response.content_length
+    if expected is not None and len(content) != expected:
+        print_warning(
+            f"{filename}: expected {expected} bytes but received {len(content)}"
+        )
+        if attempt < max_retries:
+            return None
+        print_warning(f"Skipping {filename}: incomplete download after retries")
+        return False
+
+    output_file = output_dir / filename
+    await asyncio.to_thread(output_file.write_bytes, content)
+    print_success(f"Downloaded: {filename}")
+
+    if filename == "metrics.json":
+        try:
+            metrics = orjson.loads(content)
+            print_metrics_summary(metrics)
+        except (orjson.JSONDecodeError, KeyError, TypeError) as e:
+            print_warning(f"Could not parse metrics: {e}")
+    return True
+
+
+async def _download_api_file(
+    session: aiohttp.ClientSession,
+    files_base: str,
+    filename: str,
+    output_dir: Path,
+    *,
+    max_retries: int = 2,
+) -> bool:
+    """Download one key result file with retries.
+
+    Returns True if the file was written successfully (including the metrics
+    summary side-effect when the filename is ``metrics.json``).
+    """
+    for attempt in range(1 + max_retries):
+        try:
+            async with session.get(f"{files_base}/{filename}") as response:
+                if response.status == 200:
+                    outcome = await _write_api_response(
+                        response,
+                        filename,
+                        output_dir,
+                        attempt=attempt,
+                        max_retries=max_retries,
+                    )
+                    if outcome is None:
+                        continue
+                    return outcome
+                if response.status != 404:
+                    print_warning(f"Failed to download {filename}: {response.status}")
+                return False
+        except aiohttp.ClientConnectorError:
+            if attempt < max_retries:
+                continue
+            print_warning(f"Could not connect to API service for file {filename}")
+            return False
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError, RuntimeError) as e:
+            if attempt < max_retries:
+                continue
+            print_warning(f"Error downloading {filename}: {e}")
+            return False
+    return False
+
+
 async def retrieve_results_from_api(
     job_id: str,
     namespace: str,
     output_dir: Path,
     jobset_info: JobSetInfo | None,
     api: ApiClient,
+    *,
     local_port: int = 0,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
@@ -282,74 +383,18 @@ async def retrieve_results_from_api(
             downloaded_any = False
             timeout = aiohttp.ClientTimeout(total=30)
             connector = create_tcp_connector()
-            max_retries = 2
             async with aiohttp.ClientSession(
                 timeout=timeout, connector=connector
             ) as session:
                 for filename in KEY_RESULT_FILES:
-                    for attempt in range(1 + max_retries):
-                        try:
-                            async with session.get(
-                                f"{files_base}/{filename}"
-                            ) as response:
-                                if response.status == 200:
-                                    content = await response.read()
-                                    expected = response.content_length
-                                    if (
-                                        expected is not None
-                                        and len(content) != expected
-                                    ):
-                                        print_warning(
-                                            f"{filename}: expected {expected} bytes "
-                                            f"but received {len(content)}"
-                                        )
-                                        if attempt < max_retries:
-                                            continue
-                                        print_warning(
-                                            f"Skipping {filename}: incomplete download after retries"
-                                        )
-                                        break
-                                    output_file = output_dir / filename
-                                    await asyncio.to_thread(
-                                        output_file.write_bytes, content
-                                    )
-                                    print_success(f"Downloaded: {filename}")
-                                    downloaded_any = True
-
-                                    if filename == "metrics.json":
-                                        try:
-                                            metrics = orjson.loads(content)
-                                            print_metrics_summary(metrics)
-                                        except (
-                                            orjson.JSONDecodeError,
-                                            KeyError,
-                                            TypeError,
-                                        ) as e:
-                                            print_warning(
-                                                f"Could not parse metrics: {e}"
-                                            )
-                                elif response.status != 404:
-                                    print_warning(
-                                        f"Failed to download {filename}: "
-                                        f"{response.status}"
-                                    )
-                            break
-                        except aiohttp.ClientConnectorError:
-                            if attempt < max_retries:
-                                continue
-                            print_warning(
-                                f"Could not connect to API service for job {job_id}"
-                            )
-                            break
-                        except Exception as e:
-                            if attempt < max_retries:
-                                continue
-                            print_warning(f"Error downloading {filename}: {e}")
-                            break
+                    ok = await _download_api_file(
+                        session, files_base, filename, output_dir
+                    )
+                    downloaded_any = downloaded_any or ok
 
             return downloaded_any
 
-    except Exception as e:
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, RuntimeError) as e:
         print_warning(f"Error connecting to API: {e}")
         return False
 
@@ -360,6 +405,7 @@ async def retrieve_results_from_pod(
     output_dir: Path,
     jobset_info: JobSetInfo | None,
     api: ApiClient,
+    *,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
 ) -> bool:
@@ -413,6 +459,7 @@ async def kubectl_copy_results(
     pod_name: str,
     container: str,
     output_dir: Path,
+    *,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
 ) -> bool:
@@ -509,6 +556,66 @@ def display_copied_results(output_dir: Path, jobset_info: JobSetInfo) -> bool:
     return True
 
 
+async def _download_artifact(
+    session: aiohttp.ClientSession,
+    files_base: str,
+    filename: str,
+    output_dir: Path,
+    *,
+    max_retries: int = 2,
+) -> tuple[str, int] | None:
+    """Download one artifact by name with retries.
+
+    Returns ``(dest_name, size_bytes)`` on success, ``None`` on skip/error.
+    """
+    # Sanitize server-provided filename to block path traversal
+    safe_filename = Path(filename).name
+    if not safe_filename or safe_filename.startswith("."):
+        print_warning(f"Refusing unsafe filename: {filename!r}")
+        return None
+    quoted = quote(safe_filename, safe="")
+
+    for attempt in range(1 + max_retries):
+        try:
+            async with session.get(f"{files_base}/{quoted}") as resp:
+                if resp.status == 404:
+                    return None
+                resp.raise_for_status()
+
+                x_filename = resp.headers.get("x-filename")
+                raw_dest = x_filename or safe_filename
+                dest_name = Path(raw_dest).name or safe_filename
+                dest_path = output_dir / dest_name
+
+                content = await resp.read()
+                expected = resp.content_length
+                if expected is not None and len(content) != expected:
+                    print_warning(
+                        f"{dest_name}: expected {expected} bytes "
+                        f"but received {len(content)}"
+                    )
+                    if attempt < max_retries:
+                        continue
+                    print_warning(
+                        f"Skipping {dest_name}: incomplete download after retries"
+                    )
+                    return None
+
+                await asyncio.to_thread(dest_path.write_bytes, content)
+                file_size = len(content)
+                print_success(f"Downloaded: {dest_name} ({_human_size(file_size)})")
+                return (dest_name, file_size)
+        except aiohttp.ClientConnectionError:
+            if attempt < max_retries:
+                continue
+            print_warning("Lost connection to API service")
+            return None
+        except aiohttp.ClientResponseError as e:
+            print_warning(f"Failed to download {filename}: {e.status}")
+            return None
+    return None
+
+
 async def retrieve_all_artifacts(
     job_id: str,
     namespace: str,
@@ -516,6 +623,7 @@ async def retrieve_all_artifacts(
     jobset_info: JobSetInfo | None,
     api: ApiClient,
     local_port: int,
+    *,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
 ) -> bool:
@@ -577,57 +685,12 @@ async def retrieve_all_artifacts(
                     return False
 
                 files_base = f"{api_base}{API_RESULTS_FILES_PATH}"
-                max_retries = 2
                 for filename in available_files:
-                    # Sanitize server-provided filename to block path traversal
-                    safe_filename = Path(filename).name
-                    if not safe_filename or safe_filename.startswith("."):
-                        print_warning(f"Refusing unsafe filename: {filename!r}")
-                        continue
-                    quoted = quote(safe_filename, safe="")
-                    for attempt in range(1 + max_retries):
-                        try:
-                            async with session.get(f"{files_base}/{quoted}") as resp:
-                                if resp.status == 404:
-                                    break
-                                resp.raise_for_status()
-
-                                x_filename = resp.headers.get("x-filename")
-                                raw_dest = x_filename or safe_filename
-                                dest_name = Path(raw_dest).name or safe_filename
-                                dest_path = output_dir / dest_name
-
-                                content = await resp.read()
-                                expected = resp.content_length
-                                if expected is not None and len(content) != expected:
-                                    print_warning(
-                                        f"{dest_name}: expected {expected} bytes "
-                                        f"but received {len(content)}"
-                                    )
-                                    if attempt < max_retries:
-                                        continue
-                                    print_warning(
-                                        f"Skipping {dest_name}: incomplete download after retries"
-                                    )
-                                    break
-
-                                await asyncio.to_thread(dest_path.write_bytes, content)
-
-                                file_size = len(content)
-                                downloaded_files.append((dest_name, file_size))
-                                print_success(
-                                    f"Downloaded: {dest_name} ({_human_size(file_size)})"
-                                )
-
-                            break
-                        except aiohttp.ClientConnectionError:
-                            if attempt < max_retries:
-                                continue
-                            print_warning("Lost connection to API service")
-                            break
-                        except aiohttp.ClientResponseError as e:
-                            print_warning(f"Failed to download {filename}: {e.status}")
-                            break
+                    result = await _download_artifact(
+                        session, files_base, filename, output_dir
+                    )
+                    if result is not None:
+                        downloaded_files.append(result)
 
             if downloaded_files:
                 print_file_table(downloaded_files)
@@ -640,7 +703,7 @@ async def retrieve_all_artifacts(
     except aiohttp.ClientConnectionError:
         print_error("Could not connect to API. Is the pod running?")
         return False
-    except Exception as e:
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, RuntimeError) as e:
         print_error(f"Error downloading artifacts: {e!r}")
         return False
 
@@ -650,6 +713,7 @@ async def shutdown_api_service(
     namespace: str,
     api: ApiClient,
     local_port: int = 0,
+    *,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
 ) -> bool:
@@ -705,7 +769,7 @@ async def shutdown_api_service(
                     f"Unexpected response from shutdown endpoint: {response.status}"
                 )
                 return False
-    except Exception as e:
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, RuntimeError) as e:
         print_warning(f"Could not send shutdown signal: {e}")
         return False
 
@@ -713,6 +777,7 @@ async def shutdown_api_service(
 async def stream_controller_logs(
     namespace: str,
     pod_name: str,
+    *,
     container: str = Containers.CONTROL_PLANE,
     kubeconfig: str | None = None,
     kube_context: str | None = None,

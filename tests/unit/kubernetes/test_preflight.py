@@ -4,7 +4,7 @@
 
 Focuses on:
 - CheckResult / PreflightResults dataclass behavior
-- PreflightChecker individual check methods (mocked k8s API)
+- CLIPreflightChecker individual check methods (mocked k8s API)
 - Quick-check and full-check orchestration (short-circuit, ordering)
 - Error handling for all k8s API failure modes
 """
@@ -50,7 +50,7 @@ from pytest import param
 from aiperf.kubernetes.preflight import (
     CheckResult,
     CheckStatus,
-    PreflightChecker,
+    CLIPreflightChecker,
     PreflightResults,
     _format_duration,
 )
@@ -60,8 +60,8 @@ from aiperf.kubernetes.preflight import (
 # =============================================================================
 
 
-def _make_checker(**overrides: Any) -> PreflightChecker:
-    """Create a PreflightChecker with sensible defaults, overridable per-test."""
+def _make_checker(**overrides: Any) -> CLIPreflightChecker:
+    """Create a CLIPreflightChecker with sensible defaults, overridable per-test."""
     defaults: dict[str, Any] = {
         "namespace": "test-ns",
         "kubeconfig": None,
@@ -73,7 +73,7 @@ def _make_checker(**overrides: Any) -> PreflightChecker:
         "workers": 1,
     }
     defaults.update(overrides)
-    return PreflightChecker(**defaults)
+    return CLIPreflightChecker(**defaults)
 
 
 def _make_version(major: str = "1", minor: str = "28") -> VersionInfo:
@@ -291,7 +291,7 @@ class TestCheckResult:
 
 
 # =============================================================================
-# PreflightChecker.__init__
+# CLIPreflightChecker.__init__
 # =============================================================================
 
 
@@ -306,7 +306,7 @@ class TestPreflightCheckerInit:
         assert c.workers == 1
 
     def test_lists_normalized_from_none(self) -> None:
-        c = PreflightChecker("ns", image_pull_secrets=None, secrets=None)
+        c = CLIPreflightChecker("ns", image_pull_secrets=None, secrets=None)
         assert c.image_pull_secrets == []
         assert c.secrets == []
 

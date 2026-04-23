@@ -113,6 +113,7 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
         final_state: LifecycleState,
         hook_type: AIPerfHook,
         event: asyncio.Event,
+        *,
         reverse: bool = False,
     ) -> None:
         """This method wraps the functionality of changing the state of the lifecycle, and running the hooks.
@@ -146,7 +147,7 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
                 await self._set_state(LifecycleState.STOPPED)
             else:
                 await self._fail(asyncio.CancelledError())
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - lifecycle transition wrapper must catch any hook failure and enter FAILED
             await self._fail(e)
         finally:
             # Ensure the event is always set so waiters (e.g. bootstrap) unblock.
@@ -379,7 +380,7 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
         for child in reversed(self._children):
             try:
                 await child.stop()
-            except (Exception, asyncio.CancelledError):
+            except (Exception, asyncio.CancelledError):  # noqa: BLE001 - continue shutting down siblings regardless of per-child failure
                 self.debug(f"Error stopping child {child}, continuing shutdown")
 
     def __str__(self) -> str:

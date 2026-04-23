@@ -92,7 +92,7 @@ class WorkerStatusTable(Widget):
                 self.data_table.update_cell(  # type: ignore
                     row_key, self._column_keys[col_name], cell_value, update_width=True
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - best-effort UI cell update; any textual/rich error is logged and skipped
                 _logger.warning(
                     f"Error updating cell {col_name} with value {cell_value}: {e!r}"
                 )

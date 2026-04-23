@@ -54,8 +54,12 @@ class OwnerReference(K8sCamelModel):
 
 
 @dataclass(slots=True)
-class HealthCheckResult:
-    """Result of an endpoint health check."""
+class EndpointHealthResult:
+    """Result of probing the benchmark target endpoint for reachability.
+
+    Distinct from `aiperf.common.mixins.health_check_mixin.HealthCheckResult`,
+    which tracks internal service health.
+    """
 
     reachable: bool
     """Whether the endpoint responded to at least one health probe."""
@@ -65,8 +69,8 @@ class HealthCheckResult:
 
 
 @dataclass(slots=True)
-class FetchResult:
-    """Result of fetching metrics and files from controller pod."""
+class ControllerFetchResult:
+    """Result of fetching metrics and files from the AIPerfJob controller pod."""
 
     metrics: dict[str, Any] | None
     """Full metrics dict from the controller's /api/metrics endpoint."""
@@ -227,8 +231,13 @@ class MetricsSummary:
         return {k: v for k, v in dataclasses.asdict(self).items() if v is not None}
 
 
-class EndpointConfig(AIPerfBaseModel):
-    """Validated endpoint configuration."""
+class K8sEndpointConfig(AIPerfBaseModel):
+    """Validated endpoint configuration for the AIPerfJob CRD.
+
+    Distinct from :class:`aiperf.config.endpoint.EndpointConfig`, which is the
+    full benchmark-side endpoint config. This one models the reduced CRD-spec
+    shape the operator validates before creating resources.
+    """
 
     __slots__ = ()
 
@@ -241,9 +250,11 @@ class EndpointConfig(AIPerfBaseModel):
     def validate_url(cls, v: str) -> str:
         """Validate URL format."""
         if not v:
-            raise ValueError("Endpoint URL is required")
+            raise ValueError(f"Endpoint URL is required, got {v!r}")
         if not v.startswith(("http://", "https://")):
-            raise ValueError("Endpoint URL must start with http:// or https://")
+            raise ValueError(
+                f"Endpoint URL must start with http:// or https://, got {v!r}"
+            )
         return v
 
 
@@ -281,7 +292,9 @@ class AIPerfJobSpec(AIPerfBaseModel):
     def validate_image(cls, v: str) -> str:
         """Validate image is not empty."""
         if not v or not v.strip():
-            raise ValueError("Image is required")
+            raise ValueError(
+                f"Image is required (got {v!r}); set image.repository and image.tag or pass --image."
+            )
         return v
 
     @model_validator(mode="after")
@@ -289,10 +302,14 @@ class AIPerfJobSpec(AIPerfBaseModel):
         """Validate endpoint has required fields."""
         endpoint = self.endpoint
         if not endpoint:
-            raise ValueError("endpoint is required")
+            raise ValueError(
+                f"endpoint.url or endpoint.urls is required, got keys={sorted(endpoint.keys()) if isinstance(endpoint, dict) else type(endpoint).__name__!r}"
+            )
 
         if not endpoint.get("url") and not endpoint.get("urls"):
-            raise ValueError("endpoint.url or endpoint.urls is required")
+            raise ValueError(
+                f"endpoint.url or endpoint.urls is required, got keys={sorted(endpoint.keys())!r}"
+            )
 
         return self
 

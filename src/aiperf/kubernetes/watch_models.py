@@ -1,6 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Data models for the aiperf kube watch command."""
+"""Domain models for the ``aiperf kube watch`` CLI TUI.
+
+These frozen dataclasses (PodSnapshot, DiagnosisIssue, WorkersSnapshot,
+MetricsSnapshot, WatchSnapshot, ...) are assembled by the watch command
+and rendered by the ``watch_render_*`` modules into the interactive
+status display.
+
+The sibling module ``aiperf.kubernetes.watchdog`` defines parallel
+models (WatchdogPodSnapshot, WatchdogProblem, PodTimeline, ...) used by
+the in-cluster production monitor. The two vocabularies are
+intentionally separate: this module backs a user-facing TUI, while
+``watchdog`` drives autonomous monitoring and logs findings."""
 
 from __future__ import annotations
 

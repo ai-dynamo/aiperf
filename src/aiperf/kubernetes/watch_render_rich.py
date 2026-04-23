@@ -128,7 +128,6 @@ class RichRenderer:
         table.add_column(style="bold")
         table.add_column(justify="right")
 
-        # Throughput
         table.add_row(
             "Throughput",
             f"{m.request_throughput_rps:,.1f} req/s",
@@ -142,7 +141,6 @@ class RichRenderer:
             f"{m.total_token_throughput_tps:,.1f} tok/s",
         )
 
-        # Latency
         table.add_row(
             "Latency avg",
             f"{m.request_latency_avg_ms:.2f} ms",
@@ -176,7 +174,6 @@ class RichRenderer:
                 f"{m.output_token_throughput_per_user_tps:,.0f} tok/s",
             )
 
-        # Counts
         table.add_row(
             "Requests",
             f"{m.request_count:,}",

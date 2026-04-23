@@ -21,6 +21,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import aiohttp
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client import ApiClient
 from kubernetes_asyncio.client.exceptions import ApiException
@@ -35,7 +36,7 @@ from aiperf.kubernetes.cr_refs import (
 )
 from aiperf.kubernetes.jobset import get_jobset_install_hint
 from aiperf.kubernetes.preflight import CheckResult, CheckStatus, PreflightResults
-from aiperf.kubernetes.preflight_utils import parse_image_ref
+from aiperf.kubernetes.preflight_utils import check_rbac_access, parse_image_ref
 from aiperf.kubernetes.resources import CONFIGMAP_MAX_SIZE_BYTES
 from aiperf.kubernetes.utils import (
     format_cpu,
@@ -81,37 +82,6 @@ _OPERATOR_RBAC_PERMISSIONS: list[tuple[str, str, str]] = [
 ]
 
 
-async def _check_rbac_access(
-    api: ApiClient,
-    verb: str,
-    resource: str,
-    group: str,
-    namespace: str,
-) -> bool:
-    """Check if current user/service-account has a specific RBAC permission.
-
-    Submits a ``SelfSubjectAccessReview`` to the API server.
-    """
-    resource_attrs: dict[str, Any] = {
-        "verb": verb,
-        "resource": resource,
-        "namespace": namespace,
-    }
-    if group:
-        resource_attrs["group"] = group
-
-    body = {
-        "apiVersion": "authorization.k8s.io/v1",
-        "kind": "SelfSubjectAccessReview",
-        "spec": {"resourceAttributes": resource_attrs},
-    }
-
-    review = await client.AuthorizationV1Api(api).create_self_subject_access_review(
-        body=body
-    )
-    return bool(review.status and review.status.allowed)
-
-
 def _controller_resource_requirements() -> tuple[float, float]:
     """Return total controller-pod CPU cores and memory GiB."""
     from aiperf.kubernetes.environment import (
@@ -147,6 +117,9 @@ class OperatorPreflightChecker:
 
     Runs 19 checks across 3 tiers. Blocking checks (FAIL) prevent resource
     creation. Warning checks (WARN) are logged but do not block.
+
+    Sibling: ``aiperf.kubernetes.preflight.CLIPreflightChecker`` handles
+    pre-deploy CLI-side preflight.
     """
 
     api: ApiClient
@@ -270,7 +243,7 @@ class OperatorPreflightChecker:
         start = time.perf_counter()
         try:
             result = await check_fn()
-        except Exception as e:
+        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
             # Transient errors (empty message, connection errors) should warn,
             # not fail permanently - the operator can retry on the next reconcile.
             error_str = str(e).strip()
@@ -354,17 +327,25 @@ class OperatorPreflightChecker:
         missing = []
         for verb, resource, group in _OPERATOR_RBAC_PERMISSIONS:
             try:
-                allowed = await _check_rbac_access(
+                allowed = await check_rbac_access(
                     self.api,
-                    verb,
-                    resource,
-                    group,
-                    self.namespace,
+                    verb=verb,
+                    resource=resource,
+                    group=group,
+                    namespace=self.namespace,
                 )
                 if not allowed:
                     display = f"{group}/{resource}" if group else resource
                     missing.append(f"{verb} {display}")
-            except Exception as e:
+            except (
+                ApiException,
+                aiohttp.ClientError,
+                asyncio.TimeoutError,
+                OSError,
+            ) as e:
+                display = f"{group}/{resource}" if group else resource
+                missing.append(f"{verb} {display} (check failed: {e})")
+            except Exception as e:  # noqa: BLE001 - defensive: any per-permission probe error falls through to 'assume missing' rather than abort the tier
                 display = f"{group}/{resource}" if group else resource
                 missing.append(f"{verb} {display} (check failed: {e})")
 
@@ -479,7 +460,7 @@ class OperatorPreflightChecker:
         try:
             node_list = await client.CoreV1Api(self.api).list_node()
             nodes = node_list.items
-        except Exception as e:
+        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
             return CheckResult(
                 name="Node Resources",
                 status=CheckStatus.WARN,
@@ -547,7 +528,7 @@ class OperatorPreflightChecker:
         try:
             node_list = await client.CoreV1Api(self.api).list_node()
             nodes = node_list.items
-        except Exception as e:
+        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
             return CheckResult(
                 name="Node Selector Match",
                 status=CheckStatus.WARN,
@@ -589,7 +570,7 @@ class OperatorPreflightChecker:
         try:
             node_list = await client.CoreV1Api(self.api).list_node()
             nodes = node_list.items
-        except Exception as e:
+        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
             return CheckResult(
                 name="Per-Node Schedulability",
                 status=CheckStatus.WARN,
@@ -731,7 +712,7 @@ class OperatorPreflightChecker:
                 status=CheckStatus.PASS,
                 message="Memory estimates within limits",
             )
-        except Exception as e:
+        except (ValueError, TypeError, OSError) as e:
             return CheckResult(
                 name="Memory Estimation",
                 status=CheckStatus.WARN,
@@ -1026,7 +1007,7 @@ class OperatorPreflightChecker:
                 limit=1,
             )
             return True
-        except Exception:
+        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError):
             return False
 
     async def _namespace_has_default_queue(self) -> bool:
@@ -1035,7 +1016,7 @@ class OperatorPreflightChecker:
             ns = await client.CoreV1Api(self.api).read_namespace(name=self.namespace)
             annotations = (ns.metadata.annotations or {}) if ns.metadata else {}
             return bool(annotations.get("kueue.x-k8s.io/default-queue-name"))
-        except Exception:
+        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError):
             return False
 
     async def _check_configmap_size(self) -> CheckResult:
@@ -1059,7 +1040,7 @@ class OperatorPreflightChecker:
                 status=CheckStatus.PASS,
                 message=f"ConfigMap size OK ({size_bytes:,} bytes)",
             )
-        except Exception as e:
+        except (ValueError, TypeError, OSError) as e:
             return CheckResult(
                 name="ConfigMap Size",
                 status=CheckStatus.FAIL,
@@ -1091,7 +1072,8 @@ class OperatorPreflightChecker:
 
                     body = orjson.loads(e.body)
                     msg = body.get("message", msg)
-                except Exception:
+                except (ValueError, TypeError, orjson.JSONDecodeError):
+                    # e.body was not well-formed JSON; fall back to str(e).
                     pass
             return CheckResult(
                 name="Dry Run",
@@ -1101,7 +1083,7 @@ class OperatorPreflightChecker:
                     f"Fix: check OPA/Gatekeeper policies or admission webhooks."
                 ),
             )
-        except Exception as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
             return CheckResult(
                 name="Dry Run",
                 status=CheckStatus.WARN,
@@ -1148,7 +1130,7 @@ class OperatorPreflightChecker:
                 status=CheckStatus.WARN,
                 message=f"Could not check PSA: {e}",
             )
-        except Exception as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
             return CheckResult(
                 name="Pod Security Admission",
                 status=CheckStatus.WARN,
@@ -1168,7 +1150,7 @@ class OperatorPreflightChecker:
         try:
             node_list = await client.CoreV1Api(self.api).list_node()
             nodes = node_list.items
-        except Exception as e:
+        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
             return CheckResult(
                 name="Tolerations",
                 status=CheckStatus.WARN,

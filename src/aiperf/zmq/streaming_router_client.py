@@ -69,6 +69,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         address: str,
         bind: bool = True,
         socket_ops: dict | None = None,
+        *,
         additional_bind_address: str | None = None,
         decode_type: Any = None,
         **kwargs,
@@ -204,7 +205,9 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         """
         try:
             response = await self._receiver_handler(identity, message)  # type: ignore[misc]
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - receiver handler boundary, must not crash ROUTER loop
             self.exception(
                 f"Exception in handler for {type(message).__name__} from {identity}: {e!r}"
             )
@@ -215,7 +218,9 @@ class ZMQStreamingRouterClient(BaseZMQClient):
                 await self.socket.send_multipart(
                     [*routing_envelope, _encoder.encode(response)]
                 )
-            except Exception as e:
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 - send boundary, must not crash ROUTER dispatcher
                 self.exception(f"Failed to send response to {identity}: {e!r}")
                 await self._recover_from_send_failure(identity, e)
 
@@ -248,7 +253,9 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         )
         try:
             await self._recreate_socket()
-        except Exception as recreate_error:
+        except asyncio.CancelledError:
+            raise
+        except (zmq.ZMQError, asyncio.TimeoutError) as recreate_error:
             if not self.stop_requested:
                 self.exception(
                     "Failed to recreate streaming ROUTER socket after send "
@@ -304,10 +311,15 @@ class ZMQStreamingRouterClient(BaseZMQClient):
                 self.trace("Router receiver task timed out")
                 await yield_to_event_loop()
                 continue
-            except (asyncio.CancelledError, zmq.ContextTerminated):
+            except asyncio.CancelledError:
                 self.debug("Streaming ROUTER receiver task cancelled")
+                raise
+            except zmq.ContextTerminated:
+                self.debug(
+                    "Streaming ROUTER receiver task stopped (ZMQ context terminated)"
+                )
                 break
-            except Exception as e:
+            except (zmq.ZMQError, asyncio.TimeoutError, msgspec.DecodeError) as e:
                 if not self.stop_requested:
                     self.exception(
                         f"Error in streaming ROUTER receiver for client {self.client_id}: {e!r}"

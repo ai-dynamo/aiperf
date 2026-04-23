@@ -27,7 +27,7 @@ class JobSetLabels:
 
 
 @dataclass(frozen=True)
-class Labels:
+class AIPerfLabels:
     """Label keys and values used to identify AIPerf resources."""
 
     APP_KEY: str = "app"

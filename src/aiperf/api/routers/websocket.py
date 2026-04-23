@@ -131,7 +131,7 @@ async def websocket_endpoint(websocket: WebSocket, component: WebSocketDep) -> N
 
     except WebSocketDisconnect:
         component.info(f"WebSocket: Client {client_id} disconnected")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - unexpected WS errors are logged; connection cleanup still runs in finally
         component.exception(f"WebSocket error for {client_id}: {e}")
     finally:
         component.ws_manager.remove(client_id)
@@ -192,7 +192,7 @@ class WebSocketManager(AIPerfLoggerMixin):
         try:
             await ws.send_text(json_str)
             return None
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - Starlette/websockets can surface many disconnect error types; any failure means drop this client
             self.warning(f"Send failed for {client_id}: {e}")
             return client_id
 

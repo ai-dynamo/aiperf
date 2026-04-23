@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared pre-flight check utilities.
 
-Functions used by both the CLI ``PreflightChecker`` and the operator
+Functions used by both the CLI ``CLIPreflightChecker`` and the operator
 ``OperatorPreflightChecker``.
 """
 
@@ -19,6 +19,7 @@ from kubernetes_asyncio.client.models import (
 
 async def check_rbac_access(
     api: ApiClient,
+    *,
     verb: str,
     resource: str,
     group: str,

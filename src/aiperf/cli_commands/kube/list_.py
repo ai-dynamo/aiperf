@@ -4,11 +4,14 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from cyclopts import App, Parameter
 
 from aiperf.config.kube import KubeManageOptions
+
+if TYPE_CHECKING:
+    from aiperf.kubernetes.models import AIPerfJobInfo
 
 app = App(name="list")
 
@@ -104,7 +107,11 @@ async def list_jobs(
         ) as api:
             while True:
                 jobs = await _fetch_jobs(
-                    api, manage_options, search_all, status_filter, job_id
+                    api,
+                    manage_options=manage_options,
+                    search_all=search_all,
+                    status_filter=status_filter,
+                    job_id=job_id,
                 )
 
                 if not jobs:
@@ -131,11 +138,12 @@ async def list_jobs(
 
 async def _fetch_jobs(
     api: object,
+    *,
     manage_options: KubeManageOptions,
     search_all: bool,
     status_filter: str | None,
     job_id: str | None,
-) -> list:
+) -> list[AIPerfJobInfo]:
     """Fetch job list from cluster."""
     from aiperf.kubernetes.client import (
         find_aiperf_job,

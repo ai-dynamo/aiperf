@@ -68,6 +68,6 @@ class MetricRecordProcessor(BaseMetricsProcessor):
                 self.trace(
                     lambda tag=tag, e=e: f"No metric value for metric '{tag}': {e!r}"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-metric; skip bad parse and continue
                 self.warning(f"Error parsing record for metric '{tag}': {e!r}")
         return record_metrics

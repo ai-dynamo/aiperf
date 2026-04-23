@@ -174,7 +174,7 @@ def _extract_metric_labels(info_labels: InfoLabels | None) -> InfoLabels:
     }
 
 
-class MetricContext(NamedTuple):
+class MetricsMetricContext(NamedTuple):
     """Shared context for formatting a single MetricResult."""
 
     metric: MetricResult
@@ -198,7 +198,7 @@ class MetricContext(NamedTuple):
         )
 
 
-def _format_summary(ctx: MetricContext) -> list[str]:
+def _format_summary(ctx: MetricsMetricContext) -> list[str]:
     """Format a Summary block with quantile lines, _sum, and _count."""
     summary_name = f"{ctx.base_name}{ctx.unit_suffix}"
 
@@ -227,7 +227,7 @@ def _format_summary(ctx: MetricContext) -> list[str]:
 
 
 def _format_gauge(
-    ctx: MetricContext, stat: str, display: str, value: int | float
+    ctx: MetricsMetricContext, stat: str, display: str, value: int | float
 ) -> list[str]:
     """Format a single Gauge block."""
     name = f"{ctx.base_name}_{stat}{ctx.unit_suffix}"
@@ -241,7 +241,7 @@ def _format_gauge(
     ]
 
 
-def _format_gauges(ctx: MetricContext) -> list[str]:
+def _format_gauges(ctx: MetricsMetricContext) -> list[str]:
     """Format individual Gauge blocks for scalar stats.
 
     When quantiles are present, count/sum are emitted as part of the Summary.
@@ -289,7 +289,7 @@ def format_as_prometheus(
     base_labels_str = format_labels(metric_labels)
 
     for metric in metrics:
-        ctx = MetricContext(
+        ctx = MetricsMetricContext(
             metric=metric,
             base_name=f"aiperf_{sanitize_metric_name(metric.tag)}",
             unit_suffix=f"_{_sanitize_unit(metric.unit)}" if metric.unit else "",

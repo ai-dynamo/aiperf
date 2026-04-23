@@ -156,6 +156,7 @@ class BasePublicDatasetLoader(BaseLoader):
         self,
         prompt_len: int,
         output_len: int,
+        *,
         min_seq_len: int = 4,
         max_prompt_len: int = 1024,
         max_total_len: int = 2048,
