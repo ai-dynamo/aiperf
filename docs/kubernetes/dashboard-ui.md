@@ -124,7 +124,13 @@ flowchart TB
 
 ## Pages
 
+> Screenshots in this section are reproduced from committed fixtures by
+> `tools/capture_operator_ui_screenshots.py` — no cluster or running
+> benchmark required to refresh them.
+
 ### Dashboard (`#/`)
+
+![Dashboard](../media/images/operator-ui-01-dashboard.png)
 
 Cluster-wide overview, the landing page.
 
@@ -156,6 +162,8 @@ Cluster-wide overview, the landing page.
 
 ### Jobs (`#/jobs`)
 
+![Jobs](../media/images/operator-ui-02-jobs.png)
+
 Tabular list of every AIPerfJob known to the operator.
 
 **Filters:**
@@ -171,6 +179,23 @@ Clicking a row navigates to Job Detail. The list re-polls
 `GET /api/v1/jobs` every 5s.
 
 ### Job Detail (`#/jobs/:ns/:name`)
+
+Completed job, with the SLO hero strip, KPI tiles, per-phase cards, and the
+full artifacts + metadata tail:
+
+![Job Detail — Completed](../media/images/operator-ui-03-job-detail-completed.png)
+
+Running job. The hero reports live status; KPIs read from
+`status.liveSummary`; the Cancel button and Pods card appear only while
+the CR is live:
+
+![Job Detail — Running](../media/images/operator-ui-04-job-detail-running.png)
+
+Archived job (CR deleted, PVC results retained). A banner flags the missing
+cluster resource; KPIs + Phases + Job Configuration are synthesized from the
+`profile_export_aiperf.json` summary. Cancel and Pods are omitted:
+
+![Job Detail — Archived](../media/images/operator-ui-08-job-detail-archived.png)
 
 The deepest page, scoped to one AIPerfJob. Sections shown depend on whether
 the job is still running or has finished.
@@ -225,6 +250,8 @@ the job is still running or has finished.
 
 ### Leaderboard (`#/leaderboard`)
 
+![Leaderboard](../media/images/operator-ui-05-leaderboard.png)
+
 Cross-job ranking for a single metric.
 
 **Controls:**
@@ -248,6 +275,8 @@ Cross-job ranking for a single metric.
 
 ### Compare (`#/compare`)
 
+![Compare](../media/images/operator-ui-06-compare.png)
+
 Side-by-side diff of 2 or more completed runs.
 
 - **Left panel** — searchable checklist of every stored job (from
@@ -262,6 +291,8 @@ Side-by-side diff of 2 or more completed runs.
 **Endpoints:** `GET /api/v1/analytics/compare?jobs=id1&jobs=id2&...`.
 
 ### History (`#/history`)
+
+![History](../media/images/operator-ui-07-history.png)
 
 Trend view of a single metric across all runs over time.
 
