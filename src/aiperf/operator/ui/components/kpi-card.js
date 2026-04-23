@@ -4,11 +4,9 @@ import { useCountUp } from '../lib/hooks.js';
 
 const slugifyLabel = (s) => String(s ?? '').toLowerCase().trim().replace(/\s+/g, '-');
 
-// Stroke colors keyed to SLO status. Neutral dim when no SLO is declared
-// (or the value isn't numeric) so the line stays visible but uncoloured.
-const SPARK_STROKE_GOOD = 'var(--green, #40a02b)';
-const SPARK_STROKE_BAD = 'var(--red, #d20f39)';
-const SPARK_STROKE_NEUTRAL = 'var(--muted, #7f849c)';
+const SPARK_STROKE_GOOD = 'var(--green, #7ccf5e)';
+const SPARK_STROKE_BAD = 'var(--red, #ff5c5c)';
+const SPARK_STROKE_NEUTRAL = 'var(--paper-faint, rgba(244,240,225,0.36))';
 
 /** Evaluate an optional SLO against the tile's headline value.
  *
@@ -34,29 +32,29 @@ function evalSlo(slo, rawValue) {
 }
 
 /**
- * Metric card — simple card, brand-colored value for key metrics.
+ * Metric card — CONSOLE meter-slot aesthetic.
  *
- * Optional ``slo`` prop renders a small green/red chip next to the label with
- * the threshold (e.g. ``✓ ≤ 500``). When undeclared, no chip renders.
+ * Inside a ``.meter-bank`` grid the CSS repaints the tile as a no-chrome
+ * slot (hair top edge, amber underline on hover, 44px JetBrains Mono Bold
+ * value). Outside the meter-bank (e.g. Job Detail's tile row) the legacy
+ * ``.metric-card`` card styling applies; both get the new palette.
  *
- * Optional ``points`` prop (chronological ``{t, v}`` samples) renders an
- * inline SVG sparkline between the headline value and the subtitle. Stroke
- * color follows SLO status: green when pass, red when fail, neutral when
- * the SLO is undeclared. The Sparkline component renders a stable placeholder
- * when fewer than 2 samples are available, so callers can always pass the prop.
+ * Optional ``tone`` prop ("amber" | "green" | "red") colors the headline
+ * value. If omitted, the value is paper-white by default, unless ``color``
+ * is passed (legacy override).
  *
- * Optional ``icon`` prop (a Phosphor class name like ``"ph-trend-up"``) renders
- * a small tertiary-colored glyph in the label row.
+ * Optional ``slo`` prop renders a pass/fail chip next to the label.
+ * Optional ``points`` renders an inline SVG sparkline. Optional ``icon``
+ * (a Phosphor class like ``"ph-trend-up"``) prefixes the label.
  *
- * When ``value`` is numeric, the headline is gently animated via
- * :func:`useCountUp` on change. String values (``"---"``, pre-formatted
- * durations, etc.) pass through unchanged.
+ * Preserves ``data-testid="kpi-<slug>"`` for e2e tests.
  *
  * @param {{
  *   label: string,
  *   value: string|number,
  *   unit?: string,
  *   color?: string,
+ *   tone?: 'amber' | 'green' | 'red',
  *   sub?: string,
  *   rawValue?: number,
  *   icon?: string,
@@ -64,17 +62,14 @@ function evalSlo(slo, rawValue) {
  *   points?: Array<{t: number, v: number}>,
  * }} props
  */
-export function KpiCard({ label, value, unit, color, sub, rawValue, icon, slo, points }) {
-  const valueStyle = color ? `color: ${color}` : '';
+export function KpiCard({ label, value, unit, color, tone, sub, rawValue, icon, slo, points }) {
   const sloResult = evalSlo(slo, rawValue);
   const sparkStroke =
     sloResult?.kind === 'bad' ? SPARK_STROKE_BAD
     : sloResult?.kind === 'good' ? SPARK_STROKE_GOOD
     : SPARK_STROKE_NEUTRAL;
 
-  // Animate the headline when it's numeric. Integer targets render as
-  // rounded integers; fractional targets keep one decimal place so a ramp
-  // like 0 -> 42.7 doesn't jitter between integer frames.
+  // Animate numeric headlines on change. String values pass through unchanged.
   const isInt = typeof value === 'number' && Number.isInteger(value);
   const animated = useCountUp(value, {
     duration: 400,
@@ -82,11 +77,18 @@ export function KpiCard({ label, value, unit, color, sub, rawValue, icon, slo, p
   });
   const displayValue = typeof value === 'number' ? animated : (value ?? '—');
 
+  // ``tone`` takes precedence over legacy ``color`` (kept for back-compat).
+  const toneClass = tone ? ` metric-val--${tone}` : '';
+  const valueStyle = color && !tone ? `color: ${color}` : '';
+
   return html`
-    <div class="metric-card" data-testid=${'kpi-' + slugifyLabel(label)}>
+    <div
+      class="metric-card"
+      data-testid=${'kpi-' + slugifyLabel(label)}
+    >
       <div class="metric-label-row">
         <span class="metric-label">
-          ${icon && html`<i class=${'ph ' + icon} aria-hidden="true" style="color: var(--text-tertiary); margin-right: var(--space-1)"></i>`}
+          ${icon && html`<i class=${'ph ' + icon} aria-hidden="true"></i>`}
           ${label}
         </span>
         ${sloResult && html`
@@ -100,7 +102,7 @@ export function KpiCard({ label, value, unit, color, sub, rawValue, icon, slo, p
         `}
       </div>
       <div class="metric-val-row">
-        <span class="metric-val" style=${valueStyle}>
+        <span class=${'metric-val' + toneClass} style=${valueStyle}>
           ${displayValue}
         </span>
         ${unit && html`<span class="metric-unit">${unit}</span>`}
