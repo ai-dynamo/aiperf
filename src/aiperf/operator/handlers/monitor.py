@@ -563,6 +563,59 @@ async def _run_worker_and_progress_phase(
     sb.finalize()
 
 
+async def _benchmark_appears_complete(
+    *,
+    api: ApiClient,
+    namespace: str,
+    jobset_name: str,
+    key: str,
+) -> bool:
+    """Return True only when there is evidence the benchmark is actually done.
+
+    Checked signals (in order, short-circuiting on first hit):
+        1. Controller ``/api/progress`` reports ``is_complete=True``.
+        2. The control-plane container in the controller pod is terminated.
+
+    Both signals are quick, read-only, and side-effect-free; if neither fires
+    we return False so callers can skip eager completion work (e.g.
+    ``_recover_orphaned_completion_claim``) while the benchmark is still in
+    flight. A return value of False therefore means "no evidence yet, try
+    again next tick" — never "definitely still running".
+    """
+    host = controller_dns_name(jobset_name, namespace)
+    progress_client = await get_or_create_progress_client(key)
+    try:
+        progress = await progress_client.get_progress(host)
+        if not progress.connection_error and progress.is_complete:
+            return True
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+        logger.debug(
+            "progress probe for %s during orphan-claim gate failed: %s",
+            jobset_name,
+            e,
+        )
+    except Exception as e:  # noqa: BLE001 - gate is best-effort; fall through to the pod-status check on any parse/transport error
+        logger.debug(
+            "progress probe for %s during orphan-claim gate failed: %s",
+            jobset_name,
+            e,
+        )
+
+    pod = await _get_controller_pod(api, namespace, jobset_name)
+    if pod is None:
+        return False
+    statuses = (pod.status.container_statuses or []) if pod.status else []
+    controller_status = _container_status_by_name(statuses, Containers.CONTROL_PLANE)
+    if controller_status is None:
+        return False
+    terminated = (
+        controller_status.state.terminated
+        if controller_status.state and controller_status.state.terminated
+        else None
+    )
+    return terminated is not None
+
+
 async def _recover_orphaned_completion_claim(
     *,
     body: dict[str, Any],
@@ -588,6 +641,13 @@ async def _recover_orphaned_completion_claim(
         ``_shutdown_sent`` set, but the annotation on the CR persists — so every
         subsequent claim attempt short-circuits. Without this recovery, the CR
         stays ``phase=Running`` with the claim annotation forever.
+
+    Callers MUST gate this behind ``_benchmark_appears_complete`` — firing
+    it while the benchmark is still running drives ``handle_completion``
+    into a retry-stagnation loop (no key export files yet) that ends in
+    ``phase=Failed`` even though the benchmark would have finished
+    successfully. See ``tests/kubernetes/chaos/test_chaos_operator_
+    resilience.py::test_c5_orphaned_claim_recovers``.
     """
     logger.warning(
         "Recovering orphaned completion-claim for %s/%s (phase=%s): "
@@ -624,12 +684,71 @@ async def _recover_orphaned_completion_claim(
         await close_progress_client(key)
 
 
-async def _monitor_tick(
+async def _maybe_recover_orphan_claim(
     api: ApiClient,
     *,
     body: dict[str, Any],
     status: dict[str, Any],
-    spec: dict[str, Any],
+    namespace: str,
+    name: str,
+    jobset_name: str,
+    job_id: str,
+    current_phase: Phase,
+    key: str,
+    sb: StatusBuilder,
+) -> bool:
+    """Run orphan-claim recovery when claim+non-terminal+benchmark-done all hold.
+
+    Returns True if recovery ran (caller should return early), False otherwise.
+
+    The ``_benchmark_appears_complete`` gate is load-bearing: without it a
+    claim stamped while the benchmark is still running drives
+    ``handle_completion`` into a retry-stagnation loop that marks the CR
+    Failed even though the benchmark itself is still in flight. Only run
+    recovery once we have positive evidence that the benchmark is done.
+    See tests/kubernetes/chaos/test_chaos_operator_resilience.py::
+    test_c5_orphaned_claim_recovers.
+    """
+    if not is_completion_claimed(body) or current_phase in (
+        Phase.COMPLETED,
+        Phase.FAILED,
+        Phase.CANCELLED,
+    ):
+        return False
+
+    if not await _benchmark_appears_complete(
+        api=api,
+        namespace=namespace,
+        jobset_name=jobset_name,
+        key=key,
+    ):
+        logger.debug(
+            "Orphan-claim recovery deferred for %s/%s: benchmark not yet "
+            "complete; continuing normal monitor tick",
+            namespace,
+            name,
+        )
+        return False
+
+    await _recover_orphaned_completion_claim(
+        body=body,
+        status=status,
+        namespace=namespace,
+        name=name,
+        jobset_name=jobset_name,
+        job_id=job_id,
+        key=key,
+        sb=sb,
+    )
+    return True
+
+
+async def _reconcile_and_handle_jobset(
+    api: ApiClient,
+    custom: CustomObjectsApi,
+    *,
+    body: dict[str, Any],
+    status: dict[str, Any],
     patch: kopf.Patch,
     namespace: str,
     name: str,
@@ -639,45 +758,12 @@ async def _monitor_tick(
     key: str,
     sb: StatusBuilder,
 ) -> None:
-    """Execute a single monitor tick against the shared ApiClient."""
-    custom = client.CustomObjectsApi(api)
+    """Fetch the JobSet and drive the per-phase reconciliation branches.
 
-    # Orphaned-claim recovery: if the completion-claimed annotation is set but
-    # the CR never reached a terminal phase, the previous operator process
-    # crashed between claiming and completing. Re-run handle_completion so the
-    # CR converges; without this, every subsequent path short-circuits on the
-    # annotation and the CR is stuck Running forever. See
-    # tests/kubernetes/chaos/test_chaos_operator_resilience.py::test_c5_orphaned_claim_recovers.
-    if is_completion_claimed(body) and current_phase not in (
-        Phase.COMPLETED,
-        Phase.FAILED,
-        Phase.CANCELLED,
-    ):
-        await _recover_orphaned_completion_claim(
-            body=body,
-            status=status,
-            namespace=namespace,
-            name=name,
-            jobset_name=jobset_name,
-            job_id=job_id,
-            key=key,
-            sb=sb,
-        )
-        return
-
-    if await _check_job_timeout(
-        custom,
-        body=body,
-        status=status,
-        spec=spec,
-        namespace=namespace,
-        jobset_name=jobset_name,
-        job_id=job_id,
-        key=key,
-        sb=sb,
-    ):
-        return
-
+    Split out of ``_monitor_tick`` to keep the top-level tick small. Handles
+    the "JobSet not found / kueue-suspended / terminal / running" quartet and
+    delegates worker + progress aggregation to ``_run_worker_and_progress_phase``.
+    """
     jobset = await _fetch_jobset_or_reconcile(
         custom,
         namespace=namespace,
@@ -714,6 +800,67 @@ async def _monitor_tick(
         status=status,
         patch=patch,
         jobset_status=jobset_status,
+        namespace=namespace,
+        name=name,
+        jobset_name=jobset_name,
+        job_id=job_id,
+        current_phase=current_phase,
+        key=key,
+        sb=sb,
+    )
+
+
+async def _monitor_tick(
+    api: ApiClient,
+    *,
+    body: dict[str, Any],
+    status: dict[str, Any],
+    spec: dict[str, Any],
+    patch: kopf.Patch,
+    namespace: str,
+    name: str,
+    jobset_name: str,
+    job_id: str,
+    current_phase: Phase,
+    key: str,
+    sb: StatusBuilder,
+) -> None:
+    """Execute a single monitor tick against the shared ApiClient."""
+    custom = client.CustomObjectsApi(api)
+
+    if await _maybe_recover_orphan_claim(
+        api,
+        body=body,
+        status=status,
+        namespace=namespace,
+        name=name,
+        jobset_name=jobset_name,
+        job_id=job_id,
+        current_phase=current_phase,
+        key=key,
+        sb=sb,
+    ):
+        return
+
+    if await _check_job_timeout(
+        custom,
+        body=body,
+        status=status,
+        spec=spec,
+        namespace=namespace,
+        jobset_name=jobset_name,
+        job_id=job_id,
+        key=key,
+        sb=sb,
+    ):
+        return
+
+    await _reconcile_and_handle_jobset(
+        api,
+        custom,
+        body=body,
+        status=status,
+        patch=patch,
         namespace=namespace,
         name=name,
         jobset_name=jobset_name,

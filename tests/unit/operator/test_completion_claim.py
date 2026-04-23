@@ -401,7 +401,14 @@ class TestMonitorIntegration:
 
     @pytest.mark.asyncio
     async def test_orphaned_claim_triggers_handle_completion_recovery(self) -> None:
-        """Annotation set + non-terminal phase = previous handler crashed; recover."""
+        """Annotation set + non-terminal phase + benchmark complete = recover.
+
+        The orphan-recovery branch is gated on
+        ``_benchmark_appears_complete`` returning True; otherwise firing
+        the recovery during an in-flight benchmark drives
+        ``handle_completion`` into a retry-stagnation loop and marks the
+        CR Failed even when the benchmark would have succeeded.
+        """
         from aiperf.operator.handlers.monitor import monitor_progress
 
         patch = MagicMock()
@@ -415,6 +422,11 @@ class TestMonitorIntegration:
             mock_patch(
                 "aiperf.operator.handlers.monitor.k8s_client",
                 return_value=_fake_k8s_client(mock_api),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor._benchmark_appears_complete",
+                new_callable=AsyncMock,
+                return_value=True,
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor.handle_completion",
@@ -444,3 +456,72 @@ class TestMonitorIntegration:
             )
 
         mock_handle.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_orphaned_claim_deferred_while_benchmark_in_flight(self) -> None:
+        """Annotation set + non-terminal phase + benchmark NOT complete = defer recovery.
+
+        Pre-stamping the claim while the benchmark is still running (see
+        C5 chaos scenario) must not trigger ``handle_completion``: the
+        fetch path would stagnate on missing export files and mark the
+        CR Failed. Recovery should wait for the next tick, when the
+        benchmark has actually finished.
+        """
+        from aiperf.operator.handlers.monitor import monitor_progress
+
+        patch = MagicMock()
+        patch.status = {}
+
+        jobset_raw = {
+            "status": {
+                "conditions": [],
+                "replicatedJobsStatus": [],
+            },
+            "metadata": {"labels": {}},
+            "spec": {},
+        }
+        mock_api = MagicMock()
+        mock_custom = MagicMock()
+        mock_custom.get_namespaced_custom_object = AsyncMock(return_value=jobset_raw)
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor._benchmark_appears_complete",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
+                return_value=mock_custom,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.handle_completion",
+                new_callable=AsyncMock,
+            ) as mock_handle,
+            mock_patch(
+                "aiperf.operator.handlers.monitor._run_worker_and_progress_phase",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.close_progress_client",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await monitor_progress(
+                body=_body_with_annotation(),
+                status={
+                    "phase": Phase.RUNNING,
+                    "jobId": "j",
+                    "jobSetName": "js",
+                },
+                spec={},
+                name="j",
+                namespace="ns",
+                patch=patch,
+            )
+
+        mock_handle.assert_not_called()
