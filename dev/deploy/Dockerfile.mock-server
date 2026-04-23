@@ -22,9 +22,9 @@ RUN uv venv /app/.venv --python 3.13 --clear
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Layer 1: Install dependencies only (cached unless pyproject.toml changes)
-COPY pyproject.toml ./
-RUN uv sync --active --no-dev --no-install-project
+# Layer 1: Install dependencies only (cached unless pyproject.toml / uv.lock change)
+COPY pyproject.toml uv.lock ./
+RUN uv sync --active --no-dev --no-install-project --frozen
 
 # Layer 2: Copy mock server source (changes less frequently than aiperf src)
 COPY tests/aiperf_mock_server/ ./aiperf_mock_server/
@@ -32,7 +32,7 @@ COPY tests/aiperf_mock_server/ ./aiperf_mock_server/
 # Layer 3: Copy aiperf source and install (changes most frequently)
 COPY README.md LICENSE ./
 COPY src/ ./src/
-RUN uv sync --active --no-dev \
+RUN uv sync --active --no-dev --frozen \
     && uv pip install -e ./aiperf_mock_server \
     && uv pip install "uvicorn[standard]>=0.24.0"
 

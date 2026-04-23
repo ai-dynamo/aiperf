@@ -230,7 +230,7 @@ class _StreamEmitter:
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CLUSTER_NAME = os.environ.get("CLUSTER_NAME") or "aiperf"
 AIPERF_IMAGE = os.environ.get("AIPERF_IMAGE") or "aiperf:local"
-MOCK_SERVER_IMAGE = os.environ.get("MOCK_SERVER_IMAGE") or "aiperf-mock-server:local"
+MOCK_SERVER_IMAGE = os.environ.get("MOCK_SERVER_IMAGE") or "aiperf-mock-server:latest"
 JOBSET_VERSION = os.environ.get("JOBSET_VERSION") or _JSV_DEFAULT
 DEVICE_PLUGIN_VERSION = os.environ.get("DEVICE_PLUGIN_VERSION") or _DPV_DEFAULT
 MOCK_SERVER_MANIFEST = PROJECT_ROOT / "dev" / "deploy" / "mock-server.yaml"

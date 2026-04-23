@@ -233,7 +233,7 @@ uv run python scripts/publish_aiperf_arm64.py --file dev/deploy/mock-250k-stream
 |-----------------------|----------------------|-------------|
 | `CLUSTER_NAME`        | `aiperf`             | Minikube profile name. |
 | `AIPERF_IMAGE`        | `aiperf:local`       | AIPerf Docker image. |
-| `MOCK_SERVER_IMAGE`   | `aiperf-mock-server:local` | Mock server image. |
+| `MOCK_SERVER_IMAGE`   | `aiperf-mock-server:latest` | Mock server image. |
 | `JOBSET_VERSION`      | `v0.8.0`             | JobSet controller version. |
 | `MINIKUBE_MEMORY`     | `16000mb`            | Minikube memory. |
 | `MINIKUBE_CPUS`       | `8`                  | Minikube CPUs. |

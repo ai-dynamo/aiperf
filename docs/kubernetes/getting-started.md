@@ -79,7 +79,7 @@ This takes about 5-10 minutes. When it finishes you will see:
 
 ```
   ✓ Cluster          created (Kind, GPU)
-  ✓ Build images     aiperf:local, aiperf-mock-server:local
+  ✓ Build images     aiperf:local, aiperf-mock-server:latest
   ✓ Load images      2 images -> kind
   ✓ Dynamo           0.9.0 installed
   ✓ JobSet           v0.8.0 installed
