@@ -1,0 +1,85 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: "E2E Operator UI"
+
+on:
+  pull_request:
+    paths:
+      - 'src/aiperf/operator/ui/**'
+      - 'src/aiperf/operator/results_server.py'
+      - 'src/aiperf/operator/routers/**'
+      - 'tests/e2e/operator_ui/**'
+      - 'tests/fixtures/operator_ui/**'
+      - 'tests/_js_cache/**'
+      - '.github/workflows/e2e-operator-ui.yml'
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-operator-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Cache uv downloads
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/uv
+        key: uv-${{ runner.os }}-py3.12-${{ hashFiles('uv.lock', 'pyproject.toml') }}
+        restore-keys: |
+          uv-${{ runner.os }}-py3.12-
+
+    - name: Install dependencies
+      run: make first-time-setup PYTHON_VERSION=3.12
+
+    - name: Install Chromium for Playwright
+      run: uv run playwright install chromium --with-deps
+
+    - name: Run e2e suite
+      id: pytest
+      run: uv run pytest tests/e2e/ -m e2e -n auto --tracing=retain-on-failure
+
+    - name: Upload Playwright traces on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-traces-${{ github.run_id }}
+        path: test-results/
+        if-no-files-found: ignore
+        retention-days: 7
+
+    - name: Write job summary
+      if: always()
+      shell: bash
+      run: |
+        {
+          echo "## E2E Operator UI"
+          echo ""
+          if [[ "${{ steps.pytest.outcome }}" == "success" ]]; then
+            echo "Result: **passed**"
+          else
+            echo "Result: **${{ steps.pytest.outcome }}**"
+            echo ""
+            echo "Traces artifact: \`playwright-traces-${{ github.run_id }}\` (7 day retention)"
+          fi
+          echo ""
+          echo "- Runner: \`ubuntu-latest\`"
+          echo "- Python: \`3.12\`"
+          echo "- Command: \`uv run pytest tests/e2e/ -m e2e -n auto --tracing=retain-on-failure\`"
+        } >> "$GITHUB_STEP_SUMMARY"
