@@ -314,7 +314,19 @@ def _browser() -> Iterator[Browser]:
         try:
             yield browser
         finally:
-            browser.close()
+            # Teardown fires at session end, by which time pytest-asyncio's
+            # event loop is gone. Playwright's sync `browser.close()` routes
+            # through the loop-backed connection and raises
+            # `RuntimeError: Browser.close: no running event loop`. The
+            # `sync_playwright` context manager on exit still reaps the
+            # Chromium subprocess cleanly, so swallow just that specific
+            # teardown RuntimeError rather than reporting a spurious pytest
+            # error under whichever unrelated test ran last.
+            try:
+                browser.close()
+            except RuntimeError as exc:
+                if "no running event loop" not in str(exc):
+                    raise
 
 
 @pytest.fixture
