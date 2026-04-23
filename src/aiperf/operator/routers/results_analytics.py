@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
+from kubernetes_asyncio.client import ApiClient
 
+from aiperf.kubernetes.client import get_raw_aiperfjob
 from aiperf.operator.results_db import DEFAULT_COMPARE_METRICS, ResultsDB
 from aiperf.operator.routers.results_schemas import (
     CompareResponse,
@@ -170,7 +172,10 @@ def _register_summary_route(router: APIRouter, get_db: Callable[[], ResultsDB]) 
 
 
 def _register_index_routes(
-    router: APIRouter, get_db: Callable[[], ResultsDB], base_dir: Path
+    router: APIRouter,
+    get_db: Callable[[], ResultsDB],
+    base_dir: Path,
+    api_holder: list[ApiClient | None],
 ) -> None:
     """Register job-index and per-job config-lookup endpoints."""
 
@@ -185,8 +190,14 @@ def _register_index_routes(
     async def get_job_config(namespace: str, job_id: str) -> dict[str, Any]:
         """Get the original CR spec/config for a job.
 
-        First checks the index, then falls back to the standalone spec file,
-        then falls back to extracting input_config from the summary JSON.
+        Fallback chain (first hit wins):
+        1. In-memory index (``get_job_spec``) — populated as jobs land.
+        2. Standalone ``<base>/<ns>/<job>/job_spec.json`` file — written by
+           the operator after the controller starts.
+        3. ``input_config`` from the DuckDB summary — requires a finished run.
+        4. Live CR ``spec`` fetched from the apiserver — covers running jobs
+           whose artifacts haven't been persisted yet (e.g. dashboard hero
+           SLO chips for the currently-running CR).
         """
         from aiperf.operator.job_index import get_job_spec
 
@@ -205,11 +216,19 @@ def _register_index_routes(
         if result and result.get("input_config"):
             return {"source": "summary", "spec": {"benchmark": result["input_config"]}}
 
+        api = api_holder[0] if api_holder else None
+        if api is not None:
+            raw = await get_raw_aiperfjob(api, namespace, job_id)
+            if raw and raw.get("spec"):
+                return {"source": "cr", "spec": raw["spec"]}
+
         raise HTTPException(404, f"No config found for {namespace}/{job_id}")
 
 
 def create_results_analytics_router(
-    get_db: Callable[[], ResultsDB], base_dir: Path
+    get_db: Callable[[], ResultsDB],
+    base_dir: Path,
+    api_holder: list[ApiClient | None] | None = None,
 ) -> APIRouter:
     """Create the router for DuckDB analytics + index/config endpoints.
 
@@ -218,11 +237,17 @@ def create_results_analytics_router(
             raises HTTPException(503) if not yet initialized.
         base_dir: Base directory containing ``<namespace>/<job_id>/`` result files,
             used by the config fallback to look up standalone spec files.
+        api_holder: Mutable single-element list holding the kubernetes_asyncio
+            ApiClient, populated during FastAPI lifespan startup. Used by the
+            ``/config/{ns}/{name}`` live-CR fallback so running jobs with no
+            on-disk artifacts still return their declared SLOs to the UI. If
+            ``None`` or the held client is ``None``, that fallback is skipped.
     """
     router = APIRouter(prefix="/api/v1", tags=["results-analytics"])
+    _holder: list[ApiClient | None] = api_holder if api_holder is not None else [None]
     _register_leaderboard_route(router, get_db)
     _register_history_route(router, get_db)
     _register_compare_route(router, get_db)
     _register_summary_route(router, get_db)
-    _register_index_routes(router, get_db, base_dir)
+    _register_index_routes(router, get_db, base_dir, _holder)
     return router

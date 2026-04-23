@@ -310,13 +310,10 @@ export function Dashboard() {
   const liveNs = liveJob?.namespace ?? null;
   const liveName = liveJob?.name ?? null;
 
-  // Fetch the live job's full detail on a slow poll so the hero can display
-  // summary/phases/elapsed/ETA. The SLO config is not fetched here — for a
-  // running CR whose artifacts haven't been persisted yet, the config
-  // endpoint 404s, and the browser logs 404s as ``console.error`` which
-  // our e2e teardown flags. The dashboard hero without SLO chips still
-  // answers "is it healthy right now" via the idle/ok classifier; SLO
-  // chips remain the Job Detail hero's responsibility.
+  // Fetch the live job's full detail + config on a slow poll so the hero can
+  // display summary/phases/elapsed/ETA and SLO chips. The config endpoint now
+  // returns the live CR spec (``source="cr"``) when a running job has no
+  // on-disk artifacts yet, so this no longer 404s for the hero.
   useEffect(() => {
     if (!liveNs || !liveName) {
       setLiveDetail(null);
@@ -330,6 +327,12 @@ export function Dashboard() {
         setLiveDetail(d);
       } catch (_e) { /* transient */ }
     }, 5000, ac.signal);
+    poll(async () => {
+      try {
+        const c = await api.getJobConfig(liveNs, liveName);
+        setLiveConfig(c);
+      } catch (_e) { /* config not yet available */ }
+    }, 15000, ac.signal);
     return () => ac.abort();
   }, [liveNs, liveName]);
 

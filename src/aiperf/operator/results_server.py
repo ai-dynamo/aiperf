@@ -191,7 +191,7 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
             raise HTTPException(503, "Analytics engine not initialized")
         return db
 
-    app.include_router(create_results_analytics_router(_get_db, base_dir))
+    app.include_router(create_results_analytics_router(_get_db, base_dir, api_holder))
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

@@ -149,3 +149,36 @@ async def test_dashboard_hero_absent_when_no_running_job(
     await dash.goto()
     hero = page.get_by_test_id("dashboard-hero")
     await expect(hero).to_have_count(0)
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_dashboard_hero_shows_slo_chip_for_running_job(
+    live_operator_app,
+    seeded_results_dir,
+    fake_k8s_client,
+    page,
+) -> None:
+    """With SLOs declared on the running CR's spec, the hero shows SLO judgment.
+
+    Task E fix: ``/api/v1/config/{ns}/{name}`` falls back to the live CR spec
+    for a running job with no on-disk artifacts, so the hero can classify
+    health against the declared SLO instead of showing "Waiting for data".
+    """
+    for raw in fake_k8s_client.jobs_raw:
+        if raw["metadata"]["name"] == "live-run":
+            raw["spec"] = raw.get("spec", {})
+            raw["spec"]["benchmark"] = {
+                "models": {"items": [{"name": "llama3-8b"}]},
+                "endpoint": {"urls": ["http://llama3.svc:8000/v1"], "type": "chat"},
+                "slos": {"time_to_first_token": 500},
+            }
+            raw.setdefault("status", {})["liveSummary"] = {
+                "throughput_rps": 31.5,
+                "ttft_p99_ms": 250.0,
+                "latency_p99_ms": 380.0,
+            }
+    dash = DashboardPage(page, live_operator_app.base_url)
+    await dash.goto()
+    hero = page.get_by_test_id("dashboard-hero")
+    await expect(hero).to_be_visible()
+    await expect(hero).to_contain_text("On target")

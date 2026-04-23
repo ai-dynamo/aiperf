@@ -117,19 +117,27 @@ async def live_operator_app(tmp_path_factory) -> AsyncIterator[LiveApp]:
 def write_archived_job(results_dir: Path, namespace: str, name: str) -> None:
     """Drop a PVC-only (no CR) job directory into the results dir."""
     import orjson
+
     d = results_dir / namespace / name
     d.mkdir(parents=True, exist_ok=True)
-    (d / "profile_export_aiperf.json").write_bytes(orjson.dumps({
-        "status": "Succeeded",
-        "start_time": "2026-04-20T10:00:00Z",
-        "end_time": "2026-04-20T10:45:00Z",
-        "request_throughput": {"avg": 55.5, "unit": "requests/sec"},
-        "request_latency": {"p99": 421.0, "unit": "ms"},
-        "input_config": {
-            "models": {"items": [{"name": "mistral-7b"}]},
-            "endpoint": {"urls": ["http://mistral.svc:8000/v1"], "type": "chat"},
-        },
-    }))
+    (d / "profile_export_aiperf.json").write_bytes(
+        orjson.dumps(
+            {
+                "status": "Succeeded",
+                "start_time": "2026-04-20T10:00:00Z",
+                "end_time": "2026-04-20T10:45:00Z",
+                "request_throughput": {"avg": 55.5, "unit": "requests/sec"},
+                "request_latency": {"p99": 421.0, "unit": "ms"},
+                "input_config": {
+                    "models": {"items": [{"name": "mistral-7b"}]},
+                    "endpoint": {
+                        "urls": ["http://mistral.svc:8000/v1"],
+                        "type": "chat",
+                    },
+                },
+            }
+        )
+    )
     (d / ".aiperf_results_ready.json").write_bytes(orjson.dumps({"ready": True}))
 
 
@@ -302,6 +310,13 @@ def fake_k8s_client(
                 return raw.get("status", {}) or {}
         return {}
 
+    async def _get_raw(api, namespace, name):
+        for raw in fake.jobs_raw:
+            meta = raw["metadata"]
+            if meta["name"] == name and meta["namespace"] == namespace:
+                return raw
+        return None
+
     async def _get_pods(api, namespace, label_selector):
         # Canonical AIPerf selector is "aiperf.nvidia.com/job-id=<name>".
         _, _, job_id = label_selector.partition("=")
@@ -323,14 +338,23 @@ def fake_k8s_client(
     import aiperf.kubernetes.client_pods as kc_pods_mod
     import aiperf.operator.job_union as job_union_mod
     import aiperf.operator.routers.jobs as jobs_router
+    import aiperf.operator.routers.results_analytics as results_analytics_mod
 
-    patch_targets = (kc_mod, kc_jobs_mod, kc_pods_mod, jobs_router, job_union_mod)
+    patch_targets = (
+        kc_mod,
+        kc_jobs_mod,
+        kc_pods_mod,
+        jobs_router,
+        job_union_mod,
+        results_analytics_mod,
+    )
     for target in patch_targets:
         monkeypatch.setattr(target, "list_aiperf_jobs", _list, raising=False)
         monkeypatch.setattr(target, "find_aiperf_job", _find, raising=False)
         monkeypatch.setattr(
             target, "get_raw_aiperfjob_status", _raw_status, raising=False
         )
+        monkeypatch.setattr(target, "get_raw_aiperfjob", _get_raw, raising=False)
         monkeypatch.setattr(target, "get_pods", _get_pods, raising=False)
         monkeypatch.setattr(target, "cluster_version", _version, raising=False)
         monkeypatch.setattr(target, "cancel_aiperf_job", _cancel, raising=False)

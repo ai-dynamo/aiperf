@@ -152,6 +152,44 @@ async def find_aiperf_job(
     return None
 
 
+async def get_raw_aiperfjob(
+    api: ApiClient,
+    namespace: str,
+    name: str,
+) -> dict[str, Any] | None:
+    """Return the full raw AIPerfJob CR dict (spec + status + metadata) or None.
+
+    Unlike :func:`find_aiperf_job` which returns a typed :class:`AIPerfJobInfo`,
+    this returns the untouched apiserver response so callers can read the live
+    ``spec`` of a running CR that has no on-disk artifacts yet (e.g. the UI
+    config endpoint's live-spec fallback for dashboard SLO chips).
+
+    Args:
+        api: Open ``ApiClient`` from :func:`k8s_client`.
+        namespace: Namespace containing the AIPerfJob.
+        name: AIPerfJob resource name (``metadata.name``).
+
+    Returns:
+        The raw CR body (``{"apiVersion", "metadata", "spec", "status", ...}``),
+        or ``None`` if the CR does not exist (404). Any non-404 API error is
+        suppressed and also returns ``None`` — this helper is intended for
+        best-effort UI lookups where a missing/erroring CR should fall through
+        silently rather than surface as a 5xx.
+    """
+    custom = client.CustomObjectsApi(api)
+    try:
+        raw = await custom.get_namespaced_custom_object(
+            group=AIPERF_JOB_GROUP,
+            version=AIPERF_JOB_VERSION,
+            plural=AIPERF_JOB_PLURAL,
+            namespace=namespace,
+            name=name,
+        )
+    except ApiException:
+        return None
+    return raw or None
+
+
 async def get_raw_aiperfjob_status(
     api: ApiClient,
     name: str,

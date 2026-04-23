@@ -29,6 +29,7 @@ from aiperf.common.noisy_loggers import suppress_noisy_http_loggers
 from aiperf.kubernetes.client_jobs import (
     cancel_aiperf_job,
     find_aiperf_job,
+    get_raw_aiperfjob,
     get_raw_aiperfjob_status,
     list_aiperf_jobs,
 )
@@ -64,6 +65,7 @@ __all__ = [
     "find_retrievable_pod",
     "get_pod_summary",
     "get_pods",
+    "get_raw_aiperfjob",
     "get_raw_aiperfjob_status",
     "job_selector",
     "k8s_client",
