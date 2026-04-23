@@ -215,6 +215,11 @@ class TestListAndSearch:
 class TestVerboseListings:
     """--verbose surfaces Tags/Difficulty columns in list/search output."""
 
+    @pytest.fixture(autouse=True)
+    def _widen_console(self, monkeypatch) -> None:
+        """Prevent Rich from truncating verbose column headers at 80 cols."""
+        monkeypatch.setenv("COLUMNS", "200")
+
     def test_verbose_list_shows_tags_and_difficulty(self, capsys) -> None:
         init_config(list_templates=True, verbose=True)
 
