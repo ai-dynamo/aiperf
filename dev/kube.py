@@ -269,6 +269,34 @@ DYNAMO_NAMESPACE = "dynamo-server"
 DYNAMO_VERSION = os.environ.get("DYNAMO_VERSION") or _DYNAMO_VERSION_DEFAULT
 # Single-GPU disaggregated: both prefill+decode share 1 GPU at low memory util
 DYNAMO_1GPU_MEM_UTIL = os.environ.get("DYNAMO_1GPU_MEM_UTIL") or "0.3"
+
+# Kueue release: manifests.yaml ships all CRDs + the controller deployment.
+KUEUE_VERSION = os.environ.get("KUEUE_VERSION") or "v0.9.1"
+_KUEUE_MANIFEST_URL_TEMPLATE = (
+    "https://github.com/kubernetes-sigs/kueue/releases/download/"
+    "{version}/manifests.yaml"
+)
+KUEUE_NAMESPACE = "kueue-system"
+# Default queue pair seeded into the aiperf-benchmarks namespace so test
+# workloads can reference them without extra setup.
+AIPERF_BENCHMARK_NAMESPACE = "aiperf-benchmarks"
+KUEUE_CLUSTER_QUEUE_NAME = "aiperf-cluster-queue"
+KUEUE_LOCAL_QUEUE_NAME = "aiperf-local-queue"
+KUEUE_RESOURCE_FLAVOR_NAME = "aiperf-default-flavor"
+
+# kube-prometheus-stack bundles Prometheus + Grafana + Alertmanager.
+PROMETHEUS_STACK_VERSION = os.environ.get("PROMETHEUS_STACK_VERSION") or "65.5.1"
+PROMETHEUS_NAMESPACE = "monitoring"
+PROMETHEUS_RELEASE_NAME = "kube-prometheus-stack"
+PROMETHEUS_HELM_REPO_NAME = "prometheus-community"
+PROMETHEUS_HELM_REPO_URL = "https://prometheus-community.github.io/helm-charts"
+
+# loki-stack bundles Loki + Promtail for log aggregation.
+LOKI_STACK_VERSION = os.environ.get("LOKI_STACK_VERSION") or "2.10.2"
+LOKI_NAMESPACE = "monitoring"
+LOKI_RELEASE_NAME = "loki-stack"
+LOKI_HELM_REPO_NAME = "grafana"
+LOKI_HELM_REPO_URL = "https://grafana.github.io/helm-charts"
 # KV router mode for frontend (e.g. "kv" for KV-aware routing, "round-robin")
 DYNAMO_ROUTER_MODE: str | None = os.environ.get("DYNAMO_ROUTER_MODE") or None
 # KVBM CPU cache size in GB for prefill workers (enables KV cache offloading)
@@ -2245,6 +2273,339 @@ def cmd_install_dynamo() -> str:
 
     log_success(f"Dynamo operator {DYNAMO_VERSION} installed")
     return f"{DYNAMO_VERSION} installed"
+
+
+# ---------------------------------------------------------------------------
+# Kueue (batch job queuing)
+# ---------------------------------------------------------------------------
+
+
+def _kueue_default_queues_manifest() -> str:
+    """Render ResourceFlavor + ClusterQueue + LocalQueue for the default namespace.
+
+    Seeds a best-effort queue pair so benchmark jobs referencing
+    `queue-name=aiperf-local-queue` Just Work without extra setup. The
+    ClusterQueue is intentionally permissive (nominalQuota sized for dev
+    clusters); users running real workloads should tune these numbers.
+    """
+    manifests: list[dict] = [
+        _namespace_manifest(AIPERF_BENCHMARK_NAMESPACE),
+        {
+            "apiVersion": "kueue.x-k8s.io/v1beta1",
+            "kind": "ResourceFlavor",
+            "metadata": {"name": KUEUE_RESOURCE_FLAVOR_NAME},
+        },
+        {
+            "apiVersion": "kueue.x-k8s.io/v1beta1",
+            "kind": "ClusterQueue",
+            "metadata": {"name": KUEUE_CLUSTER_QUEUE_NAME},
+            "spec": {
+                "namespaceSelector": {},
+                "resourceGroups": [
+                    {
+                        "coveredResources": ["cpu", "memory", "nvidia.com/gpu"],
+                        "flavors": [
+                            {
+                                "name": KUEUE_RESOURCE_FLAVOR_NAME,
+                                "resources": [
+                                    {"name": "cpu", "nominalQuota": "1000"},
+                                    {"name": "memory", "nominalQuota": "4000Gi"},
+                                    {"name": "nvidia.com/gpu", "nominalQuota": "64"},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+        {
+            "apiVersion": "kueue.x-k8s.io/v1beta1",
+            "kind": "LocalQueue",
+            "metadata": {
+                "name": KUEUE_LOCAL_QUEUE_NAME,
+                "namespace": AIPERF_BENCHMARK_NAMESPACE,
+            },
+            "spec": {"clusterQueue": KUEUE_CLUSTER_QUEUE_NAME},
+        },
+    ]
+    return _manifests_to_yaml(manifests)
+
+
+def cmd_install_kueue() -> str:
+    """Install Kueue controller from the upstream release manifest."""
+    log_step(f"Installing Kueue {KUEUE_VERSION}")
+    _require_kubectl_and_cluster()
+
+    if _skip_if_deployment_ready(
+        "kueue-controller-manager",
+        KUEUE_NAMESPACE,
+        "Kueue already installed",
+    ):
+        # Still seed the default queues in case they were removed.
+        log_info("Ensuring default ClusterQueue / LocalQueue are present...")
+        kubectl("apply", "-f", "-", input=_kueue_default_queues_manifest(), text=True)
+        return "already installed"
+
+    log_info("Applying Kueue manifests...")
+    kubectl(
+        "apply",
+        "--server-side",
+        "-f",
+        _KUEUE_MANIFEST_URL_TEMPLATE.format(version=KUEUE_VERSION),
+    )
+    log_info("Waiting for Kueue controller to be ready...")
+    kubectl(
+        "wait",
+        "--for=condition=available",
+        f"--timeout={180 * _TIMEOUT_SCALE}s",
+        "deployment/kueue-controller-manager",
+        "-n",
+        KUEUE_NAMESPACE,
+    )
+
+    log_info("Seeding default ClusterQueue / LocalQueue for aiperf-benchmarks...")
+
+    # Retry briefly — Kueue CRDs can take a moment to register even after the
+    # controller deployment reports Available.
+    def _apply_queues() -> bool:
+        r = kubectl(
+            "apply",
+            "-f",
+            "-",
+            input=_kueue_default_queues_manifest(),
+            text=True,
+            capture=True,
+            check=False,
+        )
+        return r.returncode == 0
+
+    _poll(
+        _apply_queues,
+        attempts=30,
+        interval=2,
+        fail_msg="Failed to create default Kueue queues",
+    )
+
+    log_success(f"Kueue {KUEUE_VERSION} installed and ready")
+    return f"{KUEUE_VERSION} installed"
+
+
+def cmd_remove_kueue() -> None:
+    """Remove Kueue and the default queue pair."""
+    log_step("Removing Kueue")
+    _require_kubectl_and_cluster()
+
+    # Delete the queues first so Kueue can clean up any admission state.
+    kubectl(
+        "delete",
+        "localqueue",
+        KUEUE_LOCAL_QUEUE_NAME,
+        "-n",
+        AIPERF_BENCHMARK_NAMESPACE,
+        "--ignore-not-found",
+    )
+    kubectl("delete", "clusterqueue", KUEUE_CLUSTER_QUEUE_NAME, "--ignore-not-found")
+    kubectl(
+        "delete",
+        "resourceflavor",
+        KUEUE_RESOURCE_FLAVOR_NAME,
+        "--ignore-not-found",
+    )
+
+    kubectl(
+        "delete",
+        "-f",
+        _KUEUE_MANIFEST_URL_TEMPLATE.format(version=KUEUE_VERSION),
+        "--ignore-not-found",
+    )
+    log_success("Kueue removed")
+
+
+# ---------------------------------------------------------------------------
+# Observability: Prometheus + Grafana (kube-prometheus-stack) and Loki
+# ---------------------------------------------------------------------------
+
+
+def _helm_repo_add(name: str, url: str) -> None:
+    """Idempotently add a Helm repo and refresh its index."""
+    sh("helm", "repo", "add", name, url, "--force-update")
+    sh("helm", "repo", "update", name)
+
+
+def _helm_upgrade_install(
+    release: str,
+    chart: str,
+    namespace: str,
+    version: str,
+    *extra_args: str,
+) -> None:
+    """`helm upgrade --install` with a pinned chart version and namespace."""
+    sh(
+        "helm",
+        "upgrade",
+        "--install",
+        release,
+        chart,
+        "--kube-context",
+        _kubectl_context(),
+        "--namespace",
+        namespace,
+        "--create-namespace",
+        "--version",
+        version,
+        *extra_args,
+    )
+
+
+def _print_grafana_port_forward_hint() -> None:
+    """Tell the user how to access Grafana locally."""
+    log_info(
+        "Access Grafana:\n"
+        f"    kubectl port-forward -n {PROMETHEUS_NAMESPACE} "
+        f"svc/{PROMETHEUS_RELEASE_NAME}-grafana 3000:80\n"
+        "    # then open http://localhost:3000 (user: admin, "
+        f"pass: `kubectl get secret -n {PROMETHEUS_NAMESPACE} "
+        f"{PROMETHEUS_RELEASE_NAME}-grafana "
+        "-o jsonpath='{.data.admin-password}' | base64 -d`)"
+    )
+
+
+def cmd_install_prometheus() -> str:
+    """Install kube-prometheus-stack (Prometheus + Grafana + Alertmanager)."""
+    log_step(f"Installing kube-prometheus-stack {PROMETHEUS_STACK_VERSION}")
+    require("helm")
+    _require_kubectl_and_cluster()
+
+    # Grafana is the deployment most users care about for port-forwarding; if
+    # it's already up we short-circuit.
+    grafana_deployment = f"{PROMETHEUS_RELEASE_NAME}-grafana"
+    if _skip_if_deployment_ready(
+        grafana_deployment,
+        PROMETHEUS_NAMESPACE,
+        "kube-prometheus-stack already installed",
+    ):
+        _print_grafana_port_forward_hint()
+        return "already installed"
+
+    log_info("Adding prometheus-community Helm repo...")
+    _helm_repo_add(PROMETHEUS_HELM_REPO_NAME, PROMETHEUS_HELM_REPO_URL)
+
+    log_info("Installing kube-prometheus-stack...")
+    _helm_upgrade_install(
+        PROMETHEUS_RELEASE_NAME,
+        f"{PROMETHEUS_HELM_REPO_NAME}/kube-prometheus-stack",
+        PROMETHEUS_NAMESPACE,
+        PROMETHEUS_STACK_VERSION,
+    )
+
+    log_info("Waiting for Grafana to be ready...")
+    kubectl(
+        "wait",
+        "--for=condition=available",
+        f"--timeout={300 * _TIMEOUT_SCALE}s",
+        f"deployment/{grafana_deployment}",
+        "-n",
+        PROMETHEUS_NAMESPACE,
+    )
+    log_success(f"kube-prometheus-stack {PROMETHEUS_STACK_VERSION} installed and ready")
+    _print_grafana_port_forward_hint()
+    return f"{PROMETHEUS_STACK_VERSION} installed"
+
+
+def cmd_install_loki() -> str:
+    """Install loki-stack (Loki + Promtail)."""
+    log_step(f"Installing loki-stack {LOKI_STACK_VERSION}")
+    require("helm")
+    _require_kubectl_and_cluster()
+
+    # loki-stack ships Loki as a StatefulSet, not a Deployment, so we use a
+    # StatefulSet readiness check here instead of _skip_if_deployment_ready.
+    r = kubectl(
+        "get",
+        "statefulset",
+        LOKI_RELEASE_NAME,
+        "-n",
+        LOKI_NAMESPACE,
+        "-o",
+        "jsonpath={.status.readyReplicas}",
+        capture=True,
+        check=False,
+    )
+    if r.returncode == 0 and r.stdout.strip() and int(r.stdout) > 0:
+        log_success("loki-stack already installed")
+        return "already installed"
+
+    log_info("Adding grafana Helm repo...")
+    _helm_repo_add(LOKI_HELM_REPO_NAME, LOKI_HELM_REPO_URL)
+
+    log_info("Installing loki-stack...")
+    _helm_upgrade_install(
+        LOKI_RELEASE_NAME,
+        f"{LOKI_HELM_REPO_NAME}/loki-stack",
+        LOKI_NAMESPACE,
+        LOKI_STACK_VERSION,
+    )
+
+    log_info("Waiting for Loki StatefulSet to be ready...")
+    kubectl(
+        "rollout",
+        "status",
+        f"statefulset/{LOKI_RELEASE_NAME}",
+        "-n",
+        LOKI_NAMESPACE,
+        f"--timeout={300 * _TIMEOUT_SCALE}s",
+    )
+    log_success(f"loki-stack {LOKI_STACK_VERSION} installed and ready")
+    log_info(
+        "Query Loki locally:\n"
+        f"    kubectl port-forward -n {LOKI_NAMESPACE} "
+        f"svc/{LOKI_RELEASE_NAME} 3100:3100"
+    )
+    return f"{LOKI_STACK_VERSION} installed"
+
+
+# ---------------------------------------------------------------------------
+# Image push (retag + docker push the aiperf-slim image)
+# ---------------------------------------------------------------------------
+
+
+def cmd_push(*, registry: str, tag: str | None = None) -> str:
+    """Retag and push the locally built aiperf image to a remote registry.
+
+    Authentication is the user's responsibility — run `docker login <registry>`
+    or configure a credential helper before invoking this command.
+    """
+    require("docker")
+
+    if not registry:
+        log_error("--registry is required")
+        raise SystemExit(1)
+
+    local_id = _local_image_id(AIPERF_IMAGE)
+    if not local_id:
+        log_error(f"Image {AIPERF_IMAGE} not found locally. Run 'build' first.")
+        raise SystemExit(1)
+
+    # Allow callers to point at bare registry hosts ("nvcr.io/my-org") or full
+    # image refs ("nvcr.io/my-org/aiperf"). Normalize to the former.
+    registry = registry.rstrip("/")
+    local_repo, local_tag = (
+        AIPERF_IMAGE.rsplit(":", 1) if ":" in AIPERF_IMAGE else (AIPERF_IMAGE, "latest")
+    )
+    remote_tag = tag or local_tag
+    # If the registry already looks like a full image path (contains a '/'
+    # after the host), treat it as <host>/<repo>; otherwise append the local
+    # short name.
+    if "/" in registry:
+        remote_image = f"{registry}:{remote_tag}"
+    else:
+        remote_image = f"{registry}/{local_repo}:{remote_tag}"
+
+    log_step(f"Pushing {AIPERF_IMAGE} to {remote_image}")
+    sh("docker", "tag", AIPERF_IMAGE, remote_image)
+    sh("docker", "push", remote_image)
+    log_success(f"Pushed {remote_image}")
+    return remote_image
 
 
 # ---------------------------------------------------------------------------
@@ -4311,6 +4672,10 @@ for _func, _name, _group, _help in [
     (cmd_install_dynamo,          "install-dynamo",          lowlevel, "Install Dynamo operator (Helm)."),
     (cmd_install_aiperf_operator, "install-aiperf-operator", lowlevel, "Install AIPerf operator (Helm)."),
     (cmd_install_jobset,          "install-jobset",          lowlevel, "Install JobSet controller."),
+    (cmd_install_kueue,           "install-kueue",           lowlevel, "Install Kueue + default ClusterQueue/LocalQueue."),
+    (cmd_remove_kueue,            "remove-kueue",            lowlevel, "Remove Kueue and default queues."),
+    (cmd_install_prometheus,      "install-prometheus",      lowlevel, "Install kube-prometheus-stack (Prometheus + Grafana)."),
+    (cmd_install_loki,            "install-loki",            lowlevel, "Install loki-stack (Loki + Promtail)."),
     (cmd_cleanup,        "cleanup",        lowlevel, "Remove benchmark namespaces."),
 ]:
     app.command(_with_output(_func), name=_name, group=_group, help=_help)
@@ -4361,6 +4726,16 @@ def _cli_build(*, output: OutputOptions = _DEFAULT_OUTPUT_OPTS) -> None:
 def _cli_load(*, output: OutputOptions = _DEFAULT_OUTPUT_OPTS) -> None:
     _apply_output(output)
     cmd_load(aiperf=True, mock=True)
+
+@app.command(name="push", group=lowlevel, help="Retag and docker push the aiperf image to a remote registry.")
+def _cli_push(
+    *,
+    output: OutputOptions = _DEFAULT_OUTPUT_OPTS,
+    registry: Annotated[str, Parameter(name=["--registry", "-r"], help="Target registry host or full image path (e.g. 'nvcr.io/my-org' or 'nvcr.io/my-org/aiperf').")],
+    tag: Annotated[str | None, Parameter(name=["--tag", "-t"], help="Remote tag (default: same tag as the local AIPERF_IMAGE).")] = None,
+) -> None:
+    _apply_output(output)
+    cmd_push(registry=registry, tag=tag)
 # fmt: on
 
 

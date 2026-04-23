@@ -32,6 +32,9 @@
 		kube-setup kube-doctor kube-status kube-cleanup kube-teardown kube-reload \
 		kube-build kube-load kube-logs kube-cluster-create kube-cluster-delete \
 		kube-install-jobset kube-install-dynamo \
+		kube-install-kueue kube-remove-kueue \
+		kube-install-prometheus kube-install-loki \
+		kube-push \
 		kube-deploy-mock kube-remove-mock \
 		kube-deploy-vllm kube-remove-vllm kube-vllm-logs \
 		kube-deploy-sglang kube-remove-sglang kube-sglang-logs \
@@ -392,6 +395,21 @@ kube-install-jobset: #? install the JobSet CRD.
 
 kube-install-dynamo: #? install the Dynamo operator.
 	$(KUBE) install-dynamo
+
+kube-install-kueue: #? install Kueue and seed default ClusterQueue/LocalQueue.
+	$(KUBE) install-kueue
+
+kube-remove-kueue: #? remove Kueue and default queues.
+	$(KUBE) remove-kueue
+
+kube-install-prometheus: #? install kube-prometheus-stack (Prometheus + Grafana).
+	$(KUBE) install-prometheus
+
+kube-install-loki: #? install loki-stack (Loki + Promtail).
+	$(KUBE) install-loki
+
+kube-push: #? retag and docker push the aiperf image. Pass --registry (required) / --tag.
+	$(KUBE) push $(args)
 
 kube-deploy-mock: #? deploy the mock inference server.
 	$(KUBE) deploy-mock
