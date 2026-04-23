@@ -10,10 +10,37 @@ DO NOT ADD FIXTURES THAT ARE ONLY USED IN A SPECIFIC TEST TYPE.
 
 from __future__ import annotations
 
+import os
 import re
+import sys
+import threading
+import time
+import traceback
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+
+_RSS_STATUS_PATH = "/proc/self/status"
+_WATCHDOG_SUPPORTED = sys.platform == "linux" and os.path.exists(_RSS_STATUS_PATH)
+
+_DEFAULT_WATCHDOG_MB = 8192
+_WATCHDOG_INTERVAL_S = 0.5
+_WATCHDOG_ENV_VAR = "AIPERF_TEST_MEMORY_LIMIT_MB"
+_WATCHDOG_PATH_PREFIXES = ("tests/unit/", "tests/component_integration/")
+
+# Module-level state the hookwrapper updates and the watchdog thread reads.
+# Single writer (main thread via hookwrapper), single reader (watchdog thread);
+# atomic dict writes are sufficient - no lock needed.
+_watchdog_state: dict = {
+    "active": False,
+    "threshold_bytes": _DEFAULT_WATCHDOG_MB * 1024 * 1024,
+    "nodeid": None,
+}
+
+# Injection point for tests: override to capture calls instead of exiting.
+# Exposed as a module attribute so tests can monkeypatch it cleanly.
+_watchdog_kill_action: Callable[[str, int, int], None] | None = None
 
 # Path prefix -> markers to auto-enable (remove from default exclusions).
 # When a user targets a path starting with the prefix, the listed markers are
@@ -34,7 +61,8 @@ _PATH_MARKER_MAP: list[tuple[str, list[str]]] = [
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Auto-enable markers when the user targets a specific test path.
+    """Auto-enable markers when the user targets a specific test path, and
+    start the per-worker memory watchdog thread.
 
     ``addopts`` in pyproject.toml excludes heavy test suites by default via
     ``-m 'not k8s and not gpu and ...'``.  When the user explicitly runs
@@ -42,6 +70,14 @@ def pytest_configure(config: pytest.Config) -> None:
     detects the target and strips the corresponding ``not <marker>`` clauses
     so the tests are collected instead of silently skipped.
     """
+    _apply_path_marker_expansion(config)
+
+    if _WATCHDOG_SUPPORTED:
+        t = threading.Thread(target=_watchdog_loop, daemon=True, name="memory-watchdog")
+        t.start()
+
+
+def _apply_path_marker_expansion(config: pytest.Config) -> None:
     markexpr = getattr(config.option, "markexpr", "") or ""
     if not markexpr:
         return
@@ -79,3 +115,102 @@ def pytest_configure(config: pytest.Config) -> None:
     exclude = {f"not {m}" for m in enable}
     parts = [p for p in re.split(r"\s+and\s+", markexpr) if p.strip() not in exclude]
     config.option.markexpr = " and ".join(parts) if parts else ""
+
+
+def _read_rss_bytes() -> int | None:
+    try:
+        with open(_RSS_STATUS_PATH) as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    # "VmRSS:  12345 kB"
+                    return int(line.split()[1]) * 1024
+    except OSError:
+        return None
+    return None
+
+
+def _default_watchdog_kill(nodeid: str, rss_bytes: int, threshold_bytes: int) -> None:
+    sys.stderr.write(
+        f"\n=== pytest memory watchdog tripped ===\n"
+        f"test:      {nodeid}\n"
+        f"rss:       {rss_bytes // (1024 * 1024)} MiB\n"
+        f"threshold: {threshold_bytes // (1024 * 1024)} MiB\n"
+        f"action:    killing worker pid {os.getpid()} with exit code 137\n"
+        f"--- python thread stacks ---\n"
+    )
+    for tid, frame in sys._current_frames().items():
+        sys.stderr.write(f"\n[thread {tid}]\n")
+        sys.stderr.write("".join(traceback.format_stack(frame)))
+    sys.stderr.write("=== end pytest memory watchdog ===\n")
+    sys.stderr.flush()
+    os._exit(137)
+
+
+_watchdog_kill_action = _default_watchdog_kill
+
+
+def _watchdog_loop() -> None:
+    while True:
+        time.sleep(_WATCHDOG_INTERVAL_S)
+        if not _watchdog_state["active"]:
+            continue
+        rss = _read_rss_bytes()
+        if rss is None:
+            continue
+        threshold = _watchdog_state["threshold_bytes"]
+        if rss > threshold:
+            nodeid = _watchdog_state["nodeid"] or "<unknown>"
+            # Deactivate before killing so test overrides (which swap
+            # _watchdog_kill_action) don't re-trigger on the next tick.
+            _watchdog_state["active"] = False
+            action = _watchdog_kill_action
+            if action is not None:
+                action(nodeid, rss, threshold)
+
+
+def _in_guarded_suite(nodeid: str) -> bool:
+    return any(nodeid.startswith(p) for p in _WATCHDOG_PATH_PREFIXES)
+
+
+def _resolve_threshold_mb(item: pytest.Item) -> int | None:
+    if item.get_closest_marker("no_memory_limit") is not None:
+        return None
+    env_raw = os.environ.get(_WATCHDOG_ENV_VAR)
+    env_mb: int | None = None
+    if env_raw is not None:
+        try:
+            env_mb = int(env_raw)
+        except ValueError:
+            env_mb = None
+        else:
+            if env_mb == 0:
+                return None
+    marker = item.get_closest_marker("memory_limit")
+    if marker is not None:
+        mb = marker.kwargs.get("mb")
+        if mb is None and marker.args:
+            mb = marker.args[0]
+        if isinstance(mb, int) and mb > 0:
+            return mb
+    if env_mb is not None and env_mb > 0:
+        return env_mb
+    return _DEFAULT_WATCHDOG_MB
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item: pytest.Item):
+    if not _WATCHDOG_SUPPORTED or not _in_guarded_suite(item.nodeid):
+        yield
+        return
+    threshold_mb = _resolve_threshold_mb(item)
+    if threshold_mb is None:
+        yield
+        return
+    _watchdog_state["threshold_bytes"] = threshold_mb * 1024 * 1024
+    _watchdog_state["nodeid"] = item.nodeid
+    _watchdog_state["active"] = True
+    try:
+        yield
+    finally:
+        _watchdog_state["active"] = False
+        _watchdog_state["nodeid"] = None
