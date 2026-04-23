@@ -126,7 +126,10 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
             sf.write(buf, array, sr, format="WAV")
             b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
             return [Audio(name="", contents=[f"wav,{b64}"])]
-        except Exception:
+        except Exception as e:
+            self.debug(
+                lambda exc=e: f"Failed to encode WAV from column '{audio_column}': {exc.__class__.__name__}: {exc}"
+            )
             return []
 
     def _max_conversations(self) -> int | None:
