@@ -23,7 +23,7 @@ async def test_live_operator_app_serves_index(live_operator_app):
     async with httpx.AsyncClient(trust_env=False) as client:
         resp = await client.get(f"{live_operator_app.base_url}/")
     assert resp.status_code == 200
-    assert "<div id=\"app\"></div>" in resp.text
+    assert '<div id="app"></div>' in resp.text
 
 
 @pytest.mark.e2e
@@ -45,3 +45,16 @@ async def test_seeded_results_populates_leaderboard(
     assert "aiperf-llama3-c128" in job_ids
     assert "aiperf-llama3-c256" in job_ids
     assert "mistral-7b-run1" in job_ids
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio(loop_scope="session")
+async def test_fake_k8s_client_serves_jobs(live_operator_app, fake_k8s_client):
+    """With fake_k8s_client active, /api/v1/jobs returns the canned list."""
+    async with httpx.AsyncClient(trust_env=False) as client:
+        resp = await client.get(f"{live_operator_app.base_url}/api/v1/jobs")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    names = {j["name"] for j in body["jobs"]}
+    assert "live-run" in names
+    assert "aiperf-llama3-c128" in names
