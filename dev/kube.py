@@ -252,6 +252,14 @@ VLLM_MAX_MODEL_LEN = int(os.environ.get("MAX_MODEL_LEN") or "4096")
 VLLM_GPU_MEM_UTIL = os.environ.get("GPU_MEM_UTIL") or "0.5"
 VLLM_NAMESPACE = "vllm-server"
 
+SGLANG_IMAGE = os.environ.get("SGLANG_IMAGE") or "lmsysorg/sglang:latest"
+SGLANG_NAMESPACE = "sglang-server"
+
+TRTLLM_IMAGE = (
+    os.environ.get("TRTLLM_IMAGE") or "nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc7"
+)
+TRTLLM_NAMESPACE = "trtllm-server"
+
 DYNAMO_IMAGE = (
     os.environ.get("DYNAMO_IMAGE")
     or f"nvcr.io/nvidia/ai-dynamo/vllm-runtime:{_DYNAMO_VERSION_DEFAULT}"
@@ -2487,6 +2495,416 @@ def cmd_vllm_logs(
 
 
 # ---------------------------------------------------------------------------
+# SGLang deployment
+# ---------------------------------------------------------------------------
+
+
+def _generate_sglang_manifest(
+    model: str,
+    gpus: int,
+    sglang_image: str,
+    *,
+    hf_token: bool,
+) -> str:
+    """Generate Namespace + Service + Deployment YAML for SGLang."""
+    container: dict[str, Any] = {
+        "name": "sglang",
+        "image": sglang_image,
+        "command": [
+            "python",
+            "-m",
+            "sglang.launch_server",
+            "--model-path",
+            model,
+            "--port",
+            "8000",
+            "--host",
+            "0.0.0.0",
+        ],
+        "ports": [{"containerPort": 8000, "name": "http"}],
+        "readinessProbe": {
+            "httpGet": {"path": "/health", "port": 8000},
+            "initialDelaySeconds": 30,
+            "periodSeconds": 10,
+            "timeoutSeconds": 5,
+            "failureThreshold": 30,
+        },
+        "livenessProbe": {
+            "httpGet": {"path": "/health", "port": 8000},
+            "initialDelaySeconds": 60,
+            "periodSeconds": 15,
+            "timeoutSeconds": 5,
+            "failureThreshold": 5,
+        },
+    }
+
+    if gpus > 0:
+        container["resources"] = {
+            "limits": {"nvidia.com/gpu": str(gpus)},
+            "requests": {"nvidia.com/gpu": str(gpus)},
+        }
+
+    if hf_token:
+        container["env"] = [
+            {
+                "name": "HF_TOKEN",
+                "valueFrom": {"secretKeyRef": {"name": "hf-token", "key": "token"}},
+            }
+        ]
+
+    documents: list[dict] = [
+        _namespace_manifest(SGLANG_NAMESPACE),
+        {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {"name": "sglang-server", "namespace": SGLANG_NAMESPACE},
+            "spec": {
+                "selector": {"app": "sglang-server"},
+                "ports": [
+                    {
+                        "port": 8000,
+                        "targetPort": 8000,
+                        "protocol": "TCP",
+                        "name": "http",
+                    }
+                ],
+                "type": "ClusterIP",
+            },
+        },
+        {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {"name": "sglang-server", "namespace": SGLANG_NAMESPACE},
+            "spec": {
+                "replicas": 1,
+                "selector": {"matchLabels": {"app": "sglang-server"}},
+                "template": {
+                    "metadata": {"labels": {"app": "sglang-server"}},
+                    "spec": {
+                        "runtimeClassName": "nvidia",
+                        "containers": [container],
+                    },
+                },
+            },
+        },
+    ]
+
+    return _manifests_to_yaml(documents)
+
+
+@app.command(
+    name="deploy-sglang", group=server, help="Deploy standalone SGLang server."
+)
+def cmd_deploy_sglang(
+    *,
+    output: OutputOptions = _DEFAULT_OUTPUT_OPTS,
+    model_opts: ModelOptions = _DEFAULT_MODEL_OPTS,
+    sglang_image: Annotated[
+        str, Parameter(help="SGLang container image.")
+    ] = SGLANG_IMAGE,
+) -> None:
+    """Deploy SGLang inference server."""
+    _apply_output(output)
+    log_step(
+        f"Deploying SGLang server (model={model_opts.model}, gpus={model_opts.gpus})"
+    )
+    _require_kubectl_and_cluster()
+    _require_gpu()
+
+    if _skip_if_deployment_ready(
+        "sglang-server",
+        SGLANG_NAMESPACE,
+        "SGLang server already deployed and ready",
+    ):
+        return
+
+    hf_secret = _ensure_hf_token_secret(SGLANG_NAMESPACE)
+    manifest = _generate_sglang_manifest(
+        model_opts.model,
+        model_opts.gpus,
+        sglang_image,
+        hf_token=bool(hf_secret),
+    )
+    kubectl("apply", "-f", "-", input=manifest, text=True)
+
+    if _mode.json:
+        _mode._streaming = True
+        _mode.emit_event(
+            {
+                "type": "step_started",
+                "step": "deploy-sglang",
+                "timestamp": time.time(),
+            }
+        )
+
+    log_info(
+        "Waiting for SGLang to be ready (this may take several minutes for model download)..."
+    )
+    with _StreamEmitter("deploy-sglang"):
+        kubectl(
+            "rollout",
+            "status",
+            "deployment/sglang-server",
+            "-n",
+            SGLANG_NAMESPACE,
+            "--timeout=600s",
+        )
+    log_success("SGLang server deployed")
+    kubectl("get", "pods", "-n", SGLANG_NAMESPACE, "-l", "app=sglang-server")
+    endpoint = f"http://sglang-server.{SGLANG_NAMESPACE}.svc.cluster.local:8000/v1"
+    log_info(f"Endpoint: {endpoint}")
+    _mode.set_result(
+        {
+            "endpoint": endpoint,
+            "namespace": SGLANG_NAMESPACE,
+            "model": model_opts.model,
+            "gpus": model_opts.gpus,
+        }
+    )
+    if _mode._streaming:
+        _mode.emit_event(
+            {"type": "step_completed", "step": "deploy-sglang", "detail": endpoint}
+        )
+
+
+def cmd_remove_sglang() -> None:
+    _remove_server("SGLang server", SGLANG_NAMESPACE)
+
+
+@app.command(name="sglang-logs", group=server, help="View SGLang logs.")
+def cmd_sglang_logs(
+    *, output: OutputOptions = _DEFAULT_OUTPUT_OPTS, follow: FollowFlag = FOLLOW_DEFAULT
+) -> None:
+    """View SGLang server logs."""
+    _apply_output(output)
+    _require_kubectl_and_cluster()
+    kubectl(
+        "logs",
+        "-n",
+        SGLANG_NAMESPACE,
+        "-l",
+        "app=sglang-server",
+        *(["-f"] if follow else []),
+    )
+
+
+# ---------------------------------------------------------------------------
+# TensorRT-LLM deployment (trtllm-serve with on-the-fly engine building)
+# ---------------------------------------------------------------------------
+
+_TRTLLM_LD_LIBRARY_PATH = (
+    "/usr/local/tensorrt/lib:"
+    "/usr/local/cuda/lib64:"
+    "/usr/local/cuda/compat/lib.real:"
+    "/usr/local/lib/python3.12/dist-packages/torch/lib:"
+    "/usr/local/nvidia/lib:/usr/local/nvidia/lib64"
+)
+
+
+def _generate_trtllm_manifest(
+    model: str,
+    gpus: int,
+    trtllm_image: str,
+    max_model_len: int,
+    *,
+    hf_token: bool,
+) -> str:
+    """Generate Namespace + Service + Deployment YAML for TensorRT-LLM."""
+    env: list[dict] = [{"name": "LD_LIBRARY_PATH", "value": _TRTLLM_LD_LIBRARY_PATH}]
+    if hf_token:
+        env.append(
+            {
+                "name": "HF_TOKEN",
+                "valueFrom": {"secretKeyRef": {"name": "hf-token", "key": "token"}},
+            }
+        )
+
+    container: dict[str, Any] = {
+        "name": "trtllm",
+        "image": trtllm_image,
+        "command": ["trtllm-serve"],
+        "args": [
+            "serve",
+            model,
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "8000",
+            "--max_seq_len",
+            str(max_model_len),
+            "--tensor_parallel_size",
+            str(max(gpus, 1)),
+        ],
+        "ports": [{"containerPort": 8000, "name": "http"}],
+        "env": env,
+        "readinessProbe": {
+            "httpGet": {"path": "/health", "port": 8000},
+            "initialDelaySeconds": 30,
+            "periodSeconds": 10,
+            "timeoutSeconds": 10,
+            "failureThreshold": 120,
+        },
+        "livenessProbe": {
+            "httpGet": {"path": "/health", "port": 8000},
+            "initialDelaySeconds": 60,
+            "periodSeconds": 30,
+            "timeoutSeconds": 10,
+            "failureThreshold": 40,
+        },
+        "volumeMounts": [{"name": "shm", "mountPath": "/dev/shm"}],
+    }
+
+    if gpus > 0:
+        container["resources"] = {
+            "limits": {"nvidia.com/gpu": str(gpus)},
+            "requests": {"nvidia.com/gpu": str(gpus)},
+        }
+
+    pod_spec: dict = {
+        "runtimeClassName": "nvidia",
+        "containers": [container],
+        "volumes": [
+            {"name": "shm", "emptyDir": {"medium": "Memory", "sizeLimit": "4Gi"}},
+        ],
+    }
+
+    documents: list[dict] = [
+        _namespace_manifest(TRTLLM_NAMESPACE),
+        {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {"name": "trtllm-server", "namespace": TRTLLM_NAMESPACE},
+            "spec": {
+                "selector": {"app": "trtllm-server"},
+                "ports": [
+                    {
+                        "port": 8000,
+                        "targetPort": 8000,
+                        "protocol": "TCP",
+                        "name": "http",
+                    }
+                ],
+                "type": "ClusterIP",
+            },
+        },
+        {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {"name": "trtllm-server", "namespace": TRTLLM_NAMESPACE},
+            "spec": {
+                "replicas": 1,
+                "selector": {"matchLabels": {"app": "trtllm-server"}},
+                "template": {
+                    "metadata": {"labels": {"app": "trtllm-server"}},
+                    "spec": pod_spec,
+                },
+            },
+        },
+    ]
+
+    return _manifests_to_yaml(documents)
+
+
+@app.command(
+    name="deploy-trtllm",
+    group=server,
+    help="Deploy standalone TensorRT-LLM server.",
+)
+def cmd_deploy_trtllm(
+    *,
+    output: OutputOptions = _DEFAULT_OUTPUT_OPTS,
+    model_opts: ModelOptions = _DEFAULT_MODEL_OPTS,
+    trtllm_image: Annotated[
+        str, Parameter(help="TensorRT-LLM container image.")
+    ] = TRTLLM_IMAGE,
+) -> None:
+    """Deploy TensorRT-LLM inference server."""
+    _apply_output(output)
+    log_step(
+        f"Deploying TensorRT-LLM server (model={model_opts.model}, gpus={model_opts.gpus})"
+    )
+    _require_kubectl_and_cluster()
+    _require_gpu()
+
+    if _skip_if_deployment_ready(
+        "trtllm-server",
+        TRTLLM_NAMESPACE,
+        "TensorRT-LLM server already deployed and ready",
+    ):
+        return
+
+    hf_secret = _ensure_hf_token_secret(TRTLLM_NAMESPACE)
+    manifest = _generate_trtllm_manifest(
+        model_opts.model,
+        model_opts.gpus,
+        trtllm_image,
+        model_opts.max_model_len,
+        hf_token=bool(hf_secret),
+    )
+    kubectl("apply", "-f", "-", input=manifest, text=True)
+
+    if _mode.json:
+        _mode._streaming = True
+        _mode.emit_event(
+            {
+                "type": "step_started",
+                "step": "deploy-trtllm",
+                "timestamp": time.time(),
+            }
+        )
+
+    log_info(
+        "Waiting for TensorRT-LLM to be ready (engine build can take 10+ minutes)..."
+    )
+    with _StreamEmitter("deploy-trtllm"):
+        kubectl(
+            "rollout",
+            "status",
+            "deployment/trtllm-server",
+            "-n",
+            TRTLLM_NAMESPACE,
+            "--timeout=900s",
+        )
+    log_success("TensorRT-LLM server deployed")
+    kubectl("get", "pods", "-n", TRTLLM_NAMESPACE, "-l", "app=trtllm-server")
+    endpoint = f"http://trtllm-server.{TRTLLM_NAMESPACE}.svc.cluster.local:8000/v1"
+    log_info(f"Endpoint: {endpoint}")
+    _mode.set_result(
+        {
+            "endpoint": endpoint,
+            "namespace": TRTLLM_NAMESPACE,
+            "model": model_opts.model,
+            "gpus": model_opts.gpus,
+        }
+    )
+    if _mode._streaming:
+        _mode.emit_event(
+            {"type": "step_completed", "step": "deploy-trtllm", "detail": endpoint}
+        )
+
+
+def cmd_remove_trtllm() -> None:
+    _remove_server("TensorRT-LLM server", TRTLLM_NAMESPACE)
+
+
+@app.command(name="trtllm-logs", group=server, help="View TensorRT-LLM logs.")
+def cmd_trtllm_logs(
+    *, output: OutputOptions = _DEFAULT_OUTPUT_OPTS, follow: FollowFlag = FOLLOW_DEFAULT
+) -> None:
+    """View TensorRT-LLM server logs."""
+    _apply_output(output)
+    _require_kubectl_and_cluster()
+    kubectl(
+        "logs",
+        "-n",
+        TRTLLM_NAMESPACE,
+        "-l",
+        "app=trtllm-server",
+        *(["-f"] if follow else []),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Dynamo deployment (DynamoGraphDeployment CRD via Dynamo operator)
 # ---------------------------------------------------------------------------
 
@@ -3884,6 +4302,8 @@ for _func, _name, _group, _help in [
     (cmd_reload,         "reload",         workflow, "Rebuild + load AIPerf image."),
     (cmd_remove_dynamo,  "remove-dynamo",  server,   "Remove Dynamo server."),
     (cmd_remove_vllm,    "remove-vllm",    server,   "Remove vLLM server."),
+    (cmd_remove_sglang,  "remove-sglang",  server,   "Remove SGLang server."),
+    (cmd_remove_trtllm,  "remove-trtllm",  server,   "Remove TensorRT-LLM server."),
     (cmd_deploy_mock,    "deploy-mock",    server,   "Deploy mock LLM server."),
     (cmd_remove_mock,    "remove-mock",    server,   "Remove mock server."),
     (cmd_cluster_create, "cluster-create", lowlevel, "Create local cluster (Kind or Minikube)."),

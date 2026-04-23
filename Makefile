@@ -34,10 +34,13 @@
 		kube-install-jobset kube-install-dynamo \
 		kube-deploy-mock kube-remove-mock \
 		kube-deploy-vllm kube-remove-vllm kube-vllm-logs \
+		kube-deploy-sglang kube-remove-sglang kube-sglang-logs \
+		kube-deploy-trtllm kube-remove-trtllm kube-trtllm-logs \
 		kube-deploy-dynamo kube-remove-dynamo kube-dynamo-logs \
 		kube-deploy-lora kube-remove-lora \
 		kube-run kube-run-detach kube-dry-run \
-		kube-run-local kube-run-local-detach kube-dry-run-local
+		kube-run-local kube-run-local-detach kube-dry-run-local \
+		helm-lint helm-template helm-package
 
 
 # Include user-defined environment variables
@@ -405,6 +408,24 @@ kube-remove-vllm: #? remove the vLLM server.
 kube-vllm-logs: #? view vLLM server logs.
 	$(KUBE) vllm-logs $(args)
 
+kube-deploy-sglang: #? deploy a standalone SGLang server.
+	$(KUBE) deploy-sglang $(args)
+
+kube-remove-sglang: #? remove the SGLang server.
+	$(KUBE) remove-sglang
+
+kube-sglang-logs: #? view SGLang server logs.
+	$(KUBE) sglang-logs $(args)
+
+kube-deploy-trtllm: #? deploy a standalone TensorRT-LLM server.
+	$(KUBE) deploy-trtllm $(args)
+
+kube-remove-trtllm: #? remove the TensorRT-LLM server.
+	$(KUBE) remove-trtllm
+
+kube-trtllm-logs: #? view TensorRT-LLM server logs.
+	$(KUBE) trtllm-logs $(args)
+
 kube-deploy-dynamo: #? deploy a Dynamo inference server.
 	$(KUBE) deploy-dynamo $(args)
 
@@ -437,3 +458,19 @@ kube-run-local-detach: #? run single-pod benchmark (detached). Pass aiperf args 
 
 kube-dry-run-local: #? print single-pod manifest without running. Pass aiperf args after '--'.
 	$(KUBE) dry-run-local $(args)
+
+# ---------------------------------------------------------------------------
+# Helm chart targets for deploy/helm/aiperf-operator.
+# helm-lint validates chart structure; helm-template smoke-checks rendering
+# without cluster access; helm-package produces a versioned tarball in dist/.
+# ---------------------------------------------------------------------------
+
+helm-lint: #? lint the aiperf-operator Helm chart.
+	helm lint deploy/helm/aiperf-operator
+
+helm-template: #? smoke-check Helm chart rendering (no cluster required).
+	helm template test deploy/helm/aiperf-operator > /dev/null
+
+helm-package: #? package the aiperf-operator Helm chart into dist/.
+	mkdir -p dist/
+	helm package deploy/helm/aiperf-operator -d dist/
