@@ -4,13 +4,29 @@ name: "Run Kubernetes Tests"
 
 on:
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'llms.txt'
+      - 'LICENSE'
+      - '.gitignore'
   push:
     branches:
       - main
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'llms.txt'
+      - 'LICENSE'
+      - '.gitignore'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   kubernetes-tests:
@@ -18,12 +34,30 @@ jobs:
     timeout-minutes: 90
 
     steps:
+    - name: Free disk space
+      uses: jlumbroso/free-disk-space@v1.3.1
+      with:
+        tool-cache: false
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: false
+        swap-storage: false
+
     - uses: actions/checkout@v4
 
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
+
+    - name: Cache uv downloads
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/uv
+        key: uv-${{ runner.os }}-py3.12-${{ hashFiles('uv.lock', 'pyproject.toml') }}
+        restore-keys: |
+          uv-${{ runner.os }}-py3.12-
 
     - name: Install kubectl
       uses: azure/setup-kubectl@v4
@@ -41,7 +75,17 @@ jobs:
     - name: Install dependencies
       run: make first-time-setup PYTHON_VERSION=3.12
 
+    - name: Report pre-test disk and tool versions
+      shell: bash
+      run: |
+        df -h
+        docker version || true
+        kind version || true
+        kubectl version --client || true
+        helm version || true
+
     - name: Run kubernetes tests
+      id: pytest
       run: make kubernetes-tests-ci
       timeout-minutes: 75
 
@@ -52,10 +96,20 @@ jobs:
         mkdir -p ./k8s-ci-logs
         kind export logs ./k8s-ci-logs/kind --name aiperf || true
         kubectl get all -A > ./k8s-ci-logs/all-resources.txt || true
+        kubectl get events -A --sort-by=.lastTimestamp > ./k8s-ci-logs/events.txt || true
+        kubectl describe nodes > ./k8s-ci-logs/describe-nodes.txt || true
         kubectl describe pods -A > ./k8s-ci-logs/describe-pods.txt || true
+        kubectl get aiperfjobs -A -o yaml > ./k8s-ci-logs/aiperfjobs.yaml 2>&1 || true
+        kubectl get jobsets -A -o yaml > ./k8s-ci-logs/jobsets.yaml 2>&1 || true
+        kubectl get pods -A -o yaml > ./k8s-ci-logs/pods.yaml 2>&1 || true
         for ns in $(kubectl get ns -o name | cut -d/ -f2); do
           kubectl logs -n "$ns" --all-containers --prefix --tail=-1 -l '' > "./k8s-ci-logs/logs-$ns.txt" 2>&1 || true
         done
+        docker ps -a > ./k8s-ci-logs/docker-ps.txt 2>&1 || true
+        docker images > ./k8s-ci-logs/docker-images.txt 2>&1 || true
+        df -h > ./k8s-ci-logs/disk-usage.txt 2>&1 || true
+        free -h > ./k8s-ci-logs/memory.txt 2>&1 || true
+        dmesg | tail -500 > ./k8s-ci-logs/dmesg.txt 2>&1 || true
 
     - name: Upload cluster diagnostics
       if: failure()
@@ -64,6 +118,26 @@ jobs:
         name: k8s-ci-logs-${{ github.run_id }}
         path: k8s-ci-logs/
         retention-days: 7
+
+    - name: Write job summary
+      if: always()
+      shell: bash
+      run: |
+        {
+          echo "## Kubernetes tests"
+          echo ""
+          if [[ "${{ steps.pytest.outcome }}" == "success" ]]; then
+            echo "Result: **passed**"
+          else
+            echo "Result: **${{ steps.pytest.outcome }}**"
+            echo ""
+            echo "Diagnostics artifact: \`k8s-ci-logs-${{ github.run_id }}\` (7 day retention)"
+          fi
+          echo ""
+          echo "- Runner: \`ubuntu-latest\`"
+          echo "- Python: \`3.12\`"
+          echo "- Command: \`make kubernetes-tests-ci\`"
+        } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Teardown Kind cluster
       if: always()
