@@ -1,5 +1,6 @@
 import { html } from 'htm/preact';
 import { useRef, useEffect } from 'preact/hooks';
+import { applyChartTheme } from '../lib/chart-theme.js';
 
 /**
  * Compute a fast fingerprint of chart data to detect actual changes.
@@ -37,6 +38,8 @@ export function ChartWrapper({ type, data, options = {}, height = 300 }) {
       console.warn('ChartWrapper: window.Chart not available - Chart.js not loaded');
       return;
     }
+
+    applyChartTheme(options);
 
     chartRef.current = new window.Chart(canvasRef.current, {
       type,

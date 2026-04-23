@@ -12,6 +12,7 @@ import { PhaseCards } from '../components/phase-cards.js';
 import { GpuTelemetryCard } from '../components/gpu-telemetry.js';
 import { ReliabilityTile } from '../components/reliability-tile.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtBytes } from '../lib/format.js';
+import { applyChartTheme } from '../lib/chart-theme.js';
 
 const MAX_CHART_POINTS = 60;
 
@@ -211,7 +212,7 @@ function LatencyPercentileChart({ results }) {
     ],
   };
 
-  const chartOptions = {
+  const chartOptions = applyChartTheme({
     indexAxis: 'y',
     plugins: {
       legend: { display: false },
@@ -232,7 +233,7 @@ function LatencyPercentileChart({ results }) {
         grid: { color: palette.surface0 },
       },
     },
-  };
+  });
 
   return html`
     <div class="card" style="margin-top: var(--space-4)">
@@ -292,7 +293,7 @@ function ConcurrencyThroughputChart({ status }) {
     }],
   };
 
-  const chartOptions = {
+  const chartOptions = applyChartTheme({
     plugins: {
       legend: { display: false },
       tooltip: {
@@ -313,7 +314,7 @@ function ConcurrencyThroughputChart({ status }) {
         grid: { color: palette.surface0 + '60' },
       },
     },
-  };
+  });
 
   return html`
     <div class="card" style="margin-top: var(--space-4)">
@@ -353,7 +354,7 @@ function ISLDistributionChart({ results }) {
     }],
   };
 
-  const chartOptions = {
+  const chartOptions = applyChartTheme({
     plugins: {
       legend: { display: false },
       tooltip: {
@@ -374,7 +375,7 @@ function ISLDistributionChart({ results }) {
         title: { display: true, text: 'Tokens', color: palette.overlay1, font: { size: 10 } },
       },
     },
-  };
+  });
 
   return html`
     <div class="card" style="margin-top: var(--space-4)">
@@ -980,7 +981,7 @@ function ServerMetricsSection({ serverMetrics }) {
     { key: 'vllm:request_queue_time_seconds', label: 'Queue Time', color: palette.sapphire, unit: 's' },
   ];
 
-  const histogramChartOptions = (unit) => ({
+  const histogramChartOptions = (unit) => applyChartTheme({
     plugins: {
       legend: { display: false },
       tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y} requests` } },
@@ -1095,7 +1096,7 @@ function PerRecordAnalysis({ records }) {
         }],
   };
 
-  const latencyScatterOptions = {
+  const latencyScatterOptions = applyChartTheme({
     plugins: {
       legend: { display: multiPhase, labels: { color: palette.overlay1, font: { size: 10 } } },
       quadrantLabels: false,
@@ -1117,7 +1118,7 @@ function PerRecordAnalysis({ records }) {
         grid: { color: palette.surface0 + '60' },
       },
     },
-  };
+  });
 
   // Scatter: TTFT vs ISL
   const hasTtftIsl = rows.some(r => r.ttft != null && r.isl != null);
@@ -1139,7 +1140,7 @@ function PerRecordAnalysis({ records }) {
         }],
   } : null;
 
-  const ttftIslOptions = {
+  const ttftIslOptions = applyChartTheme({
     plugins: {
       legend: { display: multiPhase, labels: { color: palette.overlay1, font: { size: 10 } } },
       quadrantLabels: false,
@@ -1161,7 +1162,7 @@ function PerRecordAnalysis({ records }) {
         grid: { color: palette.surface0 + '60' },
       },
     },
-  };
+  });
 
   // Sortable table
   const hasItl = rows.some(r => r.itl != null);
@@ -1553,7 +1554,7 @@ export function JobDetail({ namespace, name }) {
     };
   })();
 
-  const throughputChartOptions = {
+  const throughputChartOptions = applyChartTheme({
     plugins: { legend: { display: false } },
     scales: {
       x: {
@@ -1566,9 +1567,9 @@ export function JobDetail({ namespace, name }) {
         title: { display: true, text: 'req/s', color: palette.overlay1, font: { size: 10 } },
       },
     },
-  };
+  });
 
-  const histogramOptions = {
+  const histogramOptions = applyChartTheme({
     plugins: { legend: { display: false } },
     scales: {
       x: {
@@ -1582,7 +1583,7 @@ export function JobDetail({ namespace, name }) {
         title: { display: true, text: 'Count', color: palette.overlay1, font: { size: 10 } },
       },
     },
-  };
+  });
 
   const hasExportFile = files.some(f => f.name === 'profile_export_aiperf.json');
 
@@ -1674,6 +1675,7 @@ export function JobDetail({ namespace, name }) {
           rawValue=${throughput}
           slo=${sloThroughput != null ? { threshold: sloThroughput, compare: 'gt' } : null}
           points=${kpiSeries.throughput}
+          icon="ph-trend-up"
         />
         <${KpiCard}
           label="Token Throughput"
@@ -1682,6 +1684,7 @@ export function JobDetail({ namespace, name }) {
           color=${palette.sapphire}
           sub=${outputTokenThroughputAvg != null ? `avg ${fmtNum(outputTokenThroughputAvg, 0)} tok/s` : null}
           points=${kpiSeries.token_throughput}
+          icon="ph-activity"
         />
         <${KpiCard}
           label="TTFT"
@@ -1692,6 +1695,7 @@ export function JobDetail({ namespace, name }) {
           rawValue=${ttftP99 ?? ttftAvg}
           slo=${sloTtft != null ? { threshold: sloTtft, compare: 'lt' } : null}
           points=${kpiSeries.ttft}
+          icon="ph-timer"
         />
         <${KpiCard}
           label="Latency P99"
@@ -1702,12 +1706,14 @@ export function JobDetail({ namespace, name }) {
           rawValue=${latP99}
           slo=${sloLatency != null ? { threshold: sloLatency, compare: 'lt' } : null}
           points=${kpiSeries.latency}
+          icon="ph-gauge"
         />
         <${KpiCard}
           label="Errors"
           value=${errorCount ?? '---'}
           color=${errorCount ? colors.error : colors.textMuted}
           points=${kpiSeries.errors}
+          icon="ph-warning"
         />
         <${ReliabilityTile} summary=${summary} config=${jobConfig} />
         <!-- Feature 5: Token Efficiency -->

@@ -5,19 +5,9 @@ import { palette } from '../lib/theme.js';
 import { MetricSelector } from '../components/metric-selector.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
 import { fmtNumber } from '../lib/format.js';
+import { applyChartTheme, PALETTE } from '../lib/chart-theme.js';
 
-const CHART_COLORS = [
-  palette.mauve,
-  palette.blue,
-  palette.green,
-  palette.peach,
-  palette.pink,
-  palette.teal,
-  palette.sapphire,
-  palette.yellow,
-  palette.flamingo,
-  palette.lavender,
-];
+const CHART_COLORS = PALETTE;
 
 function formatDate(iso) {
   if (!iso) return '---';
@@ -84,7 +74,7 @@ export function Leaderboard() {
     ],
   };
 
-  const chartOptions = {
+  const chartOptions = applyChartTheme({
     indexAxis: 'y',
     plugins: {
       legend: { display: false },
@@ -105,7 +95,7 @@ export function Leaderboard() {
         grid: { color: palette.surface0 + '40' },
       },
     },
-  };
+  });
 
   return html`
     <div class="leaderboard" data-testid="page-leaderboard">

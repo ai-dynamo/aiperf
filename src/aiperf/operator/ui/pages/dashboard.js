@@ -8,6 +8,7 @@ import { KpiCard } from '../components/kpi-card.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
 import { HeroStrip } from '../components/hero-strip.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtLatencyStr } from '../lib/format.js';
+import { applyChartTheme } from '../lib/chart-theme.js';
 
 function formatElapsed(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -158,7 +159,7 @@ function ThroughputLatencyScatter({ completedJobs }) {
   }));
 
   const scaleType = logScale ? 'logarithmic' : 'linear';
-  const chartOptions = {
+  const chartOptions = applyChartTheme({
     plugins: {
       legend: { display: false },
       tooltip: {
@@ -187,7 +188,7 @@ function ThroughputLatencyScatter({ completedJobs }) {
         grid: { color: palette.border + '60' },
       },
     },
-  };
+  });
 
   const models = Object.keys(modelGroups);
 
@@ -369,11 +370,11 @@ export function Dashboard() {
 
       <!-- Section 3: Metric cards -->
       <div class="metrics-row">
-        <${KpiCard} label="Running" value=${running.length} color=${palette.blue} />
-        <${KpiCard} label="Completed" value=${completed.length} color=${palette.green} />
-        <${KpiCard} label="Peak Throughput" value=${best.value != null ? fmtThroughput(best.value) : '---'} unit=${best.value != null ? 'req/s' : ''} color=${palette.accent} sub=${best.name ?? ''} />
-        <${KpiCard} label="Best TTFT" value=${bestTtft.value != null ? fmtNumber(bestTtft.value, 0) : '---'} unit=${bestTtft.value != null ? 'ms' : ''} color=${palette.cyan} sub=${bestTtft.name ?? ''} />
-        <${KpiCard} label="Token Throughput" value=${bestTokenTps.value != null ? fmtInt(bestTokenTps.value) : '---'} unit=${bestTokenTps.value != null ? 'tok/s' : ''} color=${palette.amber} sub=${bestTokenTps.name ?? ''} />
+        <${KpiCard} label="Running" value=${running.length} color=${palette.blue} icon="ph-play-circle" />
+        <${KpiCard} label="Completed" value=${completed.length} color=${palette.green} icon="ph-check-circle" />
+        <${KpiCard} label="Peak Throughput" value=${best.value != null ? fmtThroughput(best.value) : '---'} unit=${best.value != null ? 'req/s' : ''} color=${palette.accent} sub=${best.name ?? ''} icon="ph-trend-up" />
+        <${KpiCard} label="Best TTFT" value=${bestTtft.value != null ? fmtNumber(bestTtft.value, 0) : '---'} unit=${bestTtft.value != null ? 'ms' : ''} color=${palette.cyan} sub=${bestTtft.name ?? ''} icon="ph-timer" />
+        <${KpiCard} label="Token Throughput" value=${bestTokenTps.value != null ? fmtInt(bestTokenTps.value) : '---'} unit=${bestTokenTps.value != null ? 'tok/s' : ''} color=${palette.amber} sub=${bestTokenTps.name ?? ''} icon="ph-activity" />
       </div>
 
       <!-- Section 4: Active Jobs -->
