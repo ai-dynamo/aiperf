@@ -1,7 +1,7 @@
 # Pytest Memory Guard — Design
 
 **Date:** 2026-04-23
-**Status:** Proposed
+**Status:** ⚠️ **Implementation abandoned — RLIMIT_AS approach incompatible with aiperf's xdist test suite. See Post-Mortem section at the end.**
 **Scope:** `tests/unit/` and `tests/component_integration/` (in-process suites)
 
 ## Problem
@@ -250,3 +250,84 @@ skipif on `_RLIMIT_AS_SUPPORTED`.
   `markers = [...]` list, and `addopts` default deselections.
 - `tests/conftest.py` — shared fixtures; this is the insertion point.
 - CPython `resource` module — `RLIMIT_AS`, `setrlimit`, `getrlimit`.
+
+## Post-Mortem (2026-04-23)
+
+The implementation was attempted on `ajc/k8s` and **abandoned after empirical
+testing**. The `memory_limit` and `no_memory_limit` markers were registered
+in `pyproject.toml` (commit `3b29aad2b`) and remain, but the conftest guard
+was not landed.
+
+### What broke
+
+Three verification tests passed in isolation. The full
+`uv run pytest tests/unit/ -n auto` suite, however, failed catastrophically:
+
+| Default cap | Failures | Runtime |
+| --- | --- | --- |
+| disabled (`AIPERF_TEST_MEMORY_LIMIT_MB=0`) | 5 (pre-existing xdist flakes) | 52 s |
+| 4 GiB | 763 | 322 s |
+| 16 GiB | 254 | 35 s |
+| 32 GiB | 577 | 237 s |
+
+Representative failure stacks:
+
+```
+File ".../pydantic/_internal/_schema_generation_shared.py", line 34
+  MemoryError
+
+File ".../soundfile.py", line 1277
+  MemoryError: Cannot allocate write+execute memory for ffi.callback().
+```
+
+### Why RLIMIT_AS was the wrong tool
+
+`RLIMIT_AS` caps **virtual address space**, which on Linux includes every
+file-backed or anonymous `mmap` a process makes — most importantly:
+
+1. **Shared-library text reservations.** Loading `torch`, `pyarrow`,
+   `transformers`, `soundfile`, and `cffi`-backed packages reserves
+   multi-GiB virtual ranges per worker, even when RSS is small.
+2. **cffi callback trampolines.** `cffi.callback()` requires a fresh
+   `mmap(PROT_READ|PROT_WRITE|PROT_EXEC)` region. Under a tight
+   `RLIMIT_AS`, this allocation fails even with plenty of physical
+   memory free.
+3. **Pydantic schema generation.** `pydantic._internal._schema_generation_shared`
+   does large allocations during first use; first-test-in-worker penalty.
+4. **Accumulated xdist-worker state.** A single xdist worker under `-n auto`
+   processes 400–500 tests back-to-back. glibc arenas fragment, thread
+   stacks reserve ranges that aren't freed, and Python's obmalloc mmaps
+   stick around. Virtual size grows monotonically over a worker's
+   lifetime; RSS does not.
+
+The non-monotonic failure count (16 GiB → 254, 32 GiB → 577) suggests
+test-order and worker-fragmentation interactions beyond the raw cap
+value — the approach does not stabilize at any reasonable default.
+
+### What should replace this
+
+`RLIMIT_AS` was Option A in the original brainstorming. Option B (RSS
+watchdog thread) was rejected as overkill. The findings above invert
+that trade-off:
+
+- **RSS** (actual resident pages) is what indicates a runaway
+  allocation. A test that actually leaks grows RSS; library reservations
+  do not.
+- A daemon thread sampling `/proc/self/status` every 500 ms can force-fail
+  a test (via `_thread.interrupt_main()` or `os._exit(137)`) when RSS
+  crosses a threshold — attribution to the current test is possible via
+  `sys._current_frames()`.
+- Default threshold can be generous (e.g. 8 GiB RSS per worker) without
+  breaking any normal test, because real RSS is measured, not reserved
+  virtual.
+
+### What remains of this design
+
+- The `memory_limit(mb=N)` and `no_memory_limit` markers are registered
+  (commit `3b29aad2b`) and semantically match what a watchdog-based
+  implementation would need.
+- `docs/superpowers/plans/2026-04-23-pytest-memory-guard.md` describes
+  the abandoned implementation and should be marked superseded before a
+  new plan is written.
+- A follow-up spec targeting an RSS watchdog should reuse the marker
+  vocabulary and the path-gating logic (unit + component_integration).

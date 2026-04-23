@@ -1,5 +1,7 @@
 # Pytest Memory Guard Implementation Plan
 
+> ⚠️ **SUPERSEDED 2026-04-23.** This plan's RLIMIT_AS-based approach was implemented and tested against the full `tests/unit/` suite. It caused 250+ spurious failures from `cffi.callback()`, pydantic schema generation, and other libraries doing ad-hoc `mmap(PROT_EXEC)` reservations — `RLIMIT_AS` is the wrong tool for this test suite. See the Post-Mortem section of `docs/superpowers/specs/2026-04-23-pytest-memory-guard-design.md`. Only Task 1 (marker registration) landed; Tasks 2-5 were not completed. A future RSS-watchdog-based plan should supersede this file.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a per-test virtual-address-space cap (default 4 GiB) to the in-process `tests/unit/` and `tests/component_integration/` suites so runaway-allocation tests fail as attributable `MemoryError` pytest failures instead of OOM-killing xdist workers.
