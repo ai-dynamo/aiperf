@@ -141,12 +141,10 @@ class MMLUBenchmark(AIPerfLoggerMixin):
         return problems
 
     def _resolve_subjects(self, tasks: list[str] | None) -> list[str]:
-        if not tasks:
+        if not tasks or "all" in tasks:
             return MMLU_SUBJECTS
         resolved: list[str] = []
         for t in tasks:
-            if t == "all":
-                return MMLU_SUBJECTS
             if t not in MMLU_SUBJECTS:
                 raise ValueError(
                     f"Unknown MMLU subject '{t}'. Valid subjects: {MMLU_SUBJECTS}"
