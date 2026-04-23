@@ -19,7 +19,12 @@ class BasePage:
     base_url: str
 
     async def _goto(self, route: str) -> None:
-        await self.page.goto(self.base_url + route)
+        # The UI uses hash-based routing (``window.location.hash``); the
+        # FastAPI server mounts only ``/`` for the SPA, so non-root URLs
+        # like ``/jobs`` return 404. Route all navigations through
+        # ``/#<route>``, with ``/`` short-circuited to the bare index.
+        suffix = "" if route in ("", "/") else f"#{route}"
+        await self.page.goto(self.base_url + "/" + suffix)
 
 
 class DashboardPage(BasePage):
