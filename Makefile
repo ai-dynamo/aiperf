@@ -19,6 +19,7 @@
 		test coverage clean install install-app docker docker-run first-time-setup \
 		test-verbose setup-venv install-mock-server test-ci test-all \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
+		kubernetes-tests-ci test-kubernetes-ci \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
 		test-component-integration test-component-integration-ci test-component-integration-verbose \
 		add-copyright generate-cli-docs generate-env-vars-docs generate-plugin-enums \
@@ -259,6 +260,9 @@ integration-tests-ci test-integration-ci: #? run integration tests with with AIP
 	@printf "$(bold)$(blue)Running integration tests (CI mode) with AIPerf Mock Server...$(reset)\n"
 	$(activate_venv) && pytest tests/integration/ -m 'integration and not performance and not ffmpeg and not stress' -n auto -v --tb=long $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server integration tests (CI mode) passed!$(reset)\n"
+
+kubernetes-tests-ci test-kubernetes-ci: #? run kubernetes tests on Kind for CI (full suite minus gpu/k8s_slow).
+	$(activate_venv) && pytest tests/kubernetes/ --ignore=tests/kubernetes/gpu -m 'k8s and not k8s_slow' -n auto -v --tb=long $(args)
 
 integration-tests-ci-macos test-integration-ci-macos: #? run integration tests with with AIPerf Mock Server for CI on macOS (non-parallel, verbose, no performance and no ffmpeg tests).
 	@printf "$(bold)$(blue)Running integration tests (CI mode on macOS) with AIPerf Mock Server...$(reset)\n"

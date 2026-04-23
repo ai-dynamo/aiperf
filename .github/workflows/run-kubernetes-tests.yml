@@ -1,0 +1,70 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: "Run Kubernetes Tests"
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kubernetes-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install kubectl
+      uses: azure/setup-kubectl@v4
+
+    - name: Install helm
+      uses: azure/setup-helm@v4
+      with:
+        version: "latest"
+
+    - name: Install kind
+      uses: helm/kind-action@v1
+      with:
+        install_only: true
+
+    - name: Install dependencies
+      run: make first-time-setup PYTHON_VERSION=3.12
+
+    - name: Run kubernetes tests
+      run: make kubernetes-tests-ci
+      timeout-minutes: 75
+
+    - name: Collect cluster diagnostics on failure
+      if: failure()
+      shell: bash
+      run: |
+        mkdir -p ./k8s-ci-logs
+        kind export logs ./k8s-ci-logs/kind --name aiperf || true
+        kubectl get all -A > ./k8s-ci-logs/all-resources.txt || true
+        kubectl describe pods -A > ./k8s-ci-logs/describe-pods.txt || true
+        for ns in $(kubectl get ns -o name | cut -d/ -f2); do
+          kubectl logs -n "$ns" --all-containers --prefix --tail=-1 -l '' > "./k8s-ci-logs/logs-$ns.txt" 2>&1 || true
+        done
+
+    - name: Upload cluster diagnostics
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: k8s-ci-logs-${{ github.run_id }}
+        path: k8s-ci-logs/
+        retention-days: 7
+
+    - name: Teardown Kind cluster
+      if: always()
+      run: kind delete cluster --name aiperf || true
