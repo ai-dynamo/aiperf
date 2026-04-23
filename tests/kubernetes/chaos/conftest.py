@@ -29,16 +29,17 @@ def chaos_injector(kubectl: KubectlClient) -> ChaosInjector:
     return ChaosInjector(kubectl=kubectl)
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="package")
 async def toxiproxy_injector(
     kubectl: KubectlClient,
 ) -> AsyncIterator[ToxiproxyInjector]:
-    """Session-scoped toxiproxy fixture.
+    """Package-scoped toxiproxy fixture.
 
-    Applies ``fixtures/toxiproxy.yaml``, opens an admin port-forward, and
-    tears the namespace down at session end. Individual tests must call
-    ``await injector.reset()`` in their own ``finally`` to keep proxies /
-    toxics from leaking across tests.
+    Must share scope with ``kubectl`` (package-scoped in
+    ``tests/kubernetes/conftest.py``). Applies ``fixtures/toxiproxy.yaml``,
+    opens an admin port-forward, and tears the namespace down at package
+    end. Individual tests must call ``await injector.reset()`` in their
+    own ``finally`` to keep proxies/toxics from leaking across tests.
     """
     injector = ToxiproxyInjector()
     await injector.ensure_deployed(kubectl)
