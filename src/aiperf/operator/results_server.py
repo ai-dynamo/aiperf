@@ -36,17 +36,28 @@ from pathlib import Path
 
 import aiohttp
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.wsgi import WSGIMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from kubernetes_asyncio.client.exceptions import ApiException
 
 # Re-exported for tests and downstream callers.
+from aiperf.operator.dashboard_mount import DashboardProxy, build_dashboard
 from aiperf.operator.routers.results_files import (
     _display_name,
     _safe_resolve,
     create_results_files_router,
 )
 
-__all__ = ["_display_name", "_safe_resolve", "create_app", "main"]
+__all__ = [
+    "DashboardProxy",
+    "_display_name",
+    "_safe_resolve",
+    "build_dashboard",
+    "create_app",
+    "main",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +134,21 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Surface kubernetes_asyncio errors verbatim instead of masking them as 500s;
+    # router docstrings document this contract (e.g. RBAC 403 stays 403).
+    @app.exception_handler(ApiException)
+    async def _k8s_api_exception_handler(
+        request: Request, exc: ApiException
+    ) -> JSONResponse:
+        logger.warning(
+            f"Kubernetes API error on {request.method} {request.url.path}: "
+            f"status={exc.status} reason={exc.reason}"
+        )
+        return JSONResponse(
+            status_code=exc.status or 500,
+            content={"detail": str(exc.body or exc.reason or "Kubernetes API error")},
+        )
+
     # Register live jobs/cluster router (client populated during lifespan)
     from aiperf.operator.routers.jobs import create_jobs_router
     from aiperf.operator.routers.results_analytics import (
@@ -142,6 +168,30 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    # Mount the Plotly Dash dashboard at /dashboard/. DashboardProxy is mutable
+    # so the inner WSGI app can be hot-swapped when new runs land on the PVC
+    # without disturbing the outer route. If no runs exist yet, mount a
+    # placeholder that returns 503 until build_dashboard succeeds.
+    dash_app, run_count = build_dashboard(base_dir)
+    if dash_app is not None:
+        logger.info(
+            f"Mounting Plotly Dash dashboard with {run_count} runs at /dashboard/"
+        )
+        dashboard_proxy = DashboardProxy(dash_app.server)
+    else:
+        logger.info("No runs on PVC yet; /dashboard/ returns 503 until runs exist")
+
+        def _pending_app(environ, start_response):
+            start_response(
+                "503 Service Unavailable",
+                [("Content-Type", "text/plain; charset=utf-8")],
+            )
+            return [b"Dashboard not yet available: no completed runs on PVC."]
+
+        dashboard_proxy = DashboardProxy(_pending_app)
+
+    app.mount("/dashboard", WSGIMiddleware(dashboard_proxy))
 
     # Mount UI static files last (catch-all for SPA routing)
     ui_dir = Path(__file__).parent / "ui"

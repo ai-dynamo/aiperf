@@ -90,12 +90,12 @@ skipped for that file only).
      alphanumeric).
 5. **Unknown field detection** (warning by default, error with `--strict`):
    - **Top-level `spec`** is compared against the deployment schema. Known keys
-     are: `image`, `imagePullPolicy`, `resourceMode`, `connectionsPerWorker`,
-     `timeoutSeconds`, `ttlSecondsAfterFinished`, `resultsTtlDays`, `cancel`,
-     `podTemplate`, `scheduling`, `sweepExecution`, plus the nested
-     `benchmark` block. Stray top-level keys often mean an `AIPerfConfig`
-     field was placed at `spec.<x>` instead of `spec.benchmark.<x>` — the
-     warning message says so explicitly.
+     are: `image`, `imagePullPolicy`, `keepFailedPods`, `resourceMode`,
+     `connectionsPerWorker`, `timeoutSeconds`, `ttlSecondsAfterFinished`,
+     `resultsTtlDays`, `cancel`, `podTemplate`, `scheduling`, plus the
+     nested `benchmark` block. Stray top-level keys often mean an
+     `AIPerfConfig` field was placed at `spec.<x>` instead of
+     `spec.benchmark.<x>` — the warning message says so explicitly.
    - **`spec.benchmark`** is compared against the full set of
      `AIPerfConfig.model_fields` (every field the Python config model accepts).
 6. **`AIPerfConfig` construction** — `spec.benchmark` is fed through
