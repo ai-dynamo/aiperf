@@ -439,50 +439,7 @@ jobs:
             ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.container_tag }}-arm64
 
   # ============================================================================
-  # PHASE 4: TAG
-  # ============================================================================
-
-  create-nightly-tag:
-    name: Create Nightly Tag
-    needs: [prepare-nightly, create-multiarch-manifest-ecr]
-    runs-on: ubuntu-latest
-    if: ${{ inputs.publish_only != 'true' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.NIGHTLY_GITHUB_PAT || github.token }}
-          ref: ${{ inputs.ref || github.ref }}
-
-      - name: Push nightly tag (idempotent)
-        env:
-          NIGHTLY_TAG: ${{ needs.prepare-nightly.outputs.nightly_tag }}
-        run: |
-          set -euo pipefail
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          EXISTING_SHA=$(git ls-remote origin "refs/tags/${NIGHTLY_TAG}" | awk '{print $1}')
-          HEAD_SHA=$(git rev-parse HEAD)
-
-          if [ -n "${EXISTING_SHA}" ]; then
-            COMMIT_SHA=$(git ls-remote origin "refs/tags/${NIGHTLY_TAG}^{}" | awk '{print $1}')
-            if [ "${COMMIT_SHA:-${EXISTING_SHA}}" = "${HEAD_SHA}" ]; then
-              echo "Tag ${NIGHTLY_TAG} already exists at ${HEAD_SHA} — skipping."
-              exit 0
-            else
-              echo "::error::Tag ${NIGHTLY_TAG} exists at ${COMMIT_SHA:-${EXISTING_SHA}}, not ${HEAD_SHA}."
-              echo "::error::Version collision — investigate before proceeding."
-              exit 1
-            fi
-          fi
-
-          git tag -a "${NIGHTLY_TAG}" -m "Nightly build ${NIGHTLY_TAG}"
-          echo "Tag created locally (not pushed): ${NIGHTLY_TAG}"
-
-  # ============================================================================
-  # PHASE 5: STAGE
+  # PHASE 4: STAGE
   # Both jobs run under automated-release, which requires human approval before
   # proceeding (configured in GitHub: Settings > Environments > automated-release).
   # Runs on all triggers unless explicitly disabled via workflow_dispatch release=false.
@@ -490,7 +447,7 @@ jobs:
 
   stage-nightly-container:
     name: Stage Container (ECR → NGC Staging)
-    needs: [prepare-nightly, create-nightly-tag]
+    needs: [prepare-nightly, create-multiarch-manifest-ecr]
     runs-on: prod-aiperf-default-v1
     environment: automated-release
     if: ${{ inputs.publish_only != 'true' && needs.prepare-nightly.outputs.release == 'true' }}
@@ -553,16 +510,13 @@ jobs:
 
   stage-nightly-wheel:
     name: Stage Wheel (S3 → Artifactory)
-    needs: [prepare-nightly, create-nightly-tag]
+    needs: [prepare-nightly, create-multiarch-manifest-ecr]
     # Use the builder runner: prod-aiperf-default-v1's role lacks s3:GetObject on
-    # the wheels bucket. Revisit when IAM is widened (see TODO in staging step).
+    # the wheels bucket. Revisit when IAM is widened.
     runs-on: prod-aiperf-builder-amd-v1
     environment: automated-release
     if: ${{ inputs.publish_only != 'true' && needs.prepare-nightly.outputs.release == 'true' }}
     steps:
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
       - name: Upload wheel from S3 to Artifactory
         env:
           S3_BUCKET:         ${{ secrets.S3_CI_WHEELS_BUCKET }}
@@ -576,24 +530,27 @@ jobs:
           TMPDIR=$(mktemp -d)
           trap 'rm -rf "${TMPDIR}"' EXIT
 
-          # Single-object copy (no --recursive) so we only need s3:GetObject,
-          # not s3:ListBucket. The runner role on prod-aiperf-default-v1 lacks
-          # ListBucket.
+          # Single-object copy (no --recursive) so we only need s3:GetObject.
           aws s3 cp \
             "s3://${S3_BUCKET}/aiperf/nightly/${WHEEL_VERSION}/${WHEEL_FILENAME}" \
             "${TMPDIR}/${WHEEL_FILENAME}"
 
-          # Artifactory PyPI deploy URL: <repo-base>/nightly. ARTIFACTORY_URL
-          # secret holds the repo base (…/api/pypi/<repo>); the sub-path is
-          # appended here so rc.yml can use the same base with /release.
-          REPOSITORY_URL="${ARTIFACTORY_URL%/}/nightly"
-          TWINE_NON_INTERACTIVE=1 uvx twine upload \
-            --repository-url "${REPOSITORY_URL}" \
-            --username        "${ARTIFACTORY_USER}" \
-            --password        "${ARTIFACTORY_TOKEN}" \
-            --disable-progress-bar \
-            "${TMPDIR}/${WHEEL_FILENAME}"
-          echo "Wheel staged to Artifactory: ${REPOSITORY_URL}/${WHEEL_FILENAME}"
+          # Raw Artifactory deploy via native repo API. The PyPI handler
+          # (/api/pypi/) does not accept sub-path deploys — it expects the
+          # repo root URL. ARTIFACTORY_URL must be the generic repo base:
+          # https://<host>/artifactory/<repo> (no /api/pypi/, no sub-path).
+          TARGET_URL="${ARTIFACTORY_URL%/}/nightly/${WHEEL_FILENAME}"
+          BODY_FILE=$(mktemp)
+          HTTP_CODE=$(curl -sSL -o "${BODY_FILE}" -w "%{http_code}" \
+            -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
+            -T "${TMPDIR}/${WHEEL_FILENAME}" \
+            "${TARGET_URL}")
+          if [ "${HTTP_CODE}" != "201" ]; then
+            echo "::error::Artifactory deploy failed: HTTP ${HTTP_CODE} at ${TARGET_URL}"
+            cat "${BODY_FILE}" || true
+            exit 1
+          fi
+          echo "Wheel staged to Artifactory: ${TARGET_URL}"
 
   # ============================================================================
   # PHASE 6: TRIGGER GITLAB SECURITY SCAN
@@ -673,7 +630,6 @@ jobs:
       # - gpu-e2e-tests  # temporarily commented out with the job
       - build-container
       - create-multiarch-manifest-ecr
-      - create-nightly-tag
       - stage-nightly-container
       - stage-nightly-wheel
       - trigger-gitlab-security-scan
@@ -712,7 +668,6 @@ jobs:
             echo "|-----|--------|"
             echo "| build-container (→ ECR + S3 wheel) | ${{ needs.build-container.result }} |"
             echo "| create-multiarch-manifest-ecr | ${{ needs.create-multiarch-manifest-ecr.result }} |"
-            echo "| create-nightly-tag | ${{ needs.create-nightly-tag.result }} |"
             echo ""
             echo "### Stage + Scan"
             echo "| Job | Result |"

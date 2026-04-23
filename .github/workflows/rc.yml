@@ -349,72 +349,12 @@ jobs:
           echo "Release approved: ${RC_TAG} (${WHEEL_VERSION})"
 
   # ============================================================================
-  # TAG
-  # ============================================================================
-
-  create-rc-tag:
-    name: Create RC Tag
-    needs:
-      - prepare-release
-      - approve-release
-    runs-on: ubuntu-latest
-    environment: automated-release
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.RC_GITHUB_PAT }}
-
-      - name: Create and push RC tag
-        env:
-          RC_TAG: ${{ needs.prepare-release.outputs.rc_tag }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${RC_TAG}" -m "Release candidate ${RC_TAG}"
-          git push origin "${RC_TAG}"
-
-      - name: Release summary
-        env:
-          VERSION: ${{ needs.prepare-release.outputs.version }}
-          RC_TAG: ${{ needs.prepare-release.outputs.rc_tag }}
-          RC_NUMBER: ${{ needs.prepare-release.outputs.rc_number }}
-          WHEEL_VERSION: ${{ needs.prepare-release.outputs.wheel_version }}
-          WHEEL_FILENAME: ${{ needs.prepare-release.outputs.wheel_filename }}
-          GPU_TEST_RESULT: ${{ needs.gpu-e2e-tests.result }}
-        run: |
-          {
-            echo "## RC Release Summary"
-            echo ""
-            echo "| Property | Value |"
-            echo "|----------|-------|"
-            echo "| Version | ${VERSION} |"
-            echo "| RC Number | ${RC_NUMBER} |"
-            echo "| Git Tag | \`${RC_TAG}\` |"
-            echo "| Wheel Version | \`${WHEEL_VERSION}\` |"
-            echo "| Commit | \`${{ github.sha }}\` |"
-            echo "| Branch | \`${{ github.ref_name }}\` |"
-            echo "| Wheel | \`${WHEEL_FILENAME}\` |"
-            echo ""
-            echo "### Quality Gates"
-            echo ""
-            echo "| Check | Status |"
-            echo "|-------|--------|"
-            echo "| Pre-commit | ${{ needs.pre-commit.result }} |"
-            echo "| Unit Tests | ${{ needs.unit-tests.result }} |"
-            echo "| Integration Tests | ${{ needs.integration-tests.result }} |"
-            echo "| GPU E2E Tests | ${GPU_TEST_RESULT} |"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  # ============================================================================
   # STAGE ARTIFACTS
   # ============================================================================
 
   stage-container:
     name: Stage Container (ECR to NGC)
-    needs: [prepare-release, create-rc-tag]
+    needs: [prepare-release, approve-release]
     runs-on: prod-aiperf-default-v1
     environment: automated-release
     env:
@@ -453,45 +393,46 @@ jobs:
 
   stage-wheel:
     name: Stage Wheel (S3 to Artifactory)
-    needs: [prepare-release, create-rc-tag]
+    needs: [prepare-release, approve-release]
     # Use the builder runner: prod-aiperf-default-v1's role lacks s3:GetObject on
     # the wheels bucket. Revisit when IAM is widened.
     runs-on: prod-aiperf-builder-amd-v1
     environment: automated-release
     steps:
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
       - name: Copy wheel from S3 to Artifactory
         env:
           S3_BUCKET: ${{ secrets.S3_CI_WHEELS_BUCKET }}
           ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
           ARTIFACTORY_USER: ${{ secrets.ARTIFACTORY_USER }}
           ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
-          TWINE_NON_INTERACTIVE: "1"
           WHEEL_VERSION: ${{ needs.prepare-release.outputs.wheel_version }}
           WHEEL_FILENAME: ${{ needs.prepare-release.outputs.wheel_filename }}
         run: |
           set -euo pipefail
           TMPDIR="$(mktemp -d)"
           trap 'rm -rf "${TMPDIR}"' EXIT
-          # Single-object copy (no --recursive) so we only need s3:GetObject,
-          # not s3:ListBucket. The runner role on prod-aiperf-default-v1 lacks
-          # ListBucket.
+
+          # Single-object copy (no --recursive) so we only need s3:GetObject.
           aws s3 cp \
             "s3://${S3_BUCKET}/aiperf/rc/${WHEEL_VERSION}/${WHEEL_FILENAME}" \
             "${TMPDIR}/${WHEEL_FILENAME}"
-          # Artifactory PyPI deploy URL: <repo-base>/release. ARTIFACTORY_URL
-          # secret holds the repo base (…/api/pypi/<repo>); the sub-path is
-          # appended here so nightly.yml can use the same base with /nightly.
-          REPOSITORY_URL="${ARTIFACTORY_URL%/}/release"
-          uvx twine upload \
-            --repository-url "${REPOSITORY_URL}" \
-            --username "${ARTIFACTORY_USER}" \
-            --password "${ARTIFACTORY_TOKEN}" \
-            --disable-progress-bar \
-            "${TMPDIR}/${WHEEL_FILENAME}"
-          echo "Wheel staged to Artifactory: ${REPOSITORY_URL}/${WHEEL_FILENAME}"
+
+          # Raw Artifactory deploy via native repo API. The PyPI handler
+          # (/api/pypi/) does not accept sub-path deploys — it expects the
+          # repo root URL. ARTIFACTORY_URL must be the generic repo base:
+          # https://<host>/artifactory/<repo> (no /api/pypi/, no sub-path).
+          TARGET_URL="${ARTIFACTORY_URL%/}/release/${WHEEL_FILENAME}"
+          BODY_FILE=$(mktemp)
+          HTTP_CODE=$(curl -sSL -o "${BODY_FILE}" -w "%{http_code}" \
+            -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
+            -T "${TMPDIR}/${WHEEL_FILENAME}" \
+            "${TARGET_URL}")
+          if [ "${HTTP_CODE}" != "201" ]; then
+            echo "::error::Artifactory deploy failed: HTTP ${HTTP_CODE} at ${TARGET_URL}"
+            cat "${BODY_FILE}" || true
+            exit 1
+          fi
+          echo "Wheel staged to Artifactory: ${TARGET_URL}"
 
   # ============================================================================
   # TRIGGER GITLAB RELEASE AUTOMATION
@@ -588,7 +529,6 @@ jobs:
       - build-container
       - create-multiarch-manifest-ecr
       - approve-release
-      - create-rc-tag
       - stage-container
       - stage-wheel
       - trigger-gitlab-pipeline
@@ -625,7 +565,6 @@ jobs:
             echo "| build-container (→ ECR + S3 wheel) | ${{ needs.build-container.result }} |"
             echo "| create-multiarch-manifest-ecr | ${{ needs.create-multiarch-manifest-ecr.result }} |"
             echo "| approve-release | ${{ needs.approve-release.result }} |"
-            echo "| create-rc-tag | ${{ needs.create-rc-tag.result }} |"
             echo ""
             echo "### Stage + Scan"
             echo "| Job | Result |"
