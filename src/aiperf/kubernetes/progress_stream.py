@@ -105,6 +105,24 @@ async def stream_progress_from_api(
         try:
             if await _stream_once(ws_url, message_types, on_message):
                 return
+            # _stream_once returned False: server closed without a stop signal
+            # (WS ERROR frame or connection dropped cleanly). Treat as a
+            # reconnect-eligible transport failure — without this, the while
+            # loop never increments retry_count and spins forever, which under
+            # test mocks with empty frame lists becomes an unbounded memory
+            # leak (the outer asyncio.sleep backoff also never fires).
+            retry_count += 1
+            if retry_count >= max_retries:
+                raise ConnectionError(
+                    f"WebSocket stream ended without completion after "
+                    f"{max_retries} attempts."
+                )
+            print_info(
+                f"Stream ended without completion, retrying in {backoff:.1f}s... "
+                f"({retry_count}/{max_retries})"
+            )
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, _WS_MAX_BACKOFF)
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             retry_count += 1
             if retry_count >= max_retries:

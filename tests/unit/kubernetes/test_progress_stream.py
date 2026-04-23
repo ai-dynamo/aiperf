@@ -133,7 +133,12 @@ class TestSubscriptionHandshake:
             call_order.append("receive")
             return {"type": "subscribed"}
 
-        ws = _make_mock_ws([])
+        # One dummy frame so on_message is invoked and returns True, letting
+        # _consume_ws_messages exit cleanly — without a terminating frame the
+        # WS loop exits with False and stream_progress_from_api retries up to
+        # ``max_retries``, which is enough to defeat the send_json "awaited
+        # once" assertion (and historically hung the test).
+        ws = _make_mock_ws([_text_frame(b'{"type":"progress"}')])
         ws.send_json = AsyncMock(side_effect=track_send)
         ws.receive_json = AsyncMock(side_effect=track_receive)
 

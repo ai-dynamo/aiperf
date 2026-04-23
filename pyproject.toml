@@ -162,6 +162,12 @@ max-complexity = 10
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# Default per-test timeout. Unit tests should finish in well under 60 s; the
+# cap exists to catch infinite retry/await loops that can otherwise exhaust
+# memory before pytest-xdist notices anything is wrong. Slow integration/k8s
+# tests override with ``@pytest.mark.timeout(...)``.
+timeout = 60
+timeout_method = "thread"
 markers = [
     "integration: marks tests as integration tests",
     "performance: marks tests as performance tests (deselected by default)",
@@ -198,5 +204,5 @@ filterwarnings = [
 ]
 
 [tool.codespell]
-skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html,src/aiperf/operator/ui/vendor/*"
+skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html,src/aiperf/operator/ui/vendor/*,tests/_js_cache/*"
 ignore-words-list = "timeslice,timeslices,aks,ot"
