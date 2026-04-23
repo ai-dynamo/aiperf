@@ -51,6 +51,7 @@ function findMin(jobList, field) {
 
 function StatusBar({ allJobs, cluster, best }) {
   const running = allJobs.filter(j => {
+    if (j.source === 'archived') return false;
     const p = (j.phase ?? '').toLowerCase();
     return p === 'running' || p === 'initializing' || p === 'pending';
   }).length;
@@ -295,7 +296,7 @@ export function Dashboard() {
   }, []);
 
   const allJobs = enrichJobsFromSummaries(localJobs, summaryMap);
-  const running = allJobs.filter(j => { const p = (j.phase ?? '').toLowerCase(); return p === 'running' || p === 'initializing' || p === 'pending'; });
+  const running = allJobs.filter(j => { if (j.source === 'archived') return false; const p = (j.phase ?? '').toLowerCase(); return p === 'running' || p === 'initializing' || p === 'pending'; });
   const completed = allJobs.filter(j => { const p = (j.phase ?? '').toLowerCase(); return p === 'completed' || p === 'succeeded'; });
   const failed = allJobs.filter(j => { const p = (j.phase ?? '').toLowerCase(); return p === 'failed' || p === 'error'; });
 

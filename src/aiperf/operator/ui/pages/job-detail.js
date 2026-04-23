@@ -1557,7 +1557,7 @@ export function JobDetail({ namespace, name }) {
               ${endpointUrl && html` · <span style="color: ${palette.blue}">${endpointUrl}</span>`}
             </div>
           </div>
-          ${isRunning && html`
+          ${isRunning && info?.source !== 'archived' && html`
             <button
               class="btn btn-danger"
               onclick=${handleCancel}
@@ -1569,6 +1569,13 @@ export function JobDetail({ namespace, name }) {
           `}
         </div>
       </div>
+
+      ${info?.source === 'archived' && html`
+        <div class="banner banner-info" style="margin-bottom: var(--space-3); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--color-overlay-0, rgba(255,255,255,0.04)); color: var(--color-text-dim)">
+          This run's Kubernetes resource has been deleted. Showing archived
+          results from the results volume.
+        </div>
+      `}
 
       <!-- Conditions -->
       ${conditions.length > 0 && html`
@@ -1630,7 +1637,7 @@ export function JobDetail({ namespace, name }) {
             </div>
           `}
 
-          ${pods.length > 0 && html`
+          ${pods.length > 0 && info?.source !== 'archived' && html`
             <div class="card" data-testid="job-detail-pods">
               <div class="card-title">Pods</div>
               <${PodsBar} pods=${pods} />
