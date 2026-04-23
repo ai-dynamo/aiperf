@@ -358,6 +358,10 @@ def _generate_composite_enum_py(
 
     # Generate the dynamic creation code
     lines.append(f"{enum_name}Str: TypeAlias = str")
+    lines.append(
+        "# Module-scoped lookup table composed from the plugin registry at"
+        " import time (baselined as module-state)."
+    )
     lines.append(f"_{enum_name.lower()}_members: dict[str, str] = {{}}")
 
     for source in config["sources"]:

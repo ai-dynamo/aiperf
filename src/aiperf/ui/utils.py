@@ -6,6 +6,8 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 _logger = AIPerfLogger(__name__)
 
 
+# Module-scoped lookup tables (baselined as module-state; read-only, used
+# inside the format_* helpers below).
 _time_suffixes = ["d", "h", "m"]
 _time_factors = [60 * 60 * 24, 60 * 60, 60]
 
@@ -69,6 +71,7 @@ def format_eta(seconds: float | None, none_str: str = "--") -> str:
     return f"{days}d {hours}h"
 
 
+# Module-scoped lookup table (baselined as module-state; read-only).
 _byte_suffixes = ["KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"]
 _byte_factors = [1024 ** (i + 1) for i in range(len(_byte_suffixes))]
 

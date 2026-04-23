@@ -146,6 +146,7 @@ GPUTelemetryCollectorType = plugins.create_enum(PluginType.GPU_TELEMETRY_COLLECT
 # =============================================================================
 
 PhaseTypeStr: TypeAlias = str
+# Module-scoped lookup table composed from the plugin registry at import time (baselined as module-state).
 _phasetype_members: dict[str, str] = {}
 for _entry in plugins.list_entries(PluginType.ARRIVAL_PATTERN):
     _alias = {'concurrency_burst': 'concurrency'}.get(_entry.name, _entry.name)
