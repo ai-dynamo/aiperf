@@ -79,13 +79,16 @@ jobs:
   # For push events, inputs are unset so defaults (count=12, release=true, etc.)
   # are applied via shell fallbacks; siblings are pinned to github.sha to
   # guarantee all 12 pipelines build the exact triggering commit.
-  # Requires NIGHTLY_GITHUB_PAT with `workflow` scope (GITHUB_TOKEN can't
-  # trigger workflow_dispatch events to prevent loops).
+  # Uses github.token with actions:write permission. workflow_dispatch and
+  # repository_dispatch are explicit exceptions to GitHub's anti-recursion
+  # rule, so the built-in token can dispatch sibling runs.
   # ============================================================================
 
   fanout:
     name: Fan out ${{ inputs.count || '12' }} concurrent runs
     runs-on: ubuntu-latest
+    permissions:
+      actions: write   # required for `gh workflow run` via GITHUB_TOKEN
     if: ${{ github.event_name != 'schedule' && (inputs.count || '12') != '1' }}
     steps:
       - name: Validate count
@@ -104,7 +107,7 @@ jobs:
 
       - name: Dispatch sibling nightly runs
         env:
-          GH_TOKEN:  ${{ secrets.NIGHTLY_GITHUB_PAT }}
+          GH_TOKEN:  ${{ github.token }}
           COUNT:     ${{ inputs.count || '12' }}
           # For push events, inputs.ref is empty — pin siblings to github.sha
           # so all 12 runs build the exact triggering commit (no branch drift).
@@ -580,15 +583,15 @@ jobs:
           for ARCH in amd64 arm64; do
             crane copy \
               "${ECR_REGISTRY}/aiperf:${CONTAINER_TAG}-${ARCH}" \
-              "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}-${ARCH}"
+              "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}-${ARCH}"
           done
 
-          crane delete "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}" 2>/dev/null || true
+          crane delete "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}" 2>/dev/null || true
           crane index append \
-            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}-amd64" \
-            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}-arm64" \
-            --tag      "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}"
-          echo "Container staged: ${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}"
+            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}-amd64" \
+            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}-arm64" \
+            --tag      "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}"
+          echo "Container staged: ${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}"
 
   stage-nightly-wheel:
     name: Stage Wheel (S3 → Artifactory)
