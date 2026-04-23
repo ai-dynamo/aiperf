@@ -1502,6 +1502,92 @@ select, input {
 }
 
 /* ──────────────────────────────────────────────────────────────
+   GPU Telemetry grid (one card per (endpoint, gpu_index))
+────────────────────────────────────────────────────────────── */
+.gpu-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--space-4);
+}
+
+.gpu-card {
+  background: var(--bg-card);
+  border: 1px solid rgba(49, 49, 49, 0.6);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.gpu-header {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--sub);
+  line-height: 1.4;
+}
+
+.gpu-primary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: var(--space-2);
+}
+
+.gpu-tile {
+  background: #0f0f0f;
+  border: 1px solid rgba(49, 49, 49, 0.4);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gpu-tile-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  font-weight: 600;
+}
+
+.gpu-tile-val {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--white);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.gpu-tile-unit {
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.gpu-extra {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 11px;
+}
+
+.gpu-extra td {
+  padding: 4px 6px;
+  color: var(--sub);
+  font-variant-numeric: tabular-nums;
+  border-top: 1px solid rgba(34, 34, 34, 0.5);
+}
+
+.gpu-extra td:first-child {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.gpu-extra tr:first-child td { border-top: none; }
+
+/* ──────────────────────────────────────────────────────────────
    Hero strip (SLO traffic light + elapsed/ETA + active phase)
 ────────────────────────────────────────────────────────────── */
 .hero {

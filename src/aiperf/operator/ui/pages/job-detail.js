@@ -9,6 +9,8 @@ import { Conditions } from '../components/conditions.js';
 import { PodsBar } from '../components/pods-bar.js';
 import { HeroStrip } from '../components/hero-strip.js';
 import { PhaseCards } from '../components/phase-cards.js';
+import { GpuTelemetryCard } from '../components/gpu-telemetry.js';
+import { ReliabilityTile } from '../components/reliability-tile.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtBytes } from '../lib/format.js';
 
 const MAX_CHART_POINTS = 60;
@@ -816,6 +818,29 @@ function FileViewerModal({ filename, url, onClose }) {
 }
 
 // --- Server Metrics Section ---
+
+/** Flatten ``server_metrics_export.json`` into the shape ``GpuTelemetryCard``
+ *  expects: ``[{header, tag, current, avg, unit}, ...]``. Non-GPU entries
+ *  (those without a DCGM-style header) are passed through but ignored by the
+ *  card's ``parseHeader`` guard. */
+function toGpuMetricsList(serverMetrics) {
+  const dict = serverMetrics?.metrics;
+  if (!dict || typeof dict !== 'object') return [];
+  const out = [];
+  for (const [tag, m] of Object.entries(dict)) {
+    if (!m || typeof m !== 'object') continue;
+    const series = Array.isArray(m.series) && m.series.length > 0 ? m.series[0] : null;
+    const stats = series?.stats ?? null;
+    out.push({
+      header: m.header ?? null,
+      tag: m.tag ?? tag,
+      current: stats?.current ?? series?.value ?? null,
+      avg: stats?.avg ?? series?.avg ?? null,
+      unit: m.unit ?? series?.unit ?? '',
+    });
+  }
+  return out;
+}
 
 function getSeriesValue(metric) {
   // Server metrics store stats under series[0].stats.avg (or series[0].value for simple counters)
@@ -1684,6 +1709,7 @@ export function JobDetail({ namespace, name }) {
           color=${errorCount ? colors.error : colors.textMuted}
           points=${kpiSeries.errors}
         />
+        <${ReliabilityTile} summary=${summary} config=${jobConfig} />
         <!-- Feature 5: Token Efficiency -->
         ${isCompleted && results && html`<${TokenEfficiencyCard} results=${results} info=${info} />`}
       </div>
@@ -1730,6 +1756,13 @@ export function JobDetail({ namespace, name }) {
 
       <!-- Server Metrics (completed only, when available) -->
       ${isCompleted && serverMetrics && html`<${ServerMetricsSection} serverMetrics=${serverMetrics} />`}
+
+      <!-- GPU Telemetry (hidden when no DCGM-format headers are present) -->
+      ${serverMetrics && html`
+        <div style="margin-top: var(--space-4)">
+          <${GpuTelemetryCard} metrics=${toGpuMetricsList(serverMetrics)} />
+        </div>
+      `}
 
       <!-- Job Configuration (always shown if available) -->
       ${jobConfig && html`<${JobConfigSection} config=${jobConfig} />`}
