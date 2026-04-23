@@ -170,7 +170,7 @@ class TestHFInstructionResponseDatasetLoader:
 
     async def test_raises_on_missing_prompt_column(self, loader):
         data = {"dataset": [{"other_field": "value"}]}
-        with pytest.raises(ValueError, match="Column 'problem' not found"):
+        with pytest.raises(DatasetLoaderError, match="Column 'problem' not found"):
             await loader.convert_to_conversations(data)
 
     async def test_prompt_template_combines_columns(self, user_config):

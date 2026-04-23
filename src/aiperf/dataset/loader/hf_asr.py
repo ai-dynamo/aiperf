@@ -3,7 +3,7 @@
 
 import base64
 import io
-from typing import Any
+from typing import Any, TypedDict
 
 import soundfile as sf
 from datasets import Audio as HFAudio
@@ -14,6 +14,13 @@ from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
 
 _ASR_PROMPT = "Transcribe this audio."
 _MAX_DURATION_SECONDS = 30
+
+
+class _HFAudioBytesRow(TypedDict, total=False):
+    """Shape of an HF audio dict when loaded with HFAudio(decode=False)."""
+
+    bytes: bytes | None
+    path: str
 
 
 class HFASRDatasetLoader(BaseHFDatasetLoader):
@@ -46,7 +53,7 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
         self.audio_column = audio_column
         super().__init__(user_config=user_config, **kwargs)
 
-    def _audio_from_bytes(self, audio_value: dict) -> list[Audio]:
+    def _audio_from_bytes(self, audio_value: _HFAudioBytesRow) -> list[Audio]:
         """Decode raw HF audio bytes into an AIPerf Audio object.
 
         When HFAudio(decode=False) is used, each audio value is a dict with
@@ -63,10 +70,10 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
             b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
             return [Audio(name="", contents=[f"wav,{b64}"])]
         except Exception as e:
-            self.debug(f"Failed to decode audio bytes: {e}")
+            self.debug(f"Failed to decode audio bytes: {e.__class__.__name__}: {e}")
             return []
 
-    def _duration_seconds(self, audio_value: dict) -> float | None:
+    def _duration_seconds(self, audio_value: _HFAudioBytesRow) -> float | None:
         """Estimate clip duration in seconds from raw bytes via soundfile."""
         raw_bytes = audio_value.get("bytes")
         if not raw_bytes:
@@ -75,7 +82,7 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
             info = sf.info(io.BytesIO(raw_bytes))
             return info.duration
         except Exception as e:
-            self.debug(f"Failed to estimate audio duration: {e}")
+            self.debug(f"Failed to estimate audio duration: {e.__class__.__name__}: {e}")
             return None
 
     async def convert_to_conversations(

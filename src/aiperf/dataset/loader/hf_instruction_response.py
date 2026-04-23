@@ -4,6 +4,7 @@
 from typing import Any
 
 from aiperf.common.config.user_config import UserConfig
+from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Audio, Conversation, Text, Turn
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
 
@@ -68,9 +69,11 @@ class HFInstructionResponseDatasetLoader(BaseHFDatasetLoader):
             if not column_validated:
                 column_validated = True
                 if self.prompt_template is None and self.prompt_column not in row:
-                    raise ValueError(
-                        f"Column '{self.prompt_column}' not found in dataset. "
-                        f"Available columns: {list(row.keys())}"
+                    raise DatasetLoaderError(
+                        f"Column '{self.prompt_column}' not found in dataset "
+                        f"'{self.hf_dataset_name}'. Available columns: {list(row.keys())}. "
+                        f"Set 'prompt_column' to an existing column or provide a "
+                        f"'prompt_template' that references the available columns."
                     )
 
             if self.prompt_template is not None:

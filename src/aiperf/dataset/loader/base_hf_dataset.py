@@ -49,7 +49,9 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
             )
         except Exception as e:
             raise DatasetLoaderError(
-                f"Failed to load HuggingFace dataset '{self.hf_dataset_name}': {e}"
+                f"Failed to load HuggingFace dataset '{self.hf_dataset_name}': {e}. "
+                f"If the dataset is gated, authenticate with 'uv run hf auth login' "
+                f"and accept the terms on the dataset's HuggingFace page."
             ) from e
         return {"dataset": dataset}
 

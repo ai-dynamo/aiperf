@@ -49,18 +49,19 @@ def _make_audio_row(duration_seconds: float, sr: int = 16000) -> dict:
     }
 
 
+@pytest.mark.asyncio
 class TestAudioFromBytes:
-    def test_valid_bytes_returns_one_audio(self, loader):
+    async def test_valid_bytes_returns_one_audio(self, loader):
         audio_value = {"bytes": _make_audio_bytes(1.0), "path": "audio.wav"}
         audios = loader._audio_from_bytes(audio_value)
         assert len(audios) == 1
 
-    def test_content_format_starts_with_wav(self, loader):
+    async def test_content_format_starts_with_wav(self, loader):
         audio_value = {"bytes": _make_audio_bytes(1.0), "path": "audio.wav"}
         audios = loader._audio_from_bytes(audio_value)
         assert audios[0].contents[0].startswith("wav,")
 
-    def test_content_decodes_to_valid_wav(self, loader):
+    async def test_content_decodes_to_valid_wav(self, loader):
         audio_value = {"bytes": _make_audio_bytes(0.5, sr=16000), "path": "audio.wav"}
         audios = loader._audio_from_bytes(audio_value)
         b64 = audios[0].contents[0][len("wav,") :]
@@ -68,32 +69,33 @@ class TestAudioFromBytes:
         assert sr == 16000
         assert len(array) == pytest.approx(8000, rel=0.01)
 
-    def test_missing_bytes_returns_empty(self, loader):
+    async def test_missing_bytes_returns_empty(self, loader):
         audio_value = {"bytes": None, "path": "audio.wav"}
         audios = loader._audio_from_bytes(audio_value)
         assert audios == []
 
-    def test_empty_dict_returns_empty(self, loader):
+    async def test_empty_dict_returns_empty(self, loader):
         audios = loader._audio_from_bytes({})
         assert audios == []
 
-    def test_invalid_bytes_returns_empty(self, loader):
+    async def test_invalid_bytes_returns_empty(self, loader):
         audio_value = {"bytes": b"not-valid-audio", "path": "audio.wav"}
         audios = loader._audio_from_bytes(audio_value)
         assert audios == []
 
 
+@pytest.mark.asyncio
 class TestDurationSeconds:
-    def test_returns_correct_duration(self, loader):
+    async def test_returns_correct_duration(self, loader):
         audio_value = {"bytes": _make_audio_bytes(5.0, sr=16000)}
         duration = loader._duration_seconds(audio_value)
         assert duration == pytest.approx(5.0, rel=0.01)
 
-    def test_missing_bytes_returns_none(self, loader):
+    async def test_missing_bytes_returns_none(self, loader):
         duration = loader._duration_seconds({"bytes": None})
         assert duration is None
 
-    def test_invalid_bytes_returns_none(self, loader):
+    async def test_invalid_bytes_returns_none(self, loader):
         duration = loader._duration_seconds({"bytes": b"not-audio"})
         assert duration is None
 
