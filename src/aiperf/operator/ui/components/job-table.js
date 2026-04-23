@@ -97,6 +97,16 @@ export function JobTable({ jobs, onRowClick, filter }) {
     `;
   }
 
+  function renderSourceBadge(job) {
+    if (job.source === 'archived') {
+      return html`<span class="text-dim" style="margin-left: var(--space-2); font-size: var(--font-size-xs)" title="No Kubernetes resource; showing PVC results">archived</span>`;
+    }
+    if (job.source === 'both') {
+      return html`<span class="text-dim" style="margin-left: var(--space-2); font-size: var(--font-size-xs)" title="Live CR + persisted results">live+archived</span>`;
+    }
+    return null;
+  }
+
   function renderProgress(job) {
     const pct = job.progressPercent;
     if (pct == null) return html`<span class="text-dim">---</span>`;
@@ -179,7 +189,7 @@ export function JobTable({ jobs, onRowClick, filter }) {
             >
               <td class="job-table-td job-table-name">${job.name}</td>
               <td class="job-table-td text-dim">${job.namespace}</td>
-              <td class="job-table-td">${renderPhase(job.phase)}</td>
+              <td class="job-table-td">${renderPhase(job.phase)}${renderSourceBadge(job)}</td>
               <td class="job-table-td">${renderWorkers(job)}</td>
               <td class="job-table-td">${renderProgress(job)}</td>
               <td class="job-table-td">${renderThroughput(job)}</td>

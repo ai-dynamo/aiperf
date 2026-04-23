@@ -11,6 +11,7 @@ const FILTERS = [
   { label: 'Running', value: ['running', 'initializing'] },
   { label: 'Completed', value: ['completed', 'succeeded'] },
   { label: 'Failed', value: ['failed', 'error'] },
+  { label: 'Archived', value: 'archived', source: true },
 ];
 
 export function Jobs() {
@@ -54,7 +55,11 @@ export function Jobs() {
 
     // Phase filter
     if (activeFilter) {
-      result = result.filter(j => activeFilter.includes((j.phase ?? '').toLowerCase()));
+      if (activeFilter === 'archived') {
+        result = result.filter(j => j.source === 'archived');
+      } else {
+        result = result.filter(j => activeFilter.includes((j.phase ?? '').toLowerCase()));
+      }
     }
 
     // Text search (name, namespace)
@@ -105,6 +110,10 @@ export function Jobs() {
               ${f.label}
               ${f.value === null
                 ? html`<span class="filter-tab-count">${localJobs.length}</span>`
+                : f.source
+                ? html`<span class="filter-tab-count">
+                    ${localJobs.filter((j) => j.source === f.value).length}
+                  </span>`
                 : html`<span class="filter-tab-count">
                     ${localJobs.filter((j) => f.value.includes((j.phase ?? '').toLowerCase())).length}
                   </span>`
