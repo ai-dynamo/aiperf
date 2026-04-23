@@ -1605,6 +1605,7 @@ select, input {
 .hero--warn  { border-color: rgba(255, 193, 7, 0.45); box-shadow: 0 0 0 1px rgba(255, 193, 7, 0.12) inset; }
 .hero--error { border-color: rgba(239, 83, 80, 0.55); box-shadow: 0 0 0 1px rgba(239, 83, 80, 0.15) inset; }
 .hero--idle  { border-color: rgba(117, 117, 117, 0.45); }
+.hero--neutral { border-color: rgba(117, 117, 117, 0.45); }
 
 .hero-health { display: flex; align-items: center; gap: 14px; }
 
@@ -1619,6 +1620,7 @@ select, input {
 .hero-health-dot--warn  { background: var(--amber); box-shadow: 0 0 16px rgba(255, 193, 7, 0.5); }
 .hero-health-dot--error { background: var(--red); box-shadow: 0 0 16px rgba(239, 83, 80, 0.5); animation: pulse 1.2s infinite; }
 .hero-health-dot--idle  { background: var(--muted); }
+.hero-health-dot--neutral { background: var(--muted); }
 
 .hero-health-label {
   font-size: 18px;

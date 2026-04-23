@@ -119,7 +119,10 @@ async def test_dashboard_hero_visible_for_running_job(
 
     We drop a minimal ``job_spec.json`` for ``live-run`` so the hero's
     config fetch returns 200 (otherwise Chrome logs the 404 as
-    ``console.error`` and the ``page`` fixture fails teardown).
+    ``console.error`` and the ``page`` fixture fails teardown). The empty
+    spec declares zero SLOs, so the hero shows the honest "Running" +
+    "no SLOs declared — no live judgment" variant rather than the old
+    present-tense "On target" lie.
     """
     import orjson
 
@@ -132,6 +135,9 @@ async def test_dashboard_hero_visible_for_running_job(
     hero = page.get_by_test_id("dashboard-hero")
     await expect(hero).to_be_visible()
     await expect(hero).to_contain_text("live-run")
+    text = await hero.inner_text()
+    assert "Running" in text or "no SLOs declared" in text, text
+    assert "On target" not in text, text
 
 
 @pytest.mark.asyncio(loop_scope="session")

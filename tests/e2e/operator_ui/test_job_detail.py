@@ -202,12 +202,14 @@ async def test_job_detail_cancel_button_calls_api(
 async def test_job_detail_shows_hero_strip(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """``hero-strip`` renders with a health-label text from the v2-style classifier.
+    """``hero-strip`` renders a lifecycle-aware health headline.
 
-    With no metrics + no completion, the classifier returns ``idle`` and the
-    label reads "Waiting for data". With throughput seeded, it flips to
-    ``ok`` ("On target"). Either label satisfies the test; we just assert the
-    strip is present and its label text is one of the known health messages.
+    The ``aiperf-llama3-c128`` CR has ``phase=Succeeded`` and the committed
+    fixture declares no SLOs, so the hero shows the "no judgment" past-tense
+    variant: "Completed" + "no SLOs declared". On a live run with SLOs met
+    we'd instead expect "Passed SLOs" / "On target"; the test tolerates the
+    full set of valid lifecycle labels so the fixture can evolve without
+    forcing a rewrite.
     """
     _set_job_summary(
         fake_k8s_client,
@@ -225,14 +227,46 @@ async def test_job_detail_shows_hero_strip(
     assert any(
         label in text
         for label in (
+            "Completed",
+            "Passed SLOs",
+            "Missed SLOs",
+            "Failed",
+            "Cancelled",
             "On target",
             "Waiting for data",
             "SLO violated",
             "SLO slipping",
             "Errors reported",
             "Attention needed",
+            "Running",
         )
     ), f"no known health label in hero strip: {text!r}"
+    # c128 fixture: Succeeded + no SLOs → expect "Completed" + the honest
+    # no-SLOs subtitle, never the old present-tense "On target" lie.
+    assert "Completed" in text, text
+    assert "no SLOs declared" in text, text
+    assert "On target" not in text, text
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_job_detail_hero_says_passed_slos_when_slos_met(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page,
+) -> None:
+    """Completed run + declared SLOs + values under threshold → 'Passed SLOs'."""
+    _set_job_summary(
+        fake_k8s_client, "aiperf-bench", "aiperf-llama3-c128",
+        {"throughput_rps": 42.1, "ttft_p99_ms": 180.0, "latency_p99_ms": 300.0},
+    )
+    _write_spec(
+        seeded_results_dir, "aiperf-bench", "aiperf-llama3-c128",
+        {"benchmark": {"slos": {"time_to_first_token": 500}}},
+    )
+    detail = JobDetailPage(
+        page, live_operator_app.base_url, "aiperf-bench", "aiperf-llama3-c128"
+    )
+    await detail.goto()
+    hero = page.get_by_test_id("hero-strip")
+    await expect(hero).to_contain_text("Passed SLOs")
 
 
 @pytest.mark.asyncio(loop_scope="session")

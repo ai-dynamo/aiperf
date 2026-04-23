@@ -115,20 +115,38 @@ function classifyHealth(slos, metrics, recs) {
   return { status, category, reasons };
 }
 
-/** Pick the active phase (running, not complete) with the most completed
- *  requests as the focal point for the big progress bar.
+/** Pick the active phase to hero.
+ *
+ *  Prefers phases explicitly marked ``active`` (and not ``complete``).
+ *  When no phase is marked active — common for live CRs whose status
+ *  snapshot hasn't flipped the flag yet — fall back to the incomplete
+ *  phase with the most completed requests, and finally to the first
+ *  incomplete phase (pre-start state).
  */
 function pickActivePhase(phaseMap) {
-  const entries = Object.entries(phaseMap ?? {});
-  const running = entries.filter(([, p]) => p.active && !p.complete);
-  if (running.length === 0) return null;
-  running.sort(([, a], [, b]) => {
-    const ac = a.requestsCompleted ?? a.requests_completed ?? a.completed ?? 0;
-    const bc = b.requestsCompleted ?? b.requests_completed ?? b.completed ?? 0;
-    return bc - ac;
-  });
-  const [name, data] = running[0];
-  return { name, ...data };
+  const arr = Object.entries(phaseMap ?? {}).map(([name, p]) => ({ ...p, name }));
+  const done = p => p.complete === true;
+  const completedOf = p =>
+    p.final_requests_completed ??
+    p.requestsCompleted ??
+    p.requests_completed ??
+    p.completed ??
+    0;
+
+  const explicit = arr.filter(p => p.active && !done(p));
+  if (explicit.length > 0) {
+    explicit.sort((a, b) => completedOf(b) - completedOf(a));
+    return explicit[0];
+  }
+
+  const inProgress = arr.filter(p => !done(p) && completedOf(p) > 0);
+  if (inProgress.length > 0) {
+    inProgress.sort((a, b) => completedOf(b) - completedOf(a));
+    return inProgress[0];
+  }
+
+  const pending = arr.filter(p => !done(p));
+  return pending[0] ?? null;
 }
 
 /** Live ETA (seconds) from current completion rate. Null when phase lacks
@@ -198,38 +216,87 @@ export function HeroStrip({ info, status, config, onClick }) {
   const phaseMap = status?.phases ?? {};
   const metrics = summaryToMetrics(summary);
   const phase = info?.phase ?? '';
-  const complete =
+  const terminalPhase =
     phase === 'Succeeded' ||
     phase === 'Failed' ||
+    phase === 'Cancelled' ||
+    phase === 'Archived' ||
     phase === 'Completed' ||
     phase === 'Error';
+  const livePhase = phase === 'Running' || phase === 'Pending';
   const recs = {
     successRecords: summary?.total_requests ?? 0,
     errorRecords: 0,
-    complete,
+    complete: terminalPhase,
   };
-  const slos = extractSlos(config);
-  const health = classifyHealth(slos, metrics, recs);
+  const slosRaw = extractSlos(config);
+  const slosDeclared = !!(slosRaw && typeof slosRaw === 'object' && Object.keys(slosRaw).length > 0);
+  const health = classifyHealth(slosRaw, metrics, recs);
 
   const active = pickActivePhase(phaseMap);
   const pct = activePct(active);
   const eta = estimateEtaSec(active);
   const elapsed = elapsedSec(info);
 
-  const healthLabel = (() => {
-    if (health.status === 'idle') return 'Waiting for data';
-    if (health.status === 'ok') return 'On target';
-    switch (health.category) {
-      case 'slo':
-        return 'SLO violated';
-      case 'goodput':
-        return 'SLO slipping';
-      case 'errors':
-        return 'Errors reported';
-      default:
-        return 'Attention needed';
+  // Derive the headline + subtitle + visual variant from the job's lifecycle
+  // position. ``visualStatus`` drives the CSS accent (green/amber/red/grey);
+  // it can differ from ``health.status`` when we want to show neutral copy
+  // for no-SLO runs even though classifyHealth returned ``ok``.
+  let healthLabel;
+  let healthSub;
+  let visualStatus = health.status;
+
+  if (terminalPhase) {
+    if (phase === 'Failed' || phase === 'Error') {
+      healthLabel = 'Failed';
+      healthSub = info?.error || health.reasons[0] || 'run reported failure';
+      visualStatus = 'error';
+    } else if (phase === 'Cancelled') {
+      healthLabel = 'Cancelled';
+      healthSub = 'run stopped before completion';
+      visualStatus = 'neutral';
+    } else if (!slosDeclared) {
+      healthLabel = 'Completed';
+      healthSub = 'no SLOs declared — no pass/fail judgment';
+      visualStatus = 'neutral';
+    } else if (health.status === 'ok') {
+      healthLabel = 'Passed SLOs';
+      healthSub = 'all declared SLOs met';
+      visualStatus = 'ok';
+    } else {
+      healthLabel = 'Missed SLOs';
+      healthSub = health.reasons.slice(0, 2).join(' · ') || 'one or more SLOs violated';
+      visualStatus = health.status === 'warn' ? 'warn' : 'error';
     }
-  })();
+  } else if (livePhase) {
+    if (!slosDeclared) {
+      healthLabel = 'Running';
+      healthSub = 'no SLOs declared — no live judgment';
+      visualStatus = 'neutral';
+    } else if (health.status === 'idle') {
+      healthLabel = 'Waiting for data';
+      healthSub = health.reasons.slice(0, 2).join(' · ') || 'no metrics reported yet';
+    } else if (health.status === 'ok') {
+      healthLabel = 'On target';
+      healthSub = 'all declared SLOs passing';
+    } else if (health.category === 'slo') {
+      healthLabel = 'SLO violated';
+      healthSub = health.reasons.slice(0, 2).join(' · ');
+    } else if (health.category === 'goodput') {
+      healthLabel = 'SLO slipping';
+      healthSub = health.reasons.slice(0, 2).join(' · ');
+    } else if (health.category === 'errors') {
+      healthLabel = 'Errors reported';
+      healthSub = health.reasons.slice(0, 2).join(' · ');
+    } else {
+      healthLabel = 'Attention needed';
+      healthSub = health.reasons.slice(0, 2).join(' · ');
+    }
+  } else {
+    healthLabel = phase || 'Unknown';
+    healthSub = '';
+    visualStatus = 'neutral';
+  }
 
   const completedCount =
     active?.final_requests_completed ??
@@ -249,22 +316,16 @@ export function HeroStrip({ info, status, config, onClick }) {
 
   return html`
     <div
-      class=${'hero hero--' + health.status}
+      class=${'hero hero--' + visualStatus}
       style=${style}
       onclick=${clickable ? onClick : null}
       data-testid="hero-strip"
     >
       <div class="hero-health">
-        <div class=${'hero-health-dot hero-health-dot--' + health.status}></div>
+        <div class=${'hero-health-dot hero-health-dot--' + visualStatus}></div>
         <div class="hero-health-text">
           <div class="hero-health-label">${healthLabel}</div>
-          <div class="hero-health-reasons">
-            ${health.reasons.length > 0
-              ? health.reasons.slice(0, 2).join(' · ')
-              : health.status === 'ok'
-              ? 'all declared SLOs passing'
-              : 'no judgment — no SLOs declared'}
-          </div>
+          <div class="hero-health-reasons">${healthSub}</div>
         </div>
       </div>
 
@@ -282,7 +343,20 @@ export function HeroStrip({ info, status, config, onClick }) {
       </div>
 
       <div class="hero-phase">
-        ${active
+        ${terminalPhase
+          ? html`
+              <div class="hero-phase-head">
+                <span class="hero-phase-name">${phase}</span>
+                <span class="hero-phase-pct">${fmtPercent(100)}</span>
+              </div>
+              <div class="hero-phase-track">
+                <div class="hero-phase-fill hero-phase-fill--done" style="width: 100%"></div>
+              </div>
+              <div class="hero-phase-sub">
+                ${elapsed != null ? fmtDuration(elapsed) + ' · ' : ''}${fmtInt(recs.successRecords)} records
+              </div>
+            `
+          : active
           ? html`
               <div class="hero-phase-head">
                 <span class="hero-phase-name">${active.name}</span>
@@ -293,19 +367,6 @@ export function HeroStrip({ info, status, config, onClick }) {
               </div>
               <div class="hero-phase-sub">
                 ${fmtInt(completedCount)}${totalCount ? ' / ' + fmtInt(totalCount) : ''} completed
-              </div>
-            `
-          : complete
-          ? html`
-              <div class="hero-phase-head">
-                <span class="hero-phase-name">benchmark complete</span>
-                <span class="hero-phase-pct">${fmtPercent(100)}</span>
-              </div>
-              <div class="hero-phase-track">
-                <div class="hero-phase-fill hero-phase-fill--done" style="width: 100%"></div>
-              </div>
-              <div class="hero-phase-sub">
-                ${fmtInt(recs.successRecords)} records processed
               </div>
             `
           : html`
