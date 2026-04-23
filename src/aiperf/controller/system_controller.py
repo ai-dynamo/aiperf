@@ -711,12 +711,113 @@ class SystemController(
             missing={},
         )
 
+    async def _check_sibling_containers_alive(self) -> None:
+        """Fail registration if a sibling container in our own pod has died.
+
+        Without this check, a crashed or OOMKilled sibling (e.g. the
+        ``server-metrics-manager`` container hitting its memory limit
+        before it can register) would leave ``_wait_and_handle_configure
+        _events`` blocked for the full ``PROFILE_CONFIGURE_TIMEOUT`` (300
+        s by default). By reading our own pod's container statuses and
+        calling ``ServiceRegistry.fail_service`` for any terminated non-
+        control-plane container, we fail fast with an actionable error.
+
+        Quietly no-ops outside Kubernetes (required env vars not set) or
+        if the API call fails — the configure-wait's own timeout is a
+        safe fallback.
+
+        Finding our own pod is slightly indirect: ``HOSTNAME`` is set to
+        the JobSet's deterministic pod-hostname (e.g.
+        ``aiperf-chaos-baseline-controller-0-0``) which is a PREFIX of
+        the real pod name (Kubernetes appends a random suffix like
+        ``-k52d5``). We list controller-labeled pods in our namespace and
+        match by ``metadata.name.startswith(HOSTNAME)``.
+        """
+        import os
+
+        pod_hostname = os.environ.get("HOSTNAME")
+        namespace = os.environ.get("AIPERF_NAMESPACE")
+        job_id = os.environ.get("AIPERF_JOB_ID")
+        if not pod_hostname or not namespace or not job_id:
+            return
+
+        try:
+            from kubernetes_asyncio import client
+
+            from aiperf.kubernetes.client import k8s_client
+
+            async with k8s_client() as api:
+                pod_list = await client.CoreV1Api(api).list_namespaced_pod(
+                    namespace=namespace,
+                    label_selector=(
+                        f"aiperf.nvidia.com/job-id={job_id},"
+                        f"jobset.sigs.k8s.io/replicatedjob-name=controller"
+                    ),
+                )
+        except Exception as e:  # noqa: BLE001 - sibling-check is best-effort; never raise into configure loop
+            self.debug(
+                lambda: f"Sibling-container check skipped (pod list failed): {e}"
+            )
+            return
+
+        own_pod = next(
+            (
+                p
+                for p in (pod_list.items or [])
+                if (p.metadata.name if p.metadata else "").startswith(pod_hostname)
+            ),
+            None,
+        )
+        if own_pod is None or own_pod.status is None:
+            return
+
+        # Containers we never want to fail on: us (control-plane) and
+        # infrastructure sidecars that aren't aiperf services.
+        INFRA_CONTAINERS = {
+            "control-plane",
+            "event-bus-proxy",
+            "results-sidecar",
+            "worker-manager",  # legacy name for worker-group-manager
+        }
+
+        for cs in own_pod.status.container_statuses or []:
+            container_name = cs.name or ""
+            if container_name in INFRA_CONTAINERS:
+                continue
+            terminated = cs.state.terminated if cs.state and cs.state.terminated else None
+            if not terminated:
+                continue
+            reason = terminated.reason or "Terminated"
+            exit_code = terminated.exit_code
+            if exit_code == 0 and reason not in ("OOMKilled",):
+                continue  # Peaceful exit of an optional worker; not a failure
+
+            # Convert container name ("dataset-manager") to the service_id the
+            # registry uses ("dataset_manager").
+            service_id = container_name.replace("-", "_")
+            service_info = ServiceRegistry.services.get(service_id)
+            service_type = (
+                service_info.service_type
+                if service_info
+                else service_id  # type: ignore[assignment] — registry accepts string fallbacks
+            )
+
+            self.error(
+                f"Sibling container '{container_name}' terminated "
+                f"(reason={reason}, exitCode={exit_code}) before registration — "
+                f"failing {service_id}"
+            )
+            ServiceRegistry.fail_service(service_id, service_type)
+
     async def _log_configure_progress(self, begin: float, timeout: float) -> None:
         """Log periodic progress during configuration wait."""
         interval = 5.0
         while True:
             await asyncio.sleep(interval)
             elapsed = time.perf_counter() - begin
+            # Detect sibling containers that died before registering so we fail
+            # fast instead of waiting out PROFILE_CONFIGURE_TIMEOUT.
+            await self._check_sibling_containers_alive()
             pending_types = self._get_pending_type_counts()
             pending_ids = ServiceRegistry.expected_ids - self._configured_ids
             configured = len(self._configured_ids)
