@@ -468,17 +468,23 @@ jobs:
           ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
           TWINE_NON_INTERACTIVE: "1"
           WHEEL_VERSION: ${{ needs.prepare-release.outputs.wheel_version }}
+          WHEEL_FILENAME: ${{ needs.prepare-release.outputs.wheel_filename }}
         run: |
           set -euo pipefail
           TMPDIR="$(mktemp -d)"
           trap 'rm -rf "${TMPDIR}"' EXIT
-          aws s3 cp "s3://${S3_BUCKET}/aiperf/rc/${WHEEL_VERSION}/" "${TMPDIR}/" --recursive
+          # Single-object copy (no --recursive) so we only need s3:GetObject,
+          # not s3:ListBucket. The runner role on prod-aiperf-default-v1 lacks
+          # ListBucket.
+          aws s3 cp \
+            "s3://${S3_BUCKET}/aiperf/rc/${WHEEL_VERSION}/${WHEEL_FILENAME}" \
+            "${TMPDIR}/${WHEEL_FILENAME}"
           uvx twine upload \
             --repository-url "${ARTIFACTORY_URL}" \
             --username "${ARTIFACTORY_USER}" \
             --password "${ARTIFACTORY_TOKEN}" \
             --disable-progress-bar \
-            "${TMPDIR}"/*.whl
+            "${TMPDIR}/${WHEEL_FILENAME}"
 
   # ============================================================================
   # TRIGGER GITLAB RELEASE AUTOMATION

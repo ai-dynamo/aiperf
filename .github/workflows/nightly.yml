@@ -567,28 +567,26 @@ jobs:
           ARTIFACTORY_URL:   ${{ secrets.ARTIFACTORY_URL }}
           ARTIFACTORY_USER:  ${{ secrets.ARTIFACTORY_USER }}
           ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
-          WHEEL_VERSION:    ${{ needs.prepare-nightly.outputs.wheel_version }}
+          WHEEL_VERSION:     ${{ needs.prepare-nightly.outputs.wheel_version }}
+          WHEEL_FILENAME:    ${{ needs.prepare-nightly.outputs.wheel_filename }}
         run: |
           set -euo pipefail
           TMPDIR=$(mktemp -d)
           trap 'rm -rf "${TMPDIR}"' EXIT
 
+          # Single-object copy (no --recursive) so we only need s3:GetObject,
+          # not s3:ListBucket. The runner role on prod-aiperf-default-v1 lacks
+          # ListBucket.
           aws s3 cp \
-            "s3://${S3_BUCKET}/aiperf/nightly/${WHEEL_VERSION}/" \
-            "${TMPDIR}/" --recursive --include "*.whl"
-
-          mapfile -t WHEELS < <(find "${TMPDIR}" -name "*.whl" -type f)
-          if [ "${#WHEELS[@]}" -ne 1 ]; then
-            echo "::error::Expected exactly one wheel from S3, found ${#WHEELS[@]}"
-            exit 1
-          fi
+            "s3://${S3_BUCKET}/aiperf/nightly/${WHEEL_VERSION}/${WHEEL_FILENAME}" \
+            "${TMPDIR}/${WHEEL_FILENAME}"
 
           TWINE_NON_INTERACTIVE=1 uvx twine upload \
             --repository-url "${ARTIFACTORY_URL}" \
             --username        "${ARTIFACTORY_USER}" \
             --password        "${ARTIFACTORY_TOKEN}" \
             --disable-progress-bar \
-            "${WHEELS[0]}"
+            "${TMPDIR}/${WHEEL_FILENAME}"
           echo "Wheel staged to Artifactory: ${WHEEL_VERSION}"
 
   # ============================================================================
