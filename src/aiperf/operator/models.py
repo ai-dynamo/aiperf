@@ -286,6 +286,10 @@ class AIPerfJobSpec(AIPerfBaseModel):
         default=None, ge=1, le=365, description="TTL for results in PVC (days)"
     )
     cancel: bool = Field(default=False, description="Set to true to cancel the job")
+    skip_endpoint_check: bool = Field(
+        default=False,
+        description="Skip the operator-side endpoint reachability probe before deploying.",
+    )
 
     @field_validator("image")
     @classmethod
@@ -339,6 +343,7 @@ class AIPerfJobSpec(AIPerfBaseModel):
             ttl_seconds_after_finished=spec.get("ttlSecondsAfterFinished"),
             results_ttl_days=spec.get("resultsTtlDays"),
             cancel=spec.get("cancel", False),
+            skip_endpoint_check=spec.get("skipEndpointCheck", False),
         )
 
     def get_endpoint_url(self) -> str | None:

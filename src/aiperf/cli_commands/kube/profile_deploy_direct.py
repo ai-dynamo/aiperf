@@ -158,10 +158,15 @@ async def deploy_direct(
     detach: bool,
     no_wait: bool,
     attach_port: int,
+    skip_endpoint_check: bool = False,
 ) -> None:
     """Deploy directly without the operator (creates all K8s resources)."""
     from aiperf.kubernetes import console as kube_console
     from aiperf.kubernetes.resources import KubernetesDeployment
+
+    del (
+        skip_endpoint_check
+    )  # direct mode does no client-side endpoint check; accepted for CLI parity
 
     config, deploy_config, num_pods = _prepare_direct_deploy(
         config, kube_options, name, namespace

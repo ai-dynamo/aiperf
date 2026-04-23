@@ -223,6 +223,7 @@ async def profile(
             "detach": detach,
             "no_wait": no_wait,
             "attach_port": attach_port,
+            "skip_endpoint_check": skip_endpoint_check,
         }
         if use_operator:
             await deploy_via_operator(

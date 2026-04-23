@@ -123,6 +123,10 @@ spec:
                 type: boolean
                 description: Set to true to cancel the job
                 default: false
+              skipEndpointCheck:
+                type: boolean
+                description: Skip the operator-side endpoint reachability probe before deploying
+                default: false
               podTemplate:
                 type: object
                 description: Pod template configuration

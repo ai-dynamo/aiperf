@@ -40,6 +40,7 @@ _DEPLOYMENT_FIELDS = {
     "cancel",
     "podTemplate",
     "scheduling",
+    "skipEndpointCheck",
 }
 
 # Top-level spec fields: deployment fields + the benchmark key

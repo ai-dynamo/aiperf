@@ -93,6 +93,12 @@ async def _check_endpoint_reachable(
     if not endpoint_url:
         return
 
+    if validated_spec.skip_endpoint_check:
+        logger.info(
+            f"Skipping endpoint reachability probe for {endpoint_url} (skipEndpointCheck=true)"
+        )
+        return
+
     health = await check_endpoint_health(endpoint_url)
     if health.reachable:
         status.conditions.set_true(

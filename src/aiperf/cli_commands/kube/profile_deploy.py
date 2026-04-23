@@ -254,6 +254,7 @@ async def deploy_via_operator(
     detach: bool,
     no_wait: bool,
     attach_port: int,
+    skip_endpoint_check: bool = False,
 ) -> None:
     """Deploy by creating an AIPerfJob CR (requires operator)."""
     from kubernetes_asyncio import client as k8s_client_mod
@@ -262,6 +263,9 @@ async def deploy_via_operator(
     from aiperf.kubernetes.client import k8s_client
 
     del no_wait, attach_port  # signature parity with deploy_direct; unused here
+
+    if skip_endpoint_check:
+        spec["skipEndpointCheck"] = True
 
     cr = _build_cr(name, namespace, spec)
 

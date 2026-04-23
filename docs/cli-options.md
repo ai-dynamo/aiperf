@@ -38,10 +38,6 @@ Run an individual AIPerf service in a single process
 
 Run a standalone ZMQ proxy (for Kubernetes sidecar deployments)
 
-### [`config init`](#aiperf-config-init)
-
-Generate a starter configuration from bundled templates.
-
 ### [`config validate`](#aiperf-config-validate)
 
 Validate a YAML configuration file.
@@ -63,6 +59,10 @@ Compare two configuration files and show differences.
 Generate YAML configuration from CLI options.
 
 [Endpoint](#endpoint) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Output](#output) • [HTTP Trace](#http-trace) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Conversation Input](#conversation-input) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prompt](#prompt) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Service](#service) • [Server Metrics](#server-metrics) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Workers](#workers) • [ZMQ Communication](#zmq-communication) • [Accuracy](#accuracy) • [Multi-Run](#multi-run) • [Parameters](#parameters)
+
+### [`config init`](#aiperf-config-init)
+
+Generate a starter configuration from bundled templates.
 
 ### [`kube init`](#aiperf-kube-init)
 
@@ -1111,81 +1111,6 @@ HTTP port for /healthz and /readyz. Falls back to AIPERF_SERVICE_HEALTH_PORT.
 
 <hr/>
 
-## `aiperf config init`
-
-Generate a starter configuration from bundled templates.
-
-Without arguments, generates the 'minimal' template. Use --list to browse all 19 bundled templates organized by category, or --search to find templates by keyword.
-
-Use --model and --url to pre-fill the two fields every config needs, so the generated file is ready to run without editing.
-
-**Examples:**
-
-```bash
-# List all available templates
-aiperf config init --list
-
-# List with tags, features, and difficulty
-aiperf config init --list --verbose
-
-# Search for sweep-related templates
-aiperf config init --search sweep
-
-# Filter by category
-aiperf config init --list --category "Load Testing"
-
-# Generate the minimal starter config
-aiperf config init
-
-# Generate a specific template
-aiperf config init --template goodput_slo
-
-# Generate with your model and endpoint pre-filled
-aiperf config init --template latency_test \
-    --model meta-llama/Llama-3.1-70B-Instruct \
-    --url http://my-server:8000/v1/chat/completions
-
-# Save to a file
-aiperf config init --template sweep_distributions --output benchmark.yaml
-
-# Pipe to a file
-aiperf config init --template latency_test > my_benchmark.yaml
-```
-
-#### `-t`, `--template` `<str>`
-
-Template name to use (e.g. 'minimal', 'goodput_slo'). Run with --list to see all available templates.
-
-#### `-l`, `--list`, `--no-list`
-
-List all available templates grouped by category.
-
-#### `-s`, `--search` `<str>`
-
-Search templates by keyword (matches name, description, tags, features).
-
-#### `-c`, `--category` `<str>`
-
-Filter templates by category (substring match).
-
-#### `-v`, `--verbose`, `--no-verbose`
-
-Show tags, features, and difficulty in template listings.
-
-#### `--model` `<str>`
-
-Override model name in the generated config.
-
-#### `--url` `<str>`
-
-Override endpoint URL in the generated config.
-
-#### `-o`, `--output` `<str>`
-
-Output file path. If not specified, prints to stdout.
-
-<hr/>
-
 ## `aiperf config validate`
 
 Validate a YAML configuration file.
@@ -2159,13 +2084,93 @@ Output format: 'yaml' or 'json'.
 
 <hr/>
 
-## `aiperf kube init`
+## `aiperf config init`
 
-Generate a starter configuration template
+Generate a starter configuration from bundled templates.
+
+Without arguments, generates the 'minimal' template. Use --list to browse available templates, --search to find by keyword, --model/--url to pre-fill the two fields every config needs.
+
+**Examples:**
+
+```bash
+aiperf config init --list
+aiperf config init --template goodput_slo --model my-model --url http://host/v1
+```
+
+#### `-t`, `--template` `<str>`
+
+Template name to use (e.g. 'minimal', 'goodput_slo'). Run with --list to see all available templates.
+
+#### `-l`, `--list`, `--no-list`
+
+List all available templates grouped by category.
+
+#### `-s`, `--search` `<str>`
+
+Search templates by keyword (matches name, description, tags, features).
+
+#### `-c`, `--category` `<str>`
+
+Filter templates by category (substring match).
+
+#### `-v`, `--verbose`, `--no-verbose`
+
+Show tags, features, and difficulty in template listings.
+
+#### `--model` `<str>`
+
+Override model name in the generated config.
+
+#### `--url` `<str>`
+
+Override endpoint URL in the generated config.
 
 #### `-o`, `--output` `<str>`
 
 Output file path. If not specified, prints to stdout.
+
+<hr/>
+
+## `aiperf kube init`
+
+Generate a starter configuration template
+
+#### `-t`, `--template` `<str>`
+
+Template name to use (e.g. 'minimal', 'goodput_slo'). Run with --list to see all available templates.
+
+#### `-l`, `--list`, `--no-list`
+
+List all available templates grouped by category.
+
+#### `-s`, `--search` `<str>`
+
+Search templates by keyword (matches name, description, tags, features).
+
+#### `-c`, `--category` `<str>`
+
+Filter templates by category (substring match).
+
+#### `-v`, `--verbose`, `--no-verbose`
+
+Show tags, features, and difficulty in template listings.
+
+#### `--model` `<str>`
+
+Override model name in the generated config.
+
+#### `--url` `<str>`
+
+Override endpoint URL in the generated config.
+
+#### `-o`, `--output` `<str>`
+
+Output file path. If not specified, prints to stdout.
+
+#### `--job-name` `<str>`
+
+Value for metadata.name on the generated AIPerfJob.
+<br/>_Default: `my-benchmark`_
 
 <hr/>
 
