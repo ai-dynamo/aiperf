@@ -53,10 +53,13 @@ on:
         default: ''
         required: false
 
-# Prevent overlapping nightly runs from corrupting shared ECR tags and S3 prefixes.
+# Allow concurrent nightly runs. Shared destinations (ECR/NGC `aiperf:<container_tag>`,
+# S3 wheel path, Artifactory wheel) are last-writer-wins on same-day/same-commit
+# collisions; the Artifactory repo must be configured to allow overwrites.
+# Each run gets a unique concurrency group so GitHub never serializes runs.
 # cancel-in-progress: false — never cancel a run that may be pending human approval.
 concurrency:
-  group: nightly-pipeline
+  group: nightly-${{ github.run_id }}
   cancel-in-progress: false
 
 permissions:
@@ -123,7 +126,6 @@ jobs:
             source .nightly-version/version-info.env
           else
             TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
-            HUMAN_TS=$(date -u +%Y-%m-%d-%H%M%S)
             DATE_ONLY=$(date -u +%Y%m%d)
             SHORT_SHA=$(git rev-parse --short=7 HEAD)
 
@@ -142,9 +144,9 @@ jobs:
               fi
               NIGHTLY_TAG="nightly-republish-${WHEEL_VERSION}"
             else
-              NIGHTLY_TAG="nightly-${HUMAN_TS}"
-              WHEEL_VERSION="${BASE_VERSION}.dev${TIMESTAMP}"
               CONTAINER_TAG="nightly-${DATE_ONLY}-${SHORT_SHA}"
+              NIGHTLY_TAG="${CONTAINER_TAG}"
+              WHEEL_VERSION="${BASE_VERSION}.dev${DATE_ONLY}"
             fi
 
             WHEEL_FILENAME="aiperf-${WHEEL_VERSION}-py3-none-any.whl"
@@ -236,27 +238,29 @@ jobs:
         # Replace with: uv run pytest -m integration -n auto
         run: echo "Tests temporarily disabled"
 
-  gpu-e2e-tests:
-    name: GPU End-to-End Tests
-    needs: [prepare-nightly]
-    runs-on: prod-aiperf-tester-amd-gpu-v1
-    if: ${{ inputs.publish_only != 'true' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref || github.ref }}
-
-      - name: Run test_docs_end_to_end
-        env:
-          AIPERF_SOURCE_DIR: ${{ github.workspace }}
-          CI_JOB_NAME: test_docs_end_to_end
-        run: |
-          bash -x tests/ci/test_docs_end_to_end/setup_test.sh
-
-      - name: Cleanup Docker containers
-        if: always()
-        run: docker compose -f docker-compose.yml down || true
+  # TODO: re-enable when GPU runner is available. Also restore references in
+  # build-container.needs and pipeline-summary (needs: list + summary table).
+  # gpu-e2e-tests:
+  #   name: GPU End-to-End Tests
+  #   needs: [prepare-nightly]
+  #   runs-on: prod-aiperf-tester-amd-gpu-v1
+  #   if: ${{ inputs.publish_only != 'true' }}
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #       with:
+  #         ref: ${{ inputs.ref || github.ref }}
+  #
+  #     - name: Run test_docs_end_to_end
+  #       env:
+  #         AIPERF_SOURCE_DIR: ${{ github.workspace }}
+  #         CI_JOB_NAME: test_docs_end_to_end
+  #       run: |
+  #         bash -x tests/ci/test_docs_end_to_end/setup_test.sh
+  #
+  #     - name: Cleanup Docker containers
+  #       if: always()
+  #       run: docker compose -f docker-compose.yml down || true
 
   # ============================================================================
   # PHASE 3: BUILD
@@ -266,7 +270,7 @@ jobs:
 
   build-container:
     name: Build Container (${{ matrix.arch }})
-    needs: [prepare-nightly, pre-commit, unit-tests, integration-tests, gpu-e2e-tests]
+    needs: [prepare-nightly, pre-commit, unit-tests, integration-tests]
     if: ${{ inputs.publish_only != 'true' }}
     strategy:
       fail-fast: false
@@ -662,7 +666,7 @@ jobs:
       - pre-commit
       - unit-tests
       - integration-tests
-      - gpu-e2e-tests
+      # - gpu-e2e-tests  # temporarily commented out with the job
       - build-container
       - create-multiarch-manifest-ecr
       - create-nightly-tag
@@ -698,7 +702,6 @@ jobs:
             echo "| pre-commit | ${{ needs.pre-commit.result }} |"
             echo "| unit-tests | ${{ needs.unit-tests.result }} |"
             echo "| integration-tests | ${{ needs.integration-tests.result }} |"
-            echo "| gpu-e2e-tests | ${{ needs.gpu-e2e-tests.result }} |"
             echo ""
             echo "### Build + Upload"
             echo "| Job | Result |"
