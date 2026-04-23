@@ -162,11 +162,13 @@ def tokenize_request(request: RequestT) -> TokenizedText:
     # For embeddings, rankings, and images - simple token counting without generation options
     if isinstance(
         request,
-        EmbeddingRequest
-        | RankingRequest
-        | HFTEIRerankRequest
-        | CohereRerankRequest
-        | ImageGenerationRequest,
+        (
+            EmbeddingRequest,
+            RankingRequest,
+            HFTEIRerankRequest,
+            CohereRerankRequest,
+            ImageGenerationRequest,
+        ),
     ):
         return TokenizedText(
             text=text,
@@ -271,12 +273,12 @@ def _extract_request_content(request: RequestT) -> tuple[str, int | None]:
     if isinstance(request, ChatCompletionRequest):
         text = _extract_chat_messages(request.messages)
         return text, request.max_output_tokens
-    elif isinstance(request, CompletionRequest | TGIGenerateRequest):
+    elif isinstance(request, (CompletionRequest, TGIGenerateRequest)):
         return request.prompt_text, request.max_tokens
     elif isinstance(request, EmbeddingRequest):
         text = "\n".join(request.inputs)
         return text, None
-    elif isinstance(request, RankingRequest | HFTEIRerankRequest | CohereRerankRequest):
+    elif isinstance(request, (RankingRequest, HFTEIRerankRequest, CohereRerankRequest)):
         text = request.query_text + "\n" + "\n".join(request.passage_texts)
         return text, None
     elif isinstance(request, ImageGenerationRequest):

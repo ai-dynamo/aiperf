@@ -50,6 +50,22 @@ def validate_dns_label(
 
     Raises:
         ValueError: If the value is not a valid DNS label.
+
+    Examples:
+        >>> validate_dns_label("aiperf-bench-7f2a", field_name="jobset.name")
+        'aiperf-bench-7f2a'
+        >>> validate_dns_label("", field_name="jobset.name")
+        Traceback (most recent call last):
+            ...
+        ValueError: jobset.name cannot be empty; expected a non-empty DNS label ...
+        >>> validate_dns_label("-bad", field_name="jobset.name")
+        Traceback (most recent call last):
+            ...
+        ValueError: jobset.name '-bad' must be a valid DNS label: ...
+        >>> validate_dns_label("MyJob", field_name="jobset.name")  # uppercase rejected
+        Traceback (most recent call last):
+            ...
+        ValueError: jobset.name 'MyJob' must be a valid DNS label: ...
     """
     if not value:
         raise ValueError(

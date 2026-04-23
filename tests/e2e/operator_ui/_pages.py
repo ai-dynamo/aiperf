@@ -42,7 +42,9 @@ class JobsPage(BasePage):
         await expect(self.page.get_by_test_id("page-jobs")).to_be_visible()
 
     def rows(self) -> Locator:
-        return self.page.get_by_test_id("job-table").locator("[data-testid^='job-row-']")
+        return self.page.get_by_test_id("job-table").locator(
+            "[data-testid^='job-row-']"
+        )
 
     def row(self, namespace: str, name: str) -> Locator:
         return self.page.get_by_test_id(f"job-row-{namespace}-{name}")

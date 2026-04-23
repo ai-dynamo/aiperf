@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from cyclopts import App, Parameter
 
@@ -85,7 +85,7 @@ async def watch(
     )
 
 
-def _build_renderer(output: str) -> WatchRenderer:
+def _build_renderer(output: Literal["json", "text", "rich"]) -> WatchRenderer:
     from aiperf.kubernetes.watch_render_json import JsonRenderer
     from aiperf.kubernetes.watch_render_rich import RichRenderer
     from aiperf.kubernetes.watch_render_text import TextRenderer
@@ -102,7 +102,7 @@ async def _run_watch(
     job_id: str | None,
     manage_options: KubeManageOptions,
     all_jobs: bool,
-    output: str,
+    output: Literal["json", "text", "rich"],
     interval: float,
     follow_logs: bool,
 ) -> None:

@@ -148,4 +148,4 @@ class TestDashboardLiveContract:
         html = resp.text
         assert "KNOWN_STATUSES" in html
         # Guard against regression to the escapeHtml-only version.
-        assert 'worker-status ${escapeHtml(w.status' not in html
+        assert "worker-status ${escapeHtml(w.status" not in html

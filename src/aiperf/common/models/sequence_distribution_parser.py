@@ -54,7 +54,12 @@ class DistributionParser:
             ValueError: If string format is invalid or unrecognized
         """
         if not isinstance(dist_str, str) or not dist_str.strip():
-            raise ValueError("Distribution string cannot be empty")
+            raise ValueError(
+                "SequenceLengthDistribution.validate() failed: input string is empty; "
+                "expected one of: semicolon ('256,128:40;512,256:60'), "
+                "bracket ('[(256,128):40,(512,256):60]'), "
+                'or JSON (\'{"pairs": [{"isl": 256, "osl": 128, "prob": 40}, ...]}\')'
+            )
 
         dist_str = dist_str.strip()
 
@@ -99,7 +104,12 @@ class DistributionParser:
             ValueError: If string format is invalid or unrecognized
         """
         if not isinstance(dist_str, str) or not dist_str.strip():
-            raise ValueError("Distribution string cannot be empty")
+            raise ValueError(
+                "SequenceLengthDistribution.validate() failed: input string is empty; "
+                "expected one of: semicolon ('256,128:40;512,256:60'), "
+                "bracket ('[(256,128):40,(512,256):60]'), "
+                'or JSON (\'{"pairs": [{"isl": 256, "osl": 128, "prob": 40}, ...]}\')'
+            )
 
         dist_str = dist_str.strip()
 
@@ -129,7 +139,11 @@ class DistributionParser:
             raise ValueError(f"Invalid JSON format: {e}") from e
 
         if "pairs" not in data:
-            raise ValueError("JSON format must contain 'pairs' key")
+            raise ValueError(
+                f"SequenceLengthDistribution JSON parse failed: top-level object "
+                f"missing required 'pairs' key; got keys={sorted(data.keys())!r}; "
+                'expected \'{"pairs": [{"isl": <int>, "osl": <int>, "prob": <float>}, ...]}\''
+            )
 
         pairs = []
         for i, pair_data in enumerate(data["pairs"]):

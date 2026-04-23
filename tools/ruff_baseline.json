@@ -19,6 +19,16 @@
     ],
     [
       "C901",
+      "src/aiperf/operator/job_union.py",
+      "find_any_job"
+    ],
+    [
+      "C901",
+      "src/aiperf/operator/job_union.py",
+      "list_all_jobs"
+    ],
+    [
+      "C901",
       "src/aiperf/plot/dashboard/callbacks.py",
       "_generate_custom_single_run_plot"
     ],

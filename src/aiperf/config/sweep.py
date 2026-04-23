@@ -125,7 +125,7 @@ def detect_sweep_fields(data: dict[str, Any]) -> dict[str, list[Any]]:
                 if (
                     isinstance(value, list)
                     and key in MAGIC_LIST_FIELDS
-                    and all(isinstance(v, int | float) for v in value)
+                    and all(isinstance(v, (int, float)) for v in value)
                 ):
                     sweep_fields[new_path] = value
                 else:

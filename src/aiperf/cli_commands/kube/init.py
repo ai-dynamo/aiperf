@@ -18,6 +18,63 @@ app = App(name="init")
 
 _CMD = "aiperf kube init"
 
+_TemplateArg = Annotated[
+    str | None,
+    Parameter(
+        name=["-t", "--template"],
+        help="Template name to use (e.g. 'minimal', 'goodput_slo'). "
+        "Run with --list to see all available templates.",
+    ),
+]
+_ListArg = Annotated[
+    bool,
+    Parameter(
+        name=["-l", "--list"], help="List all available templates grouped by category."
+    ),
+]
+_SearchArg = Annotated[
+    str | None,
+    Parameter(
+        name=["-s", "--search"],
+        help="Search templates by keyword (matches name, description, tags, features).",
+    ),
+]
+_CategoryArg = Annotated[
+    str | None,
+    Parameter(
+        name=["-c", "--category"],
+        help="Filter templates by category (substring match).",
+    ),
+]
+_VerboseArg = Annotated[
+    bool,
+    Parameter(
+        name=["-v", "--verbose"],
+        help="Show tags, features, and difficulty in template listings.",
+    ),
+]
+_ModelArg = Annotated[
+    str | None,
+    Parameter(name=["--model"], help="Override model name in the generated config."),
+]
+_UrlArg = Annotated[
+    str | None,
+    Parameter(name=["--url"], help="Override endpoint URL in the generated config."),
+]
+_OutputArg = Annotated[
+    Path | None,
+    Parameter(
+        name=["-o", "--output"],
+        help="Output file path. If not specified, prints to stdout.",
+    ),
+]
+_JobNameArg = Annotated[
+    str,
+    Parameter(
+        name=["--job-name"], help="Value for metadata.name on the generated AIPerfJob."
+    ),
+]
+
 
 def _write_wrapped_template(
     content: str,
@@ -53,6 +110,7 @@ def _write_wrapped_template(
 
 
 def _generate_template(
+    *,
     template: str | None,
     model: str | None,
     url: str | None,
@@ -89,70 +147,15 @@ def _generate_template(
 @app.default
 def init_config(
     *,
-    template: Annotated[
-        str | None,
-        Parameter(
-            name=["-t", "--template"],
-            help="Template name to use (e.g. 'minimal', 'goodput_slo'). "
-            "Run with --list to see all available templates.",
-        ),
-    ] = None,
-    list_templates: Annotated[
-        bool,
-        Parameter(
-            name=["-l", "--list"],
-            help="List all available templates grouped by category.",
-        ),
-    ] = False,
-    search: Annotated[
-        str | None,
-        Parameter(
-            name=["-s", "--search"],
-            help="Search templates by keyword (matches name, description, tags, features).",
-        ),
-    ] = None,
-    category: Annotated[
-        str | None,
-        Parameter(
-            name=["-c", "--category"],
-            help="Filter templates by category (substring match).",
-        ),
-    ] = None,
-    verbose: Annotated[
-        bool,
-        Parameter(
-            name=["-v", "--verbose"],
-            help="Show tags, features, and difficulty in template listings.",
-        ),
-    ] = False,
-    model: Annotated[
-        str | None,
-        Parameter(
-            name=["--model"],
-            help="Override model name in the generated config.",
-        ),
-    ] = None,
-    url: Annotated[
-        str | None,
-        Parameter(
-            name=["--url"],
-            help="Override endpoint URL in the generated config.",
-        ),
-    ] = None,
-    output: Annotated[
-        Path | None,
-        Parameter(
-            name=["-o", "--output"],
-            help="Output file path. If not specified, prints to stdout.",
-        ),
-    ] = None,
-    job_name: Annotated[
-        str,
-        Parameter(
-            name=["--job-name"],
-            help="Value for metadata.name on the generated AIPerfJob.",
-        ),
-    ] = "my-benchmark",
+    template: _TemplateArg = None,
+    list_templates: _ListArg = False,
+    search: _SearchArg = None,
+    category: _CategoryArg = None,
+    verbose: _VerboseArg = False,
+    model: _ModelArg = None,
+    url: _UrlArg = None,
+    output: _OutputArg = None,
+    job_name: _JobNameArg = "my-benchmark",
 ) -> None:
     """Generate a starter AIPerfJob CR from bundled templates.
 
@@ -162,6 +165,8 @@ def init_config(
 
     Examples:
         aiperf kube init --list
+        aiperf kube init --list --category throughput
+        aiperf kube init --search goodput
         aiperf kube init --template minimal -o benchmark.yaml
         aiperf kube init -t goodput_slo --model my-model --url http://svc:8000
     """
@@ -175,4 +180,6 @@ def init_config(
         if list_templates:
             handle_list(category, verbose=verbose, cmd=_CMD)
             return
-        _generate_template(template, model, url, output, job_name)
+        _generate_template(
+            template=template, model=model, url=url, output=output, job_name=job_name
+        )

@@ -123,7 +123,14 @@ _TEST_MODULES_WITH_DEPTH = discover_modules(
     REPO_ROOT,
     TESTS_DIR,
     exclude_names={"conftest.py", "test_imports.py"},
-    exclude_dirs={"ci"},
+    exclude_dirs={
+        "ci",
+        ".venv",
+        "venv",
+        ".pytest_cache",
+        ".ruff_cache",
+        "aiperf_mock_server.egg-info",
+    },
 )
 
 AIPERF_MODULES = sorted_leaves_first(_AIPERF_MODULES_WITH_DEPTH)

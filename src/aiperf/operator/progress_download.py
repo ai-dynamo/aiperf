@@ -9,7 +9,7 @@ optional zstd passthrough / transcoding.
 
 import zlib
 from pathlib import Path
-from typing import Any
+from typing import Protocol
 
 import aiofiles
 import aiohttp
@@ -18,7 +18,20 @@ import zstandard as zstd
 CHUNK_SIZE = 64 * 1024
 
 
-def make_decompressor(content_encoding: str) -> Any:
+class StreamingDecompressor(Protocol):
+    """Minimal protocol for streaming decompressors used in response download.
+
+    Satisfied by ``zstd.ZstdDecompressionObj`` and ``zlib.decompressobj()`` — both
+    accept a ``bytes`` chunk and return the decompressed ``bytes``; both expose
+    ``flush()`` to drain any buffered output after the last chunk. ``None`` is
+    used for identity/unknown encodings (no decompression applied).
+    """
+
+    def decompress(self, chunk: bytes) -> bytes: ...
+    def flush(self) -> bytes: ...
+
+
+def make_decompressor(content_encoding: str) -> StreamingDecompressor | None:
     """Build a streaming decompressor for the given HTTP ``Content-Encoding``.
 
     Returns ``None`` for identity/unknown encodings so callers can skip the
@@ -45,7 +58,7 @@ async def save_zstd_passthrough(
 async def save_transcoded_zstd(
     response: aiohttp.ClientResponse,
     dest_path: Path,
-    decompressor: Any,
+    decompressor: StreamingDecompressor | None,
 ) -> None:
     """Decompress from wire encoding then re-compress as zstd for storage."""
     zst_path = dest_path.parent / (dest_path.name + ".zst")
@@ -74,7 +87,7 @@ async def save_transcoded_zstd(
 async def save_decompressed(
     response: aiohttp.ClientResponse,
     dest_path: Path,
-    decompressor: Any,
+    decompressor: StreamingDecompressor | None,
 ) -> None:
     """Decompress wire encoding and save the raw bytes to ``dest_path``."""
     async with aiofiles.open(dest_path, "wb") as f:

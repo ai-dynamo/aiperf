@@ -489,3 +489,60 @@ class TestPrintAggregateSummary:
 
         warning_calls = [call[0][0] for call in mock_logger.warning.call_args_list]
         assert any("No key metrics found" in call for call in warning_calls)
+
+
+class TestConfigureTokenizerPreload:
+    """Verify env vars are surfaced for the forkserver preload module."""
+
+    def test_sets_model_names_from_config(self, monkeypatch: pytest.MonkeyPatch):
+        from aiperf.cli_runner import _configure_tokenizer_preload
+
+        monkeypatch.delenv("AIPERF_PRELOAD_TOKENIZERS", raising=False)
+        run = _make_run(models=["Qwen/Qwen3-0.6B", "openai/gpt-oss-120b"])
+        _configure_tokenizer_preload(run)
+        import os as _os
+
+        assert (
+            _os.environ.get("AIPERF_PRELOAD_TOKENIZERS")
+            == "Qwen/Qwen3-0.6B,openai/gpt-oss-120b"
+        )
+
+    def test_explicit_tokenizer_name_overrides_model_names(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        from aiperf.cli_runner import _configure_tokenizer_preload
+
+        monkeypatch.delenv("AIPERF_PRELOAD_TOKENIZERS", raising=False)
+        monkeypatch.delenv("AIPERF_PRELOAD_TOKENIZER_TRUST_REMOTE_CODE", raising=False)
+        run = _make_run(
+            models=["served-model-a", "served-model-b"],
+            tokenizer={"name": "meta-llama/Llama-3.1-8B", "trust_remote_code": True},
+        )
+        _configure_tokenizer_preload(run)
+        import os as _os
+
+        assert _os.environ.get("AIPERF_PRELOAD_TOKENIZERS") == "meta-llama/Llama-3.1-8B"
+        assert _os.environ.get("AIPERF_PRELOAD_TOKENIZER_TRUST_REMOTE_CODE") == "true"
+
+    def test_does_not_overwrite_already_set_env(self, monkeypatch: pytest.MonkeyPatch):
+        from aiperf.cli_runner import _configure_tokenizer_preload
+
+        monkeypatch.setenv("AIPERF_PRELOAD_TOKENIZERS", "operator-set/value")
+        run = _make_run(models=["Qwen/Qwen3-0.6B"])
+        _configure_tokenizer_preload(run)
+        import os as _os
+
+        assert _os.environ.get("AIPERF_PRELOAD_TOKENIZERS") == "operator-set/value"
+
+    def test_noop_when_no_models(self, monkeypatch: pytest.MonkeyPatch):
+        """With no models configured, env var should stay unset (preload is no-op)."""
+        from aiperf.cli_runner import _configure_tokenizer_preload
+
+        monkeypatch.delenv("AIPERF_PRELOAD_TOKENIZERS", raising=False)
+        run = _make_run()
+        run.cfg.models.items = []
+        run.cfg.tokenizer = None
+        _configure_tokenizer_preload(run)
+        import os as _os
+
+        assert "AIPERF_PRELOAD_TOKENIZERS" not in _os.environ

@@ -80,7 +80,7 @@ class FixedDistribution(Distribution):
     @model_validator(mode="before")
     @classmethod
     def coerce_scalar(cls, data: Any) -> Any:
-        if isinstance(data, int | float):
+        if isinstance(data, (int, float)):
             return {"value": float(data)}
         return data
 
@@ -354,7 +354,7 @@ def _distribution_discriminator(v: Any) -> str:
         "mean" alone       -> ValueError (ambiguous)
         unknown            -> ValueError
     """
-    if isinstance(v, int | float):
+    if isinstance(v, (int, float)):
         return "fixed"
     if isinstance(v, dict):
         if "peaks" in v:

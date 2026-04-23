@@ -106,7 +106,7 @@ class SequenceDistributionEntry(BaseConfig):
 
         if "isl_stddev" in data and data["isl_stddev"] is not None:
             isl = data.get("isl")
-            if isinstance(isl, int | float):
+            if isinstance(isl, (int, float)):
                 data["isl"] = {
                     "mean": float(isl),
                     "stddev": data["isl_stddev"],
@@ -115,7 +115,7 @@ class SequenceDistributionEntry(BaseConfig):
 
         if "osl_stddev" in data and data["osl_stddev"] is not None:
             osl = data.get("osl")
-            if isinstance(osl, int | float):
+            if isinstance(osl, (int, float)):
                 data["osl"] = {
                     "mean": float(osl),
                     "stddev": data["osl_stddev"],

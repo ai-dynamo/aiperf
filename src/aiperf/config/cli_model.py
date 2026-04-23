@@ -407,7 +407,7 @@ class CLIModel(BaseModel):
         default=ExportLevel.RECORDS,
     )
     slice_duration: annotated_type(
-        float | None,
+        float | str | None,
         "--slice-duration",
         Groups.OUTPUT,
         (
@@ -492,13 +492,13 @@ class CLIModel(BaseModel):
     # =========================================================================
 
     benchmark_duration: annotated_type(
-        float | None,
+        float | str | None,
         "--benchmark-duration",
         Groups.LOAD_GENERATOR,
         "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'.",
     )
     benchmark_grace_period: annotated_type(
-        float | None,
+        float | str | None,
         "--benchmark-grace-period",
         Groups.LOAD_GENERATOR,
         (
@@ -560,19 +560,19 @@ class CLIModel(BaseModel):
         "Stop after this many requests sent (must be >= 1).",
     )
     concurrency_ramp_duration: annotated_type(
-        float | None,
+        float | str | None,
         "--concurrency-ramp-duration",
         Groups.LOAD_GENERATOR,
         "Seconds to ramp from start to target value.",
     )
     prefill_concurrency_ramp_duration: annotated_type(
-        float | None,
+        float | str | None,
         "--prefill-concurrency-ramp-duration",
         Groups.LOAD_GENERATOR,
         "Seconds to ramp from start to target value.",
     )
     request_rate_ramp_duration: annotated_type(
-        float | None,
+        float | str | None,
         "--request-rate-ramp-duration",
         Groups.WARMUP,
         "Seconds to ramp from start to target value.",
@@ -592,7 +592,7 @@ class CLIModel(BaseModel):
         ),
     )
     warmup_duration: annotated_type(
-        float | None,
+        float | str | None,
         "--warmup-duration",
         Groups.WARMUP,
         (
@@ -659,7 +659,7 @@ class CLIModel(BaseModel):
         show_choices=False,
     )
     warmup_grace_period: annotated_type(
-        float | None,
+        float | str | None,
         "--warmup-grace-period",
         Groups.WARMUP,
         (
@@ -669,7 +669,7 @@ class CLIModel(BaseModel):
         ),
     )
     warmup_concurrency_ramp_duration: annotated_type(
-        float | None,
+        float | str | None,
         "--warmup-concurrency-ramp-duration",
         Groups.WARMUP,
         (
@@ -678,7 +678,7 @@ class CLIModel(BaseModel):
         ),
     )
     warmup_prefill_concurrency_ramp_duration: annotated_type(
-        float | None,
+        float | str | None,
         "--warmup-prefill-concurrency-ramp-duration",
         Groups.WARMUP,
         (
@@ -687,7 +687,7 @@ class CLIModel(BaseModel):
         ),
     )
     warmup_request_rate_ramp_duration: annotated_type(
-        float | None,
+        float | str | None,
         "--warmup-request-rate-ramp-duration",
         Groups.WARMUP,
         (

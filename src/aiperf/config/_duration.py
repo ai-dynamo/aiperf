@@ -30,7 +30,7 @@ def _parse_duration(v: Any) -> float | None:
     """
     if v is None:
         return None
-    if isinstance(v, int | float):
+    if isinstance(v, (int, float)):
         return float(v)
     if isinstance(v, str):
         match = _DURATION_PATTERN.match(v.strip())

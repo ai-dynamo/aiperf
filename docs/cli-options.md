@@ -363,7 +363,7 @@ Controls which output files are generated. summary: Only aggregate metrics files
 | `records` | _default_ | Export per-record metrics after aggregation with display unit conversion |
 | `raw` |  | Export raw parsed records with full request/response data (most detailed) |
 
-#### `--slice-duration` `<float>`
+#### `--slice-duration` `<str>`
 
 Time slice duration in seconds for trend analysis (must be > 0). Divides benchmark into windows for per-window statistics. Supports: 30, '30s', '5m', '2h'.
 
@@ -402,11 +402,11 @@ Allow execution of custom tokenizer code from the repository. Required for some 
 
 ### Load Generator
 
-#### `--benchmark-duration` `<float>`
+#### `--benchmark-duration` `<str>`
 
 Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'.
 
-#### `--benchmark-grace-period` `<float>`
+#### `--benchmark-grace-period` `<str>`
 
 Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.
 
@@ -437,17 +437,17 @@ Gamma distribution shape parameter (must be > 0). 1.0 = Poisson, &lt;1 = bursty,
 
 Stop after this many requests sent (must be >= 1).
 
-#### `--concurrency-ramp-duration` `<float>`
+#### `--concurrency-ramp-duration` `<str>`
 
 Seconds to ramp from start to target value.
 
-#### `--prefill-concurrency-ramp-duration` `<float>`
+#### `--prefill-concurrency-ramp-duration` `<str>`
 
 Seconds to ramp from start to target value.
 
 ### Warmup
 
-#### `--request-rate-ramp-duration` `<float>`
+#### `--request-rate-ramp-duration` `<str>`
 
 Seconds to ramp from start to target value.
 
@@ -455,7 +455,7 @@ Seconds to ramp from start to target value.
 
 Warmup phase: Stop after this many requests sent (must be >= 1). If not set, uses the --request-count value.
 
-#### `--warmup-duration` `<float>`
+#### `--warmup-duration` `<str>`
 
 Warmup phase: Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. If not set, uses the --benchmark-duration value.
 
@@ -480,19 +480,19 @@ Warmup phase: Target request rate in requests per second (must be > 0). If not s
 
 Warmup phase: Concurrency-controlled immediate dispatch. If not set, uses the --arrival-pattern value.
 
-#### `--warmup-grace-period` `<float>`
+#### `--warmup-grace-period` `<str>`
 
 Warmup phase: Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'. If not set, uses the --benchmark-grace-period value.
 
-#### `--warmup-concurrency-ramp-duration` `<float>`
+#### `--warmup-concurrency-ramp-duration` `<str>`
 
 Warmup phase: Seconds to ramp from start to target value. If not set, uses the --concurrency-ramp-duration value.
 
-#### `--warmup-prefill-concurrency-ramp-duration` `<float>`
+#### `--warmup-prefill-concurrency-ramp-duration` `<str>`
 
 Warmup phase: Seconds to ramp from start to target value. If not set, uses the --prefill-concurrency-ramp-duration value.
 
-#### `--warmup-request-rate-ramp-duration` `<float>`
+#### `--warmup-request-rate-ramp-duration` `<str>`
 
 Warmup phase: Seconds to ramp from start to target value. If not set, uses the --request-rate-ramp-duration value.
 
@@ -1439,7 +1439,7 @@ Controls which output files are generated. summary: Only aggregate metrics files
 | `records` | _default_ | Export per-record metrics after aggregation with display unit conversion |
 | `raw` |  | Export raw parsed records with full request/response data (most detailed) |
 
-#### `--slice-duration` `<float>`
+#### `--slice-duration` `<str>`
 
 Time slice duration in seconds for trend analysis (must be > 0). Divides benchmark into windows for per-window statistics. Supports: 30, '30s', '5m', '2h'.
 
@@ -1478,11 +1478,11 @@ Allow execution of custom tokenizer code from the repository. Required for some 
 
 ### Load Generator
 
-#### `--benchmark-duration` `<float>`
+#### `--benchmark-duration` `<str>`
 
 Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'.
 
-#### `--benchmark-grace-period` `<float>`
+#### `--benchmark-grace-period` `<str>`
 
 Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.
 
@@ -1513,17 +1513,17 @@ Gamma distribution shape parameter (must be > 0). 1.0 = Poisson, &lt;1 = bursty,
 
 Stop after this many requests sent (must be >= 1).
 
-#### `--concurrency-ramp-duration` `<float>`
+#### `--concurrency-ramp-duration` `<str>`
 
 Seconds to ramp from start to target value.
 
-#### `--prefill-concurrency-ramp-duration` `<float>`
+#### `--prefill-concurrency-ramp-duration` `<str>`
 
 Seconds to ramp from start to target value.
 
 ### Warmup
 
-#### `--request-rate-ramp-duration` `<float>`
+#### `--request-rate-ramp-duration` `<str>`
 
 Seconds to ramp from start to target value.
 
@@ -1531,7 +1531,7 @@ Seconds to ramp from start to target value.
 
 Warmup phase: Stop after this many requests sent (must be >= 1). If not set, uses the --request-count value.
 
-#### `--warmup-duration` `<float>`
+#### `--warmup-duration` `<str>`
 
 Warmup phase: Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. If not set, uses the --benchmark-duration value.
 
@@ -1556,19 +1556,19 @@ Warmup phase: Target request rate in requests per second (must be > 0). If not s
 
 Warmup phase: Concurrency-controlled immediate dispatch. If not set, uses the --arrival-pattern value.
 
-#### `--warmup-grace-period` `<float>`
+#### `--warmup-grace-period` `<str>`
 
 Warmup phase: Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'. If not set, uses the --benchmark-grace-period value.
 
-#### `--warmup-concurrency-ramp-duration` `<float>`
+#### `--warmup-concurrency-ramp-duration` `<str>`
 
 Warmup phase: Seconds to ramp from start to target value. If not set, uses the --concurrency-ramp-duration value.
 
-#### `--warmup-prefill-concurrency-ramp-duration` `<float>`
+#### `--warmup-prefill-concurrency-ramp-duration` `<str>`
 
 Warmup phase: Seconds to ramp from start to target value. If not set, uses the --prefill-concurrency-ramp-duration value.
 
-#### `--warmup-request-rate-ramp-duration` `<float>`
+#### `--warmup-request-rate-ramp-duration` `<str>`
 
 Warmup phase: Seconds to ramp from start to target value. If not set, uses the --request-rate-ramp-duration value.
 
@@ -2381,7 +2381,7 @@ Controls which output files are generated. summary: Only aggregate metrics files
 | `records` | _default_ | Export per-record metrics after aggregation with display unit conversion |
 | `raw` |  | Export raw parsed records with full request/response data (most detailed) |
 
-#### `--slice-duration` `<float>`
+#### `--slice-duration` `<str>`
 
 Time slice duration in seconds for trend analysis (must be > 0). Divides benchmark into windows for per-window statistics. Supports: 30, '30s', '5m', '2h'.
 
@@ -2420,11 +2420,11 @@ Allow execution of custom tokenizer code from the repository. Required for some 
 
 ### Load Generator
 
-#### `--benchmark-duration` `<float>`
+#### `--benchmark-duration` `<str>`
 
 Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'.
 
-#### `--benchmark-grace-period` `<float>`
+#### `--benchmark-grace-period` `<str>`
 
 Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.
 
@@ -2455,17 +2455,17 @@ Gamma distribution shape parameter (must be > 0). 1.0 = Poisson, &lt;1 = bursty,
 
 Stop after this many requests sent (must be >= 1).
 
-#### `--concurrency-ramp-duration` `<float>`
+#### `--concurrency-ramp-duration` `<str>`
 
 Seconds to ramp from start to target value.
 
-#### `--prefill-concurrency-ramp-duration` `<float>`
+#### `--prefill-concurrency-ramp-duration` `<str>`
 
 Seconds to ramp from start to target value.
 
 ### Warmup
 
-#### `--request-rate-ramp-duration` `<float>`
+#### `--request-rate-ramp-duration` `<str>`
 
 Seconds to ramp from start to target value.
 
@@ -2473,7 +2473,7 @@ Seconds to ramp from start to target value.
 
 Warmup phase: Stop after this many requests sent (must be >= 1). If not set, uses the --request-count value.
 
-#### `--warmup-duration` `<float>`
+#### `--warmup-duration` `<str>`
 
 Warmup phase: Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. If not set, uses the --benchmark-duration value.
 
@@ -2498,19 +2498,19 @@ Warmup phase: Target request rate in requests per second (must be > 0). If not s
 
 Warmup phase: Concurrency-controlled immediate dispatch. If not set, uses the --arrival-pattern value.
 
-#### `--warmup-grace-period` `<float>`
+#### `--warmup-grace-period` `<str>`
 
 Warmup phase: Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'. If not set, uses the --benchmark-grace-period value.
 
-#### `--warmup-concurrency-ramp-duration` `<float>`
+#### `--warmup-concurrency-ramp-duration` `<str>`
 
 Warmup phase: Seconds to ramp from start to target value. If not set, uses the --concurrency-ramp-duration value.
 
-#### `--warmup-prefill-concurrency-ramp-duration` `<float>`
+#### `--warmup-prefill-concurrency-ramp-duration` `<str>`
 
 Warmup phase: Seconds to ramp from start to target value. If not set, uses the --prefill-concurrency-ramp-duration value.
 
-#### `--warmup-request-rate-ramp-duration` `<float>`
+#### `--warmup-request-rate-ramp-duration` `<str>`
 
 Warmup phase: Seconds to ramp from start to target value. If not set, uses the --request-rate-ramp-duration value.
 
@@ -3338,7 +3338,7 @@ Controls which output files are generated. summary: Only aggregate metrics files
 | `records` | _default_ | Export per-record metrics after aggregation with display unit conversion |
 | `raw` |  | Export raw parsed records with full request/response data (most detailed) |
 
-#### `--slice-duration` `<float>`
+#### `--slice-duration` `<str>`
 
 Time slice duration in seconds for trend analysis (must be > 0). Divides benchmark into windows for per-window statistics. Supports: 30, '30s', '5m', '2h'.
 
@@ -3377,11 +3377,11 @@ Allow execution of custom tokenizer code from the repository. Required for some 
 
 ### Load Generator
 
-#### `--benchmark-duration` `<float>`
+#### `--benchmark-duration` `<str>`
 
 Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'.
 
-#### `--benchmark-grace-period` `<float>`
+#### `--benchmark-grace-period` `<str>`
 
 Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.
 
@@ -3412,17 +3412,17 @@ Gamma distribution shape parameter (must be > 0). 1.0 = Poisson, &lt;1 = bursty,
 
 Stop after this many requests sent (must be >= 1).
 
-#### `--concurrency-ramp-duration` `<float>`
+#### `--concurrency-ramp-duration` `<str>`
 
 Seconds to ramp from start to target value.
 
-#### `--prefill-concurrency-ramp-duration` `<float>`
+#### `--prefill-concurrency-ramp-duration` `<str>`
 
 Seconds to ramp from start to target value.
 
 ### Warmup
 
-#### `--request-rate-ramp-duration` `<float>`
+#### `--request-rate-ramp-duration` `<str>`
 
 Seconds to ramp from start to target value.
 
@@ -3430,7 +3430,7 @@ Seconds to ramp from start to target value.
 
 Warmup phase: Stop after this many requests sent (must be >= 1). If not set, uses the --request-count value.
 
-#### `--warmup-duration` `<float>`
+#### `--warmup-duration` `<str>`
 
 Warmup phase: Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. If not set, uses the --benchmark-duration value.
 
@@ -3455,19 +3455,19 @@ Warmup phase: Target request rate in requests per second (must be > 0). If not s
 
 Warmup phase: Concurrency-controlled immediate dispatch. If not set, uses the --arrival-pattern value.
 
-#### `--warmup-grace-period` `<float>`
+#### `--warmup-grace-period` `<str>`
 
 Warmup phase: Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'. If not set, uses the --benchmark-grace-period value.
 
-#### `--warmup-concurrency-ramp-duration` `<float>`
+#### `--warmup-concurrency-ramp-duration` `<str>`
 
 Warmup phase: Seconds to ramp from start to target value. If not set, uses the --concurrency-ramp-duration value.
 
-#### `--warmup-prefill-concurrency-ramp-duration` `<float>`
+#### `--warmup-prefill-concurrency-ramp-duration` `<str>`
 
 Warmup phase: Seconds to ramp from start to target value. If not set, uses the --prefill-concurrency-ramp-duration value.
 
-#### `--warmup-request-rate-ramp-duration` `<float>`
+#### `--warmup-request-rate-ramp-duration` `<str>`
 
 Warmup phase: Seconds to ramp from start to target value. If not set, uses the --request-rate-ramp-duration value.
 

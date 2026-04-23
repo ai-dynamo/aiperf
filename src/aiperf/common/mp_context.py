@@ -47,6 +47,10 @@ _FORKSERVER_PRELOAD = [
     "aiperf.records.record_processor_service",
     "aiperf.metrics",
     "aiperf.post_processors",
+    # Imports + instantiates HF tokenizers into the forkserver helper's
+    # anon heap when AIPERF_PRELOAD_TOKENIZERS is set, so every RP child
+    # CoW-shares them. No-op when the env var is empty (K8s mode).
+    "aiperf.records._tokenizer_preload",
     # -- heavy third-party deps --
     "pydantic",
     "numpy",

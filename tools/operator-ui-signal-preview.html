@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<!--
+  SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  SPDX-License-Identifier: Apache-2.0
+
+  Signal — operator UI redesign preview.
+  Self-contained single-file HTML mockup. Open in any modern browser.
+  Mocks hardcoded; real integration lives in src/aiperf/operator/ui/ once
+  the aesthetic direction is approved.
+-->
+<html lang="en" data-theme="ink">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Signal — AIPerf</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400;1,9..144,600;1,9..144,700&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="https://unpkg.com/@phosphor-icons/web@2"></script>
+
+<style>
+:root {
+  /* — Ink palette — not pure black, not pure white. Paper & graphite. */
+  --ink:            #0a0c10;
+  --ink-raised:    #111420;
+  --ink-hi:        #181c2a;
+  --ink-edge:      rgba(244, 238, 225, 0.06);
+  --ink-edge-hi:   rgba(244, 238, 225, 0.12);
+
+  --bone:          #f4eee1;
+  --bone-dim:      rgba(244, 238, 225, 0.62);
+  --bone-faint:    rgba(244, 238, 225, 0.36);
+  --bone-ghost:    rgba(244, 238, 225, 0.18);
+
+  --signal:        #d4ff4d;      /* electric chartreuse — healthy, live */
+  --signal-soft:   #b8e840;
+  --signal-glow:   rgba(212, 255, 77, 0.35);
+  --signal-wash:   rgba(212, 255, 77, 0.08);
+
+  --amber:         #ffb547;
+  --amber-soft:    #e09b34;
+  --coral:         #ff5c5c;
+  --cobalt:        #6b8fff;
+  --rose:          #ff8a9b;
+  --violet:        #b197fc;
+
+  /* Type */
+  --f-display:     'Fraunces', 'Times New Roman', Georgia, serif;
+  --f-sans:        'DM Sans', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  --f-mono:        'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+
+  /* Spacing grid */
+  --gutter-sm: 12px;
+  --gutter-md: 20px;
+  --gutter-lg: 36px;
+  --gutter-xl: 64px;
+
+  /* Motion */
+  --ease:          cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-sharp:    cubic-bezier(0.6, 0, 0.2, 1);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  background: var(--ink);
+  color: var(--bone);
+  font-family: var(--f-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  font-feature-settings: 'ss01', 'cv11', 'tnum' 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* — Atmosphere. The dark is never flat. — */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(
+      ellipse 1200px 800px at 85% -20%,
+      var(--signal-wash),
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 800px 600px at 0% 100%,
+      rgba(107, 143, 255, 0.04),
+      transparent 60%
+    );
+  pointer-events: none;
+  z-index: 0;
+}
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    radial-gradient(rgba(244, 238, 225, 0.025) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: 0 0;
+  pointer-events: none;
+  z-index: 0;
+  mask-image: linear-gradient(to bottom, black, transparent 80%);
+}
+
+/* — Top bar — sticky, hair divider only — */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px var(--gutter-xl);
+  background: rgba(10, 12, 16, 0.82);
+  backdrop-filter: blur(20px) saturate(1.3);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  border-bottom: 1px solid var(--ink-edge);
+}
+.wordmark {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--f-display);
+  font-style: italic;
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+  color: var(--bone);
+}
+.wordmark::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: var(--signal);
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px var(--signal-wash), 0 0 16px var(--signal-glow);
+}
+.wordmark .meta {
+  font-family: var(--f-mono);
+  font-style: normal;
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--bone-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  padding-left: 14px;
+  margin-left: 4px;
+  border-left: 1px solid var(--ink-edge);
+}
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.nav a {
+  color: var(--bone-dim);
+  text-decoration: none;
+  padding: 8px 14px;
+  border-radius: 4px;
+  font-weight: 500;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: color 160ms var(--ease);
+}
+.nav a:hover { color: var(--bone); }
+.nav a.is-active {
+  color: var(--bone);
+  background: var(--ink-hi);
+}
+.nav a .ph { font-size: 15px; opacity: 0.7; }
+.nav-search {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--bone-faint);
+  padding: 8px 14px;
+  border: 1px solid var(--ink-edge);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: all 160ms var(--ease);
+}
+.nav-search:hover { border-color: var(--ink-edge-hi); color: var(--bone-dim); }
+.nav-search .ph { font-size: 12px; }
+.nav-search kbd {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  background: var(--ink-raised);
+  border: 1px solid var(--ink-edge);
+  border-radius: 3px;
+  color: var(--bone-faint);
+}
+
+/* — Main canvas — */
+main {
+  position: relative;
+  z-index: 1;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: var(--gutter-xl) var(--gutter-xl) calc(var(--gutter-xl) * 2);
+}
+
+/* — Eyebrow / section meta label — */
+.eyebrow {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--bone-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.eyebrow .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--signal);
+  box-shadow: 0 0 0 2px var(--signal-wash), 0 0 12px var(--signal-glow);
+  animation: signal-pulse 2.2s ease-in-out infinite;
+}
+@keyframes signal-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--signal-wash), 0 0 12px var(--signal-glow); opacity: 1; }
+  50%      { box-shadow: 0 0 0 6px transparent, 0 0 20px var(--signal-glow); opacity: 0.72; }
+}
+
+/* — HERO — the landing impact — */
+.hero {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: var(--gutter-xl);
+  padding: var(--gutter-xl) 0;
+  border-bottom: 1px solid var(--ink-edge);
+  min-height: 420px;
+}
+.hero::before {
+  /* localized radial glow behind the display number */
+  content: '';
+  position: absolute;
+  top: -80px;
+  left: -120px;
+  width: 560px;
+  height: 560px;
+  background: radial-gradient(
+    circle at center,
+    var(--signal-glow) 0%,
+    transparent 55%
+  );
+  filter: blur(60px);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.hero-verdict { position: relative; z-index: 1; }
+.hero-eyebrow { margin-bottom: 28px; }
+.hero-headline {
+  font-family: var(--f-display);
+  font-style: italic;
+  font-weight: 600;
+  font-size: clamp(72px, 9.5vw, 144px);
+  line-height: 0.92;
+  letter-spacing: -0.045em;
+  color: var(--bone);
+  margin-bottom: 28px;
+  font-variation-settings: 'SOFT' 100, 'opsz' 144;
+  /* shy gradient wash — "luminous" serif */
+  background: linear-gradient(180deg, var(--bone) 0%, var(--bone-dim) 140%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  text-shadow: none;
+}
+.hero-headline em {
+  color: var(--signal);
+  -webkit-text-fill-color: var(--signal);
+  font-style: italic;
+  background: none;
+}
+.hero-body {
+  font-size: 17px;
+  font-weight: 400;
+  color: var(--bone-dim);
+  max-width: 56ch;
+  margin-bottom: 36px;
+  line-height: 1.55;
+  letter-spacing: -0.005em;
+}
+.hero-body strong {
+  color: var(--bone);
+  font-weight: 500;
+}
+
+.hero-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border: 1px solid var(--ink-edge);
+  border-radius: 999px;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--bone-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  transition: all 160ms var(--ease);
+}
+.chip .ph { font-size: 12px; }
+.chip.chip--live {
+  color: var(--signal);
+  border-color: rgba(212, 255, 77, 0.32);
+  background: var(--signal-wash);
+}
+.chip.chip--live::before {
+  content: '';
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--signal);
+  box-shadow: 0 0 10px var(--signal-glow);
+  animation: signal-pulse 2.2s ease-in-out infinite;
+}
+
+/* — Hero right column: phase + elapsed/eta — */
+.hero-stats {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding-left: var(--gutter-lg);
+  border-left: 1px solid var(--ink-edge);
+}
+.hero-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.hero-stat-label {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--bone-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+}
+.hero-stat-val {
+  font-family: var(--f-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 44px;
+  line-height: 1;
+  color: var(--bone);
+  letter-spacing: -0.025em;
+  font-variation-settings: 'SOFT' 100, 'opsz' 60;
+}
+.hero-stat-val .unit {
+  font-family: var(--f-mono);
+  font-style: normal;
+  font-size: 13px;
+  color: var(--bone-faint);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  margin-left: 6px;
+}
+
+.phase-stack { display: flex; flex-direction: column; gap: 14px; }
+.phase-row {
+  display: grid;
+  grid-template-columns: 120px 1fr auto;
+  gap: 16px;
+  align-items: center;
+}
+.phase-name {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--bone-dim);
+  text-transform: lowercase;
+  letter-spacing: 0.08em;
+}
+.phase-track {
+  position: relative;
+  height: 4px;
+  background: var(--ink-edge);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.phase-fill {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  background: var(--signal-soft);
+  border-radius: inherit;
+  transform-origin: left;
+}
+.phase-fill--done { width: 100%; background: var(--bone-ghost); }
+.phase-fill--active {
+  background: linear-gradient(
+    90deg,
+    var(--signal) 0%,
+    var(--signal-soft) 100%
+  );
+  box-shadow: 0 0 12px var(--signal-glow);
+  animation: shimmer 2.6s var(--ease) infinite;
+}
+@keyframes shimmer {
+  0%   { box-shadow: 0 0 8px var(--signal-glow); }
+  50%  { box-shadow: 0 0 20px var(--signal-glow); }
+  100% { box-shadow: 0 0 8px var(--signal-glow); }
+}
+.phase-count {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--bone-faint);
+  min-width: 80px;
+  text-align: right;
+}
+
+/* — KPI strip — no boxes. Hair dividers between cells. — */
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  border-bottom: 1px solid var(--ink-edge);
+}
+.kpi-cell {
+  padding: var(--gutter-lg) var(--gutter-md);
+  border-left: 1px solid var(--ink-edge);
+  position: relative;
+  transition: background 240ms var(--ease);
+}
+.kpi-cell:first-child { border-left: none; padding-left: 0; }
+.kpi-cell:hover { background: var(--signal-wash); }
+.kpi-cell::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--signal);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 400ms var(--ease);
+}
+.kpi-cell:hover::after { transform: scaleX(1); }
+.kpi-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--bone-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  margin-bottom: 18px;
+}
+.kpi-label .ph { font-size: 13px; opacity: 0.7; color: var(--bone-dim); }
+.kpi-val {
+  font-family: var(--f-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 64px;
+  line-height: 0.92;
+  letter-spacing: -0.035em;
+  color: var(--bone);
+  font-variation-settings: 'SOFT' 100, 'opsz' 72;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.kpi-val.kpi-val--accent { color: var(--signal); }
+.kpi-val.kpi-val--warn   { color: var(--amber); }
+.kpi-val.kpi-val--err    { color: var(--coral); }
+.kpi-val .unit {
+  font-family: var(--f-mono);
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--bone-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  letter-spacing: 0.14em;
+}
+.kpi-sub {
+  margin-top: 14px;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--bone-faint);
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+}
+.kpi-sub strong { color: var(--bone-dim); font-weight: 500; }
+
+/* — Section title — editorial. — */
+.section {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: var(--gutter-xl);
+  padding: var(--gutter-xl) 0;
+  border-bottom: 1px solid var(--ink-edge);
+}
+.section-head { position: sticky; top: 92px; align-self: start; }
+.section-num {
+  font-family: var(--f-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 14px;
+  color: var(--signal);
+  letter-spacing: 0.08em;
+  margin-bottom: 10px;
+}
+.section-title {
+  font-family: var(--f-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 40px;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--bone);
+  margin-bottom: 14px;
+  font-variation-settings: 'SOFT' 100, 'opsz' 60;
+}
+.section-desc {
+  font-size: 14px;
+  color: var(--bone-dim);
+  line-height: 1.5;
+  max-width: 30ch;
+}
+
+/* — Scatter chart frame — */
+.chart-frame {
+  position: relative;
+  padding: var(--gutter-md);
+  border: 1px solid var(--ink-edge);
+  border-radius: 2px;
+  background: rgba(17, 20, 32, 0.35);
+  height: 460px;
+}
+.chart-toolbar {
+  position: absolute;
+  top: var(--gutter-md);
+  right: var(--gutter-md);
+  display: flex;
+  gap: 4px;
+  z-index: 2;
+}
+.chart-toolbar button {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  background: transparent;
+  color: var(--bone-faint);
+  border: 1px solid transparent;
+  padding: 6px 10px;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 160ms var(--ease);
+}
+.chart-toolbar button:hover { color: var(--bone-dim); }
+.chart-toolbar button.is-active {
+  color: var(--signal);
+  border-color: rgba(212, 255, 77, 0.26);
+  background: var(--signal-wash);
+}
+
+/* — Active jobs — hair-divided rows, no card — */
+.jobs-list { display: flex; flex-direction: column; }
+.job-row {
+  display: grid;
+  grid-template-columns: 32px 1fr 120px 200px 120px 24px;
+  gap: var(--gutter-md);
+  align-items: center;
+  padding: 24px 0;
+  border-top: 1px solid var(--ink-edge);
+  cursor: pointer;
+  transition: padding-left 280ms var(--ease);
+}
+.job-row:last-child { border-bottom: 1px solid var(--ink-edge); }
+.job-row:hover { padding-left: 12px; }
+.job-row .phase-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--bone-ghost);
+}
+.job-row .phase-dot.running {
+  background: var(--signal);
+  box-shadow: 0 0 0 3px var(--signal-wash), 0 0 10px var(--signal-glow);
+  animation: signal-pulse 2.2s ease-in-out infinite;
+}
+.job-row .phase-dot.failed { background: var(--coral); }
+.job-row .phase-dot.succeeded { background: var(--bone-ghost); }
+.job-name {
+  font-family: var(--f-mono);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--bone);
+  letter-spacing: -0.01em;
+}
+.job-name .ns {
+  color: var(--bone-faint);
+  font-size: 11px;
+  margin-top: 4px;
+  font-weight: 400;
+  display: block;
+}
+.job-throughput {
+  font-family: var(--f-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 28px;
+  line-height: 1;
+  color: var(--bone);
+  letter-spacing: -0.02em;
+  font-variation-settings: 'SOFT' 100, 'opsz' 36;
+}
+.job-throughput .unit {
+  font-family: var(--f-mono);
+  font-style: normal;
+  font-size: 11px;
+  color: var(--bone-faint);
+  letter-spacing: 0.14em;
+  margin-left: 3px;
+  text-transform: uppercase;
+}
+.job-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.job-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  color: var(--bone-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.job-progress-track {
+  height: 3px;
+  background: var(--ink-edge);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.job-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--signal-soft), var(--signal));
+  border-radius: inherit;
+  box-shadow: 0 0 8px var(--signal-glow);
+}
+.job-eta {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--bone-dim);
+  text-align: right;
+}
+.job-eta small {
+  display: block;
+  font-size: 9px;
+  color: var(--bone-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  margin-bottom: 4px;
+}
+.job-row .arrow {
+  color: var(--bone-ghost);
+  transition: transform 280ms var(--ease), color 160ms var(--ease);
+}
+.job-row:hover .arrow {
+  color: var(--signal);
+  transform: translateX(4px);
+}
+
+/* — Leaderboard mini — — */
+.leaderboard {
+  display: flex;
+  flex-direction: column;
+}
+.leaderboard-row {
+  display: grid;
+  grid-template-columns: 100px 1fr 1fr 180px;
+  gap: var(--gutter-md);
+  align-items: baseline;
+  padding: 24px 0;
+  border-top: 1px solid var(--ink-edge);
+}
+.leaderboard-row:last-child { border-bottom: 1px solid var(--ink-edge); }
+.leader-rank {
+  font-family: var(--f-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 72px;
+  line-height: 0.85;
+  color: var(--bone-ghost);
+  letter-spacing: -0.05em;
+  font-variation-settings: 'SOFT' 100, 'opsz' 96;
+}
+.leaderboard-row:first-child .leader-rank {
+  color: var(--signal);
+  text-shadow: 0 0 24px var(--signal-glow);
+}
+.leader-name {
+  font-family: var(--f-mono);
+  font-size: 14px;
+  color: var(--bone);
+}
+.leader-name small {
+  display: block;
+  color: var(--bone-faint);
+  font-size: 11px;
+  margin-top: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-weight: 500;
+}
+.leader-config {
+  font-size: 13px;
+  color: var(--bone-dim);
+  font-weight: 400;
+}
+.leader-val {
+  font-family: var(--f-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 36px;
+  line-height: 1;
+  color: var(--bone);
+  text-align: right;
+  font-variation-settings: 'SOFT' 100, 'opsz' 48;
+  letter-spacing: -0.025em;
+}
+.leader-val .unit {
+  font-family: var(--f-mono);
+  font-style: normal;
+  font-size: 11px;
+  color: var(--bone-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  margin-left: 3px;
+}
+
+/* — Faded "failed" section — collapsed feel, still visible — */
+.failed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 0;
+  border-top: 1px solid var(--ink-edge);
+  color: var(--bone-faint);
+  font-family: var(--f-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+.failed .coral { color: var(--coral); }
+
+/* — Footer meta — */
+footer {
+  position: relative;
+  z-index: 1;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: var(--gutter-md) var(--gutter-xl) var(--gutter-xl);
+  border-top: 1px solid var(--ink-edge);
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  color: var(--bone-ghost);
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+}
+
+/* Entrance animation — staggered reveal on page load */
+.reveal { opacity: 0; transform: translateY(12px); animation: reveal 680ms var(--ease) forwards; }
+.reveal-1 { animation-delay: 0ms; }
+.reveal-2 { animation-delay: 80ms; }
+.reveal-3 { animation-delay: 160ms; }
+.reveal-4 { animation-delay: 240ms; }
+.reveal-5 { animation-delay: 320ms; }
+.reveal-6 { animation-delay: 400ms; }
+@keyframes reveal {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Selection */
+::selection { background: var(--signal); color: var(--ink); }
+
+/* Focus */
+*:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wordmark">
+    AIPerf<span class="meta">Cluster · aiperf-prod · us-east-1</span>
+  </div>
+  <div class="nav">
+    <a href="#" class="is-active"><i class="ph ph-pulse"></i>Signal</a>
+    <a href="#"><i class="ph ph-list-bullets"></i>Runs</a>
+    <a href="#"><i class="ph ph-chart-bar"></i>Leaderboard</a>
+    <a href="#"><i class="ph ph-scales"></i>Compare</a>
+    <a href="#"><i class="ph ph-clock-counter-clockwise"></i>History</a>
+  </div>
+  <div class="nav-search">
+    <i class="ph ph-magnifying-glass"></i>Search runs<kbd>⌘K</kbd>
+  </div>
+</div>
+
+<main>
+
+  <!-- HERO -->
+  <section class="hero reveal reveal-1">
+    <div class="hero-verdict">
+      <div class="eyebrow hero-eyebrow"><span class="dot"></span>Live · Benchmark</div>
+      <h1 class="hero-headline">On target<em>.</em></h1>
+      <p class="hero-body">
+        <strong>live-run</strong> has completed <strong>3,348</strong> of 5,400 requests at
+        <strong>31.5 req/s</strong>. Tail latency holding at
+        <strong>240ms p99</strong> against your declared SLO of <strong>500ms</strong>.
+        Estimated completion in <strong>18 minutes</strong>.
+      </p>
+      <div class="hero-chips">
+        <span class="chip chip--live">Running</span>
+        <span class="chip"><i class="ph ph-cpu"></i>8 / 8 workers</span>
+        <span class="chip"><i class="ph ph-lightning"></i>8 GPUs</span>
+        <span class="chip"><i class="ph ph-clock"></i>1d 14h 32m</span>
+        <span class="chip"><i class="ph ph-target"></i>3 SLOs</span>
+      </div>
+    </div>
+
+    <aside class="hero-stats">
+      <div class="hero-stat">
+        <span class="hero-stat-label">Elapsed</span>
+        <span class="hero-stat-val">1d 14h<span class="unit">32m</span></span>
+      </div>
+      <div class="hero-stat">
+        <span class="hero-stat-label">ETA</span>
+        <span class="hero-stat-val">18m<span class="unit">remaining</span></span>
+      </div>
+
+      <div class="phase-stack">
+        <span class="hero-stat-label">Phases</span>
+        <div class="phase-row">
+          <span class="phase-name">warmup</span>
+          <div class="phase-track"><div class="phase-fill phase-fill--done"></div></div>
+          <span class="phase-count">500 / 500</span>
+        </div>
+        <div class="phase-row">
+          <span class="phase-name">benchmark</span>
+          <div class="phase-track"><div class="phase-fill phase-fill--active" style="width: 62%"></div></div>
+          <span class="phase-count">3,348 / 5,400</span>
+        </div>
+      </div>
+    </aside>
+  </section>
+
+  <!-- KPI STRIP -->
+  <section class="kpi-strip reveal reveal-2">
+    <div class="kpi-cell">
+      <div class="kpi-label"><i class="ph ph-trend-up"></i>Peak Throughput</div>
+      <div class="kpi-val kpi-val--accent">78.4<span class="unit">req/s</span></div>
+      <div class="kpi-sub"><strong>aiperf-llama3-c256</strong> · 24h ago</div>
+    </div>
+    <div class="kpi-cell">
+      <div class="kpi-label"><i class="ph ph-timer"></i>Best TTFT</div>
+      <div class="kpi-val">150<span class="unit">ms</span></div>
+      <div class="kpi-sub"><strong>aiperf-llama3-c128</strong></div>
+    </div>
+    <div class="kpi-cell">
+      <div class="kpi-label"><i class="ph ph-activity"></i>Token TPS</div>
+      <div class="kpi-val">10,035<span class="unit">tok/s</span></div>
+      <div class="kpi-sub"><strong>aiperf-llama3-c256</strong></div>
+    </div>
+    <div class="kpi-cell">
+      <div class="kpi-label"><i class="ph ph-play-circle"></i>Running</div>
+      <div class="kpi-val">1</div>
+      <div class="kpi-sub">live · 1d 14h</div>
+    </div>
+    <div class="kpi-cell">
+      <div class="kpi-label"><i class="ph ph-check-circle"></i>Completed</div>
+      <div class="kpi-val">4</div>
+      <div class="kpi-sub">past 7 days · 3 succ · 1 fail</div>
+    </div>
+    <div class="kpi-cell">
+      <div class="kpi-label"><i class="ph ph-shield-check"></i>SLO Passing</div>
+      <div class="kpi-val kpi-val--accent">100<span class="unit">%</span></div>
+      <div class="kpi-sub">0 failed SLOs this run</div>
+    </div>
+  </section>
+
+  <!-- THROUGHPUT VS LATENCY -->
+  <section class="section reveal reveal-3">
+    <div class="section-head">
+      <div class="section-num">— 01</div>
+      <h2 class="section-title">Throughput<br>vs Latency</h2>
+      <p class="section-desc">
+        Every completed benchmark plotted by sustained request throughput
+        against p99 latency. Upper-right quadrant: the good corner.
+      </p>
+    </div>
+    <div class="chart-frame">
+      <div class="chart-toolbar">
+        <button class="is-active">TPS · P99</button>
+        <button>TPS · TTFT</button>
+        <button>TOK · P99</button>
+        <button>Log</button>
+      </div>
+      <canvas id="scatter"></canvas>
+    </div>
+  </section>
+
+  <!-- ACTIVE RUNS -->
+  <section class="section reveal reveal-4">
+    <div class="section-head">
+      <div class="section-num">— 02</div>
+      <h2 class="section-title">Active<br>runs</h2>
+      <p class="section-desc">
+        Live benchmarks on the cluster. Click a row for the full detail view,
+        live throughput chart, and worker roster.
+      </p>
+    </div>
+    <div class="jobs-list">
+      <div class="job-row">
+        <div class="phase-dot running"></div>
+        <div class="job-name">live-run<span class="ns">aiperf-bench · llama3-8b</span></div>
+        <div class="job-throughput">31.5<span class="unit">r/s</span></div>
+        <div class="job-progress">
+          <div class="job-progress-meta"><span>62%</span><span>3,348 / 5,400</span></div>
+          <div class="job-progress-track"><div class="job-progress-fill" style="width: 62%"></div></div>
+        </div>
+        <div class="job-eta"><small>ETA</small>18m</div>
+        <i class="ph ph-arrow-right arrow"></i>
+      </div>
+    </div>
+  </section>
+
+  <!-- LEADERBOARD MINI -->
+  <section class="section reveal reveal-5">
+    <div class="section-head">
+      <div class="section-num">— 03</div>
+      <h2 class="section-title">Fastest<br>of the week</h2>
+      <p class="section-desc">
+        Top runs ranked by request throughput. Configuration, model, and
+        headline number at a glance. Click to compare.
+      </p>
+    </div>
+    <div class="leaderboard">
+      <div class="leaderboard-row">
+        <div class="leader-rank">01</div>
+        <div class="leader-name">aiperf-llama3-c256<small>llama3-8b · conc 256</small></div>
+        <div class="leader-config">8 GPU · H100 · vllm 0.6.3</div>
+        <div class="leader-val">78.4<span class="unit">req/s</span></div>
+      </div>
+      <div class="leaderboard-row">
+        <div class="leader-rank">02</div>
+        <div class="leader-name">mistral-7b-run1<small>mistral-7b · conc 128</small></div>
+        <div class="leader-config">4 GPU · A100 · vllm 0.6.3</div>
+        <div class="leader-val">55.5<span class="unit">req/s</span></div>
+      </div>
+      <div class="leaderboard-row">
+        <div class="leader-rank">03</div>
+        <div class="leader-name">aiperf-llama3-c128<small>llama3-8b · conc 128</small></div>
+        <div class="leader-config">4 GPU · H100 · vllm 0.6.3</div>
+        <div class="leader-val">42.1<span class="unit">req/s</span></div>
+      </div>
+      <div class="leaderboard-row">
+        <div class="leader-rank">04</div>
+        <div class="leader-name">mistral-7b-ghost<small>mistral-7b · conc 64</small></div>
+        <div class="leader-config">2 GPU · A100 · vllm 0.6.2</div>
+        <div class="leader-val">28.9<span class="unit">req/s</span></div>
+      </div>
+    </div>
+
+    <div class="failed">
+      <span>1 run failed · <span class="coral">failed-run</span> · controller crash</span>
+      <span style="letter-spacing: 0.14em">Investigate →</span>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <span>Signal v0.1 · AIPerf · Preview</span>
+  <span>Built on Preact · htm · signals · Chart.js</span>
+</footer>
+
+<script>
+// ———————————————————————————————————————————————————————————————
+// Chart — muted grids, Fraunces axis titles, signal-colored glow points
+// ———————————————————————————————————————————————————————————————
+const signal = '#d4ff4d';
+const cobalt = '#6b8fff';
+const rose   = '#ff8a9b';
+const violet = '#b197fc';
+const boneFaint = 'rgba(244, 238, 225, 0.36)';
+const boneGhost = 'rgba(244, 238, 225, 0.18);';
+const inkEdge = 'rgba(244, 238, 225, 0.08)';
+
+Chart.defaults.font.family = "'DM Sans', sans-serif";
+Chart.defaults.font.size = 11;
+Chart.defaults.color = 'rgba(244, 238, 225, 0.62)';
+
+const ctx = document.getElementById('scatter').getContext('2d');
+new Chart(ctx, {
+  type: 'scatter',
+  data: {
+    datasets: [
+      {
+        label: 'llama3-8b',
+        backgroundColor: (c) => {
+          const v = c.raw;
+          if (!v) return signal;
+          return signal;
+        },
+        borderColor: signal,
+        borderWidth: 1.5,
+        pointRadius: 9,
+        pointHoverRadius: 14,
+        data: [
+          { x: 42.1, y: 390, label: 'c128' },
+          { x: 78.4, y: 533, label: 'c256' },
+        ],
+      },
+      {
+        label: 'mistral-7b',
+        backgroundColor: cobalt,
+        borderColor: cobalt,
+        borderWidth: 1.5,
+        pointRadius: 9,
+        pointHoverRadius: 14,
+        data: [
+          { x: 28.9, y: 442, label: 'run1' },
+          { x: 55.5, y: 421, label: 'ghost' },
+        ],
+      },
+    ],
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    layout: { padding: { top: 28, right: 24, bottom: 8, left: 8 } },
+    plugins: {
+      legend: {
+        position: 'bottom',
+        align: 'start',
+        labels: {
+          usePointStyle: true,
+          pointStyle: 'circle',
+          boxWidth: 8,
+          padding: 18,
+          font: { family: "'JetBrains Mono', monospace", size: 11 },
+          color: 'rgba(244, 238, 225, 0.62)',
+        },
+      },
+      tooltip: {
+        backgroundColor: 'rgba(8, 10, 14, 0.98)',
+        borderColor: 'rgba(212, 255, 77, 0.32)',
+        borderWidth: 1,
+        padding: 14,
+        cornerRadius: 2,
+        titleFont: { family: "'Fraunces', serif", style: 'italic', weight: '400', size: 18 },
+        bodyFont: { family: "'JetBrains Mono', monospace", size: 11 },
+        displayColors: false,
+        callbacks: {
+          title: (items) => items[0].raw.label || '',
+          label: (ctx) => [`${ctx.raw.x.toFixed(1)} req/s`, `${ctx.raw.y} ms p99`],
+        },
+      },
+    },
+    scales: {
+      x: {
+        type: 'linear',
+        title: {
+          display: true,
+          text: 'Throughput (req/s)',
+          font: { family: "'Fraunces', serif", style: 'italic', size: 14, weight: '400' },
+          color: 'rgba(244, 238, 225, 0.62)',
+          padding: { top: 16 },
+        },
+        grid: { color: inkEdge, drawTicks: false },
+        border: { display: false },
+        ticks: { padding: 10, color: 'rgba(244, 238, 225, 0.36)' },
+      },
+      y: {
+        title: {
+          display: true,
+          text: 'Latency p99 (ms)',
+          font: { family: "'Fraunces', serif", style: 'italic', size: 14, weight: '400' },
+          color: 'rgba(244, 238, 225, 0.62)',
+          padding: { bottom: 16 },
+        },
+        grid: { color: inkEdge, drawTicks: false },
+        border: { display: false },
+        ticks: { padding: 10, color: 'rgba(244, 238, 225, 0.36)' },
+      },
+    },
+  },
+});
+</script>
+
+</body>
+</html>

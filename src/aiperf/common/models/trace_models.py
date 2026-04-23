@@ -272,7 +272,7 @@ class BaseTraceData(
         cls, json_or_dict: str | bytes | bytearray | dict[str, Any]
     ) -> BaseTraceData:
         """Rehydrate a trace-data instance from its dict/JSON representation."""
-        if isinstance(json_or_dict, bytes | bytearray | str):
+        if isinstance(json_or_dict, (bytes, bytearray, str)):
             data = msgspec.json.decode(json_or_dict)
         else:
             data = dict(json_or_dict)

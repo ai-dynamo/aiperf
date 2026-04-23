@@ -12,6 +12,8 @@ from aiperf.config.cli_model import CLIModel
 from aiperf.config.kube import KubeOptions
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from aiperf.config import AIPerfConfig
 
 app = App(name="profile")
@@ -121,7 +123,7 @@ def generate_benchmark_name(config: AIPerfConfig) -> str:
     return re.sub(r"[^a-z0-9-]", "-", raw).strip("-")[:40]
 
 
-def _resolve_config(cli_model: Any, config_file: Any) -> Any:
+def _resolve_config(cli_model: CLIModel, config_file: Path | None) -> AIPerfConfig:
     """Return AIPerfConfig from a plain YAML file or CLI flags."""
     if config_file is not None:
         from aiperf.config.loader import load_config

@@ -243,7 +243,7 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         if isinstance(values, MetricSeriesProtocol):
             return values.to_result(tag, metric_class.header, str(metric_class.unit))
 
-        if isinstance(values, int | float):
+        if isinstance(values, (int, float)):
             return MetricResult(
                 tag=metric_class.tag,
                 header=metric_class.header,

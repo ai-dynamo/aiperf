@@ -55,7 +55,7 @@ def is_file_dataset(dataset: DatasetConfig) -> bool:
     """Check if dataset is file-based (FILE or COMPOSED)."""
     from aiperf.config.dataset import ComposedDataset, FileDataset
 
-    return isinstance(dataset, FileDataset | ComposedDataset)
+    return isinstance(dataset, (FileDataset, ComposedDataset))
 
 
 def is_synthetic_dataset(dataset: DatasetConfig) -> bool:

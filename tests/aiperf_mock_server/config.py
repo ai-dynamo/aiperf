@@ -275,6 +275,6 @@ def _get_env_key(config_key: str) -> str:
 
 def _serialize_env_value(value: Any) -> str:
     """Serialize value for environment variable storage."""
-    if isinstance(value, list | dict):
+    if isinstance(value, (list, dict)):
         return json.dumps(value)
     return str(value)

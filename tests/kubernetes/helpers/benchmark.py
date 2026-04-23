@@ -212,7 +212,7 @@ class BenchmarkMetrics:
             val = source.get(tag)
             if isinstance(val, dict):
                 avg = val.get("avg")
-            elif isinstance(val, int | float):
+            elif isinstance(val, (int, float)):
                 avg = val
             else:
                 continue

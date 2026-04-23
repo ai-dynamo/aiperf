@@ -126,9 +126,7 @@ class TestOverwritePrompt:
         assert output_file.read_text() == "do not overwrite"
         assert "Aborted" in capsys.readouterr().out
 
-    def test_overwrites_when_user_confirms(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
+    def test_overwrites_when_user_confirms(self, tmp_path: Path, monkeypatch) -> None:
         output_file = tmp_path / "existing.yaml"
         output_file.write_text("do not overwrite")
 

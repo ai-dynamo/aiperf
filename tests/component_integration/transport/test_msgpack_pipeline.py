@@ -56,7 +56,7 @@ class TestMsgpackPipeline:
             for payload in runner_result.sent_payloads
             if isinstance(
                 payload.payload,
-                MetricRecordsWireMessage | MetricRecordsBatchWireMessage,
+                (MetricRecordsWireMessage, MetricRecordsBatchWireMessage),
             )
         ]
 

@@ -1,0 +1,1100 @@
+<!DOCTYPE html>
+<!--
+  SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  SPDX-License-Identifier: Apache-2.0
+
+  CONSOLE — operator UI redesign v2.
+  Pro-audio / broadcast instrument aesthetic. No serifs. Heavy mono numbers.
+  Amber meter-needle accent. Sharp rectangles.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CONSOLE · AIPerf</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Host+Grotesk:ital,wght@0,300..800;1,300..800&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="https://unpkg.com/@phosphor-icons/web@2"></script>
+
+<style>
+:root {
+  /* Warm gunmetal base, never black */
+  --ink-0:   #0e1014;
+  --ink-1:   #141822;
+  --ink-2:   #1b2030;
+  --ink-3:   #232a3e;
+
+  /* Hair / edge tones */
+  --edge-1:  rgba(244, 240, 225, 0.06);
+  --edge-2:  rgba(244, 240, 225, 0.12);
+  --edge-3:  rgba(244, 240, 225, 0.20);
+
+  /* Paper / text */
+  --paper:       #f4f0e1;
+  --paper-dim:   rgba(244, 240, 225, 0.62);
+  --paper-faint: rgba(244, 240, 225, 0.36);
+  --paper-ghost: rgba(244, 240, 225, 0.18);
+
+  /* Amber meter-needle — the dominant accent */
+  --amber:       #ff9f1c;
+  --amber-hot:   #ffb547;
+  --amber-bed:   rgba(255, 159, 28, 0.14);
+  --amber-glow:  rgba(255, 159, 28, 0.32);
+
+  /* Secondary / warnings */
+  --cyan:        #3ad8e3;       /* neutral signal */
+  --red:         #ff5c5c;       /* error */
+  --green:       #7ccf5e;       /* pass / ok */
+  --purple:      #b59aff;       /* tertiary data */
+
+  --f-display:   'Host Grotesk', -apple-system, 'Helvetica Neue', sans-serif;
+  --f-sans:      'Host Grotesk', -apple-system, 'Helvetica Neue', sans-serif;
+  --f-mono:      'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  background: var(--ink-0);
+  color: var(--paper);
+  font-family: var(--f-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  font-feature-settings: 'ss01', 'cv11', 'tnum' 1;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Faint grid overlay + localized atmosphere */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(244, 240, 225, 0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(244, 240, 225, 0.015) 1px, transparent 1px);
+  background-size: 48px 48px;
+  pointer-events: none;
+  z-index: 0;
+}
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 900px 600px at 50% 0%, var(--amber-bed), transparent 60%);
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* — RACK HEADER — */
+.rack-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 0 36px;
+  height: 64px;
+  background: rgba(14, 16, 20, 0.88);
+  backdrop-filter: blur(24px) saturate(1.3);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
+  border-bottom: 1px solid var(--edge-1);
+}
+.mark {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-family: var(--f-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--paper);
+}
+.mark-light {
+  width: 10px; height: 10px;
+  background: var(--amber);
+  box-shadow: 0 0 0 2px var(--amber-bed), 0 0 14px var(--amber-glow);
+  animation: mark-pulse 1.8s ease-in-out infinite;
+}
+@keyframes mark-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 2px var(--amber-bed), 0 0 14px var(--amber-glow); }
+  50%      { opacity: 0.55; box-shadow: 0 0 0 6px transparent, 0 0 22px var(--amber-glow); }
+}
+.mark-meta {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  color: var(--paper-faint);
+  padding-left: 14px;
+  border-left: 1px solid var(--edge-1);
+}
+
+.nav-stack {
+  display: flex;
+  gap: 1px;
+  background: var(--edge-1);
+  border: 1px solid var(--edge-1);
+  padding: 1px;
+}
+.nav-btn {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--paper-dim);
+  background: var(--ink-0);
+  padding: 9px 18px;
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 120ms linear;
+}
+.nav-btn .ph { font-size: 12px; opacity: 0.6; }
+.nav-btn:hover { color: var(--paper); background: var(--ink-1); }
+.nav-btn.is-active {
+  color: var(--ink-0);
+  background: var(--amber);
+}
+.nav-btn.is-active .ph { opacity: 1; }
+
+.header-right {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 16px;
+}
+.search-btn {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  background: transparent;
+  border: 1px solid var(--edge-1);
+  padding: 8px 14px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  transition: all 120ms linear;
+}
+.search-btn:hover { border-color: var(--edge-2); color: var(--paper-dim); }
+.search-btn kbd {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  padding: 2px 5px;
+  background: var(--ink-2);
+  border: 1px solid var(--edge-1);
+  color: var(--paper-faint);
+}
+
+/* — CANVAS — */
+main {
+  position: relative;
+  z-index: 1;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 36px;
+}
+
+/* Labels / eyebrows */
+.label {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+}
+.label.label--amber { color: var(--amber); }
+
+/* — HERO / STATUS STRIP — */
+.status {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 48px;
+  padding: 36px 40px;
+  border: 1px solid var(--edge-1);
+  background:
+    linear-gradient(180deg, rgba(27, 32, 48, 0.4) 0%, transparent 100%),
+    var(--ink-1);
+  position: relative;
+  overflow: hidden;
+}
+.status::before {
+  /* Inset amber glow strip on the top edge — the "power rail" */
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, var(--amber) 20%, var(--amber) 80%, transparent 100%);
+  box-shadow: 0 0 12px var(--amber-glow);
+}
+
+.status-head { display: flex; flex-direction: column; gap: 12px; }
+.status-label-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 4px;
+}
+.status-verdict {
+  font-family: var(--f-display);
+  font-weight: 800;
+  font-size: 88px;
+  line-height: 0.88;
+  letter-spacing: -0.045em;
+  color: var(--paper);
+  display: flex;
+  align-items: baseline;
+  gap: 20px;
+}
+.status-verdict .mark-glyph {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  background: var(--amber);
+  box-shadow: 0 0 24px var(--amber-glow);
+  transform: translateY(-8px);
+}
+.status-verdict .mark-glyph--warn {
+  background: var(--amber);
+  box-shadow: 0 0 24px var(--amber-glow);
+  animation: mark-pulse 1.4s ease-in-out infinite;
+}
+.status-verdict .mark-glyph--err {
+  background: var(--red);
+  box-shadow: 0 0 24px rgba(255, 92, 92, 0.4);
+}
+.chip.chip--warn {
+  color: var(--amber);
+  border-color: rgba(255, 159, 28, 0.4);
+  background: var(--amber-bed);
+  animation: mark-pulse 1.8s ease-in-out infinite;
+}
+.status-body {
+  margin-top: 18px;
+  font-size: 14px;
+  color: var(--paper-dim);
+  max-width: 58ch;
+  line-height: 1.55;
+}
+.status-body strong {
+  color: var(--paper);
+  font-weight: 600;
+}
+
+.status-meters { display: flex; flex-direction: column; gap: 24px; min-width: 240px; border-left: 1px solid var(--edge-1); padding-left: 40px; }
+.meter { display: flex; flex-direction: column; gap: 6px; }
+.meter-val {
+  font-family: var(--f-mono);
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 0.9;
+  color: var(--paper);
+  letter-spacing: -0.02em;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.meter-val.meter-val--amber { color: var(--amber); text-shadow: 0 0 20px var(--amber-glow); }
+.meter-val .unit {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--paper-faint);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.status-phases {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 320px;
+  border-left: 1px solid var(--edge-1);
+  padding-left: 40px;
+}
+.phase-line {
+  display: grid;
+  grid-template-columns: 96px 1fr 80px;
+  gap: 12px;
+  align-items: center;
+}
+.phase-label {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--paper-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+}
+.phase-meter {
+  height: 6px;
+  background: var(--ink-2);
+  border: 1px solid var(--edge-1);
+  overflow: hidden;
+  position: relative;
+}
+.phase-fill {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  background: var(--paper-ghost);
+}
+.phase-fill--done { width: 100%; background: var(--paper-ghost); }
+.phase-fill--active {
+  background: var(--amber);
+  box-shadow: inset 0 0 8px rgba(255, 255, 255, 0.3);
+  animation: rail 2.2s ease-in-out infinite;
+}
+@keyframes rail {
+  0%, 100% { box-shadow: inset 0 0 8px rgba(255, 255, 255, 0.3), 0 0 10px var(--amber-glow); }
+  50%      { box-shadow: inset 0 0 8px rgba(255, 255, 255, 0.4), 0 0 20px var(--amber-glow); }
+}
+.phase-count {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--paper-faint);
+  text-align: right;
+  letter-spacing: 0.04em;
+}
+
+.status-chips { margin-top: 24px; display: flex; gap: 8px; flex-wrap: wrap; grid-column: 1 / -1; }
+.chip {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--paper-dim);
+  padding: 6px 11px;
+  border: 1px solid var(--edge-1);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.chip .ph { font-size: 12px; opacity: 0.7; }
+.chip.chip--live { color: var(--amber); border-color: rgba(255, 159, 28, 0.28); background: var(--amber-bed); }
+.chip.chip--live::before {
+  content: '';
+  width: 5px; height: 5px;
+  background: var(--amber);
+  box-shadow: 0 0 8px var(--amber-glow);
+  animation: mark-pulse 1.8s ease-in-out infinite;
+}
+
+/* — METER BANK — KPI row, no boxes, hair dividers — */
+.meter-bank {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  border: 1px solid var(--edge-1);
+  border-top: none;
+  background: var(--ink-1);
+}
+.meter-slot {
+  padding: 24px 20px 22px;
+  border-left: 1px solid var(--edge-1);
+  position: relative;
+  transition: background 120ms linear;
+}
+.meter-slot:first-child { border-left: none; }
+.meter-slot:hover { background: var(--ink-2); }
+.meter-slot::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--amber);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 240ms linear;
+}
+.meter-slot:hover::before { transform: scaleX(1); }
+
+.meter-slot-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.meter-slot-label .ph { font-size: 12px; color: var(--paper-dim); opacity: 0.8; }
+.meter-slot-label .label { letter-spacing: 0.22em; }
+.meter-slot-val {
+  font-family: var(--f-mono);
+  font-weight: 700;
+  font-size: 44px;
+  line-height: 0.95;
+  letter-spacing: -0.03em;
+  color: var(--paper);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.meter-slot-val.is-amber { color: var(--amber); text-shadow: 0 0 14px var(--amber-glow); }
+.meter-slot-val.is-red { color: var(--red); }
+.meter-slot-val.is-green { color: var(--green); }
+.meter-slot-val .unit {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--paper-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+}
+.meter-slot-sub {
+  margin-top: 12px;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  color: var(--paper-faint);
+  letter-spacing: 0.06em;
+}
+.meter-slot-sub strong { color: var(--paper-dim); font-weight: 500; }
+
+/* — SECTION / PANEL — */
+.panel {
+  margin-top: 36px;
+  border: 1px solid var(--edge-1);
+  background: var(--ink-1);
+}
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--edge-1);
+  background:
+    linear-gradient(180deg, rgba(27, 32, 48, 0.4) 0%, transparent 100%),
+    var(--ink-1);
+}
+.panel-title {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--paper);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.panel-title::before {
+  content: '';
+  width: 8px; height: 8px;
+  background: var(--amber);
+  box-shadow: 0 0 10px var(--amber-glow);
+}
+.panel-title small {
+  font-weight: 500;
+  color: var(--paper-faint);
+  letter-spacing: 0.16em;
+  padding-left: 14px;
+  margin-left: 4px;
+  border-left: 1px solid var(--edge-1);
+}
+.panel-actions { display: flex; gap: 4px; }
+.panel-actions button {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  background: transparent;
+  color: var(--paper-faint);
+  border: 1px solid transparent;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: all 120ms linear;
+}
+.panel-actions button:hover { color: var(--paper-dim); }
+.panel-actions button.is-active {
+  color: var(--amber);
+  border-color: rgba(255, 159, 28, 0.28);
+  background: var(--amber-bed);
+}
+.panel-body { padding: 28px 24px; }
+.panel-body.panel-body--chart { height: 420px; padding: 20px 12px 12px; }
+
+/* — RUN LIST — one row per live benchmark — */
+.run-list { display: flex; flex-direction: column; }
+.run-row {
+  display: grid;
+  grid-template-columns: 14px 1fr 120px 260px 180px 90px 16px;
+  align-items: center;
+  gap: 20px;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--edge-1);
+  cursor: pointer;
+  transition: background 120ms linear;
+}
+.run-row:last-child { border-bottom: none; }
+.run-row:hover { background: var(--ink-2); }
+.run-dot { width: 8px; height: 8px; background: var(--paper-ghost); }
+.run-dot.running {
+  background: var(--amber);
+  box-shadow: 0 0 10px var(--amber-glow);
+  animation: mark-pulse 1.8s ease-in-out infinite;
+}
+.run-dot.failed { background: var(--red); }
+.run-dot.done { background: var(--paper-ghost); }
+
+.run-name {
+  font-family: var(--f-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--paper);
+}
+.run-name small {
+  display: block;
+  font-weight: 500;
+  color: var(--paper-faint);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  margin-top: 5px;
+}
+
+/* Per-run verdict chip — sharp rectangle, color-coded */
+.verdict {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 5px 9px;
+  border: 1px solid currentColor;
+  text-align: center;
+  white-space: nowrap;
+}
+.verdict--ok   { color: var(--green); background: rgba(124, 207, 94, 0.08); }
+.verdict--warn { color: var(--amber); background: var(--amber-bed); }
+.verdict--err  { color: var(--red);   background: rgba(255, 92, 92, 0.08); }
+
+/* Inline stats strip — R/S, TTFT, P99 */
+.run-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+  border-left: 1px solid var(--edge-1);
+  padding-left: 18px;
+}
+.run-stat { display: flex; flex-direction: column; gap: 3px; }
+.run-stat .label { font-size: 9px; letter-spacing: 0.2em; }
+.run-stat-val {
+  font-family: var(--f-mono);
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--paper);
+  letter-spacing: -0.015em;
+}
+.run-stat-val.is-amber { color: var(--amber); }
+.run-stat-val.is-red { color: var(--red); }
+.run-stat-val small {
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--paper-faint);
+  letter-spacing: 0.14em;
+  margin-left: 2px;
+  text-transform: uppercase;
+}
+
+.run-prog {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.run-prog-meta {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--f-mono);
+  font-size: 9px;
+  color: var(--paper-faint);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+.run-prog-track { height: 4px; background: var(--ink-2); border: 1px solid var(--edge-1); overflow: hidden; }
+.run-prog-fill { height: 100%; background: var(--amber); box-shadow: 0 0 8px var(--amber-glow); }
+
+.run-eta {
+  font-family: var(--f-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--paper-dim);
+  text-align: right;
+  letter-spacing: -0.01em;
+}
+.run-eta small {
+  display: block;
+  font-size: 9px;
+  color: var(--paper-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  margin-bottom: 3px;
+  font-weight: 500;
+}
+.run-row .arrow {
+  color: var(--paper-ghost);
+  transition: transform 160ms linear, color 120ms linear;
+}
+.run-row:hover .arrow { color: var(--amber); transform: translateX(4px); }
+
+/* — LEADERBOARD — */
+.ldr-row {
+  display: grid;
+  grid-template-columns: 60px 1fr 180px 140px 120px;
+  align-items: center;
+  gap: 24px;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--edge-1);
+}
+.ldr-row:last-child { border-bottom: none; }
+.ldr-rank {
+  font-family: var(--f-mono);
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--paper-ghost);
+  letter-spacing: 0.04em;
+}
+.ldr-row:first-child .ldr-rank {
+  color: var(--amber);
+  text-shadow: 0 0 14px var(--amber-glow);
+}
+.ldr-name {
+  font-family: var(--f-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--paper);
+}
+.ldr-name small {
+  display: block;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--paper-faint);
+  margin-top: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+.ldr-config {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--paper-dim);
+  letter-spacing: 0.02em;
+}
+.ldr-sparkline { height: 30px; }
+.ldr-val {
+  font-family: var(--f-mono);
+  font-weight: 700;
+  font-size: 26px;
+  color: var(--paper);
+  text-align: right;
+  letter-spacing: -0.02em;
+}
+.ldr-val .unit { font-size: 10px; font-weight: 500; color: var(--paper-faint); letter-spacing: 0.14em; margin-left: 3px; text-transform: uppercase; }
+
+.footnote {
+  margin-top: 24px;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  display: flex;
+  justify-content: space-between;
+  padding: 14px 24px;
+  border: 1px solid var(--edge-1);
+  border-top: 2px solid var(--red);
+  background: var(--ink-1);
+}
+.footnote .red { color: var(--red); font-weight: 700; }
+
+/* Entrance */
+.reveal { opacity: 0; transform: translateY(8px); animation: reveal 580ms ease-out forwards; }
+.reveal-1 { animation-delay: 0ms; }
+.reveal-2 { animation-delay: 60ms; }
+.reveal-3 { animation-delay: 120ms; }
+.reveal-4 { animation-delay: 180ms; }
+.reveal-5 { animation-delay: 240ms; }
+@keyframes reveal { to { opacity: 1; transform: translateY(0); } }
+
+::selection { background: var(--amber); color: var(--ink-0); }
+*:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+/* footer */
+.console-footer {
+  padding: 28px 36px;
+  border-top: 1px solid var(--edge-1);
+  max-width: 1440px;
+  margin: 48px auto 0;
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--paper-ghost);
+}
+</style>
+</head>
+<body>
+
+<div class="rack-header">
+  <div class="mark">
+    <div class="mark-light"></div>
+    AIPERF · CONSOLE
+    <span class="mark-meta">CLUSTER · AIPERF-PROD · US-EAST-1</span>
+  </div>
+  <nav class="nav-stack">
+    <button class="nav-btn is-active"><i class="ph ph-waveform"></i>CONSOLE</button>
+    <button class="nav-btn"><i class="ph ph-list-numbers"></i>RUNS</button>
+    <button class="nav-btn"><i class="ph ph-chart-bar"></i>BOARD</button>
+    <button class="nav-btn"><i class="ph ph-scales"></i>COMPARE</button>
+    <button class="nav-btn"><i class="ph ph-clock-counter-clockwise"></i>LOG</button>
+  </nav>
+  <div class="header-right">
+    <button class="search-btn"><i class="ph ph-magnifying-glass"></i>Search<kbd>⌘K</kbd></button>
+  </div>
+</div>
+
+<main>
+
+  <!-- FLEET STATUS — aggregate across all running benchmarks, 0..N -->
+  <section class="status reveal reveal-1">
+    <div class="status-head">
+      <div class="status-label-row">
+        <span class="label label--amber">▸ FLEET</span>
+        <span class="label">STATUS</span>
+        <span class="label">▸ 3 LIVE · 2 NAMESPACES</span>
+      </div>
+      <h1 class="status-verdict">2 OF 3 ON TARGET<span class="mark-glyph mark-glyph--warn"></span></h1>
+      <p class="status-body">
+        <strong>3</strong> benchmarks running across
+        <strong>aiperf-bench</strong> and <strong>ml-lab</strong>.
+        Aggregate throughput <strong>84.7 req/s</strong>. One run
+        (<strong>llama-c512</strong>) is missing its TTFT SLO —
+        <strong>520ms p99</strong> against declared <strong>500ms</strong>.
+      </p>
+      <div class="status-chips">
+        <span class="chip chip--live">3 RUNNING</span>
+        <span class="chip chip--warn">1 SLIPPING</span>
+        <span class="chip"><i class="ph ph-cpu"></i>20 / 20 WORKERS</span>
+        <span class="chip"><i class="ph ph-lightning"></i>20 GPUs</span>
+        <span class="chip"><i class="ph ph-stack"></i>2 NS</span>
+        <span class="chip"><i class="ph ph-target"></i>6 / 7 SLOs</span>
+      </div>
+    </div>
+
+    <div class="status-meters">
+      <div class="meter">
+        <span class="label">FLEET R/S</span>
+        <span class="meter-val meter-val--amber">84.7</span>
+      </div>
+      <div class="meter">
+        <span class="label">WORST P99</span>
+        <span class="meter-val">420<span class="unit">ms</span></span>
+      </div>
+    </div>
+
+    <div class="status-phases">
+      <span class="label">CLUSTER LOAD</span>
+      <div class="phase-line">
+        <span class="phase-label">GPUs</span>
+        <div class="phase-meter"><div class="phase-fill phase-fill--active" style="width: 83%"></div></div>
+        <span class="phase-count">20/24</span>
+      </div>
+      <div class="phase-line">
+        <span class="phase-label">NODES</span>
+        <div class="phase-meter"><div class="phase-fill phase-fill--active" style="width: 60%"></div></div>
+        <span class="phase-count">3/5</span>
+      </div>
+      <div class="phase-line">
+        <span class="phase-label">SLOs</span>
+        <div class="phase-meter"><div class="phase-fill phase-fill--done" style="width: 100%"></div></div>
+        <span class="phase-count">7/7</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- METER BANK -->
+  <section class="meter-bank reveal reveal-2">
+    <div class="meter-slot">
+      <div class="meter-slot-label"><i class="ph ph-trend-up"></i><span class="label">PEAK R/S</span></div>
+      <div class="meter-slot-val is-amber">78.4</div>
+      <div class="meter-slot-sub"><strong>c256</strong> · 24h ago</div>
+    </div>
+    <div class="meter-slot">
+      <div class="meter-slot-label"><i class="ph ph-timer"></i><span class="label">BEST TTFT</span></div>
+      <div class="meter-slot-val">150<span class="unit">ms</span></div>
+      <div class="meter-slot-sub"><strong>c128</strong> · llama3-8b</div>
+    </div>
+    <div class="meter-slot">
+      <div class="meter-slot-label"><i class="ph ph-activity"></i><span class="label">TOK / S</span></div>
+      <div class="meter-slot-val">10,035</div>
+      <div class="meter-slot-sub"><strong>c256</strong></div>
+    </div>
+    <div class="meter-slot">
+      <div class="meter-slot-label"><i class="ph ph-play"></i><span class="label">LIVE</span></div>
+      <div class="meter-slot-val">1</div>
+      <div class="meter-slot-sub">1d 14h elapsed</div>
+    </div>
+    <div class="meter-slot">
+      <div class="meter-slot-label"><i class="ph ph-check"></i><span class="label">DONE / 7d</span></div>
+      <div class="meter-slot-val">4</div>
+      <div class="meter-slot-sub">3 succ · <span style="color: var(--red)">1 fail</span></div>
+    </div>
+    <div class="meter-slot">
+      <div class="meter-slot-label"><i class="ph ph-shield-check"></i><span class="label">SLO PASS</span></div>
+      <div class="meter-slot-val is-green">100<span class="unit">%</span></div>
+      <div class="meter-slot-sub">0 / 3 failed</div>
+    </div>
+  </section>
+
+  <!-- THROUGHPUT VS LATENCY CHART PANEL -->
+  <section class="panel reveal reveal-3">
+    <div class="panel-header">
+      <div class="panel-title">SCATTER · TPS × P99<small>all stored runs</small></div>
+      <div class="panel-actions">
+        <button class="is-active">TPS · P99</button>
+        <button>TPS · TTFT</button>
+        <button>TOK · P99</button>
+        <button>LOG</button>
+      </div>
+    </div>
+    <div class="panel-body panel-body--chart"><canvas id="scatter"></canvas></div>
+  </section>
+
+  <!-- ACTIVE RUNS — one detailed row per live benchmark -->
+  <section class="panel reveal reveal-4">
+    <div class="panel-header">
+      <div class="panel-title">ACTIVE RUNS<small>3 live · 2 namespaces</small></div>
+      <div class="panel-actions"><button>VIEW ALL →</button></div>
+    </div>
+    <div class="run-list">
+
+      <div class="run-row run-row--live">
+        <span class="run-dot running"></span>
+        <div class="run-name">live-run<small>AIPERF-BENCH · LLAMA3-8B · CONC 256</small></div>
+        <span class="verdict verdict--ok">ON TARGET</span>
+        <div class="run-stats">
+          <div class="run-stat"><span class="label">R/S</span><span class="run-stat-val">31.5</span></div>
+          <div class="run-stat"><span class="label">TTFT</span><span class="run-stat-val">240<small>ms</small></span></div>
+          <div class="run-stat"><span class="label">P99</span><span class="run-stat-val">380<small>ms</small></span></div>
+        </div>
+        <div class="run-prog">
+          <div class="run-prog-meta"><span>BENCHMARK · 62%</span><span>3,348 / 5,400</span></div>
+          <div class="run-prog-track"><div class="run-prog-fill" style="width: 62%"></div></div>
+        </div>
+        <div class="run-eta"><small>ETA</small>18m</div>
+        <i class="ph ph-arrow-right arrow"></i>
+      </div>
+
+      <div class="run-row run-row--live">
+        <span class="run-dot running"></span>
+        <div class="run-name">mistral-sweep<small>ML-LAB · MISTRAL-7B · CONC 128</small></div>
+        <span class="verdict verdict--ok">ON TARGET</span>
+        <div class="run-stats">
+          <div class="run-stat"><span class="label">R/S</span><span class="run-stat-val">28.2</span></div>
+          <div class="run-stat"><span class="label">TTFT</span><span class="run-stat-val">185<small>ms</small></span></div>
+          <div class="run-stat"><span class="label">P99</span><span class="run-stat-val">320<small>ms</small></span></div>
+        </div>
+        <div class="run-prog">
+          <div class="run-prog-meta"><span>WARMUP · 48%</span><span>240 / 500</span></div>
+          <div class="run-prog-track"><div class="run-prog-fill" style="width: 48%"></div></div>
+        </div>
+        <div class="run-eta"><small>ETA</small>42m</div>
+        <i class="ph ph-arrow-right arrow"></i>
+      </div>
+
+      <div class="run-row run-row--live">
+        <span class="run-dot running"></span>
+        <div class="run-name">llama-c512<small>AIPERF-BENCH · LLAMA3-8B · CONC 512</small></div>
+        <span class="verdict verdict--warn">SLO SLIPPING</span>
+        <div class="run-stats">
+          <div class="run-stat"><span class="label">R/S</span><span class="run-stat-val is-amber">25.0</span></div>
+          <div class="run-stat"><span class="label">TTFT</span><span class="run-stat-val is-amber">520<small>ms</small></span></div>
+          <div class="run-stat"><span class="label">P99</span><span class="run-stat-val">420<small>ms</small></span></div>
+        </div>
+        <div class="run-prog">
+          <div class="run-prog-meta"><span>BENCHMARK · 24%</span><span>1,200 / 5,000</span></div>
+          <div class="run-prog-track"><div class="run-prog-fill" style="width: 24%"></div></div>
+        </div>
+        <div class="run-eta"><small>ETA</small>1h 8m</div>
+        <i class="ph ph-arrow-right arrow"></i>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- LEADERBOARD -->
+  <section class="panel reveal reveal-5">
+    <div class="panel-header">
+      <div class="panel-title">LEADERBOARD · REQ/S<small>top 4 past 7d</small></div>
+      <div class="panel-actions"><button class="is-active">REQ/S</button><button>P99</button><button>TTFT</button></div>
+    </div>
+    <div>
+      <div class="ldr-row">
+        <div class="ldr-rank">01</div>
+        <div class="ldr-name">aiperf-llama3-c256<small>llama3-8b · conc 256</small></div>
+        <div class="ldr-config">8 GPU · H100 · vllm 0.6.3</div>
+        <svg class="ldr-sparkline" viewBox="0 0 120 30" preserveAspectRatio="none">
+          <polyline fill="none" stroke="#ff9f1c" stroke-width="1.6" points="0,22 15,20 30,18 45,14 60,10 75,8 90,6 105,5 120,4"/>
+          <circle cx="120" cy="4" r="2" fill="#ff9f1c"/>
+        </svg>
+        <div class="ldr-val">78.4<span class="unit">r/s</span></div>
+      </div>
+      <div class="ldr-row">
+        <div class="ldr-rank">02</div>
+        <div class="ldr-name">mistral-7b-run1<small>mistral-7b · conc 128</small></div>
+        <div class="ldr-config">4 GPU · A100 · vllm 0.6.3</div>
+        <svg class="ldr-sparkline" viewBox="0 0 120 30" preserveAspectRatio="none">
+          <polyline fill="none" stroke="rgba(244,240,225,0.4)" stroke-width="1.4" points="0,24 15,22 30,22 45,18 60,16 75,14 90,12 105,13 120,12"/>
+          <circle cx="120" cy="12" r="1.8" fill="rgba(244,240,225,0.6)"/>
+        </svg>
+        <div class="ldr-val">55.5<span class="unit">r/s</span></div>
+      </div>
+      <div class="ldr-row">
+        <div class="ldr-rank">03</div>
+        <div class="ldr-name">aiperf-llama3-c128<small>llama3-8b · conc 128</small></div>
+        <div class="ldr-config">4 GPU · H100 · vllm 0.6.3</div>
+        <svg class="ldr-sparkline" viewBox="0 0 120 30" preserveAspectRatio="none">
+          <polyline fill="none" stroke="rgba(244,240,225,0.4)" stroke-width="1.4" points="0,18 15,20 30,16 45,18 60,15 75,17 90,16 105,17 120,16"/>
+          <circle cx="120" cy="16" r="1.8" fill="rgba(244,240,225,0.6)"/>
+        </svg>
+        <div class="ldr-val">42.1<span class="unit">r/s</span></div>
+      </div>
+      <div class="ldr-row">
+        <div class="ldr-rank">04</div>
+        <div class="ldr-name">mistral-7b-ghost<small>mistral-7b · conc 64</small></div>
+        <div class="ldr-config">2 GPU · A100 · vllm 0.6.2</div>
+        <svg class="ldr-sparkline" viewBox="0 0 120 30" preserveAspectRatio="none">
+          <polyline fill="none" stroke="rgba(244,240,225,0.4)" stroke-width="1.4" points="0,20 15,19 30,21 45,19 60,20 75,21 90,20 105,21 120,22"/>
+          <circle cx="120" cy="22" r="1.8" fill="rgba(244,240,225,0.6)"/>
+        </svg>
+        <div class="ldr-val">28.9<span class="unit">r/s</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="footnote">
+    <span>1 RUN FAILED · <span class="red">FAILED-RUN</span> · CONTROLLER CRASH</span>
+    <span>▸ INVESTIGATE</span>
+  </div>
+
+</main>
+
+<div class="console-footer">
+  <span>CONSOLE v0.2 · AIPERF · PREVIEW</span>
+  <span>PREACT · HTM · SIGNALS · CHART.JS</span>
+</div>
+
+<script>
+const amber = '#ff9f1c';
+const cyan = '#3ad8e3';
+const paperFaint = 'rgba(244, 240, 225, 0.36)';
+const edge1 = 'rgba(244, 240, 225, 0.06)';
+
+Chart.defaults.font.family = "'JetBrains Mono', monospace";
+Chart.defaults.font.size = 10;
+Chart.defaults.color = paperFaint;
+
+new Chart(document.getElementById('scatter').getContext('2d'), {
+  type: 'scatter',
+  data: {
+    datasets: [
+      {
+        label: 'llama3-8b',
+        backgroundColor: amber,
+        borderColor: amber,
+        borderWidth: 1.5,
+        pointRadius: 8,
+        pointHoverRadius: 12,
+        data: [
+          { x: 42.1, y: 390, label: 'c128' },
+          { x: 78.4, y: 533, label: 'c256' },
+        ],
+      },
+      {
+        label: 'mistral-7b',
+        backgroundColor: cyan,
+        borderColor: cyan,
+        borderWidth: 1.5,
+        pointRadius: 8,
+        pointHoverRadius: 12,
+        data: [
+          { x: 28.9, y: 442, label: 'run1' },
+          { x: 55.5, y: 421, label: 'ghost' },
+        ],
+      },
+    ],
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    layout: { padding: { top: 16, right: 24, bottom: 4, left: 4 } },
+    plugins: {
+      legend: {
+        position: 'top',
+        align: 'end',
+        labels: {
+          usePointStyle: true,
+          pointStyle: 'rect',
+          boxWidth: 10,
+          padding: 18,
+          font: { family: "'JetBrains Mono', monospace", size: 10, weight: '600' },
+        },
+      },
+      tooltip: {
+        backgroundColor: 'rgba(14, 16, 20, 0.98)',
+        borderColor: 'rgba(255, 159, 28, 0.32)',
+        borderWidth: 1,
+        padding: 12,
+        cornerRadius: 0,
+        titleFont: { family: "'JetBrains Mono', monospace", size: 11, weight: '700' },
+        bodyFont: { family: "'JetBrains Mono', monospace", size: 10 },
+        displayColors: false,
+        callbacks: {
+          title: (items) => items[0].raw.label?.toUpperCase() || '',
+          label: (ctx) => [`${ctx.raw.x.toFixed(1)} req/s`, `${ctx.raw.y} ms p99`],
+        },
+      },
+    },
+    scales: {
+      x: {
+        type: 'linear',
+        title: { display: true, text: 'THROUGHPUT (REQ/S)',
+          font: { family: "'JetBrains Mono', monospace", size: 10, weight: '700' },
+          color: paperFaint, padding: { top: 12 } },
+        grid: { color: edge1, drawTicks: false },
+        border: { display: false },
+        ticks: { padding: 8 },
+      },
+      y: {
+        title: { display: true, text: 'LATENCY P99 (MS)',
+          font: { family: "'JetBrains Mono', monospace", size: 10, weight: '700' },
+          color: paperFaint, padding: { bottom: 12 } },
+        grid: { color: edge1, drawTicks: false },
+        border: { display: false },
+        ticks: { padding: 8 },
+      },
+    },
+  },
+});
+</script>
+
+</body>
+</html>

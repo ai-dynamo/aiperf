@@ -62,9 +62,9 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC, Singleton)
                     for k, v in value.items()
                 )
             )
-        if isinstance(value, list | tuple):
+        if isinstance(value, (list, tuple)):
             return tuple(BaseZMQCommunication._freeze_cache_value(v) for v in value)
-        if isinstance(value, set | frozenset):
+        if isinstance(value, (set, frozenset)):
             return tuple(
                 sorted(BaseZMQCommunication._freeze_cache_value(v) for v in value)
             )
@@ -72,7 +72,7 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC, Singleton)
             return ("type", value.__module__, value.__qualname__)
         if hasattr(value, "cache_key"):
             return ("codec", codec_cache_key(value))
-        if value is None or isinstance(value, str | int | float | bool | bytes):
+        if value is None or isinstance(value, (str, int, float, bool, bytes)):
             return value
         return ("repr", repr(value))
 

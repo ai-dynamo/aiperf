@@ -162,7 +162,7 @@ class RealtimeMetricsTable(Widget):
 
         if isinstance(value, datetime):
             value_str = value.strftime("%Y-%m-%d %H:%M:%S")
-        elif isinstance(value, int | float):
+        elif isinstance(value, (int, float)):
             value_str = f"{value:,.2f}"
         else:
             value_str = str(value)

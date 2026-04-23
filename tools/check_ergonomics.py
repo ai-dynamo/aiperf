@@ -34,6 +34,9 @@ Checks (each can also be run in isolation with --only <check>):
     duplicate-classes   class names must be unique across src/aiperf/
     pydantic-fields     Pydantic models must have <=30 ``Field(...)`` decls
     stdlib-json         no ``import json`` / ``json.dumps`` / ``json.loads``
+    exception-message   raised exceptions must include a context message
+    isinstance-tuple    isinstance/issubclass must use tuple form, not A | B
+                        (PEP 604 unions construct a new object each call)
 
 Usage:
     python -m tools.check_ergonomics                 # run all checks
@@ -80,6 +83,7 @@ CHECKS = [
     "pydantic-fields",
     "stdlib-json",
     "exception-message",
+    "isinstance-tuple",
 ]
 
 
@@ -432,6 +436,52 @@ def check_exception_message(tree: ast.Module, rel: str) -> list[Violation]:
 # ---------------------------------------------------------------------------
 
 
+def check_isinstance_tuple(tree: ast.Module, rel: str) -> list[Violation]:
+    """Flag ``isinstance(x, A | B)`` — require tuple form ``isinstance(x, (A, B))``.
+
+    PEP 604 union syntax in isinstance/issubclass is measurably slower than
+    the tuple form at runtime (the union object must be constructed on each
+    call). Ruff retired UP038 for the same reason; we keep the rule via
+    this check.
+    """
+    out: list[Violation] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = (
+            func.id
+            if isinstance(func, ast.Name)
+            else func.attr
+            if isinstance(func, ast.Attribute)
+            else None
+        )
+        if name not in ("isinstance", "issubclass"):
+            continue
+        if len(node.args) < 2 or not isinstance(node.args[1], ast.BinOp):
+            continue
+        # Only match pipe-unions (A | B | C), not other BinOps
+        cur: ast.AST = node.args[1]
+        is_union = True
+        while isinstance(cur, ast.BinOp):
+            if not isinstance(cur.op, ast.BitOr):
+                is_union = False
+                break
+            cur = cur.left
+        if not is_union:
+            continue
+        out.append(
+            Violation(
+                check="isinstance-tuple",
+                file=rel,
+                line=node.lineno,
+                identifier=f"{name}:{node.lineno}",
+                message=f"use tuple form '{name}(x, (A, B))' — A | B is slower at runtime",
+            )
+        )
+    return out
+
+
 def check_duplicate_classes(
     trees: dict[Path, ast.Module], rels: dict[Path, str]
 ) -> list[Violation]:
@@ -476,7 +526,8 @@ def _iter_py_files(paths: list[Path]) -> list[Path]:
             out.append(p)
         elif p.is_dir():
             out.extend(sorted(p.rglob("*.py")))
-    return [f for f in out if "__pycache__" not in f.parts]
+    skip = {"__pycache__", ".venv", "venv", ".pytest_cache", ".ruff_cache"}
+    return [f for f in out if not (skip & set(f.parts))]
 
 
 def _run_per_file(path: Path, rel: str, enabled: set[str]) -> list[Violation]:
@@ -500,6 +551,8 @@ def _run_per_file(path: Path, rel: str, enabled: set[str]) -> list[Violation]:
         out.extend(check_pydantic_fields(tree, rel))
     if "exception-message" in enabled:
         out.extend(check_exception_message(tree, rel))
+    if "isinstance-tuple" in enabled:
+        out.extend(check_isinstance_tuple(tree, rel))
     return out
 
 

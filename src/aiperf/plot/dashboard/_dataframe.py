@@ -53,7 +53,7 @@ def _convert_to_numeric(value: Any, context: str = "") -> float | int | None:
     if value is None:
         return None
 
-    if isinstance(value, int | float):
+    if isinstance(value, (int, float)):
         if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
             return value
         return value

@@ -380,12 +380,12 @@ class ConfigSchemaGenerator(Generator):
 
                 # Recurse into nested structures
                 for key, value in obj.items():
-                    if isinstance(value, dict | list):
+                    if isinstance(value, (dict, list)):
                         walk_schema(value, f"{path}.{key}")
 
             elif isinstance(obj, list):
                 for i, item in enumerate(obj):
-                    if isinstance(item, dict | list):
+                    if isinstance(item, (dict, list)):
                         walk_schema(item, f"{path}[{i}]")
 
         # Walk all definitions

@@ -23,6 +23,7 @@ from aiperf.common.models.record_models import ReasoningResponseData, TokenCount
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
+from aiperf.records import _tokenizer_preload
 
 
 # TODO: Should we create non-tokenizer based parsers?
@@ -81,7 +82,7 @@ class InferenceResultParser(CommunicationMixin):
                     )
                     resolve_alias = True
                 self.tokenizers[model.name] = await asyncio.to_thread(
-                    Tokenizer.from_pretrained,
+                    _tokenizer_preload.get_or_load,
                     tokenizer_name,
                     trust_remote_code=self.run.cfg.tokenizer.trust_remote_code
                     if self.run.cfg.tokenizer
@@ -112,7 +113,7 @@ class InferenceResultParser(CommunicationMixin):
                     else model
                 )
                 self.tokenizers[model] = await asyncio.to_thread(
-                    Tokenizer.from_pretrained,
+                    _tokenizer_preload.get_or_load,
                     tokenizer_name,
                     trust_remote_code=self.run.cfg.tokenizer.trust_remote_code
                     if self.run.cfg.tokenizer

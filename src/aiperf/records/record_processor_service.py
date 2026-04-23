@@ -59,6 +59,7 @@ from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.post_processors.protocols import RecordProcessorProtocol
+from aiperf.records import _tokenizer_preload
 from aiperf.records.inference_result_parser import InferenceResultParser
 
 
@@ -234,7 +235,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                     ) or model
                     resolve_alias = True
                 self.tokenizers[model] = await asyncio.to_thread(
-                    Tokenizer.from_pretrained,
+                    _tokenizer_preload.get_or_load,
                     tokenizer_name,
                     trust_remote_code=self.run.cfg.tokenizer.trust_remote_code
                     if self.run.cfg.tokenizer

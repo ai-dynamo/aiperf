@@ -48,7 +48,7 @@ def _normalize_ramp(v: Any) -> Any:
     """Normalize ramp shorthand to RampConfig dict."""
     if v is None:
         return None
-    if isinstance(v, int | float | str):
+    if isinstance(v, (int, float, str)):
         duration = _parse_duration(v)
         return {"duration": duration}
     if isinstance(v, dict) and "duration" in v:

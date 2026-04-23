@@ -511,6 +511,7 @@ def print_sweep_summary(
     records: list[dict],
 ) -> None:
     duration_s = (events[-1][0] - t0) / 1e9
+    n_buckets = ts.n
 
     print(f"\n{'=' * 70}")
     print("  Sweep Line Summary")

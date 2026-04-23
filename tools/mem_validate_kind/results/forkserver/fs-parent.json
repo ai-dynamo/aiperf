@@ -1,0 +1,27 @@
+{
+  "pid": 1,
+  "comm": "python",
+  "VmRSS_kB": 445780,
+  "RssAnon_kB": 413052,
+  "RssFile_kB": 32728,
+  "Pss_kB": 85607,
+  "Pss_Anon_kB": 83173,
+  "Pss_File_kB": 2434,
+  "Private_Dirty_kB": 49920,
+  "Private_Clean_kB": 96,
+  "Shared_Clean_kB": 35120,
+  "Shared_Dirty_kB": 365696,
+  "label": "fs-parent",
+  "child_pids": [
+    77,
+    78,
+    79,
+    80,
+    81,
+    82,
+    83,
+    84,
+    85,
+    86
+  ]
+}

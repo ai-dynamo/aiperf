@@ -96,7 +96,7 @@ class exit_on_error(AbstractContextManager):
         if (
             not self.exceptions
             and not isinstance(
-                exc_value, (SystemExit | KeyboardInterrupt | asyncio.CancelledError)
+                exc_value, ((SystemExit, KeyboardInterrupt, asyncio.CancelledError))
             )
         ) or issubclass(exc_type, self.exceptions):
             # Only show full traceback if requested

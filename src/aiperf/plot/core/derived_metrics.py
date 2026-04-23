@@ -50,12 +50,12 @@ class DerivedMetricCalculator:
             for key, value in throughput_data.items():
                 if key == "unit":
                     continue
-                if isinstance(value, int | float):
+                if isinstance(value, (int, float)):
                     per_gpu_data[key] = value / gpu_count
         else:
             for stat_name in STAT_KEYS:
                 stat_value = getattr(throughput_data, stat_name, None)
-                if stat_value is not None and isinstance(stat_value, int | float):
+                if stat_value is not None and isinstance(stat_value, (int, float)):
                     per_gpu_data[stat_name] = stat_value / gpu_count
 
         return per_gpu_data

@@ -1,0 +1,15 @@
+{
+  "pid": 1,
+  "comm": "python",
+  "VmRSS_kB": 445740,
+  "RssAnon_kB": 412216,
+  "RssFile_kB": 33524,
+  "Pss_kB": 421944,
+  "Pss_Anon_kB": 414988,
+  "Pss_File_kB": 6956,
+  "Private_Dirty_kB": 414988,
+  "Private_Clean_kB": 340,
+  "Shared_Clean_kB": 34636,
+  "Shared_Dirty_kB": 0,
+  "label": "c-w02-pre"
+}

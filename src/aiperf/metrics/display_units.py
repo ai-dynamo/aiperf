@@ -36,7 +36,7 @@ def to_display_unit(result: MetricResult, registry: MetricRegistry) -> MetricRes
         if val is None:
             continue
         # Only convert numeric values
-        if isinstance(val, int | float):
+        if isinstance(val, (int, float)):
             try:
                 new_value = metric_cls.unit.convert_to(display_unit, val)
             except MetricUnitError as e:

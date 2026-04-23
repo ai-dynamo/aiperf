@@ -86,9 +86,7 @@ async def test_leaderboard_metric_selector_changes_order(
     # throughput), but rank 2 flips: under throughput it was c128
     # (42.1 > 28.9); under latency it is mistral (340 ms > 300 ms). Pin
     # the flip as evidence that the selector re-queried the API.
-    await expect(table.locator("tbody tr").nth(1)).to_contain_text(
-        "mistral-7b-run1"
-    )
+    await expect(table.locator("tbody tr").nth(1)).to_contain_text("mistral-7b-run1")
 
 
 @pytest.mark.asyncio(loop_scope="session")

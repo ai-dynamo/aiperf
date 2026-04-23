@@ -59,7 +59,7 @@ class TestEmpiricalSampler:
 
         samples = sampler.sample_batch(10)
         assert len(samples) == 10
-        assert all(isinstance(s, int | np.integer) for s in samples)
+        assert all(isinstance(s, (int, np.integer)) for s in samples)
 
     def test_sample_respects_distribution(self) -> None:
         """Test that sampling respects empirical distribution."""

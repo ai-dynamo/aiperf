@@ -1,0 +1,15 @@
+{
+  "pid": 110,
+  "comm": "python",
+  "VmRSS_kB": 388644,
+  "RssAnon_kB": 375108,
+  "RssFile_kB": 13536,
+  "Pss_kB": 81204,
+  "Pss_Anon_kB": 80695,
+  "Pss_File_kB": 508,
+  "Private_Dirty_kB": 51196,
+  "Private_Clean_kB": 0,
+  "Shared_Clean_kB": 13836,
+  "Shared_Dirty_kB": 324340,
+  "label": "mp-mp-child-00-pre"
+}

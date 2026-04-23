@@ -21,7 +21,7 @@ class MetricSizeUnitInfo(BaseMetricUnitInfo):
 
     def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
         """Convert a value from this unit to another unit."""
-        if not isinstance(other_unit, MetricSizeUnit | MetricSizeUnitInfo):
+        if not isinstance(other_unit, (MetricSizeUnit, MetricSizeUnitInfo)):
             return super().convert_to(other_unit, value)
 
         return value * (self.num_bytes / other_unit.num_bytes)
@@ -120,7 +120,7 @@ class MetricTimeUnit(BaseMetricUnit):
 
     def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
         """Convert a value from this unit to another unit."""
-        if not isinstance(other_unit, MetricTimeUnit | MetricTimeUnitInfo):
+        if not isinstance(other_unit, (MetricTimeUnit, MetricTimeUnitInfo)):
             return super().convert_to(other_unit, value)
 
         return value * (other_unit.per_second / self.per_second)
@@ -157,7 +157,7 @@ class PowerMetricUnitInfo(BaseMetricUnitInfo):
 
     def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
         """Convert a value from this unit to another unit."""
-        if not isinstance(other_unit, PowerMetricUnit | PowerMetricUnitInfo):
+        if not isinstance(other_unit, (PowerMetricUnit, PowerMetricUnitInfo)):
             return super().convert_to(other_unit, value)
 
         return value * (self.watts / other_unit.watts)
@@ -201,7 +201,7 @@ class EnergyMetricUnitInfo(BaseMetricUnitInfo):
 
     def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
         """Convert a value from this unit to another unit."""
-        if not isinstance(other_unit, EnergyMetricUnit | EnergyMetricUnitInfo):
+        if not isinstance(other_unit, (EnergyMetricUnit, EnergyMetricUnitInfo)):
             return super().convert_to(other_unit, value)
 
         return value * (self.joules / other_unit.joules)
@@ -273,7 +273,7 @@ class MetricOverTimeUnitInfo(BaseMetricUnitInfo):
         if other_unit == self:
             return value
 
-        if isinstance(other_unit, MetricOverTimeUnit | MetricOverTimeUnitInfo):
+        if isinstance(other_unit, (MetricOverTimeUnit, MetricOverTimeUnitInfo)):
             # Chain convert each unit to the other unit.
             value = self.primary_unit.convert_to(other_unit.primary_unit, value)
             value = self.time_unit.convert_to(other_unit.time_unit, value)
@@ -283,7 +283,7 @@ class MetricOverTimeUnitInfo(BaseMetricUnitInfo):
 
         # If the other unit is a time unit, convert our time unit to the other unit.
         # TODO: Should we even allow this?
-        if isinstance(other_unit, MetricTimeUnit | MetricTimeUnitInfo):
+        if isinstance(other_unit, (MetricTimeUnit, MetricTimeUnitInfo)):
             return self.time_unit.convert_to(other_unit, value)
 
         # Otherwise, convert the primary unit to the other unit.
@@ -367,7 +367,7 @@ class FrequencyMetricUnitInfo(BaseMetricUnitInfo):
 
     def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
         """Convert a value from this unit to another unit."""
-        if not isinstance(other_unit, FrequencyMetricUnit | FrequencyMetricUnitInfo):
+        if not isinstance(other_unit, (FrequencyMetricUnit, FrequencyMetricUnitInfo)):
             return super().convert_to(other_unit, value)
 
         return value * (self.hertz / other_unit.hertz)
@@ -418,7 +418,7 @@ class TemperatureMetricUnitInfo(BaseMetricUnitInfo):
     def convert_to(self, other_unit: "MetricUnitT", value: int | float) -> float:
         """Convert a value from this unit to another unit."""
         if not isinstance(
-            other_unit, TemperatureMetricUnit | TemperatureMetricUnitInfo
+            other_unit, (TemperatureMetricUnit, TemperatureMetricUnitInfo)
         ):
             return super().convert_to(other_unit, value)
 

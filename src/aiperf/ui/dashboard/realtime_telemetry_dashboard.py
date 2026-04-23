@@ -143,7 +143,7 @@ class GPUMetricsTable(Widget):
         if value is None:
             return Text("N/A", justify="right", style="dim")
 
-        if not isinstance(value, int | float):
+        if not isinstance(value, (int, float)):
             return Text(str(value), justify="right", style="green")
 
         value_str = f"{value:.2e}" if abs(value) >= 1000000 else f"{value:,.2f}"

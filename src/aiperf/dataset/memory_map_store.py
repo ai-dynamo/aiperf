@@ -126,7 +126,12 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             RuntimeError: If already finalized
         """
         if self._finalized:
-            raise RuntimeError("Cannot add conversations after finalization")
+            raise RuntimeError(
+                "MemoryMapDatasetBackingStore.add_conversation() called on an "
+                "already-finalized store: Cannot add conversations after finalize(); "
+                "each store instance may be finalized at most once — construct a new "
+                "MemoryMapDatasetBackingStore for additional datasets."
+            )
 
         conv_bytes = _CONVERSATION_ENCODER.encode(conversation)
         await self._write_bytes(conv_bytes)
@@ -153,7 +158,12 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             RuntimeError: If already finalized
         """
         if self._finalized:
-            raise RuntimeError("Cannot add conversations after finalization")
+            raise RuntimeError(
+                "MemoryMapDatasetBackingStore.add_conversations() called on an "
+                "already-finalized store: Cannot add conversations after finalize(); "
+                "each store instance may be finalized at most once — construct a new "
+                "MemoryMapDatasetBackingStore for additional datasets."
+            )
         for conversation_id, conversation in conversations.items():
             await self.add_conversation(conversation_id, conversation)
 

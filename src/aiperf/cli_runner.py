@@ -185,12 +185,55 @@ def _set_fd_cloexec_on_terminal(logger: AIPerfLogger) -> None:
         logger.debug(f"Could not set FD_CLOEXEC on terminal descriptors: {e}")
 
 
+def _configure_tokenizer_preload(run: BenchmarkRun) -> None:
+    """Surface tokenizer identities into env so the forkserver preload sees them.
+
+    Read by :mod:`aiperf.records._tokenizer_preload` at forkserver-helper
+    startup. Must be called before the first subprocess spawn (and
+    therefore before queue creation in :func:`_setup_ui_queues`), since
+    Python's forkserver starts on demand and snapshots the env once.
+
+    Name selection mirrors :class:`~aiperf.records.inference_result_parser.InferenceResultParser`:
+    an explicit ``tokenizer.name`` in config overrides per-model defaults
+    for every model. Without it, each model name is used as its own
+    tokenizer name.
+
+    Uses raw (unresolved) names because the resolver chain hasn't run yet
+    when this is called. In the common case of canonical HF IDs (e.g.
+    ``Qwen/Qwen3-0.6B``) the raw name is the correct tokenizer name and
+    CoW sharing works; aliased names (e.g. ``gpt2``) miss the preload
+    cache and fall through to per-RP on-demand loading — same as without
+    this feature.
+    """
+    import os
+
+    cfg = run.cfg
+    tokenizer_cfg = cfg.tokenizer
+    if tokenizer_cfg is not None and tokenizer_cfg.name:
+        names = [tokenizer_cfg.name]
+    else:
+        names = cfg.get_model_names()
+    if not names:
+        return
+    os.environ.setdefault("AIPERF_PRELOAD_TOKENIZERS", ",".join(names))
+    if tokenizer_cfg is not None:
+        os.environ.setdefault(
+            "AIPERF_PRELOAD_TOKENIZER_TRUST_REMOTE_CODE",
+            "true" if tokenizer_cfg.trust_remote_code else "false",
+        )
+        os.environ.setdefault(
+            "AIPERF_PRELOAD_TOKENIZER_REVISION",
+            tokenizer_cfg.revision or "main",
+        )
+
+
 def _run_single_benchmark(run: BenchmarkRun) -> None:
     """Run a single benchmark."""
     config = run.cfg
     using_dashboard = config.ui_type == UIType.DASHBOARD
 
     _configure_multiprocessing_start_method(using_dashboard)
+    _configure_tokenizer_preload(run)
 
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.common.bootstrap import bootstrap_and_run_service

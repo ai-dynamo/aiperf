@@ -436,7 +436,7 @@ class DashboardBuilder:
             if isinstance(value, dict):
                 # Recurse into nested dict
                 self._flatten_config(value, row, f"{full_key}.")
-            elif isinstance(value, int | float | str | bool):
+            elif isinstance(value, (int, float, str, bool)):
                 # Add primitive value
                 row[full_key] = value
 

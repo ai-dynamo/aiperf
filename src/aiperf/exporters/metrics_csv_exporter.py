@@ -130,7 +130,7 @@ class MetricsCsvExporter(MetricsBaseExporter):
         if isinstance(value, numbers.Integral):
             return f"{int(value)}"
         # Real numbers (covers built-in float and many Real implementations) and Decimal
-        if isinstance(value, numbers.Real | Decimal):
+        if isinstance(value, (numbers.Real, Decimal)):
             return f"{float(value):.2f}"
 
         return str(value)

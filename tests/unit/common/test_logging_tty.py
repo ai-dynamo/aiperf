@@ -198,7 +198,7 @@ class TestSetupChildProcessLogging:
             for h in root.handlers
             if isinstance(h, logging.StreamHandler)
             and not isinstance(
-                h, CustomRichHandler | MultiProcessLogHandler | logging.FileHandler
+                h, (CustomRichHandler, MultiProcessLogHandler, logging.FileHandler)
             )
         ]
         assert len(console_handlers) == 1
@@ -241,7 +241,7 @@ class TestSetupChildProcessLogging:
             for h in root.handlers
             if isinstance(h, logging.StreamHandler)
             and not isinstance(
-                h, CustomRichHandler | MultiProcessLogHandler | logging.FileHandler
+                h, (CustomRichHandler, MultiProcessLogHandler, logging.FileHandler)
             )
         ]
         assert len(console_handlers) == 1

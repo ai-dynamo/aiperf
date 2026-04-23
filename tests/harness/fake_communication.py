@@ -532,9 +532,9 @@ class FakeCommunication(BaseCommunication):
                     for k, v in value.items()
                 )
             )
-        if isinstance(value, list | tuple):
+        if isinstance(value, (list, tuple)):
             return tuple(FakeCommunication._freeze_cache_value(v) for v in value)
-        if isinstance(value, set | frozenset):
+        if isinstance(value, (set, frozenset)):
             return tuple(
                 sorted(FakeCommunication._freeze_cache_value(v) for v in value)
             )
@@ -542,7 +542,7 @@ class FakeCommunication(BaseCommunication):
             return ("codec", codec_cache_key(value))
         if isinstance(value, type):
             return ("type", value.__module__, value.__qualname__)
-        if value is None or isinstance(value, str | int | float | bool | bytes):
+        if value is None or isinstance(value, (str, int, float, bool, bytes)):
             return value
         return ("repr", repr(value))
 

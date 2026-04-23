@@ -56,7 +56,7 @@ def _to_plain(obj: Any) -> Any:
 
     if isinstance(obj, Mapping):
         return {k: _to_plain(v) for k, v in obj.items()}
-    if isinstance(obj, list | tuple):
+    if isinstance(obj, (list, tuple)):
         return [_to_plain(v) for v in obj]
     return obj
 

@@ -80,7 +80,7 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
 
             if isinstance(value, datetime):
                 value = value.strftime("%Y-%m-%d %H:%M:%S")
-            elif isinstance(value, int | float):
+            elif isinstance(value, (int, float)):
                 value = f"{value:,.2f}"
             else:
                 value = str(value)

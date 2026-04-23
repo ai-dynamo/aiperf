@@ -115,7 +115,7 @@ def _parse_sequence_as_tuple_list(input: Any) -> list[tuple[str, Any]]:
     output: list[tuple[str, Any]] = []
     for item in input:
         # If item is already a 2-element sequence (key-value pair), convert directly to tuple
-        if isinstance(item, list | tuple) and len(item) == 2:
+        if isinstance(item, (list, tuple)) and len(item) == 2:
             key, value = item
             output.append((str(key), coerce_value(value)))
         else:
@@ -169,7 +169,7 @@ def parse_str_or_dict_as_tuple_list(input: Any | None) -> list[tuple[str, Any]] 
     """
     if input is None:
         return None
-    if isinstance(input, list | tuple | set):
+    if isinstance(input, (list, tuple, set)):
         return _parse_sequence_as_tuple_list(input)
     if isinstance(input, dict):
         return [(key, coerce_value(value)) for key, value in input.items()]
@@ -226,7 +226,7 @@ def parse_str_or_list_of_positive_values(input: Any) -> list[Any]:
     except ValueError as e:
         raise ValueError(f"User Config: {output} - all values must be numeric") from e
 
-    if not all(isinstance(x, (int | float)) and x > 0 for x in output):
+    if not all(isinstance(x, ((int, float))) and x > 0 for x in output):
         raise ValueError(f"User Config: {output} - all values must be positive numbers")
 
     return output

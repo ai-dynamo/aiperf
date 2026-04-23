@@ -135,7 +135,7 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
             value = json_obj.get(field)
             if not (isinstance(value, list) and value):
                 continue
-            if isinstance(value[0], int | float):
+            if isinstance(value[0], (int, float)):
                 return EmbeddingResponseData(embeddings=[value])
             if isinstance(value[0], list):
                 return EmbeddingResponseData(embeddings=value)
@@ -221,9 +221,9 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
 
         if isinstance(value, list) and value:
             first = value[0]
-            if isinstance(first, list) and first and isinstance(first[0], int | float):
+            if isinstance(first, list) and first and isinstance(first[0], (int, float)):
                 return EmbeddingResponseData(embeddings=value)
-            if isinstance(first, int | float):
+            if isinstance(first, (int, float)):
                 return EmbeddingResponseData(embeddings=[value])
             if isinstance(first, dict):
                 return RankingsResponseData(rankings=value)
