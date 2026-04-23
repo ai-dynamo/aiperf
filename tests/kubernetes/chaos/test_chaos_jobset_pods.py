@@ -264,7 +264,7 @@ async def _get_worker_pod_uids(
         namespace,
         "-l",
         f"jobset.sigs.k8s.io/jobset-name=aiperf-{job_name},"
-        "jobset.sigs.k8s.io/replicatedjob-name=worker",
+        "jobset.sigs.k8s.io/replicatedjob-name=workers",
         "-o",
         "jsonpath={range .items[*]}{.metadata.name}={.metadata.uid}{'\\n'}{end}",
         check=False,

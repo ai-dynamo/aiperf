@@ -355,7 +355,7 @@ class ChaosInjector:
     async def get_worker_pod_names(self, namespace: str, job_name: str) -> list[str]:
         """Return every worker pod name for an AIPerfJob.
 
-        Matches the ``replicatedjob-name=worker`` label that the JobSet
+        Matches the ``replicatedjob-name=workers`` label that the JobSet
         applies to every worker pod. Returns an empty list when the job
         has not yet created workers.
         """
@@ -366,7 +366,7 @@ class ChaosInjector:
             namespace,
             "-l",
             f"jobset.sigs.k8s.io/jobset-name=aiperf-{job_name},"
-            "jobset.sigs.k8s.io/replicatedjob-name=worker",
+            "jobset.sigs.k8s.io/replicatedjob-name=workers",
             "-o",
             "jsonpath={.items[*].metadata.name}",
             check=False,
