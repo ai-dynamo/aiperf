@@ -58,3 +58,15 @@ async def test_fake_k8s_client_serves_jobs(live_operator_app, fake_k8s_client):
     names = {j["name"] for j in body["jobs"]}
     assert "live-run" in names
     assert "aiperf-llama3-c128" in names
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio(loop_scope="session")
+async def test_page_loads_spa_without_console_errors(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+):
+    """Root URL renders the Preact app; no console errors; CDN intercepted."""
+    await page.goto(live_operator_app.base_url + "/")
+    await page.wait_for_selector("#app > *", timeout=10_000)
+    title = await page.title()
+    assert title == "AIPerf"

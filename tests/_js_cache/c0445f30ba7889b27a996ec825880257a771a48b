@@ -1,0 +1,3 @@
+/* esm.sh - preact@10.29.1/hooks */
+import "/preact@10.29.1/es2022/preact.mjs";
+export * from "/preact@10.29.1/es2022/hooks.mjs";

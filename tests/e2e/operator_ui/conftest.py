@@ -11,8 +11,10 @@ monkeypatch the k8s helpers — no respawn.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import shutil
 import socket
+import urllib.request
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -25,6 +27,15 @@ import pytest
 import pytest_asyncio
 import uvicorn
 from fastapi import FastAPI
+from playwright.async_api import (
+    Browser,
+    BrowserContext,
+    ConsoleMessage,
+    Page,
+    Playwright,
+    Route,
+    async_playwright,
+)
 
 from aiperf.operator.results_server import create_app
 
@@ -317,3 +328,155 @@ def fake_k8s_client(
     yield fake
 
     holder[0] = original
+
+
+# =============================================================================
+# Browser page fixture with CDN interception + console-error gate
+# =============================================================================
+
+# On-disk cache for CDN responses pulled during e2e runs, committed to git so
+# subsequent runs are fully offline. Keyed by ``sha256(url)[:40]`` -> bytes,
+# with a sibling ``<digest>.meta`` recording the original URL for auditability.
+#
+# Why cache live CDN and not use the committed ``ui/vendor/`` stubs? Those
+# stubs are version-pinned snippets (e.g. ``preact@10.29.0``) that re-export
+# from deeper bundle URLs. Mixing them with the un-pinned specifiers
+# ``htm@3/preact`` and ``@preact/signals@1`` pulls in a newer transitive preact
+# (e.g. 10.29.1) and the browser treats them as distinct module graphs —
+# ``h`` is exported by one copy but missing from the other, breaking htm.
+# Letting the full CDN graph cache keeps version coherence.
+JS_CACHE = Path(__file__).parent.parent.parent / "_js_cache"
+
+# CDN hosts whose module/bundle responses are cached under ``_js_cache/``.
+# First run populates the cache from the live CDN; subsequent runs are offline.
+CACHEABLE_HOSTS: tuple[str, ...] = (
+    "https://esm.sh/",
+    "https://cdn.jsdelivr.net/",
+)
+
+# Host-substrings stubbed with empty bodies — fonts are noise for e2e tests.
+STUB_EMPTY_MAP: dict[str, str] = {
+    "fonts.googleapis.com": "text/css",
+    "fonts.gstatic.com": "font/woff2",
+}
+
+
+def _cache_path(url: str) -> Path:
+    """Deterministic on-disk cache path for a CDN URL."""
+    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:40]
+    return JS_CACHE / digest
+
+
+def _load_cdn_cached(url: str) -> bytes:
+    """Return the bytes for ``url``, populating ``_js_cache/`` on miss.
+
+    Writes a sibling ``<digest>.meta`` with the source URL for auditability
+    (so a reviewer inspecting ``tests/_js_cache/`` can see what each blob is).
+    """
+    body_path = _cache_path(url)
+    if body_path.exists():
+        return body_path.read_bytes()
+    JS_CACHE.mkdir(parents=True, exist_ok=True)
+    with urllib.request.urlopen(url, timeout=15) as resp:  # noqa: S310
+        body = resp.read()
+    body_path.write_bytes(body)
+    body_path.with_suffix(".meta").write_text(url, encoding="utf-8")
+    return body
+
+
+# Override pytest-playwright-asyncio's default ``playwright``/``browser`` fixtures
+# so they share the session-scoped event loop used by ``live_operator_app``.
+# Without matching ``loop_scope="session"``, pytest-asyncio raises ScopeMismatch
+# when a test requests both the session-scoped app and the (otherwise
+# function-loop-scoped) ``page``.
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def playwright() -> AsyncIterator[Playwright]:
+    pw = await async_playwright().start()
+    try:
+        yield pw
+    finally:
+        await pw.stop()
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def browser(playwright: Playwright) -> AsyncIterator[Browser]:
+    browser = await playwright.chromium.launch()
+    try:
+        yield browser
+    finally:
+        await browser.close()
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def context(browser: Browser) -> AsyncIterator[BrowserContext]:
+    ctx = await browser.new_context()
+    try:
+        yield ctx
+    finally:
+        await ctx.close()
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def page(
+    live_operator_app: LiveApp, context: BrowserContext
+) -> AsyncIterator[Page]:
+    """Browser ``page`` with CDN interception and an error gate.
+
+    - Requests to ``live_operator_app.base_url`` pass through unchanged.
+    - ``esm.sh`` / ``cdn.jsdelivr.net`` requests are cached under
+      ``tests/_js_cache/`` on first hit and replayed offline on subsequent
+      runs. Chart.js picks content-type from ``application/javascript``; ES
+      modules need ``text/javascript`` — both served via ``text/javascript``
+      which is accepted for classic scripts and required for modules in
+      modern Chromium.
+    - Font CDN requests are stubbed to empty bodies (tests don't need webfonts).
+    - Any ``pageerror`` or ``console.error`` fails the test at teardown;
+      unmapped external requests fail the test at teardown.
+    """
+    errors: list[str] = []
+    unmapped: list[str] = []
+
+    def _on_pageerror(exc: Exception) -> None:
+        errors.append(f"pageerror: {exc}")
+
+    def _on_console(msg: ConsoleMessage) -> None:
+        if msg.type == "error":
+            errors.append(f"console.error: {msg.text}")
+
+    page = await context.new_page()
+    page.on("pageerror", _on_pageerror)
+    page.on("console", _on_console)
+
+    async def _handle(route: Route) -> None:
+        url = route.request.url
+        if url.startswith(live_operator_app.base_url):
+            await route.continue_()
+            return
+        for needle, content_type in STUB_EMPTY_MAP.items():
+            if needle in url:
+                await route.fulfill(status=200, content_type=content_type, body=b"")
+                return
+        for prefix in CACHEABLE_HOSTS:
+            if url.startswith(prefix):
+                body = await asyncio.to_thread(_load_cdn_cached, url)
+                await route.fulfill(
+                    status=200, content_type="text/javascript", body=body
+                )
+                return
+        unmapped.append(url)
+        await route.abort()
+
+    await page.route("**/*", _handle)
+
+    try:
+        yield page
+    finally:
+        await page.close()
+
+    if unmapped:
+        pytest.fail(
+            "Unmapped external requests (add them to CACHEABLE_HOSTS or fix "
+            "the UI):\n" + "\n".join(f"  - {u}" for u in unmapped)
+        )
+    if errors:
+        pytest.fail("Browser errors detected:\n" + "\n".join(errors))
