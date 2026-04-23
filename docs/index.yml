@@ -167,6 +167,10 @@ navigation:
     path: kubernetes/preflight.md
   - page: Debug Command
     path: kubernetes/debug-command.md
+  - page: Attach to a Running Benchmark
+    path: kubernetes/attach.md
+  - page: Logs
+    path: kubernetes/logs.md
   - page: Watch Diagnosis Issues
     path: kubernetes/diagnosis-issues.md
   - page: Results Server API Reference
@@ -179,6 +183,10 @@ navigation:
     path: kubernetes/memory-estimator.md
   - page: Kueue Integration
     path: kubernetes/kueue.md
+  - page: Sweeps on Kubernetes
+    path: kubernetes/sweeps.md
+  - page: GPU Telemetry on Kubernetes
+    path: kubernetes/gpu-telemetry.md
   - page: Direct Mode (no operator)
     path: kubernetes/direct-mode.md
   - page: AI-Assisted Deployment Guide

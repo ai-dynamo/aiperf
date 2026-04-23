@@ -205,11 +205,14 @@ When making changes, update the appropriate documentation files. When adding a n
 | Kubernetes deployment, Helm chart, cluster setup | `docs/kubernetes/getting-started.md` + `docs/kubernetes/configuration.md` + `docs/kubernetes/production.md` + `docs/kubernetes/workflow.md` |
 | Kubernetes RBAC, securityContext, NetworkPolicy | `docs/kubernetes/rbac-security.md` |
 | Kube preflight checks / validate / debug | `docs/kubernetes/preflight.md` + `docs/kubernetes/validate.md` + `docs/kubernetes/debug-command.md` |
+| Kube attach / logs command deep-dives | `docs/kubernetes/attach.md` + `docs/kubernetes/logs.md` |
 | Watch diagnosis issues / thresholds | `docs/kubernetes/diagnosis-issues.md` |
 | Operator HTTP API / web dashboard | `docs/kubernetes/results-api.md` + `docs/kubernetes/dashboard-ui.md` |
 | Controller-pod sidecars (event-bus, results) | `docs/kubernetes/sidecars.md` |
 | Memory estimator model / tuning | `docs/kubernetes/memory-estimator.md` |
 | Kueue integration | `docs/kubernetes/kueue.md` |
+| Sweeps on Kubernetes | `docs/kubernetes/sweeps.md` |
+| GPU telemetry on Kubernetes | `docs/kubernetes/gpu-telemetry.md` |
 | Direct mode (`--no-operator`) | `docs/kubernetes/direct-mode.md` |
 | `aiperf kube init` / `generate` | `docs/kubernetes/init-and-generate.md` |
 | Kube CLI commands | `docs/cli-options.md` (auto-generated via `make generate-cli-docs`) |
