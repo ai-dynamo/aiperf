@@ -115,7 +115,9 @@ class HealthServerMixin(HealthCheckMixin, AIPerfLifecycleMixin):
             return
 
         host = Environment.SERVICE.HEALTH_HOST
-        port = cli_port or Environment.SERVICE.HEALTH_PORT
+        # Distinguish "CLI port not set" (None) from "CLI port 0, let OS pick".
+        # A plain `cli_port or HEALTH_PORT` would fall through on 0.
+        port = cli_port if cli_port is not None else Environment.SERVICE.HEALTH_PORT
         bind_key = (host, port)
 
         # Check if another service already owns this port in this process

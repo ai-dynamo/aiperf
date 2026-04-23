@@ -134,14 +134,15 @@ class TestHealthServerMixin:
     async def test_cli_health_port_overrides_env(self, mock_env_settings) -> None:
         """Test --health-port CLI arg overrides environment config."""
         service = MockServiceWithHealthServer()
-        service._health_port = 18094
+        service._health_port = 0  # OS-assigned to avoid cross-run zombie collisions
 
         with mock_env_settings(enabled=True, port=18088):
             await service._health_server_start()
 
             try:
                 assert service._health_server is not None
-                status, body = await make_http_request(18094, "/healthz")
+                actual_port = service._health_server.sockets[0].getsockname()[1]
+                status, body = await make_http_request(actual_port, "/healthz")
                 assert status == 200
                 assert body == "ok"
             finally:
@@ -153,14 +154,15 @@ class TestHealthServerMixin:
     ) -> None:
         """Test --health-port starts server even when HEALTH_ENABLED=false."""
         service = MockServiceWithHealthServer()
-        service._health_port = 18095
+        service._health_port = 0  # OS-assigned to avoid cross-run zombie collisions
 
         with mock_env_settings(enabled=False, port=18088):
             await service._health_server_start()
 
             try:
                 assert service._health_server is not None
-                status, body = await make_http_request(18095, "/healthz")
+                actual_port = service._health_server.sockets[0].getsockname()[1]
+                status, body = await make_http_request(actual_port, "/healthz")
                 assert status == 200
                 assert body == "ok"
             finally:
@@ -171,11 +173,16 @@ class TestHealthServerMixin:
         """Test /healthz returns 200 when service is healthy."""
         service = MockServiceWithHealthServer(LifecycleState.RUNNING)
 
-        with mock_env_settings(enabled=True, port=18081):
+        # port=0 lets the OS assign an ephemeral port. Fixed ports
+        # (18081/18082) flake across back-to-back sessions when a prior
+        # xdist worker crash-exits without closing the socket — the
+        # zombie holds the port for several minutes.
+        with mock_env_settings(enabled=True, port=0):
             await service._health_server_start()
 
             try:
-                status, body = await make_http_request(18081, "/healthz")
+                actual_port = service._health_server.sockets[0].getsockname()[1]
+                status, body = await make_http_request(actual_port, "/healthz")
                 assert status == 200
                 assert body == "ok"
             finally:
@@ -186,11 +193,12 @@ class TestHealthServerMixin:
         """Test /healthz returns 503 when service has failed."""
         service = MockServiceWithHealthServer(LifecycleState.FAILED)
 
-        with mock_env_settings(enabled=True, port=18082):
+        with mock_env_settings(enabled=True, port=0):
             await service._health_server_start()
 
             try:
-                status, body = await make_http_request(18082, "/healthz")
+                actual_port = service._health_server.sockets[0].getsockname()[1]
+                status, body = await make_http_request(actual_port, "/healthz")
                 assert status == 503
                 assert body == "unhealthy"
             finally:
