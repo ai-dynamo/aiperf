@@ -17,6 +17,13 @@ def hf_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
+def _make_revision_snapshot(model_dir: Path, ref: str, commit_hash: str) -> None:
+    """Create a refs/<ref> file and the corresponding snapshots/<hash>/ directory."""
+    (model_dir / "refs").mkdir(parents=True, exist_ok=True)
+    (model_dir / "refs" / ref).write_text(commit_hash)
+    (model_dir / "snapshots" / commit_hash).mkdir(parents=True, exist_ok=True)
+
+
 class TestIsHfCached:
     def test_returns_false_when_cache_dir_missing(self, tmp_path, monkeypatch) -> None:
         nonexistent = tmp_path / "does_not_exist"
@@ -47,6 +54,47 @@ class TestIsHfCached:
         (hf_cache / "models--org-a--gpt2").mkdir()
         (hf_cache / "models--org-b--gpt2").mkdir()
         assert _is_hf_cached("gpt2") is False
+
+    # --- revision-aware tests ---
+
+    def test_revision_returns_true_when_named_ref_and_snapshot_exist(
+        self, hf_cache
+    ) -> None:
+        model_dir = hf_cache / "models--meta-llama--Llama-2-7b-hf"
+        _make_revision_snapshot(model_dir, "main", "abc123")
+        assert _is_hf_cached("meta-llama/Llama-2-7b-hf", revision="main") is True
+
+    def test_revision_returns_false_when_refs_file_missing(self, hf_cache) -> None:
+        model_dir = hf_cache / "models--meta-llama--Llama-2-7b-hf"
+        (model_dir / "snapshots" / "abc123").mkdir(parents=True)
+        assert _is_hf_cached("meta-llama/Llama-2-7b-hf", revision="v1.2") is False
+
+    def test_revision_returns_false_when_snapshot_dir_missing(self, hf_cache) -> None:
+        model_dir = hf_cache / "models--meta-llama--Llama-2-7b-hf"
+        (model_dir / "refs").mkdir(parents=True)
+        (model_dir / "refs" / "v1.2").write_text("def456")
+        # snapshots/def456/ intentionally not created
+        assert _is_hf_cached("meta-llama/Llama-2-7b-hf", revision="v1.2") is False
+
+    def test_revision_returns_false_when_different_revision_cached(
+        self, hf_cache
+    ) -> None:
+        # "main" is cached; "v1.2" is not
+        model_dir = hf_cache / "models--meta-llama--Llama-2-7b-hf"
+        _make_revision_snapshot(model_dir, "main", "abc123")
+        assert _is_hf_cached("meta-llama/Llama-2-7b-hf", revision="v1.2") is False
+
+    def test_revision_as_direct_commit_hash_returns_true(self, hf_cache) -> None:
+        model_dir = hf_cache / "models--meta-llama--Llama-2-7b-hf"
+        (model_dir / "snapshots" / "abc123").mkdir(parents=True)
+        assert _is_hf_cached("meta-llama/Llama-2-7b-hf", revision="abc123") is True
+
+    def test_no_revision_returns_true_when_only_directory_exists(
+        self, hf_cache
+    ) -> None:
+        # Backward-compat: no revision arg → directory-only check
+        (hf_cache / "models--meta-llama--Llama-2-7b-hf").mkdir()
+        assert _is_hf_cached("meta-llama/Llama-2-7b-hf") is True
 
 
 class TestFindCachedModelForAlias:

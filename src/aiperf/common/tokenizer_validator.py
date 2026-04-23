@@ -158,7 +158,7 @@ def preload_tokenizers(
                 logger.debug(f"Tokenizer preload skipped for '{name}': local path")
             continue
         # Already in HF disk cache
-        if _is_hf_cached(name):
+        if _is_hf_cached(name, revision):
             if logger:
                 logger.debug(
                     f"Tokenizer preload skipped for '{name}': already in HF cache"
