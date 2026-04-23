@@ -63,6 +63,20 @@ def _ensure_empty_results_dir(base: Path, namespace: str, name: str) -> None:
     (d / "job_spec.json").write_bytes(orjson.dumps({"benchmark": {}}))
 
 
+def _write_spec(base: Path, namespace: str, name: str, spec: dict[str, Any]) -> None:
+    """Drop a custom ``job_spec.json`` for the config endpoint.
+
+    Used to seed SLOs for the SLO-chip test; the config endpoint returns
+    ``{source: "file", spec: <file contents>}`` and the UI reads
+    ``spec.benchmark.slos`` (or ``spec.slos``) for SLO thresholds.
+    """
+    import orjson
+
+    d = base / namespace / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "job_spec.json").write_bytes(orjson.dumps(spec))
+
+
 @pytest.mark.asyncio(loop_scope="session")
 async def test_job_detail_renders_metrics(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
@@ -182,3 +196,102 @@ async def test_job_detail_cancel_button_calls_api(
         await page.wait_for_timeout(int(step * 1000))
         waited += step
     assert ("aiperf-bench", "live-run") in fake_k8s_client.cancelled
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_job_detail_shows_hero_strip(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """``hero-strip`` renders with a health-label text from the v2-style classifier.
+
+    With no metrics + no completion, the classifier returns ``idle`` and the
+    label reads "Waiting for data". With throughput seeded, it flips to
+    ``ok`` ("On target"). Either label satisfies the test; we just assert the
+    strip is present and its label text is one of the known health messages.
+    """
+    _set_job_summary(
+        fake_k8s_client,
+        "aiperf-bench",
+        "aiperf-llama3-c128",
+        {"throughput_rps": 42.1, "ttft_avg_ms": 150.0, "latency_p99_ms": 300.0},
+    )
+    detail = JobDetailPage(
+        page, live_operator_app.base_url, "aiperf-bench", "aiperf-llama3-c128"
+    )
+    await detail.goto()
+    hero = page.get_by_test_id("hero-strip")
+    await expect(hero).to_be_visible()
+    text = await hero.inner_text()
+    assert any(
+        label in text
+        for label in (
+            "On target",
+            "Waiting for data",
+            "SLO violated",
+            "SLO slipping",
+            "Errors reported",
+            "Attention needed",
+        )
+    ), f"no known health label in hero strip: {text!r}"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_job_detail_kpi_ttft_headlines_p99(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """The TTFT KPI tile's big value is the ``ttft_p99_ms`` number, not the avg.
+
+    v2-inspired tile specs use p99 as the headline for TTFT. With
+    ``ttft_avg_ms=100`` and ``ttft_p99_ms=420``, the tile's metric-val shows
+    ``420`` (p99) and the sub-line shows ``avg 100 ms``.
+    """
+    _set_job_summary(
+        fake_k8s_client,
+        "aiperf-bench",
+        "aiperf-llama3-c128",
+        {"ttft_avg_ms": 100.0, "ttft_p99_ms": 420.0},
+    )
+    detail = JobDetailPage(
+        page, live_operator_app.base_url, "aiperf-bench", "aiperf-llama3-c128"
+    )
+    await detail.goto()
+    ttft = page.get_by_test_id("kpi-ttft")
+    await expect(ttft).to_be_visible()
+    headline = ttft.locator(".metric-val")
+    await expect(headline).to_contain_text("420")
+    sub = ttft.locator(".metric-sub")
+    await expect(sub).to_contain_text("avg 100")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_job_detail_slo_chip_when_declared(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """SLO chip appears when ``config.spec.benchmark.slos`` declares a threshold.
+
+    Seeds ``ttft_p99_ms=420`` and a config with
+    ``{benchmark: {slos: {time_to_first_token: 500}}}``. The TTFT tile's
+    headline (420) is <= 500 so the chip is ``✓``; the chip testid follows
+    the KpiCard label slug (``kpi-slo-ttft``).
+    """
+    _set_job_summary(
+        fake_k8s_client,
+        "aiperf-bench",
+        "aiperf-llama3-c128",
+        {"ttft_avg_ms": 100.0, "ttft_p99_ms": 420.0},
+    )
+    _write_spec(
+        seeded_results_dir,
+        "aiperf-bench",
+        "aiperf-llama3-c128",
+        {"benchmark": {"slos": {"time_to_first_token": 500}}},
+    )
+    detail = JobDetailPage(
+        page, live_operator_app.base_url, "aiperf-bench", "aiperf-llama3-c128"
+    )
+    await detail.goto()
+    chip = page.get_by_test_id("kpi-slo-ttft")
+    await expect(chip).to_be_visible()
+    # Chip renders "✓ ≤ 500" (or "✗ ≤ 500" when over budget). 420 <= 500 → ✓.
+    await expect(chip).to_contain_text("✓")
+    await expect(chip).to_contain_text("500")

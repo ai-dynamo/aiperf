@@ -85,6 +85,26 @@ export function fmtPercent(value, decimals = 1) {
 }
 
 /**
+ * Format an elapsed duration given in **seconds** as "1d 2h 3m" / "4h 5m 6s" /
+ * "7m 8s" / "9s". Mirrors the static-v2 dashboard formatter so both UIs show
+ * identical duration strings.
+ * @param {number|null|undefined} seconds
+ * @returns {string}
+ */
+export function fmtDuration(seconds) {
+  if (seconds == null || !isFinite(seconds)) return '---';
+  const s = Math.max(0, Math.floor(seconds));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m ${sec}s`;
+  if (m > 0) return `${m}m ${sec}s`;
+  return `${sec}s`;
+}
+
+/**
  * Format file size in human-readable form.
  * @param {number} bytes
  * @returns {string}

@@ -5,9 +5,10 @@ import { phaseColor, colors, palette } from '../lib/theme.js';
 import { navigate } from '../lib/router.js';
 import { KpiCard } from '../components/kpi-card.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
-import { PhaseBar } from '../components/phase-bar.js';
 import { Conditions } from '../components/conditions.js';
 import { PodsBar } from '../components/pods-bar.js';
+import { HeroStrip } from '../components/hero-strip.js';
+import { PhaseCards } from '../components/phase-cards.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtBytes } from '../lib/format.js';
 
 const MAX_CHART_POINTS = 60;
@@ -1448,23 +1449,29 @@ export function JobDetail({ namespace, name }) {
   const summary = status.liveSummary ?? status.summary ?? {};
   const throughput = summary.throughput_rps ?? info.throughputRps ?? null;
   const ttftAvg = summary.ttft_avg_ms ?? null;
+  const ttftP99 = summary.ttft_p99_ms ?? null;
   const latP99 = summary.latency_p99_ms ?? info.latencyP99Ms ?? null;
+  const latAvg = summary.latency_avg_ms ?? null;
   const errorRate = summary.error_rate ?? null;
   const errorCount = errorRate != null ? fmtNumber(errorRate, 1) + '%' : null;
 
   // Metrics from results (nested under .metrics in the CR status)
   const rawResults = status.results ?? null;
   const results = rawResults?.metrics ?? rawResults ?? null;
-  const outputTokenThroughput = results?.output_token_throughput?.avg ?? summary.output_token_throughput_tps ?? null;
+  const outputTokenThroughputAvg = results?.output_token_throughput?.avg ?? summary.output_token_throughput_tps ?? null;
+  // Current throughput: prefer live current-window value when available;
+  // fall back to avg so completed/archived jobs still populate the headline.
+  const outputTokenThroughputCurrent = summary.output_token_throughput_tps ?? outputTokenThroughputAvg;
+
+  // SLO source of truth: config endpoint may wrap benchmark or unwrap it
+  // (summary-fallback path). Check both shapes; fall back to {} when unset.
+  const slos = jobConfig?.spec?.benchmark?.slos ?? jobConfig?.spec?.slos ?? {};
+  const sloTtft = slos.time_to_first_token;
+  const sloLatency = slos.request_latency;
+  const sloThroughput = slos.request_throughput;
 
   const conditions = status.conditions ?? [];
-  // Convert phases dict {name: {requestsCompleted, requestsTotal, ...}} to array
   const rawPhases = status.phases ?? {};
-  const phasesArray = Object.entries(rawPhases).map(([phaseName, p]) => ({
-    name: phaseName,
-    completed: p.requestsCompleted ?? p.requests_completed ?? 0,
-    total: p.requestsTotal ?? p.requests_total ?? 0,
-  }));
   const pods = job?.pods ?? [];
   const jobError = info.error ?? status.error ?? null;
 
@@ -1591,6 +1598,11 @@ export function JobDetail({ namespace, name }) {
         </div>
       `}
 
+      <!-- Hero strip: SLO-aware health + elapsed/ETA + active-phase progress -->
+      <div style="margin-bottom: var(--space-4)">
+        <${HeroStrip} info=${info} status=${status} config=${jobConfig} />
+      </div>
+
       <!-- KPI row -->
       <div class="kpi-row" style="margin-bottom: var(--space-6)">
         <${KpiCard}
@@ -1598,24 +1610,34 @@ export function JobDetail({ namespace, name }) {
           value=${fmtRps(throughput) ?? '---'}
           unit=${throughput != null ? 'req/s' : ''}
           color=${colors.phaseRunning}
+          sub=${throughput != null ? `avg ${fmtRps(throughput)} req/s` : null}
+          rawValue=${throughput}
+          slo=${sloThroughput != null ? { threshold: sloThroughput, compare: 'gt' } : null}
         />
         <${KpiCard}
           label="Token Throughput"
-          value=${outputTokenThroughput != null ? fmtNum(outputTokenThroughput, 0) : '---'}
-          unit=${outputTokenThroughput != null ? 'tok/s' : ''}
+          value=${outputTokenThroughputCurrent != null ? fmtNum(outputTokenThroughputCurrent, 0) : '---'}
+          unit=${outputTokenThroughputCurrent != null ? 'tok/s' : ''}
           color=${palette.sapphire}
+          sub=${outputTokenThroughputAvg != null ? `avg ${fmtNum(outputTokenThroughputAvg, 0)} tok/s` : null}
         />
         <${KpiCard}
-          label="TTFT avg"
-          value=${fmtMs(ttftAvg) ?? '---'}
-          unit=${ttftAvg != null ? 'ms' : ''}
+          label="TTFT"
+          value=${ttftP99 != null ? fmtMs(ttftP99) : (ttftAvg != null ? fmtMs(ttftAvg) : '---')}
+          unit=${(ttftP99 ?? ttftAvg) != null ? 'ms' : ''}
           color=${palette.teal}
+          sub=${ttftAvg != null ? `avg ${fmtNum(ttftAvg, 0)} ms` : null}
+          rawValue=${ttftP99 ?? ttftAvg}
+          slo=${sloTtft != null ? { threshold: sloTtft, compare: 'lt' } : null}
         />
         <${KpiCard}
           label="Latency P99"
           value=${latP99 != null ? fmtNumber(latP99, 0) : '---'}
           unit=${latP99 != null ? 'ms' : ''}
           color=${palette.peach}
+          sub=${latAvg != null ? `avg ${fmtNum(latAvg, 0)} ms` : null}
+          rawValue=${latP99}
+          slo=${sloLatency != null ? { threshold: sloLatency, compare: 'lt' } : null}
         />
         <${KpiCard}
           label="Errors"
@@ -1630,10 +1652,9 @@ export function JobDetail({ namespace, name }) {
       <div class="detail-split">
         <!-- Left: Phase progress + pods -->
         <div>
-          ${phasesArray.length > 0 && html`
-            <div class="card" style="margin-bottom: var(--space-4)">
-              <div class="card-title">Phases</div>
-              <${PhaseBar} phases=${phasesArray} />
+          ${Object.keys(rawPhases).length > 0 && html`
+            <div style="margin-bottom: var(--space-4)">
+              <${PhaseCards} phases=${rawPhases} />
             </div>
           `}
 

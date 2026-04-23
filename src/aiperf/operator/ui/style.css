@@ -1457,3 +1457,233 @@ select, input {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--dim);
 }
+
+/* ──────────────────────────────────────────────────────────────
+   KPI chip (SLO compliance pill on KpiCard)
+────────────────────────────────────────────────────────────── */
+.metric-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: 6px;
+}
+
+.kpi-chip {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.kpi-chip--good { background: rgba(118, 185, 0, 0.15); color: var(--green); }
+.kpi-chip--warn { background: rgba(255, 193, 7, 0.15); color: var(--amber); }
+.kpi-chip--bad  { background: rgba(239, 83, 80, 0.15); color: var(--red); }
+
+.kpi-chip-thresh {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 9px;
+  opacity: 0.9;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Hero strip (SLO traffic light + elapsed/ETA + active phase)
+────────────────────────────────────────────────────────────── */
+.hero {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.2fr) minmax(180px, 0.8fr) minmax(300px, 2fr);
+  gap: var(--space-4);
+  padding: 16px 18px;
+  background: var(--bg-card);
+  border: 1px solid rgba(49, 49, 49, 0.6);
+  border-radius: var(--radius-lg);
+  align-items: center;
+}
+
+.hero--ok    { border-color: rgba(118, 185, 0, 0.45); box-shadow: 0 0 0 1px rgba(118, 185, 0, 0.12) inset; }
+.hero--warn  { border-color: rgba(255, 193, 7, 0.45); box-shadow: 0 0 0 1px rgba(255, 193, 7, 0.12) inset; }
+.hero--error { border-color: rgba(239, 83, 80, 0.55); box-shadow: 0 0 0 1px rgba(239, 83, 80, 0.15) inset; }
+.hero--idle  { border-color: rgba(117, 117, 117, 0.45); }
+
+.hero-health { display: flex; align-items: center; gap: 14px; }
+
+.hero-health-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.02);
+}
+.hero-health-dot--ok    { background: var(--green); box-shadow: 0 0 16px rgba(118, 185, 0, 0.5); animation: pulse 2s infinite; }
+.hero-health-dot--warn  { background: var(--amber); box-shadow: 0 0 16px rgba(255, 193, 7, 0.5); }
+.hero-health-dot--error { background: var(--red); box-shadow: 0 0 16px rgba(239, 83, 80, 0.5); animation: pulse 1.2s infinite; }
+.hero-health-dot--idle  { background: var(--muted); }
+
+.hero-health-label {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--white);
+  line-height: 1.1;
+}
+.hero-health-reasons {
+  font-size: 11px;
+  color: var(--sub);
+  margin-top: 4px;
+  font-family: var(--font-mono);
+}
+
+.hero-clock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--border);
+}
+.hero-clock-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  justify-content: space-between;
+}
+.hero-clock-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  font-weight: 600;
+}
+.hero-clock-val {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.hero-clock-val--dim { color: var(--muted); font-weight: 400; }
+
+.hero-phase {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--border);
+}
+.hero-phase-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.hero-phase-name {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--white);
+}
+.hero-phase-name--idle { color: var(--muted); font-weight: 400; }
+.hero-phase-pct {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.hero-phase-track {
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.hero-phase-fill {
+  height: 100%;
+  background: var(--blue);
+  border-radius: 4px;
+  transition: width 300ms ease;
+}
+.hero-phase-fill--done { background: var(--green); }
+.hero--error .hero-phase-fill { background: var(--red); }
+.hero--warn .hero-phase-fill  { background: var(--amber); }
+
+.hero-phase-sub {
+  font-size: 11px;
+  color: var(--sub);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Phase cards (one card per benchmark phase)
+────────────────────────────────────────────────────────────── */
+.phases-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-4);
+}
+
+.phase-card {
+  background: var(--bg-card);
+  border: 1px solid rgba(49, 49, 49, 0.6);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.phase-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.phase-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  font-family: var(--font-mono);
+  letter-spacing: -0.01em;
+}
+
+/* Phase badge modifiers: the plain .phase-badge class is defined earlier
+   in this file (job table); these modifiers add per-state colors. */
+.phase-badge--running    { background: rgba(59, 130, 246, 0.15); color: var(--blue); padding: 2px 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+.phase-badge--pending    { background: rgba(117, 117, 117, 0.15); color: var(--muted); padding: 2px 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+.phase-badge--complete   { background: rgba(118, 185, 0, 0.15); color: var(--green); padding: 2px 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+.phase-badge--grace      { background: rgba(255, 193, 7, 0.15); color: var(--amber); padding: 2px 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+
+.phase-track {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.phase-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--blue);
+  transition: width 300ms ease;
+}
+.phase-card.complete .phase-fill { background: var(--green); }
+.phase-card.grace    .phase-fill { background: var(--amber); }
+
+.phase-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.phase-stat { display: flex; flex-direction: column; gap: 2px; }
+.phase-stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+}
+.phase-stat-val {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
