@@ -147,7 +147,33 @@ kueue:
   # When set, the benchmark namespace is annotated with
   # kueue.x-k8s.io/default-queue-name so all AIPerf jobs are automatically
   # admitted through Kueue even without an explicit --queue-name flag.
+  # Leave empty to auto-fill from kueue.localQueueName when createQueues=true.
   defaultQueueName: ""
+
+  # kueue.createQueues toggles chart-managed provisioning of the Kueue
+  # ResourceFlavor, ClusterQueue, and LocalQueue. Users who install Kueue
+  # separately can flip this on to let the chart seed the queue pair instead
+  # of applying it out-of-band (matches the dev/kube.py `install-kueue`
+  # manifest). Off by default so charts render cleanly on clusters without
+  # Kueue CRDs; also gated on the kueue.x-k8s.io/v1beta1 API being present.
+  createQueues: false
+  # kueue.flavorName is the ResourceFlavor name when createQueues=true.
+  flavorName: "default-flavor"
+  # kueue.clusterQueueName is the ClusterQueue name when createQueues=true.
+  clusterQueueName: "aiperf-cluster-queue"
+  # kueue.localQueueName is the LocalQueue name created in the benchmark
+  # namespace when createQueues=true; also used as defaultQueueName when that
+  # value is left empty.
+  localQueueName: "aiperf-local-queue"
+  # kueue.resources sets the ClusterQueue nominalQuota per covered resource.
+  # Defaults are generous so benchmark jobs admit without tuning on dev
+  # clusters; production users should size these to their fleet.
+  resources:
+    cpu: "1000"
+    memory: "4Ti"
+    # gpu (nvidia.com/gpu) is optional — set to e.g. "64" to include it in
+    # the covered resources list. Empty / unset skips GPU quota entirely.
+    gpu: ""
 
 # ingress exposes the results-server HTTP API outside the cluster via an Ingress.
 # Disabled by default: results are reachable via ClusterIP + port-forward.
@@ -179,6 +205,29 @@ networkPolicy:
   # networkPolicy.allowedIngressCIDRs is a CIDR allow-list for external scrapers
   # (e.g. Prometheus, ingress controllers) reaching health (8080) and results ports
   allowedIngressCIDRs: []
+
+# serviceMonitor creates a Prometheus Operator ServiceMonitor that scrapes the
+# operator's /metrics endpoint on the health port (8080). Requires the
+# monitoring.coreos.com/v1 CRDs from the Prometheus Operator / kube-prometheus-stack.
+# Disabled by default because many clusters do not ship the Prometheus Operator CRDs.
+serviceMonitor:
+  # serviceMonitor.enabled toggles ServiceMonitor resource creation
+  enabled: false
+  # serviceMonitor.interval is the Prometheus scrape interval
+  interval: 30s
+  # serviceMonitor.scrapeTimeout is the Prometheus scrape timeout
+  scrapeTimeout: 10s
+  # serviceMonitor.honorLabels preserves labels from the scraped target on collision
+  honorLabels: true
+  # serviceMonitor.scheme is the URI scheme Prometheus uses to scrape ("http" or "https")
+  scheme: "http"
+  # serviceMonitor.labels is a map of extra labels for Prometheus discovery
+  # (e.g. release: prometheus-stack to match a kube-prometheus-stack selector)
+  labels: {}
+  # serviceMonitor.tlsConfig is an optional Prometheus TLS config block (insecureSkipVerify, caFile, etc.)
+  tlsConfig: {}
+  # serviceMonitor.bearerTokenSecret is an optional SecretKeySelector {name, key} for bearer-token auth
+  bearerTokenSecret: {}
 
 # defaults contains default settings for AIPerfJob resources
 defaults:
