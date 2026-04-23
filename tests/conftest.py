@@ -22,7 +22,19 @@ from pathlib import Path
 import pytest
 
 _RSS_STATUS_PATH = "/proc/self/status"
-_WATCHDOG_SUPPORTED = sys.platform == "linux" and os.path.exists(_RSS_STATUS_PATH)
+_SMAPS_ROLLUP_PATH = "/proc/self/smaps_rollup"
+# Prefer PSS (proportional set size) because aiperf runs under pytest-xdist
+# with ~24 workers; RSS double-counts shared library pages across workers and
+# inflates reported per-worker memory by hundreds of MiB. PSS charges each
+# process only its proportional share of shared pages, giving an honest
+# per-worker cost for both the watchdog trigger and the --memory-report
+# summary. smaps_rollup was added in Linux 4.14 (2017); fall back to RSS on
+# older kernels so the guard still works.
+_WATCHDOG_SUPPORTED = sys.platform == "linux" and (
+    os.path.exists(_SMAPS_ROLLUP_PATH) or os.path.exists(_RSS_STATUS_PATH)
+)
+_PSS_AVAILABLE = sys.platform == "linux" and os.path.exists(_SMAPS_ROLLUP_PATH)
+_MEMORY_METRIC_NAME = "pss" if _PSS_AVAILABLE else "rss"
 
 _DEFAULT_WATCHDOG_MB = 8192
 _WATCHDOG_INTERVAL_S = 0.5
@@ -122,7 +134,23 @@ def _apply_path_marker_expansion(config: pytest.Config) -> None:
     config.option.markexpr = " and ".join(parts) if parts else ""
 
 
-def _read_rss_bytes() -> int | None:
+def _read_memory_bytes() -> int | None:
+    """Return per-process memory usage in bytes (PSS where available, else RSS).
+
+    PSS (proportional set size) from /proc/self/smaps_rollup charges shared
+    pages fractionally across mappers, giving an accurate per-worker cost
+    under xdist. Falls back to VmRSS from /proc/self/status on kernels
+    without smaps_rollup.
+    """
+    if _PSS_AVAILABLE:
+        try:
+            with open(_SMAPS_ROLLUP_PATH) as f:
+                for line in f:
+                    if line.startswith("Pss:"):
+                        # "Pss:    12345 kB"
+                        return int(line.split()[1]) * 1024
+        except OSError:
+            pass
     try:
         with open(_RSS_STATUS_PATH) as f:
             for line in f:
@@ -134,11 +162,11 @@ def _read_rss_bytes() -> int | None:
     return None
 
 
-def _default_watchdog_kill(nodeid: str, rss_bytes: int, threshold_bytes: int) -> None:
+def _default_watchdog_kill(nodeid: str, mem_bytes: int, threshold_bytes: int) -> None:
     sys.stderr.write(
         f"\n=== pytest memory watchdog tripped ===\n"
         f"test:      {nodeid}\n"
-        f"rss:       {rss_bytes // (1024 * 1024)} MiB\n"
+        f"{_MEMORY_METRIC_NAME}:       {mem_bytes // (1024 * 1024)} MiB\n"
         f"threshold: {threshold_bytes // (1024 * 1024)} MiB\n"
         f"action:    killing worker pid {os.getpid()} with exit code 137\n"
         f"--- python thread stacks ---\n"
@@ -159,7 +187,7 @@ def _watchdog_loop() -> None:
         time.sleep(_WATCHDOG_INTERVAL_S)
         if not _watchdog_state["active"]:
             continue
-        rss = _read_rss_bytes()
+        rss = _read_memory_bytes()
         if rss is None:
             continue
         nodeid = _watchdog_state["nodeid"] or "<unknown>"
@@ -214,10 +242,10 @@ def pytest_runtest_call(item: pytest.Item):
     if threshold_mb is None:
         yield
         return
-    rss_start = _read_rss_bytes()
+    mem_start = _read_memory_bytes()
     _per_test_rss[item.nodeid] = {
-        "start": rss_start,
-        "peak": rss_start,
+        "start": mem_start,
+        "peak": mem_start,
         "end": None,
     }
     _watchdog_state["threshold_bytes"] = threshold_mb * 1024 * 1024
@@ -228,11 +256,11 @@ def pytest_runtest_call(item: pytest.Item):
     finally:
         _watchdog_state["active"] = False
         _watchdog_state["nodeid"] = None
-        rss_end = _read_rss_bytes()
+        mem_end = _read_memory_bytes()
         entry = _per_test_rss[item.nodeid]
-        entry["end"] = rss_end
-        if rss_end is not None and (entry["peak"] is None or rss_end > entry["peak"]):
-            entry["peak"] = rss_end
+        entry["end"] = mem_end
+        if mem_end is not None and (entry["peak"] is None or mem_end > entry["peak"]):
+            entry["peak"] = mem_end
         # Forward RSS data to the controller via user_properties so that
         # pytest_terminal_summary (which only runs in the controller under
         # xdist) can read it from the test report.
@@ -293,7 +321,9 @@ def pytest_terminal_summary(
         reverse=True,
     )[:top_n]
     mib = 1024 * 1024
-    terminalreporter.section(f"memory report (top {len(rows)} by peak RSS)")
+    terminalreporter.section(
+        f"memory report (top {len(rows)} by peak {_MEMORY_METRIC_NAME.upper()})"
+    )
     terminalreporter.write_line(
         f"  {'peak':>8}  {'delta':>8}  {'start':>8}  {'end':>8}  test"
     )
