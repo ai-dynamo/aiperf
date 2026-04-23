@@ -57,6 +57,7 @@ from aiperf.operator.status import (
 
 if TYPE_CHECKING:
     from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
+    from aiperf.operator.progress_client import ProgressClient
 
 logger = logging.getLogger(__name__)
 
@@ -562,6 +563,67 @@ async def _run_worker_and_progress_phase(
     sb.finalize()
 
 
+async def _recover_orphaned_completion_claim(
+    *,
+    body: dict[str, Any],
+    status: dict[str, Any],
+    namespace: str,
+    name: str,
+    jobset_name: str,
+    job_id: str,
+    key: str,
+    sb: StatusBuilder,
+) -> None:
+    """Re-invoke ``handle_completion`` for a CR with a stale completion claim.
+
+    Side effects:
+        - Runs ``handle_completion`` (results fetch, status patch, JobSet delete).
+        - Best-effort shutdown signal to the controller pod (may already be gone).
+        - Closes the cached ProgressClient on exit.
+
+    Why this exists:
+        ``try_claim_completion`` sets the ``aiperf.nvidia.com/completion-claimed``
+        annotation *before* ``handle_completion`` runs. If the operator pod
+        crashes in that window, the new process starts with an empty
+        ``_shutdown_sent`` set, but the annotation on the CR persists — so every
+        subsequent claim attempt short-circuits. Without this recovery, the CR
+        stays ``phase=Running`` with the claim annotation forever.
+    """
+    logger.warning(
+        "Recovering orphaned completion-claim for %s/%s (phase=%s): "
+        "previous handler did not reach a terminal phase; re-running "
+        "handle_completion to converge",
+        namespace,
+        name,
+        status.get("phase"),
+    )
+    try:
+        await handle_completion(
+            body, namespace, jobset_name, job_id, status=status, sb=sb
+        )
+        host = controller_dns_name(jobset_name, namespace)
+        progress_client = await get_or_create_progress_client(key)
+        try:
+            await progress_client.send_shutdown(host)
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+            logger.debug(
+                "send_shutdown during orphaned-claim recovery for %s/%s failed "
+                "(expected if controller pod already gone): %s",
+                namespace,
+                name,
+                e,
+            )
+        except Exception as e:  # noqa: BLE001 - recovery path must not raise; shutdown signal is best-effort
+            logger.debug(
+                "send_shutdown during orphaned-claim recovery for %s/%s failed: %s",
+                namespace,
+                name,
+                e,
+            )
+    finally:
+        await close_progress_client(key)
+
+
 async def _monitor_tick(
     api: ApiClient,
     *,
@@ -579,6 +641,29 @@ async def _monitor_tick(
 ) -> None:
     """Execute a single monitor tick against the shared ApiClient."""
     custom = client.CustomObjectsApi(api)
+
+    # Orphaned-claim recovery: if the completion-claimed annotation is set but
+    # the CR never reached a terminal phase, the previous operator process
+    # crashed between claiming and completing. Re-run handle_completion so the
+    # CR converges; without this, every subsequent path short-circuits on the
+    # annotation and the CR is stuck Running forever. See
+    # tests/kubernetes/chaos/test_chaos_operator_resilience.py::test_c5_orphaned_claim_recovers.
+    if is_completion_claimed(body) and current_phase not in (
+        Phase.COMPLETED,
+        Phase.FAILED,
+        Phase.CANCELLED,
+    ):
+        await _recover_orphaned_completion_claim(
+            body=body,
+            status=status,
+            namespace=namespace,
+            name=name,
+            jobset_name=jobset_name,
+            job_id=job_id,
+            key=key,
+            sb=sb,
+        )
+        return
 
     if await _check_job_timeout(
         custom,
@@ -964,7 +1049,7 @@ async def _maybe_recover_terminated_controller(
 
 
 async def _fetch_live_metrics(
-    progress_client: Any,
+    progress_client: ProgressClient,
     host: str,
     jobset_name: str,
     patch: kopf.Patch,
@@ -989,7 +1074,7 @@ async def _fetch_live_metrics(
 
 
 async def _fetch_server_metrics(
-    progress_client: Any,
+    progress_client: ProgressClient,
     host: str,
     jobset_name: str,
     patch: kopf.Patch,
@@ -1019,7 +1104,7 @@ async def _fetch_progress(
     jobset_name: str,
     patch: kopf.Patch,
     sb: StatusBuilder,
-    progress_client: Any,
+    progress_client: ProgressClient,
     key: str,
     current_phase: Phase = Phase.RUNNING,
     *,

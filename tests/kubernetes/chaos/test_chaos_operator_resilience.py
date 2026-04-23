@@ -83,15 +83,6 @@ async def test_c4_kill_operator_mid_benchmark_recovers(
         )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Synthetic C5 — simulates 'operator crashed right after claiming' by "
-        "stamping the completion-claimed annotation before the real claim. "
-        "This is presently an open-question scenario for handle_completion "
-        "recovery; see findings.md / tests/kubernetes/chaos/README.md."
-    ),
-    strict=False,
-)
 async def test_c5_orphaned_claim_recovers(
     operator_ready: OperatorDeployer,
     chaos_injector: ChaosInjector,
@@ -99,14 +90,15 @@ async def test_c5_orphaned_claim_recovers(
     operator_job_namespace: str,
     kubectl: KubectlClient,
 ) -> None:
-    """Pre-stamp completion-claim annotation + kill operator.
+    """Pre-stamp completion-claim annotation + kill operator; CR still completes.
 
     Simulates the window where the operator crashed after the claim
-    patch but before `handle_completion` finished. A correctly
-    self-healing operator should still bring the CR to Completed (via
-    `_maybe_recover_terminated_controller` salvage) — but the in-process
-    `_shutdown_sent` set loses state on restart, and the annotation
-    fast-path can short-circuit the salvage attempt. See findings log.
+    patch but before ``handle_completion`` finished. The ``_monitor_tick``
+    orphaned-claim recovery branch (see ``monitor.py::
+    _recover_orphaned_completion_claim``) re-invokes ``handle_completion``
+    so the CR converges to Completed — without this, the CR would be stuck
+    Running forever because every completion code path short-circuits on
+    the annotation.
     """
     name = "chaos-c5"
     try:
@@ -125,14 +117,16 @@ async def test_c5_orphaned_claim_recovers(
         await chaos_injector.kill_operator_pod(force=True)
         await chaos_injector.wait_for_operator_ready(timeout=60.0)
 
-        # Benchmark duration 120 s + generous recovery margin.
+        # Benchmark duration 120 s + orphan-recovery margin.
         phase = await chaos_injector.wait_for_phase(
             operator_job_namespace,
             name,
             phases=("Completed", "Failed"),
             timeout=300.0,
         )
-        assert phase in ("Completed", "Failed")
+        assert phase == "Completed", (
+            f"Orphan-claim recovery should converge CR to Completed, got {phase}"
+        )
     finally:
         await kubectl.run(
             "delete",

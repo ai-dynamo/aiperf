@@ -59,10 +59,12 @@ The full design, scenario catalog, and every verdict are in `docs/superpowers/sp
 
 ## Bugs this suite has already surfaced
 
-- **Fixed here:** stale `get_api` import in `src/aiperf/kubernetes/completion_signal.py` — every benchmark completion's stop hook crashed silently.
-- **Open:** operator does not self-heal an orphaned `completion-claimed` annotation (see `test_c5_orphaned_claim_recovers` xfail and findings.md Bug B).
-- **Open:** `server_metrics_manager` OOMs at 128 Mi (the `tests/kubernetes/helpers/operator.py` default) and blocks `SystemController` configuration — set `AIPERF_K8S_SERVER_METRICS_MANAGER_MEMORY=256Mi` on the operator Deployment before running chaos locally.
-- **Open:** `server_metrics_manager` cross-namespace pod-list RBAC failure (403) spams logs and delays profiling by 15–25 s.
+All four bugs below were discovered in the 2026-04-23 session:
+
+- **Fixed:** stale `get_api` import in `src/aiperf/kubernetes/completion_signal.py` — every benchmark completion's stop hook crashed silently.
+- **Fixed:** operator self-heals an orphaned `completion-claimed` annotation via `_recover_orphaned_completion_claim` (`src/aiperf/operator/handlers/monitor.py`); `test_c5_orphaned_claim_recovers` is no longer xfail.
+- **Fixed:** `tests/kubernetes/helpers/operator.py` now sets `AIPERF_K8S_SERVER_METRICS_MANAGER_MEMORY=256Mi` (was 128Mi, OOMed and blocked `SystemController`).
+- **Fixed:** `server_metrics_manager` auto-discovery uses the pod's own namespace (via `AIPERF_NAMESPACE` env / downward-API file) instead of endpoint-derived namespace — no more cross-namespace 403 spam.
 
 ## Adding a new scenario
 

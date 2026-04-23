@@ -327,16 +327,28 @@ class TestLifecycleIntegration:
 
 
 class TestMonitorIntegration:
-    """Verify monitor_progress' JobSet-completed path honours the durable claim."""
+    """Verify monitor_progress' JobSet-completed path honours the durable claim.
+
+    Two regimes for an existing ``completion-claimed`` annotation:
+
+    - ``phase`` is already terminal (Completed / Failed / Cancelled) → the
+      annotation is authoritative evidence that a prior handler finished;
+      ``handle_completion`` must NOT run again.
+    - ``phase`` is non-terminal (Running / Initializing) → the previous
+      handler crashed between claim-patch and status-patch, orphaning the
+      CR. ``monitor_progress`` re-runs ``handle_completion`` so the CR
+      converges to Completed instead of staying stuck. See
+      tests/kubernetes/chaos/test_chaos_operator_resilience.py::
+      test_c5_orphaned_claim_recovers.
+    """
 
     @pytest.mark.asyncio
-    async def test_jobset_completed_annotation_preset_skips_handle_completion(
+    async def test_terminal_phase_with_annotation_skips_handle_completion(
         self,
     ) -> None:
-        """When the CR body has the annotation, JobSet Completed should not re-enter handle_completion."""
+        """Annotation + terminal phase = prior handler finished; do NOT re-enter."""
         from aiperf.operator.handlers.monitor import monitor_progress
 
-        # Minimal kopf.Patch-like object
         patch = MagicMock()
         patch.status = {}
 
@@ -370,6 +382,54 @@ class TestMonitorIntegration:
                 new_callable=AsyncMock,
             ),
         ):
+            # monitor_progress has an early-return for terminal phases, so this
+            # exits before the JobSet condition check even reads the body.
+            await monitor_progress(
+                body=_body_with_annotation(),
+                status={
+                    "phase": Phase.COMPLETED,
+                    "jobId": "j",
+                    "jobSetName": "js",
+                },
+                spec={},
+                name="j",
+                namespace="ns",
+                patch=patch,
+            )
+
+        mock_handle.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_orphaned_claim_triggers_handle_completion_recovery(self) -> None:
+        """Annotation set + non-terminal phase = previous handler crashed; recover."""
+        from aiperf.operator.handlers.monitor import monitor_progress
+
+        patch = MagicMock()
+        patch.status = {}
+
+        mock_api = MagicMock()
+        mock_progress_client = AsyncMock()
+        mock_progress_client.send_shutdown = AsyncMock()
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.handle_completion",
+                new_callable=AsyncMock,
+            ) as mock_handle,
+            mock_patch(
+                "aiperf.operator.handlers.monitor.get_or_create_progress_client",
+                new_callable=AsyncMock,
+                return_value=mock_progress_client,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.close_progress_client",
+                new_callable=AsyncMock,
+            ),
+        ):
             await monitor_progress(
                 body=_body_with_annotation(),
                 status={
@@ -383,4 +443,4 @@ class TestMonitorIntegration:
                 patch=patch,
             )
 
-        mock_handle.assert_not_called()
+        mock_handle.assert_called_once()
