@@ -454,7 +454,9 @@ jobs:
   stage-wheel:
     name: Stage Wheel (S3 to Artifactory)
     needs: [prepare-release, create-rc-tag]
-    runs-on: prod-aiperf-default-v1
+    # Use the builder runner: prod-aiperf-default-v1's role lacks s3:GetObject on
+    # the wheels bucket. Revisit when IAM is widened.
+    runs-on: prod-aiperf-builder-amd-v1
     environment: automated-release
     steps:
       - name: Install uv

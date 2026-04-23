@@ -554,7 +554,9 @@ jobs:
   stage-nightly-wheel:
     name: Stage Wheel (S3 → Artifactory)
     needs: [prepare-nightly, create-nightly-tag]
-    runs-on: prod-aiperf-default-v1
+    # Use the builder runner: prod-aiperf-default-v1's role lacks s3:GetObject on
+    # the wheels bucket. Revisit when IAM is widened (see TODO in staging step).
+    runs-on: prod-aiperf-builder-amd-v1
     environment: automated-release
     if: ${{ inputs.publish_only != 'true' && needs.prepare-nightly.outputs.release == 'true' }}
     steps:
