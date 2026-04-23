@@ -32,7 +32,6 @@ Requirements: playwright + Chromium installed in the active venv
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import shutil
 import signal
@@ -56,9 +55,14 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def wait_for_http(url: str, *, deadline: float, label: str,
-                  ok_status: int | None = 200,
-                  accept_any_response: bool = False) -> bool:
+def wait_for_http(
+    url: str,
+    *,
+    deadline: float,
+    label: str,
+    ok_status: int | None = 200,
+    accept_any_response: bool = False,
+) -> bool:
     """Poll ``url`` until it returns ``ok_status`` or the deadline passes.
 
     If ``accept_any_response`` is True, *any* HTTP response code (including
@@ -73,7 +77,9 @@ def wait_for_http(url: str, *, deadline: float, label: str,
     while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen(url, timeout=1.5) as resp:
-                if accept_any_response or (ok_status is not None and resp.status == ok_status):
+                if accept_any_response or (
+                    ok_status is not None and resp.status == ok_status
+                ):
                     return True
                 last_err = f"HTTP {resp.status}"
         except urllib.error.HTTPError as e:
@@ -97,7 +103,9 @@ def tail_file(path: Path, label: str, lines: int = 20) -> None:
         return
     if content:
         tail = "\n".join(content.splitlines()[-lines:])
-        print(f"[e2e] --- {label} tail ({lines} lines) ---\n{tail}\n[e2e] ---", flush=True)
+        print(
+            f"[e2e] --- {label} tail ({lines} lines) ---\n{tail}\n[e2e] ---", flush=True
+        )
 
 
 def terminate(proc: subprocess.Popen, label: str, timeout: float = 5.0) -> None:
@@ -113,7 +121,10 @@ def terminate(proc: subprocess.Popen, label: str, timeout: float = 5.0) -> None:
             proc.wait(timeout=timeout)
             return
         except subprocess.TimeoutExpired:
-            print(f"[e2e] {label}: {sig.name} did not stop process, escalating", flush=True)
+            print(
+                f"[e2e] {label}: {sig.name} did not stop process, escalating",
+                flush=True,
+            )
 
 
 # ───────────────────────── mock server ─────────────────────────
@@ -126,9 +137,13 @@ def start_mock_server(port: int, log_path: Path) -> subprocess.Popen:
     can't block on a full OS pipe buffer.
     """
     cmd = [
-        sys.executable, "-m", "aiperf_mock_server",
-        "--host", "127.0.0.1",
-        "--port", str(port),
+        sys.executable,
+        "-m",
+        "aiperf_mock_server",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
     ]
     print(f"[e2e] starting mock server: {' '.join(cmd)}", flush=True)
     print(f"[e2e]   log → {log_path}", flush=True)
@@ -168,24 +183,39 @@ def start_aiperf(
     """
     aiperf = shutil.which("aiperf") or "aiperf"
     cmd = [
-        aiperf, "profile",
-        "--model", model,
-        "--url", f"http://127.0.0.1:{mock_port}",
-        "--endpoint-type", "chat",
+        aiperf,
+        "profile",
+        "--model",
+        model,
+        "--url",
+        f"http://127.0.0.1:{mock_port}",
+        "--endpoint-type",
+        "chat",
         "--streaming",
-        "--request-rate", str(request_rate),
+        "--request-rate",
+        str(request_rate),
         # Uses the shorthand string form — "40s" — to exercise the
         # duration parser (helped shake out a pydantic float-only bug).
-        "--benchmark-duration", f"{duration_sec}s",
-        "--concurrency", str(concurrency),
-        "--warmup-request-count", str(warmup),
-        "--isl", str(isl),
-        "--osl", str(osl),
-        "--tokenizer", "builtin",
-        "--random-seed", "42",
-        "--ui", "simple",
-        "--goodput", goodput,
-        "--artifact-dir", str(artifact_dir),
+        "--benchmark-duration",
+        f"{duration_sec}s",
+        "--concurrency",
+        str(concurrency),
+        "--warmup-request-count",
+        str(warmup),
+        "--isl",
+        str(isl),
+        "--osl",
+        str(osl),
+        "--tokenizer",
+        "builtin",
+        "--random-seed",
+        "42",
+        "--ui",
+        "simple",
+        "--goodput",
+        goodput,
+        "--artifact-dir",
+        str(artifact_dir),
     ]
     env = os.environ.copy()
     env["AIPERF_API_SERVER_PORT"] = str(api_port)
@@ -236,8 +266,13 @@ def inspect_with_playwright(
         browser = p.chromium.launch(headless=True)
         ctx = browser.new_context(viewport={"width": 1400, "height": 2000})
         page = ctx.new_page()
-        page.on("console", lambda m: result["console"].append(f"[{m.type}] {m.text[:200]}"))
-        page.on("pageerror", lambda e: result["console"].append(f"[pageerror] {str(e)[:200]}"))
+        page.on(
+            "console", lambda m: result["console"].append(f"[{m.type}] {m.text[:200]}")
+        )
+        page.on(
+            "pageerror",
+            lambda e: result["console"].append(f"[pageerror] {str(e)[:200]}"),
+        )
 
         page.goto(f"{base_url}/dashboard-v2/")
         # Take an initial screenshot of the page in whatever state we find it.
@@ -348,14 +383,26 @@ def print_report(report: dict[str, Any]) -> None:
     dom = report.get("dom", {})
     hero = dom.get("hero", {})
     print(f"[e2e] status dot connected:   {dom.get('status_connected')}", flush=True)
-    print(f"[e2e] hero kind / label:      {hero.get('kind')} / {hero.get('label')}", flush=True)
+    print(
+        f"[e2e] hero kind / label:      {hero.get('kind')} / {hero.get('label')}",
+        flush=True,
+    )
     print(f"[e2e] hero reasons:           {hero.get('reasons')}", flush=True)
-    print(f"[e2e] elapsed / eta:          {hero.get('elapsed')} / {hero.get('eta')}", flush=True)
-    print(f"[e2e] active phase / pct:     {hero.get('phase_name')} / {hero.get('phase_pct')}", flush=True)
+    print(
+        f"[e2e] elapsed / eta:          {hero.get('elapsed')} / {hero.get('eta')}",
+        flush=True,
+    )
+    print(
+        f"[e2e] active phase / pct:     {hero.get('phase_name')} / {hero.get('phase_pct')}",
+        flush=True,
+    )
     phases = dom.get("phases", [])
     print(f"[e2e] phase cards ({len(phases)}):", flush=True)
     for ph in phases:
-        print(f"[e2e]    {ph.get('name'):<12} {ph.get('badge'):<10} {ph.get('progress')}", flush=True)
+        print(
+            f"[e2e]    {ph.get('name'):<12} {ph.get('badge'):<10} {ph.get('progress')}",
+            flush=True,
+        )
     chart = dom.get("chart")
     if chart:
         pts = list(zip(chart["labels"], chart["sample_counts"], strict=False))
@@ -366,8 +413,8 @@ def print_report(report: dict[str, Any]) -> None:
         slo = tile.get("slo_kind") or "—"
         chip = tile.get("chip_text") or ""
         print(
-            f"[e2e]   {tile.get('label'):<20} [{tile.get('primary_stat','?'):<7}] "
-            f"{tile.get('val','?'):<10}{tile.get('unit',''):<6}  "
+            f"[e2e]   {tile.get('label'):<20} [{tile.get('primary_stat', '?'):<7}] "
+            f"{tile.get('val', '?'):<10}{tile.get('unit', ''):<6}  "
             f"{slo:<5}  {chip}  (sparkline paths={tile.get('sparkline_points')})",
             flush=True,
         )
@@ -375,9 +422,16 @@ def print_report(report: dict[str, Any]) -> None:
     if srv:
         print(f"[e2e] server metrics ({len(srv)}):", flush=True)
         for row in srv:
-            print(f"[e2e]   {row.get('name'):<32} {row.get('value'):<18} {row.get('saturation') or ''}", flush=True)
+            print(
+                f"[e2e]   {row.get('name'):<32} {row.get('value'):<18} {row.get('saturation') or ''}",
+                flush=True,
+            )
     print(f"[e2e] log entries:            {dom.get('log_entries')}", flush=True)
-    console_errs = [c for c in report.get("console", []) if "pageerror" in c or c.startswith("[error]")]
+    console_errs = [
+        c
+        for c in report.get("console", [])
+        if "pageerror" in c or c.startswith("[error]")
+    ]
     if console_errs:
         print(f"[e2e] browser console errors ({len(console_errs)}):", flush=True)
         for c in console_errs[:10]:
@@ -396,18 +450,30 @@ def print_report(report: dict[str, Any]) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Run a real aiperf benchmark against a real mock server, "
-                    "then inspect the live API dashboard in a headless browser.",
+        "then inspect the live API dashboard in a headless browser.",
     )
     ap.add_argument("--model", default="mock-llama")
-    ap.add_argument("--duration-sec", type=int, default=45,
-                    help="Profiling-phase duration in seconds. Needs to be long "
-                         "enough for the browser to observe live data (default: 45 s).")
-    ap.add_argument("--request-rate", type=float, default=10.0,
-                    help="Target request rate in req/s (poisson arrival).")
+    ap.add_argument(
+        "--duration-sec",
+        type=int,
+        default=45,
+        help="Profiling-phase duration in seconds. Needs to be long "
+        "enough for the browser to observe live data (default: 45 s).",
+    )
+    ap.add_argument(
+        "--request-rate",
+        type=float,
+        default=10.0,
+        help="Target request rate in req/s (poisson arrival).",
+    )
     ap.add_argument("--concurrency", type=int, default=16)
-    ap.add_argument("--warmup", type=int, default=5,
-                    help="Warmup request count. Keep small so warmup doesn't "
-                         "eat the Playwright observation window.")
+    ap.add_argument(
+        "--warmup",
+        type=int,
+        default=5,
+        help="Warmup request count. Keep small so warmup doesn't "
+        "eat the Playwright observation window.",
+    )
     ap.add_argument("--isl", type=int, default=200)
     ap.add_argument("--osl", type=int, default=100)
     ap.add_argument(
@@ -416,13 +482,16 @@ def main() -> int:
         help="AIPerf goodput SLOs (same syntax as `aiperf profile --goodput`).",
     )
     ap.add_argument(
-        "--screenshots-dir", type=Path, default=DEFAULT_SCREENSHOT_DIR,
+        "--screenshots-dir",
+        type=Path,
+        default=DEFAULT_SCREENSHOT_DIR,
         help="Directory to save captured screenshots into.",
     )
     ap.add_argument(
-        "--save-to-docs", action="store_true",
+        "--save-to-docs",
+        action="store_true",
         help="Also copy the live screenshot to docs/media/images/api-dashboard-v2.png "
-             "so the repo's canonical dashboard image reflects this e2e run.",
+        "so the repo's canonical dashboard image reflects this e2e run.",
     )
     args = ap.parse_args()
 
@@ -465,12 +534,16 @@ def main() -> int:
 
         # 3. Launch aiperf profile with the API server exposed.
         aiperf_proc = start_aiperf(
-            mock_port=mock_port, api_port=api_port,
+            mock_port=mock_port,
+            api_port=api_port,
             model=args.model,
             duration_sec=args.duration_sec,
             request_rate=args.request_rate,
-            concurrency=args.concurrency, warmup=args.warmup,
-            isl=args.isl, osl=args.osl, goodput=args.goodput,
+            concurrency=args.concurrency,
+            warmup=args.warmup,
+            isl=args.isl,
+            osl=args.osl,
+            goodput=args.goodput,
             artifact_dir=artifact_dir,
             log_path=aiperf_log,
         )
@@ -518,8 +591,11 @@ def main() -> int:
         chart_has_points = any(n >= 3 for n in chart.get("sample_counts", []))
         has_values = any(t.get("val") and t["val"] != "---" for t in kpi)
         hero_kind = (dom.get("hero") or {}).get("kind")
-        console_errors = [c for c in report.get("console", [])
-                          if c.startswith("[error]") or c.startswith("[pageerror]")]
+        console_errors = [
+            c
+            for c in report.get("console", [])
+            if c.startswith("[error]") or c.startswith("[pageerror]")
+        ]
 
         print("[e2e] pass/fail gate:", flush=True)
         print(f"[e2e]   status connected:   {dom.get('status_connected')}", flush=True)
@@ -528,8 +604,13 @@ def main() -> int:
         print(f"[e2e]   chart has points:   {chart_has_points}", flush=True)
         print(f"[e2e]   console clean:      {len(console_errors) == 0}", flush=True)
 
-        if dom.get("status_connected") and hero_kind and has_values \
-                and chart_has_points and not console_errors:
+        if (
+            dom.get("status_connected")
+            and hero_kind
+            and has_values
+            and chart_has_points
+            and not console_errors
+        ):
             print("[e2e] LIVE DASHBOARD CHECK: PASS", flush=True)
             exit_code = 0
         else:

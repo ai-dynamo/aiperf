@@ -250,15 +250,22 @@ async def test_job_detail_shows_hero_strip(
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_job_detail_hero_says_passed_slos_when_slos_met(
-    live_operator_app, seeded_results_dir, fake_k8s_client, page,
+    live_operator_app,
+    seeded_results_dir,
+    fake_k8s_client,
+    page,
 ) -> None:
     """Completed run + declared SLOs + values under threshold → 'Passed SLOs'."""
     _set_job_summary(
-        fake_k8s_client, "aiperf-bench", "aiperf-llama3-c128",
+        fake_k8s_client,
+        "aiperf-bench",
+        "aiperf-llama3-c128",
         {"throughput_rps": 42.1, "ttft_p99_ms": 180.0, "latency_p99_ms": 300.0},
     )
     _write_spec(
-        seeded_results_dir, "aiperf-bench", "aiperf-llama3-c128",
+        seeded_results_dir,
+        "aiperf-bench",
+        "aiperf-llama3-c128",
         {"benchmark": {"slos": {"time_to_first_token": 500}}},
     )
     detail = JobDetailPage(
@@ -333,14 +340,21 @@ async def test_job_detail_slo_chip_when_declared(
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_job_detail_sparkline_element_present(
-    live_operator_app, seeded_results_dir, fake_k8s_client, page,
+    live_operator_app,
+    seeded_results_dir,
+    fake_k8s_client,
+    page,
 ) -> None:
     """Sparkline <svg> renders inside each KPI tile (empty placeholder is OK)."""
     _set_job_summary(
-        fake_k8s_client, "aiperf-bench", "aiperf-llama3-c128",
+        fake_k8s_client,
+        "aiperf-bench",
+        "aiperf-llama3-c128",
         {"throughput_rps": 42.1, "ttft_p99_ms": 180.0, "latency_p99_ms": 300.0},
     )
-    detail = JobDetailPage(page, live_operator_app.base_url, "aiperf-bench", "aiperf-llama3-c128")
+    detail = JobDetailPage(
+        page, live_operator_app.base_url, "aiperf-bench", "aiperf-llama3-c128"
+    )
     await detail.goto()
     # Every KPI tile has an <svg class="sparkline"> element (or equivalent).
     count = await page.locator("svg.sparkline").count()
@@ -349,10 +363,15 @@ async def test_job_detail_sparkline_element_present(
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_job_detail_gpu_card_hidden_without_data(
-    live_operator_app, seeded_results_dir, fake_k8s_client, page,
+    live_operator_app,
+    seeded_results_dir,
+    fake_k8s_client,
+    page,
 ) -> None:
     """GpuTelemetryCard stays hidden when no GPU metrics are present."""
-    detail = JobDetailPage(page, live_operator_app.base_url, "aiperf-bench", "aiperf-llama3-c128")
+    detail = JobDetailPage(
+        page, live_operator_app.base_url, "aiperf-bench", "aiperf-llama3-c128"
+    )
     await detail.goto()
     # No server_metrics_export.json seeded → card should not render.
     gpu = page.locator("[data-testid='gpu-telemetry']")
@@ -361,14 +380,21 @@ async def test_job_detail_gpu_card_hidden_without_data(
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_job_detail_reliability_tile_renders(
-    live_operator_app, seeded_results_dir, fake_k8s_client, page,
+    live_operator_app,
+    seeded_results_dir,
+    fake_k8s_client,
+    page,
 ) -> None:
     """Reliability tile visible on job detail with success rate / error count."""
     _set_job_summary(
-        fake_k8s_client, "aiperf-bench", "aiperf-llama3-c128",
+        fake_k8s_client,
+        "aiperf-bench",
+        "aiperf-llama3-c128",
         {"throughput_rps": 42.1, "total_requests": 100, "error_rate": 0.0},
     )
-    detail = JobDetailPage(page, live_operator_app.base_url, "aiperf-bench", "aiperf-llama3-c128")
+    detail = JobDetailPage(
+        page, live_operator_app.base_url, "aiperf-bench", "aiperf-llama3-c128"
+    )
     await detail.goto()
     reliability = page.get_by_test_id("kpi-reliability")
     await expect(reliability).to_be_visible()

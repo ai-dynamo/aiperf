@@ -207,9 +207,7 @@ class TestTransportErrorRetry:
             ),
         ],
     )  # fmt: skip
-    async def test_transport_error_triggers_retry(
-        self, exc: Exception
-    ) -> None:
+    async def test_transport_error_triggers_retry(self, exc: Exception) -> None:
         """Subclasses of ClientError and TimeoutError are caught and retried."""
         # First attempt raises; second attempt succeeds with a stop message.
         ws_ok = _make_mock_ws([_text_frame(b'{"done":true}')])

@@ -36,7 +36,16 @@ _WATCHDOG_SUPPORTED = sys.platform == "linux" and (
 _PSS_AVAILABLE = sys.platform == "linux" and os.path.exists(_SMAPS_ROLLUP_PATH)
 _MEMORY_METRIC_NAME = "pss" if _PSS_AVAILABLE else "rss"
 
-_DEFAULT_WATCHDOG_MB = 8192
+# Duplicate fd 2 at conftest import time, before pytest's per-test capture
+# plugin can dup2 over it. The watchdog writes its diagnostic here so the
+# message survives pytest's capture and os._exit(137)'s capture-teardown
+# bypass. Closed? We leak intentionally for the life of the process.
+try:
+    _WATCHDOG_STDERR_FD = os.dup(2)
+except OSError:
+    _WATCHDOG_STDERR_FD = 2
+
+_DEFAULT_WATCHDOG_MB = 2048
 _WATCHDOG_INTERVAL_S = 0.5
 _WATCHDOG_ENV_VAR = "AIPERF_TEST_MEMORY_LIMIT_MB"
 _WATCHDOG_PATH_PREFIXES = ("tests/unit/", "tests/component_integration/")
@@ -163,19 +172,39 @@ def _read_memory_bytes() -> int | None:
 
 
 def _default_watchdog_kill(nodeid: str, mem_bytes: int, threshold_bytes: int) -> None:
-    sys.stderr.write(
-        f"\n=== pytest memory watchdog tripped ===\n"
-        f"test:      {nodeid}\n"
-        f"{_MEMORY_METRIC_NAME}:       {mem_bytes // (1024 * 1024)} MiB\n"
-        f"threshold: {threshold_bytes // (1024 * 1024)} MiB\n"
-        f"action:    killing worker pid {os.getpid()} with exit code 137\n"
-        f"--- python thread stacks ---\n"
+    # Build the diagnostic once.
+    lines: list[str] = [
+        "\n=== pytest memory watchdog tripped ===\n",
+        f"test:      {nodeid}\n",
+        f"{_MEMORY_METRIC_NAME}:       {mem_bytes // (1024 * 1024)} MiB\n",
+        f"threshold: {threshold_bytes // (1024 * 1024)} MiB\n",
+        f"action:    killing worker pid {os.getpid()} with exit code 137\n",
+    ]
+    log_path = os.environ.get(
+        "AIPERF_WATCHDOG_LOG_FILE", f"/tmp/aiperf-pytest-watchdog-{os.getpid()}.log"
     )
+    lines.append(f"log file:  {log_path}\n")
+    lines.append("--- python thread stacks ---\n")
     for tid, frame in sys._current_frames().items():
-        sys.stderr.write(f"\n[thread {tid}]\n")
-        sys.stderr.write("".join(traceback.format_stack(frame)))
-    sys.stderr.write("=== end pytest memory watchdog ===\n")
-    sys.stderr.flush()
+        lines.append(f"\n[thread {tid}]\n")
+        lines.append("".join(traceback.format_stack(frame)))
+    lines.append("=== end pytest memory watchdog ===\n")
+    blob = "".join(lines).encode("utf-8", "replace")
+
+    # Write to a file so the diagnostic survives pytest's per-test fd-level
+    # capture (which dup2s over fd 2 into a deleted tempfile) and
+    # os._exit(137)'s capture-teardown bypass.
+    try:
+        with open(log_path, "wb") as f:
+            f.write(blob)
+    except OSError:
+        pass
+    # Best-effort: also try the saved fd in case the user is running without
+    # pytest's fd capture (e.g. `-s`), so the diagnostic is visible inline.
+    try:
+        os.write(_WATCHDOG_STDERR_FD, blob)
+    except OSError:
+        pass
     os._exit(137)
 
 

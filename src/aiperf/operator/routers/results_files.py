@@ -43,6 +43,48 @@ def _display_name(path: Path) -> str:
     return path.name
 
 
+async def _build_job_bundle(job_dir: Path) -> bytes:
+    """Build an in-memory zip of every file in ``job_dir``, transparently
+    decompressing ``.zst`` entries back to their original names.
+
+    One-shot construction (return the full bytes) rather than streaming,
+    because ``zipfile.ZipFile`` tracks its own byte offsets and doesn't
+    compose with draining the underlying ``BytesIO`` between writes — the
+    central-directory offsets get confused and readers see stray bytes.
+    For the typical benchmark bundle (a few MiB, single-digit files) the
+    whole thing fits in memory easily; streaming buys nothing.
+    """
+    import io
+    import zipfile
+    import zstandard
+
+    dctx = zstandard.ZstdDecompressor()
+    files = sorted([f for f in job_dir.iterdir() if f.is_file()], key=lambda p: p.name)
+
+    def _build() -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+            for f in files:
+                arcname = _display_name(f)
+                if f.suffix == ".zst":
+                    payload = dctx.decompress(f.read_bytes())
+                else:
+                    payload = f.read_bytes()
+                zf.writestr(arcname, payload)
+        return buf.getvalue()
+
+    return await asyncio.to_thread(_build)
+
+
+async def _stream_job_bundle(job_dir: Path) -> AsyncIterator[bytes]:
+    """Yield a prebuilt job bundle in fixed-size chunks so the FastAPI
+    ``StreamingResponse`` can flush progressively to the client even though
+    the zip itself is constructed in one shot by :func:`_build_job_bundle`."""
+    data = await _build_job_bundle(job_dir)
+    for i in range(0, len(data), CHUNK_SIZE):
+        yield data[i:i + CHUNK_SIZE]
+
+
 async def _stream_zstd_raw(file_path: Path) -> AsyncIterator[bytes]:
     """Stream a .zst file directly as raw bytes."""
     async with aiofiles.open(file_path, "rb") as f:
@@ -202,6 +244,30 @@ def create_results_files_router(base_dir: Path) -> APIRouter:
             return ResultsHistoryListResponse()
         jobs = await asyncio.to_thread(_scan_job_dirs, base_dir)
         return ResultsHistoryListResponse(jobs=jobs)
+
+    @router.get("/results/{namespace}/{job_id}.zip")
+    async def download_bundle(namespace: str, job_id: str) -> StreamingResponse:
+        """Download every result file for a job as one uncompressed zip.
+
+        Entries stored in zstd-compressed form on the PVC are decompressed back
+        to their original names inside the archive, so the download is usable
+        without extra tooling.
+
+        This route is registered before ``list_job_files`` so the FastAPI
+        matcher sees ``{job_id}.zip`` first — otherwise the bare
+        ``/results/{ns}/{job_id}`` pattern would capture the ``.zip`` as part
+        of the job_id and fall through to a 404.
+        """
+        job_dir = _resolve_job_dir(base_dir, namespace, job_id)
+        bundle_name = f"{namespace}__{job_id}.zip"
+        return StreamingResponse(
+            _stream_job_bundle(job_dir),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{bundle_name}"',
+                "X-Filename": bundle_name,
+            },
+        )
 
     @router.get("/results/{namespace}/{job_id}", response_model=FileListResponse)
     async def list_job_files(namespace: str, job_id: str) -> FileListResponse:

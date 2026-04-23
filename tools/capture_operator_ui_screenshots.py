@@ -53,30 +53,29 @@ from tests.e2e.operator_ui.conftest import (  # noqa: E402
     _pod_raw_to_v1pod,
 )
 
-
 # Route → output-filename mapping. Order matters only for console readability.
 ROUTES = [
-    ("operator-ui-01-dashboard",            "/"),
-    ("operator-ui-02-jobs",                 "/#/jobs"),
+    ("operator-ui-01-dashboard", "/"),
+    ("operator-ui-02-jobs", "/#/jobs"),
     ("operator-ui-03-job-detail-completed", "/#/jobs/aiperf-bench/aiperf-llama3-c128"),
-    ("operator-ui-04-job-detail-running",   "/#/jobs/aiperf-bench/live-run"),
-    ("operator-ui-05-leaderboard",          "/#/leaderboard"),
-    ("operator-ui-06-compare",              "/#/compare"),
-    ("operator-ui-07-history",              "/#/history"),
-    ("operator-ui-08-job-detail-archived",  "/#/jobs/ml-lab/ghost-run"),
+    ("operator-ui-04-job-detail-running", "/#/jobs/aiperf-bench/live-run"),
+    ("operator-ui-05-leaderboard", "/#/leaderboard"),
+    ("operator-ui-06-compare", "/#/compare"),
+    ("operator-ui-07-history", "/#/history"),
+    ("operator-ui-08-job-detail-archived", "/#/jobs/ml-lab/ghost-run"),
 ]
 
 # The UI reads status.summary as flat keys (throughput_rps, ttft_avg_ms, …),
 # while profile_export_aiperf.json uses nested metrics (request_throughput.avg).
 # This script seeds CR status with the flat form so KPIs render populated.
 _FLAT_METRIC_MAP = {
-    "throughput_rps":              ("request_throughput",     "avg"),
-    "latency_p99_ms":              ("request_latency",        "p99"),
-    "latency_avg_ms":              ("request_latency",        "avg"),
-    "ttft_avg_ms":                 ("time_to_first_token",    "avg"),
-    "ttft_p99_ms":                 ("time_to_first_token",    "p99"),
-    "itl_avg_ms":                  ("inter_token_latency",    "avg"),
-    "itl_p99_ms":                  ("inter_token_latency",    "p99"),
+    "throughput_rps": ("request_throughput", "avg"),
+    "latency_p99_ms": ("request_latency", "p99"),
+    "latency_avg_ms": ("request_latency", "avg"),
+    "ttft_avg_ms": ("time_to_first_token", "avg"),
+    "ttft_p99_ms": ("time_to_first_token", "p99"),
+    "itl_avg_ms": ("inter_token_latency", "avg"),
+    "itl_p99_ms": ("inter_token_latency", "p99"),
     "output_token_throughput_tps": ("output_token_throughput", "avg"),
 }
 
@@ -106,21 +105,31 @@ def _seed_results_dir(out: Path) -> Path:
     # One PVC-only job (no matching CR) so the archived row + banner render.
     ghost_dir = results_dir / "ml-lab" / "ghost-run"
     ghost_dir.mkdir(parents=True, exist_ok=True)
-    (ghost_dir / "profile_export_aiperf.json").write_bytes(orjson.dumps({
-        "status": "Succeeded",
-        "start_time": "2026-04-20T10:00:00Z",
-        "end_time":   "2026-04-20T10:45:00Z",
-        "request_throughput":     {"avg": 55.5, "unit": "requests/sec"},
-        "request_latency":        {"p99": 421.0, "unit": "ms"},
-        "time_to_first_token":    {"avg": 195.0, "unit": "ms"},
-        "inter_token_latency":    {"avg": 31.0,  "unit": "ms"},
-        "output_token_throughput": {"avg": 7104.0, "unit": "tokens/sec"},
-        "input_config": {
-            "models":   {"items": [{"name": "mistral-7b"}]},
-            "endpoint": {"urls": ["http://mistral.svc:8000/v1"], "type": "chat", "streaming": True},
-        },
-    }))
-    (ghost_dir / ".aiperf_results_ready.json").write_bytes(orjson.dumps({"ready": True}))
+    (ghost_dir / "profile_export_aiperf.json").write_bytes(
+        orjson.dumps(
+            {
+                "status": "Succeeded",
+                "start_time": "2026-04-20T10:00:00Z",
+                "end_time": "2026-04-20T10:45:00Z",
+                "request_throughput": {"avg": 55.5, "unit": "requests/sec"},
+                "request_latency": {"p99": 421.0, "unit": "ms"},
+                "time_to_first_token": {"avg": 195.0, "unit": "ms"},
+                "inter_token_latency": {"avg": 31.0, "unit": "ms"},
+                "output_token_throughput": {"avg": 7104.0, "unit": "tokens/sec"},
+                "input_config": {
+                    "models": {"items": [{"name": "mistral-7b"}]},
+                    "endpoint": {
+                        "urls": ["http://mistral.svc:8000/v1"],
+                        "type": "chat",
+                        "streaming": True,
+                    },
+                },
+            }
+        )
+    )
+    (ghost_dir / ".aiperf_results_ready.json").write_bytes(
+        orjson.dumps({"ready": True})
+    )
     return results_dir
 
 
@@ -146,8 +155,8 @@ def _enrich_cr_status(jobs_raw: list[dict], results_dir: Path) -> None:
         status["startTime"] = created.isoformat().replace("+00:00", "Z")
         if phase != "Running":
             status["completionTime"] = (
-                created + _dt.timedelta(minutes=45)
-            ).isoformat().replace("+00:00", "Z")
+                (created + _dt.timedelta(minutes=45)).isoformat().replace("+00:00", "Z")
+            )
 
         # Workers snapshot
         if phase == "Failed":
@@ -162,26 +171,26 @@ def _enrich_cr_status(jobs_raw: list[dict], results_dir: Path) -> None:
             pct = 100 if total == 0 else round((completed / total) * 100)
             return {
                 "requestsCompleted": completed,
-                "requestsTotal":     total,
+                "requestsTotal": total,
                 "requestsProgressPercent": pct,
             }
 
         if phase == "Running":
             status["currentPhase"] = "benchmark"
             status["phases"] = {
-                "warmup":    _phase_block(500, 500),
+                "warmup": _phase_block(500, 500),
                 "benchmark": _phase_block(3348, 5400),
             }
         elif phase == "Failed":
             status["currentPhase"] = "benchmark"
             status["phases"] = {
-                "warmup":    _phase_block(500, 500),
+                "warmup": _phase_block(500, 500),
                 "benchmark": _phase_block(180, 1000),
             }
         else:
             status["currentPhase"] = "completed"
             status["phases"] = {
-                "warmup":    _phase_block(500, 500),
+                "warmup": _phase_block(500, 500),
                 "benchmark": _phase_block(100, 100),
             }
 
@@ -195,35 +204,41 @@ def _enrich_cr_status(jobs_raw: list[dict], results_dir: Path) -> None:
                 status["summary"] = flat
         elif phase == "Running":
             status["liveSummary"] = {
-                "throughput_rps":  31.5,
-                "latency_p99_ms":  380.0,
-                "latency_avg_ms":  290.0,
-                "ttft_avg_ms":     170.0,
-                "ttft_p99_ms":     240.0,
-                "itl_avg_ms":      28.0,
-                "itl_p99_ms":      40.0,
+                "throughput_rps": 31.5,
+                "latency_p99_ms": 380.0,
+                "latency_avg_ms": 290.0,
+                "ttft_avg_ms": 170.0,
+                "ttft_p99_ms": 240.0,
+                "itl_avg_ms": 28.0,
+                "itl_p99_ms": 40.0,
                 "output_token_throughput_tps": 4032.0,
-                "total_requests":  5400,
-                "error_rate":      0.0,
+                "total_requests": 5400,
+                "error_rate": 0.0,
             }
 
         # Conditions — visible badges on the detail page
         status.setdefault("conditions", [])
         if phase == "Succeeded" and not status["conditions"]:
             status["conditions"] = [
-                {"type": "Ready",     "status": "True", "reason": "BenchmarkComplete"},
+                {"type": "Ready", "status": "True", "reason": "BenchmarkComplete"},
                 {"type": "Succeeded", "status": "True"},
             ]
         elif phase == "Failed" and not status["conditions"]:
             status["conditions"] = [
-                {"type": "Failed", "status": "True", "reason": "PodError",
-                 "message": "controller pod exited non-zero"},
+                {
+                    "type": "Failed",
+                    "status": "True",
+                    "reason": "PodError",
+                    "message": "controller pod exited non-zero",
+                },
             ]
         elif phase == "Running" and not status["conditions"]:
             status["conditions"] = [{"type": "Ready", "status": "True"}]
 
 
-def _install_fake_k8s(jobs_raw: list[dict], pods_raw: list[dict], cluster: dict) -> None:
+def _install_fake_k8s(
+    jobs_raw: list[dict], pods_raw: list[dict], cluster: dict
+) -> None:
     """Monkeypatch the six k8s helpers across every module that imports them."""
     from aiperf.kubernetes.models import AIPerfJobCR
 
@@ -258,7 +273,8 @@ def _install_fake_k8s(jobs_raw: list[dict], pods_raw: list[dict], cluster: dict)
     async def get_pods(api, namespace, label_selector):
         job_id = label_selector.split("=", 1)[1]
         return [
-            _pod_raw_to_v1pod(p) for p in pods_raw
+            _pod_raw_to_v1pod(p)
+            for p in pods_raw
             if p["metadata"].get("labels", {}).get("aiperf.nvidia.com/job-id") == job_id
         ]
 
@@ -276,13 +292,13 @@ def _install_fake_k8s(jobs_raw: list[dict], pods_raw: list[dict], cluster: dict)
     import aiperf.operator.routers.results_analytics as ra
 
     patches = [
-        ("list_aiperf_jobs",         list_aiperf_jobs),
-        ("find_aiperf_job",          find_aiperf_job),
+        ("list_aiperf_jobs", list_aiperf_jobs),
+        ("find_aiperf_job", find_aiperf_job),
         ("get_raw_aiperfjob_status", get_raw_aiperfjob_status),
-        ("get_raw_aiperfjob",        get_raw_aiperfjob),
-        ("get_pods",                 get_pods),
-        ("cluster_version",          cluster_version),
-        ("cancel_aiperf_job",        cancel_aiperf_job),
+        ("get_raw_aiperfjob", get_raw_aiperfjob),
+        ("get_pods", get_pods),
+        ("cluster_version", cluster_version),
+        ("cancel_aiperf_job", cancel_aiperf_job),
     ]
     for mod in (kc, kj, kp, ju, jr, ra):
         for nm, fn in patches:
@@ -308,8 +324,12 @@ async def _capture_all(out_dir: Path, width: int, height: int, settle_ms: int) -
 
     port = _free_port()
     cfg = uvicorn.Config(
-        app, host="127.0.0.1", port=port, log_level="warning",
-        access_log=False, lifespan="on",
+        app,
+        host="127.0.0.1",
+        port=port,
+        log_level="warning",
+        access_log=False,
+        lifespan="on",
     )
     server = uvicorn.Server(cfg)
     serve_task = asyncio.create_task(server.serve())
@@ -335,7 +355,9 @@ async def _capture_all(out_dir: Path, width: int, height: int, settle_ms: int) -
         for prefix in CACHEABLE_HOSTS:
             if url.startswith(prefix):
                 body = await asyncio.to_thread(_load_cdn_cached, url)
-                await route.fulfill(status=200, content_type=_content_type_for(url), body=body)
+                await route.fulfill(
+                    status=200, content_type=_content_type_for(url), body=body
+                )
                 return
         print(f"  WARN unmapped external: {url}")
         await route.abort()
@@ -371,16 +393,26 @@ async def _capture_all(out_dir: Path, width: int, height: int, settle_ms: int) -
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument(
-        "--out-dir", type=Path,
+        "--out-dir",
+        type=Path,
         default=REPO / "docs" / "media" / "images",
         help="Directory to write PNGs into (default: docs/media/images/).",
     )
-    parser.add_argument("--width", type=int, default=1440,
-                        help="Viewport width in px (default: 1440).")
-    parser.add_argument("--height", type=int, default=1600,
-                        help="Viewport height in px (default: 1600).")
-    parser.add_argument("--settle-ms", type=int, default=900,
-                        help="Wait after networkidle before screenshot (default: 900).")
+    parser.add_argument(
+        "--width", type=int, default=1440, help="Viewport width in px (default: 1440)."
+    )
+    parser.add_argument(
+        "--height",
+        type=int,
+        default=1600,
+        help="Viewport height in px (default: 1600).",
+    )
+    parser.add_argument(
+        "--settle-ms",
+        type=int,
+        default=900,
+        help="Wait after networkidle before screenshot (default: 900).",
+    )
     args = parser.parse_args()
 
     asyncio.run(_capture_all(args.out_dir, args.width, args.height, args.settle_ms))

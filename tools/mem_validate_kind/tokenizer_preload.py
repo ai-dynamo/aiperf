@@ -22,7 +22,6 @@ from __future__ import annotations
 import os
 import sys
 
-
 _LOADED: dict[str, object] = {}
 
 
@@ -46,7 +45,9 @@ def _preload() -> None:
 
     for m in models:
         try:
-            print(f"[tokenizer-preload] loading {m} into forkserver heap", file=sys.stderr)
+            print(
+                f"[tokenizer-preload] loading {m} into forkserver heap", file=sys.stderr
+            )
             tok = AutoTokenizer.from_pretrained(m, trust_remote_code=True)
             # Run an encode so any lazy initialization (byte-fallback tables,
             # merge tries, special-tokens maps) is realized here in the

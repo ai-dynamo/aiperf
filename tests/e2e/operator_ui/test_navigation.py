@@ -96,7 +96,10 @@ async def test_unknown_route_shows_not_found(
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_top_nav_icons_present(
-    live_operator_app, seeded_results_dir, fake_k8s_client, page,
+    live_operator_app,
+    seeded_results_dir,
+    fake_k8s_client,
+    page,
 ) -> None:
     """Phosphor icons render next to every nav link."""
     dash = DashboardPage(page, live_operator_app.base_url)

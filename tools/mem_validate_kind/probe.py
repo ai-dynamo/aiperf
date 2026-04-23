@@ -35,7 +35,6 @@ import sys
 import time
 from pathlib import Path
 
-
 _FORKSERVER_PRELOAD = [
     "aiperf.common.bootstrap",
     "aiperf.config",
@@ -217,7 +216,11 @@ def mode_forkserver(prefix: str, n: int, model_ids: list[str]) -> None:
     plain ``os.fork()`` which has the same CoW semantics (children share
     parent's anon heap until they write).
     """
-    print(f"[forkserver-parent] starting, pid={os.getpid()}, N={n}", file=sys.stderr, flush=True)
+    print(
+        f"[forkserver-parent] starting, pid={os.getpid()}, N={n}",
+        file=sys.stderr,
+        flush=True,
+    )
     do_imports()
     load_tokenizers(model_ids)
     warmup()

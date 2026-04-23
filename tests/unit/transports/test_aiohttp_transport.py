@@ -155,7 +155,9 @@ class TestAioHttpTransport:
     )
     def test_get_url(self, cfg_base_url, custom_endpoint, expected_url):
         """Test get_url with various base URLs and endpoints."""
-        model_endpoint = make_run(base_url=cfg_base_url, custom_endpoint=custom_endpoint)
+        model_endpoint = make_run(
+            base_url=cfg_base_url, custom_endpoint=custom_endpoint
+        )
 
         transport = AioHttpTransport(run=model_endpoint)
         request_info = create_request_info(model_endpoint.cfg)
@@ -206,9 +208,13 @@ class TestAioHttpTransport:
         ],
         ids=["custom-path-full-url", "custom-path-no-slash", "v1-prefix-dedup"],
     )
-    def test_get_url_dedup_custom_path(self, cfg_base_url, custom_endpoint, expected_url):
+    def test_get_url_dedup_custom_path(
+        self, cfg_base_url, custom_endpoint, expected_url
+    ):
         """Custom endpoint path is deduped when URL already contains it."""
-        model_endpoint = make_run(base_url=cfg_base_url, custom_endpoint=custom_endpoint)
+        model_endpoint = make_run(
+            base_url=cfg_base_url, custom_endpoint=custom_endpoint
+        )
         transport = AioHttpTransport(run=model_endpoint)
         request_info = create_request_info(model_endpoint.cfg)
         url = transport.get_url(request_info)

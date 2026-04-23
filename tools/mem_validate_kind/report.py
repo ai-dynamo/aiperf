@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 
 
@@ -74,44 +73,58 @@ def main() -> int:
     print("## CONTAINERS MODE  (N separate sibling containers)")
     print(f"   {len(c_snaps)} worker snapshots loaded")
     if c_snaps:
-        print(f"   {'container':<10} {'Pss':>11} {'Pss_Anon':>11} {'Pss_File':>11} "
-              f"{'Priv_Dirty':>11} {'RssAnon':>11}")
+        print(
+            f"   {'container':<10} {'Pss':>11} {'Pss_Anon':>11} {'Pss_File':>11} "
+            f"{'Priv_Dirty':>11} {'RssAnon':>11}"
+        )
         for s in c_snaps:
-            print(f"   {str(s.get('label', ''))[:10]:<10} "
-                  f"{mib(s['Pss_kB']):>11} {mib(s['Pss_Anon_kB']):>11} "
-                  f"{mib(s['Pss_File_kB']):>11} {mib(s['Private_Dirty_kB']):>11} "
-                  f"{mib(s['RssAnon_kB']):>11}")
+            print(
+                f"   {str(s.get('label', ''))[:10]:<10} "
+                f"{mib(s['Pss_kB']):>11} {mib(s['Pss_Anon_kB']):>11} "
+                f"{mib(s['Pss_File_kB']):>11} {mib(s['Private_Dirty_kB']):>11} "
+                f"{mib(s['RssAnon_kB']):>11}"
+            )
         c_pss = sum(s["Pss_kB"] for s in c_snaps)
         c_pss_anon = sum(s["Pss_Anon_kB"] for s in c_snaps)
         c_priv_dirty = sum(s["Private_Dirty_kB"] for s in c_snaps)
-        print(f"   {'TOTAL':<10} {mib(c_pss):>11} {mib(c_pss_anon):>11} "
-              f"{'-':>11} {mib(c_priv_dirty):>11} "
-              f"{mib(sum(s['RssAnon_kB'] for s in c_snaps)):>11}")
+        print(
+            f"   {'TOTAL':<10} {mib(c_pss):>11} {mib(c_pss_anon):>11} "
+            f"{'-':>11} {mib(c_priv_dirty):>11} "
+            f"{mib(sum(s['RssAnon_kB'] for s in c_snaps)):>11}"
+        )
 
     c_cgroup_kib = 0
     for f in sorted(containers_dir.glob("cgroup-*.txt")):
         c_cgroup_kib += _read_cgroup_kib(f)
-    print(f"   sum memory.current across {len(list(containers_dir.glob('cgroup-*.txt')))} "
-          f"container cgroups: {mib(c_cgroup_kib)}")
+    print(
+        f"   sum memory.current across {len(list(containers_dir.glob('cgroup-*.txt')))} "
+        f"container cgroups: {mib(c_cgroup_kib)}"
+    )
 
     # ----- forkserver (os.fork) mode -----
     print()
     print("## FORKSERVER MODE  (1 container, os.fork N children)")
     print(f"   {len(f_snaps)} parent+child snapshots loaded")
     if f_snaps:
-        print(f"   {'process':<14} {'Pss':>11} {'Pss_Anon':>11} {'Pss_File':>11} "
-              f"{'Priv_Dirty':>11} {'RssAnon':>11}")
+        print(
+            f"   {'process':<14} {'Pss':>11} {'Pss_Anon':>11} {'Pss_File':>11} "
+            f"{'Priv_Dirty':>11} {'RssAnon':>11}"
+        )
         for s in f_snaps:
-            print(f"   {str(s.get('label', ''))[:14]:<14} "
-                  f"{mib(s['Pss_kB']):>11} {mib(s['Pss_Anon_kB']):>11} "
-                  f"{mib(s['Pss_File_kB']):>11} {mib(s['Private_Dirty_kB']):>11} "
-                  f"{mib(s['RssAnon_kB']):>11}")
+            print(
+                f"   {str(s.get('label', ''))[:14]:<14} "
+                f"{mib(s['Pss_kB']):>11} {mib(s['Pss_Anon_kB']):>11} "
+                f"{mib(s['Pss_File_kB']):>11} {mib(s['Private_Dirty_kB']):>11} "
+                f"{mib(s['RssAnon_kB']):>11}"
+            )
         f_pss = sum(s["Pss_kB"] for s in f_snaps)
         f_pss_anon = sum(s["Pss_Anon_kB"] for s in f_snaps)
         f_priv_dirty = sum(s["Private_Dirty_kB"] for s in f_snaps)
-        print(f"   {'TOTAL':<14} {mib(f_pss):>11} {mib(f_pss_anon):>11} "
-              f"{'-':>11} {mib(f_priv_dirty):>11} "
-              f"{mib(sum(s['RssAnon_kB'] for s in f_snaps)):>11}")
+        print(
+            f"   {'TOTAL':<14} {mib(f_pss):>11} {mib(f_pss_anon):>11} "
+            f"{'-':>11} {mib(f_priv_dirty):>11} "
+            f"{mib(sum(s['RssAnon_kB'] for s in f_snaps)):>11}"
+        )
 
     f_cgroup_kib = _read_cgroup_kib(forkserver_dir / "cgroup-forkserver.txt")
     print(f"   memory.current of forkserver container cgroup: {mib(f_cgroup_kib)}")
@@ -122,42 +135,60 @@ def main() -> int:
         print()
         print("## MP-FORKSERVER MODE  (multiprocessing.set_forkserver_preload)")
         print(f"   {len(m_snaps)} parent+child snapshots loaded")
-        print(f"   {'process':<18} {'Pss':>11} {'Pss_Anon':>11} {'Pss_File':>11} "
-              f"{'Priv_Dirty':>11} {'RssAnon':>11}")
+        print(
+            f"   {'process':<18} {'Pss':>11} {'Pss_Anon':>11} {'Pss_File':>11} "
+            f"{'Priv_Dirty':>11} {'RssAnon':>11}"
+        )
         for s in m_snaps:
-            print(f"   {str(s.get('label', ''))[:18]:<18} "
-                  f"{mib(s['Pss_kB']):>11} {mib(s['Pss_Anon_kB']):>11} "
-                  f"{mib(s['Pss_File_kB']):>11} {mib(s['Private_Dirty_kB']):>11} "
-                  f"{mib(s['RssAnon_kB']):>11}")
+            print(
+                f"   {str(s.get('label', ''))[:18]:<18} "
+                f"{mib(s['Pss_kB']):>11} {mib(s['Pss_Anon_kB']):>11} "
+                f"{mib(s['Pss_File_kB']):>11} {mib(s['Private_Dirty_kB']):>11} "
+                f"{mib(s['RssAnon_kB']):>11}"
+            )
         m_pss = sum(s["Pss_kB"] for s in m_snaps)
         m_pss_anon = sum(s["Pss_Anon_kB"] for s in m_snaps)
         m_priv_dirty = sum(s["Private_Dirty_kB"] for s in m_snaps)
-        print(f"   {'TOTAL':<18} {mib(m_pss):>11} {mib(m_pss_anon):>11} "
-              f"{'-':>11} {mib(m_priv_dirty):>11} "
-              f"{mib(sum(s['RssAnon_kB'] for s in m_snaps)):>11}")
-        m_cgroup_kib = _read_cgroup_kib(mp_dir / "cgroup-forkserver.txt") if mp_dir else 0
-        print(f"   memory.current of mp-forkserver container cgroup: {mib(m_cgroup_kib)}")
+        print(
+            f"   {'TOTAL':<18} {mib(m_pss):>11} {mib(m_pss_anon):>11} "
+            f"{'-':>11} {mib(m_priv_dirty):>11} "
+            f"{mib(sum(s['RssAnon_kB'] for s in m_snaps)):>11}"
+        )
+        m_cgroup_kib = (
+            _read_cgroup_kib(mp_dir / "cgroup-forkserver.txt") if mp_dir else 0
+        )
+        print(
+            f"   memory.current of mp-forkserver container cgroup: {mib(m_cgroup_kib)}"
+        )
 
     # ----- deltas -----
     print()
     print("## DELTA (containers − fork-variant)")
     if c_snaps and f_snaps:
         print("  vs forkserver (os.fork):")
-        print(f"   sum Pss:            {mib(c_pss - f_pss)}  "
-              f"(containers {mib(c_pss)} − forkserver {mib(f_pss)})")
+        print(
+            f"   sum Pss:            {mib(c_pss - f_pss)}  "
+            f"(containers {mib(c_pss)} − forkserver {mib(f_pss)})"
+        )
     if c_cgroup_kib and f_cgroup_kib:
-        print(f"   cgroup memory.current: "
-              f"{mib(c_cgroup_kib - f_cgroup_kib)}  "
-              f"(containers {mib(c_cgroup_kib)} − forkserver {mib(f_cgroup_kib)})")
+        print(
+            f"   cgroup memory.current: "
+            f"{mib(c_cgroup_kib - f_cgroup_kib)}  "
+            f"(containers {mib(c_cgroup_kib)} − forkserver {mib(f_cgroup_kib)})"
+        )
 
     if c_snaps and m_snaps:
         print("  vs mp-forkserver (multiprocessing.set_forkserver_preload):")
-        print(f"   sum Pss:            {mib(c_pss - m_pss)}  "
-              f"(containers {mib(c_pss)} − mp {mib(m_pss)})")
+        print(
+            f"   sum Pss:            {mib(c_pss - m_pss)}  "
+            f"(containers {mib(c_pss)} − mp {mib(m_pss)})"
+        )
     if c_cgroup_kib and m_cgroup_kib:
-        print(f"   cgroup memory.current: "
-              f"{mib(c_cgroup_kib - m_cgroup_kib)}  "
-              f"(containers {mib(c_cgroup_kib)} − mp {mib(m_cgroup_kib)})")
+        print(
+            f"   cgroup memory.current: "
+            f"{mib(c_cgroup_kib - m_cgroup_kib)}  "
+            f"(containers {mib(c_cgroup_kib)} − mp {mib(m_cgroup_kib)})"
+        )
 
     print()
     return 0

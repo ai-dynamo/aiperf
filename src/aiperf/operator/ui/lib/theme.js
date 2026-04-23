@@ -1,62 +1,63 @@
-// AIPerf dark theme - CONSOLE palette (amber-dominant, cyan secondary).
-// Legacy color keys (blue/peach/teal/mauve/...) collapse onto the two-tone
-// CONSOLE palette so pages that haven't been re-keyed still render amber/cyan
-// rather than the pre-CONSOLE blue/orange/teal fan-out.
+// AIPerf dark theme — MCC (Mission Control Console) palette.
+// Phosphor amber primary, phosphor cyan secondary, phosphor green for SLO-pass,
+// CRT red for failures. Legacy color keys (blue/peach/teal/mauve/...) collapse
+// onto this four-color palette so pages that haven't been re-keyed still render
+// amber/cyan rather than the pre-MCC blue/orange/teal fan-out.
 export const palette = {
-  // Base layers (neutral grays, no blue tint)
-  bg: '#0c0c0c',
-  bgCard: '#161616',
-  bgRaised: '#222222',
+  // Base layers — near-black with a warm undertone (no blue tint)
+  bg: '#07070a',
+  bgCard: '#0c0c11',
+  bgRaised: '#111117',
 
   // Borders
-  border: '#313131',
-  borderHover: '#4b4b4b',
-  borderSubtle: '#1a1a1a',
+  border: 'rgba(244, 238, 222, 0.11)',
+  borderHover: 'rgba(244, 238, 222, 0.18)',
+  borderSubtle: 'rgba(244, 238, 222, 0.06)',
 
-  // Text (neutral gray scale)
-  dim: '#4b4b4b',
-  muted: '#757575',
-  sub: '#a7a7a7',
-  text: '#eeeeee',
+  // Text (paper off-white scale)
+  dim: 'rgba(244, 238, 222, 0.18)',
+  muted: 'rgba(244, 238, 222, 0.38)',
+  sub: 'rgba(244, 238, 222, 0.68)',
+  text: '#f4eede',
   white: '#ffffff',
 
-  // Accent — CONSOLE amber replaces NVIDIA green as the primary accent.
-  accent: '#ff9f1c',
-  accentDim: 'rgba(255,159,28,0.15)',
+  // Accent — phosphor amber is the primary meter-needle color.
+  accent: '#ffb627',
+  accentDim: 'rgba(255, 182, 39, 0.14)',
 
   // Semantic — primary = amber, secondary = cyan. All other named colors
-  // collapse onto the same two-tone palette.
-  blue: '#ff9f1c',     // formerly #3b82f6 — now amber (CONSOLE primary)
-  cyan: '#3ad8e3',     // CONSOLE secondary data signal
-  green: '#7ccf5e',    // SLO pass only
-  amber: '#ff9f1c',
-  red: '#ff5c5c',
-  pink: '#ff9f1c',
-  orange: '#ff9f1c',
-  teal: '#3ad8e3',
-  indigo: '#3ad8e3',
-  mauve: '#3ad8e3',
+  // collapse onto the phosphor palette.
+  blue: '#ffb627',     // legacy key re-pointed to amber (MCC primary)
+  cyan: '#7eeaff',
+  green: '#64ffb3',    // SLO pass only
+  amber: '#ffb627',
+  red: '#ff5964',
+  pink: '#ffb627',
+  orange: '#ffb627',
+  teal: '#7eeaff',
+  indigo: '#7eeaff',
+  mauve: '#7eeaff',
 
   // Compatibility aliases (used by other pages not being rewritten)
-  base: '#0c0c0c',
-  mantle: '#161616',
-  crust: '#080808',
-  surface0: '#313131',
-  surface1: '#4b4b4b',
-  surface2: '#4b4b4b',
-  overlay0: '#757575',
-  overlay1: '#a7a7a7',
-  overlay2: '#a7a7a7',
-  subtext0: '#a7a7a7',
-  subtext1: '#eeeeee',
-  yellow: '#ff9f1c',
-  peach: '#ff9f1c',
-  maroon: '#ff5c5c',
-  sapphire: '#3ad8e3',
-  sky: '#3ad8e3',
-  lavender: '#3ad8e3',
-  flamingo: '#ff9f1c',
-  rosewater: '#ff9f1c',
+  base: '#07070a',
+  mantle: '#0c0c11',
+  crust: '#000000',
+  surface0: 'rgba(244, 238, 222, 0.11)',
+  surface1: 'rgba(244, 238, 222, 0.18)',
+  surface2: 'rgba(244, 238, 222, 0.18)',
+  overlay0: 'rgba(244, 238, 222, 0.38)',
+  overlay1: 'rgba(244, 238, 222, 0.68)',
+  overlay2: 'rgba(244, 238, 222, 0.68)',
+  subtext0: 'rgba(244, 238, 222, 0.68)',
+  subtext1: '#f4eede',
+  yellow: '#ffb627',
+  peach: '#ffb627',
+  maroon: '#ff5964',
+  sapphire: '#7eeaff',
+  sky: '#7eeaff',
+  lavender: '#7eeaff',
+  flamingo: '#ffb627',
+  rosewater: '#ffb627',
 };
 
 // Semantic mappings
@@ -81,12 +82,12 @@ export const colors = {
   error: palette.red,
   info: palette.blue,
 
-  // Job phase colors — CONSOLE: live = amber (peak/attention),
-  // completed = green (pass), failed = red, pending/initializing = paper-faint.
+  // Job phase colors — MCC: live = amber (peak/attention), completed = green
+  // (pass), failed = red, pending/initializing = paper-faint.
   phaseRunning: palette.amber,
   phaseCompleted: palette.green,
   phaseFailed: palette.red,
-  phasePending: 'rgba(244, 240, 225, 0.36)',
+  phasePending: 'rgba(244, 238, 222, 0.38)',
   phaseUnknown: palette.muted,
 };
 
@@ -100,12 +101,11 @@ export function phaseColor(phase) {
   return colors.phaseUnknown;
 }
 
-// Stable model-color assignment — CONSOLE: amber-first, then cyan.
-// Downstream tints cycle through the two-tone palette plus red/green for
-// outlier signals; no blue, no purple.
+// Stable model-color assignment — MCC: amber-first, then cyan. Downstream tints
+// cycle through the phosphor palette plus red/green for outlier signals.
 const MODEL_COLORS = [
-  '#ff9f1c', '#3ad8e3', '#7ccf5e', '#ff5c5c',
-  '#ffb547', '#f4f0e1',
+  '#ffb627', '#7eeaff', '#64ffb3', '#ff5964',
+  '#ffd166', '#c4a5ff',
 ];
 
 /**

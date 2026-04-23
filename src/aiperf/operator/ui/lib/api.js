@@ -75,6 +75,21 @@ export const api = {
     return apiFetch('/results');
   },
 
+  /** List individual result files for a job on the PVC. */
+  listJobFiles(ns, jobId) {
+    return apiFetch(`/results/${encodeURIComponent(ns)}/${encodeURIComponent(jobId)}`);
+  },
+
+  /** Build an absolute-ish URL for a single result file (for anchor href downloads). */
+  resultFileUrl(ns, jobId, filename) {
+    return `${BASE}/results/${encodeURIComponent(ns)}/${encodeURIComponent(jobId)}/${encodeURIComponent(filename)}`;
+  },
+
+  /** Build an absolute-ish URL for the full job bundle as a single zip. */
+  resultBundleUrl(ns, jobId) {
+    return `${BASE}/results/${encodeURIComponent(ns)}/${encodeURIComponent(jobId)}.zip`;
+  },
+
   /** Get original CR config for a job */
   getJobConfig(ns, jobId) {
     return apiFetch(

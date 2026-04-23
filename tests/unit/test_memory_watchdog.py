@@ -78,4 +78,6 @@ def test_no_memory_limit_marker_disables_watchdog(
 
 
 def test_default_threshold_applied() -> None:
-    assert _watchdog_state["threshold_bytes"] == 8192 * 1024 * 1024
+    from tests.conftest import _DEFAULT_WATCHDOG_MB
+
+    assert _watchdog_state["threshold_bytes"] == _DEFAULT_WATCHDOG_MB * 1024 * 1024
