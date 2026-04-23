@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from aiperf.accuracy.benchmark_loader import load_benchmark_problems
@@ -54,11 +55,14 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         self.grader: BaseGrader = grader_cls(user_config=user_config)
 
         self.problems: list[BenchmarkProblem] | None = None
+        self._problems_lock = asyncio.Lock()
 
     async def _ensure_problems_loaded(self) -> None:
         if self.problems is not None:
             return
-        self.problems = await load_benchmark_problems(self.user_config)
+        async with self._problems_lock:
+            if self.problems is None:
+                self.problems = await load_benchmark_problems(self.user_config)
 
     async def process_record(
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata

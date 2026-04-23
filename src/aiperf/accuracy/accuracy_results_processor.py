@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
@@ -35,6 +36,7 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
         self.user_config = user_config
 
         self._problems: list[BenchmarkProblem] | None = None
+        self._problems_lock = asyncio.Lock()
         self._task_correct: dict[str, int] = defaultdict(int)
         self._task_total: dict[str, int] = defaultdict(int)
         self._overall_correct: int = 0
@@ -43,7 +45,9 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
     async def _ensure_problems_loaded(self) -> None:
         if self._problems is not None:
             return
-        self._problems = await load_benchmark_problems(self.user_config)
+        async with self._problems_lock:
+            if self._problems is None:
+                self._problems = await load_benchmark_problems(self.user_config)
 
     async def process_result(self, record_data: MetricRecordsData) -> None:
         await self._ensure_problems_loaded()

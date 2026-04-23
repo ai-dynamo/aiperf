@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import AsyncMock, MagicMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -186,3 +187,59 @@ class TestAccuracyResultsProcessorSessionBounds:
         assert processor._overall_total == 1
         assert processor._overall_correct == 1
         assert processor._task_correct["test_task"] == 1
+
+
+@pytest.mark.asyncio
+class TestEnsureProblemsLoadedConcurrency:
+    async def test_record_processor_loads_problems_exactly_once_under_concurrency(
+        self, monkeypatch
+    ) -> None:
+        """Concurrent _ensure_problems_loaded calls must invoke load_benchmark_problems once."""
+        problem = _make_problem()
+        load_called = 0
+
+        async def slow_load(_user_config):
+            nonlocal load_called
+            load_called += 1
+            await asyncio.sleep(0)
+            return [problem]
+
+        user_config = _make_user_config()
+        processor = _make_processor(monkeypatch, user_config)
+
+        with patch(
+            "aiperf.accuracy.accuracy_record_processor.load_benchmark_problems",
+            side_effect=slow_load,
+        ):
+            await asyncio.gather(
+                *[processor._ensure_problems_loaded() for _ in range(10)]
+            )
+
+        assert load_called == 1
+        assert processor.problems == [problem]
+
+    async def test_results_processor_loads_problems_exactly_once_under_concurrency(
+        self,
+    ) -> None:
+        """Concurrent _ensure_problems_loaded calls must invoke load_benchmark_problems once."""
+        problem = _make_problem()
+        load_called = 0
+
+        async def slow_load(_user_config):
+            nonlocal load_called
+            load_called += 1
+            await asyncio.sleep(0)
+            return [problem]
+
+        processor = _make_results_processor(None, _make_user_config())
+
+        with patch(
+            "aiperf.accuracy.accuracy_results_processor.load_benchmark_problems",
+            side_effect=slow_load,
+        ):
+            await asyncio.gather(
+                *[processor._ensure_problems_loaded() for _ in range(10)]
+            )
+
+        assert load_called == 1
+        assert processor._problems == [problem]
