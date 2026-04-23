@@ -29,7 +29,7 @@ def chaos_injector(kubectl: KubectlClient) -> ChaosInjector:
     return ChaosInjector(kubectl=kubectl)
 
 
-@pytest_asyncio.fixture(scope="package")
+@pytest_asyncio.fixture(scope="package", loop_scope="package")
 async def toxiproxy_injector(
     kubectl: KubectlClient,
 ) -> AsyncIterator[ToxiproxyInjector]:
