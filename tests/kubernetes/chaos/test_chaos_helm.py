@@ -192,23 +192,41 @@ async def test_h1_install_job_uninstall_reinstall_is_clean(
         # Phase 2: uninstall cleanly.
         await deployer.uninstall_chart(wait=True)
 
-        # Assert no AIPerfJob CRs left anywhere.
+        # `helm uninstall` intentionally retains CRDs (and any CR instances
+        # it didn't create) so user data is never silently destroyed. Assert
+        # instead that the release + operator deployment are gone; actively
+        # GC any leftover CRs ourselves so re-install is clean.
+        status_after = await deployer.get_release_status()
+        assert status_after != "deployed", (
+            f"H1 release still deployed after uninstall: {status_after!r}"
+        )
+
         remaining_crs = await kubectl.run(
             "get",
             "aiperfjobs",
             "-A",
             "-o",
-            "jsonpath={.items[*].metadata.namespace}/{.items[*].metadata.name}",
+            "jsonpath={range .items[*]}{.metadata.namespace}/{.metadata.name}{'\\n'}{end}",
             check=False,
         )
-        own_remaining = [
-            line
+        leftover = [
+            line.strip()
             for line in remaining_crs.stdout.splitlines()
-            if release in line or "h1-" in line
+            if line.strip() and ("h1-" in line or release in line)
         ]
-        assert not own_remaining, (
-            f"H1 left AIPerfJob CRs after uninstall: {own_remaining!r}"
-        )
+        for entry in leftover:
+            ns, _, name = entry.partition("/")
+            if ns and name:
+                await kubectl.run(
+                    "delete",
+                    "aiperfjob",
+                    name,
+                    "-n",
+                    ns,
+                    "--ignore-not-found",
+                    "--wait=false",
+                    check=False,
+                )
 
         # Assert no PVCs left in operator namespace (storage was disabled,
         # but we still check defensively).

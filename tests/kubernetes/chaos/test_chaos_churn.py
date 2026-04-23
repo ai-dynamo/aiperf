@@ -216,13 +216,15 @@ async def test_c11_parallel_jobs_delete_subset(
         # to leak pods, the namespace pod count would prevent the survivor
         # from finishing — an implicit end-to-end check.
 
-        # Survivor completes within 240 s (120 s duration + generous
-        # margin for fetch/shutdown).
+        # Survivor completes within 360 s. The 120 s benchmark duration
+        # overlaps with the operator reaping two sibling JobSets + their
+        # workers + pods, so CPU pressure on a 4-vCPU Kind node is real.
+        # On a larger cluster this can be tightened back to 240 s.
         phase = await chaos_injector.wait_for_phase(
             operator_job_namespace,
             survivor,
             phases=("Completed",),
-            timeout=240.0,
+            timeout=360.0,
         )
         assert phase == "Completed", (
             f"C11 survivor {survivor!r} did not reach Completed "
