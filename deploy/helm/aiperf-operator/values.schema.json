@@ -31,6 +31,13 @@
         "shareProcessNamespace": { "type": "boolean" }
       }
     },
+    "chaos": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "controllerHttpUrlOverride": { "type": "string" }
+      }
+    },
     "operator": {
       "type": "object",
       "additionalProperties": false,
