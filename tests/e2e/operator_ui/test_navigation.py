@@ -92,3 +92,15 @@ async def test_unknown_route_shows_not_found(
     """Unknown hash routes render the ``Not Found`` stub in ``app.js``."""
     await page.goto(f"{live_operator_app.base_url}/#/does-not-exist")
     await expect(page.get_by_text("Not Found")).to_be_visible()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_top_nav_icons_present(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page,
+) -> None:
+    """Phosphor icons render next to every nav link."""
+    dash = DashboardPage(page, live_operator_app.base_url)
+    await dash.goto()
+    icons = page.locator(".topbar .ph")
+    count = await icons.count()
+    assert count >= 5, f"expected >=5 Phosphor icons in nav, got {count}"

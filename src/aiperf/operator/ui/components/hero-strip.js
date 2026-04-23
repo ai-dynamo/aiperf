@@ -245,52 +245,65 @@ export function HeroStrip({ info, status, config, onClick }) {
   let healthLabel;
   let healthSub;
   let visualStatus = health.status;
+  let headlineIcon = null;
 
   if (terminalPhase) {
     if (phase === 'Failed' || phase === 'Error') {
       healthLabel = 'Failed';
       healthSub = info?.error || health.reasons[0] || 'run reported failure';
       visualStatus = 'error';
+      headlineIcon = 'ph-x-circle';
     } else if (phase === 'Cancelled') {
       healthLabel = 'Cancelled';
       healthSub = 'run stopped before completion';
       visualStatus = 'neutral';
+      headlineIcon = 'ph-x-circle';
     } else if (!slosDeclared) {
       healthLabel = 'Completed';
       healthSub = 'no SLOs declared — no pass/fail judgment';
       visualStatus = 'neutral';
+      headlineIcon = 'ph-check-circle';
     } else if (health.status === 'ok') {
       healthLabel = 'Passed SLOs';
       healthSub = 'all declared SLOs met';
       visualStatus = 'ok';
+      headlineIcon = 'ph-check-circle';
     } else {
       healthLabel = 'Missed SLOs';
       healthSub = health.reasons.slice(0, 2).join(' · ') || 'one or more SLOs violated';
       visualStatus = health.status === 'warn' ? 'warn' : 'error';
+      headlineIcon = 'ph-x-circle';
     }
   } else if (livePhase) {
     if (!slosDeclared) {
       healthLabel = 'Running';
       healthSub = 'no SLOs declared — no live judgment';
       visualStatus = 'neutral';
+      headlineIcon = 'ph-clock';
     } else if (health.status === 'idle') {
       healthLabel = 'Waiting for data';
       healthSub = health.reasons.slice(0, 2).join(' · ') || 'no metrics reported yet';
+      headlineIcon = 'ph-clock';
     } else if (health.status === 'ok') {
       healthLabel = 'On target';
       healthSub = 'all declared SLOs passing';
+      headlineIcon = 'ph-check-circle';
     } else if (health.category === 'slo') {
       healthLabel = 'SLO violated';
       healthSub = health.reasons.slice(0, 2).join(' · ');
+      headlineIcon = 'ph-warning';
     } else if (health.category === 'goodput') {
       healthLabel = 'SLO slipping';
       healthSub = health.reasons.slice(0, 2).join(' · ');
+      headlineIcon = 'ph-warning';
     } else if (health.category === 'errors') {
       healthLabel = 'Errors reported';
       healthSub = health.reasons.slice(0, 2).join(' · ');
+      headlineIcon = 'ph-warning';
     } else {
       healthLabel = 'Attention needed';
       healthSub = health.reasons.slice(0, 2).join(' · ');
+      headlineIcon = 'ph-warning';
     }
   } else {
     healthLabel = phase || 'Unknown';
@@ -322,9 +335,12 @@ export function HeroStrip({ info, status, config, onClick }) {
       data-testid="hero-strip"
     >
       <div class="hero-health">
-        <div class=${'hero-health-dot hero-health-dot--' + visualStatus}></div>
+        <div class=${'hero-health-dot hero-health-dot--' + visualStatus + (visualStatus === 'ok' && livePhase ? ' live' : '')}></div>
         <div class="hero-health-text">
-          <div class="hero-health-label">${healthLabel}</div>
+          <div class="hero-health-label">
+            ${headlineIcon && html`<i class=${'ph ' + headlineIcon} aria-hidden="true" style="margin-right: var(--space-2)"></i>`}
+            ${healthLabel}
+          </div>
           <div class="hero-health-reasons">${healthSub}</div>
         </div>
       </div>

@@ -1,5 +1,6 @@
 import { html } from 'htm/preact';
 import { Sparkline } from './sparkline.js';
+import { useCountUp } from '../lib/hooks.js';
 
 const slugifyLabel = (s) => String(s ?? '').toLowerCase().trim().replace(/\s+/g, '-');
 
@@ -44,6 +45,13 @@ function evalSlo(slo, rawValue) {
  * the SLO is undeclared. The Sparkline component renders a stable placeholder
  * when fewer than 2 samples are available, so callers can always pass the prop.
  *
+ * Optional ``icon`` prop (a Phosphor class name like ``"ph-trend-up"``) renders
+ * a small tertiary-colored glyph in the label row.
+ *
+ * When ``value`` is numeric, the headline is gently animated via
+ * :func:`useCountUp` on change. String values (``"---"``, pre-formatted
+ * durations, etc.) pass through unchanged.
+ *
  * @param {{
  *   label: string,
  *   value: string|number,
@@ -51,11 +59,12 @@ function evalSlo(slo, rawValue) {
  *   color?: string,
  *   sub?: string,
  *   rawValue?: number,
+ *   icon?: string,
  *   slo?: { threshold: number, compare?: 'lt' | 'gt', value?: number },
  *   points?: Array<{t: number, v: number}>,
  * }} props
  */
-export function KpiCard({ label, value, unit, color, sub, rawValue, slo, points }) {
+export function KpiCard({ label, value, unit, color, sub, rawValue, icon, slo, points }) {
   const valueStyle = color ? `color: ${color}` : '';
   const sloResult = evalSlo(slo, rawValue);
   const sparkStroke =
@@ -63,10 +72,23 @@ export function KpiCard({ label, value, unit, color, sub, rawValue, slo, points 
     : sloResult?.kind === 'good' ? SPARK_STROKE_GOOD
     : SPARK_STROKE_NEUTRAL;
 
+  // Animate the headline when it's numeric. Integer targets render as
+  // rounded integers; fractional targets keep one decimal place so a ramp
+  // like 0 -> 42.7 doesn't jitter between integer frames.
+  const isInt = typeof value === 'number' && Number.isInteger(value);
+  const animated = useCountUp(value, {
+    duration: 400,
+    formatter: isInt ? (v) => Math.round(v) : (v) => Number(v).toFixed(1),
+  });
+  const displayValue = typeof value === 'number' ? animated : (value ?? '—');
+
   return html`
     <div class="metric-card" data-testid=${'kpi-' + slugifyLabel(label)}>
       <div class="metric-label-row">
-        <span class="metric-label">${label}</span>
+        <span class="metric-label">
+          ${icon && html`<i class=${'ph ' + icon} aria-hidden="true" style="color: var(--text-tertiary); margin-right: var(--space-1)"></i>`}
+          ${label}
+        </span>
         ${sloResult && html`
           <span
             class=${'kpi-chip kpi-chip--' + sloResult.kind}
@@ -79,7 +101,7 @@ export function KpiCard({ label, value, unit, color, sub, rawValue, slo, points 
       </div>
       <div class="metric-val-row">
         <span class="metric-val" style=${valueStyle}>
-          ${value ?? '—'}
+          ${displayValue}
         </span>
         ${unit && html`<span class="metric-unit">${unit}</span>`}
       </div>

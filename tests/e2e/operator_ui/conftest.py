@@ -398,6 +398,7 @@ JS_CACHE = Path(__file__).parent.parent.parent / "_js_cache"
 CACHEABLE_HOSTS: tuple[str, ...] = (
     "https://esm.sh/",
     "https://cdn.jsdelivr.net/",
+    "https://unpkg.com/",
 )
 
 # Host-substrings stubbed with empty bodies — fonts are noise for e2e tests.
@@ -411,6 +412,27 @@ def _cache_path(url: str) -> Path:
     """Deterministic on-disk cache path for a CDN URL."""
     digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:40]
     return JS_CACHE / digest
+
+
+def _content_type_for(url: str) -> str:
+    """Pick a reasonable Content-Type for a cached CDN URL.
+
+    Chromium rejects webfonts with a JS MIME type (``text/javascript``), which
+    emits ``Failed to decode downloaded font`` into ``console.error`` and trips
+    the e2e error gate. Phosphor's stylesheet references ``.woff2``/``.woff``
+    glyphs, and its script is JS — branch on the suffix so both resolve
+    cleanly.
+    """
+    lower = url.lower().split("?", 1)[0]
+    if lower.endswith(".woff2"):
+        return "font/woff2"
+    if lower.endswith(".woff"):
+        return "font/woff"
+    if lower.endswith(".ttf"):
+        return "font/ttf"
+    if lower.endswith(".css"):
+        return "text/css"
+    return "text/javascript"
 
 
 def _load_cdn_cached(url: str) -> bytes:
@@ -506,7 +528,9 @@ async def page(
             if url.startswith(prefix):
                 body = await asyncio.to_thread(_load_cdn_cached, url)
                 await route.fulfill(
-                    status=200, content_type="text/javascript", body=body
+                    status=200,
+                    content_type=_content_type_for(url),
+                    body=body,
                 )
                 return
         unmapped.append(url)

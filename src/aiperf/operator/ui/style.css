@@ -1908,3 +1908,42 @@ select, input {
   font-size: 13px;
   font-weight: 600;
 }
+
+/* ===== G2: micro-animations + Phosphor icon sizing ===== */
+
+/* Phosphor icons */
+.ph {
+  font-size: 1em;
+  vertical-align: -0.125em;
+}
+.nav-link .ph,
+.topbar .ph { font-size: 1.05em; }
+
+/* Status dot pulse (running + healthy) */
+@keyframes dotPulse {
+  0%, 100% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+  50%      { box-shadow: 0 0 0 6px transparent; opacity: 0.65; }
+}
+.hero-health-dot--ok.live {
+  animation: dotPulse 2s var(--ease-out) infinite;
+}
+
+/* Phase fill easing (fallback for components that didn't inline it) */
+.phase-fill, .phase-bar-fill, .hero-phase-fill {
+  transition: width var(--dur-slow) var(--ease-out);
+}
+
+/* Interactive card hover transition */
+.card, .kpi-tile, .job-card, .metric-card, .active-job-row {
+  transition: background var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out);
+}
+
+/* Buttons */
+button, .btn {
+  transition: background var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out),
+              transform var(--dur-fast) var(--ease-out);
+}
+button:hover, .btn:hover { background: var(--surface-2); }
+button:active, .btn:active { transform: translateY(1px); }
