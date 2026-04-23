@@ -20,7 +20,7 @@ async def load_benchmark_problems(user_config: UserConfig) -> list[BenchmarkProb
     benchmark_cls = plugins.get_class(PluginType.ACCURACY_BENCHMARK, acc_cfg.benchmark)
 
     n_shots = acc_cfg.n_shots
-    if n_shots == 0:
+    if n_shots is None:
         meta = plugins.get_metadata(PluginType.ACCURACY_BENCHMARK, acc_cfg.benchmark)
         default_n = meta.get("default_n_shots")
         if default_n is not None:
