@@ -11,13 +11,19 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      {{- include "aiperf-operator.selectorLabels" . | nindent 6 }}
+      {{- include "aiperf-operator.operatorSelectorLabels" . | nindent 6 }}
   policyTypes:
     - Ingress
     - Egress
   ingress:
-    # Allow traffic from the benchmark namespace to health (8080) and results (8081).
+    # Allow traffic from the release namespace (operator's own namespace — needed
+    # for `helm test` hook pods to hit /healthz), the benchmark namespace, and
+    # any configured additional namespaces. All hit health (8080) and results
+    # (resultsServer.port).
     - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Values.benchmarkNamespace.name | quote }}

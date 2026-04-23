@@ -7,15 +7,36 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "aiperf-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
   annotations:
     "helm.sh/hook": test
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    "helm.sh/hook-delete-policy": before-hook-creation
 spec:
   restartPolicy: Never
-  serviceAccountName: {{ include "aiperf-operator.serviceAccountName" . }}
+  serviceAccountName: {{ include "aiperf-operator.testServiceAccountName" . }}
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
   containers:
   - name: health-check
-    image: bitnami/kubectl:latest
+    image: "{{ .Values.tests.image.repository }}:{{ .Values.tests.image.tag }}"
+    imagePullPolicy: {{ .Values.tests.image.pullPolicy }}
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+    {{- with .Values.tests.resources }}
+    resources:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
     command: ["sh", "-c"]
     args:
     - |
@@ -32,8 +53,7 @@ spec:
 
       echo "Checking health endpoint..."
       for i in $(seq 1 10); do
-        if wget -qO- --timeout=5 "http://${POD_IP}:8080/healthz" 2>/dev/null; then
-          echo ""
+        if curl -fsS --max-time 5 "http://${POD_IP}:8080/healthz" >/dev/null 2>&1; then
           echo "Operator health check passed"
           exit 0
         fi

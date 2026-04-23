@@ -58,6 +58,22 @@ operator:
   # operator.affinity is the pod affinity configuration
   affinity: {}
 
+  # operator.topologySpreadConstraints spreads replicas across failure domains
+  # (e.g. zones, nodes). Only takes effect when operator.replicas > 1; ignored
+  # for single-replica installs. Example:
+  #   - maxSkew: 1
+  #     topologyKey: topology.kubernetes.io/zone
+  #     whenUnsatisfiable: ScheduleAnyway
+  #     labelSelector:
+  #       matchLabels:
+  #         app.kubernetes.io/name: aiperf-operator
+  #         app.kubernetes.io/component: operator
+  topologySpreadConstraints: []
+
+  # operator.priorityClassName pins the operator to a specific PriorityClass
+  # (e.g. "system-cluster-critical"). Empty = cluster default.
+  priorityClassName: ""
+
   # operator.env contains environment variables for the operator process
   env:
     # monitorInterval is the interval between status checks (seconds)
@@ -78,6 +94,19 @@ operator:
     endpointCheckTimeout: "10.0"
     # resultsCompressOnDisk stores downloaded result files as zstd on the PVC
     resultsCompressOnDisk: "true"
+
+  # operator.watchNamespaces limits which namespaces the operator watches
+  # for AIPerfJob CRs. Empty list (default) watches all namespaces (kopf's
+  # `--all-namespaces` flag). Non-empty list passes `--namespace=<ns>` for
+  # each entry. Note: the ClusterRole still grants cluster-wide read
+  # permissions; for a true scope-limited install, also set `rbac.create=false`
+  # and provide namespace-scoped RBAC out of band.
+  watchNamespaces: []
+
+  # operator.tmpSizeLimit bounds the /tmp emptyDir. Empty (default) = unbounded.
+  # Set to e.g. "256Mi" to cap node-ephemeral storage use; exceeding the limit
+  # triggers pod eviction (Kubernetes 1.25+).
+  tmpSizeLimit: ""
 
 # resultsServer is the sidecar container that serves stored results via HTTP
 resultsServer:
@@ -123,6 +152,11 @@ storage:
   # a shared filesystem (e.g. NFS, CephFS, EFS) for multi-replica HA deployments.
   accessMode: "ReadWriteOnce"
 
+  # storage.emptyDirSizeLimit bounds the fallback emptyDir when storage.enabled=false.
+  # Empty (default) = unbounded (matches original chart behavior). Set to e.g.
+  # "10Gi" on shared dev clusters; exceeding the limit evicts the pod (k8s 1.25+).
+  emptyDirSizeLimit: ""
+
 # serviceAccount controls service account creation
 serviceAccount:
   # serviceAccount.create specifies whether to create a service account
@@ -140,6 +174,14 @@ benchmarkNamespace:
   create: true
   # benchmarkNamespace.name is the benchmark namespace name
   name: "aiperf-benchmarks"
+
+# benchmarkRbacNamespaces lists additional namespaces to provision benchmark
+# RBAC (Role + RoleBinding bound to the `default` ServiceAccount) in, beyond
+# benchmarkNamespace.name. Use when benchmark jobs run in multiple namespaces
+# (e.g. per-team). The chart also creates each namespace (with the same keep
+# policy as the primary benchmark namespace); entries are de-duplicated
+# against benchmarkNamespace.name.
+benchmarkRbacNamespaces: []
 
 # kueue configures Kueue gang-scheduling integration
 kueue:
@@ -231,9 +273,36 @@ serviceMonitor:
 
 # defaults contains default settings for AIPerfJob resources
 defaults:
-  # defaults.image is the default container image for benchmark jobs
-  # (matches image.repository + Chart.appVersion; override with --set for local/dev builds)
-  image: "nvcr.io/nvidia/aiperf:0.7.0"
+  # defaults.image is the default container image for benchmark jobs.
+  # When empty, the chart computes "<image.repository>:<image.tag|Chart.AppVersion>"
+  # so overriding image.tag automatically propagates to benchmark pods. Set
+  # explicitly to decouple benchmark image from operator image.
+  image: ""
 
   # defaults.imagePullPolicy is the default image pull policy for benchmark jobs
   imagePullPolicy: "IfNotPresent"
+
+# tests configures the `helm test` hook pods (CRD check, operator health check).
+tests:
+  image:
+    # tests.image.repository is the registry/image for test-hook pods.
+    # Must provide `kubectl` and `curl` on PATH.
+    repository: alpine/k8s
+    # tests.image.tag is the image tag. Pinned (not :latest) so helm test is
+    # reproducible and works with `imagePullPolicy: IfNotPresent` on clusters
+    # where :latest would otherwise be re-pulled on every run.
+    tag: "1.33.11"
+    # tests.image.pullPolicy is the image pull policy for test-hook pods.
+    pullPolicy: IfNotPresent
+
+  # tests.resources caps the test-hook pods' resource usage. Defaults are
+  # intentionally small — each pod runs one `kubectl get` or `curl` loop and
+  # exits. Limits prevent BestEffort QoS on clusters that penalize unbounded
+  # pods; feel free to set to {} for unbounded.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi

@@ -54,6 +54,18 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
+Operator pod selector labels — adds `app.kubernetes.io/component: operator` so
+Service, NetworkPolicy, and PodDisruptionBudget selectors match *only* the
+operator pod and not `helm test` hook pods (which linger as Completed between
+test runs thanks to `hook-delete-policy: before-hook-creation`, and would
+otherwise receive Service traffic despite not listening on health/results ports).
+*/}}
+{{- define "aiperf-operator.operatorSelectorLabels" -}}
+{{ include "aiperf-operator.selectorLabels" . }}
+app.kubernetes.io/component: operator
+{{- end }}
+
+{{/*
 Create the name of the service account to use
 */}}
 {{- define "aiperf-operator.serviceAccountName" -}}
@@ -62,4 +74,26 @@ Create the name of the service account to use
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
+{{- end }}
+
+{{/*
+Default container image for AIPerfJob benchmark pods. Falls back to
+"<image.repository>:<image.tag|Chart.AppVersion>" when defaults.image is unset
+so users who override image.tag automatically get matching benchmark images.
+*/}}
+{{- define "aiperf-operator.defaultJobImage" -}}
+{{- if .Values.defaults.image }}
+{{- .Values.defaults.image }}
+{{- else }}
+{{- printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) }}
+{{- end }}
+{{- end }}
+
+{{/*
+Service account name for `helm test` hook pods. A dedicated SA (separate
+from the operator SA) keeps the test hook surface minimal: read-only get on
+the AIPerfJob CRD and get/list pods in the release namespace.
+*/}}
+{{- define "aiperf-operator.testServiceAccountName" -}}
+{{- printf "%s-tests" (include "aiperf-operator.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end }}

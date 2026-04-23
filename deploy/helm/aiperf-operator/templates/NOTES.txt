@@ -12,7 +12,7 @@ AIPerf Operator has been installed!
      namespace: {{ .Values.benchmarkNamespace.name }}
    spec:
      # Deployment fields use camelCase (K8s convention)
-     image: {{ .Values.defaults.image }}
+     image: {{ include "aiperf-operator.defaultJobImage" . }}
 
      # Benchmark config lives under spec.benchmark in snake_case
      # (identical to AIPerf CLI YAML config files)
@@ -44,6 +44,6 @@ AIPerf Operator has been installed!
 {{- end }}
 
 6. Run preflight checks against the cluster:
-   aiperf kube preflight --image {{ .Values.defaults.image }}
+   aiperf kube preflight --image {{ include "aiperf-operator.defaultJobImage" . }}
 
 For more information, visit: https://github.com/nvidia/aiperf

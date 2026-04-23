@@ -13,11 +13,11 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      {{- include "aiperf-operator.selectorLabels" . | nindent 6 }}
+      {{- include "aiperf-operator.operatorSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "aiperf-operator.selectorLabels" . | nindent 8 }}
+        {{- include "aiperf-operator.operatorSelectorLabels" . | nindent 8 }}
       {{- with .Values.operator.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
@@ -46,7 +46,13 @@ spec:
         - -m
         - aiperf.operator.main
         - --verbose
+        {{- if .Values.operator.watchNamespaces }}
+        {{- range .Values.operator.watchNamespaces }}
+        - --namespace={{ . }}
+        {{- end }}
+        {{- else }}
         - --all-namespaces
+        {{- end }}
         - --liveness=http://0.0.0.0:8080/healthz
         ports:
         - name: health
@@ -62,7 +68,7 @@ spec:
         - name: AIPERF_RESULTS_DIR
           value: {{ .Values.storage.mountPath | quote }}
         - name: AIPERF_DEFAULT_IMAGE
-          value: {{ .Values.defaults.image | quote }}
+          value: {{ include "aiperf-operator.defaultJobImage" . | quote }}
         - name: AIPERF_JOB_TIMEOUT_SECONDS
           value: {{ .Values.operator.env.jobTimeoutSeconds | quote }}
         - name: AIPERF_POD_RESTART_THRESHOLD
@@ -126,6 +132,8 @@ spec:
           value: {{ .Values.resultsServer.port | quote }}
         - name: TMPDIR
           value: "/tmp"
+        - name: MPLCONFIGDIR
+          value: "/tmp/matplotlib"
         livenessProbe:
           httpGet:
             path: /healthz
@@ -158,13 +166,19 @@ spec:
           readOnly: true
       volumes:
       - name: tmp
-        emptyDir: {}
+        emptyDir:
+          {{- with .Values.operator.tmpSizeLimit }}
+          sizeLimit: {{ . | quote }}
+          {{- end }}
       - name: results
       {{- if .Values.storage.enabled }}
         persistentVolumeClaim:
           claimName: {{ include "aiperf-operator.fullname" . }}-results
       {{- else }}
-        emptyDir: {}
+        emptyDir:
+          {{- with .Values.storage.emptyDirSizeLimit }}
+          sizeLimit: {{ . | quote }}
+          {{- end }}
       {{- end }}
       {{- with .Values.operator.nodeSelector }}
       nodeSelector:
@@ -173,6 +187,13 @@ spec:
       {{- with .Values.operator.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.priorityClassName }}
+      priorityClassName: {{ . | quote }}
       {{- end }}
       {{- with .Values.operator.tolerations }}
       tolerations:

@@ -64,7 +64,7 @@ spec:
               image:
                 type: string
                 description: Container image
-                default: {{ .Values.defaults.image | quote }}
+                default: {{ include "aiperf-operator.defaultJobImage" . | quote }}
               imagePullPolicy:
                 type: string
                 description: |-

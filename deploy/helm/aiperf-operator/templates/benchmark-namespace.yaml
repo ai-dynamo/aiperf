@@ -1,23 +1,34 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+{{- /* Primary benchmark namespace (gated on benchmarkNamespace.create) plus
+       every entry in benchmarkRbacNamespaces, de-duplicated. Each namespace
+       carries the keep-policy so `helm uninstall` does not drop running jobs. */ -}}
+{{- $namespaces := list }}
 {{- if .Values.benchmarkNamespace.create }}
+{{- $namespaces = append $namespaces .Values.benchmarkNamespace.name }}
+{{- end }}
+{{- range .Values.benchmarkRbacNamespaces }}
+{{- $namespaces = append $namespaces . }}
+{{- end }}
+{{- $defaultQueue := .Values.kueue.defaultQueueName }}
+{{- if and (not $defaultQueue) .Values.kueue.createQueues }}
+{{- $defaultQueue = .Values.kueue.localQueueName }}
+{{- end }}
+{{- range $ns := $namespaces | uniq }}
+---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: {{ .Values.benchmarkNamespace.name }}
+  name: {{ $ns }}
   labels:
-    {{- include "aiperf-operator.labels" . | nindent 4 }}
+    {{- include "aiperf-operator.labels" $ | nindent 4 }}
     aiperf.nvidia.com/auto-generated: "true"
   annotations:
     # Preserve the benchmark namespace (and any AIPerfJob CRs still inside it)
     # across `helm uninstall`, matching the CRD's resource-policy so an uninstall
     # does not drop running jobs.
     helm.sh/resource-policy: keep
-    {{- $defaultQueue := .Values.kueue.defaultQueueName }}
-    {{- if and (not $defaultQueue) .Values.kueue.createQueues }}
-    {{- $defaultQueue = .Values.kueue.localQueueName }}
-    {{- end }}
-    {{- if $defaultQueue }}
+    {{- if and $defaultQueue (eq $ns $.Values.benchmarkNamespace.name) }}
     kueue.x-k8s.io/default-queue-name: {{ $defaultQueue | quote }}
     {{- end }}
 {{- end }}

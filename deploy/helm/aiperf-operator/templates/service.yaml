@@ -10,7 +10,7 @@ metadata:
 spec:
   type: ClusterIP
   selector:
-    {{- include "aiperf-operator.selectorLabels" . | nindent 4 }}
+    {{- include "aiperf-operator.operatorSelectorLabels" . | nindent 4 }}
   ports:
   - name: health
     port: 8080
