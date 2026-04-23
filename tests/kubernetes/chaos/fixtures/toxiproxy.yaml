@@ -1,0 +1,129 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Toxiproxy fixture for chaos tests.
+#
+# Deploys a single-replica toxiproxy into namespace `aiperf-chaos-toxiproxy`
+# with the admin API exposed on port 8474 and a block of proxy listen ports
+# (20000-20005) so tests can front multiple upstream services through the
+# same deployment. See `tests/kubernetes/chaos/toxiproxy.py` for the async
+# client that drives this.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aiperf-chaos-toxiproxy
+  labels:
+    aiperf.nvidia.com/purpose: chaos-testing
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: toxiproxy
+  namespace: aiperf-chaos-toxiproxy
+  labels:
+    app: toxiproxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: toxiproxy
+  template:
+    metadata:
+      labels:
+        app: toxiproxy
+    spec:
+      containers:
+      - name: toxiproxy
+        image: ghcr.io/shopify/toxiproxy:2.9.0
+        imagePullPolicy: IfNotPresent
+        args:
+        - "-host"
+        - "0.0.0.0"
+        ports:
+        - name: admin
+          containerPort: 8474
+          protocol: TCP
+        - name: proxy-0
+          containerPort: 20000
+          protocol: TCP
+        - name: proxy-1
+          containerPort: 20001
+          protocol: TCP
+        - name: proxy-2
+          containerPort: 20002
+          protocol: TCP
+        - name: proxy-3
+          containerPort: 20003
+          protocol: TCP
+        - name: proxy-4
+          containerPort: 20004
+          protocol: TCP
+        - name: proxy-5
+          containerPort: 20005
+          protocol: TCP
+        readinessProbe:
+          tcpSocket:
+            port: 8474
+          initialDelaySeconds: 2
+          periodSeconds: 5
+          timeoutSeconds: 3
+        livenessProbe:
+          tcpSocket:
+            port: 8474
+          initialDelaySeconds: 10
+          periodSeconds: 15
+          timeoutSeconds: 5
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+          capabilities:
+            drop:
+              - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: toxiproxy
+  namespace: aiperf-chaos-toxiproxy
+spec:
+  selector:
+    app: toxiproxy
+  ports:
+  - name: admin
+    port: 8474
+    targetPort: 8474
+    protocol: TCP
+  - name: proxy-0
+    port: 20000
+    targetPort: 20000
+    protocol: TCP
+  - name: proxy-1
+    port: 20001
+    targetPort: 20001
+    protocol: TCP
+  - name: proxy-2
+    port: 20002
+    targetPort: 20002
+    protocol: TCP
+  - name: proxy-3
+    port: 20003
+    targetPort: 20003
+    protocol: TCP
+  - name: proxy-4
+    port: 20004
+    targetPort: 20004
+    protocol: TCP
+  - name: proxy-5
+    port: 20005
+    targetPort: 20005
+    protocol: TCP

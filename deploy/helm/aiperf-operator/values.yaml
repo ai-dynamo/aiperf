@@ -108,6 +108,16 @@ operator:
   # triggers pod eviction (Kubernetes 1.25+).
   tmpSizeLimit: ""
 
+# podTemplate configures PodSpec fields on JobSet pods spawned by the operator.
+podTemplate:
+  # podTemplate.shareProcessNamespace enables a shared PID namespace across
+  # every container in each JobSet pod. When true, pods render with
+  # `spec.shareProcessNamespace: true`, which lets any container issue
+  # `kill -9 <pid>` against sibling containers via `kubectl exec`. Used by
+  # the chaos-testing suite to inject controller/worker/sidecar faults.
+  # Keep false in production — it weakens process isolation.
+  shareProcessNamespace: false
+
 # resultsServer is the sidecar container that serves stored results via HTTP
 resultsServer:
   # resultsServer.port is the HTTP port for the results API

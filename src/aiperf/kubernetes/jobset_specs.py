@@ -125,6 +125,8 @@ class AIPerfReplicatedJobSpec(AIPerfBaseModel):
             ]
         if tmpl.service_account_name:
             pod_spec["serviceAccountName"] = tmpl.service_account_name
+        if tmpl.share_process_namespace:
+            pod_spec["shareProcessNamespace"] = True
         return pod_spec
 
     def _build_pod_annotations(self) -> dict[str, str]:

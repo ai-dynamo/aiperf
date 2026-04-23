@@ -75,6 +75,11 @@ class PodTemplateConfig(BaseConfig):
         default_factory=dict,
         description="Container securityContext overrides (merged into each container spec)",
     )
+    share_process_namespace: bool = Field(
+        default=False,
+        description="When true, all containers in the pod share a single PID namespace. "
+        "Enables kubectl exec cross-container kills for chaos tests. Keep false in production.",
+    )
 
 
 class DeploymentConfig(BaseConfig):

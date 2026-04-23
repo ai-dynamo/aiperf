@@ -325,6 +325,7 @@ class OperatorDeployer:
         project_root: Path,
         operator_image: str = "aiperf:local",
         default_job_namespace: str = "default",
+        share_process_namespace: bool = False,
     ) -> None:
         """Initialize operator deployer.
 
@@ -332,11 +333,18 @@ class OperatorDeployer:
             kubectl: Kubectl client.
             project_root: Path to project root.
             operator_image: Operator image name.
+            default_job_namespace: Namespace for spawned AIPerfJob resources.
+            share_process_namespace: When True, configures the operator with
+                ``AIPERF_K8S_SHARE_PROCESS_NAMESPACE=true`` so every JobSet pod
+                it spawns sets ``spec.shareProcessNamespace=true``. Chaos
+                scenarios flip this on to enable cross-container kubectl exec
+                kills; keep off for normal e2e coverage.
         """
         self.kubectl = kubectl
         self.project_root = project_root
         self.operator_image = operator_image
         self.default_job_namespace = default_job_namespace
+        self.share_process_namespace = share_process_namespace
         self._deployed_jobs: list[OperatorJobResult] = []
 
     async def install_crd(self) -> None:
@@ -475,10 +483,7 @@ class OperatorDeployer:
         await self.kubectl.apply(manifest)
 
         # Use defaults that match production; Kind node has enough memory
-        await self.kubectl.run(
-            "set",
-            "env",
-            "deployment/aiperf-operator",
+        env_pairs = [
             "AIPERF_K8S_WORKER_POD_CPU=3350m",
             "AIPERF_K8S_WORKER_POD_MEMORY=6144Mi",
             "AIPERF_K8S_SYSTEM_CONTROLLER_CPU=250m",
@@ -499,6 +504,14 @@ class OperatorDeployer:
             "AIPERF_K8S_SERVER_METRICS_MANAGER_MEMORY=256Mi",
             "AIPERF_K8S_RESULTS_SIDECAR_CPU=100m",
             "AIPERF_K8S_RESULTS_SIDECAR_MEMORY=128Mi",
+        ]
+        if self.share_process_namespace:
+            env_pairs.append("AIPERF_K8S_SHARE_PROCESS_NAMESPACE=true")
+        await self.kubectl.run(
+            "set",
+            "env",
+            "deployment/aiperf-operator",
+            *env_pairs,
             "-n",
             self.OPERATOR_NAMESPACE,
             check=True,

@@ -336,6 +336,15 @@ class _K8sEnvironment(BaseSettings):
         "pre-sidecar behavior where SystemController owns the event-bus proxy.",
     )
 
+    SHARE_PROCESS_NAMESPACE: bool = Field(
+        default=False,
+        description="When true, JobSet pods spawned by the operator set "
+        "podSpec.shareProcessNamespace=true so all containers share a PID "
+        "namespace. Enables cross-container `kubectl exec kill -9 <pid>` "
+        "for chaos-testing workflows. Keep false in production; chaos "
+        "fixtures flip it on via AIPERF_K8S_SHARE_PROCESS_NAMESPACE=true.",
+    )
+
     # Non-resource settings
     HEALTH: _HealthProbeSettings = Field(
         default_factory=_HealthProbeSettings,

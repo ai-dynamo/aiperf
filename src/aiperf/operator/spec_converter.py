@@ -116,6 +116,13 @@ class AIPerfJobSpecConverter:
             if key in self.spec:
                 deployment_dict[key] = self.spec[key]
 
+        # Seed shareProcessNamespace from AIPERF_K8S_SHARE_PROCESS_NAMESPACE
+        # when the CR does not set it explicitly. Chaos fixtures flip the env
+        # var on to unlock cross-container kubectl exec kills.
+        if K8sEnvironment.SHARE_PROCESS_NAMESPACE:
+            pod_template = deployment_dict.setdefault("podTemplate", {})
+            pod_template.setdefault("shareProcessNamespace", True)
+
         return DeploymentConfig.model_validate(deployment_dict)
 
     def calculate_workers(self, dc: DeploymentConfig | None = None) -> int:

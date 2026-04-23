@@ -19,6 +19,9 @@ import datetime
 import logging
 import time
 from dataclasses import dataclass
+from typing import Any
+
+import orjson
 
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
@@ -230,7 +233,9 @@ class ChaosInjector:
 
     async def wait_for_operator_ready(self, timeout: float | None = None) -> float:
         """Block until an operator pod is Ready (2/2)."""
-        deadline = time.monotonic() + (timeout or self.timings.operator_recovery_seconds)
+        deadline = time.monotonic() + (
+            timeout or self.timings.operator_recovery_seconds
+        )
         start = time.monotonic()
         while time.monotonic() < deadline:
             res = await self.kubectl.run(
@@ -314,3 +319,229 @@ class ChaosInjector:
                 value = stripped[len(prefix) :].strip()
                 return value.strip('"').strip("'") or None
         return None
+
+    async def get_controller_pod_name(self, namespace: str, job_name: str) -> str:
+        """Return the controller pod name for an AIPerfJob.
+
+        The JobSet spawns a single controller replica named
+        ``aiperf-<job>-controller-0-0-...``; we match the standard
+        ``jobset.sigs.k8s.io/replicatedjob-name=controller`` label.
+
+        Raises:
+            RuntimeError: When no controller pod is present (e.g. job still
+                Pending or already reaped).
+        """
+        res = await self.kubectl.run(
+            "get",
+            "pods",
+            "-n",
+            namespace,
+            "-l",
+            f"jobset.sigs.k8s.io/jobset-name=aiperf-{job_name},"
+            "jobset.sigs.k8s.io/replicatedjob-name=controller",
+            "-o",
+            "jsonpath={.items[0].metadata.name}",
+            check=False,
+        )
+        name = res.stdout.strip()
+        if not name:
+            raise RuntimeError(
+                f"no controller pod found for AIPerfJob {namespace}/{job_name} "
+                f"(label jobset.sigs.k8s.io/jobset-name=aiperf-{job_name}); "
+                "is the job still Pending?"
+            )
+        return name
+
+    async def get_worker_pod_names(self, namespace: str, job_name: str) -> list[str]:
+        """Return every worker pod name for an AIPerfJob.
+
+        Matches the ``replicatedjob-name=worker`` label that the JobSet
+        applies to every worker pod. Returns an empty list when the job
+        has not yet created workers.
+        """
+        res = await self.kubectl.run(
+            "get",
+            "pods",
+            "-n",
+            namespace,
+            "-l",
+            f"jobset.sigs.k8s.io/jobset-name=aiperf-{job_name},"
+            "jobset.sigs.k8s.io/replicatedjob-name=worker",
+            "-o",
+            "jsonpath={.items[*].metadata.name}",
+            check=False,
+        )
+        names = res.stdout.strip().split()
+        return [n for n in names if n]
+
+    async def get_mock_server_pod_name(
+        self, namespace: str = "default", deployment: str = "aiperf-mock-server"
+    ) -> str:
+        """Return the mock-server pod name that serves benchmark traffic.
+
+        The k8s test harness runs a single-replica ``aiperf-mock-server``
+        Deployment in the ``default`` namespace (see ``tests/kubernetes/conftest.py``).
+
+        Raises:
+            RuntimeError: When no pod matches (deployment missing or
+                scaled to zero).
+        """
+        res = await self.kubectl.run(
+            "get",
+            "pods",
+            "-n",
+            namespace,
+            "-l",
+            f"app={deployment}",
+            "-o",
+            "jsonpath={.items[0].metadata.name}",
+            check=False,
+        )
+        name = res.stdout.strip()
+        if not name:
+            raise RuntimeError(
+                f"no pod found for mock-server deployment {namespace}/{deployment} "
+                "(expected label app=aiperf-mock-server); has the fixture been deployed?"
+            )
+        return name
+
+    async def kill_container_by_pid(
+        self,
+        pod: str,
+        container_pid: int,
+        namespace: str,
+        exec_container: str,
+    ) -> None:
+        """Kill a sibling container by PID via shared-PID-namespace exec.
+
+        Requires the pod to have been rendered with
+        ``spec.shareProcessNamespace: true`` (see
+        ``AIPERF_K8S_SHARE_PROCESS_NAMESPACE``). ``kubectl exec`` into
+        ``exec_container`` and issue ``kill -9 <pid>`` against the target
+        PID, which the kernel resolves to a sibling container because the
+        PID namespace is shared.
+
+        Args:
+            pod: Pod name hosting both containers.
+            container_pid: PID of the target process (obtain via
+                ``kubectl exec <pod> -c <any> -- pgrep -n <name>`` upstream).
+            namespace: Namespace of the pod.
+            exec_container: Container to exec into to issue the kill
+                (must have ``sh`` on PATH).
+        """
+        await self.kubectl.run(
+            "exec",
+            pod,
+            "-c",
+            exec_container,
+            "-n",
+            namespace,
+            "--",
+            "sh",
+            "-c",
+            f"kill -9 {container_pid}",
+            check=False,
+        )
+
+    async def wait_for_container_restart(
+        self,
+        pod: str,
+        container: str,
+        namespace: str,
+        *,
+        since_count: int,
+        timeout: float = 60.0,
+    ) -> int:
+        """Poll ``containerStatuses[].restartCount`` until it exceeds ``since_count``.
+
+        Args:
+            pod: Pod name.
+            container: Container name within the pod.
+            namespace: Namespace of the pod.
+            since_count: Baseline restartCount captured before the fault
+                injection (tests must snapshot this first).
+            timeout: Max seconds to wait for a new restart to be observed.
+
+        Returns:
+            The observed restartCount (strictly greater than ``since_count``).
+
+        Raises:
+            TimeoutError: When ``restartCount`` does not advance within
+                ``timeout`` seconds.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            res = await self.kubectl.run(
+                "get",
+                "pod",
+                pod,
+                "-n",
+                namespace,
+                "-o",
+                "jsonpath={.status.containerStatuses[?(@.name=='"
+                + container
+                + "')].restartCount}",
+                check=False,
+            )
+            raw = res.stdout.strip()
+            if raw.isdigit():
+                count = int(raw)
+                if count > since_count:
+                    return count
+            await asyncio.sleep(0.5)
+        raise TimeoutError(
+            f"container {namespace}/{pod}:{container} did not restart "
+            f"(restartCount still <= {since_count}) within {timeout} s"
+        )
+
+    async def create_invalid_cr(
+        self,
+        namespace: str,
+        name: str,
+        spec_patch: dict[str, Any],
+    ) -> None:
+        """Apply an AIPerfJob CR with a deliberately malformed spec patch.
+
+        Builds a minimal benchmark spec, overlays ``spec_patch`` on top, and
+        applies via ``kubectl apply -f -``. Used by chaos tests that assert
+        the operator surfaces a validation error (Failed phase + status
+        condition). The CR is intentionally accepted by the CRD OpenAPI
+        schema — validation happens in the operator spec-converter.
+
+        Args:
+            namespace: Target namespace.
+            name: CR name.
+            spec_patch: Dict merged on top of a minimal valid spec. For
+                example ``{"benchmark": {"endpoint": {"urls": ["not a url"]}}}``
+                exercises the endpoint URL validator.
+        """
+        base_spec: dict[str, Any] = {
+            "image": "aiperf:local",
+            "imagePullPolicy": "Never",
+            "benchmark": {
+                "models": {"items": [{"name": "mock-model"}]},
+                "endpoint": {
+                    "urls": [
+                        "http://aiperf-mock-server.default.svc.cluster.local:8000/v1"
+                    ]
+                },
+                "phases": {
+                    "type": "concurrency",
+                    "concurrency": 1,
+                    "requests": 1,
+                },
+                "tokenizer": {"name": "gpt2"},
+                "runtime": {"ui": "none"},
+            },
+        }
+        for key, value in spec_patch.items():
+            base_spec[key] = value
+        manifest = (
+            "apiVersion: aiperf.nvidia.com/v1alpha1\n"
+            "kind: AIPerfJob\n"
+            "metadata:\n"
+            f"  name: {name}\n"
+            f"  namespace: {namespace}\n"
+            "spec: " + orjson.dumps(base_spec).decode() + "\n"
+        )
+        await self.kubectl.apply(manifest, namespace=namespace)
