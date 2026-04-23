@@ -62,7 +62,7 @@ jobs:
       version: ${{ steps.extract.outputs.version }}
       rc_number: ${{ steps.rc.outputs.rc_number }}
       rc_tag: ${{ steps.rc.outputs.rc_tag }}
-      pep440_version: ${{ steps.rc.outputs.pep440_version }}
+      wheel_version: ${{ steps.rc.outputs.wheel_version }}
       wheel_filename: ${{ steps.rc.outputs.wheel_filename }}
     steps:
       - name: Checkout repository
@@ -104,12 +104,12 @@ jobs:
           fi
 
           RC_TAG="v${VERSION}-rc${NEXT_RC}"
-          PEP440_VERSION="${VERSION}rc${NEXT_RC}"
-          WHEEL_FILENAME="aiperf-${PEP440_VERSION}-py3-none-any.whl"
+          WHEEL_VERSION="${VERSION}rc${NEXT_RC}"
+          WHEEL_FILENAME="aiperf-${WHEEL_VERSION}-py3-none-any.whl"
 
           echo "rc_number=${NEXT_RC}" >> "$GITHUB_OUTPUT"
           echo "rc_tag=${RC_TAG}" >> "$GITHUB_OUTPUT"
-          echo "pep440_version=${PEP440_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "wheel_version=${WHEEL_VERSION}" >> "$GITHUB_OUTPUT"
           echo "wheel_filename=${WHEEL_FILENAME}" >> "$GITHUB_OUTPUT"
 
   # ============================================================================
@@ -181,68 +181,12 @@ jobs:
 
   # No environment: declaration — builder runners carry AWS credentials via IAM
   # instance profile. The automated-release gate is enforced at tag creation and staging only.
-  build-wheel:
-    name: Build and Validate Wheel
-    needs: [prepare-release]
-    runs-on: prod-aiperf-builder-amd-v1
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Patch version for RC
-        uses: ./.github/actions/update-pyproject-version
-        with:
-          version: ${{ needs.prepare-release.outputs.pep440_version }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build wheel-builder stage and extract wheel
-        run: |
-          docker buildx build \
-            --target wheel-builder \
-            --cache-from type=gha,scope=amd64 \
-            --cache-to type=gha,mode=max,scope=amd64 \
-            --output type=local,dest=./wheel-out/ \
-            .
-
-      - name: Verify wheel exists
-        env:
-          EXPECTED_WHEEL: ${{ needs.prepare-release.outputs.wheel_filename }}
-        run: |
-          if [ ! -f "wheel-out/dist/${EXPECTED_WHEEL}" ]; then
-            echo "::error::Expected wheel not found: wheel-out/dist/${EXPECTED_WHEEL}"
-            exit 1
-          fi
-          ls -la wheel-out/dist/
-
-      - name: Validate wheel
-        run: |
-          uvx twine check wheel-out/dist/*.whl
-          uv venv .venv-validate
-          uv pip install --python .venv-validate/bin/python wheel-out/dist/*.whl
-          .venv-validate/bin/python -c "import aiperf; print(f'aiperf version: {aiperf.__version__}')"
-          .venv-validate/bin/aiperf --help
-
-      - name: Upload wheel to S3
-        env:
-          S3_BUCKET: ${{ secrets.S3_CI_WHEELS_BUCKET }}
-          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
-        run: |
-          set -euo pipefail
-          S3_KEY="aiperf/rc/${PEP440_VERSION}/"
-          aws s3 cp wheel-out/dist/*.whl "s3://${S3_BUCKET}/${S3_KEY}" --sse AES256
-          echo "Wheel uploaded to S3 for ${PEP440_VERSION}"
-
   build-container:
     name: Build and Push Container (${{ matrix.arch }})
     needs: [prepare-release]
     runs-on: ${{ matrix.runner }}
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - arch: amd64
@@ -261,7 +205,7 @@ jobs:
       - name: Patch version for RC
         uses: ./.github/actions/update-pyproject-version
         with:
-          version: ${{ needs.prepare-release.outputs.pep440_version }}
+          version: ${{ needs.prepare-release.outputs.wheel_version }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -274,14 +218,73 @@ jobs:
           aws ecr get-login-password --region ${AWS_DEFAULT_REGION} \
             | docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
 
+      # Wheel is pure Python (py3-none-any); build once on amd64 and upload.
+      # The wheel-builder layer is cached into aiperf:cache-amd64 and reused
+      # by the runtime build below.
+      - name: Build and extract wheel (amd64 only)
+        if: matrix.arch == 'amd64'
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          set -euo pipefail
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+          docker buildx build \
+            --platform linux/amd64 \
+            --target   wheel-builder \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-amd64" \
+            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache-amd64,mode=max" \
+            --output     type=local,dest=./dist/ \
+            .
+
+      - name: Validate wheel (amd64 only)
+        if: matrix.arch == 'amd64'
+        env:
+          EXPECTED_VERSION: ${{ needs.prepare-release.outputs.wheel_version }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t WHEELS < <(find dist/ -name "aiperf-*.whl" -type f)
+          if [ "${#WHEELS[@]}" -eq 0 ]; then
+            echo "::error::No wheel found in dist/ after build"
+            exit 1
+          fi
+          if [ "${#WHEELS[@]}" -gt 1 ]; then
+            echo "::error::Multiple wheels found in dist/ — expected exactly one:"
+            printf '  %s\n' "${WHEELS[@]}"
+            exit 1
+          fi
+          WHEEL_PATH="${WHEELS[0]}"
+
+          uvx twine check "${WHEEL_PATH}"
+          uv venv .venv-check
+          uv pip install --python .venv-check/bin/python "${WHEEL_PATH}"
+          INSTALLED_VERSION=$(.venv-check/bin/python -c "import aiperf; print(aiperf.__version__)")
+          if [ "${INSTALLED_VERSION}" != "${EXPECTED_VERSION}" ]; then
+            echo "::error::Wheel version mismatch: expected '${EXPECTED_VERSION}', got '${INSTALLED_VERSION}'"
+            exit 1
+          fi
+          .venv-check/bin/aiperf --help
+
+      - name: Upload wheel to S3 (amd64 only)
+        if: matrix.arch == 'amd64'
+        env:
+          S3_BUCKET:     ${{ secrets.S3_CI_WHEELS_BUCKET }}
+          WHEEL_VERSION: ${{ needs.prepare-release.outputs.wheel_version }}
+        run: |
+          set -euo pipefail
+          WHEEL=$(find dist/ -name "aiperf-*.whl" | head -1)
+          aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/aiperf/rc/${WHEEL_VERSION}/" --sse AES256
+          echo "Wheel uploaded to S3 for ${WHEEL_VERSION}"
+
       - name: Build and push arch-specific image
         env:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+          WHEEL_VERSION: ${{ needs.prepare-release.outputs.wheel_version }}
         run: |
           ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-          IMAGE_REF="${ECR_REGISTRY}/aiperf:${PEP440_VERSION}-${{ matrix.arch }}"
+          IMAGE_REF="${ECR_REGISTRY}/aiperf:${WHEEL_VERSION}-${{ matrix.arch }}"
           CACHE_REF="${ECR_REGISTRY}/aiperf:cache-${{ matrix.arch }}"
           docker buildx build \
             --platform ${{ matrix.platform }} \
@@ -314,10 +317,10 @@ jobs:
           registry-username: AWS
           registry-password: ${{ steps.ecr.outputs.password }}
           target-image: >-
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-release.outputs.pep440_version }}
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-release.outputs.wheel_version }}
           source-images: >-
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-release.outputs.pep440_version }}-amd64
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-release.outputs.pep440_version }}-arm64
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-release.outputs.wheel_version }}-amd64
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-release.outputs.wheel_version }}-arm64
 
   # ============================================================================
   # APPROVE
@@ -334,7 +337,6 @@ jobs:
       - unit-tests
       - integration-tests
       - gpu-e2e-tests
-      - build-wheel
       - create-multiarch-manifest-ecr
     runs-on: ubuntu-latest
     environment: approve-release
@@ -342,9 +344,9 @@ jobs:
       - name: Release approved
         env:
           RC_TAG:         ${{ needs.prepare-release.outputs.rc_tag }}
-          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+          WHEEL_VERSION: ${{ needs.prepare-release.outputs.wheel_version }}
         run: |
-          echo "Release approved: ${RC_TAG} (${PEP440_VERSION})"
+          echo "Release approved: ${RC_TAG} (${WHEEL_VERSION})"
 
   # ============================================================================
   # TAG
@@ -379,7 +381,7 @@ jobs:
           VERSION: ${{ needs.prepare-release.outputs.version }}
           RC_TAG: ${{ needs.prepare-release.outputs.rc_tag }}
           RC_NUMBER: ${{ needs.prepare-release.outputs.rc_number }}
-          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+          WHEEL_VERSION: ${{ needs.prepare-release.outputs.wheel_version }}
           WHEEL_FILENAME: ${{ needs.prepare-release.outputs.wheel_filename }}
           GPU_TEST_RESULT: ${{ needs.gpu-e2e-tests.result }}
         run: |
@@ -391,7 +393,7 @@ jobs:
             echo "| Version | ${VERSION} |"
             echo "| RC Number | ${RC_NUMBER} |"
             echo "| Git Tag | \`${RC_TAG}\` |"
-            echo "| PEP 440 Version | \`${PEP440_VERSION}\` |"
+            echo "| Wheel Version | \`${WHEEL_VERSION}\` |"
             echo "| Commit | \`${{ github.sha }}\` |"
             echo "| Branch | \`${{ github.ref_name }}\` |"
             echo "| Wheel | \`${WHEEL_FILENAME}\` |"
@@ -436,17 +438,17 @@ jobs:
         env:
           ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
           NGC_IMAGE: nvcr.io/${{ secrets.NGC_PUBLISH_ORG }}/aiperf
-          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+          WHEEL_VERSION: ${{ needs.prepare-release.outputs.wheel_version }}
         run: |
           set -euo pipefail
           for ARCH in amd64 arm64; do
-            crane copy "${ECR_REGISTRY}/aiperf:${PEP440_VERSION}-${ARCH}" \
-                       "${NGC_IMAGE}:${PEP440_VERSION}-${ARCH}"
+            crane copy "${ECR_REGISTRY}/aiperf:${WHEEL_VERSION}-${ARCH}" \
+                       "${NGC_IMAGE}:${WHEEL_VERSION}-${ARCH}"
           done
           crane index append \
-            --manifest "${NGC_IMAGE}:${PEP440_VERSION}-amd64" \
-            --manifest "${NGC_IMAGE}:${PEP440_VERSION}-arm64" \
-            --tag "${NGC_IMAGE}:${PEP440_VERSION}"
+            --manifest "${NGC_IMAGE}:${WHEEL_VERSION}-amd64" \
+            --manifest "${NGC_IMAGE}:${WHEEL_VERSION}-arm64" \
+            --tag "${NGC_IMAGE}:${WHEEL_VERSION}"
 
 
   stage-wheel:
@@ -465,12 +467,12 @@ jobs:
           ARTIFACTORY_USER: ${{ secrets.ARTIFACTORY_USER }}
           ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
           TWINE_NON_INTERACTIVE: "1"
-          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+          WHEEL_VERSION: ${{ needs.prepare-release.outputs.wheel_version }}
         run: |
           set -euo pipefail
           TMPDIR="$(mktemp -d)"
           trap 'rm -rf "${TMPDIR}"' EXIT
-          aws s3 cp "s3://${S3_BUCKET}/aiperf/rc/${PEP440_VERSION}/" "${TMPDIR}/" --recursive
+          aws s3 cp "s3://${S3_BUCKET}/aiperf/rc/${WHEEL_VERSION}/" "${TMPDIR}/" --recursive
           uvx twine upload \
             --repository-url "${ARTIFACTORY_URL}" \
             --username "${ARTIFACTORY_USER}" \
@@ -504,7 +506,7 @@ jobs:
       - name: Trigger GitLab RC pipeline
         env:
           RC_TAG: ${{ needs.prepare-release.outputs.rc_tag }}
-          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+          WHEEL_VERSION: ${{ needs.prepare-release.outputs.wheel_version }}
           WHEEL_FILENAME: ${{ needs.prepare-release.outputs.wheel_filename }}
           GITLAB_TOKEN: ${{ secrets.GITLAB_TRIGGER_TOKEN }}
           GITLAB_URL: ${{ secrets.GITLAB_PIPELINE_URL }}
@@ -526,7 +528,7 @@ jobs:
             --form "variables[PROJECT]=aiperf" \
             --form "variables[SOURCE_BRANCH]=${GITHUB_REF_NAME}" \
             --form "variables[RC_TAG]=${RC_TAG}" \
-            --form "variables[PEP440_VERSION]=${PEP440_VERSION}" \
+            --form "variables[WHEEL_VERSION]=${WHEEL_VERSION}" \
             --form "variables[COMMIT_SHA]=${{ github.sha }}" \
             --form "variables[GITHUB_RUN_ID]=${{ github.run_id }}" \
             --form "variables[ARTIFACTS]=wheel,container" \
@@ -570,7 +572,6 @@ jobs:
       - unit-tests
       - integration-tests
       - gpu-e2e-tests
-      - build-wheel
       - build-container
       - create-multiarch-manifest-ecr
       - approve-release
@@ -584,7 +585,7 @@ jobs:
       - name: Write pipeline summary
         env:
           RC_TAG:         ${{ needs.prepare-release.outputs.rc_tag }}
-          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+          WHEEL_VERSION: ${{ needs.prepare-release.outputs.wheel_version }}
         run: |
           {
             echo "## RC Pipeline Summary"
@@ -592,7 +593,7 @@ jobs:
             echo "| Property | Value |"
             echo "|----------|-------|"
             echo "| RC Tag | \`${RC_TAG}\` |"
-            echo "| Version | \`${PEP440_VERSION}\` |"
+            echo "| Version | \`${WHEEL_VERSION}\` |"
             echo "| Commit | \`${{ github.sha }}\` |"
             echo "| Branch | \`${GITHUB_REF_NAME}\` |"
             echo "| Trigger | ${{ github.event_name }} |"
@@ -608,8 +609,7 @@ jobs:
             echo "### Build + Tag"
             echo "| Job | Result |"
             echo "|-----|--------|"
-            echo "| build-wheel (→ S3) | ${{ needs.build-wheel.result }} |"
-            echo "| build-container (→ ECR) | ${{ needs.build-container.result }} |"
+            echo "| build-container (→ ECR + S3 wheel) | ${{ needs.build-container.result }} |"
             echo "| create-multiarch-manifest-ecr | ${{ needs.create-multiarch-manifest-ecr.result }} |"
             echo "| approve-release | ${{ needs.approve-release.result }} |"
             echo "| create-rc-tag | ${{ needs.create-rc-tag.result }} |"

@@ -25,9 +25,9 @@ outputs:
   base_version:
     description: 'Base semver version extracted from branch (e.g. 0.6.0)'
     value: ${{ steps.compute.outputs.base_version }}
-  pep440_version:
-    description: 'PEP 440 RC version (e.g. 0.6.0rc0)'
-    value: ${{ steps.compute.outputs.pep440_version }}
+  wheel_version:
+    description: 'Wheel version in PEP 440 form (e.g. 0.6.0rc0)'
+    value: ${{ steps.compute.outputs.wheel_version }}
   rc_tag:
     description: 'Git RC tag (e.g. v0.6.0-rc0)'
     value: ${{ steps.compute.outputs.rc_tag }}
@@ -83,18 +83,18 @@ runs:
           exit 1
         fi
 
-        PEP440_VERSION="${BASE_VERSION}rc${RC_NUMBER}"
+        WHEEL_VERSION="${BASE_VERSION}rc${RC_NUMBER}"
         RC_TAG="v${BASE_VERSION}-rc${RC_NUMBER}"
-        WHEEL_FILENAME="aiperf-${PEP440_VERSION}-py3-none-any.whl"
+        WHEEL_FILENAME="aiperf-${WHEEL_VERSION}-py3-none-any.whl"
 
         IMAGE="${CONTAINER_REGISTRY}/${CONTAINER_REPOSITORY}"
-        MULTIARCH_TAG="${PEP440_VERSION}"
-        AMD64_TAG="${PEP440_VERSION}-amd64"
-        ARM64_TAG="${PEP440_VERSION}-arm64"
+        MULTIARCH_TAG="${WHEEL_VERSION}"
+        AMD64_TAG="${WHEEL_VERSION}-amd64"
+        ARM64_TAG="${WHEEL_VERSION}-arm64"
 
         {
           echo "base_version=${BASE_VERSION}"
-          echo "pep440_version=${PEP440_VERSION}"
+          echo "wheel_version=${WHEEL_VERSION}"
           echo "rc_tag=${RC_TAG}"
           echo "wheel_filename=${WHEEL_FILENAME}"
           echo "container_image=${IMAGE}"
@@ -108,6 +108,6 @@ runs:
 
         echo "### Release Metadata" >> "$GITHUB_STEP_SUMMARY"
         echo "- **Base version**: ${BASE_VERSION}" >> "$GITHUB_STEP_SUMMARY"
-        echo "- **PEP 440 version**: ${PEP440_VERSION}" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Wheel version**: ${WHEEL_VERSION}" >> "$GITHUB_STEP_SUMMARY"
         echo "- **RC tag**: ${RC_TAG}" >> "$GITHUB_STEP_SUMMARY"
         echo "- **Wheel**: ${WHEEL_FILENAME}" >> "$GITHUB_STEP_SUMMARY"

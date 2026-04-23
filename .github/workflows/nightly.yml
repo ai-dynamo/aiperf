@@ -29,7 +29,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: 'Branch name, tag, or commit SHA to build from. Defaults to tip-of-tree on the triggering ref.'
+        description: 'Branch name, tag, or commit SHA to build from. Must resolve to a commit reachable from origin/main. Defaults to tip-of-tree on the triggering ref.'
         default: ''
         required: false
       release:
@@ -41,11 +41,15 @@ on:
         type: boolean
         default: false
       publish_only:
-        description: 'Skip build phase; re-stage existing artifacts. Requires pep440_version.'
+        description: 'Skip build phase; re-stage existing artifacts. Requires wheel_version and container_tag.'
         type: boolean
         default: false
-      pep440_version:
-        description: 'Existing PEP 440 version to re-stage (used only when publish_only=true).'
+      wheel_version:
+        description: 'Existing wheel version (PEP 440, e.g. 0.6.0.dev20260422123456) to re-stage. Used only when publish_only=true.'
+        default: ''
+        required: false
+      container_tag:
+        description: 'Existing container tag (nightly-YYYYMMDD-<short_sha>) to re-stage (used only when publish_only=true).'
         default: ''
         required: false
 
@@ -71,7 +75,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       nightly_tag:    ${{ steps.version.outputs.nightly_tag }}
-      pep440_version: ${{ steps.version.outputs.pep440_version }}
+      wheel_version: ${{ steps.version.outputs.wheel_version }}
+      container_tag:  ${{ steps.version.outputs.container_tag }}
       wheel_filename: ${{ steps.version.outputs.wheel_filename }}
       base_version:   ${{ steps.version.outputs.base_version }}
       run_timestamp:  ${{ steps.version.outputs.run_timestamp }}
@@ -81,6 +86,23 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Verify ref is reachable from main
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          REF_DESCRIPTION: ${{ inputs.ref || github.ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          RESOLVED_SHA=$(git rev-parse HEAD)
+          echo "Resolved ref '${REF_DESCRIPTION}' to ${RESOLVED_SHA}"
+          if ! git merge-base --is-ancestor "${RESOLVED_SHA}" origin/main; then
+            echo "::error::Ref '${REF_DESCRIPTION}' (${RESOLVED_SHA}) is not reachable from origin/main."
+            echo "::error::On-demand nightly releases must build from commits merged to main."
+            exit 1
+          fi
+          echo "Ref verified: ${RESOLVED_SHA} is on main."
 
       - name: Restore version artifact from prior attempt
         id: restore
@@ -102,6 +124,8 @@ jobs:
           else
             TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
             HUMAN_TS=$(date -u +%Y-%m-%d-%H%M%S)
+            DATE_ONLY=$(date -u +%Y%m%d)
+            SHORT_SHA=$(git rev-parse --short=7 HEAD)
 
             BASE_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
             if [[ ! "${BASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -110,22 +134,25 @@ jobs:
             fi
 
             if [ "${{ inputs.publish_only }}" = "true" ]; then
-              PEP440_VERSION="${{ inputs.pep440_version }}"
-              if [ -z "${PEP440_VERSION}" ]; then
-                echo "::error::publish_only=true requires pep440_version input"
+              WHEEL_VERSION="${{ inputs.wheel_version }}"
+              CONTAINER_TAG="${{ inputs.container_tag }}"
+              if [ -z "${WHEEL_VERSION}" ] || [ -z "${CONTAINER_TAG}" ]; then
+                echo "::error::publish_only=true requires both wheel_version and container_tag inputs"
                 exit 1
               fi
-              NIGHTLY_TAG="nightly-republish-${PEP440_VERSION}"
+              NIGHTLY_TAG="nightly-republish-${WHEEL_VERSION}"
             else
               NIGHTLY_TAG="nightly-${HUMAN_TS}"
-              PEP440_VERSION="${BASE_VERSION}.dev${TIMESTAMP}"
+              WHEEL_VERSION="${BASE_VERSION}.dev${TIMESTAMP}"
+              CONTAINER_TAG="nightly-${DATE_ONLY}-${SHORT_SHA}"
             fi
 
-            WHEEL_FILENAME="aiperf-${PEP440_VERSION}-py3-none-any.whl"
+            WHEEL_FILENAME="aiperf-${WHEEL_VERSION}-py3-none-any.whl"
           fi
 
           echo "nightly_tag=${NIGHTLY_TAG}"         >> "$GITHUB_OUTPUT"
-          echo "pep440_version=${PEP440_VERSION}"   >> "$GITHUB_OUTPUT"
+          echo "wheel_version=${WHEEL_VERSION}"   >> "$GITHUB_OUTPUT"
+          echo "container_tag=${CONTAINER_TAG}"     >> "$GITHUB_OUTPUT"
           echo "wheel_filename=${WHEEL_FILENAME}"   >> "$GITHUB_OUTPUT"
           echo "base_version=${BASE_VERSION}"       >> "$GITHUB_OUTPUT"
           echo "run_timestamp=${TIMESTAMP:-reused}" >> "$GITHUB_OUTPUT"
@@ -133,7 +160,8 @@ jobs:
           mkdir -p .nightly-version
           {
             echo "NIGHTLY_TAG=${NIGHTLY_TAG}"
-            echo "PEP440_VERSION=${PEP440_VERSION}"
+            echo "WHEEL_VERSION=${WHEEL_VERSION}"
+            echo "CONTAINER_TAG=${CONTAINER_TAG}"
             echo "WHEEL_FILENAME=${WHEEL_FILENAME}"
             echo "BASE_VERSION=${BASE_VERSION}"
             echo "TIMESTAMP=${TIMESTAMP:-reused}"
@@ -236,84 +264,12 @@ jobs:
   # instance profile. The automated-release gate is enforced at staging only.
   # ============================================================================
 
-  build-wheel:
-    name: Build Wheel
-    needs: [prepare-nightly, pre-commit, unit-tests, integration-tests, gpu-e2e-tests]
-    runs-on: prod-aiperf-builder-amd-v1
-    if: ${{ inputs.publish_only != 'true' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref || github.ref }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Patch version in pyproject.toml
-        uses: ./.github/actions/update-pyproject-version
-        with:
-          version: ${{ needs.prepare-nightly.outputs.pep440_version }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build wheel via Docker wheel-builder stage
-        run: |
-          docker buildx build \
-            --target wheel-builder \
-            --cache-from type=gha,scope=wheel-amd64 \
-            --cache-to   type=gha,scope=wheel-amd64,mode=max \
-            --output     type=local,dest=./dist/ \
-            .
-
-      - name: Detect and validate wheel
-        id: wheel
-        env:
-          EXPECTED_VERSION: ${{ needs.prepare-nightly.outputs.pep440_version }}
-        run: |
-          set -euo pipefail
-
-          mapfile -t WHEELS < <(find dist/ -name "aiperf-*.whl" -type f)
-          if [ "${#WHEELS[@]}" -eq 0 ]; then
-            echo "::error::No wheel found in dist/ after build"
-            exit 1
-          fi
-          if [ "${#WHEELS[@]}" -gt 1 ]; then
-            echo "::error::Multiple wheels found in dist/ — expected exactly one:"
-            printf '  %s\n' "${WHEELS[@]}"
-            exit 1
-          fi
-          WHEEL_PATH="${WHEELS[0]}"
-
-          uvx twine check "${WHEEL_PATH}"
-          uv venv .venv-check
-          uv pip install --python .venv-check/bin/python "${WHEEL_PATH}"
-          INSTALLED_VERSION=$(.venv-check/bin/python -c "import aiperf; print(aiperf.__version__)")
-          if [ "${INSTALLED_VERSION}" != "${EXPECTED_VERSION}" ]; then
-            echo "::error::Wheel version mismatch: expected '${EXPECTED_VERSION}', got '${INSTALLED_VERSION}'"
-            exit 1
-          fi
-          .venv-check/bin/aiperf --help
-
-          echo "wheel_path=${WHEEL_PATH}"                    >> "$GITHUB_OUTPUT"
-          echo "wheel_filename=$(basename "${WHEEL_PATH}")"  >> "$GITHUB_OUTPUT"
-
-      - name: Upload wheel to S3
-        env:
-          S3_BUCKET:      ${{ secrets.S3_CI_WHEELS_BUCKET }}
-          PEP440_VERSION: ${{ needs.prepare-nightly.outputs.pep440_version }}
-        run: |
-          set -euo pipefail
-          WHEEL=$(find dist/ -name "aiperf-*.whl" | head -1)
-          aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/aiperf/nightly/${PEP440_VERSION}/" --sse AES256
-
   build-container:
     name: Build Container (${{ matrix.arch }})
     needs: [prepare-nightly, pre-commit, unit-tests, integration-tests, gpu-e2e-tests]
     if: ${{ inputs.publish_only != 'true' }}
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - arch: amd64
@@ -343,7 +299,7 @@ jobs:
       - name: Patch version in pyproject.toml
         uses: ./.github/actions/update-pyproject-version
         with:
-          version: ${{ needs.prepare-nightly.outputs.pep440_version }}
+          version: ${{ needs.prepare-nightly.outputs.wheel_version }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -357,15 +313,73 @@ jobs:
             | docker login --username AWS --password-stdin \
                 "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
 
+      # Wheel is pure Python (py3-none-any); build once on amd64 and upload.
+      # The wheel-builder layer is cached into aiperf:cache-amd64 and reused
+      # by the runtime build below.
+      - name: Build and extract wheel (amd64 only)
+        if: matrix.arch == 'amd64'
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          set -euo pipefail
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+          docker buildx build \
+            --platform linux/amd64 \
+            --target   wheel-builder \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-amd64" \
+            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache-amd64,mode=max" \
+            --output     type=local,dest=./dist/ \
+            .
+
+      - name: Validate wheel (amd64 only)
+        if: matrix.arch == 'amd64'
+        env:
+          EXPECTED_VERSION: ${{ needs.prepare-nightly.outputs.wheel_version }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t WHEELS < <(find dist/ -name "aiperf-*.whl" -type f)
+          if [ "${#WHEELS[@]}" -eq 0 ]; then
+            echo "::error::No wheel found in dist/ after build"
+            exit 1
+          fi
+          if [ "${#WHEELS[@]}" -gt 1 ]; then
+            echo "::error::Multiple wheels found in dist/ — expected exactly one:"
+            printf '  %s\n' "${WHEELS[@]}"
+            exit 1
+          fi
+          WHEEL_PATH="${WHEELS[0]}"
+
+          uvx twine check "${WHEEL_PATH}"
+          uv venv .venv-check
+          uv pip install --python .venv-check/bin/python "${WHEEL_PATH}"
+          INSTALLED_VERSION=$(.venv-check/bin/python -c "import aiperf; print(aiperf.__version__)")
+          if [ "${INSTALLED_VERSION}" != "${EXPECTED_VERSION}" ]; then
+            echo "::error::Wheel version mismatch: expected '${EXPECTED_VERSION}', got '${INSTALLED_VERSION}'"
+            exit 1
+          fi
+          .venv-check/bin/aiperf --help
+
+      - name: Upload wheel to S3 (amd64 only)
+        if: matrix.arch == 'amd64'
+        env:
+          S3_BUCKET:     ${{ secrets.S3_CI_WHEELS_BUCKET }}
+          WHEEL_VERSION: ${{ needs.prepare-nightly.outputs.wheel_version }}
+        run: |
+          set -euo pipefail
+          WHEEL=$(find dist/ -name "aiperf-*.whl" | head -1)
+          aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/aiperf/nightly/${WHEEL_VERSION}/" --sse AES256
+
       - name: Build and push ${{ matrix.arch }} image to ECR
         env:
           AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-          PEP440_VERSION:     ${{ needs.prepare-nightly.outputs.pep440_version }}
+          CONTAINER_TAG:      ${{ needs.prepare-nightly.outputs.container_tag }}
         run: |
           set -euo pipefail
           REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-          IMAGE_TAG="${PEP440_VERSION}-${{ matrix.arch }}"
+          IMAGE_TAG="${CONTAINER_TAG}-${{ matrix.arch }}"
 
           refresh_ecr_token() {
             while sleep 21600; do
@@ -398,6 +412,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - name: Get ECR login token
         id: ecr
@@ -413,10 +429,10 @@ jobs:
           registry-username: AWS
           registry-password: ${{ steps.ecr.outputs.password }}
           target-image: >-
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.pep440_version }}
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.container_tag }}
           source-images: >-
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.pep440_version }}-amd64
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.pep440_version }}-arm64
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.container_tag }}-amd64
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.container_tag }}-arm64
 
   # ============================================================================
   # PHASE 4: TAG
@@ -424,7 +440,7 @@ jobs:
 
   create-nightly-tag:
     name: Create Nightly Tag
-    needs: [prepare-nightly, build-wheel, create-multiarch-manifest-ecr]
+    needs: [prepare-nightly, create-multiarch-manifest-ecr]
     runs-on: ubuntu-latest
     if: ${{ inputs.publish_only != 'true' }}
     steps:
@@ -513,23 +529,23 @@ jobs:
           AWS_ACCOUNT_ID:         ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION:     ${{ secrets.AWS_DEFAULT_REGION }}
           NGC_STAGING_IMAGE_BASE: ${{ secrets.NGC_STAGING_IMAGE_BASE }}
-          PEP440_VERSION:         ${{ needs.prepare-nightly.outputs.pep440_version }}
+          CONTAINER_TAG:          ${{ needs.prepare-nightly.outputs.container_tag }}
         run: |
           set -euo pipefail
           ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
 
           for ARCH in amd64 arm64; do
             crane copy \
-              "${ECR_REGISTRY}/aiperf:${PEP440_VERSION}-${ARCH}" \
-              "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}-${ARCH}"
+              "${ECR_REGISTRY}/aiperf:${CONTAINER_TAG}-${ARCH}" \
+              "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}-${ARCH}"
           done
 
-          crane delete "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}" 2>/dev/null || true
+          crane delete "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}" 2>/dev/null || true
           crane index append \
-            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}-amd64" \
-            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}-arm64" \
-            --tag      "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}"
-          echo "Container staged: ${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}"
+            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}-amd64" \
+            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}-arm64" \
+            --tag      "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}"
+          echo "Container staged: ${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${CONTAINER_TAG}"
 
   stage-nightly-wheel:
     name: Stage Wheel (S3 → Artifactory)
@@ -547,14 +563,14 @@ jobs:
           ARTIFACTORY_URL:   ${{ secrets.ARTIFACTORY_URL }}
           ARTIFACTORY_USER:  ${{ secrets.ARTIFACTORY_USER }}
           ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
-          PEP440_VERSION:    ${{ needs.prepare-nightly.outputs.pep440_version }}
+          WHEEL_VERSION:    ${{ needs.prepare-nightly.outputs.wheel_version }}
         run: |
           set -euo pipefail
           TMPDIR=$(mktemp -d)
           trap 'rm -rf "${TMPDIR}"' EXIT
 
           aws s3 cp \
-            "s3://${S3_BUCKET}/aiperf/nightly/${PEP440_VERSION}/" \
+            "s3://${S3_BUCKET}/aiperf/nightly/${WHEEL_VERSION}/" \
             "${TMPDIR}/" --recursive --include "*.whl"
 
           mapfile -t WHEELS < <(find "${TMPDIR}" -name "*.whl" -type f)
@@ -569,7 +585,7 @@ jobs:
             --password        "${ARTIFACTORY_TOKEN}" \
             --disable-progress-bar \
             "${WHEELS[0]}"
-          echo "Wheel staged to Artifactory: ${PEP440_VERSION}"
+          echo "Wheel staged to Artifactory: ${WHEEL_VERSION}"
 
   # ============================================================================
   # PHASE 6: TRIGGER GITLAB SECURITY SCAN
@@ -590,7 +606,8 @@ jobs:
           GITLAB_TRIGGER_TOKEN:   ${{ secrets.GITLAB_TRIGGER_TOKEN }}
           GITLAB_TRIGGER_URL:     ${{ secrets.GITLAB_PIPELINE_URL }}
           NIGHTLY_TAG:            ${{ needs.prepare-nightly.outputs.nightly_tag }}
-          PEP440_VERSION:         ${{ needs.prepare-nightly.outputs.pep440_version }}
+          WHEEL_VERSION:         ${{ needs.prepare-nightly.outputs.wheel_version }}
+          CONTAINER_TAG:          ${{ needs.prepare-nightly.outputs.container_tag }}
           ARTIFACTORY_PYPI_URL:   ${{ secrets.ARTIFACTORY_PYPI_URL }}
         run: |
           set -euo pipefail
@@ -613,7 +630,8 @@ jobs:
             --form "variables[PROJECT]=aiperf" \
             --form "variables[SOURCE_BRANCH]=${GITHUB_REF_NAME}" \
             --form "variables[NIGHTLY_TAG]=${NIGHTLY_TAG}" \
-            --form "variables[PEP440_VERSION]=${PEP440_VERSION}" \
+            --form "variables[WHEEL_VERSION]=${WHEEL_VERSION}" \
+            --form "variables[CONTAINER_TAG]=${CONTAINER_TAG}" \
             --form "variables[COMMIT_SHA]=${{ github.sha }}" \
             --form "variables[GITHUB_RUN_ID]=${GITHUB_RUN_ID}" \
             --form "variables[ARTIFACTS]=wheel,container" \
@@ -645,7 +663,6 @@ jobs:
       - unit-tests
       - integration-tests
       - gpu-e2e-tests
-      - build-wheel
       - build-container
       - create-multiarch-manifest-ecr
       - create-nightly-tag
@@ -658,7 +675,8 @@ jobs:
       - name: Write pipeline summary
         env:
           NIGHTLY_TAG:    ${{ needs.prepare-nightly.outputs.nightly_tag }}
-          PEP440_VERSION: ${{ needs.prepare-nightly.outputs.pep440_version }}
+          WHEEL_VERSION: ${{ needs.prepare-nightly.outputs.wheel_version }}
+          CONTAINER_TAG:  ${{ needs.prepare-nightly.outputs.container_tag }}
         run: |
           {
             echo "## Nightly Pipeline Summary"
@@ -666,7 +684,8 @@ jobs:
             echo "| Property | Value |"
             echo "|----------|-------|"
             echo "| Tag | \`${NIGHTLY_TAG}\` |"
-            echo "| Version | \`${PEP440_VERSION}\` |"
+            echo "| Version | \`${WHEEL_VERSION}\` |"
+            echo "| Container Tag | \`${CONTAINER_TAG}\` |"
             echo "| Commit | \`${{ github.sha }}\` |"
             echo "| Git ref | \`${{ inputs.ref || github.ref }}\` |"
             echo "| Branch | \`${GITHUB_REF_NAME}\` |"
@@ -684,8 +703,7 @@ jobs:
             echo "### Build + Upload"
             echo "| Job | Result |"
             echo "|-----|--------|"
-            echo "| build-wheel (→ S3) | ${{ needs.build-wheel.result }} |"
-            echo "| build-container (→ ECR) | ${{ needs.build-container.result }} |"
+            echo "| build-container (→ ECR + S3 wheel) | ${{ needs.build-container.result }} |"
             echo "| create-multiarch-manifest-ecr | ${{ needs.create-multiarch-manifest-ecr.result }} |"
             echo "| create-nightly-tag | ${{ needs.create-nightly-tag.result }} |"
             echo ""
