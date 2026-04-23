@@ -134,8 +134,8 @@ RUN mkdir -p /app /app/artifacts /app/.cache \
     && chmod -R 755 /app
 
 # Install only the dependencies using uv
-COPY pyproject.toml uv.lock ./
-RUN uv sync --active --no-install-project --frozen
+COPY pyproject.toml .
+RUN uv sync --active --no-install-project
 
 # Copy the rest of the application
 COPY --from=wheel-builder /dist /dist
