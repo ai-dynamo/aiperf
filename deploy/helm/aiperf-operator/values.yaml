@@ -149,6 +149,37 @@ kueue:
   # admitted through Kueue even without an explicit --queue-name flag.
   defaultQueueName: ""
 
+# ingress exposes the results-server HTTP API outside the cluster via an Ingress.
+# Disabled by default: results are reachable via ClusterIP + port-forward.
+ingress:
+  # ingress.enabled toggles Ingress resource creation
+  enabled: false
+  # ingress.className is the IngressClass name (e.g. "nginx"); empty uses the cluster default
+  className: ""
+  # ingress.annotations is a map of annotations applied to the Ingress
+  annotations: {}
+  # ingress.hosts is the list of host rules; each entry has a host and a paths list.
+  # Paths default to backend port = resultsServer.port (8081). Override per path with portNumber.
+  hosts:
+    - host: aiperf.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  # ingress.tls is the optional TLS configuration (list of {hosts, secretName})
+  tls: []
+
+# networkPolicy restricts pod traffic to/from the operator.
+# Disabled by default: no restrictions applied.
+networkPolicy:
+  # networkPolicy.enabled toggles NetworkPolicy resource creation
+  enabled: false
+  # networkPolicy.allowedNamespaces is a list of namespace names allowed to reach the operator
+  # (in addition to the benchmark namespace) and reachable by the operator's egress
+  allowedNamespaces: []
+  # networkPolicy.allowedIngressCIDRs is a CIDR allow-list for external scrapers
+  # (e.g. Prometheus, ingress controllers) reaching health (8080) and results ports
+  allowedIngressCIDRs: []
+
 # defaults contains default settings for AIPerfJob resources
 defaults:
   # defaults.image is the default container image for benchmark jobs
