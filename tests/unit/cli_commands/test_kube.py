@@ -154,6 +154,26 @@ def mock_kube_client():
             "aiperf.kubernetes.client.find_operator_pod",
             new=_strip_api_find_operator_pod,
         ),
+        # `from aiperf.kubernetes.client import X` in call-site modules captures
+        # the symbol at import time. If another test has already loaded those
+        # modules, the above module-attribute patches miss the bound name.
+        # Patch each call-site binding explicitly so the fixture is order-safe.
+        patch(
+            "aiperf.kubernetes.attach.find_controller_pod",
+            new=_strip_api_find_controller_pod,
+        ),
+        patch(
+            "aiperf.kubernetes.attach.find_jobset",
+            new=_strip_api_find_jobset,
+        ),
+        patch(
+            "aiperf.kubernetes.results.find_controller_pod",
+            new=_strip_api_find_controller_pod,
+        ),
+        patch(
+            "aiperf.kubernetes.results_operator.find_operator_pod",
+            new=_strip_api_find_operator_pod,
+        ),
     ):
         yield mock_client
 
@@ -472,13 +492,19 @@ class TestAttachCommand:
 
 
 class TestPrintProgressMessage:
-    """Tests for print_progress_message helper."""
+    """Tests for print_progress_message helper.
+
+    `message_type` uses the enum's serialized value (lowercase
+    ``"credit_phase_start"``), matching what arrives over the WebSocket.
+    The uppercase enum-name form is not a valid dict key for the dispatch
+    table and produces a silent no-op.
+    """
 
     def test_credit_phase_start(self, capsys) -> None:
         """Test printing CREDIT_PHASE_START message."""
         print_progress_message(
             {
-                "message_type": "CREDIT_PHASE_START",
+                "message_type": "credit_phase_start",
                 "stats": {"phase": "profiling"},
             }
         )
@@ -491,7 +517,7 @@ class TestPrintProgressMessage:
         """Test printing CREDIT_PHASE_PROGRESS message."""
         print_progress_message(
             {
-                "message_type": "CREDIT_PHASE_PROGRESS",
+                "message_type": "credit_phase_progress",
                 "stats": {
                     "phase": "profiling",
                     "requests_completed": 500,
@@ -508,7 +534,7 @@ class TestPrintProgressMessage:
         """Test printing CREDIT_PHASE_COMPLETE message."""
         print_progress_message(
             {
-                "message_type": "CREDIT_PHASE_COMPLETE",
+                "message_type": "credit_phase_complete",
                 "stats": {"phase": "warmup"},
             }
         )
@@ -520,7 +546,7 @@ class TestPrintProgressMessage:
 
     def test_all_records_received(self, capsys) -> None:
         """Test printing ALL_RECORDS_RECEIVED message."""
-        print_progress_message({"message_type": "ALL_RECORDS_RECEIVED"})
+        print_progress_message({"message_type": "all_records_received"})
 
         captured = capsys.readouterr()
         assert "[COMPLETE]" in captured.out
@@ -536,7 +562,7 @@ class TestPrintProgressMessage:
         """Test printing WORKER_STATUS_SUMMARY message."""
         print_progress_message(
             {
-                "message_type": "WORKER_STATUS_SUMMARY",
+                "message_type": "worker_status_summary",
                 "workers": {
                     "worker-1": {"status": "HEALTHY"},
                     "worker-2": {"status": "HEALTHY"},

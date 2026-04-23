@@ -388,7 +388,7 @@ class TestFetchResultsWithRetry:
         """Verify returns both metrics and downloaded files."""
         with (
             mock_patch(
-                "aiperf.operator.handlers.completion.get_or_create_progress_client",
+                "aiperf.operator.handlers._completion_fetch.get_or_create_progress_client",
                 return_value=mock_progress_client,
             ),
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
@@ -414,7 +414,7 @@ class TestFetchResultsWithRetry:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.completion.get_or_create_progress_client",
+                "aiperf.operator.handlers._completion_fetch.get_or_create_progress_client",
                 return_value=mock_client,
             ),
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
@@ -439,7 +439,7 @@ class TestFetchResultsWithRetry:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.completion.get_or_create_progress_client",
+                "aiperf.operator.handlers._completion_fetch.get_or_create_progress_client",
                 return_value=mock_client,
             ),
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
@@ -459,7 +459,7 @@ class TestFetchResultsWithRetry:
         """Verify skips download if RESULTS_DIR doesn't exist."""
         with (
             mock_patch(
-                "aiperf.operator.handlers.completion.get_or_create_progress_client",
+                "aiperf.operator.handlers._completion_fetch.get_or_create_progress_client",
                 return_value=mock_progress_client,
             ),
             mock_patch.object(
@@ -491,11 +491,11 @@ class TestFetchResultsWithRetry:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.completion.get_or_create_progress_client",
+                "aiperf.operator.handlers._completion_fetch.get_or_create_progress_client",
                 return_value=mock_client,
             ),
             mock_patch(
-                "aiperf.operator.handlers.completion.ProgressClient",
+                "aiperf.operator.handlers._completion_fetch.ProgressClient",
                 return_value=sidecar_client,
             ),
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
@@ -526,11 +526,11 @@ class TestFetchResultsWithRetry:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.completion.get_or_create_progress_client",
+                "aiperf.operator.handlers._completion_fetch.get_or_create_progress_client",
                 return_value=mock_client,
             ),
             mock_patch(
-                "aiperf.operator.handlers.completion.ProgressClient",
+                "aiperf.operator.handlers._completion_fetch.ProgressClient",
                 return_value=sidecar_client,
             ),
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),

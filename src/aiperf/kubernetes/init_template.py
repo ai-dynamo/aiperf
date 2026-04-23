@@ -2,11 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """Config template generator for Kubernetes deployments.
 
-Provides an AIPerfJob CR template that users can customize
-for their benchmark setup.
+Wraps any AIPerf benchmark-config YAML body (e.g. one of the bundled templates
+in ``src/aiperf/config/templates/``) in an ``AIPerfJob`` CR shell so users can
+``kubectl apply`` or feed it to ``aiperf kube profile --config``.
 """
 
-KUBE_INIT_TEMPLATE = """\
+from __future__ import annotations
+
+import textwrap
+
+_HEADER = """\
 # AIPerf Kubernetes Benchmark - AIPerfJob Custom Resource
 #
 # Usage (CLI):
@@ -21,44 +26,12 @@ KUBE_INIT_TEMPLATE = """\
 apiVersion: aiperf.nvidia.com/v1alpha1
 kind: AIPerfJob
 metadata:
-  name: my-benchmark
+  name: {job_name}
 spec:
-  # === Benchmark Configuration ===
   benchmark:
-    # Model name(s) served by the endpoint
-    models:
-      - "your-model-name"
+"""
 
-    # Endpoint to benchmark (list of URLs)
-    endpoint:
-      urls:
-        - "http://your-server:8000"
-      streaming: true
-
-    # Dataset configuration
-    datasets:
-      main:
-        type: synthetic
-        entries: 1000
-        prompts:
-          isl:
-            mean: 512
-            stddev: 0
-          osl:
-            mean: 128
-            stddev: 0
-
-    # Load phases
-    phases:
-      warmup:
-        type: concurrency
-        concurrency: 10
-        requests: 10
-        exclude_from_results: true
-      profiling:
-        type: concurrency
-        concurrency: 50
-        requests: 500
+_FOOTER = """\
 
   # === Deployment Options ===
   # ttlSecondsAfterFinished: 300
@@ -93,13 +66,56 @@ spec:
 """
 
 
-def generate_init_template(filename: str) -> str:
-    """Generate a config template with the given filename in usage instructions.
+def _strip_leading_meta_headers(content: str) -> str:
+    """Drop leading ``# yaml-language-server`` / ``# @template`` metadata blocks.
+
+    Bundled templates carry editor/schema hints and a ``# @template`` metadata
+    block at the top that are irrelevant (and misleading) once wrapped under
+    ``spec.benchmark``. We strip until the first blank line or first
+    non-metadata content line.
+    """
+    lines = content.splitlines(keepends=True)
+    out: list[str] = []
+    skipping = True
+    for line in lines:
+        if skipping:
+            stripped = line.strip()
+            if stripped.startswith("# yaml-language-server"):
+                continue
+            if stripped.startswith("# @template"):
+                continue
+            if stripped.startswith("#") and ": " in stripped[2:]:
+                # @template metadata key/value line — skip
+                continue
+            skipping = False
+        out.append(line)
+    return "".join(out)
+
+
+def wrap_as_aiperf_job(
+    benchmark_body: str,
+    *,
+    filename: str = "benchmark.yaml",
+    job_name: str = "my-benchmark",
+) -> str:
+    """Wrap an AIPerf benchmark config body in an AIPerfJob CR.
 
     Args:
-        filename: The filename to substitute into usage instructions.
+        benchmark_body: YAML content of an AIPerf benchmark config (top-level
+            keys like ``model``, ``endpoint``, ``dataset``, ``phases``).
+            SPDX headers should already be stripped by the caller; this
+            function additionally strips yaml-language-server and
+            ``# @template`` metadata blocks.
+        filename: Filename used in the usage-instruction comments.
+        job_name: Value for ``metadata.name`` on the generated CR.
 
     Returns:
-        The template string with filename substituted.
+        A complete AIPerfJob YAML document with the body indented under
+        ``spec.benchmark`` and the standard deployment-options / pod /
+        scheduling commented blocks appended.
     """
-    return KUBE_INIT_TEMPLATE.format(filename=filename)
+    cleaned = _strip_leading_meta_headers(benchmark_body).rstrip("\n")
+    indented = textwrap.indent(cleaned, "    ")
+    return (
+        _HEADER.format(filename=filename, job_name=job_name) + indented + "\n" + _FOOTER
+    )

@@ -1,130 +1,137 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for aiperf.cli_commands.kube_init module."""
+"""Unit tests for `aiperf kube init`.
+
+Verifies the full template-library surface (list, search, generate with overrides)
+and the AIPerfJob wrapping applied to every generated config.
+"""
+
+from __future__ import annotations
 
 from pathlib import Path
 
 import ruamel.yaml
 
 from aiperf.cli_commands.kube.init import init_config
-from aiperf.kubernetes.init_template import generate_init_template
-
-# =============================================================================
-# Template Content Tests
-# =============================================================================
 
 
-class TestTemplateContent:
-    """Tests for the KUBE_INIT_TEMPLATE content."""
-
-    def test_template_contains_required_sections(self) -> None:
-        """Test template has AIPerfJob CR structure."""
-        template = generate_init_template("test.yaml")
-        assert "apiVersion: aiperf.nvidia.com/v1alpha1" in template
-        assert "kind: AIPerfJob" in template
-        assert "models:" in template
-        assert "endpoint:" in template
-        assert "phases:" in template
-
-    def test_template_substitutes_filename(self) -> None:
-        """Test that {filename} is replaced in the template."""
-        template = generate_init_template("my-benchmark.yaml")
-        assert "my-benchmark.yaml" in template
-        assert "{filename}" not in template
-
-    def test_template_is_valid_yaml(self) -> None:
-        """Test uncommented lines parse as valid YAML."""
-        template = generate_init_template("test.yaml")
-        # Extract only non-comment, non-empty lines
-        yaml_lines = []
-        for line in template.splitlines():
-            stripped = line.lstrip()
-            if stripped and not stripped.startswith("#"):
-                yaml_lines.append(line)
-
-        yaml_str = "\n".join(yaml_lines)
-        yaml = ruamel.yaml.YAML()
-        parsed = yaml.load(yaml_str)
-        assert parsed is not None
-        assert "apiVersion" in parsed
-        assert "spec" in parsed
-
-    def test_template_mentions_deployment_options(self) -> None:
-        """Test template mentions deployment configuration."""
-        template = generate_init_template("test.yaml")
-        assert "podTemplate" in template
-        assert "scheduling" in template
+def _parse_yaml_from_cr(text: str) -> dict:
+    """Strip comments and parse the AIPerfJob CR body."""
+    yaml_lines = [
+        line
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    return ruamel.yaml.YAML().load("\n".join(yaml_lines))
 
 
-# =============================================================================
-# Init Command Tests
-# =============================================================================
+class TestInitGenerate:
+    """Default generation path: template -> wrapped AIPerfJob."""
 
+    def test_default_template_prints_aiperf_job_to_stdout(self, capsys) -> None:
+        init_config(output=None)
 
-class TestInitCommand:
-    """Tests for the kube init command."""
+        out = capsys.readouterr().out
+        assert "apiVersion: aiperf.nvidia.com/v1alpha1" in out
+        assert "kind: AIPerfJob" in out
+        assert "  benchmark:" in out
 
-    async def test_init_stdout(self, capsys) -> None:
-        """Test init prints template to stdout when no output specified."""
-
-        await init_config(output=None)
-
-        captured = capsys.readouterr()
-        assert "apiVersion:" in captured.out
-        assert "models:" in captured.out
-
-    async def test_init_writes_to_file(self, tmp_path: Path) -> None:
-        """Test init writes template to specified file."""
-
+    def test_writes_to_file_and_is_valid_yaml(self, tmp_path: Path) -> None:
         output_file = tmp_path / "benchmark.yaml"
-        await init_config(output=output_file)
+        init_config(output=output_file)
 
         assert output_file.exists()
+        parsed = _parse_yaml_from_cr(output_file.read_text())
+        assert parsed["kind"] == "AIPerfJob"
+        assert "benchmark" in parsed["spec"]
+
+    def test_filename_appears_in_usage_comments(self, tmp_path: Path) -> None:
+        output_file = tmp_path / "my-bench.yaml"
+        init_config(output=output_file)
+
         content = output_file.read_text()
-        assert "endpoint:" in content
-        assert "benchmark.yaml" in content
+        assert "my-bench.yaml" in content
 
-    async def test_init_prompts_on_overwrite(self, tmp_path: Path, monkeypatch) -> None:
-        """Test init prompts before overwriting existing file."""
-        from unittest.mock import AsyncMock, patch
+    def test_custom_job_name(self, tmp_path: Path) -> None:
+        output_file = tmp_path / "run.yaml"
+        init_config(output=output_file, job_name="run-42")
 
-        output_file = tmp_path / "existing.yaml"
-        output_file.write_text("old content")
+        parsed = _parse_yaml_from_cr(output_file.read_text())
+        assert parsed["metadata"]["name"] == "run-42"
 
-        with patch(
-            "aiperf.kubernetes.cli_helpers.confirm_action",
-            new_callable=AsyncMock,
-            return_value=False,
-        ):
-            await init_config(output=output_file)
+    def test_creates_parent_dirs(self, tmp_path: Path) -> None:
+        output_file = tmp_path / "sub" / "deep" / "benchmark.yaml"
+        init_config(output=output_file)
 
-        # File should not be overwritten
-        assert output_file.read_text() == "old content"
+        assert output_file.exists()
 
-    async def test_init_overwrites_on_confirm(
+
+class TestInitOverrides:
+    """--model / --url patch the singular/plural form actually present."""
+
+    def test_model_override_on_singular_form(self, tmp_path: Path) -> None:
+        """'minimal' template uses `model:` (singular); override must match."""
+        output_file = tmp_path / "out.yaml"
+        init_config(template="minimal", model="my-model", output=output_file)
+
+        parsed = _parse_yaml_from_cr(output_file.read_text())
+        assert parsed["spec"]["benchmark"]["model"] == "my-model"
+
+    def test_url_override_on_singular_form(self, tmp_path: Path) -> None:
+        output_file = tmp_path / "out.yaml"
+        init_config(template="minimal", url="http://svc:8000", output=output_file)
+
+        parsed = _parse_yaml_from_cr(output_file.read_text())
+        assert parsed["spec"]["benchmark"]["endpoint"]["url"] == "http://svc:8000"
+
+
+class TestInitOverwritePrompt:
+    """Existing output file prompts via input() and respects the response."""
+
+    def test_refuses_to_overwrite_when_user_declines(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        """Test init overwrites file when user confirms."""
-        from unittest.mock import AsyncMock, patch
-
         output_file = tmp_path / "existing.yaml"
         output_file.write_text("old content")
 
-        with patch(
-            "aiperf.kubernetes.cli_helpers.confirm_action",
-            new_callable=AsyncMock,
-            return_value=True,
-        ):
-            await init_config(output=output_file)
+        monkeypatch.setattr("builtins.input", lambda _prompt: "n")
+        init_config(output=output_file)
+
+        assert output_file.read_text() == "old content"
+
+    def test_overwrites_when_user_confirms(self, tmp_path: Path, monkeypatch) -> None:
+        output_file = tmp_path / "existing.yaml"
+        output_file.write_text("old content")
+
+        monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+        init_config(output=output_file)
 
         content = output_file.read_text()
-        assert "endpoint:" in content
+        assert "kind: AIPerfJob" in content
         assert "old content" not in content
 
-    async def test_init_creates_parent_dirs(self, tmp_path: Path) -> None:
-        """Test init creates parent directories if needed."""
 
-        output_file = tmp_path / "subdir" / "deep" / "benchmark.yaml"
-        await init_config(output=output_file)
+class TestInitListAndSearch:
+    """--list and --search paths print the template catalog instead of generating."""
 
-        assert output_file.exists()
+    def test_list_prints_category_headers(self, capsys) -> None:
+        init_config(list_templates=True)
+
+        out = capsys.readouterr().out
+        assert "Getting Started" in out
+        assert "minimal" in out
+        # Hint should reference the kube command, not config init
+        assert "aiperf kube init --template" in out
+
+    def test_search_matches_template_name(self, capsys) -> None:
+        init_config(search="minimal")
+
+        out = capsys.readouterr().out
+        assert "minimal" in out
+
+    def test_search_no_match_prints_kube_hint(self, capsys) -> None:
+        init_config(search="zzz_no_such_template_zzz")
+
+        out = capsys.readouterr().out
+        assert "No templates match" in out
+        assert "aiperf kube init --list" in out

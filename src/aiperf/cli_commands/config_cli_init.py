@@ -11,96 +11,13 @@ from cyclopts import Parameter
 
 from aiperf.cli_commands.config_cli import config_app
 from aiperf.cli_utils import exit_on_error
+from aiperf.config.templates_cli import (
+    build_overrides,
+    handle_list,
+    handle_search,
+)
 
-
-def _print_template_table(
-    templates: list,
-    *,
-    verbose: bool = False,
-) -> None:
-    """Print templates as a Rich table grouped by category."""
-    from rich.console import Console
-    from rich.table import Table
-
-    from aiperf.config.templates import CATEGORY_ORDER
-
-    console = Console()
-    by_category: dict[str, list] = {}
-    for t in templates:
-        by_category.setdefault(t.category, []).append(t)
-
-    for cat in CATEGORY_ORDER:
-        group = by_category.pop(cat, None)
-        if not group:
-            continue
-
-        table = Table(
-            title=cat,
-            title_style="bold",
-            show_header=True,
-            header_style="dim",
-            box=None,
-            pad_edge=False,
-        )
-        table.add_column("Name", style="cyan", min_width=25)
-        table.add_column("Title")
-        table.add_column("Description", style="dim")
-        if verbose:
-            table.add_column("Tags", style="dim")
-            table.add_column("Difficulty", style="dim")
-
-        for t in group:
-            row: list[str] = [t.name, t.title, t.description]
-            if verbose:
-                row.append(", ".join(t.tags) if t.tags else "")
-                row.append(t.difficulty)
-            table.add_row(*row)
-
-        console.print(table)
-        console.print()
-
-
-def _handle_search(search: str, *, verbose: bool) -> None:
-    from aiperf.config.templates import search_templates
-
-    results = search_templates(search)
-    if not results:
-        print(f"No templates match '{search}'.")
-        print("Run 'aiperf config init --list' to see all templates.")
-        return
-    _print_template_table(results, verbose=verbose)
-
-
-def _handle_list(category: str | None, *, verbose: bool) -> None:
-    from aiperf.config.templates import list_templates as _list_templates
-
-    results = _list_templates(category=category)
-    if not results:
-        print(f"No templates in category '{category}'.")
-        return
-    _print_template_table(results, verbose=verbose)
-    print("Use 'aiperf config init --template <name>' to generate a template.")
-
-
-def _build_overrides(content: str, model: str | None, url: str | None) -> dict:
-    """Build overrides dict, matching singular/plural form used in template."""
-    import yaml as _yaml
-
-    overrides: dict = {}
-    if not (model or url):
-        return overrides
-
-    raw = _yaml.safe_load(content) or {}
-    if model:
-        key = "model" if "model" in raw else "models"
-        overrides[key] = model if key == "model" else [model]
-    if url:
-        ep = raw.get("endpoint", {})
-        url_key = "url" if "url" in ep else "urls"
-        overrides.setdefault("endpoint", {})[url_key] = (
-            url if url_key == "url" else [url]
-        )
-    return overrides
+_CMD = "aiperf config init"
 
 
 def _write_template_output(
@@ -146,7 +63,7 @@ def _generate_template(
         raise SystemExit(1) from None
 
     content = load_template_content(name)
-    overrides = _build_overrides(content, model, url)
+    overrides = build_overrides(content, model, url)
     content = strip_spdx_header(content)
     if overrides:
         content = apply_overrides(content, overrides)
@@ -227,9 +144,9 @@ def init_config(
     """
     with exit_on_error(title="Template Error"):
         if search:
-            _handle_search(search, verbose=verbose)
+            handle_search(search, verbose=verbose, cmd=_CMD)
             return
         if list_templates:
-            _handle_list(category, verbose=verbose)
+            handle_list(category, verbose=verbose, cmd=_CMD)
             return
         _generate_template(template, model, url, output)
