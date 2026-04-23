@@ -9,6 +9,7 @@ plumbing so the manager can focus on collector lifecycle and result publication.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Protocol
 from urllib.parse import urlparse
 
@@ -123,11 +124,20 @@ class EndpointResolver:
             return []
 
     async def _run_auto_discovery(self, logger: _Logger) -> list[str]:
-        # Derive namespace from endpoint URLs if not explicitly set.
-        # Service DNS: "svc-name.namespace.svc.cluster.local" -> namespace
+        # Namespace precedence for auto-discovery:
+        # 1. ``discovery.namespace`` — explicit operator/CLI override
+        # 2. Pod's own namespace (AIPERF_NAMESPACE env) — the only namespace
+        #    the pod's service account reliably has pods:list permission for
+        # 3. Derived from endpoint-service DNS (cross-namespace fallback)
+        #
+        # Step 2 avoids the "403 pod list in namespace=X" log spam on every
+        # benchmark startup when the inference endpoint lives in a different
+        # namespace (e.g. mock-server in ``default``, job in ``aiperf-jobs-*``).
+        # Users who WANT cross-namespace discovery can set
+        # ``discovery.namespace`` explicitly or configure a ClusterRole.
         ns = self.discovery.namespace  # type: ignore[union-attr]
         if ns is None:
-            ns = self.extract_namespace_from_endpoints()
+            ns = _own_namespace() or self.extract_namespace_from_endpoints()
         logger.info(
             f"Server Metrics: Running Kubernetes auto-discovery"
             f"{f' (namespace={ns})' if ns else ''}..."
@@ -155,4 +165,26 @@ class EndpointResolver:
                     return parts[1]
             except (ValueError, AttributeError):
                 continue
+        return None
+
+
+def _own_namespace() -> str | None:
+    """Return the pod's own namespace, or None if unknown.
+
+    Tries AIPERF_NAMESPACE (set by the JobSet manifest) first, then the
+    downward-API file mounted into every pod by Kubernetes. Works outside
+    K8s by returning None, which lets the caller fall back to other
+    inference strategies.
+    """
+    ns = os.environ.get("AIPERF_NAMESPACE")
+    if ns:
+        return ns
+    try:
+        with open(
+            "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
+            encoding="utf-8",
+        ) as fh:
+            data = fh.read().strip()
+            return data or None
+    except OSError:
         return None
