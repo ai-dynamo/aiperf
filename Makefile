@@ -474,3 +474,11 @@ helm-template: #? smoke-check Helm chart rendering (no cluster required).
 helm-package: #? package the aiperf-operator Helm chart into dist/.
 	mkdir -p dist/
 	helm package deploy/helm/aiperf-operator -d dist/
+
+.PHONY: install-e2e-browsers test-e2e
+
+install-e2e-browsers: ## Install Playwright Chromium for e2e UI tests
+	uv run playwright install chromium --with-deps || uv run playwright install chromium
+
+test-e2e: ## Run operator web UI e2e tests
+	uv run pytest tests/e2e/ -m e2e -n auto

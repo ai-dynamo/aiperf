@@ -96,6 +96,12 @@ dev = [
   "pympler>=1.1",
 ]
 
+[dependency-groups]
+dev = [
+    "playwright>=1.58.0",
+    "pytest-playwright>=0.7.2",
+]
+
 [tool.ruff]
 # Base settings for ruff
 line-length = 88
@@ -173,6 +179,7 @@ markers = [
     "trtllm: marks tests requiring a TRT-LLM server (deselected by default)",
     "sglang: marks tests requiring an SGLang server (deselected by default)",
     "fern: marks tests that validate Fern documentation (requires fern CLI)",
+    "e2e: marks tests as browser-based end-to-end UI tests (requires playwright chromium, deselected by default)",
 ]
 # Better console output
 console_output_style = "progress"
@@ -181,7 +188,7 @@ verbosity_assertions = 2
 # Deselect slow/infra test suites by default - opt in explicitly:
 #   pytest -m k8s, pytest -m gpu, pytest -m performance, pytest -m integration, etc.
 # IDE note: When running a specific test file/function from IDE, markers are often bypassed
-addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit and not gpu and not vllm and not dynamo and not trtllm and not sglang and not k8s and not fern'"
+addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit and not gpu and not vllm and not dynamo and not trtllm and not sglang and not k8s and not fern and not e2e'"
 # Filter out known warnings from third-party libraries and test infrastructure
 filterwarnings = [
     "ignore::RuntimeWarning:looptime",
