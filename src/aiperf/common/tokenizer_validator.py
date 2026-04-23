@@ -1,10 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Early tokenizer validation before spawning services."""
+"""Early tokenizer validation and preloading before spawning services."""
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from typing import TYPE_CHECKING
@@ -170,11 +171,13 @@ def preload_tokenizers(
             logger.debug(
                 "Tokenizer preload: all tokenizers already cached, no download needed"
             )
+        _enable_hf_offline_mode(logger)
         return
 
     if logger:
         logger.info(f"Preloading {len(names_to_load)} tokenizer(s) into local cache...")
 
+    all_succeeded = True
     for name in names_to_load:
         if logger:
             logger.info(f"  Caching tokenizer: {name}")
@@ -188,8 +191,20 @@ def preload_tokenizers(
                 resolve_alias=False,  # already resolved by validate_tokenizer_early
             )
         except Exception as e:
+            all_succeeded = False
             if logger:
                 logger.warning(
                     f"  Failed to preload tokenizer '{name}': {e}. "
                     "Child processes will attempt to load it themselves."
                 )
+
+    if all_succeeded:
+        _enable_hf_offline_mode(logger)
+
+
+def _enable_hf_offline_mode(logger: AIPerfLogger | None = None) -> None:
+    """Set HF environment variables so spawned processes never make network calls."""
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    if logger:
+        logger.debug("Enabled HF offline mode for child processes")

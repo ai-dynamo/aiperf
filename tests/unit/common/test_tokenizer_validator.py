@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for early tokenizer validation."""
+"""Tests for early tokenizer validation and preloading."""
 
+import os
 from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
@@ -51,6 +52,13 @@ def _mock_endpoint_meta() -> Iterator[None]:
         return_value=meta,
     ):
         yield
+
+
+@pytest.fixture(autouse=True)
+def _clean_hf_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove HF offline env vars before each test so assertions are reliable."""
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
 
 
 class TestPreloadTokenizers:
@@ -151,6 +159,44 @@ class TestPreloadTokenizers:
         ):
             preload_tokenizers(resolved)
         assert mock_load.call_count == 2
+
+    def test_enables_offline_mode_after_successful_preload(self) -> None:
+        resolved = {"model": "meta-llama/Llama-2-7b-hf"}
+        with (
+            patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
+            patch.object(Tokenizer, "from_pretrained"),
+        ):
+            preload_tokenizers(resolved)
+        assert os.environ.get("HF_HUB_OFFLINE") == "1"
+        assert os.environ.get("TRANSFORMERS_OFFLINE") == "1"
+
+    def test_enables_offline_mode_when_all_already_cached(self) -> None:
+        resolved = {"model": "meta-llama/Llama-2-7b-hf"}
+        with (
+            patch("aiperf.common.tokenizer._is_hf_cached", return_value=True),
+            patch.object(Tokenizer, "from_pretrained") as mock_load,
+        ):
+            preload_tokenizers(resolved)
+        mock_load.assert_not_called()
+        assert os.environ.get("HF_HUB_OFFLINE") == "1"
+        assert os.environ.get("TRANSFORMERS_OFFLINE") == "1"
+
+    def test_does_not_enable_offline_mode_on_failure(self) -> None:
+        resolved = {"model": "meta-llama/Llama-2-7b-hf"}
+        with (
+            patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
+            patch.object(
+                Tokenizer, "from_pretrained", side_effect=RuntimeError("network error")
+            ),
+        ):
+            preload_tokenizers(resolved)
+        assert os.environ.get("HF_HUB_OFFLINE") is None
+        assert os.environ.get("TRANSFORMERS_OFFLINE") is None
+
+    def test_does_not_enable_offline_mode_when_skipped(self) -> None:
+        preload_tokenizers(None)
+        assert os.environ.get("HF_HUB_OFFLINE") is None
+        assert os.environ.get("TRANSFORMERS_OFFLINE") is None
 
 
 @pytest.mark.usefixtures("_mock_endpoint_meta")
