@@ -4,10 +4,15 @@
 # Toxiproxy fixture for chaos tests.
 #
 # Deploys a single-replica toxiproxy into namespace `aiperf-chaos-toxiproxy`
-# with the admin API exposed on port 8474 and a block of proxy listen ports
-# (20000-20005) so tests can front multiple upstream services through the
-# same deployment. See `tests/kubernetes/chaos/toxiproxy.py` for the async
-# client that drives this.
+# with the admin API exposed on port 8474 and a block of proxy listen ports:
+#   - proxy-0..proxy-5  (20000-20005): generic, unreserved, any test may use
+#   - mock-server       (20010):       reserved for B3 mock-server latency
+#                                      injection; front `aiperf-mock-server`
+#                                      so benchmark traffic flows through
+#                                      toxiproxy instead of the service DNS
+# See `tests/kubernetes/chaos/toxiproxy.py` for the async client that drives
+# this and the `TOXIPROXY_MOCK_SERVER_PORT` constant that names the reserved
+# slot.
 ---
 apiVersion: v1
 kind: Namespace
@@ -61,6 +66,9 @@ spec:
           protocol: TCP
         - name: proxy-5
           containerPort: 20005
+          protocol: TCP
+        - name: mock-server
+          containerPort: 20010
           protocol: TCP
         readinessProbe:
           tcpSocket:
@@ -126,4 +134,8 @@ spec:
   - name: proxy-5
     port: 20005
     targetPort: 20005
+    protocol: TCP
+  - name: mock-server
+    port: 20010
+    targetPort: 20010
     protocol: TCP

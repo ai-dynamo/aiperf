@@ -27,7 +27,12 @@ import pytest
 
 from tests.kubernetes.chaos.chaos_injector import ChaosInjector
 from tests.kubernetes.chaos.mock_server_injector import MockServerInjector
-from tests.kubernetes.chaos.toxiproxy import ToxiproxyInjector
+from tests.kubernetes.chaos.toxiproxy import (
+    TOXIPROXY_MOCK_SERVER_PORT,
+    TOXIPROXY_NAMESPACE,
+    TOXIPROXY_SERVICE,
+    ToxiproxyInjector,
+)
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
@@ -41,11 +46,6 @@ MOCK_SERVER_DEPLOYMENT = "aiperf-mock-server"
 
 MOCK_SERVER_SERVICE_PORT = 8000
 """Service port the mock server listens on."""
-
-TOXIPROXY_MOCK_LISTEN_PORT = 20010
-"""Toxiproxy listen port allocated for mock-server traffic (fixture exposes
-20000-20005 by default; 20010 requires the fixture to advertise it). If
-routing the benchmark through toxiproxy is not wired up, the test xfails."""
 
 
 @pytest.fixture
@@ -262,82 +262,75 @@ async def test_b3_mock_server_latency_injection(
     longrun_config: AIPerfJobConfig,
     operator_job_namespace: str,
     kubectl: KubectlClient,
-    request: pytest.FixtureRequest,
 ) -> None:
     """Inject 500 ms latency via toxiproxy; p99 request latency reflects it.
 
-    Intended to exercise the benchmark's tolerance of slow upstreams --
-    the worker's HTTP client must not time out at its default budget and
-    the p99 latency metric must surface the injected delay rather than
-    being clipped by a timeout cascade.
+    Exercises the benchmark's tolerance of slow upstreams: the worker's
+    HTTP client must not time out at its default budget and the
+    ``request_latency`` distribution must surface the injected delay
+    rather than being clipped by a timeout cascade.
+
+    Wiring:
+        - Toxiproxy's ``mock-server`` proxy listens on
+          ``0.0.0.0:{TOXIPROXY_MOCK_SERVER_PORT}`` (exposed by the
+          fixture Service as port ``mock-server``).
+        - ``AIPerfJobConfig.endpoint_url`` points at
+          ``http://toxiproxy.<ns>.svc.cluster.local:20010/v1`` so every
+          worker request transits toxiproxy before hitting the mock
+          server.
 
     Tolerances:
         - ``metrics.request_latency.p99 > 400 ms`` (lower bound: injected
-          latency of 500 ms +- 50 ms jitter, minus mock-server's own
-          ~20 ms TTFT variance).
-
-    NOTE: routing benchmark traffic through toxiproxy requires pointing
-    ``AIPerfJobConfig.endpoint_url`` at the toxiproxy Service inside the
-    cluster rather than at ``aiperf-mock-server``. The toxiproxy fixture
-    deploys ``aiperf-chaos-toxiproxy/toxiproxy`` but its Service does
-    NOT currently expose listen port 20010, and we do not want to mutate
-    the fixture in a test. This test xfails with a TODO until the
-    fixture advertises an in-cluster proxy port for mock-server traffic.
+          downstream latency of 500 ms +/- 50 ms jitter, minus mock-server's
+          own ~20 ms TTFT variance). Metrics are served in ms (see
+          ``RequestLatencyMetric.display_unit``).
     """
-    _ = request  # kept for future hook / skip-conditions
-    pytest.xfail(
-        "B3 latency injection requires toxiproxy fixture to expose an "
-        "in-cluster Service port for mock-server traffic (e.g. proxy "
-        "name=mock-server, listen=:20010) and AIPerfJobConfig to accept "
-        "a per-test endpoint_url override routed through that Service. "
-        "TODO: extend fixtures/toxiproxy.yaml with the extra port + a "
-        "helper that points longrun_config.endpoint_url at "
-        "toxiproxy.<ns>.svc:20010 before create_job is called."
-    )
-
-    # The intended flow (kept for documentation; unreachable under xfail
-    # until the fixture is extended):
     name = "chaos-b3"
+    toxiproxy_endpoint = (
+        f"http://{TOXIPROXY_SERVICE}.{TOXIPROXY_NAMESPACE}.svc.cluster.local:"
+        f"{TOXIPROXY_MOCK_SERVER_PORT}/v1"
+    )
     try:
         await toxiproxy_injector.add_proxy(
             name="mock-server",
-            listen=f"0.0.0.0:{TOXIPROXY_MOCK_LISTEN_PORT}",
+            listen=f"0.0.0.0:{TOXIPROXY_MOCK_SERVER_PORT}",
             upstream=(
-                f"{MOCK_SERVER_DEPLOYMENT}.{MOCK_SERVER_NAMESPACE}.svc:"
+                f"{MOCK_SERVER_DEPLOYMENT}.{MOCK_SERVER_NAMESPACE}.svc.cluster.local:"
                 f"{MOCK_SERVER_SERVICE_PORT}"
             ),
         )
         await toxiproxy_injector.add_toxic(
-            "mock-server",
-            "latency",
-            {"latency": 500, "jitter": 50},
+            proxy_name="mock-server",
+            toxic_type="latency",
+            attributes={"latency": 500, "jitter": 50},
         )
+
         cfg = AIPerfJobConfig(
             concurrency=longrun_config.concurrency,
             request_count=None,
             benchmark_duration=60.0,
             warmup_request_count=longrun_config.warmup_request_count,
             image=longrun_config.image,
-            endpoint_url=(
-                f"http://toxiproxy.aiperf-chaos-toxiproxy.svc.cluster.local:"
-                f"{TOXIPROXY_MOCK_LISTEN_PORT}/v1"
-            ),
+            endpoint_url=toxiproxy_endpoint,
         )
         await operator_ready.create_job(
             config=cfg, name=name, namespace=operator_job_namespace
         )
         status = await operator_ready.wait_for_job_completion(
-            name, operator_job_namespace, timeout=240
+            name, operator_job_namespace, timeout=300
         )
         assert status.is_completed, (
-            f"AIPerfJob {name} did not complete with latency injection: "
-            f"phase={status.phase}, error={status.error}"
+            f"AIPerfJob {name} did not complete with 500 ms toxiproxy latency "
+            f"injection: phase={status.phase}, error={status.error}"
         )
-        assert status.results is not None
+        assert status.results is not None, (
+            "records-manager did not surface metrics under latency injection"
+        )
         metrics = status.results.get("metrics", {})
         p99 = _metric_p99(metrics, "request_latency")
         assert p99 is not None and p99 > 400.0, (
-            f"expected p99 request_latency > 400 ms with 500 ms toxic, "
+            f"expected p99 request_latency > 400 ms with 500 ms toxic "
+            f"(unit=ms per RequestLatencyMetric.display_unit), "
             f"got {p99!r} from metrics={metrics}"
         )
     finally:

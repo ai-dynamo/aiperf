@@ -49,6 +49,17 @@ TOXIPROXY_SERVICE = "toxiproxy"
 TOXIPROXY_ADMIN_PORT = 8474
 """Toxiproxy admin REST API port (inside the cluster)."""
 
+TOXIPROXY_MOCK_SERVER_PORT = 20010
+"""Reserved listen port for fronting ``aiperf-mock-server`` traffic.
+
+Kept in sync with the named ``mock-server`` port in
+``fixtures/toxiproxy.yaml``. Tests that need to inject faults into
+benchmark traffic should ``add_proxy(name="mock-server",
+listen=f"0.0.0.0:{TOXIPROXY_MOCK_SERVER_PORT}", upstream=...)`` and
+point ``AIPerfJobConfig.endpoint_url`` at
+``http://toxiproxy.aiperf-chaos-toxiproxy.svc.cluster.local:20010/v1``.
+Generic proxy slots (20000-20005) remain unreserved."""
+
 
 class ToxiproxyInjector:
     """Async REST client for a cluster-deployed toxiproxy instance.
