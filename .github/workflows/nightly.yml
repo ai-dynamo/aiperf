@@ -123,12 +123,14 @@ jobs:
         run: |
           set -euo pipefail
           # Shell-level fallbacks for inputs that aren't populated on push events.
-          # SKIP_SCAN and PUBLISH default to true so push-driven fanout tests
-          # skip the GitLab security scan and the full build path; useful for
-          # exercising staging/fanout orchestration without burning scans/builds.
-          RELEASE="${RELEASE:-true}"
+          # For push-triggered fanout testing: release=false skips stage+scan,
+          # so siblings build (cache-hot, fast) without touching NGC/Artifactory
+          # or triggering the GitLab security pipeline. publish_only=false is
+          # required — publish_only=true needs wheel_version and container_tag
+          # inputs which the fanout doesn't have for push events.
+          RELEASE="${RELEASE:-false}"
           SKIP_SCAN="${SKIP_SCAN:-true}"
-          PUBLISH="${PUBLISH:-true}"
+          PUBLISH="${PUBLISH:-false}"
           SIBLINGS=$((COUNT - 1))
           for i in $(seq 1 "${SIBLINGS}"); do
             gh workflow run nightly.yml \
