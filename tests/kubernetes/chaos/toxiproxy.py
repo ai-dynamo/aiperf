@@ -73,6 +73,16 @@ point ``AIPerfJobConfig.endpoint_url`` at
 ``http://toxiproxy.aiperf-chaos-toxiproxy.svc.cluster.local:20010/v1``.
 Generic proxy slots (20000-20005) remain unreserved."""
 
+TOXIPROXY_CONTROLLER_HTTP_PORT = 20002
+"""Reserved listen port for fronting operator -> controller HTTP traffic.
+
+Stable slot used by C16 (and any future controller-HTTP fault-injection
+scenario) so the toxiproxy Service URL is deterministic and the operator
+can be redeployed once with
+``AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE=http://toxiproxy.<ns>.svc:20002``.
+Kept distinct from :data:`TOXIPROXY_MOCK_SERVER_PORT` (20010) so mock-server
+and controller-HTTP fault targets never collide."""
+
 
 class ToxiproxyInjector:
     """Async REST client for a cluster-deployed toxiproxy instance.
