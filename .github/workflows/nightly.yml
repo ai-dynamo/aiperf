@@ -109,9 +109,12 @@ jobs:
         env:
           GH_TOKEN:  ${{ github.token }}
           COUNT:     ${{ inputs.count || '12' }}
-          # For push events, inputs.ref is empty — pin siblings to github.sha
-          # so all 12 runs build the exact triggering commit (no branch drift).
-          REF:       ${{ inputs.ref || github.sha }}
+          # For workflow_dispatch, inputs.ref defaults to the pinned main SHA.
+          # For push events, inputs.ref is empty — fall back to the same pinned
+          # main SHA (NOT github.sha, which may be on the dev branch and would
+          # fail the Verify step's main-ancestor check on each sibling).
+          # Keep this value in sync with the `ref` input's default above.
+          REF:       ${{ inputs.ref || '083d3c479d2995c3074363b491d5aea833020ab4' }}
           RELEASE:   ${{ inputs.release }}
           SKIP_SCAN: ${{ inputs.skip_security_scan }}
           PUBLISH:   ${{ inputs.publish_only }}
