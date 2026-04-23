@@ -479,6 +479,7 @@ jobs:
             --form "ref=main" \
             --form "variables[PIPELINE_TYPE]=rc" \
             --form "variables[RELEASE_TYPE]=rc" \
+            --form "variables[DRY_RUN]=true" \
             --form "variables[PROJECT]=aiperf" \
             --form "variables[SOURCE_BRANCH]=${GITHUB_REF_NAME}" \
             --form "variables[RC_TAG]=${RC_TAG}" \
