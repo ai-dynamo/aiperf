@@ -263,6 +263,58 @@ class TestCancel:
         assert "archived" in resp.text.lower()
 
 
+def test_get_job_archived_synthesizes_status(tmp_path: Path, monkeypatch):
+    """GET /api/v1/jobs/{ns}/{name} for an archived job returns a full synthesized status."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from aiperf.operator import job_union as ju
+    from aiperf.operator.routers.jobs import create_jobs_router
+
+    d = tmp_path / "ns" / "ghost"
+    d.mkdir(parents=True)
+    (d / "profile_export_aiperf.json").write_bytes(
+        orjson.dumps(
+            {
+                "status": "Succeeded",
+                "start_time": "2026-04-22T10:00:00Z",
+                "end_time": "2026-04-22T10:45:00Z",
+                "request_count": 7777,
+                "request_throughput": {"avg": 42.1, "unit": "requests/sec"},
+                "request_latency": {"avg": 180.0, "p99": 390.0, "unit": "ms"},
+                "time_to_first_token": {"avg": 45.5, "p99": 120.0, "unit": "ms"},
+                "output_token_throughput": {"avg": 2048.5, "unit": "tokens/sec"},
+            }
+        )
+    )
+
+    async def fake_find(api, name, namespace):
+        return None
+
+    monkeypatch.setattr(ju, "find_aiperf_job", fake_find)
+
+    api_holder = [object()]
+    router = create_jobs_router(api_holder, tmp_path)
+
+    app = FastAPI()
+    app.include_router(router)
+    with TestClient(app) as client:
+        resp = client.get("/api/v1/jobs/ns/ghost")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["job"]["source"] == "archived"
+    status = body["status"]
+    assert status["phase"] == "Succeeded"
+    assert status["currentPhase"] == "completed"
+    assert status["workers"] == {"ready": 0, "total": 0}
+    assert status["summary"]["throughput_rps"] == 42.1
+    assert status["summary"]["latency_p99_ms"] == 390.0
+    assert status["summary"]["ttft_avg_ms"] == 45.5
+    assert status["summary"]["total_requests"] == 7777
+    assert status["phases"]["benchmark"]["requestsCompleted"] == 7777
+    assert body["pods"] == []
+
+
 def test_list_jobs_includes_archived_only_entry(tmp_path: Path, monkeypatch):
     """GET /api/v1/jobs returns a PVC-only entry when no CR exists for it."""
     from fastapi import FastAPI

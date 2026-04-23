@@ -140,6 +140,110 @@ def _scan_pvc_jobs(
     return out
 
 
+# Map from profile_export nested metric path -> flat status.summary key.
+# Each entry: (flat_key, summary_key, nested_field). A source of None
+# (value absent or nested missing) means the key is OMITTED from the output,
+# so downstream UI code that does ``summary.throughput_rps ?? null`` picks
+# up the fall-through instead of a silently-null key.
+_FLAT_METRIC_MAP: tuple[tuple[str, str, str], ...] = (
+    ("throughput_rps", "request_throughput", "avg"),
+    ("latency_avg_ms", "request_latency", "avg"),
+    ("latency_p99_ms", "request_latency", "p99"),
+    ("ttft_avg_ms", "time_to_first_token", "avg"),
+    ("ttft_p99_ms", "time_to_first_token", "p99"),
+    ("itl_avg_ms", "inter_token_latency", "avg"),
+    ("itl_p99_ms", "inter_token_latency", "p99"),
+    ("output_token_throughput_tps", "output_token_throughput", "avg"),
+)
+
+
+def _flat_summary_from_profile_export(summary: dict[str, Any]) -> dict[str, Any]:
+    """Flatten a profile_export summary into the camel-ish keys the UI reads.
+
+    The UI's job-detail page reads KPIs from ``status.summary.{throughput_rps,
+    ttft_avg_ms, latency_p99_ms, output_token_throughput_tps, error_rate,
+    total_requests}``. Live CRs write these flat keys directly; archived jobs
+    only have nested ``profile_export_aiperf.json`` metrics, which this helper
+    translates. Keys whose source is missing/None are omitted.
+    """
+    flat: dict[str, Any] = {}
+    for flat_key, nested_key, field in _FLAT_METRIC_MAP:
+        nested = summary.get(nested_key)
+        if not isinstance(nested, dict):
+            continue
+        value = nested.get(field)
+        if value is None:
+            continue
+        flat[flat_key] = value
+
+    request_count = summary.get("request_count")
+    if request_count is not None:
+        flat["total_requests"] = request_count
+    # error_rate is always present in the UI's expected schema; default to 0.0
+    # when the source summary is silent so cards don't render "---" for a
+    # benchmark that simply had zero errors.
+    flat["error_rate"] = summary.get("error_rate") or 0.0
+    return flat
+
+
+def synthesize_status_from_summary(
+    namespace: str,
+    name: str,
+    summary: dict[str, Any],
+    conditions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build a ``status``-shaped dict for an archived (PVC-only) job.
+
+    The returned dict matches the schema a live CR's ``status`` subresource
+    exposes (jobId, phase, workers, conditions, phases, summary, timestamps),
+    so the UI can consume it through the same code path as live jobs — just
+    with pods/workers empty. The flat ``status.summary.*`` keys (``throughput_rps``,
+    ``latency_p99_ms``, ...) are derived from the nested ``profile_export_aiperf.json``
+    metrics via :func:`_flat_summary_from_profile_export`.
+
+    Args:
+        namespace: Kubernetes namespace of the original job (retained for
+            symmetry with the live-CR caller; not currently embedded).
+        name: AIPerfJob name — written into ``status.jobId``.
+        summary: The parsed ``profile_export_aiperf.json`` dict.
+        conditions: Optional list of condition dicts to pass through verbatim.
+            When omitted, a single ``{type: <phase>, status: "True"}`` entry
+            is synthesized from ``summary["status"]``.
+
+    Returns:
+        A dict with keys ``jobId, phase, startTime, completionTime,
+        currentPhase, workers, conditions, phases, summary``. Archived is
+        always past-completion, so ``currentPhase`` is hardcoded to
+        ``"completed"`` and the synthetic ``phases.benchmark`` entry reports
+        100 % progress.
+    """
+    del namespace  # reserved for future use
+    phase = str(summary.get("status") or "Archived")
+    if conditions is None:
+        conditions = [{"type": phase, "status": "True"}]
+
+    # Request count for the phases bar: prefer explicit, else fall back to 0.
+    request_count = int(summary.get("request_count") or 0)
+
+    return {
+        "jobId": name,
+        "phase": phase,
+        "startTime": summary.get("start_time"),
+        "completionTime": summary.get("end_time"),
+        "currentPhase": "completed",
+        "workers": {"ready": 0, "total": 0},
+        "conditions": conditions,
+        "phases": {
+            "benchmark": {
+                "requestsCompleted": request_count,
+                "requestsTotal": request_count,
+                "requestsProgressPercent": 100,
+            }
+        },
+        "summary": _flat_summary_from_profile_export(summary),
+    }
+
+
 async def list_all_jobs(
     api: ApiClient | None,
     results_dir: Path,

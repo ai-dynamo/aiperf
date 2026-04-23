@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import orjson
 from fastapi import APIRouter, HTTPException
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client import ApiClient
@@ -21,7 +22,11 @@ from aiperf.kubernetes.client import (
     get_pods,
     get_raw_aiperfjob_status,
 )
-from aiperf.operator.job_union import find_any_job, list_all_jobs
+from aiperf.operator.job_union import (
+    find_any_job,
+    list_all_jobs,
+    synthesize_status_from_summary,
+)
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client.models import V1Node, V1Pod
@@ -181,9 +186,30 @@ async def _get_job_impl(
         raise HTTPException(404, f"Job {namespace}/{name} not found")
 
     if job.source == "archived":
+        job_dir = results_dir / namespace / name
+        summary_path = job_dir / "profile_export_aiperf.json"
+        try:
+            summary = orjson.loads(summary_path.read_bytes())
+        except (OSError, orjson.JSONDecodeError) as e:
+            logger.warning(f"Failed to read archived summary {summary_path}: {e}")
+            summary = {}
+        conditions: list[dict[str, Any]] | None = None
+        conditions_path = job_dir / "conditions.json"
+        if conditions_path.is_file():
+            try:
+                raw = orjson.loads(conditions_path.read_bytes())
+            except (OSError, orjson.JSONDecodeError) as e:
+                logger.warning(
+                    f"Failed to read archived conditions {conditions_path}: {e}"
+                )
+            else:
+                if isinstance(raw, list):
+                    conditions = raw
+                elif isinstance(raw, dict) and isinstance(raw.get("conditions"), list):
+                    conditions = raw["conditions"]
         return JobDetailResponse(
             job=job.model_dump(by_alias=True),
-            status={},
+            status=synthesize_status_from_summary(namespace, name, summary, conditions),
             pods=[],
         )
 

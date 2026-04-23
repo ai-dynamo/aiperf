@@ -264,3 +264,106 @@ async def test_find_any_job_returns_none_when_neither(tmp_path, monkeypatch):
     monkeypatch.setattr(job_union, "find_aiperf_job", fake_find)
     info = await job_union.find_any_job(None, tmp_path, "ns", "missing")
     assert info is None
+
+
+# =============================================================================
+# synthesize_status_from_summary
+# =============================================================================
+
+
+def _full_summary() -> dict:
+    """A profile_export-shaped summary with every nested metric populated."""
+    return {
+        "status": "Succeeded",
+        "start_time": "2026-04-22T10:00:00Z",
+        "end_time": "2026-04-22T10:45:00Z",
+        "request_count": 10000,
+        "request_throughput": {"avg": 42.1, "unit": "requests/sec"},
+        "request_latency": {"avg": 180.0, "p99": 390.0, "unit": "ms"},
+        "time_to_first_token": {"avg": 45.5, "p99": 120.0, "unit": "ms"},
+        "inter_token_latency": {"avg": 12.3, "p99": 30.0, "unit": "ms"},
+        "output_token_throughput": {"avg": 2048.5, "unit": "tokens/sec"},
+        "error_rate": 0.005,
+    }
+
+
+def test_synthesize_status_full_summary():
+    from aiperf.operator.job_union import synthesize_status_from_summary
+
+    status = synthesize_status_from_summary("ns", "j1", _full_summary())
+
+    assert status["jobId"] == "j1"
+    assert status["phase"] == "Succeeded"
+    assert status["startTime"] == "2026-04-22T10:00:00Z"
+    assert status["completionTime"] == "2026-04-22T10:45:00Z"
+    assert status["currentPhase"] == "completed"
+    assert status["workers"] == {"ready": 0, "total": 0}
+
+    summary = status["summary"]
+    assert summary["throughput_rps"] == 42.1
+    assert summary["latency_avg_ms"] == 180.0
+    assert summary["latency_p99_ms"] == 390.0
+    assert summary["ttft_avg_ms"] == 45.5
+    assert summary["ttft_p99_ms"] == 120.0
+    assert summary["itl_avg_ms"] == 12.3
+    assert summary["itl_p99_ms"] == 30.0
+    assert summary["output_token_throughput_tps"] == 2048.5
+    assert summary["total_requests"] == 10000
+    assert summary["error_rate"] == 0.005
+
+    phases = status["phases"]
+    assert phases["benchmark"]["requestsCompleted"] == 10000
+    assert phases["benchmark"]["requestsTotal"] == 10000
+    assert phases["benchmark"]["requestsProgressPercent"] == 100
+
+
+def test_synthesize_status_missing_metric_skipped():
+    from aiperf.operator.job_union import synthesize_status_from_summary
+
+    partial = {
+        "status": "Succeeded",
+        "request_throughput": {"avg": 42.1},
+        # No request_latency, no ttft, no itl, no output_token_throughput
+    }
+    status = synthesize_status_from_summary("ns", "j1", partial)
+    summary = status["summary"]
+    assert summary["throughput_rps"] == 42.1
+    # Absent metrics should be OMITTED (not present as None keys).
+    assert "latency_p99_ms" not in summary
+    assert "latency_avg_ms" not in summary
+    assert "ttft_avg_ms" not in summary
+    assert "ttft_p99_ms" not in summary
+    assert "itl_avg_ms" not in summary
+    assert "itl_p99_ms" not in summary
+    assert "output_token_throughput_tps" not in summary
+
+
+def test_synthesize_status_archived_phase_fallback():
+    from aiperf.operator.job_union import synthesize_status_from_summary
+
+    status = synthesize_status_from_summary(
+        "ns", "j1", {"request_throughput": {"avg": 1.0}}
+    )
+    assert status["phase"] == "Archived"
+
+
+def test_synthesize_status_conditions_passthrough():
+    from aiperf.operator.job_union import synthesize_status_from_summary
+
+    conds = [
+        {"type": "Progressing", "status": "False", "reason": "Completed"},
+        {"type": "Ready", "status": "True"},
+    ]
+    status = synthesize_status_from_summary(
+        "ns", "j1", _full_summary(), conditions=conds
+    )
+    assert status["conditions"] == conds
+
+
+def test_synthesize_status_conditions_synthesized():
+    from aiperf.operator.job_union import synthesize_status_from_summary
+
+    status = synthesize_status_from_summary("ns", "j1", {"status": "Failed"})
+    [cond] = status["conditions"]
+    assert cond["type"] == "Failed"
+    assert cond["status"] == "True"
