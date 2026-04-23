@@ -511,8 +511,6 @@ def print_sweep_summary(
     records: list[dict],
 ) -> None:
     duration_s = (events[-1][0] - t0) / 1e9
-    n_buckets = ts.n
-    t_sec = np.arange(n_buckets)
 
     print(f"\n{'=' * 70}")
     print("  Sweep Line Summary")
@@ -746,7 +744,6 @@ def plot(
 ) -> None:
     n_buckets = ts.n
     t_sec = np.arange(n_buckets)
-    duration_s = (events[-1][0] - t0) / 1e9
     expected_windows = expected_windows or []
     wave_completion_windows = wave_completion_windows or []
 
