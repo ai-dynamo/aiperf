@@ -545,3 +545,108 @@ class ChaosInjector:
             "spec: " + orjson.dumps(base_spec).decode() + "\n"
         )
         await self.kubectl.apply(manifest, namespace=namespace)
+
+    async def wait_for_pod_status_reason(
+        self,
+        namespace: str,
+        label_selector: str,
+        reason: str,
+        timeout: float = 90.0,
+    ) -> str:
+        """Block until any pod matching ``label_selector`` has a container
+        whose ``state.waiting.reason`` equals ``reason`` (e.g.
+        ``ImagePullBackOff`` or ``ErrImagePull``).
+
+        The poll inspects every pod in the selector and every container
+        status; the first match wins. ``ErrImagePull`` is the transient
+        pre-stage that kubelet flips to ``ImagePullBackOff`` after the
+        first backoff window, so scenarios that care about "image pull
+        is stuck" should accept either by calling this helper twice or
+        by widening ``reason`` via an OR in the caller.
+
+        Args:
+            namespace: Namespace to scan.
+            label_selector: kubectl ``-l`` selector.
+            reason: Exact container-waiting reason to wait for.
+            timeout: Max seconds to wait.
+
+        Returns:
+            The pod name where the reason was first observed.
+
+        Raises:
+            TimeoutError: When no pod surfaces ``reason`` within the
+                timeout window.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            res = await self.kubectl.run(
+                "get",
+                "pods",
+                "-n",
+                namespace,
+                "-l",
+                label_selector,
+                "-o",
+                "json",
+                check=False,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                try:
+                    data: dict[str, Any] = orjson.loads(res.stdout)
+                except orjson.JSONDecodeError:
+                    data = {}
+                for item in data.get("items", []):
+                    pod_name = item.get("metadata", {}).get("name", "")
+                    statuses = item.get("status", {}).get("containerStatuses", []) or []
+                    init_statuses = (
+                        item.get("status", {}).get("initContainerStatuses", []) or []
+                    )
+                    for cs in (*statuses, *init_statuses):
+                        waiting = (cs.get("state") or {}).get("waiting") or {}
+                        if waiting.get("reason") == reason:
+                            return pod_name
+            await asyncio.sleep(1.0)
+        raise TimeoutError(
+            f"no pod in {namespace} matching {label_selector!r} reached "
+            f"containerStatus.state.waiting.reason={reason!r} within {timeout} s"
+        )
+
+    async def apply_resource_quota(
+        self,
+        namespace: str,
+        name: str,
+        hard_limits: dict[str, str],
+    ) -> None:
+        """Apply a ``ResourceQuota`` to ``namespace``.
+
+        Args:
+            namespace: Target namespace. Must already exist.
+            name: ResourceQuota resource name.
+            hard_limits: Mapping of quota field to cap, e.g.
+                ``{"requests.memory": "512Mi", "limits.memory": "512Mi"}``.
+                Values are applied verbatim as the quota ``spec.hard`` block.
+        """
+        manifest = {
+            "apiVersion": "v1",
+            "kind": "ResourceQuota",
+            "metadata": {"name": name, "namespace": namespace},
+            "spec": {"hard": dict(hard_limits)},
+        }
+        await self.kubectl.apply(orjson.dumps(manifest).decode(), namespace=namespace)
+
+    async def delete_resource_quota(self, namespace: str, name: str) -> None:
+        """Idempotently delete a ``ResourceQuota`` by name.
+
+        Swallows NotFound so it is safe to call from an unconditional
+        ``finally`` even when the quota was never applied.
+        """
+        await self.kubectl.run(
+            "delete",
+            "resourcequota",
+            name,
+            "-n",
+            namespace,
+            "--ignore-not-found",
+            "--wait=false",
+            check=False,
+        )
