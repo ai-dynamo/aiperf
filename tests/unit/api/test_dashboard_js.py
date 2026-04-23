@@ -69,7 +69,10 @@ def _playwright_ready() -> tuple[bool, str]:
     try:
         from playwright.sync_api import sync_playwright  # noqa: F401
     except ImportError:
-        return (False, "playwright not installed (`uv pip install playwright pytest-playwright`)")
+        return (
+            False,
+            "playwright not installed (`uv pip install playwright pytest-playwright`)",
+        )
     # Check Chromium binary: the launch call is the authoritative test, but
     # failing fast here avoids a cryptic stacktrace if the browser is missing.
     try:
@@ -79,7 +82,10 @@ def _playwright_ready() -> tuple[bool, str]:
             browser = p.chromium.launch(headless=True)
             browser.close()
     except Exception as exc:  # noqa: BLE001 - one-shot probe, message surfaces via skip reason
-        return (False, f"Chromium not launchable: {exc!s}. Run `uv run playwright install chromium`.")
+        return (
+            False,
+            f"Chromium not launchable: {exc!s}. Run `uv run playwright install chromium`.",
+        )
     return (True, "")
 
 
@@ -138,7 +144,7 @@ def _build_app(
     app.state.service = svc
 
     app.include_router(static_router)  # GET /, GET /dashboard, GET /dashboard-v2
-    app.include_router(core_router)    # GET /api/config + health
+    app.include_router(core_router)  # GET /api/config + health
 
     @app.get("/api/progress")
     async def _progress() -> dict[str, Any]:
@@ -165,9 +171,7 @@ def _build_app(
         try:
             while True:
                 raw = await websocket.receive_text()
-                await websocket.send_text(
-                    '{"type": "subscribed", "message_types": []}'
-                )
+                await websocket.send_text('{"type": "subscribed", "message_types": []}')
                 try:
                     parsed = json.loads(raw)
                 except Exception:  # noqa: BLE001
@@ -177,11 +181,18 @@ def _build_app(
 
                 if broadcast_phases:
                     for name in phase_names:
-                        await websocket.send_text(json.dumps({
-                            "type": "credit_phase_start",
-                            "phase": name,
-                            "stats": {"start_ns": 1, "total_expected_requests": 100},
-                        }))
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "type": "credit_phase_start",
+                                    "phase": name,
+                                    "stats": {
+                                        "start_ns": 1,
+                                        "total_expected_requests": 100,
+                                    },
+                                }
+                            )
+                        )
 
                 for payload in ws_payloads:
                     await websocket.send_text(json.dumps(payload))
@@ -295,7 +306,7 @@ def _run_server(
 
 
 @pytest.fixture(scope="session")
-def _browser() -> "Iterator[Browser]":
+def _browser() -> Iterator[Browser]:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
@@ -307,7 +318,7 @@ def _browser() -> "Iterator[Browser]":
 
 
 @pytest.fixture
-def _page(_browser: "Browser") -> "Iterator[Page]":
+def _page(_browser: Browser) -> Iterator[Page]:
     context = _browser.new_context()
     page = context.new_page()
     try:
@@ -402,8 +413,8 @@ class TestDashboardRenderConfig:
     )  # fmt: skip
     def test_renderConfig_populates_config_bar(
         self,
-        _page: "Page",
-        cfg_builder: "Any",
+        _page: Page,
+        cfg_builder: Any,
         must_contain: list[str],
         must_not_contain: list[str],
     ) -> None:
@@ -439,7 +450,7 @@ class TestDashboardRenderConfig:
             log_text = _page.locator("#log").text_content() or ""
 
         assert console_errors == [], (
-            f"unexpected browser console errors:\n  " + "\n  ".join(console_errors)
+            "unexpected browser console errors:\n  " + "\n  ".join(console_errors)
         )
 
         missing = [t for t in must_contain if t not in text]
@@ -460,7 +471,7 @@ class TestDashboardRenderConfig:
         )
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
-    def test_api_config_does_not_leak_api_key(self, _page: "Page") -> None:
+    def test_api_config_does_not_leak_api_key(self, _page: Page) -> None:
         """End-to-end: the browser should never see the api_key field on /api/config."""
         captured: list[dict[str, Any]] = []
 
@@ -521,7 +532,9 @@ class TestDashboardV2InlineJS:
                     f"{path.relative_to(_STATIC_V2_DIR)}:\n  "
                     + proc.stderr.decode(errors="replace").replace("\n", "\n  ")
                 )
-        assert not failures, "v2 JS files failed node --check:\n" + "\n\n".join(failures)
+        assert not failures, "v2 JS files failed node --check:\n" + "\n\n".join(
+            failures
+        )
 
 
 class TestDashboardV2Render:
@@ -532,7 +545,7 @@ class TestDashboardV2Render:
     """
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
-    def test_v2_boots_and_shows_config_bar(self, _page: "Page") -> None:
+    def test_v2_boots_and_shows_config_bar(self, _page: Page) -> None:
         """v2 dashboard must boot, render the config bar, and flip status to Connected."""
         console_errors: list[str] = []
         _page.on(
@@ -562,12 +575,23 @@ class TestDashboardV2Render:
         # Same label set as v1's renderConfig — v2 reimplements the same
         # source-of-truth mapping against the current BenchmarkConfig shape.
         required = [
-            "Model", "llama3-8b", "llama3-70b",
-            "Endpoint", "chat (streaming)",
-            "URL", "http://srv:8000/v1/chat/completions",
-            "warmup Type", "concurrency", "warmup Concurrency", "4",
-            "profiling Type", "poisson", "profiling Rate", "20 QPS",
-            "profiling Duration", "5m 0s",
+            "Model",
+            "llama3-8b",
+            "llama3-70b",
+            "Endpoint",
+            "chat (streaming)",
+            "URL",
+            "http://srv:8000/v1/chat/completions",
+            "warmup Type",
+            "concurrency",
+            "warmup Concurrency",
+            "4",
+            "profiling Type",
+            "poisson",
+            "profiling Rate",
+            "20 QPS",
+            "profiling Duration",
+            "5m 0s",
         ]
         missing = [t for t in required if t not in config_text]
         assert not missing, (
@@ -576,7 +600,7 @@ class TestDashboardV2Render:
         assert "SHOULD_NOT_LEAK" not in config_text
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
-    def test_v2_phases_keyed_by_name_not_collapsed(self, _page: "Page") -> None:
+    def test_v2_phases_keyed_by_name_not_collapsed(self, _page: Page) -> None:
         """v2's PhaseCards keys on the backend phase name (fixes the v1 collapse bug).
 
         We push ``credit_phase_start`` for each configured phase via the
@@ -587,14 +611,25 @@ class TestDashboardV2Render:
         cfg = AIPerfConfig(
             models=["llama3-8b"],
             endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets={"default": {
-                "type": "synthetic", "entries": 10,
-                "prompts": {"isl": 128, "osl": 32},
-            }},
+            datasets={
+                "default": {
+                    "type": "synthetic",
+                    "entries": 10,
+                    "prompts": {"isl": 128, "osl": 32},
+                }
+            },
             phases={
-                "phase_alpha": {"type": "concurrency", "requests": 10, "concurrency": 1},
-                "phase_beta":  {"type": "concurrency", "requests": 20, "concurrency": 2},
-                "phase_gamma": {"type": "concurrency", "requests": 30, "concurrency": 3},
+                "phase_alpha": {
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                },
+                "phase_beta": {"type": "concurrency", "requests": 20, "concurrency": 2},
+                "phase_gamma": {
+                    "type": "concurrency",
+                    "requests": 30,
+                    "concurrency": 3,
+                },
             },
             runtime={"api_port": 8080},
         )
@@ -620,7 +655,7 @@ class TestDashboardV2Render:
         )
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
-    def test_v2_serves_all_module_assets(self, _page: "Page") -> None:
+    def test_v2_serves_all_module_assets(self, _page: Page) -> None:
         """Every /dashboard-v2/lib/* and /dashboard-v2/components/* request must 200.
 
         Catches regressions in the FastAPI static asset handler (path
@@ -670,10 +705,18 @@ def _metric_result(
         "current": current,
         "sum": None,
         "avg": avg,
-        "p1": None, "p5": None, "p10": None, "p25": None,
+        "p1": None,
+        "p5": None,
+        "p10": None,
+        "p25": None,
         "p50": p50 if p50 is not None else avg,
-        "p75": None, "p90": p99, "p95": None, "p99": p99,
-        "min": None, "max": max, "std": None,
+        "p75": None,
+        "p90": p99,
+        "p95": None,
+        "p99": p99,
+        "min": None,
+        "max": max,
+        "std": None,
     }
 
 
@@ -697,7 +740,7 @@ class TestDashboardV2RealtimeMetrics:
     """
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
-    def test_realtime_metrics_tiles_render_expected_values(self, _page: "Page") -> None:
+    def test_realtime_metrics_tiles_render_expected_values(self, _page: Page) -> None:
         """Each hero tile must show its canonical primary stat + secondary stat.
 
         No ``cfg.slos`` is configured in the multi-phase fixture, so no chip
@@ -707,20 +750,52 @@ class TestDashboardV2RealtimeMetrics:
         payload = {
             "type": "realtime_metrics",
             "metrics": [
-                _metric_result("request_throughput",      "Request Throughput",      "req/s",
-                               current=19.8, avg=20.1, p99=21.0),
-                _metric_result("output_token_throughput", "Output Token Throughput", "tok/s",
-                               current=1823.4, avg=1798.1, p99=1920.0),
-                _metric_result("request_latency",         "Request Latency",         "ms",
-                               current=482.3, avg=465.5, p99=812.0),
-                _metric_result("time_to_first_token",     "Time To First Token",     "ms",
-                               current=73.2, avg=68.7, p99=118.0),
-                _metric_result("inter_token_latency",     "Inter Token Latency",     "ms",
-                               current=12.1, avg=11.8, p99=21.4),
+                _metric_result(
+                    "request_throughput",
+                    "Request Throughput",
+                    "req/s",
+                    current=19.8,
+                    avg=20.1,
+                    p99=21.0,
+                ),
+                _metric_result(
+                    "output_token_throughput",
+                    "Output Token Throughput",
+                    "tok/s",
+                    current=1823.4,
+                    avg=1798.1,
+                    p99=1920.0,
+                ),
+                _metric_result(
+                    "request_latency",
+                    "Request Latency",
+                    "ms",
+                    current=482.3,
+                    avg=465.5,
+                    p99=812.0,
+                ),
+                _metric_result(
+                    "time_to_first_token",
+                    "Time To First Token",
+                    "ms",
+                    current=73.2,
+                    avg=68.7,
+                    p99=118.0,
+                ),
+                _metric_result(
+                    "inter_token_latency",
+                    "Inter Token Latency",
+                    "ms",
+                    current=12.1,
+                    avg=11.8,
+                    p99=21.4,
+                ),
             ],
         }
 
-        with _run_server(_build_multi_phase_cfg(), extra_ws_payloads=[payload]) as base_url:
+        with _run_server(
+            _build_multi_phase_cfg(), extra_ws_payloads=[payload]
+        ) as base_url:
             _page.goto(f"{base_url}/dashboard-v2", wait_until="networkidle")
             _page.wait_for_selector("#config-bar.visible", timeout=10_000)
             _page.wait_for_function(
@@ -747,7 +822,9 @@ class TestDashboardV2RealtimeMetrics:
         assert rt["primary_stat"] == "current"
         assert rt["val"] == "19.80" and rt["unit"] == "req/s"
         assert "20.10" in rt["sub"] and "avg" in rt["sub"].lower()
-        assert rt["slo_kind"] is None, "throughput is not an SLO metric by NIM convention"
+        assert rt["slo_kind"] is None, (
+            "throughput is not an SLO metric by NIM convention"
+        )
 
         out = by_label["Output Tokens/s"]
         assert out["primary_stat"] == "current"
@@ -777,7 +854,7 @@ class TestDashboardV2RealtimeMetrics:
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
     def test_realtime_metrics_chip_honors_user_slo_and_renders_threshold(
-        self, _page: "Page"
+        self, _page: Page
     ) -> None:
         """When the user declares ``cfg.slos``, the chip is binary pass/fail
         against that value and the chip label echoes the user's threshold.
@@ -789,11 +866,16 @@ class TestDashboardV2RealtimeMetrics:
         cfg_with_slo = AIPerfConfig(
             models=["llama3-8b"],
             endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets={"default": {
-                "type": "synthetic", "entries": 10,
-                "prompts": {"isl": 128, "osl": 32},
-            }},
-            phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+            datasets={
+                "default": {
+                    "type": "synthetic",
+                    "entries": 10,
+                    "prompts": {"isl": 128, "osl": 32},
+                }
+            },
+            phases={
+                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
+            },
             slos={
                 "time_to_first_token": 100.0,
                 "inter_token_latency": 10.0,
@@ -806,12 +888,30 @@ class TestDashboardV2RealtimeMetrics:
         passing = {
             "type": "realtime_metrics",
             "metrics": [
-                _metric_result("time_to_first_token", "Time To First Token", "ms",
-                               current=80.0, avg=75.0, p99=92.0),    # ≤ 100 ✓
-                _metric_result("inter_token_latency", "Inter Token Latency", "ms",
-                               current=7.5, avg=7.8, p99=12.0),       # avg 7.8 ≤ 10 ✓
-                _metric_result("request_latency",     "Request Latency",     "ms",
-                               current=1100.0, avg=1050.0, p99=1420.0), # ≤ 1500 ✓
+                _metric_result(
+                    "time_to_first_token",
+                    "Time To First Token",
+                    "ms",
+                    current=80.0,
+                    avg=75.0,
+                    p99=92.0,
+                ),  # ≤ 100 ✓
+                _metric_result(
+                    "inter_token_latency",
+                    "Inter Token Latency",
+                    "ms",
+                    current=7.5,
+                    avg=7.8,
+                    p99=12.0,
+                ),  # avg 7.8 ≤ 10 ✓
+                _metric_result(
+                    "request_latency",
+                    "Request Latency",
+                    "ms",
+                    current=1100.0,
+                    avg=1050.0,
+                    p99=1420.0,
+                ),  # ≤ 1500 ✓
             ],
         }
 
@@ -849,19 +949,41 @@ class TestDashboardV2RealtimeMetrics:
         assert "100" in pass_state["TTFT"]["chip_text"], pass_state["TTFT"]
         assert pass_state["ITL"]["slo_kind"] == "good", pass_state["ITL"]
         assert "10" in pass_state["ITL"]["chip_text"], pass_state["ITL"]
-        assert pass_state["Request Latency"]["slo_kind"] == "good", pass_state["Request Latency"]
-        assert "1500" in pass_state["Request Latency"]["chip_text"], pass_state["Request Latency"]
+        assert pass_state["Request Latency"]["slo_kind"] == "good", pass_state[
+            "Request Latency"
+        ]
+        assert "1500" in pass_state["Request Latency"]["chip_text"], pass_state[
+            "Request Latency"
+        ]
 
         # Scenario B: TTFT violates (p99=140 > 100). Others still pass.
         failing = {
             "type": "realtime_metrics",
             "metrics": [
-                _metric_result("time_to_first_token", "Time To First Token", "ms",
-                               current=130.0, avg=110.0, p99=140.0),  # > 100 ✗
-                _metric_result("inter_token_latency", "Inter Token Latency", "ms",
-                               current=7.5, avg=7.8, p99=12.0),
-                _metric_result("request_latency",     "Request Latency",     "ms",
-                               current=1100.0, avg=1050.0, p99=1420.0),
+                _metric_result(
+                    "time_to_first_token",
+                    "Time To First Token",
+                    "ms",
+                    current=130.0,
+                    avg=110.0,
+                    p99=140.0,
+                ),  # > 100 ✗
+                _metric_result(
+                    "inter_token_latency",
+                    "Inter Token Latency",
+                    "ms",
+                    current=7.5,
+                    avg=7.8,
+                    p99=12.0,
+                ),
+                _metric_result(
+                    "request_latency",
+                    "Request Latency",
+                    "ms",
+                    current=1100.0,
+                    avg=1050.0,
+                    p99=1420.0,
+                ),
             ],
         }
 
@@ -875,7 +997,7 @@ class TestDashboardV2RealtimeMetrics:
         assert fail_state["Request Latency"]["slo_kind"] == "good"
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
-    def test_realtime_metrics_no_chip_without_user_slo(self, _page: "Page") -> None:
+    def test_realtime_metrics_no_chip_without_user_slo(self, _page: Page) -> None:
         """Absolute regression guard against fabricated defaults: no chip may
         appear on any latency tile when ``cfg.slos`` does not cover it.
 
@@ -886,16 +1008,36 @@ class TestDashboardV2RealtimeMetrics:
         payload = {
             "type": "realtime_metrics",
             "metrics": [
-                _metric_result("time_to_first_token", "Time To First Token", "ms",
-                               current=480.0, avg=450.0, p99=720.0),
-                _metric_result("request_latency",     "Request Latency",     "ms",
-                               current=9000.0, avg=8500.0, p99=11000.0),
-                _metric_result("inter_token_latency", "Inter Token Latency", "ms",
-                               current=95.0, avg=90.0, p99=180.0),
+                _metric_result(
+                    "time_to_first_token",
+                    "Time To First Token",
+                    "ms",
+                    current=480.0,
+                    avg=450.0,
+                    p99=720.0,
+                ),
+                _metric_result(
+                    "request_latency",
+                    "Request Latency",
+                    "ms",
+                    current=9000.0,
+                    avg=8500.0,
+                    p99=11000.0,
+                ),
+                _metric_result(
+                    "inter_token_latency",
+                    "Inter Token Latency",
+                    "ms",
+                    current=95.0,
+                    avg=90.0,
+                    p99=180.0,
+                ),
             ],
         }
 
-        with _run_server(_build_multi_phase_cfg(), extra_ws_payloads=[payload]) as base_url:
+        with _run_server(
+            _build_multi_phase_cfg(), extra_ws_payloads=[payload]
+        ) as base_url:
             _page.goto(f"{base_url}/dashboard-v2", wait_until="networkidle")
             _page.wait_for_function(
                 "() => Array.from(document.querySelectorAll('.kpi-tile-label > span:first-child'))"
@@ -921,7 +1063,7 @@ class TestDashboardV2RealtimeMetrics:
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
     def test_realtime_metrics_goodput_tile_green_when_100_percent(
-        self, _page: "Page"
+        self, _page: Page
     ) -> None:
         """Goodput tile is green iff every request met every user SLO.
 
@@ -931,11 +1073,16 @@ class TestDashboardV2RealtimeMetrics:
         cfg = AIPerfConfig(
             models=["llama3-8b"],
             endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets={"default": {
-                "type": "synthetic", "entries": 10,
-                "prompts": {"isl": 128, "osl": 32},
-            }},
-            phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+            datasets={
+                "default": {
+                    "type": "synthetic",
+                    "entries": 10,
+                    "prompts": {"isl": 128, "osl": 32},
+                }
+            },
+            phases={
+                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
+            },
             slos={"time_to_first_token": 500.0, "inter_token_latency": 30.0},
             runtime={"api_port": 8080},
         )
@@ -945,8 +1092,15 @@ class TestDashboardV2RealtimeMetrics:
             "type": "realtime_metrics",
             "metrics": [
                 _metric_result("goodput", "Goodput", "req/s", current=19.2),
-                _metric_result("request_count", "Request Count", "requests", current=1000.0),
-                _metric_result("good_request_count", "Good Request Count", "requests", current=1000.0),
+                _metric_result(
+                    "request_count", "Request Count", "requests", current=1000.0
+                ),
+                _metric_result(
+                    "good_request_count",
+                    "Good Request Count",
+                    "requests",
+                    current=1000.0,
+                ),
             ],
         }
         with _run_server(cfg, extra_ws_payloads=[perfect]) as base_url:
@@ -975,17 +1129,22 @@ class TestDashboardV2RealtimeMetrics:
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
     def test_realtime_metrics_goodput_tile_warn_when_any_failure(
-        self, _page: "Page"
+        self, _page: Page
     ) -> None:
         """Any user-SLO failure → warn. No fake band; binary at the user's bar."""
         cfg = AIPerfConfig(
             models=["llama3-8b"],
             endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets={"default": {
-                "type": "synthetic", "entries": 10,
-                "prompts": {"isl": 128, "osl": 32},
-            }},
-            phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+            datasets={
+                "default": {
+                    "type": "synthetic",
+                    "entries": 10,
+                    "prompts": {"isl": 128, "osl": 32},
+                }
+            },
+            phases={
+                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
+            },
             slos={"time_to_first_token": 500.0},
             runtime={"api_port": 8080},
         )
@@ -993,8 +1152,15 @@ class TestDashboardV2RealtimeMetrics:
             "type": "realtime_metrics",
             "metrics": [
                 _metric_result("goodput", "Goodput", "req/s", current=19.2),
-                _metric_result("request_count", "Request Count", "requests", current=1000.0),
-                _metric_result("good_request_count", "Good Request Count", "requests", current=999.0),
+                _metric_result(
+                    "request_count", "Request Count", "requests", current=1000.0
+                ),
+                _metric_result(
+                    "good_request_count",
+                    "Good Request Count",
+                    "requests",
+                    current=999.0,
+                ),
             ],
         }
         with _run_server(cfg, extra_ws_payloads=[near_miss]) as base_url:
@@ -1024,7 +1190,7 @@ class TestDashboardV2RealtimeMetrics:
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
     def test_realtime_metrics_goodput_tile_reads_avg_when_no_current(
-        self, _page: "Page"
+        self, _page: Page
     ) -> None:
         """Scalar counters/derived metrics (``good_request_count``,
         ``request_count``, ``goodput``) come off the real server with a value
@@ -1035,11 +1201,16 @@ class TestDashboardV2RealtimeMetrics:
         cfg = AIPerfConfig(
             models=["llama3-8b"],
             endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets={"default": {
-                "type": "synthetic", "entries": 10,
-                "prompts": {"isl": 128, "osl": 32},
-            }},
-            phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+            datasets={
+                "default": {
+                    "type": "synthetic",
+                    "entries": 10,
+                    "prompts": {"isl": 128, "osl": 32},
+                }
+            },
+            phases={
+                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
+            },
             slos={"time_to_first_token": 500.0, "inter_token_latency": 30.0},
             runtime={"api_port": 8080},
         )
@@ -1049,8 +1220,12 @@ class TestDashboardV2RealtimeMetrics:
             "type": "realtime_metrics",
             "metrics": [
                 _metric_result("goodput", "Goodput", "req/s", avg=19.1),
-                _metric_result("request_count", "Request Count", "requests", avg=1000.0),
-                _metric_result("good_request_count", "Good Request Count", "requests", avg=997.0),
+                _metric_result(
+                    "request_count", "Request Count", "requests", avg=1000.0
+                ),
+                _metric_result(
+                    "good_request_count", "Good Request Count", "requests", avg=997.0
+                ),
             ],
         }
         with _run_server(cfg, extra_ws_payloads=[payload]) as base_url:
@@ -1078,7 +1253,7 @@ class TestDashboardV2RealtimeMetrics:
         assert "of 1,000" in (state["sub"] or ""), state
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
-    def test_realtime_metrics_success_rate_tile_when_no_slos(self, _page: "Page") -> None:
+    def test_realtime_metrics_success_rate_tile_when_no_slos(self, _page: Page) -> None:
         """Without configured SLOs, the reliability tile falls back to
         Success Rate. The chip is green iff zero errors, warn otherwise —
         no fabricated pass-rate threshold.
@@ -1086,16 +1261,29 @@ class TestDashboardV2RealtimeMetrics:
         payload = {
             "type": "realtime_metrics",
             "metrics": [
-                _metric_result("request_count", "Request Count", "requests",
-                               current=1000.0),
-                _metric_result("error_request_count", "Error Request Count", "requests",
-                               current=3.0),
-                _metric_result("time_to_first_token", "Time To First Token", "ms",
-                               current=140.0, avg=120.0, p99=220.0),
+                _metric_result(
+                    "request_count", "Request Count", "requests", current=1000.0
+                ),
+                _metric_result(
+                    "error_request_count",
+                    "Error Request Count",
+                    "requests",
+                    current=3.0,
+                ),
+                _metric_result(
+                    "time_to_first_token",
+                    "Time To First Token",
+                    "ms",
+                    current=140.0,
+                    avg=120.0,
+                    p99=220.0,
+                ),
             ],
         }
 
-        with _run_server(_build_multi_phase_cfg(), extra_ws_payloads=[payload]) as base_url:
+        with _run_server(
+            _build_multi_phase_cfg(), extra_ws_payloads=[payload]
+        ) as base_url:
             _page.goto(f"{base_url}/dashboard-v2", wait_until="networkidle")
             _page.wait_for_function(
                 "() => Array.from(document.querySelectorAll('.kpi-tile-label > span:first-child'))"
@@ -1121,25 +1309,34 @@ class TestDashboardV2RealtimeMetrics:
         assert info["val"] == "99.70%", info
         assert info["kind"] == "warn", info
         # Chip text should say '3 errors', not a fake "≥ 99%" threshold.
-        assert "3" in (info["chip"] or "") and "error" in (info["chip"] or "").lower(), info
+        assert (
+            "3" in (info["chip"] or "") and "error" in (info["chip"] or "").lower()
+        ), info
         assert "3" in (info["sub"] or ""), info
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
     def test_realtime_metrics_success_rate_green_when_zero_errors(
-        self, _page: "Page"
+        self, _page: Page
     ) -> None:
         """With zero errors and no SLOs, Success Rate is green with a
         '0 errors' chip — an objective fact, not a claim."""
         payload = {
             "type": "realtime_metrics",
             "metrics": [
-                _metric_result("request_count", "Request Count", "requests",
-                               current=1000.0),
-                _metric_result("error_request_count", "Error Request Count", "requests",
-                               current=0.0),
+                _metric_result(
+                    "request_count", "Request Count", "requests", current=1000.0
+                ),
+                _metric_result(
+                    "error_request_count",
+                    "Error Request Count",
+                    "requests",
+                    current=0.0,
+                ),
             ],
         }
-        with _run_server(_build_multi_phase_cfg(), extra_ws_payloads=[payload]) as base_url:
+        with _run_server(
+            _build_multi_phase_cfg(), extra_ws_payloads=[payload]
+        ) as base_url:
             _page.goto(f"{base_url}/dashboard-v2", wait_until="networkidle")
             _page.wait_for_function(
                 "() => Array.from(document.querySelectorAll('.kpi-tile-label > span:first-child'))"
@@ -1159,10 +1356,12 @@ class TestDashboardV2RealtimeMetrics:
                 }"""
             )
         assert info["kind"] == "good", info
-        assert "0" in (info["chip"] or "") and "error" in (info["chip"] or "").lower(), info
+        assert (
+            "0" in (info["chip"] or "") and "error" in (info["chip"] or "").lower()
+        ), info
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
-    def test_realtime_metrics_card_hidden_without_data(self, _page: "Page") -> None:
+    def test_realtime_metrics_card_hidden_without_data(self, _page: Page) -> None:
         """The KPI card must stay out of the DOM until at least one known metric
         lands, so the dashboard doesn't render a wall of ``---`` tiles at boot."""
         with _run_server(_build_multi_phase_cfg()) as base_url:
@@ -1179,40 +1378,97 @@ class TestDashboardV2GpuTelemetry:
     ``(endpoint, gpu_index)`` parsed from the metric header."""
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
-    def test_gpu_telemetry_groups_by_endpoint_and_index(self, _page: "Page") -> None:
+    def test_gpu_telemetry_groups_by_endpoint_and_index(self, _page: Page) -> None:
         """Two endpoints × two GPUs = four cards, each scoped to the right GPU."""
-        def gpu(tag_base: str, header_name: str, endpoint: str, gpu_idx: int,
-                uuid: str, unit: str, *, current: float, avg: float) -> dict[str, Any]:
+
+        def gpu(
+            tag_base: str,
+            header_name: str,
+            endpoint: str,
+            gpu_idx: int,
+            uuid: str,
+            unit: str,
+            *,
+            current: float,
+            avg: float,
+        ) -> dict[str, Any]:
             enc_ep = endpoint.replace(":", "_").replace(".", "_")
             return _metric_result(
                 tag=f"{tag_base}_dcgm_http___{enc_ep}_metrics_gpu{gpu_idx}_{uuid}",
                 header=f"{header_name} | {endpoint} | GPU {gpu_idx} | NVIDIA H100 80GB HBM3",
                 unit=unit,
-                current=current, avg=avg, p99=current,
+                current=current,
+                avg=avg,
+                p99=current,
             )
 
         metrics = []
-        for endpoint, uuid_base in [("node1:9401", "uuid-n1"), ("node2:9401", "uuid-n2")]:
+        for endpoint, uuid_base in [
+            ("node1:9401", "uuid-n1"),
+            ("node2:9401", "uuid-n2"),
+        ]:
             for gi in (0, 1):
                 u = f"{uuid_base}-{gi}"
                 load = 0.85 if (endpoint == "node1:9401" and gi == 0) else 0.60
                 metrics += [
-                    gpu("gpu_power_usage",  "GPU Power Usage",  endpoint, gi, u, "W",
-                        current=round(400 * load, 0), avg=round(380 * load, 0)),
-                    gpu("gpu_utilization",  "GPU Utilization",  endpoint, gi, u, "%",
-                        current=round(100 * load, 1), avg=round(95 * load, 1)),
-                    gpu("gpu_temperature",  "GPU Temperature",  endpoint, gi, u, "C",
-                        current=60 + round(18 * load), avg=58 + round(17 * load)),
-                    gpu("gpu_memory_used",  "GPU Memory Used",  endpoint, gi, u, "GB",
-                        current=round(48 * load, 1), avg=round(47 * load, 1)),
+                    gpu(
+                        "gpu_power_usage",
+                        "GPU Power Usage",
+                        endpoint,
+                        gi,
+                        u,
+                        "W",
+                        current=round(400 * load, 0),
+                        avg=round(380 * load, 0),
+                    ),
+                    gpu(
+                        "gpu_utilization",
+                        "GPU Utilization",
+                        endpoint,
+                        gi,
+                        u,
+                        "%",
+                        current=round(100 * load, 1),
+                        avg=round(95 * load, 1),
+                    ),
+                    gpu(
+                        "gpu_temperature",
+                        "GPU Temperature",
+                        endpoint,
+                        gi,
+                        u,
+                        "C",
+                        current=60 + round(18 * load),
+                        avg=58 + round(17 * load),
+                    ),
+                    gpu(
+                        "gpu_memory_used",
+                        "GPU Memory Used",
+                        endpoint,
+                        gi,
+                        u,
+                        "GB",
+                        current=round(48 * load, 1),
+                        avg=round(47 * load, 1),
+                    ),
                     # Extra metric to verify the "other" table populates too.
-                    gpu("gpu_sm_clock",     "SM Clock",         endpoint, gi, u, "MHz",
-                        current=1620 if load > 0.8 else 1410, avg=1580),
+                    gpu(
+                        "gpu_sm_clock",
+                        "SM Clock",
+                        endpoint,
+                        gi,
+                        u,
+                        "MHz",
+                        current=1620 if load > 0.8 else 1410,
+                        avg=1580,
+                    ),
                 ]
 
         payload = {"type": "realtime_telemetry_metrics", "metrics": metrics}
 
-        with _run_server(_build_multi_phase_cfg(), extra_ws_payloads=[payload]) as base_url:
+        with _run_server(
+            _build_multi_phase_cfg(), extra_ws_payloads=[payload]
+        ) as base_url:
             _page.goto(f"{base_url}/dashboard-v2", wait_until="networkidle")
             _page.wait_for_selector("#config-bar.visible", timeout=10_000)
             _page.wait_for_function(
@@ -1238,8 +1494,10 @@ class TestDashboardV2GpuTelemetry:
         # One card per (endpoint, gpu_index) pair; headers should contain both.
         headers = [g["header"] for g in gpus]
         expected_pairs = {
-            ("node1:9401", 0), ("node1:9401", 1),
-            ("node2:9401", 0), ("node2:9401", 1),
+            ("node1:9401", 0),
+            ("node1:9401", 1),
+            ("node2:9401", 0),
+            ("node2:9401", 1),
         }
         found_pairs = set()
         for h in headers:
@@ -1252,8 +1510,9 @@ class TestDashboardV2GpuTelemetry:
 
         # Locate the hot GPU (node1 / GPU 0, load=0.85) and verify its primary
         # tiles carry the expected labels + display units.
-        hot = next(g for g in gpus
-                   if "node1:9401" in g["header"] and "GPU 0" in g["header"])
+        hot = next(
+            g for g in gpus if "node1:9401" in g["header"] and "GPU 0" in g["header"]
+        )
         labels = {t["label"]: t["val"] for t in hot["tiles"]}
         assert "Power" in labels and labels["Power"].endswith("W"), labels
         # Power at load=0.85 is round(400*0.85, 0) = 340 W.
@@ -1267,7 +1526,7 @@ class TestDashboardV2GpuTelemetry:
         assert not any(t["label"] == "SM Clock" for t in hot["tiles"]), hot["tiles"]
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
-    def test_gpu_telemetry_card_hidden_without_data(self, _page: "Page") -> None:
+    def test_gpu_telemetry_card_hidden_without_data(self, _page: Page) -> None:
         """No telemetry → the GPU section must stay out of the DOM entirely."""
         with _run_server(_build_multi_phase_cfg()) as base_url:
             _page.goto(f"{base_url}/dashboard-v2", wait_until="networkidle")
@@ -1275,7 +1534,9 @@ class TestDashboardV2GpuTelemetry:
             _page.wait_for_timeout(400)
             cards = _page.locator(".gpu-card").count()
 
-        assert cards == 0, f"expected zero GPU cards before telemetry arrives, got {cards}"
+        assert cards == 0, (
+            f"expected zero GPU cards before telemetry arrives, got {cards}"
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -1294,16 +1555,22 @@ class TestDashboardV2HeroStrip:
     """
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
-    def test_hero_health_green_when_all_slos_met(self, _page: "Page") -> None:
+    def test_hero_health_green_when_all_slos_met(self, _page: Page) -> None:
         """Health = OK when every user SLO's p99 is at or under the user's
         threshold and no requests are failing."""
         cfg = AIPerfConfig(
             models=["llama3-8b"],
             endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets={"default": {"type": "synthetic", "entries": 10,
-                                  "prompts": {"isl": 128, "osl": 32}}},
-            phases={"default": {"type": "concurrency", "requests": 1000,
-                                "concurrency": 4}},
+            datasets={
+                "default": {
+                    "type": "synthetic",
+                    "entries": 10,
+                    "prompts": {"isl": 128, "osl": 32},
+                }
+            },
+            phases={
+                "default": {"type": "concurrency", "requests": 1000, "concurrency": 4}
+            },
             slos={"time_to_first_token": 500.0, "inter_token_latency": 30.0},
             runtime={"api_port": 8080},
         )
@@ -1311,19 +1578,39 @@ class TestDashboardV2HeroStrip:
             {
                 "type": "credit_phase_start",
                 "phase": "default",
-                "stats": {"start_ns": int(time.time_ns()) - int(10e9),
-                          "total_expected_requests": 1000},
+                "stats": {
+                    "start_ns": int(time.time_ns()) - int(10e9),
+                    "total_expected_requests": 1000,
+                },
             },
             {
                 "type": "realtime_metrics",
                 "metrics": [
-                    _metric_result("time_to_first_token", "Time To First Token", "ms",
-                                   current=120.0, avg=115.0, p99=180.0),
-                    _metric_result("inter_token_latency", "Inter Token Latency", "ms",
-                                   current=12.0, avg=11.5, p99=22.0),
-                    _metric_result("request_count", "Request Count", "requests", current=100.0),
-                    _metric_result("good_request_count", "Good Request Count",
-                                   "requests", current=100.0),
+                    _metric_result(
+                        "time_to_first_token",
+                        "Time To First Token",
+                        "ms",
+                        current=120.0,
+                        avg=115.0,
+                        p99=180.0,
+                    ),
+                    _metric_result(
+                        "inter_token_latency",
+                        "Inter Token Latency",
+                        "ms",
+                        current=12.0,
+                        avg=11.5,
+                        p99=22.0,
+                    ),
+                    _metric_result(
+                        "request_count", "Request Count", "requests", current=100.0
+                    ),
+                    _metric_result(
+                        "good_request_count",
+                        "Good Request Count",
+                        "requests",
+                        current=100.0,
+                    ),
                 ],
             },
         ]
@@ -1338,28 +1625,44 @@ class TestDashboardV2HeroStrip:
         assert "all declared SLOs passing" in reasons, reasons
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
-    def test_hero_health_error_when_slo_violated(self, _page: "Page") -> None:
+    def test_hero_health_error_when_slo_violated(self, _page: Page) -> None:
         """SLO violation → hero turns red and spells out the violation."""
         cfg = AIPerfConfig(
             models=["llama3-8b"],
             endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets={"default": {"type": "synthetic", "entries": 10,
-                                  "prompts": {"isl": 128, "osl": 32}}},
-            phases={"default": {"type": "concurrency", "requests": 100, "concurrency": 4}},
+            datasets={
+                "default": {
+                    "type": "synthetic",
+                    "entries": 10,
+                    "prompts": {"isl": 128, "osl": 32},
+                }
+            },
+            phases={
+                "default": {"type": "concurrency", "requests": 100, "concurrency": 4}
+            },
             slos={"time_to_first_token": 200.0},
             runtime={"api_port": 8080},
         )
         payload = [
             {
-                "type": "credit_phase_start", "phase": "default",
-                "stats": {"start_ns": int(time.time_ns()) - int(5e9),
-                          "total_expected_requests": 100},
+                "type": "credit_phase_start",
+                "phase": "default",
+                "stats": {
+                    "start_ns": int(time.time_ns()) - int(5e9),
+                    "total_expected_requests": 100,
+                },
             },
             {
                 "type": "realtime_metrics",
                 "metrics": [
-                    _metric_result("time_to_first_token", "Time To First Token", "ms",
-                                   current=320.0, avg=280.0, p99=400.0),  # 400 > 200
+                    _metric_result(
+                        "time_to_first_token",
+                        "Time To First Token",
+                        "ms",
+                        current=320.0,
+                        avg=280.0,
+                        p99=400.0,
+                    ),  # 400 > 200
                 ],
             },
         ]
@@ -1377,7 +1680,7 @@ class TestDashboardV2HeroStrip:
         assert "200" in reasons, reasons
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
-    def test_hero_shows_elapsed_eta_and_active_phase(self, _page: "Page") -> None:
+    def test_hero_shows_elapsed_eta_and_active_phase(self, _page: Page) -> None:
         """Elapsed + ETA compute from start_ns; active-phase progress bar
         shows the phase by name and completion pct."""
         five_s_ago_ns = int(time.time_ns()) - int(5e9)
@@ -1394,13 +1697,21 @@ class TestDashboardV2HeroStrip:
             {
                 "type": "realtime_metrics",
                 "metrics": [
-                    _metric_result("request_throughput", "Request Throughput", "req/s",
-                                   current=50.0, avg=49.0, p99=52.0),
+                    _metric_result(
+                        "request_throughput",
+                        "Request Throughput",
+                        "req/s",
+                        current=50.0,
+                        avg=49.0,
+                        p99=52.0,
+                    ),
                 ],
             },
         ]
 
-        with _run_server(_build_multi_phase_cfg(), extra_ws_payloads=payload) as base_url:
+        with _run_server(
+            _build_multi_phase_cfg(), extra_ws_payloads=payload
+        ) as base_url:
             _page.goto(f"{base_url}/dashboard-v2", wait_until="networkidle")
             _page.wait_for_selector(".hero-phase-name", timeout=10_000)
             phase_name = _page.locator(".hero-phase-name").first.text_content()
@@ -1431,24 +1742,56 @@ class TestDashboardV2Sparklines:
     """
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
-    def test_sparklines_render_after_repeated_samples(self, _page: "Page") -> None:
+    def test_sparklines_render_after_repeated_samples(self, _page: Page) -> None:
         """Two distinct realtime_metrics batches → each tile's sparkline
         must contain a polyline with at least two points."""
-        sample = lambda ttft_p99: {
-            "type": "realtime_metrics",
-            "metrics": [
-                _metric_result("request_throughput", "Request Throughput", "req/s",
-                               current=20.0, avg=20.0, p99=21.0),
-                _metric_result("output_token_throughput", "Output Token Throughput", "tok/s",
-                               current=1800.0, avg=1790.0, p99=1900.0),
-                _metric_result("time_to_first_token", "Time To First Token", "ms",
-                               current=ttft_p99 * 0.7, avg=ttft_p99 * 0.6, p99=ttft_p99),
-                _metric_result("inter_token_latency", "Inter Token Latency", "ms",
-                               current=12.0, avg=11.5, p99=18.0),
-                _metric_result("request_latency", "Request Latency", "ms",
-                               current=800.0, avg=760.0, p99=900.0),
-            ],
-        }
+
+        def sample(ttft_p99):
+            return {
+                "type": "realtime_metrics",
+                "metrics": [
+                    _metric_result(
+                        "request_throughput",
+                        "Request Throughput",
+                        "req/s",
+                        current=20.0,
+                        avg=20.0,
+                        p99=21.0,
+                    ),
+                    _metric_result(
+                        "output_token_throughput",
+                        "Output Token Throughput",
+                        "tok/s",
+                        current=1800.0,
+                        avg=1790.0,
+                        p99=1900.0,
+                    ),
+                    _metric_result(
+                        "time_to_first_token",
+                        "Time To First Token",
+                        "ms",
+                        current=ttft_p99 * 0.7,
+                        avg=ttft_p99 * 0.6,
+                        p99=ttft_p99,
+                    ),
+                    _metric_result(
+                        "inter_token_latency",
+                        "Inter Token Latency",
+                        "ms",
+                        current=12.0,
+                        avg=11.5,
+                        p99=18.0,
+                    ),
+                    _metric_result(
+                        "request_latency",
+                        "Request Latency",
+                        "ms",
+                        current=800.0,
+                        avg=760.0,
+                        p99=900.0,
+                    ),
+                ],
+            }
 
         with _run_server(
             _build_multi_phase_cfg(),
@@ -1492,30 +1835,43 @@ class TestDashboardV2LogPane:
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
     def test_log_records_phase_and_worker_events_with_severity(
-        self, _page: "Page"
+        self, _page: Page
     ) -> None:
         """Phase-start and worker-error events must land in the log with
         distinct categories and severity classes."""
         payload = [
             # First push establishes a worker in healthy state.
             {
-                "type": "worker_health", "worker_id": "w-alpha",
-                "status": "healthy", "in_flight": 0, "completed": 0, "failed": 0,
+                "type": "worker_health",
+                "worker_id": "w-alpha",
+                "status": "healthy",
+                "in_flight": 0,
+                "completed": 0,
+                "failed": 0,
             },
             # Phase starts — info/phase.
             {
-                "type": "credit_phase_start", "phase": "profiling",
-                "stats": {"start_ns": int(time.time_ns()) - int(1e9),
-                          "total_expected_requests": 100},
+                "type": "credit_phase_start",
+                "phase": "profiling",
+                "stats": {
+                    "start_ns": int(time.time_ns()) - int(1e9),
+                    "total_expected_requests": 100,
+                },
             },
             # Worker flips to error — error/worker.
             {
-                "type": "worker_health", "worker_id": "w-alpha",
-                "status": "error", "in_flight": 0, "completed": 0, "failed": 5,
+                "type": "worker_health",
+                "worker_id": "w-alpha",
+                "status": "error",
+                "in_flight": 0,
+                "completed": 0,
+                "failed": 5,
             },
         ]
 
-        with _run_server(_build_multi_phase_cfg(), extra_ws_payloads=payload) as base_url:
+        with _run_server(
+            _build_multi_phase_cfg(), extra_ws_payloads=payload
+        ) as base_url:
             _page.goto(f"{base_url}/dashboard-v2", wait_until="networkidle")
             _page.wait_for_function(
                 "() => document.querySelectorAll('.log-entry--error').length >= 1",
@@ -1531,7 +1887,8 @@ class TestDashboardV2LogPane:
             )
 
         has_phase_info = any(
-            e["severity"] == "info" and e["cat"] == "phase"
+            e["severity"] == "info"
+            and e["cat"] == "phase"
             and "profiling" in (e["msg"] or "")
             for e in entries
         )
@@ -1542,18 +1899,38 @@ class TestDashboardV2LogPane:
         assert has_worker_err, f"missing worker error entry; got {entries!r}"
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
-    def test_log_filter_narrows_to_warn_plus(self, _page: "Page") -> None:
+    def test_log_filter_narrows_to_warn_plus(self, _page: Page) -> None:
         """Clicking the 'warn+' filter must hide info-only entries."""
         payload = [
-            {"type": "worker_health", "worker_id": "w-a",
-             "status": "healthy", "in_flight": 0, "completed": 0, "failed": 0},
-            {"type": "credit_phase_start", "phase": "default",
-             "stats": {"start_ns": int(time.time_ns()), "total_expected_requests": 50}},
-            {"type": "worker_health", "worker_id": "w-a",
-             "status": "high_load", "in_flight": 5, "completed": 40, "failed": 0},
+            {
+                "type": "worker_health",
+                "worker_id": "w-a",
+                "status": "healthy",
+                "in_flight": 0,
+                "completed": 0,
+                "failed": 0,
+            },
+            {
+                "type": "credit_phase_start",
+                "phase": "default",
+                "stats": {
+                    "start_ns": int(time.time_ns()),
+                    "total_expected_requests": 50,
+                },
+            },
+            {
+                "type": "worker_health",
+                "worker_id": "w-a",
+                "status": "high_load",
+                "in_flight": 5,
+                "completed": 40,
+                "failed": 0,
+            },
         ]
 
-        with _run_server(_build_multi_phase_cfg(), extra_ws_payloads=payload) as base_url:
+        with _run_server(
+            _build_multi_phase_cfg(), extra_ws_payloads=payload
+        ) as base_url:
             _page.goto(f"{base_url}/dashboard-v2", wait_until="networkidle")
             _page.wait_for_function(
                 "() => document.querySelectorAll('.log-entry').length >= 2",
@@ -1574,7 +1951,9 @@ class TestDashboardV2LogPane:
             )
             after = _page.locator(".log-entry").count()
 
-        assert before > after, f"warn+ filter should reduce entries: before={before} after={after}"
+        assert before > after, (
+            f"warn+ filter should reduce entries: before={before} after={after}"
+        )
 
 
 class TestDashboardV2ServerMetricsContext:
@@ -1582,19 +1961,30 @@ class TestDashboardV2ServerMetricsContext:
     tooltips so raw numbers aren't left uninterpreted."""
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
-    def test_server_metrics_saturation_classes(self, _page: "Page") -> None:
+    def test_server_metrics_saturation_classes(self, _page: Page) -> None:
         """kv_cache_utilization 0.45 → good, 0.80 → warn, 0.95 → bad.
-           queue_depth 3 → good, 20 → warn, 100 → bad."""
+        queue_depth 3 → good, 20 → warn, 100 → bad."""
         payload = {
             "type": "realtime_server_metrics",
-            "endpoint_summaries": [{"endpoint": "http://srv:8000", "metrics": [
-                {"name": "kv_cache_utilization", "value": 0.95, "unit": "ratio"},
-                {"name": "queue_depth", "value": 3, "unit": "requests"},
-                {"name": "batch_size_avg", "value": 22.5, "unit": "requests"},
-            ]}],
+            "endpoint_summaries": [
+                {
+                    "endpoint": "http://srv:8000",
+                    "metrics": [
+                        {
+                            "name": "kv_cache_utilization",
+                            "value": 0.95,
+                            "unit": "ratio",
+                        },
+                        {"name": "queue_depth", "value": 3, "unit": "requests"},
+                        {"name": "batch_size_avg", "value": 22.5, "unit": "requests"},
+                    ],
+                }
+            ],
         }
 
-        with _run_server(_build_multi_phase_cfg(), extra_ws_payloads=[payload]) as base_url:
+        with _run_server(
+            _build_multi_phase_cfg(), extra_ws_payloads=[payload]
+        ) as base_url:
             _page.goto(f"{base_url}/dashboard-v2", wait_until="networkidle")
             _page.wait_for_selector(".server-metrics", timeout=10_000)
             _page.wait_for_function(
@@ -1634,18 +2024,37 @@ class TestDashboardV2ThroughputLatencyChart:
     plotted datasets after multiple realtime samples arrive."""
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
-    def test_chart_renders_after_multiple_samples(self, _page: "Page") -> None:
-        sample = lambda i: {
-            "type": "realtime_metrics",
-            "metrics": [
-                _metric_result("request_throughput", "Request Throughput", "req/s",
-                               current=18.0 + i, avg=18.0 + i, p99=20.0 + i),
-                _metric_result("request_latency", "Request Latency", "ms",
-                               current=400.0 + 20 * i, avg=380.0, p99=800.0 + 50 * i),
-                _metric_result("time_to_first_token", "Time To First Token", "ms",
-                               current=100.0 + 10 * i, avg=95.0, p99=150.0 + 20 * i),
-            ],
-        }
+    def test_chart_renders_after_multiple_samples(self, _page: Page) -> None:
+        def sample(i):
+            return {
+                "type": "realtime_metrics",
+                "metrics": [
+                    _metric_result(
+                        "request_throughput",
+                        "Request Throughput",
+                        "req/s",
+                        current=18.0 + i,
+                        avg=18.0 + i,
+                        p99=20.0 + i,
+                    ),
+                    _metric_result(
+                        "request_latency",
+                        "Request Latency",
+                        "ms",
+                        current=400.0 + 20 * i,
+                        avg=380.0,
+                        p99=800.0 + 50 * i,
+                    ),
+                    _metric_result(
+                        "time_to_first_token",
+                        "Time To First Token",
+                        "ms",
+                        current=100.0 + 10 * i,
+                        avg=95.0,
+                        p99=150.0 + 20 * i,
+                    ),
+                ],
+            }
 
         with _run_server(
             _build_multi_phase_cfg(),
