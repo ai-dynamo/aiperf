@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, field_validator
 
@@ -329,6 +329,13 @@ class AIPerfJobInfo(K8sCamelModel):
     model: str | None = Field(default=None, description="Target model name from spec.")
     endpoint: str | None = Field(
         default=None, description="Target endpoint URL from spec."
+    )
+    source: Literal["live", "archived", "both"] = Field(
+        default="live",
+        description=(
+            "Provenance: 'live' = CR on cluster only; 'archived' = PVC results "
+            "only (CR no longer exists); 'both' = CR + PVC results."
+        ),
     )
 
     @property
