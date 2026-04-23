@@ -416,34 +416,6 @@ def _status_schema() -> dict[str, Any]:
                 "type": "integer",
                 "description": "Days to retain result files before cleanup",
             },
-            "sweep": {
-                "type": "object",
-                "x-kubernetes-preserve-unknown-fields": True,
-                "description": "Sweep orchestration metadata (totalVariations, trialsPerVariation, totalRuns)",
-            },
-            "runs": {
-                "type": "object",
-                "description": "Sweep run summary counts",
-                "properties": {
-                    "completed": {"type": "integer"},
-                    "failed": {"type": "integer"},
-                    "active": {"type": "integer"},
-                    "pending": {"type": "integer"},
-                },
-            },
-            "runDetails": {
-                "type": "array",
-                "description": "Detailed status for each sweep run",
-                "items": {
-                    "type": "object",
-                    "x-kubernetes-preserve-unknown-fields": True,
-                },
-            },
-            "sweepResults": {
-                "type": "object",
-                "x-kubernetes-preserve-unknown-fields": True,
-                "description": "Aggregated metrics from completed sweep runs",
-            },
             "conditions": {
                 "type": "array",
                 "items": {
@@ -602,7 +574,7 @@ def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
                                         "AIPerfJob specification.\n"
                                         "\n"
                                         "spec.benchmark: AIPerfConfig fields (models, endpoint, datasets,\n"
-                                        "phases, sweep, etc.) in snake_case — identical to AIPerf CLI YAML.\n"
+                                        "phases, etc.) in snake_case — identical to AIPerf CLI YAML.\n"
                                         "\n"
                                         "Top-level deployment fields (image, podTemplate, scheduling, etc.)\n"
                                         "use camelCase following Kubernetes API conventions."

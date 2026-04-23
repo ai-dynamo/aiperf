@@ -56,7 +56,7 @@ spec:
               AIPerfJob specification.
 
               spec.benchmark: AIPerfConfig fields (models, endpoint, datasets,
-              phases, sweep, etc.) in snake_case — identical to AIPerf CLI YAML.
+              phases, etc.) in snake_case — identical to AIPerf CLI YAML.
 
               Top-level deployment fields (image, podTemplate, scheduling, etc.)
               use camelCase following Kubernetes API conventions.

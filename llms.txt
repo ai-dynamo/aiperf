@@ -52,7 +52,6 @@ Agents working in this repo should read `CLAUDE.md` first — it defines coding 
 - [docs/kubernetes/sidecars.md](docs/kubernetes/sidecars.md): Controller-pod sidecars — event-bus proxy (XPUB:5663/XSUB:5664, fan-in isolation) and results sidecar (port 9091, fallback retrieval with readiness marker).
 - [docs/kubernetes/memory-estimator.md](docs/kubernetes/memory-estimator.md): Per-component memory model (RecordsManager, Workers, DatasetManager, RecordProcessor, ...); calibration constants; OOM-risk thresholds; tuning recipes.
 - [docs/kubernetes/kueue.md](docs/kubernetes/kueue.md): Kueue gang-scheduling integration — `spec.scheduling.{queueName,priorityClass}`, namespace default queues, Workload admission watching.
-- [docs/kubernetes/sweeps.md](docs/kubernetes/sweeps.md): Sweep execution on Kubernetes — CRD/config schema, per-point submission workaround (sweep key is dropped at HEAD), analytics aggregation via `/api/v1/analytics/compare`.
 - [docs/kubernetes/gpu-telemetry.md](docs/kubernetes/gpu-telemetry.md): GPU telemetry on Kubernetes — opt-out sidecar, endpoint configuration (no auto-discovery), DCGM scrape flow, ingest path.
 - [docs/kubernetes/direct-mode.md](docs/kubernetes/direct-mode.md): `aiperf kube profile --no-operator` — operator-vs-direct feature matrix, when to use, cleanup, limitations.
 - [docs/kubernetes/ai-debugging-guide.md](docs/kubernetes/ai-debugging-guide.md) / [ai-deployment-guide.md](docs/kubernetes/ai-deployment-guide.md): Agent-oriented runbooks for debugging and deploying `AIPerfJob` CRs.

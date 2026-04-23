@@ -43,19 +43,10 @@ class AIPerfLabels:
     """Human-readable benchmark name."""
 
     PARENT: str = "aiperf.nvidia.com/parent"
-    """Parent resource name for sweep runs."""
-
-    SWEEP_RUN: str = "aiperf.nvidia.com/sweep-run"
-    """Sweep run identifier."""
-
-    VARIATION_INDEX: str = "aiperf.nvidia.com/variation-index"
-    """Sweep variation index within a sweep."""
+    """Parent resource name."""
 
     TRIAL: str = "aiperf.nvidia.com/trial"
     """Trial number for repeated runs."""
-
-    RUN_INDEX: str = "aiperf.nvidia.com/run-index"
-    """Sequential run index within a sweep."""
 
     SELECTOR: str = "app=aiperf"
     """Label selector string for filtering AIPerf pods."""

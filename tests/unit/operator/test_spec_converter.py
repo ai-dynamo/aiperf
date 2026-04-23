@@ -15,6 +15,7 @@ from aiperf.operator.spec_converter import (
     DEFAULT_CONNECTIONS_PER_WORKER,
     AIPerfJobSpecConverter,
     apply_worker_config,
+    build_benchmark_run,
 )
 from aiperf.plugin.enums import ServiceRunType, UIType
 
@@ -591,3 +592,62 @@ class TestJinja2Expansion:
         converter = AIPerfJobSpecConverter(spec, "job", "default")
         # 50 / 100 → 1 (ceil)
         assert converter.calculate_workers() == 1
+
+
+class TestBuildBenchmarkRunSweepWarning:
+    """K8s operator cannot orchestrate parameter sweeps; build_benchmark_run
+    must warn and strip `sweep`/`multi_run` rather than silently drop them.
+    """
+
+    def _base_config(self) -> dict[str, Any]:
+        return {
+            "models": ["test-model"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": {"main": {"type": "synthetic"}},
+            "phases": {
+                "type": "concurrency",
+                "dataset": "main",
+                "requests": 10,
+                "concurrency": 1,
+            },
+        }
+
+    def test_sweep_key_is_stripped(self) -> None:
+        config = self._base_config()
+        config["sweep"] = {"parameter": "concurrency", "values": [1, 2, 4]}
+        build_benchmark_run(config, "run-1", "default")
+        assert "sweep" not in config
+
+    def test_multi_run_key_is_stripped(self) -> None:
+        config = self._base_config()
+        config["multi_run"] = {"trials": 3}
+        build_benchmark_run(config, "run-1", "default")
+        assert "multi_run" not in config
+
+    def test_sweep_triggers_warning_log(self, caplog: pytest.LogCaptureFixture) -> None:
+        config = self._base_config()
+        config["sweep"] = {"parameter": "concurrency", "values": [1, 2]}
+        with caplog.at_level("WARNING", logger="aiperf.operator.spec_converter"):
+            build_benchmark_run(config, "run-1", "default")
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("sweep" in m and "Kubernetes" in m for m in messages), messages
+
+    def test_multi_run_triggers_warning_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        config = self._base_config()
+        config["multi_run"] = {"trials": 3}
+        with caplog.at_level("WARNING", logger="aiperf.operator.spec_converter"):
+            build_benchmark_run(config, "run-1", "default")
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("multi_run" in m and "Kubernetes" in m for m in messages), messages
+
+    def test_no_warning_when_keys_absent(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        config = self._base_config()
+        with caplog.at_level("WARNING", logger="aiperf.operator.spec_converter"):
+            build_benchmark_run(config, "run-1", "default")
+        for record in caplog.records:
+            assert "sweep" not in record.getMessage()
+            assert "multi_run" not in record.getMessage()

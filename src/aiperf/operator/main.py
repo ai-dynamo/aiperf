@@ -12,7 +12,6 @@ Handles AIPerfJob CRD lifecycle with:
 - Job timeout detection
 - Pod restart monitoring
 - Results TTL cleanup
-- Sweep/multi-run orchestration (sequential child JobSets)
 
 Run: kopf run -m aiperf.operator.main --verbose
 

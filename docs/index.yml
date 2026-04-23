@@ -183,8 +183,6 @@ navigation:
     path: kubernetes/memory-estimator.md
   - page: Kueue Integration
     path: kubernetes/kueue.md
-  - page: Sweeps on Kubernetes
-    path: kubernetes/sweeps.md
   - page: GPU Telemetry on Kubernetes
     path: kubernetes/gpu-telemetry.md
   - page: Direct Mode (no operator)

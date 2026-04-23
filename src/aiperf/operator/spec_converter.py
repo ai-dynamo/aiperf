@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import logging
 import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -26,6 +27,8 @@ from aiperf.config.deployment import DeploymentConfig
 from aiperf.config.loader import expand_config_dict
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.plugin.enums import ServiceRunType, UIType
+
+logger = logging.getLogger(__name__)
 
 # Default connections per worker for auto-scaling calculation.
 # Must match DeploymentConfig.connections_per_worker default.
@@ -191,8 +194,15 @@ def build_benchmark_run(
     from aiperf.config.benchmark import BenchmarkRun
     from aiperf.config.config import BenchmarkConfig
 
-    run_config.pop("multi_run", None)
-    run_config.pop("sweep", None)
+    for unsupported_key in ("sweep", "multi_run"):
+        if unsupported_key in run_config:
+            logger.warning(
+                "AIPerfJob includes '%s' config; Kubernetes does not currently "
+                "orchestrate parameter sweeps. Running base config as a single "
+                "benchmark. To sweep, use the local `aiperf profile` CLI.",
+                unsupported_key,
+            )
+            run_config.pop(unsupported_key, None)
     apply_k8s_runtime_config(run_config, run_id, namespace)
     cfg = BenchmarkConfig.model_validate(run_config)
 
