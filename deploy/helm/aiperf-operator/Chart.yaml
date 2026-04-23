@@ -5,7 +5,7 @@ name: aiperf-operator
 description: AIPerf Kubernetes Operator for LLM inference benchmarking
 type: application
 kubeVersion: ">=1.24.0-0"
-version: 0.1.0
+version: 0.7.0
 appVersion: "0.7.0"
 keywords:
   - aiperf

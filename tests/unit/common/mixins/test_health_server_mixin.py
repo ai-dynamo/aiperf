@@ -76,9 +76,9 @@ async def make_http_request(port: int, path: str) -> tuple[int, str]:
 @pytest.fixture(autouse=True)
 def clear_health_server_registry():
     """Clear the process-level health server registry before each test."""
-    health_server_mixin._active_health_servers.clear()
+    health_server_mixin._ActiveHealthServers._registry.clear()
     yield
-    health_server_mixin._active_health_servers.clear()
+    health_server_mixin._ActiveHealthServers._registry.clear()
 
 
 @pytest.fixture
@@ -333,13 +333,16 @@ class TestHealthServerMixin:
 
         with mock_env_settings(enabled=True, port=18091):
             await service._health_server_start()
-            assert ("127.0.0.1", 18091) in health_server_mixin._active_health_servers
+            assert (
+                "127.0.0.1",
+                18091,
+            ) in health_server_mixin._ActiveHealthServers._registry
 
             await service._health_server_stop()
             assert (
                 "127.0.0.1",
                 18091,
-            ) not in health_server_mixin._active_health_servers
+            ) not in health_server_mixin._ActiveHealthServers._registry
 
     @pytest.mark.asyncio
     async def test_second_service_can_start_after_first_stops(

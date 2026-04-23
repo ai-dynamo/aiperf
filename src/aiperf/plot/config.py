@@ -10,17 +10,18 @@ Loads plot specifications from YAML files with the following priority:
 3. Default shipped config (src/aiperf/plot/default_plot_config.yaml)
 """
 
-import difflib
 import logging
-import re
 import shutil
 from pathlib import Path
+from typing import Any
 
 from ruamel.yaml import YAML
 
-from aiperf.plot.constants import ALL_STAT_KEYS
+from aiperf.plot._metrics import (
+    expand_metric_shortcut,
+    parse_and_validate_metric_name,
+)
 from aiperf.plot.core.plot_specs import (
-    DataSource,
     ExperimentClassificationConfig,
     MetricSpec,
     PlotSpec,
@@ -28,89 +29,12 @@ from aiperf.plot.core.plot_specs import (
     Style,
     TimeSlicePlotSpec,
 )
-from aiperf.plot.metric_names import (
-    get_aggregated_metrics,
-    get_gpu_metrics,
-    get_request_metrics,
-    get_timeslice_metrics,
-)
+
+# Back-compat re-export: tests and external callers import this from
+# `aiperf.plot.config`. The implementation lives in `_metrics.py`.
+_parse_and_validate_metric_name = parse_and_validate_metric_name
 
 _logger = logging.getLogger(__name__)
-
-
-def _detect_invalid_stat_pattern(metric_name: str) -> str | None:
-    """
-    Detect if metric name has an invalid stat-like suffix pattern.
-
-    Args:
-        metric_name: Full metric name
-
-    Returns:
-        The invalid stat suffix if detected (e.g., "p67"), None otherwise
-    """
-    if "_" not in metric_name:
-        return None
-
-    _, potential_stat = metric_name.rsplit("_", 1)
-
-    if potential_stat in ["avg", "min", "max", "std"]:
-        return None
-
-    if (
-        potential_stat.startswith("p")
-        and potential_stat[1:].isdigit()
-        and potential_stat not in ALL_STAT_KEYS
-    ):
-        return potential_stat
-
-    return None
-
-
-def _parse_and_validate_metric_name(metric_name: str) -> tuple[str, str | None]:
-    """
-    Parse and validate metric name format.
-
-    Supports two formats:
-    1. {metric_name}_{stat} - e.g., "request_latency_p50"
-    2. {metric_name} - e.g., "request_number"
-
-    Args:
-        metric_name: Metric shortcut name
-
-    Returns:
-        Tuple of (base_metric_name, stat) where stat is None if no suffix
-
-    Raises:
-        ValueError: If metric name has invalid stat suffix pattern
-    """
-    if "_" not in metric_name:
-        return (metric_name, None)
-
-    base_name, potential_stat = metric_name.rsplit("_", 1)
-
-    if potential_stat in ALL_STAT_KEYS:
-        return (base_name, potential_stat)
-
-    invalid_stat = _detect_invalid_stat_pattern(metric_name)
-    if invalid_stat:
-        close_matches = difflib.get_close_matches(
-            invalid_stat, ALL_STAT_KEYS, n=3, cutoff=0.6
-        )
-
-        error_msg = (
-            f"Invalid stat suffix '{invalid_stat}' in metric '{metric_name}'.\n\n"
-        )
-        error_msg += "Valid stat suffixes are:\n"
-        error_msg += f"  {', '.join(ALL_STAT_KEYS)}\n"
-
-        if close_matches:
-            error_msg += "\nDid you mean one of these?\n"
-            for match in close_matches:
-                error_msg += f"  - {base_name}_{match}\n"
-
-        raise ValueError(error_msg)
-
-    return (metric_name, None)
 
 
 class PlotConfig:
@@ -413,65 +337,15 @@ class PlotConfig:
             raise ValueError(f"Missing 'type' field in preset '{name}'")
         plot_type = PlotType(plot_type_str)
 
-        metrics = []
-
-        x_metric = preset.get("x")
-        if x_metric:
-            metrics.append(
-                self._expand_metric_shortcut(x_metric, "x", preset.get("source"))
-            )
-
-        y_metric = preset.get("y")
-        if y_metric:
-            y_stat = preset.get("stat")
-            metrics.append(
-                self._expand_metric_shortcut(
-                    y_metric, "y", preset.get("source"), y_stat
-                )
-            )
-
-        y2_metric = preset.get("y2")
-        if y2_metric:
-            metrics.append(self._expand_metric_shortcut(y2_metric, "y2", None))
-
-        if not metrics:
-            raise ValueError(f"No metrics defined in preset '{name}'")
-
-        exp_class_config = self.get_experiment_classification_config()
-        if exp_class_config is not None:
-            # When experiment classification is enabled, ALWAYS use experiment_group
-            groups = "experiment_group"
-            _logger.info(
-                f"Classification enabled for plot '{name}': forcing groups={groups}"
-            )
-        else:
-            # When classification disabled, use explicit YAML setting or default
-            groups = preset.get("groups")
-            if groups is None or groups == []:
-                groups = ["run_name"]
-            _logger.info(
-                f"Classification disabled for plot '{name}': using groups={groups}"
-            )
-
-        spec_kwargs = {
-            "name": name,
-            "plot_type": plot_type,
-            "metrics": metrics,
-            "title": preset.get("title"),
-            "filename": f"{name}.png",
-            "description": preset.get("description"),
-            "label_by": preset.get("labels"),
-            "group_by": groups,
-        }
-
-        if "primary_style" in preset:
-            spec_kwargs["primary_style"] = Style(**preset["primary_style"])
-        if "secondary_style" in preset:
-            spec_kwargs["secondary_style"] = Style(**preset["secondary_style"])
-        if "supplementary_col" in preset:
-            spec_kwargs["supplementary_col"] = preset["supplementary_col"]
-        if "autoscale" in preset:
-            spec_kwargs["autoscale"] = preset["autoscale"]
+        metrics = _build_preset_metrics(name, preset)
+        groups = self._resolve_preset_groups(name, preset)
+        spec_kwargs = _build_spec_kwargs(
+            name=name,
+            preset=preset,
+            plot_type=plot_type,
+            metrics=metrics,
+            groups=groups,
+        )
 
         if "use_slice_duration" in preset:
             spec_kwargs["use_slice_duration"] = preset["use_slice_duration"]
@@ -479,142 +353,79 @@ class PlotConfig:
 
         return PlotSpec(**spec_kwargs)
 
-    def _is_server_metric(self, metric_name: str) -> bool:
-        """
-        Check if a metric name appears to be a server metric.
+    def _resolve_preset_groups(self, name: str, preset: dict) -> str | list[str]:
+        """Pick the grouping strategy based on experiment classification state."""
+        exp_class_config = self.get_experiment_classification_config()
+        if exp_class_config is not None:
+            # When experiment classification is enabled, ALWAYS use experiment_group
+            groups: str | list[str] = "experiment_group"
+            _logger.info(
+                f"Classification enabled for plot '{name}': forcing groups={groups}"
+            )
+            return groups
 
-        This is a heuristic-based detection used during config parsing to determine
-        the data source for metrics. The actual metric data comes from export files,
-        so this is only used for automatic source inference in plot specifications.
-
-        Server metrics typically follow Prometheus naming conventions:
-        - Contains colon separator (e.g., "vllm:metric_name", "triton:metric")
-        - Common prefixes: vllm, triton, http, dynamo, nvidia, nv
-        - May include endpoint/label filters: metric[endpoint], metric{labels}
-
-        Note: If you have custom Prometheus metrics that don't match these patterns,
-        explicitly set `source: server_metrics` in your plot specification.
-
-        Args:
-            metric_name: Metric name to check
-
-        Returns:
-            True if likely a server metric, False otherwise
-        """
-        # Strip endpoint/label filters first
-        base_name = re.sub(r"\[.*?\]|\{.*?\}", "", metric_name).strip()
-
-        # Check for Prometheus namespace convention (most reliable indicator)
-        # Format: namespace:metric_name (e.g., "vllm:kv_cache_usage")
-        if ":" in base_name:
-            return True
-
-        # Check for common Prometheus/server metric prefixes
-        # Includes standard patterns from vLLM, Triton, HTTP, DCGM, NVIDIA
-        prometheus_prefixes = [
-            "vllm_",
-            "sglang_",
-            "trtllm_",
-            "nv_inference_",  # Triton Inference Server (most specific)
-            "nv_gpu_",  # Triton GPU metrics
-            "nv_",  # Generic Triton/NVIDIA
-            "http_",
-            "https_",
-            "dynamo_",
-            "nvidia_",
-            "dcgm_",
-            "gpu_",
-            "process_",
-            "node_",
-            "container_",
-        ]
-        if any(base_name.startswith(prefix) for prefix in prometheus_prefixes):
-            return True
-
-        # Check for common Prometheus suffixes (counter/gauge indicators)
-        prometheus_suffixes = [
-            "_total",
-            "_count",
-            "_sum",
-            "_bucket",
-            "_seconds",
-            "_milliseconds",
-            "_microseconds",
-            "_us",  # Triton microseconds
-            "_ms",  # Triton milliseconds
-            "_ns",
-            "_bytes",
-        ]
-        return any(base_name.endswith(suffix) for suffix in prometheus_suffixes)
-
-    def _expand_metric_shortcut(
-        self,
-        metric_value: str | dict,
-        axis: str,
-        source_override: str | None = None,
-        stat_override: str | None = None,
-    ) -> MetricSpec:
-        """
-        Expand metric shortcut to full MetricSpec using dynamic pattern matching.
-
-        Supports two formats:
-        1. Dict format: {"metric": "request_latency", "stat": "avg"}
-        2. String format (legacy): "request_latency_avg" or "request_number"
-
-        Args:
-            metric_value: Metric as dict with 'metric' and 'stat' keys, or string shortcut
-            axis: Axis assignment ("x", "y", "y2")
-            source_override: Override data source (for timeslice plots)
-            stat_override: Override stat (for timeslice plots)
-
-        Returns:
-            MetricSpec object
-
-        Raises:
-            ValueError: If metric name or stat is not recognized
-        """
-        if isinstance(metric_value, dict):
-            base_name = metric_value["metric"]
-            stat = metric_value.get("stat")
-            # Extract source from dict if present (overrides source_override)
-            if "source" in metric_value and not source_override:
-                source_override = metric_value["source"]
-        else:
-            base_name, stat = _parse_and_validate_metric_name(metric_value)
-
-        # If source is explicitly specified, use it and skip validation
-        # This allows users to specify server metrics that don't match heuristic patterns
-        if source_override:
-            source = DataSource(source_override)
-        else:
-            source = self._auto_detect_source(base_name, metric_value)
-        if stat_override:
-            stat = stat_override
-
-        return MetricSpec(name=base_name, source=source, axis=axis, stat=stat)
-
-    def _auto_detect_source(
-        self, base_name: str, metric_value: str | dict
-    ) -> DataSource:
-        """Infer the DataSource for a metric name via registered metric catalogs."""
-        if base_name in get_aggregated_metrics():
-            return DataSource.AGGREGATED
-        if base_name in get_request_metrics():
-            return DataSource.REQUESTS
-        if base_name in get_timeslice_metrics():
-            return DataSource.TIMESLICES
-        if base_name in get_gpu_metrics():
-            return DataSource.GPU_TELEMETRY
-        if self._is_server_metric(base_name):
-            # Server metrics (Prometheus-style names like "vllm:kv_cache_usage_perc")
-            return DataSource.SERVER_METRICS
-        all_known = (
-            get_aggregated_metrics()
-            + get_request_metrics()
-            + get_timeslice_metrics()
-            + get_gpu_metrics()
+        # When classification disabled, use explicit YAML setting or default
+        groups = preset.get("groups")
+        if groups is None or groups == []:
+            groups = ["run_name"]
+        _logger.info(
+            f"Classification disabled for plot '{name}': using groups={groups}"
         )
-        raise ValueError(
-            f"Unknown metric: '{base_name}' (from shortcut '{metric_value}'). "
-            f"Known metrics: {all_known}. For server metrics, use Prometheus-style names like 'vllm:metric_name'."
+        return groups
+
+
+def _build_preset_metrics(name: str, preset: dict) -> list[MetricSpec]:
+    """Expand x/y/y2 shortcut fields from a preset into MetricSpec objects."""
+    metrics: list[MetricSpec] = []
+
+    x_metric = preset.get("x")
+    if x_metric:
+        metrics.append(expand_metric_shortcut(x_metric, "x", preset.get("source")))
+
+    y_metric = preset.get("y")
+    if y_metric:
+        y_stat = preset.get("stat")
+        metrics.append(
+            expand_metric_shortcut(y_metric, "y", preset.get("source"), y_stat)
         )
+
+    y2_metric = preset.get("y2")
+    if y2_metric:
+        metrics.append(expand_metric_shortcut(y2_metric, "y2", None))
+
+    if not metrics:
+        raise ValueError(f"No metrics defined in preset '{name}'")
+
+    return metrics
+
+
+def _build_spec_kwargs(
+    *,
+    name: str,
+    preset: dict,
+    plot_type: PlotType,
+    metrics: list[MetricSpec],
+    groups: str | list[str],
+) -> dict[str, Any]:
+    """Assemble the kwargs dict used to construct PlotSpec / TimeSlicePlotSpec."""
+    spec_kwargs: dict[str, Any] = {
+        "name": name,
+        "plot_type": plot_type,
+        "metrics": metrics,
+        "title": preset.get("title"),
+        "filename": f"{name}.png",
+        "description": preset.get("description"),
+        "label_by": preset.get("labels"),
+        "group_by": groups,
+    }
+
+    if "primary_style" in preset:
+        spec_kwargs["primary_style"] = Style(**preset["primary_style"])
+    if "secondary_style" in preset:
+        spec_kwargs["secondary_style"] = Style(**preset["secondary_style"])
+    if "supplementary_col" in preset:
+        spec_kwargs["supplementary_col"] = preset["supplementary_col"]
+    if "autoscale" in preset:
+        spec_kwargs["autoscale"] = preset["autoscale"]
+
+    return spec_kwargs

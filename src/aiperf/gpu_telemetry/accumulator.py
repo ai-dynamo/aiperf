@@ -224,12 +224,19 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         Returns:
             TelemetryExportData object with pre-computed metrics for each GPU
         """
-        # Create time filter for warmup exclusion
         # Note: end_ns is typically None to include the final telemetry scrape
         # that occurs after PROFILE_COMPLETE but before export
         time_filter = TimeRangeFilter(start_ns=start_ns, end_ns=end_ns)
+        summary = self._build_summary(start_ns, end_ns)
+        endpoints = self._build_endpoints(time_filter)
 
-        # Build summary
+        return TelemetryExportData(
+            summary=summary, endpoints=endpoints, error_summary=error_summary
+        )
+
+    def _build_summary(
+        self, start_ns: int | None, end_ns: int | None
+    ) -> TelemetrySummary:
         # When start_ns/end_ns is None, use current time as the timestamp
         start_time = (
             datetime.fromtimestamp(start_ns / NANOS_PER_SECOND)
@@ -241,65 +248,65 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
             if end_ns is not None
             else datetime.now()
         )
-        summary = TelemetrySummary(
+        return TelemetrySummary(
             endpoints_configured=list(self._hierarchy.dcgm_endpoints.keys()),
             endpoints_successful=list(self._hierarchy.dcgm_endpoints.keys()),
             start_time=start_time,
             end_time=end_time,
         )
 
-        # Build endpoints dict with pre-computed metrics
+    def _build_endpoints(self, time_filter: TimeRangeFilter) -> dict[str, EndpointData]:
         endpoints: dict[str, EndpointData] = {}
+        if not self._hierarchy.dcgm_endpoints:
+            return endpoints
 
-        if self._hierarchy.dcgm_endpoints:
-            for (
-                dcgm_url,
-                gpus_data,
-            ) in self._hierarchy.dcgm_endpoints.items():
-                endpoint_display = normalize_endpoint_display(dcgm_url)
-                gpus_dict: dict[str, GpuSummary] = {}
+        for dcgm_url, gpus_data in self._hierarchy.dcgm_endpoints.items():
+            endpoint_display = normalize_endpoint_display(dcgm_url)
+            gpus_dict: dict[str, GpuSummary] = {}
 
-                for gpu_uuid, gpu_data in gpus_data.items():
-                    metrics_dict = {}
+            for gpu_uuid, gpu_data in gpus_data.items():
+                metrics_dict = self._compute_gpu_metrics(
+                    gpu_data, gpu_uuid, time_filter
+                )
+                gpu_summary = GpuSummary(
+                    gpu_index=gpu_data.metadata.gpu_index,
+                    gpu_name=gpu_data.metadata.gpu_model_name,
+                    gpu_uuid=gpu_uuid,
+                    hostname=gpu_data.metadata.hostname,
+                    namespace=gpu_data.metadata.namespace,
+                    pod_name=gpu_data.metadata.pod_name,
+                    metrics=metrics_dict,
+                )
+                gpus_dict[f"gpu_{gpu_data.metadata.gpu_index}"] = gpu_summary
 
-                    for (
-                        metric_display,
-                        metric_key,
-                        unit_enum,
-                    ) in get_gpu_telemetry_metrics_config():
-                        try:
-                            is_counter = metric_key in GPU_TELEMETRY_COUNTER_METRICS
-                            metric_result = gpu_data.get_metric_result(
-                                metric_key,
-                                metric_key,
-                                metric_display,
-                                unit_enum,
-                                time_filter=time_filter,
-                                is_counter=is_counter,
-                            )
-                            metrics_dict[metric_key] = metric_result.to_json_result()
-                        except NoMetricValue:
-                            continue
-                        except Exception as e:  # noqa: BLE001 - per-metric; skip bad record and continue
-                            self.warning(
-                                f"Failed to compute metric '{metric_key}' for GPU {gpu_uuid[:12]}: {e}"
-                            )
-                            continue
+            endpoints[endpoint_display] = EndpointData(gpus=gpus_dict)
 
-                    gpu_summary = GpuSummary(
-                        gpu_index=gpu_data.metadata.gpu_index,
-                        gpu_name=gpu_data.metadata.gpu_model_name,
-                        gpu_uuid=gpu_uuid,
-                        hostname=gpu_data.metadata.hostname,
-                        namespace=gpu_data.metadata.namespace,
-                        pod_name=gpu_data.metadata.pod_name,
-                        metrics=metrics_dict,
-                    )
+        return endpoints
 
-                    gpus_dict[f"gpu_{gpu_data.metadata.gpu_index}"] = gpu_summary
-
-                endpoints[endpoint_display] = EndpointData(gpus=gpus_dict)
-
-        return TelemetryExportData(
-            summary=summary, endpoints=endpoints, error_summary=error_summary
-        )
+    def _compute_gpu_metrics(
+        self,
+        gpu_data: Any,
+        gpu_uuid: str,
+        time_filter: TimeRangeFilter,
+    ) -> dict[str, Any]:
+        metrics_dict: dict[str, Any] = {}
+        for metric_display, metric_key, unit_enum in get_gpu_telemetry_metrics_config():
+            try:
+                is_counter = metric_key in GPU_TELEMETRY_COUNTER_METRICS
+                metric_result = gpu_data.get_metric_result(
+                    metric_key,
+                    metric_key,
+                    metric_display,
+                    unit_enum,
+                    time_filter=time_filter,
+                    is_counter=is_counter,
+                )
+                metrics_dict[metric_key] = metric_result.to_json_result()
+            except NoMetricValue:
+                continue
+            except Exception as e:  # noqa: BLE001 - per-metric; skip bad record and continue
+                self.warning(
+                    f"Failed to compute metric '{metric_key}' for GPU {gpu_uuid[:12]}: {e}"
+                )
+                continue
+        return metrics_dict

@@ -42,8 +42,10 @@ export function CommandPalette({ onClose }) {
   const allItems = [
     ...PAGES.map((p) => ({ label: p.label, sub: 'Page', action: () => navigate(p.path) })),
     ...jobs.value.map((j) => {
-      const ns = j.metadata?.namespace ?? 'default';
-      const name = j.metadata?.name ?? '';
+      // /api/v1/jobs returns flat AIPerfJobInfo records (K8sCamelModel),
+      // not raw CR objects — so namespace/name live at the top level.
+      const ns = j.namespace ?? 'default';
+      const name = j.name ?? '';
       return {
         label: name,
         sub: ns,
@@ -65,6 +67,16 @@ export function CommandPalette({ onClose }) {
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  // Global ESC handler — inner onkeydown only fires while focus is inside the
+  // palette div; a stray click elsewhere would otherwise strand the modal.
+  useEffect(() => {
+    function onGlobalKey(e) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', onGlobalKey);
+    return () => document.removeEventListener('keydown', onGlobalKey);
+  }, [onClose]);
 
   function handleKeyDown(e) {
     if (e.key === 'Escape') {

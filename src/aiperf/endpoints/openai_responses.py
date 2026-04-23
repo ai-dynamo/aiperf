@@ -117,38 +117,9 @@ class ResponsesEndpoint(BaseEndpoint):
             return
 
         content: list[dict[str, Any]] = []
-
-        for text in turn.texts:
-            for c in text.contents:
-                if not c:
-                    continue
-                content.append({"type": "input_text", "text": c})
-
-        for image in turn.images:
-            for c in image.contents:
-                if not c:
-                    continue
-                content.append({"type": "input_image", "image_url": c})
-
-        for audio in turn.audios:
-            for c in audio.contents:
-                if not c:
-                    continue
-                if "," not in c:
-                    raise ValueError(
-                        "Audio content must be in the format 'format,b64_audio'."
-                    )
-                fmt, b64_audio = c.split(",", 1)
-                content.append(
-                    {
-                        "type": "input_audio",
-                        "input_audio": {
-                            "data": b64_audio,
-                            "format": fmt,
-                        },
-                    }
-                )
-
+        content.extend(_build_text_parts(turn))
+        content.extend(_build_image_parts(turn))
+        content.extend(_build_audio_parts(turn))
         item["content"] = content
 
     def parse_response(
@@ -283,6 +254,52 @@ class ResponsesEndpoint(BaseEndpoint):
             return TextResponseData(text=output_text)
 
         return None
+
+
+def _build_text_parts(turn: Turn) -> list[dict[str, Any]]:
+    """Build ``input_text`` content parts for a turn."""
+    parts: list[dict[str, Any]] = []
+    for text in turn.texts:
+        for c in text.contents:
+            if not c:
+                continue
+            parts.append({"type": "input_text", "text": c})
+    return parts
+
+
+def _build_image_parts(turn: Turn) -> list[dict[str, Any]]:
+    """Build ``input_image`` content parts for a turn."""
+    parts: list[dict[str, Any]] = []
+    for image in turn.images:
+        for c in image.contents:
+            if not c:
+                continue
+            parts.append({"type": "input_image", "image_url": c})
+    return parts
+
+
+def _build_audio_parts(turn: Turn) -> list[dict[str, Any]]:
+    """Build ``input_audio`` content parts for a turn."""
+    parts: list[dict[str, Any]] = []
+    for audio in turn.audios:
+        for c in audio.contents:
+            if not c:
+                continue
+            if "," not in c:
+                raise ValueError(
+                    "Audio content must be in the format 'format,b64_audio'."
+                )
+            fmt, b64_audio = c.split(",", 1)
+            parts.append(
+                {
+                    "type": "input_audio",
+                    "input_audio": {
+                        "data": b64_audio,
+                        "format": fmt,
+                    },
+                }
+            )
+    return parts
 
 
 def _collect_output_parts(output: list[Any]) -> tuple[list[str], list[str]]:

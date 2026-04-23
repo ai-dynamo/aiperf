@@ -143,69 +143,95 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         next_new_session_turn = self._conversation_source.next().build_first_turn()
 
         while True:
-            now = time.perf_counter()
-
-            # Behind schedule: reset to now instead of sending a burst to catch up.
-            # This sacrifices inter-arrival distribution accuracy for stable throughput.
-            if next_target_perf < now:
-                next_target_perf = now
-
-            sleep_duration = next_target_perf - now
-            if sleep_duration > 0:
-                await asyncio.sleep(sleep_duration)
-            else:
-                # CRITICAL: Always yield to event loop to allow callbacks to run.
-                # Without this, CONCURRENCY_BURST mode (0 interval) busy-loops and
-                # starves credit return callbacks, causing deadlock.
-                await yield_to_event_loop()
-
+            next_target_perf = await self._wait_for_next_interval(next_target_perf)
             # Schedule next interval BEFORE issuing credit. This way, variable
             # credit issuance latency doesn't affect the timing of the next interval.
             next_target_perf += self._rate_generator.next_interval()
 
-            # Priority 1: Queued continuation turns from completed previous turns.
-            # These already hold session slots, so we just need prefill slots.
-            if not self._continuation_turns.empty():
-                should_continue = await self._credit_issuer.issue_credit(
-                    self._continuation_turns.get_nowait()
-                )
-                if not should_continue:
-                    return
-
-            # Priority 2: Start new session if allowed and slots available.
-            # try_issue_credit returns None if no slot (skip interval), False if
-            # stop condition reached (exit loop), True if issued successfully.
-            elif self._stop_checker.can_start_new_session():
-                result = await self._credit_issuer.try_issue_credit(
-                    next_new_session_turn
-                )
-                match result:
-                    case True:  # Successfully issued credit
-                        # Re-sample the next new turn for the next interval.
-                        next_new_session_turn = (
-                            self._conversation_source.next().build_first_turn()
-                        )
-                    case False:  # Stop condition reached
-                        self.debug(
-                            "Exiting: stop condition reached after try_issue_credit"
-                        )
-                        return
-                    case None:  # No slot available, retry later
-                        # Always yield to event loop to allow callbacks to run.
-                        # This is especially critical to prevent deadlock in CONCURRENCY_BURST mode (0 interval).
-                        await yield_to_event_loop()
-
-            # Priority 3: No more sessions to start and queue is empty.
-            # Check if we're done sending entirely.
-            elif not self._stop_checker.can_send_any_turn():
+            done, next_new_session_turn = await self._issue_next_credit(
+                next_new_session_turn
+            )
+            if done:
                 return
-            else:
-                # Can still send turns but queue is empty and can't start new
-                # sessions (session limit reached). Skip this interval and wait for
-                # continuation turns to arrive from callbacks.
+
+    async def _wait_for_next_interval(self, next_target_perf: float) -> float:
+        """Sleep until the next target perf time, returning the (possibly reset) target.
+
+        Resets the target to `now` if we're behind schedule to avoid catch-up bursts.
+        """
+        now = time.perf_counter()
+
+        # Behind schedule: reset to now instead of sending a burst to catch up.
+        # This sacrifices inter-arrival distribution accuracy for stable throughput.
+        if next_target_perf < now:
+            next_target_perf = now
+
+        sleep_duration = next_target_perf - now
+        if sleep_duration > 0:
+            await asyncio.sleep(sleep_duration)
+        else:
+            # CRITICAL: Always yield to event loop to allow callbacks to run.
+            # Without this, CONCURRENCY_BURST mode (0 interval) busy-loops and
+            # starves credit return callbacks, causing deadlock.
+            await yield_to_event_loop()
+        return next_target_perf
+
+    async def _issue_next_credit(
+        self, next_new_session_turn: TurnToSend
+    ) -> tuple[bool, TurnToSend]:
+        """Issue one credit for this interval by priority: continuation, new session, or skip.
+
+        Returns (done, next_new_session_turn). `done=True` signals the main loop to exit.
+        """
+        # Priority 1: Queued continuation turns from completed previous turns.
+        # These already hold session slots, so we just need prefill slots.
+        if not self._continuation_turns.empty():
+            should_continue = await self._credit_issuer.issue_credit(
+                self._continuation_turns.get_nowait()
+            )
+            return (not should_continue, next_new_session_turn)
+
+        # Priority 2: Start new session if allowed and slots available.
+        if self._stop_checker.can_start_new_session():
+            return await self._try_start_new_session(next_new_session_turn)
+
+        # Priority 3: No more sessions to start and queue is empty.
+        # Check if we're done sending entirely.
+        if not self._stop_checker.can_send_any_turn():
+            return (True, next_new_session_turn)
+
+        # Can still send turns but queue is empty and can't start new
+        # sessions (session limit reached). Skip this interval and wait for
+        # continuation turns to arrive from callbacks.
+        # Always yield to event loop to allow callbacks to run.
+        # This is especially critical to prevent deadlock in CONCURRENCY_BURST mode (0 interval).
+        await yield_to_event_loop()
+        return (False, next_new_session_turn)
+
+    async def _try_start_new_session(
+        self, next_new_session_turn: TurnToSend
+    ) -> tuple[bool, TurnToSend]:
+        """Attempt to issue a credit for a new session.
+
+        try_issue_credit returns None if no slot (skip interval), False if
+        stop condition reached (exit loop), True if issued successfully.
+        """
+        result = await self._credit_issuer.try_issue_credit(next_new_session_turn)
+        match result:
+            case True:  # Successfully issued credit
+                # Re-sample the next new turn for the next interval.
+                return (
+                    False,
+                    self._conversation_source.next().build_first_turn(),
+                )
+            case False:  # Stop condition reached
+                self.debug("Exiting: stop condition reached after try_issue_credit")
+                return (True, next_new_session_turn)
+            case _:  # None: no slot available, retry later
                 # Always yield to event loop to allow callbacks to run.
                 # This is especially critical to prevent deadlock in CONCURRENCY_BURST mode (0 interval).
                 await yield_to_event_loop()
+                return (False, next_new_session_turn)
 
     async def handle_credit_return(self, credit: Credit) -> None:
         """Queue the next turn of this conversation for the main loop.

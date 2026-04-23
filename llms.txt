@@ -35,9 +35,22 @@ Agents working in this repo should read `CLAUDE.md` first — it defines coding 
 ## Kubernetes
 
 - [docs/kubernetes/getting-started.md](docs/kubernetes/getting-started.md): Helm install, first `AIPerfJob`.
-- [docs/kubernetes/configuration.md](docs/kubernetes/configuration.md): CR schema, operator tunables, composite CLI flags.
+- [docs/kubernetes/workflow.md](docs/kubernetes/workflow.md): End-to-end narrative walkthrough — `init` → `validate` → `preflight` → `profile` → `attach`/`watch` → `results` → cleanup, with the "last benchmark" state file.
+- [docs/kubernetes/init-and-generate.md](docs/kubernetes/init-and-generate.md): `aiperf kube init` scaffold and `aiperf kube generate` for rendering CR/JobSet manifests without deploying (GitOps workflow).
+- [docs/kubernetes/configuration.md](docs/kubernetes/configuration.md): CR schema, operator tunables, composite CLI flags, `resourceMode` QoS modes, `AIPERF_K8S_*` env var reference.
 - [docs/kubernetes/production.md](docs/kubernetes/production.md): Production rollout, sizing, observability.
+- [docs/kubernetes/rbac-security.md](docs/kubernetes/rbac-security.md): Two-role RBAC model (operator `ClusterRole` + per-namespace benchmark `Role`), pod `securityContext`, `NetworkPolicy` allow-list, least-privilege checklist.
 - [docs/kubernetes/monitoring.md](docs/kubernetes/monitoring.md): Metrics endpoints, Prometheus scraping, Loki integration.
+- [docs/kubernetes/validate.md](docs/kubernetes/validate.md): `aiperf kube validate` CLI — offline schema + naming check; JSON output schema for CI gates.
+- [docs/kubernetes/preflight.md](docs/kubernetes/preflight.md): Preflight check catalog — tiered validations (K8s version, RBAC, node resources, quotas, image, secrets, ConfigMap size, dry run) with status values, skip mechanisms, and fix recipes.
+- [docs/kubernetes/debug-command.md](docs/kubernetes/debug-command.md): `aiperf kube debug` — one-shot snapshot (events, pod problem map, logs, node resources); triage recipes; contrast with `watch` and `preflight`.
+- [docs/kubernetes/diagnosis-issues.md](docs/kubernetes/diagnosis-issues.md): Watch diagnosis engine — the 9 issue IDs with exact thresholds, `warning`/`critical` severities, health rollup logic, CI-gate jq recipes.
+- [docs/kubernetes/results-api.md](docs/kubernetes/results-api.md): Operator Results Server HTTP API — 14 `/api/v1/...` endpoints (jobs, results, analytics, meta) with query params, examples, zstd/gzip content negotiation.
+- [docs/kubernetes/dashboard-ui.md](docs/kubernetes/dashboard-ui.md): Web dashboard (port 8081) — 6 pages (Dashboard, Jobs, Job Detail, Leaderboard, Compare, History), command palette, access patterns.
+- [docs/kubernetes/sidecars.md](docs/kubernetes/sidecars.md): Controller-pod sidecars — event-bus proxy (XPUB:5663/XSUB:5664, fan-in isolation) and results sidecar (port 9091, fallback retrieval with readiness marker).
+- [docs/kubernetes/memory-estimator.md](docs/kubernetes/memory-estimator.md): Per-component memory model (RecordsManager, Workers, DatasetManager, RecordProcessor, ...); calibration constants; OOM-risk thresholds; tuning recipes.
+- [docs/kubernetes/kueue.md](docs/kubernetes/kueue.md): Kueue gang-scheduling integration — `spec.scheduling.{queueName,priorityClass}`, namespace default queues, Workload admission watching.
+- [docs/kubernetes/direct-mode.md](docs/kubernetes/direct-mode.md): `aiperf kube profile --no-operator` — operator-vs-direct feature matrix, when to use, cleanup, limitations.
 - [docs/kubernetes/ai-debugging-guide.md](docs/kubernetes/ai-debugging-guide.md) / [ai-deployment-guide.md](docs/kubernetes/ai-deployment-guide.md): Agent-oriented runbooks for debugging and deploying `AIPerfJob` CRs.
 
 ## Optional

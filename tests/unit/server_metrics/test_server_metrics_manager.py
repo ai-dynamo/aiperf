@@ -799,7 +799,7 @@ class TestMetricsDiscovery:
         )
         manager = ServerMetricsManager(run=run)
         with patch(
-            "aiperf.server_metrics.manager.is_running_in_kubernetes",
+            "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
             return_value=False,
         ):
             result = await manager._run_metrics_discovery()
@@ -822,11 +822,11 @@ class TestMetricsDiscovery:
         manager = ServerMetricsManager(run=run)
         with (
             patch(
-                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
                 return_value=True,
             ),
             patch(
-                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                "aiperf.server_metrics.endpoint_resolver.discover_kubernetes_endpoints",
                 new_callable=AsyncMock,
                 return_value=["http://pod-1:8080/metrics"],
             ) as mock_discover,
@@ -845,11 +845,11 @@ class TestMetricsDiscovery:
         manager = ServerMetricsManager(run=run)
         with (
             patch(
-                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
                 return_value=True,
             ),
             patch(
-                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                "aiperf.server_metrics.endpoint_resolver.discover_kubernetes_endpoints",
                 new_callable=AsyncMock,
                 return_value=["http://auto:8080/metrics"],
             ),
@@ -874,11 +874,11 @@ class TestMetricsDiscovery:
         manager = ServerMetricsManager(run=run)
         with (
             patch(
-                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
                 return_value=True,
             ),
             patch(
-                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                "aiperf.server_metrics.endpoint_resolver.discover_kubernetes_endpoints",
                 new_callable=AsyncMock,
                 return_value=["http://pod-1:8080/metrics"],
             ) as mock_discover,
@@ -896,7 +896,7 @@ class TestMetricsDiscovery:
         run = _make_run(AIPerfConfig(**_BASE))
         manager = ServerMetricsManager(run=run)
         with patch(
-            "aiperf.server_metrics.manager.is_running_in_kubernetes",
+            "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
             return_value=False,
         ):
             result = await manager._run_metrics_discovery()
@@ -913,11 +913,11 @@ class TestMetricsDiscovery:
         manager = ServerMetricsManager(run=run)
         with (
             patch(
-                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
                 return_value=True,
             ),
             patch(
-                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                "aiperf.server_metrics.endpoint_resolver.discover_kubernetes_endpoints",
                 new_callable=AsyncMock,
                 side_effect=Exception("K8s API error"),
             ),
@@ -938,11 +938,11 @@ class TestMetricsDiscovery:
 
         with (
             patch(
-                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
                 return_value=True,
             ),
             patch(
-                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                "aiperf.server_metrics.endpoint_resolver.discover_kubernetes_endpoints",
                 new_callable=AsyncMock,
                 return_value=["http://discovered:8080/metrics"],
             ),
@@ -972,11 +972,11 @@ class TestMetricsDiscovery:
 
         with (
             patch(
-                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
                 return_value=True,
             ),
             patch(
-                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                "aiperf.server_metrics.endpoint_resolver.discover_kubernetes_endpoints",
                 new_callable=AsyncMock,
                 return_value=["http://pod-1:8080/metrics"],
             ),
@@ -1013,11 +1013,11 @@ class TestMetricsDiscovery:
 
         with (
             patch(
-                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
                 return_value=True,
             ),
             patch(
-                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                "aiperf.server_metrics.endpoint_resolver.discover_kubernetes_endpoints",
                 new_callable=AsyncMock,
                 return_value=["http://already-there:8080/metrics"],
             ),
@@ -1052,11 +1052,11 @@ class TestMetricsDiscovery:
 
         with (
             patch(
-                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
                 return_value=True,
             ),
             patch(
-                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                "aiperf.server_metrics.endpoint_resolver.discover_kubernetes_endpoints",
                 new_callable=AsyncMock,
                 return_value=["http://pod-1:8080/metrics"],
             ),
@@ -1088,7 +1088,7 @@ class TestMetricsDiscovery:
 
         with (
             patch(
-                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
                 return_value=False,
             ),
             patch(

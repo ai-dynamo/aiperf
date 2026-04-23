@@ -353,6 +353,7 @@ config = BenchmarkConfig(
     concurrency=5,
     request_count=50,
     warmup_request_count=5,
+    concurrency_ramp_duration=None,  # set to seconds to ramp concurrency over time
     image="aiperf:local",
     workers=2,
     input_sequence_min=50,

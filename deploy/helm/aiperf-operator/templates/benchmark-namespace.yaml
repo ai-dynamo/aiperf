@@ -8,8 +8,12 @@ metadata:
   labels:
     {{- include "aiperf-operator.labels" . | nindent 4 }}
     aiperf.nvidia.com/auto-generated: "true"
-  {{- if .Values.kueue.defaultQueueName }}
   annotations:
+    # Preserve the benchmark namespace (and any AIPerfJob CRs still inside it)
+    # across `helm uninstall`, matching the CRD's resource-policy so an uninstall
+    # does not drop running jobs.
+    helm.sh/resource-policy: keep
+    {{- if .Values.kueue.defaultQueueName }}
     kueue.x-k8s.io/default-queue-name: {{ .Values.kueue.defaultQueueName | quote }}
-  {{- end }}
+    {{- end }}
 {{- end }}

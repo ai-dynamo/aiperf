@@ -940,7 +940,10 @@ class TestOutlierDetection:
         # Latency-type metrics: high values are bad
         latency_values = np.array([95.0, 105.0, 130.0])
         latency_outliers = detect_directional_outliers(
-            latency_values, "time_to_first_token", run_avg, run_std
+            latency_values,
+            "time_to_first_token",
+            run_average=run_avg,
+            run_std=run_std,
         )
         # Only 130.0 is outlier (above upper bound 110.0)
         is_95_outlier = latency_outliers[0]
@@ -953,7 +956,10 @@ class TestOutlierDetection:
         # Throughput metrics: low values are bad
         throughput_values = np.array([105.0, 95.0, 70.0])
         throughput_outliers = detect_directional_outliers(
-            throughput_values, "request_throughput", run_avg, run_std
+            throughput_values,
+            "request_throughput",
+            run_average=run_avg,
+            run_std=run_std,
         )
         # Only 70.0 is outlier (below lower bound 90.0)
         is_105_throughput_outlier = throughput_outliers[0]
@@ -971,7 +977,11 @@ class TestOutlierDetection:
         slice_stds = np.array([5.0, 5.0, 2.0, 15.0])
 
         outliers = detect_directional_outliers(
-            values, "time_to_first_token", run_avg, run_std, slice_stds
+            values,
+            "time_to_first_token",
+            run_average=run_avg,
+            run_std=run_std,
+            slice_stds=slice_stds,
         )
 
         # Upper bounds: 70 + 10 + slice_stds = [85, 85, 82, 95]
@@ -981,7 +991,11 @@ class TestOutlierDetection:
 
         # But without slice_stds, 90 would be outlier (upper bound = 80)
         outliers_no_slice = detect_directional_outliers(
-            values, "time_to_first_token", run_avg, run_std, slice_stds=None
+            values,
+            "time_to_first_token",
+            run_average=run_avg,
+            run_std=run_std,
+            slice_stds=None,
         )
         assert outliers_no_slice[3]
 
@@ -993,7 +1007,11 @@ class TestOutlierDetection:
         slice_stds_wrong_length = np.array([5.0, 5.0])
 
         outliers = detect_directional_outliers(
-            values, "time_to_first_token", run_avg, run_std, slice_stds_wrong_length
+            values,
+            "time_to_first_token",
+            run_average=run_avg,
+            run_std=run_std,
+            slice_stds=slice_stds_wrong_length,
         )
 
         # Should use zeros for slice_stds (upper bound = 80)

@@ -113,182 +113,143 @@ class WorkerManager(BaseComponentService):
             return
 
         console = Console()
-
-        table = Table(title=f"Worker Process Stats | {title}")
-        table.add_column("Worker", justify="left", style="cyan")
-        table.add_column("RSS (MB)", justify="right", style="green")
-        table.add_column("CPU (%)", justify="right", style="yellow")
-        table.add_column("Threads", justify="right")
-        table.add_column("Vol CtxSw", justify="right")
-        table.add_column("Invol CtxSw", justify="right")
-        table.add_column("Total Read", justify="right", style="blue")
-        table.add_column("Total Write", justify="right", style="magenta")
-        table.add_column("CPU Time (s)", justify="right")
-        table.add_column("Tasks", justify="right")
+        table = _build_worker_stats_table(title)
 
         for worker_id, info in sorted(self.worker_infos.items()):
-            agg = info.health_aggregates
-
-            mem = agg.memory_usage
-            mem_str = (
-                f"{mem.min / 1e6:.1f} / {mem.avg / 1e6:.1f} / {mem.max / 1e6:.1f}"
-                if mem.count > 0
-                else "N/A"
-            )
-
-            cpu = agg.cpu_usage
-            cpu_str = (
-                f"{cpu.min:.1f} / {cpu.avg:.1f} / {cpu.max:.1f}"
-                if cpu.count > 0
-                else "N/A"
-            )
-
-            threads = agg.num_threads
-            threads_str = (
-                f"{int(threads.min)} / {threads.avg:.1f} / {int(threads.max)}"
-                if threads.count > 0
-                else "N/A"
-            )
-
-            vol_ctx = agg.voluntary_ctx_switches
-            vol_ctx_str = (
-                f"{int(vol_ctx.max - vol_ctx.min):,}"
-                if vol_ctx.count > 0
-                and vol_ctx.min is not None
-                and vol_ctx.max is not None
-                else "N/A"
-            )
-
-            invol_ctx = agg.involuntary_ctx_switches
-            invol_ctx_str = (
-                f"{int(invol_ctx.max - invol_ctx.min):,}"
-                if invol_ctx.count > 0
-                and invol_ctx.min is not None
-                and invol_ctx.max is not None
-                else "N/A"
-            )
-
-            io_read = agg.io_read_bytes
-            io_read_str = (
-                format_bytes(int(io_read.max - io_read.min))
-                if io_read.count > 0
-                and io_read.min is not None
-                and io_read.max is not None
-                else "N/A"
-            )
-
-            io_write = agg.io_write_bytes
-            io_write_str = (
-                format_bytes(int(io_write.max - io_write.min))
-                if io_write.count > 0
-                and io_write.min is not None
-                and io_write.max is not None
-                else "N/A"
-            )
-
-            cpu_user = agg.cpu_time_user
-            cpu_sys = agg.cpu_time_system
-            if (
-                cpu_user.count > 0
-                and cpu_sys.count > 0
-                and cpu_user.min is not None
-                and cpu_sys.min is not None
-                and cpu_user.max is not None
-                and cpu_sys.max is not None
-            ):
-                cpu_time_str = f"u:{cpu_user.max - cpu_user.min:.1f} s:{cpu_sys.max - cpu_sys.min:.1f}"
-            else:
-                cpu_time_str = "N/A"
-
-            tasks = info.task_stats
-            tasks_str = f"{tasks.completed}/{tasks.total}"
-            if tasks.failed > 0:
-                tasks_str += f" ({tasks.failed} failed)"
-
-            table.add_row(
-                worker_id.split("-")[-1],
-                mem_str,
-                cpu_str,
-                threads_str,
-                vol_ctx_str,
-                invol_ctx_str,
-                io_read_str,
-                io_write_str,
-                cpu_time_str,
-                tasks_str,
-            )
-
-        # Totals row
-        total_tasks = sum(i.task_stats.total for i in self.worker_infos.values())
-        total_completed = sum(
-            i.task_stats.completed for i in self.worker_infos.values()
-        )
-        total_failed = sum(i.task_stats.failed for i in self.worker_infos.values())
-
-        all_mem_min = min(
-            (i.health_aggregates.memory_usage.min or float("inf"))
-            for i in self.worker_infos.values()
-        )
-        all_mem_max = max(
-            (i.health_aggregates.memory_usage.max or 0)
-            for i in self.worker_infos.values()
-        )
-        all_cpu_max = max(
-            (i.health_aggregates.cpu_usage.max or 0) for i in self.worker_infos.values()
-        )
-        all_vol_ctx_delta = sum(
-            (i.health_aggregates.voluntary_ctx_switches.max or 0)
-            - (i.health_aggregates.voluntary_ctx_switches.min or 0)
-            for i in self.worker_infos.values()
-        )
-        all_invol_ctx_delta = sum(
-            (i.health_aggregates.involuntary_ctx_switches.max or 0)
-            - (i.health_aggregates.involuntary_ctx_switches.min or 0)
-            for i in self.worker_infos.values()
-        )
-        all_io_read_delta = sum(
-            (i.health_aggregates.io_read_bytes.max or 0)
-            - (i.health_aggregates.io_read_bytes.min or 0)
-            for i in self.worker_infos.values()
-        )
-        all_io_write_delta = sum(
-            (i.health_aggregates.io_write_bytes.max or 0)
-            - (i.health_aggregates.io_write_bytes.min or 0)
-            for i in self.worker_infos.values()
-        )
-        all_cpu_user_delta = sum(
-            (i.health_aggregates.cpu_time_user.max or 0)
-            - (i.health_aggregates.cpu_time_user.min or 0)
-            for i in self.worker_infos.values()
-        )
-        all_cpu_sys_delta = sum(
-            (i.health_aggregates.cpu_time_system.max or 0)
-            - (i.health_aggregates.cpu_time_system.min or 0)
-            for i in self.worker_infos.values()
-        )
-
-        total_tasks_str = f"{total_completed}/{total_tasks}"
-        if total_failed > 0:
-            total_tasks_str += f" ({total_failed} failed)"
+            table.add_row(*_worker_stats_row(worker_id, info))
 
         table.add_section()
-        table.add_row(
-            f"[bold]TOTAL ({len(self.worker_infos)} workers)[/bold]",
-            f"[bold]{all_mem_min / 1e6:.1f} - {all_mem_max / 1e6:.1f}[/bold]",
-            f"[bold]max: {all_cpu_max:.1f}[/bold]",
-            "",
-            f"[bold]{int(all_vol_ctx_delta):,}[/bold]",
-            f"[bold]{int(all_invol_ctx_delta):,}[/bold]",
-            f"[bold]{format_bytes(int(all_io_read_delta))}[/bold]",
-            f"[bold]{format_bytes(int(all_io_write_delta))}[/bold]",
-            f"[bold]u:{all_cpu_user_delta:.1f} s:{all_cpu_sys_delta:.1f}[/bold]",
-            f"[bold]{total_tasks_str}[/bold]",
-        )
+        table.add_row(*_worker_stats_totals_row(self.worker_infos))
 
         console.print("\n")
         console.print(table)
         console.print("[dim]Values shown as: min / avg / max[/dim]")
         console.file.flush()
+
+
+def _build_worker_stats_table(title: str) -> Table:
+    table = Table(title=f"Worker Process Stats | {title}")
+    table.add_column("Worker", justify="left", style="cyan")
+    table.add_column("RSS (MB)", justify="right", style="green")
+    table.add_column("CPU (%)", justify="right", style="yellow")
+    table.add_column("Threads", justify="right")
+    table.add_column("Vol CtxSw", justify="right")
+    table.add_column("Invol CtxSw", justify="right")
+    table.add_column("Total Read", justify="right", style="blue")
+    table.add_column("Total Write", justify="right", style="magenta")
+    table.add_column("CPU Time (s)", justify="right")
+    table.add_column("Tasks", justify="right")
+    return table
+
+
+def _format_delta(stat, formatter=lambda v: f"{int(v):,}") -> str:
+    if stat.count > 0 and stat.min is not None and stat.max is not None:
+        return formatter(stat.max - stat.min)
+    return "N/A"
+
+
+def _format_cpu_time(cpu_user, cpu_sys) -> str:
+    if (
+        cpu_user.count > 0
+        and cpu_sys.count > 0
+        and cpu_user.min is not None
+        and cpu_sys.min is not None
+        and cpu_user.max is not None
+        and cpu_sys.max is not None
+    ):
+        return f"u:{cpu_user.max - cpu_user.min:.1f} s:{cpu_sys.max - cpu_sys.min:.1f}"
+    return "N/A"
+
+
+def _worker_stats_row(worker_id: str, info: WorkerStatusInfo) -> tuple[str, ...]:
+    agg = info.health_aggregates
+
+    mem = agg.memory_usage
+    mem_str = (
+        f"{mem.min / 1e6:.1f} / {mem.avg / 1e6:.1f} / {mem.max / 1e6:.1f}"
+        if mem.count > 0
+        else "N/A"
+    )
+
+    cpu = agg.cpu_usage
+    cpu_str = (
+        f"{cpu.min:.1f} / {cpu.avg:.1f} / {cpu.max:.1f}" if cpu.count > 0 else "N/A"
+    )
+
+    threads = agg.num_threads
+    threads_str = (
+        f"{int(threads.min)} / {threads.avg:.1f} / {int(threads.max)}"
+        if threads.count > 0
+        else "N/A"
+    )
+
+    tasks = info.task_stats
+    tasks_str = f"{tasks.completed}/{tasks.total}"
+    if tasks.failed > 0:
+        tasks_str += f" ({tasks.failed} failed)"
+
+    return (
+        worker_id.split("-")[-1],
+        mem_str,
+        cpu_str,
+        threads_str,
+        _format_delta(agg.voluntary_ctx_switches),
+        _format_delta(agg.involuntary_ctx_switches),
+        _format_delta(agg.io_read_bytes, lambda v: format_bytes(int(v))),
+        _format_delta(agg.io_write_bytes, lambda v: format_bytes(int(v))),
+        _format_cpu_time(agg.cpu_time_user, agg.cpu_time_system),
+        tasks_str,
+    )
+
+
+def _worker_stats_totals_row(
+    worker_infos: dict[str, WorkerStatusInfo],
+) -> tuple[str, ...]:
+    total_tasks = sum(i.task_stats.total for i in worker_infos.values())
+    total_completed = sum(i.task_stats.completed for i in worker_infos.values())
+    total_failed = sum(i.task_stats.failed for i in worker_infos.values())
+
+    all_mem_min = min(
+        (i.health_aggregates.memory_usage.min or float("inf"))
+        for i in worker_infos.values()
+    )
+    all_mem_max = max(
+        (i.health_aggregates.memory_usage.max or 0) for i in worker_infos.values()
+    )
+    all_cpu_max = max(
+        (i.health_aggregates.cpu_usage.max or 0) for i in worker_infos.values()
+    )
+
+    def _delta_sum(attr: str) -> float:
+        return sum(
+            (getattr(i.health_aggregates, attr).max or 0)
+            - (getattr(i.health_aggregates, attr).min or 0)
+            for i in worker_infos.values()
+        )
+
+    all_vol_ctx_delta = _delta_sum("voluntary_ctx_switches")
+    all_invol_ctx_delta = _delta_sum("involuntary_ctx_switches")
+    all_io_read_delta = _delta_sum("io_read_bytes")
+    all_io_write_delta = _delta_sum("io_write_bytes")
+    all_cpu_user_delta = _delta_sum("cpu_time_user")
+    all_cpu_sys_delta = _delta_sum("cpu_time_system")
+
+    total_tasks_str = f"{total_completed}/{total_tasks}"
+    if total_failed > 0:
+        total_tasks_str += f" ({total_failed} failed)"
+
+    return (
+        f"[bold]TOTAL ({len(worker_infos)} workers)[/bold]",
+        f"[bold]{all_mem_min / 1e6:.1f} - {all_mem_max / 1e6:.1f}[/bold]",
+        f"[bold]max: {all_cpu_max:.1f}[/bold]",
+        "",
+        f"[bold]{int(all_vol_ctx_delta):,}[/bold]",
+        f"[bold]{int(all_invol_ctx_delta):,}[/bold]",
+        f"[bold]{format_bytes(int(all_io_read_delta))}[/bold]",
+        f"[bold]{format_bytes(int(all_io_write_delta))}[/bold]",
+        f"[bold]u:{all_cpu_user_delta:.1f} s:{all_cpu_sys_delta:.1f}[/bold]",
+        f"[bold]{total_tasks_str}[/bold]",
+    )
 
 
 def main() -> None:

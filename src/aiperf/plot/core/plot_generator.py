@@ -35,6 +35,56 @@ from aiperf.plot.core.plot_specs import Style
 from aiperf.plot.metric_names import get_gpu_metric_unit, get_metric_display_name
 
 
+def _is_percentage_metric(metric_name: str) -> bool:
+    """Return True when a metric is expressed in percent (unit == '%' or has 'utilization')."""
+    if get_gpu_metric_unit(metric_name) == "%":
+        return True
+    return "utilization" in metric_name.lower()
+
+
+def _sort_prometheus_buckets(
+    buckets: dict[str, int],
+) -> tuple[list[str], list[int]]:
+    """Sort Prometheus histogram buckets by numeric ``le`` upper bound ('+Inf' last)."""
+    sorted_entries: list[tuple[str, float, int]] = []
+    for le, count in buckets.items():
+        if le == "+Inf":
+            sort_key = float("inf")
+        else:
+            try:
+                sort_key = float(le)
+            except ValueError:
+                sort_key = float("inf")
+        sorted_entries.append((le, sort_key, count))
+    sorted_entries.sort(key=lambda entry: entry[1])
+    return [b[0] for b in sorted_entries], [b[2] for b in sorted_entries]
+
+
+def _sweep_pareto(
+    y_values: np.ndarray,
+    y_direction: "PlotMetricDirection",
+    *,
+    reverse: bool,
+) -> np.ndarray:
+    """Single-pass Pareto sweep over y_values (forward when reverse=False)."""
+    n = len(y_values)
+    is_pareto = np.zeros(n, dtype=bool)
+    indices = range(n - 1, -1, -1) if reverse else range(n)
+    if y_direction == PlotMetricDirection.HIGHER:
+        best = float("-inf")
+        for i in indices:
+            if y_values[i] >= best:
+                is_pareto[i] = True
+                best = y_values[i]
+    else:
+        best = float("inf")
+        for i in indices:
+            if y_values[i] <= best:
+                is_pareto[i] = True
+                best = y_values[i]
+    return is_pareto
+
+
 def get_nvidia_color_scheme(
     n_colors: int,
     palette_name: str = "bright",
@@ -72,6 +122,7 @@ def get_nvidia_color_scheme(
 def detect_directional_outliers(
     values: np.ndarray | pd.Series,
     metric_name: str,
+    *,
     run_average: float | None = None,
     run_std: float | None = None,
     slice_stds: np.ndarray | pd.Series | None = None,
@@ -193,6 +244,37 @@ class PlotGenerator:
         """
         return self._color_pool[:n_colors]
 
+    def _build_axis_layout(self, autoscale_active: bool) -> dict:
+        """NVIDIA-themed axis layout dict."""
+        return {
+            "gridcolor": self.colors["grid"],
+            "showline": True,
+            "linecolor": self.colors["border"],
+            "color": self.colors["text"],
+            "rangemode": "normal" if autoscale_active else "tozero",
+        }
+
+    def _build_legend_layout(self) -> dict:
+        """NVIDIA-themed legend layout dict."""
+        paper = self.colors["paper"]
+        return {
+            "font": {
+                "size": 11,
+                "family": PLOT_FONT_FAMILY,
+                "color": self.colors["text"],
+            },
+            "bgcolor": (
+                f"rgba({int(paper[1:3], 16)}, {int(paper[3:5], 16)}, "
+                f"{int(paper[5:7], 16)}, 0.8)"
+            ),
+            "bordercolor": self.colors["border"],
+            "borderwidth": 1,
+            "x": 1.02,
+            "y": 1.0,
+            "xanchor": "left",
+            "yanchor": "top",
+        }
+
     def _get_base_layout(
         self,
         title: str,
@@ -202,25 +284,11 @@ class PlotGenerator:
         hovermode: str | None = None,
         autoscale: str = "none",
     ) -> dict:
-        """
-        Get base layout configuration with NVIDIA branding.
+        """Base layout with NVIDIA branding (fonts, colors, margins, grid).
 
-        Provides consistent styling (fonts, colors, margins, grid) that can be
-        applied to all plot types. This is the single source of truth for
-        NVIDIA brand styling.
-
-        Args:
-            title: Plot title text
-            x_label: X-axis label text
-            y_label: Y-axis label text
-            hovermode: Optional hover mode (e.g., "x unified")
-            autoscale: Which axes to autoscale ("none", "x", "y", "both")
-
-        Returns:
-            Dictionary of layout configuration ready for fig.update_layout()
+        ``autoscale`` selects which axes use rangemode ``normal`` vs ``tozero``.
         """
         template = "plotly_dark" if self.theme == PlotTheme.DARK else "plotly_white"
-
         layout = {
             "title": {
                 "text": title,
@@ -244,39 +312,12 @@ class PlotGenerator:
             "margin": {"l": 60, "r": 150, "t": 70, "b": 80},
             "plot_bgcolor": self.colors["background"],
             "paper_bgcolor": self.colors["paper"],
-            "xaxis": {
-                "gridcolor": self.colors["grid"],
-                "showline": True,
-                "linecolor": self.colors["border"],
-                "color": self.colors["text"],
-                "rangemode": "normal" if autoscale in ("x", "both") else "tozero",
-            },
-            "yaxis": {
-                "gridcolor": self.colors["grid"],
-                "showline": True,
-                "linecolor": self.colors["border"],
-                "color": self.colors["text"],
-                "rangemode": "normal" if autoscale in ("y", "both") else "tozero",
-            },
-            "legend": {
-                "font": {
-                    "size": 11,
-                    "family": PLOT_FONT_FAMILY,
-                    "color": self.colors["text"],
-                },
-                "bgcolor": f"rgba({int(self.colors['paper'][1:3], 16)}, {int(self.colors['paper'][3:5], 16)}, {int(self.colors['paper'][5:7], 16)}, 0.8)",
-                "bordercolor": self.colors["border"],
-                "borderwidth": 1,
-                "x": 1.02,
-                "y": 1.0,
-                "xanchor": "left",
-                "yanchor": "top",
-            },
+            "xaxis": self._build_axis_layout(autoscale in ("x", "both")),
+            "yaxis": self._build_axis_layout(autoscale in ("y", "both")),
+            "legend": self._build_legend_layout(),
         }
-
         if hovermode:
             layout["hovermode"] = hovermode
-
         return layout
 
     def _prepare_groups(
@@ -286,29 +327,11 @@ class PlotGenerator:
         experiment_types: dict[str, str] | None = None,
         group_display_names: dict[str, str] | None = None,
     ) -> tuple[list[str | None], dict[str, str], dict[str, str]]:
-        """
-        Prepare group list and color mapping for multi-series plots.
+        """Group list + color map for multi-series plots.
 
-        Supports two modes:
-        1. Experiment groups coloring: When experiment_types provided, uses NVIDIA brand colors
-           (baselines=grey, treatments=green) with custom legend ordering.
-        2. Other coloring: Uses distinct seaborn colors for each group.
-
-        Args:
-            df: DataFrame containing the data
-            group_by: Column name to group by (e.g., "model", "concurrency"), or None for no grouping
-            experiment_types: Optional mapping of group_name -> "baseline"|"treatment".
-                If provided, uses NVIDIA brand colors (grey for baselines, green for treatments).
-                If None, uses distinct seaborn colors. Raises ValueError if any group has an
-                experiment_type other than "baseline" or "treatment".
-            group_display_names: Optional mapping of group_name -> display_name for legends
-
-        Returns:
-            Tuple of (groups, group_colors, group_display_names) where:
-            - groups: Sorted list of group values (baselines first, then treatments),
-                or [None] if no grouping
-            - group_colors: Dict mapping group values to color hex codes
-            - group_display_names: Dict mapping group values to display names (or empty dict)
+        If ``experiment_types`` is given, uses grey for baselines and green for the
+        first treatment (seaborn for remaining treatments); otherwise assigns
+        distinct palette colors from the instance color pool.
         """
         logger = logging.getLogger(__name__)
 
@@ -321,58 +344,11 @@ class PlotGenerator:
             f"Preparing groups with group_by='{group_by}': found {len(groups)} unique values: {groups}"
         )
 
-        # Experiment groups coloring: Use grey for baselines, green for first treatment, and distinct seaborn colors for remaining treatments
         if experiment_types:
-            baselines = [g for g in groups if experiment_types.get(g) == "baseline"]
-            treatments = [g for g in groups if experiment_types.get(g) == "treatment"]
-
-            # Validate that all groups have valid experiment_types
-            unknown_groups = [
-                g
-                for g in groups
-                if experiment_types.get(g) not in ("baseline", "treatment")
-            ]
-            if unknown_groups:
-                invalid_mappings = {g: experiment_types.get(g) for g in unknown_groups}
-                raise ValueError(
-                    f"Invalid experiment_type for groups: {invalid_mappings}. "
-                    f"Expected 'baseline' or 'treatment'."
-                )
-
-            baselines = sorted(baselines)
-            treatments = sorted(treatments)
-
-            ordered_groups = baselines + treatments
-
-            group_colors = {}
-
-            for group in baselines:
-                group_colors[group] = NVIDIA_GRAY
-
-            if len(treatments) > 0:
-                group_colors[treatments[0]] = NVIDIA_GREEN
-
-            if len(treatments) > 1:
-                seaborn_colors = sns.color_palette(
-                    "bright", n_colors=len(treatments) - 1
-                ).as_hex()
-                for i, group in enumerate(treatments[1:]):
-                    group_colors[group] = seaborn_colors[i]
-
-            logger.info(
-                f"Applied semantic coloring: {len(baselines)} baselines, {len(treatments)} treatments"
+            return self._prepare_experiment_groups(
+                groups, experiment_types, group_display_names, logger
             )
-            logger.info(f"  Baselines: {baselines}")
-            logger.info(f"  Treatments: {treatments}")
-            logger.info(f"  Color assignments: {group_colors}")
 
-            self._validate_line_count(len(ordered_groups))
-
-            display_names = group_display_names or {}
-
-            return ordered_groups, group_colors, display_names
-
-        # Other coloring: Use distinct seaborn colors for each group
         for group in groups:
             if group not in self._group_color_registry:
                 color_index = self._next_color_index % len(self._color_pool)
@@ -381,6 +357,53 @@ class PlotGenerator:
 
         group_colors = {group: self._group_color_registry[group] for group in groups}
         return groups, group_colors, (group_display_names or {})
+
+    def _prepare_experiment_groups(
+        self,
+        groups: list,
+        experiment_types: dict[str, str],
+        group_display_names: dict[str, str] | None,
+        logger: logging.Logger,
+    ) -> tuple[list[str | None], dict[str, str], dict[str, str]]:
+        """Baseline/treatment coloring: grey baselines, green first treatment, seaborn rest."""
+        baselines = [g for g in groups if experiment_types.get(g) == "baseline"]
+        treatments = [g for g in groups if experiment_types.get(g) == "treatment"]
+
+        unknown_groups = [
+            g
+            for g in groups
+            if experiment_types.get(g) not in ("baseline", "treatment")
+        ]
+        if unknown_groups:
+            invalid_mappings = {g: experiment_types.get(g) for g in unknown_groups}
+            raise ValueError(
+                f"Invalid experiment_type for groups: {invalid_mappings}. "
+                f"Expected 'baseline' or 'treatment'."
+            )
+
+        baselines = sorted(baselines)
+        treatments = sorted(treatments)
+        ordered_groups = baselines + treatments
+
+        group_colors: dict[str, str] = {g: NVIDIA_GRAY for g in baselines}
+        if len(treatments) > 0:
+            group_colors[treatments[0]] = NVIDIA_GREEN
+        if len(treatments) > 1:
+            seaborn_colors = sns.color_palette(
+                "bright", n_colors=len(treatments) - 1
+            ).as_hex()
+            for i, group in enumerate(treatments[1:]):
+                group_colors[group] = seaborn_colors[i]
+
+        logger.info(
+            f"Applied semantic coloring: {len(baselines)} baselines, {len(treatments)} treatments"
+        )
+        logger.info(f"  Baselines: {baselines}")
+        logger.info(f"  Treatments: {treatments}")
+        logger.info(f"  Color assignments: {group_colors}")
+
+        self._validate_line_count(len(ordered_groups))
+        return ordered_groups, group_colors, group_display_names or {}
 
     def _validate_line_count(self, n_traces: int) -> None:
         """Warn if more than 4 lines/traces in a single plot (once per session)."""
@@ -445,61 +468,19 @@ class PlotGenerator:
         x_direction: PlotMetricDirection,
         y_direction: PlotMetricDirection,
     ) -> np.ndarray:
-        """
-        Compute Pareto frontier using O(n log n) sweep algorithm.
+        """Pareto frontier via single-sweep O(n log n) after sort by x-coordinate.
 
-        The algorithm leverages the fact that after sorting by x-coordinate, we can
-        scan once (left-to-right or right-to-left depending on metric directions)
-        and track the best y-value seen so far to determine Pareto optimality.
-
-        Args:
-            x_values: X-axis metric values (must already be sorted ascending)
-            y_values: Y-axis metric values (corresponding to x_values)
-            x_direction: Whether higher or lower x is better
-            y_direction: Whether higher or lower y is better
-
-        Returns:
-            Boolean array where True indicates point is on Pareto frontier
+        Uses non-strict comparisons so identical points are all on the frontier.
         """
         n = len(x_values)
-
         if n == 0:
             return np.array([], dtype=bool)
         if n == 1:
             return np.array([True], dtype=bool)
 
-        is_pareto = np.zeros(n, dtype=bool)
-
-        # Use non-strict comparisons (>= and <=) so identical points are all on the frontier.
-        # When points have the same coordinates, none dominates any other.
         if x_direction == PlotMetricDirection.LOWER:
-            if y_direction == PlotMetricDirection.HIGHER:
-                best_y = float("-inf")
-                for i in range(n):
-                    if y_values[i] >= best_y:
-                        is_pareto[i] = True
-                        best_y = y_values[i]
-            else:
-                best_y = float("inf")
-                for i in range(n):
-                    if y_values[i] <= best_y:
-                        is_pareto[i] = True
-                        best_y = y_values[i]
-        else:
-            if y_direction == PlotMetricDirection.HIGHER:
-                best_y = float("-inf")
-                for i in range(n - 1, -1, -1):
-                    if y_values[i] >= best_y:
-                        is_pareto[i] = True
-                        best_y = y_values[i]
-            else:
-                best_y = float("inf")
-                for i in range(n - 1, -1, -1):
-                    if y_values[i] <= best_y:
-                        is_pareto[i] = True
-                        best_y = y_values[i]
-
-        return is_pareto
+            return _sweep_pareto(y_values, y_direction, reverse=False)
+        return _sweep_pareto(y_values, y_direction, reverse=True)
 
     def _is_pareto_efficient(self, costs: np.ndarray) -> np.ndarray:
         """Find Pareto-efficient points where we want to maximize both dimensions.
@@ -541,173 +522,239 @@ class PlotGenerator:
         experiment_types: dict[str, str] | None = None,
         group_display_names: dict[str, str] | None = None,
     ) -> go.Figure:
-        """Create a Pareto curve plot showing trade-offs between two metrics.
-
-        The Pareto frontier is calculated automatically, highlighting optimal
-        configurations where improving one metric doesn't worsen the other.
-
-        Args:
-            df: DataFrame containing the metrics
-            x_metric: Column name for x-axis metric (e.g., "latency")
-            y_metric: Column name for y-axis metric (e.g., "throughput")
-            label_by: Column to use for point labels (default: "concurrency")
-            group_by: Column to group data by for multi-series (default: "model")
-            title: Plot title (auto-generated if None)
-            x_label: X-axis label (auto-generated if None)
-            y_label: Y-axis label (auto-generated if None)
-
-        Returns:
-            Plotly Figure object with pareto curve and data points
-        """
+        """Pareto curve plot: trade-off between two metrics with auto-computed frontier."""
         df_sorted = df.sort_values(x_metric)
         fig = go.Figure()
 
-        # Auto-generate labels if not provided
         title = (
             title
             or f"Pareto Curve: {get_metric_display_name(y_metric)} vs {get_metric_display_name(x_metric)}"
         )
         x_label = x_label or get_metric_display_name(x_metric)
         y_label = y_label or get_metric_display_name(y_metric)
-
-        # Use default label_by if None provided
         if label_by is None:
             label_by = "concurrency"
 
         groups, group_colors, display_names = self._prepare_groups(
             df_sorted, group_by, experiment_types, group_display_names
         )
+        x_dir = self._get_metric_direction(x_metric)
+        y_dir = self._get_metric_direction(y_metric)
+        self._require_metric_directions(x_metric, y_metric, x_dir, y_dir)
 
         for group in groups:
-            if group is None:
-                group_data = df_sorted
-                group_color = self._get_palette_colors(1)[0]
-                group_name = "Data"
-            else:
-                # df_sorted is already sorted by x_metric, filtering preserves order
-                group_data = df_sorted[df_sorted[group_by] == group]
-                group_color = group_colors[group]
-                # Use display name if available, otherwise use group ID
-                # Convert to string to ensure compatibility with Plotly (handles numpy types)
-                group_name = str(display_names.get(group, group))
-
-            # Calculate Pareto frontier for this group based on metric directions
-            x_dir = self._get_metric_direction(x_metric)
-            y_dir = self._get_metric_direction(y_metric)
-
-            if not x_dir or not y_dir:
-                missing = []
-                if not x_dir:
-                    missing.append(f"x-axis metric '{x_metric}'")
-                if not y_dir:
-                    missing.append(f"y-axis metric '{y_metric}'")
-
-                raise ValueError(
-                    f"Cannot determine optimization direction for {' and '.join(missing)}. "
-                    f"Metrics must be registered in MetricRegistry with LARGER_IS_BETTER flag "
-                    f"or defined in DERIVED_METRIC_DIRECTIONS. Add the metric(s) to ensure "
-                    f"correct Pareto frontier calculation."
-                )
-
-            # Sort by x, then by y (best y first) to handle ties in x correctly.
-            # For ties in x, only the point with best y can be on the frontier.
-            y_ascending = y_dir == PlotMetricDirection.LOWER
-            group_data = group_data.sort_values(
-                [x_metric, y_metric], ascending=[True, y_ascending]
-            )
-            x_values = group_data[x_metric].values
-            y_values = group_data[y_metric].values
-            is_pareto = self._compute_pareto_frontier(x_values, y_values, x_dir, y_dir)
-
-            df_pareto = group_data[is_pareto].sort_values(x_metric)
-
-            if not df_pareto.empty:
-                # Shadow for Pareto frontier line (only connects optimal points)
-                fig.add_trace(
-                    go.Scatter(
-                        x=df_pareto[x_metric],
-                        y=df_pareto[y_metric],
-                        mode="lines",
-                        line=dict(width=8, color="rgba(255, 255, 255, 0.1)"),
-                        showlegend=False,
-                        hoverinfo="skip",
-                        legendgroup=group_name,
-                    )
-                )
-
-                # Main Pareto frontier line (only connects optimal points)
-                fig.add_trace(
-                    go.Scatter(
-                        x=df_pareto[x_metric],
-                        y=df_pareto[y_metric],
-                        mode="lines",
-                        line=dict(width=3, color=group_color),
-                        showlegend=False,
-                        hoverinfo="skip",
-                        legendgroup=group_name,
-                    )
-                )
-
-            # Prepare labels and hover text
-            labels = [str(val) for val in group_data[label_by]]
-            hovertexts = [
-                f"<b>{group_name} - {label}</b><br>{x_label}: {x:.1f}<br>{y_label}: {y:.1f}<br><i>💡 Click for full config</i>"
-                for label, x, y in zip(
-                    labels, group_data[x_metric], group_data[y_metric], strict=False
-                )
-            ]
-
-            # Shadow layer for markers
-            fig.add_trace(
-                go.Scatter(
-                    x=group_data[x_metric],
-                    y=group_data[y_metric],
-                    mode="markers",
-                    marker=dict(
-                        size=14,
-                        symbol="circle",
-                        color="rgba(255, 255, 255, 0.15)",
-                        line=dict(width=0),
-                    ),
-                    showlegend=False,
-                    hoverinfo="skip",
-                    legendgroup=group_name,
-                )
+            self._add_pareto_group(
+                fig,
+                df_sorted=df_sorted,
+                group=group,
+                group_by=group_by,
+                group_colors=group_colors,
+                display_names=display_names,
+                x_metric=x_metric,
+                y_metric=y_metric,
+                label_by=label_by,
+                x_dir=x_dir,
+                y_dir=y_dir,
+                x_label=x_label,
+                y_label=y_label,
             )
 
-            # Main markers
-            fig.add_trace(
-                go.Scatter(
-                    x=group_data[x_metric],
-                    y=group_data[y_metric],
-                    mode="markers+text",
-                    marker=dict(
-                        size=9,
-                        symbol="circle",
-                        color=group_color,
-                        line=dict(width=0),
-                    ),
-                    text=labels,
-                    textposition="top center",
-                    textfont=dict(
-                        size=10,
-                        color=self.colors["text"],
-                        family=PLOT_FONT_FAMILY,
-                        weight="bold",
-                    ),
-                    hovertemplate="%{customdata.text}<extra></extra>",
-                    customdata=hovertexts,
-                    name=group_name,
-                    showlegend=(group is not None),
-                    legendgroup=group_name,
-                )
-            )
-
-        # Apply NVIDIA branding layout
-        layout = self._get_base_layout(title, x_label, y_label)
-        fig.update_layout(layout)
-
+        fig.update_layout(self._get_base_layout(title, x_label, y_label))
         return fig
+
+    def _require_metric_directions(
+        self,
+        x_metric: str,
+        y_metric: str,
+        x_dir: PlotMetricDirection | str,
+        y_dir: PlotMetricDirection | str,
+    ) -> None:
+        """Raise ValueError listing any metrics missing a direction registration."""
+        if x_dir and y_dir:
+            return
+        missing = []
+        if not x_dir:
+            missing.append(f"x-axis metric '{x_metric}'")
+        if not y_dir:
+            missing.append(f"y-axis metric '{y_metric}'")
+        raise ValueError(
+            f"Cannot determine optimization direction for {' and '.join(missing)}. "
+            f"Metrics must be registered in MetricRegistry with LARGER_IS_BETTER flag "
+            f"or defined in DERIVED_METRIC_DIRECTIONS. Add the metric(s) to ensure "
+            f"correct Pareto frontier calculation."
+        )
+
+    def _resolve_group_slice(
+        self,
+        df_sorted: pd.DataFrame,
+        group: str | None,
+        *,
+        group_by: str | None,
+        group_colors: dict[str, str],
+        display_names: dict[str, str],
+    ) -> tuple[pd.DataFrame, str, str]:
+        """Slice dataframe and pick color + display name for one group (None == no grouping)."""
+        if group is None:
+            return df_sorted, self._get_palette_colors(1)[0], "Data"
+        return (
+            df_sorted[df_sorted[group_by] == group],
+            group_colors[group],
+            str(display_names.get(group, group)),
+        )
+
+    def _add_pareto_group(
+        self,
+        fig: go.Figure,
+        *,
+        df_sorted: pd.DataFrame,
+        group: str | None,
+        group_by: str | None,
+        group_colors: dict[str, str],
+        display_names: dict[str, str],
+        x_metric: str,
+        y_metric: str,
+        label_by: str,
+        x_dir: PlotMetricDirection,
+        y_dir: PlotMetricDirection,
+        x_label: str,
+        y_label: str,
+    ) -> None:
+        """Render one group's frontier line + markers (shadow + main)."""
+        group_data, group_color, group_name = self._resolve_group_slice(
+            df_sorted,
+            group,
+            group_by=group_by,
+            group_colors=group_colors,
+            display_names=display_names,
+        )
+        y_ascending = y_dir == PlotMetricDirection.LOWER
+        group_data = group_data.sort_values(
+            [x_metric, y_metric], ascending=[True, y_ascending]
+        )
+        is_pareto = self._compute_pareto_frontier(
+            group_data[x_metric].values, group_data[y_metric].values, x_dir, y_dir
+        )
+        df_pareto = group_data[is_pareto].sort_values(x_metric)
+
+        if not df_pareto.empty:
+            self._add_pareto_frontier_lines(
+                fig,
+                df_pareto,
+                x_metric=x_metric,
+                y_metric=y_metric,
+                group_color=group_color,
+                group_name=group_name,
+            )
+
+        labels = [str(val) for val in group_data[label_by]]
+        hovertexts = [
+            f"<b>{group_name} - {label}</b><br>{x_label}: {x:.1f}<br>{y_label}: {y:.1f}<br><i>💡 Click for full config</i>"
+            for label, x, y in zip(
+                labels, group_data[x_metric], group_data[y_metric], strict=False
+            )
+        ]
+        self._add_pareto_markers(
+            fig,
+            group_data=group_data,
+            x_metric=x_metric,
+            y_metric=y_metric,
+            labels=labels,
+            hovertexts=hovertexts,
+            group=group,
+            group_color=group_color,
+            group_name=group_name,
+        )
+
+    def _add_pareto_frontier_lines(
+        self,
+        fig: go.Figure,
+        df_pareto: pd.DataFrame,
+        *,
+        x_metric: str,
+        y_metric: str,
+        group_color: str,
+        group_name: str,
+    ) -> None:
+        """Shadow + main frontier line traces."""
+        fig.add_trace(
+            go.Scatter(
+                x=df_pareto[x_metric],
+                y=df_pareto[y_metric],
+                mode="lines",
+                line=dict(width=8, color="rgba(255, 255, 255, 0.1)"),
+                showlegend=False,
+                hoverinfo="skip",
+                legendgroup=group_name,
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=df_pareto[x_metric],
+                y=df_pareto[y_metric],
+                mode="lines",
+                line=dict(width=3, color=group_color),
+                showlegend=False,
+                hoverinfo="skip",
+                legendgroup=group_name,
+            )
+        )
+
+    def _add_pareto_markers(
+        self,
+        fig: go.Figure,
+        *,
+        group_data: pd.DataFrame,
+        x_metric: str,
+        y_metric: str,
+        labels: list[str],
+        hovertexts: list[str],
+        group: str | None,
+        group_color: str,
+        group_name: str,
+    ) -> None:
+        """Shadow + main marker traces (labels + hover) for one Pareto group."""
+        fig.add_trace(
+            go.Scatter(
+                x=group_data[x_metric],
+                y=group_data[y_metric],
+                mode="markers",
+                marker=dict(
+                    size=14,
+                    symbol="circle",
+                    color="rgba(255, 255, 255, 0.15)",
+                    line=dict(width=0),
+                ),
+                showlegend=False,
+                hoverinfo="skip",
+                legendgroup=group_name,
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=group_data[x_metric],
+                y=group_data[y_metric],
+                mode="markers+text",
+                marker=dict(
+                    size=9,
+                    symbol="circle",
+                    color=group_color,
+                    line=dict(width=0),
+                ),
+                text=labels,
+                textposition="top center",
+                textfont=dict(
+                    size=10,
+                    color=self.colors["text"],
+                    family=PLOT_FONT_FAMILY,
+                    weight="bold",
+                ),
+                hovertemplate="%{customdata.text}<extra></extra>",
+                customdata=hovertexts,
+                name=group_name,
+                showlegend=(group is not None),
+                legendgroup=group_name,
+            )
+        )
 
     def create_scatter_line_plot(
         self,
@@ -724,26 +771,10 @@ class PlotGenerator:
         group_display_names: dict[str, str] | None = None,
         mode: str = "lines+markers",
     ) -> go.Figure:
-        """Create a scatter plot with or without connecting lines.
-
-        Args:
-            df: DataFrame containing the metrics
-            x_metric: Column name for x-axis metric
-            y_metric: Column name for y-axis metric
-            label_by: Column to use for point labels (default: "concurrency")
-            group_by: Column to group data by for multi-series (default: "model")
-            title: Plot title (auto-generated if None)
-            x_label: X-axis label (auto-generated if None)
-            y_label: Y-label label (auto-generated if None)
-            mode: Plot mode - "lines+markers" or "markers" (default: "lines+markers")
-
-        Returns:
-            Plotly Figure object with scatter plot
-        """
+        """Scatter plot with optional connecting lines ('lines+markers' by default)."""
         df_sorted = df.sort_values(x_metric)
         fig = go.Figure()
 
-        # Auto-generate labels if not provided
         title = (
             title
             or f"{get_metric_display_name(y_metric)} vs {get_metric_display_name(x_metric)}"
@@ -751,77 +782,94 @@ class PlotGenerator:
         x_label = x_label or get_metric_display_name(x_metric)
         y_label = y_label or get_metric_display_name(y_metric)
 
-        # Prepare groups and colors
         groups, group_colors, display_names = self._prepare_groups(
             df_sorted, group_by, experiment_types, group_display_names
         )
 
         for group in groups:
-            if group is None:
-                group_data = df_sorted
-                group_color = self._get_palette_colors(1)[0]
-                group_name = "Data"
-            else:
-                # df_sorted is already sorted by x_metric, filtering preserves order
-                group_data = df_sorted[df_sorted[group_by] == group]
-                group_color = group_colors[group]
-                # Use display name if available, otherwise use group ID
-                # Convert to string to ensure compatibility with Plotly (handles numpy types)
-                group_name = str(display_names.get(group, group))
-
-            # Determine shadow and main modes based on mode parameter
-            shadow_mode = mode
-            main_mode = f"{mode}+text" if "text" not in mode else mode
-
-            # Shadow layer
-            fig.add_trace(
-                go.Scatter(
-                    x=group_data[x_metric],
-                    y=group_data[y_metric],
-                    mode=shadow_mode,
-                    marker=dict(
-                        size=14,
-                        color="rgba(255, 255, 255, 0.12)",
-                        symbol="circle",
-                        line=dict(width=0),
-                    ),
-                    line=dict(width=8, color="rgba(255, 255, 255, 0.08)"),
-                    showlegend=False,
-                    hoverinfo="skip",
-                )
+            group_data, group_color, group_name = self._resolve_group_slice(
+                df_sorted,
+                group,
+                group_by=group_by,
+                group_colors=group_colors,
+                display_names=display_names,
+            )
+            self._add_scatter_line_group(
+                fig,
+                group_data=group_data,
+                group=group,
+                group_color=group_color,
+                group_name=group_name,
+                x_metric=x_metric,
+                y_metric=y_metric,
+                label_by=label_by,
+                mode=mode,
+                x_label=x_label,
+                y_label=y_label,
             )
 
-            # Main trace
-            labels = [str(val) for val in group_data[label_by]]
-            fig.add_trace(
-                go.Scatter(
-                    x=group_data[x_metric],
-                    y=group_data[y_metric],
-                    mode=main_mode,
-                    marker=dict(
-                        size=9,
-                        color=group_color,
-                        symbol="circle",
-                        line=dict(width=0),
-                    ),
-                    line=dict(width=3, color=group_color),
-                    text=labels,
-                    textposition="top center",
-                    textfont=dict(
-                        size=9, color=self.colors["text"], family=PLOT_FONT_FAMILY
-                    ),
-                    hovertemplate=f"<b>{group_name} - %{{text}}</b><br>{x_label}: %{{x:.1f}}<br>{y_label}: %{{y:.1f}}<br><i>💡 Click for full config</i><extra></extra>",
-                    name=group_name,
-                    showlegend=(group is not None),
-                    legendgroup=group_name,
-                )
-            )
-
-        # Apply NVIDIA branding layout
-        layout = self._get_base_layout(title, x_label, y_label)
-        fig.update_layout(layout)
-
+        fig.update_layout(self._get_base_layout(title, x_label, y_label))
         return fig
+
+    def _add_scatter_line_group(
+        self,
+        fig: go.Figure,
+        *,
+        group_data: pd.DataFrame,
+        group: str | None,
+        group_color: str,
+        group_name: str,
+        x_metric: str,
+        y_metric: str,
+        label_by: str,
+        mode: str,
+        x_label: str,
+        y_label: str,
+    ) -> None:
+        """Shadow + main scatter/line traces for a single group."""
+        shadow_mode = mode
+        main_mode = f"{mode}+text" if "text" not in mode else mode
+
+        fig.add_trace(
+            go.Scatter(
+                x=group_data[x_metric],
+                y=group_data[y_metric],
+                mode=shadow_mode,
+                marker=dict(
+                    size=14,
+                    color="rgba(255, 255, 255, 0.12)",
+                    symbol="circle",
+                    line=dict(width=0),
+                ),
+                line=dict(width=8, color="rgba(255, 255, 255, 0.08)"),
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+        labels = [str(val) for val in group_data[label_by]]
+        fig.add_trace(
+            go.Scatter(
+                x=group_data[x_metric],
+                y=group_data[y_metric],
+                mode=main_mode,
+                marker=dict(
+                    size=9,
+                    color=group_color,
+                    symbol="circle",
+                    line=dict(width=0),
+                ),
+                line=dict(width=3, color=group_color),
+                text=labels,
+                textposition="top center",
+                textfont=dict(
+                    size=9, color=self.colors["text"], family=PLOT_FONT_FAMILY
+                ),
+                hovertemplate=f"<b>{group_name} - %{{text}}</b><br>{x_label}: %{{x:.1f}}<br>{y_label}: %{{y:.1f}}<br><i>💡 Click for full config</i><extra></extra>",
+                name=group_name,
+                showlegend=(group is not None),
+                legendgroup=group_name,
+            )
+        )
 
     def create_multi_run_bar_chart(
         self,
@@ -1033,81 +1081,72 @@ class PlotGenerator:
         average_label: str | None = None,
         average_std: float | None = None,
     ) -> go.Figure:
-        """Create a time series histogram/bar chart.
-
-        Args:
-            df: DataFrame containing the time series data
-            x_col: Column name for x-axis (e.g., "Timeslice")
-            y_col: Column name for y-axis values (e.g., "avg", "p50", "p90")
-            title: Plot title (auto-generated if None)
-            x_label: X-axis label (auto-generated if None)
-            y_label: Y-axis label (auto-generated if None)
-            slice_duration: Duration of each slice in seconds (for time-based x-axis)
-            warning_text: Optional warning text to display at bottom of plot
-            average_value: Optional average value across whole run to display as horizontal line
-            average_label: Optional label for the average line
-            average_std: Optional standard deviation to show as error band around average line
-
-        Returns:
-            Plotly Figure object with bar chart
-        """
+        """Time-series histogram/bar chart with optional run-average overlay and warning banner."""
         fig = go.Figure()
-
-        # Auto-generate labels if not provided
         title = title or f"{get_metric_display_name(y_col)} Over Time"
         x_label = x_label or (
             "Timeslice (s)" if slice_duration else get_metric_display_name(x_col)
         )
         y_label = y_label or get_metric_display_name(y_col)
 
-        # Get primary color from theme-specific palette
+        self._add_histogram_bar(
+            fig,
+            df=df,
+            x_col=x_col,
+            y_col=y_col,
+            x_label=x_label,
+            y_label=y_label,
+            slice_duration=slice_duration,
+        )
+
+        if average_value is not None:
+            self._add_run_average_overlay(
+                fig,
+                df=df,
+                x_col=x_col,
+                slice_duration=slice_duration,
+                average_value=average_value,
+                average_std=average_std,
+                average_label=average_label,
+            )
+
+        fig.update_layout(
+            self._build_histogram_layout(
+                title,
+                x_label,
+                y_label,
+                df=df,
+                x_col=x_col,
+                slice_duration=slice_duration,
+                warning_text=warning_text,
+            )
+        )
+        fig.update_layout(
+            legend=dict(x=0.99, y=0.01, xanchor="right", yanchor="bottom"),
+            margin=dict(r=20),
+        )
+        return fig
+
+    def _add_histogram_bar(
+        self,
+        fig: go.Figure,
+        *,
+        df: pd.DataFrame,
+        x_col: str,
+        y_col: str,
+        x_label: str,
+        y_label: str,
+        slice_duration: float | None,
+    ) -> None:
+        """Add the main Bar trace (including error_y if 'std' column present)."""
         primary_color = self._get_palette_colors(1)[0]
-        r, g, b = mcolors.to_rgb(primary_color)
-
-        # Prepare x-axis values and bar configuration
-        if slice_duration is not None:
-            # Use continuous time scale
-            slice_indices = df[x_col].values
-            # X-values are the center of each slice (bars are centered on x-value in plotly)
-            x_values = slice_indices * slice_duration + slice_duration / 2
-            # Bar width equals slice duration for continuous coverage
-            bar_width = slice_duration
-
-            # Prepare hover data with time ranges and slice indices
-            slice_start_times = slice_indices * slice_duration
-            time_ranges = [
-                f"{int(start)}s-{int(start + slice_duration)}s"
-                for start in slice_start_times
-            ]
-            hover_template = (
-                f"Time: %{{customdata[0]}}<br>"
-                f"Slice: %{{customdata[1]}}<br>"
-                f"{y_label}: %{{y:.2f}}<extra></extra>"
-            )
-            customdata = list(zip(time_ranges, slice_indices.astype(int), strict=False))
-
-            # Transparent bars with borders
-            marker_config = dict(
-                color=f"rgba({int(r * 255)}, {int(g * 255)}, {int(b * 255)}, 0.7)",
-                line=dict(color=primary_color, width=2),
-            )
-        else:
-            # Fallback for non-time-based data
-            x_values = df[x_col]
-            bar_width = None
-            hover_template = (
-                f"{x_label}: %{{x}}<br>{y_label}: %{{y:.2f}}<extra></extra>"
-            )
-            customdata = None
-            marker_config = dict(
-                color=primary_color,
-                line=dict(color=primary_color, width=0),
-            )
-
-        # Create bar chart with error bars if std is available
-        error_y_config = None
-        if "std" in df.columns:
-            error_y_config = dict(
+        x_values, bar_width, hover_template, customdata, marker_config = (
+            self._build_histogram_bar_config(df, x_col, y_label, slice_duration)
+        )
+        if slice_duration is None:
+            hover_template = f"{x_label}: {hover_template}"
+        error_y_config = (
+            dict(
                 type="data",
                 array=df["std"],
                 visible=True,
@@ -1115,7 +1154,9 @@ class PlotGenerator:
                 thickness=2,
                 width=6,
             )
-
+            if "std" in df.columns
+            else None
+        )
         fig.add_trace(
             go.Bar(
                 x=x_values,
@@ -1129,99 +1170,154 @@ class PlotGenerator:
             )
         )
 
-        # Add horizontal average line if provided
-        if average_value is not None:
-            if slice_duration is not None:
-                x_range = [0, (df[x_col].max() + 1) * slice_duration]
-            else:
-                x_range = [df[x_col].min() - 0.5, df[x_col].max() + 0.5]
+    def _build_histogram_bar_config(
+        self,
+        df: pd.DataFrame,
+        x_col: str,
+        y_label: str,
+        slice_duration: float | None,
+    ) -> tuple:
+        """Return (x_values, bar_width, hover_template, customdata, marker_config)."""
+        primary_color = self._get_palette_colors(1)[0]
+        r, g, b = mcolors.to_rgb(primary_color)
 
-            # Add shaded region for ±1 std if provided
-            if average_std is not None:
-                upper_bound = average_value + average_std
-                lower_bound = average_value - average_std
-
-                # Add filled area for std band
-                fig.add_trace(
-                    go.Scatter(
-                        x=x_range + x_range[::-1],
-                        y=[upper_bound, upper_bound, lower_bound, lower_bound],
-                        fill="toself",
-                        fillcolor="rgba(255, 184, 28, 0.2)",  # NVIDIA gold with 20% opacity
-                        line=dict(width=0),
-                        showlegend=True,
-                        name="±1 Std Dev",
-                        hovertemplate=f"±1 Std Dev: {lower_bound:.2f} - {upper_bound:.2f}<extra></extra>",
-                    )
-                )
-
-            # Add average line on top of std band
-            # Use secondary color from palette for average line
-            palette_colors = self._get_palette_colors(2)
-            avg_line_color = (
-                palette_colors[1] if len(palette_colors) > 1 else palette_colors[0]
+        if slice_duration is None:
+            marker_config = dict(
+                color=primary_color, line=dict(color=primary_color, width=0)
             )
+            hover = f"%{{x}}<br>{y_label}: %{{y:.2f}}<extra></extra>"
+            return df[x_col], None, hover, None, marker_config
 
+        slice_indices = df[x_col].values
+        x_values = slice_indices * slice_duration + slice_duration / 2
+        slice_start_times = slice_indices * slice_duration
+        time_ranges = [
+            f"{int(start)}s-{int(start + slice_duration)}s"
+            for start in slice_start_times
+        ]
+        hover = (
+            f"Time: %{{customdata[0]}}<br>"
+            f"Slice: %{{customdata[1]}}<br>"
+            f"{y_label}: %{{y:.2f}}<extra></extra>"
+        )
+        customdata = list(zip(time_ranges, slice_indices.astype(int), strict=False))
+        marker_config = dict(
+            color=f"rgba({int(r * 255)}, {int(g * 255)}, {int(b * 255)}, 0.7)",
+            line=dict(color=primary_color, width=2),
+        )
+        return x_values, slice_duration, hover, customdata, marker_config
+
+    def _add_run_average_overlay(
+        self,
+        fig: go.Figure,
+        *,
+        df: pd.DataFrame,
+        x_col: str,
+        slice_duration: float | None,
+        average_value: float,
+        average_std: float | None,
+        average_label: str | None,
+    ) -> None:
+        """Horizontal run-average line plus optional ±1 std filled band."""
+        if slice_duration is not None:
+            x_range = [0, (df[x_col].max() + 1) * slice_duration]
+        else:
+            x_range = [df[x_col].min() - 0.5, df[x_col].max() + 0.5]
+
+        if average_std is not None:
+            upper_bound = average_value + average_std
+            lower_bound = average_value - average_std
             fig.add_trace(
                 go.Scatter(
-                    x=x_range,
-                    y=[average_value, average_value],
-                    mode="lines",
-                    line=dict(color=avg_line_color, width=3),
-                    name=average_label or "Run Average",
+                    x=x_range + x_range[::-1],
+                    y=[upper_bound, upper_bound, lower_bound, lower_bound],
+                    fill="toself",
+                    fillcolor="rgba(255, 184, 28, 0.2)",
+                    line=dict(width=0),
                     showlegend=True,
-                    hovertemplate=f"{average_label or 'Run Average'}<extra></extra>",
+                    name="±1 Std Dev",
+                    hovertemplate=f"±1 Std Dev: {lower_bound:.2f} - {upper_bound:.2f}<extra></extra>",
                 )
             )
 
-        # Apply NVIDIA branding layout
-        layout = self._get_base_layout(title, x_label, y_label, hovermode="x unified")
+        palette_colors = self._get_palette_colors(2)
+        avg_line_color = (
+            palette_colors[1] if len(palette_colors) > 1 else palette_colors[0]
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=x_range,
+                y=[average_value, average_value],
+                mode="lines",
+                line=dict(color=avg_line_color, width=3),
+                name=average_label or "Run Average",
+                showlegend=True,
+                hovertemplate=f"{average_label or 'Run Average'}<extra></extra>",
+            )
+        )
 
-        # Configure x-axis for continuous time
+    def _build_warning_annotation(
+        self,
+        warning_text: str,
+        *,
+        y: float = -0.10,
+        yshift: int | None = None,
+    ) -> dict:
+        """Bottom-of-plot secondary-color warning banner annotation dict."""
+        secondary = self.colors["secondary"]
+        annotation = {
+            "x": 0.5,
+            "y": y,
+            "xref": "paper",
+            "yref": "paper",
+            "text": warning_text,
+            "showarrow": False,
+            "font": {
+                "size": 11,
+                "family": PLOT_FONT_FAMILY,
+                "color": secondary,
+            },
+            "bgcolor": (
+                f"rgba({int(secondary[1:3], 16)}, {int(secondary[3:5], 16)}, "
+                f"{int(secondary[5:7], 16)}, 0.1)"
+            ),
+            "bordercolor": secondary,
+            "borderwidth": 2,
+            "borderpad": 8,
+            "xanchor": "center",
+            "yanchor": "top",
+        }
+        if yshift is not None:
+            annotation["yshift"] = yshift
+        return annotation
+
+    def _build_histogram_layout(
+        self,
+        title: str,
+        x_label: str,
+        y_label: str,
+        *,
+        df: pd.DataFrame,
+        x_col: str,
+        slice_duration: float | None,
+        warning_text: str | None,
+    ) -> dict:
+        """Compose layout (zero gaps, slice ticks, warning banner) for histograms."""
+        layout = self._get_base_layout(title, x_label, y_label, hovermode="x unified")
         layout["bargap"] = 0
         layout["bargroupgap"] = 0
         if slice_duration is not None:
-            # Primary x-axis: Time values at boundaries
             slice_indices = df[x_col].values
             max_slice = slice_indices.max()
             layout["xaxis"]["dtick"] = slice_duration
             layout["xaxis"]["tick0"] = 0
             layout["xaxis"]["range"] = [0, (max_slice + 1) * slice_duration]
-
         if warning_text:
-            if "annotations" not in layout:
-                layout["annotations"] = []
-
             layout["margin"]["b"] = 140
-
-            warning_annotation = dict(
-                x=0.5,
-                y=-0.10,
-                xref="paper",
-                yref="paper",
-                text=warning_text,
-                showarrow=False,
-                font=dict(
-                    size=11, family=PLOT_FONT_FAMILY, color=self.colors["secondary"]
-                ),
-                bgcolor=f"rgba({int(self.colors['secondary'][1:3], 16)}, {int(self.colors['secondary'][3:5], 16)}, {int(self.colors['secondary'][5:7], 16)}, 0.1)",
-                bordercolor=self.colors["secondary"],
-                borderwidth=2,
-                borderpad=8,
-                xanchor="center",
-                yanchor="top",
-            )
             layout["annotations"] = list(layout.get("annotations", [])) + [
-                warning_annotation
+                self._build_warning_annotation(warning_text)
             ]
-
-        fig.update_layout(layout)
-        fig.update_layout(
-            legend=dict(x=0.99, y=0.01, xanchor="right", yanchor="bottom"),
-            margin=dict(r=20),
-        )
-
-        return fig
+        return layout
 
     def create_timeslice_scatter(
         self,
@@ -1240,155 +1336,287 @@ class PlotGenerator:
         average_std: float | None = None,
         unit: str = "",
     ) -> go.Figure:
-        """Create a timeslice scatter plot with outlier highlighting.
+        """Timeslice scatter with outlier highlighting (bad points in red).
 
-        Designed specifically for timeslice data with low data-to-ink ratio:
-        - Scatter points instead of bars
-        - Seaborn deep palette colors for normal points
-        - Red highlighting for bad outliers outside the run average ± std band
-        - Minimal grid and axes styling
-        - Error bars and average line overlay preserved
-        - Time range labels (e.g., "0-10", "10-20") on diagonal
-
-        Args:
-            df: DataFrame containing the timeslice data
-            x_col: Column name for x-axis (e.g., "Timeslice")
-            y_col: Column name for y-axis values (e.g., "avg", "p50", "p90")
-            metric_name: Name of the metric for outlier detection
-            title: Plot title (auto-generated if None)
-            x_label: X-axis label (auto-generated if None)
-            y_label: Y-axis label (auto-generated if None)
-            slice_duration: Duration of each slice in seconds (for time-based x-axis)
-            warning_text: Optional warning text to display at bottom of plot
-            average_value: Run average value (center of gold band) for outlier detection
-            average_label: Optional label for the average line
-            average_std: Run standard deviation (width of gold band) for outlier detection
-            unit: Unit of measurement for the metric (e.g., "ms", "tokens/s")
-
-        Returns:
-            Plotly Figure object with timeslice scatter plot
+        Outliers are detected via :func:`detect_directional_outliers` against the
+        run average ± std band.
         """
         fig = go.Figure()
+        ctx = self._prepare_timeslice_context(
+            df=df,
+            x_col=x_col,
+            y_col=y_col,
+            metric_name=metric_name,
+            title=title,
+            x_label=x_label,
+            y_label=y_label,
+            slice_duration=slice_duration,
+            average_value=average_value,
+            average_std=average_std,
+        )
 
+        if average_value is not None:
+            self._add_timeslice_average_overlay(
+                fig,
+                df=df,
+                x_col=x_col,
+                slice_duration=slice_duration,
+                average_value=average_value,
+                average_std=average_std,
+                average_label=average_label,
+                unit=unit,
+            )
+        self._add_timeslice_point_traces(
+            fig,
+            x_values=ctx["x_values"],
+            y_values=ctx["y_values"],
+            normal_mask=ctx["normal_mask"],
+            outlier_mask=ctx["outlier_mask"],
+            primary_color=ctx["primary_color"],
+            error_y_normal=ctx["error_y_normal"],
+            error_y_outlier=ctx["error_y_outlier"],
+            hover_template=ctx["hover_template"],
+            customdata=ctx["customdata"],
+        )
+        if "std" in df.columns and (
+            np.any(ctx["normal_mask"]) or np.any(ctx["outlier_mask"])
+        ):
+            self._add_timeslice_std_legend_proxy(fig, ctx["primary_color"])
+
+        fig.update_layout(
+            self._build_timeslice_layout(
+                ctx["title"],
+                ctx["x_label"],
+                ctx["y_label"],
+                df=df,
+                x_col=x_col,
+                slice_duration=slice_duration,
+                warning_text=warning_text,
+            )
+        )
+        fig.update_layout(
+            legend=dict(x=0.99, y=0.01, xanchor="right", yanchor="bottom"),
+            margin=dict(r=20),
+        )
+        return fig
+
+    def _prepare_timeslice_context(
+        self,
+        *,
+        df: pd.DataFrame,
+        x_col: str,
+        y_col: str,
+        metric_name: str,
+        title: str | None,
+        x_label: str | None,
+        y_label: str | None,
+        slice_duration: float | None,
+        average_value: float | None,
+        average_std: float | None,
+    ) -> dict:
+        """Build the shared context dict (labels, colors, masks, hover) for a timeslice plot."""
         title = title or f"{get_metric_display_name(y_col)} Over Time"
         x_label = x_label or (
             "Timeslice (s)" if slice_duration else get_metric_display_name(x_col)
         )
         y_label = y_label or get_metric_display_name(y_col)
-
-        # Get primary color from theme-specific palette for normal points
         primary_color = self._get_palette_colors(1)[0]
 
-        if slice_duration is not None:
-            slice_indices = df[x_col].values
-            x_values = slice_indices * slice_duration + slice_duration / 2
-
-            slice_start_times = slice_indices * slice_duration
-            time_ranges = [
-                f"{int(start)}s-{int(start + slice_duration)}s"
-                for start in slice_start_times
-            ]
-            hover_template = (
-                f"Time: %{{customdata[0]}}<br>"
-                f"Slice: %{{customdata[1]}}<br>"
-                f"{y_label}: %{{y:.2f}}<extra></extra>"
-            )
-            customdata = list(zip(time_ranges, slice_indices.astype(int), strict=False))
-        else:
-            x_values = df[x_col].values
-            hover_template = (
-                f"{x_label}: %{{x}}<br>{y_label}: %{{y:.2f}}<extra></extra>"
-            )
-            customdata = None
-
+        x_values, hover_template, customdata = self._timeslice_x_and_hover(
+            df,
+            x_col,
+            y_label=y_label,
+            x_label=x_label,
+            slice_duration=slice_duration,
+        )
         y_values = df[y_col].values
-        slice_stds = df["std"].values if "std" in df.columns else None
+        normal_mask, outlier_mask, error_y_normal, error_y_outlier = (
+            self._compute_timeslice_outliers(
+                df,
+                y_values,
+                metric_name,
+                average_value=average_value,
+                average_std=average_std,
+                primary_color=primary_color,
+            )
+        )
+        return {
+            "title": title,
+            "x_label": x_label,
+            "y_label": y_label,
+            "primary_color": primary_color,
+            "x_values": x_values,
+            "y_values": y_values,
+            "hover_template": hover_template,
+            "customdata": customdata,
+            "normal_mask": normal_mask,
+            "outlier_mask": outlier_mask,
+            "error_y_normal": error_y_normal,
+            "error_y_outlier": error_y_outlier,
+        }
+
+    def _compute_timeslice_outliers(
+        self,
+        df: pd.DataFrame,
+        y_values: np.ndarray,
+        metric_name: str,
+        *,
+        average_value: float | None,
+        average_std: float | None,
+        primary_color: str,
+    ) -> tuple[np.ndarray, np.ndarray, dict | None, dict | None]:
+        """Compute outlier mask + normal/outlier error-bar configs for timeslice scatter."""
         outlier_mask = detect_directional_outliers(
             y_values,
             metric_name,
             run_average=average_value,
             run_std=average_std,
-            slice_stds=slice_stds,
+            slice_stds=df["std"].values if "std" in df.columns else None,
         )
-
         normal_mask = ~outlier_mask
-        normal_x = x_values[normal_mask]
-        normal_y = y_values[normal_mask]
-        outlier_x = x_values[outlier_mask]
-        outlier_y = y_values[outlier_mask]
+        error_y_normal, error_y_outlier = self._timeslice_error_bars(
+            df, normal_mask, outlier_mask, primary_color
+        )
+        return normal_mask, outlier_mask, error_y_normal, error_y_outlier
 
-        error_y_normal = None
-        error_y_outlier = None
-        if "std" in df.columns:
-            std_values = df["std"].values
-            if np.any(normal_mask):
-                error_y_normal = dict(
-                    type="data",
-                    array=std_values[normal_mask],
-                    visible=True,
-                    color=primary_color,
-                    thickness=1.5,
-                    width=4,
-                )
-            if np.any(outlier_mask):
-                error_y_outlier = dict(
-                    type="data",
-                    array=std_values[outlier_mask],
-                    visible=True,
-                    color=OUTLIER_RED,
-                    thickness=1.5,
-                    width=4,
-                )
+    def _timeslice_x_and_hover(
+        self,
+        df: pd.DataFrame,
+        x_col: str,
+        *,
+        y_label: str,
+        x_label: str,
+        slice_duration: float | None,
+    ) -> tuple[np.ndarray, str, list | None]:
+        """Return (x_values, hover_template, customdata) for a timeslice scatter."""
+        if slice_duration is None:
+            hover = f"{x_label}: %{{x}}<br>{y_label}: %{{y:.2f}}<extra></extra>"
+            return df[x_col].values, hover, None
 
-        if average_value is not None:
-            if slice_duration is not None:
-                x_max = (df[x_col].max() + 1) * slice_duration
-                x_range = [0, x_max]
-            else:
-                x_range = [df[x_col].min() - 0.5, df[x_col].max() + 0.5]
+        slice_indices = df[x_col].values
+        x_values = slice_indices * slice_duration + slice_duration / 2
+        slice_start_times = slice_indices * slice_duration
+        time_ranges = [
+            f"{int(start)}s-{int(start + slice_duration)}s"
+            for start in slice_start_times
+        ]
+        hover = (
+            f"Time: %{{customdata[0]}}<br>"
+            f"Slice: %{{customdata[1]}}<br>"
+            f"{y_label}: %{{y:.2f}}<extra></extra>"
+        )
+        customdata = list(zip(time_ranges, slice_indices.astype(int), strict=False))
+        return x_values, hover, customdata
 
-            if average_std is not None:
-                upper_bound = average_value + average_std
-                lower_bound = average_value - average_std
+    def _timeslice_error_bars(
+        self,
+        df: pd.DataFrame,
+        normal_mask: np.ndarray,
+        outlier_mask: np.ndarray,
+        primary_color: str,
+    ) -> tuple[dict | None, dict | None]:
+        """Return (error_y_normal, error_y_outlier) configs for timeslice scatter."""
+        if "std" not in df.columns:
+            return None, None
+        std_values = df["std"].values
+        error_y_normal = (
+            dict(
+                type="data",
+                array=std_values[normal_mask],
+                visible=True,
+                color=primary_color,
+                thickness=1.5,
+                width=4,
+            )
+            if np.any(normal_mask)
+            else None
+        )
+        error_y_outlier = (
+            dict(
+                type="data",
+                array=std_values[outlier_mask],
+                visible=True,
+                color=OUTLIER_RED,
+                thickness=1.5,
+                width=4,
+            )
+            if np.any(outlier_mask)
+            else None
+        )
+        return error_y_normal, error_y_outlier
 
-                std_label = f"Run Std: {average_std:.2f}"
-                if unit:
-                    std_label = f"{std_label} {unit}"
+    def _add_timeslice_average_overlay(
+        self,
+        fig: go.Figure,
+        *,
+        df: pd.DataFrame,
+        x_col: str,
+        slice_duration: float | None,
+        average_value: float,
+        average_std: float | None,
+        average_label: str | None,
+        unit: str,
+    ) -> None:
+        """Gold ±1 std band plus a run-average line trace."""
+        if slice_duration is not None:
+            x_range = [0, (df[x_col].max() + 1) * slice_duration]
+        else:
+            x_range = [df[x_col].min() - 0.5, df[x_col].max() + 0.5]
 
-                band_color = (
-                    "rgba(232, 232, 232, 0.3)"
-                    if self.theme == PlotTheme.LIGHT
-                    else "rgba(255, 184, 28, 0.15)"
-                )
-
-                fig.add_trace(
-                    go.Scatter(
-                        x=x_range + x_range[::-1],
-                        y=[upper_bound, upper_bound, lower_bound, lower_bound],
-                        mode="lines",
-                        fill="toself",
-                        fillcolor=band_color,
-                        line=dict(width=0),
-                        showlegend=True,
-                        legendrank=3,
-                        name=std_label,
-                        hovertemplate=f"±1 Std Dev: {lower_bound:.2f} - {upper_bound:.2f}<extra></extra>",
-                    )
-                )
-
+        if average_std is not None:
+            upper_bound = average_value + average_std
+            lower_bound = average_value - average_std
+            std_label = f"Run Std: {average_std:.2f}"
+            if unit:
+                std_label = f"{std_label} {unit}"
+            band_color = (
+                "rgba(232, 232, 232, 0.3)"
+                if self.theme == PlotTheme.LIGHT
+                else "rgba(255, 184, 28, 0.15)"
+            )
             fig.add_trace(
                 go.Scatter(
-                    x=x_range,
-                    y=[average_value, average_value],
+                    x=x_range + x_range[::-1],
+                    y=[upper_bound, upper_bound, lower_bound, lower_bound],
                     mode="lines",
-                    line=dict(color="#555555", width=2),
-                    name=average_label or "Run Average",
+                    fill="toself",
+                    fillcolor=band_color,
+                    line=dict(width=0),
                     showlegend=True,
-                    legendrank=4,
-                    hovertemplate=f"{average_label or 'Run Average'}<extra></extra>",
+                    legendrank=3,
+                    name=std_label,
+                    hovertemplate=f"±1 Std Dev: {lower_bound:.2f} - {upper_bound:.2f}<extra></extra>",
                 )
             )
 
+        fig.add_trace(
+            go.Scatter(
+                x=x_range,
+                y=[average_value, average_value],
+                mode="lines",
+                line=dict(color="#555555", width=2),
+                name=average_label or "Run Average",
+                showlegend=True,
+                legendrank=4,
+                hovertemplate=f"{average_label or 'Run Average'}<extra></extra>",
+            )
+        )
+
+    def _add_timeslice_point_traces(
+        self,
+        fig: go.Figure,
+        *,
+        x_values: np.ndarray,
+        y_values: np.ndarray,
+        normal_mask: np.ndarray,
+        outlier_mask: np.ndarray,
+        primary_color: str,
+        error_y_normal: dict | None,
+        error_y_outlier: dict | None,
+        hover_template: str,
+        customdata: list | None,
+    ) -> None:
+        """Normal-point and outlier-point scatter traces."""
         if np.any(normal_mask):
             normal_customdata = (
                 [customdata[i] for i in range(len(customdata)) if normal_mask[i]]
@@ -1397,14 +1625,10 @@ class PlotGenerator:
             )
             fig.add_trace(
                 go.Scatter(
-                    x=normal_x,
-                    y=normal_y,
+                    x=x_values[normal_mask],
+                    y=y_values[normal_mask],
                     mode="markers",
-                    marker=dict(
-                        color=primary_color,
-                        size=6,
-                        line=dict(width=0),
-                    ),
+                    marker=dict(color=primary_color, size=6, line=dict(width=0)),
                     error_y=error_y_normal,
                     name="Timeslice Average",
                     showlegend=True,
@@ -1422,8 +1646,8 @@ class PlotGenerator:
             )
             fig.add_trace(
                 go.Scatter(
-                    x=outlier_x,
-                    y=outlier_y,
+                    x=x_values[outlier_mask],
+                    y=y_values[outlier_mask],
                     mode="markers",
                     marker=dict(
                         color=OUTLIER_RED,
@@ -1440,110 +1664,95 @@ class PlotGenerator:
                 )
             )
 
-        if "std" in df.columns and (np.any(normal_mask) or np.any(outlier_mask)):
-            fig.add_trace(
-                go.Scatter(
-                    x=[-999999, -999999],
-                    y=[0, 1],
-                    mode="lines",
-                    line=dict(
-                        color=primary_color,
-                        width=3,
-                    ),
-                    name="±1 Timeslice Std",
-                    showlegend=True,
-                    legendrank=2,
-                    hoverinfo="skip",
-                )
+    def _add_timeslice_std_legend_proxy(
+        self, fig: go.Figure, primary_color: str
+    ) -> None:
+        """Off-canvas legend-only trace representing ±1 timeslice std error bars."""
+        fig.add_trace(
+            go.Scatter(
+                x=[-999999, -999999],
+                y=[0, 1],
+                mode="lines",
+                line=dict(color=primary_color, width=3),
+                name="±1 Timeslice Std",
+                showlegend=True,
+                legendrank=2,
+                hoverinfo="skip",
             )
+        )
 
+    def _build_timeslice_layout(
+        self,
+        title: str,
+        x_label: str,
+        y_label: str,
+        *,
+        df: pd.DataFrame,
+        x_col: str,
+        slice_duration: float | None,
+        warning_text: str | None,
+    ) -> dict:
+        """Timeslice-specific layout: grid, diagonal ticks, bottom warning banner."""
         layout = self._get_base_layout(title, x_label, y_label, hovermode="closest")
-
-        layout["xaxis"]["showgrid"] = True
-        layout["xaxis"]["gridwidth"] = 0.5
-        layout["xaxis"]["gridcolor"] = (
+        grid_color = (
             "rgba(200, 200, 200, 0.2)"
             if self.theme == PlotTheme.LIGHT
             else "rgba(100, 100, 100, 0.2)"
         )
-
-        layout["yaxis"]["showgrid"] = True
-        layout["yaxis"]["gridwidth"] = 0.5
-        layout["yaxis"]["gridcolor"] = (
-            "rgba(200, 200, 200, 0.2)"
-            if self.theme == PlotTheme.LIGHT
-            else "rgba(100, 100, 100, 0.2)"
-        )
-
-        layout["xaxis"]["linewidth"] = 1
-        layout["yaxis"]["linewidth"] = 1
+        for axis in ("xaxis", "yaxis"):
+            layout[axis]["showgrid"] = True
+            layout[axis]["gridwidth"] = 0.5
+            layout[axis]["gridcolor"] = grid_color
+            layout[axis]["linewidth"] = 1
         layout["yaxis"]["rangemode"] = "tozero"
 
         if slice_duration is not None:
-            slice_indices = df[x_col].values
-            max_slice = slice_indices.max()
-
-            # Configure custom ticks with range labels at center positions
-            layout["xaxis"]["tickmode"] = "array"
-            tick_positions = [
-                i * slice_duration + slice_duration / 2
-                for i in range(int(max_slice) + 1)
-            ]
-            tick_labels = [
-                f"{int(i * slice_duration)}-{int((i + 1) * slice_duration)}"
-                for i in range(int(max_slice) + 1)
-            ]
-            layout["xaxis"]["tickvals"] = tick_positions
-            layout["xaxis"]["ticktext"] = tick_labels
-            layout["xaxis"]["tickangle"] = -45
-
-            # Increase bottom margin to accommodate diagonal labels
-            if "margin" not in layout:
-                layout["margin"] = {}
-            layout["margin"]["b"] = 100
-
-            x_max = (max_slice + 1) * slice_duration
-            layout["xaxis"]["range"] = [0, x_max]
-
+            self._apply_timeslice_tick_config(layout, df, x_col, slice_duration)
         if warning_text:
-            if "annotations" not in layout:
-                layout["annotations"] = []
+            self._apply_timeslice_warning(layout, warning_text, slice_duration)
+        return layout
 
-            # Use pixel-based yshift for precise positioning below x-axis
-            has_diagonal_labels = slice_duration is not None
-            # Shift below x-axis: account for tick labels + axis title
-            yshift_pixels = -85 if has_diagonal_labels else -50
-            layout["margin"]["b"] = 140 if has_diagonal_labels else 100
+    def _apply_timeslice_tick_config(
+        self,
+        layout: dict,
+        df: pd.DataFrame,
+        x_col: str,
+        slice_duration: float,
+    ) -> None:
+        """Diagonal time-range ticks on the x-axis."""
+        slice_indices = df[x_col].values
+        max_slice = slice_indices.max()
+        layout["xaxis"]["tickmode"] = "array"
+        tick_positions = [
+            i * slice_duration + slice_duration / 2 for i in range(int(max_slice) + 1)
+        ]
+        tick_labels = [
+            f"{int(i * slice_duration)}-{int((i + 1) * slice_duration)}"
+            for i in range(int(max_slice) + 1)
+        ]
+        layout["xaxis"]["tickvals"] = tick_positions
+        layout["xaxis"]["ticktext"] = tick_labels
+        layout["xaxis"]["tickangle"] = -45
+        if "margin" not in layout:
+            layout["margin"] = {}
+        layout["margin"]["b"] = 100
+        layout["xaxis"]["range"] = [0, (max_slice + 1) * slice_duration]
 
-            warning_annotation = dict(
-                x=0.5,
-                y=0,
-                xref="paper",
-                yref="paper",
-                yshift=yshift_pixels,
-                text=warning_text,
-                showarrow=False,
-                font=dict(
-                    size=11, family=PLOT_FONT_FAMILY, color=self.colors["secondary"]
-                ),
-                bgcolor=f"rgba({int(self.colors['secondary'][1:3], 16)}, {int(self.colors['secondary'][3:5], 16)}, {int(self.colors['secondary'][5:7], 16)}, 0.1)",
-                bordercolor=self.colors["secondary"],
-                borderwidth=2,
-                borderpad=8,
-                xanchor="center",
-                yanchor="top",
-            )
-            layout["annotations"] = list(layout.get("annotations", [])) + [
-                warning_annotation
-            ]
-
-        fig.update_layout(layout)
-        fig.update_layout(
-            legend=dict(x=0.99, y=0.01, xanchor="right", yanchor="bottom"),
-            margin=dict(r=20),
-        )
-
-        return fig
+    def _apply_timeslice_warning(
+        self,
+        layout: dict,
+        warning_text: str,
+        slice_duration: float | None,
+    ) -> None:
+        """Append a warning-banner annotation sized to clear diagonal tick labels."""
+        if "annotations" not in layout:
+            layout["annotations"] = []
+        has_diagonal_labels = slice_duration is not None
+        yshift_pixels = -85 if has_diagonal_labels else -50
+        layout["margin"]["b"] = 140 if has_diagonal_labels else 100
+        layout["annotations"] = list(layout.get("annotations", [])) + [
+            self._build_warning_annotation(warning_text, y=0, yshift=yshift_pixels)
+        ]
 
     def create_dual_axis_plot(
         self,
@@ -1562,44 +1771,78 @@ class PlotGenerator:
         y1_label: str | None = None,
         y2_label: str | None = None,
     ) -> go.Figure:
-        """
-        Create a dual Y-axis plot with independent data sources and configurable visualization styles.
+        """Dual Y-axis plot with independent data sources + per-series :class:`Style` (0-100 when both percentages)."""
+        default_style = Style(mode="lines", line_shape=None, fill=None)
+        primary_style = primary_style or default_style
+        secondary_style = secondary_style or default_style
+        title, x_label, y1_label, y2_label = self._resolve_dual_axis_labels(
+            title,
+            x_label,
+            y1_label,
+            y2_label,
+            y1_metric=y1_metric,
+            y2_metric=y2_metric,
+        )
+        primary_hover = self._build_dual_axis_primary_hover(
+            x_label, y1_label, df_primary, active_count_col
+        )
+        customdata = df_primary[active_count_col] if active_count_col else None
+        palette = self._get_palette_colors(2)
+        primary_color = palette[0]
+        secondary_color = palette[1] if len(palette) > 1 else palette[0]
 
-        This generic method supports plotting any two metrics on separate Y-axes with
-        independent data sources and full control over visualization styles (line modes,
-        shapes, fill patterns, widths, and marker properties).
-
-        Examples:
-            - Throughput + GPU utilization (step function + filled area)
-            - Price + volume (lines + bars)
-            - Temperature + pressure (smooth splines + lines)
-
-        Args:
-            df_primary: DataFrame for primary metric (left Y-axis)
-            df_secondary: DataFrame for secondary metric (right Y-axis)
-            x_col_primary: Column name for x-axis in primary DataFrame
-            x_col_secondary: Column name for x-axis in secondary DataFrame
-            y1_metric: Column name for primary y-axis (left)
-            y2_metric: Column name for secondary y-axis (right)
-            primary_style: Style configuration for primary trace
-            secondary_style: Style configuration for secondary trace
-            active_count_col: Optional column name in df_primary for supplementary data (shown in tooltip)
-            title: Plot title (auto-generated if None)
-            x_label: X-axis label (auto-generated from x_col_primary if None)
-            y1_label: Primary Y-axis label (auto-generated from y1_metric if None)
-            y2_label: Secondary Y-axis label (auto-generated from y2_metric if None)
-
-        Returns:
-            Plotly Figure object with dual Y-axes
-        """
         fig = go.Figure()
+        self._add_dual_axis_trace(
+            fig,
+            df=df_primary,
+            x_col=x_col_primary,
+            y_col=y1_metric,
+            style=primary_style,
+            color=primary_color,
+            name=y1_label,
+            yaxis="y",
+            hovertemplate=primary_hover,
+            customdata=customdata,
+        )
+        self._add_dual_axis_trace(
+            fig,
+            df=df_secondary,
+            x_col=x_col_secondary,
+            y_col=y2_metric,
+            style=secondary_style,
+            color=secondary_color,
+            name=y2_label,
+            yaxis="y2",
+            hovertemplate=f"{x_label}: %{{x:.1f}}s<br>{y2_label}: %{{y:.1f}}<extra></extra>",
+            customdata=None,
+        )
+        fig.update_layout(
+            self._build_dual_axis_layout(
+                title,
+                x_label,
+                y1_label,
+                y2_label=y2_label,
+                y1_metric=y1_metric,
+                y2_metric=y2_metric,
+            )
+        )
+        fig.update_layout(
+            legend=dict(x=0.99, y=0.01, xanchor="right", yanchor="bottom"),
+            margin=dict(r=20),
+        )
+        return fig
 
-        # Provide default styles if not specified
-        if primary_style is None:
-            primary_style = Style(mode="lines", line_shape=None, fill=None)
-        if secondary_style is None:
-            secondary_style = Style(mode="lines", line_shape=None, fill=None)
-
+    def _resolve_dual_axis_labels(
+        self,
+        title: str | None,
+        x_label: str | None,
+        y1_label: str | None,
+        y2_label: str | None,
+        *,
+        y1_metric: str,
+        y2_metric: str,
+    ) -> tuple[str, str, str, str]:
+        """Fill in auto-generated title + axis labels for a dual-axis plot."""
         title = (
             title
             or f"{get_metric_display_name(y1_metric)} with {get_metric_display_name(y2_metric)}"
@@ -1607,93 +1850,73 @@ class PlotGenerator:
         x_label = x_label or "Time (s)"
         y1_label = y1_label or get_metric_display_name(y1_metric)
         y2_label = y2_label or get_metric_display_name(y2_metric)
+        return title, x_label, y1_label, y2_label
 
-        primary_hover = f"{x_label}: %{{x:.1f}}s<br>{y1_label}: %{{y:.1f}}"
+    def _build_dual_axis_primary_hover(
+        self,
+        x_label: str,
+        y1_label: str,
+        df_primary: pd.DataFrame,
+        active_count_col: str | None,
+    ) -> str:
+        """Primary hover template with optional Active Requests line."""
+        hover = f"{x_label}: %{{x:.1f}}s<br>{y1_label}: %{{y:.1f}}"
         if active_count_col and active_count_col in df_primary.columns:
-            primary_hover += "<br>Active Requests: %{customdata}"
+            hover += "<br>Active Requests: %{customdata}"
+        return hover + "<extra></extra>"
 
-        primary_hover += "<extra></extra>"
-
-        customdata = df_primary[active_count_col] if active_count_col else None
-
-        # Get palette colors for primary and secondary traces
-        palette_colors = self._get_palette_colors(2)
-        primary_color = palette_colors[0]
-        secondary_color = (
-            palette_colors[1] if len(palette_colors) > 1 else palette_colors[0]
-        )
-
-        # Extract RGB from colors for fillcolor
-        primary_rgb = mcolors.to_rgb(primary_color)
-        secondary_rgb = mcolors.to_rgb(secondary_color)
-
-        # Build primary trace configuration
-        primary_trace_config = {
-            "x": df_primary[x_col_primary],
-            "y": df_primary[y1_metric],
-            "mode": primary_style.mode,
-            "line": dict(width=primary_style.line_width, color=primary_color),
-            "name": y1_label,
-            "yaxis": "y",
+    def _add_dual_axis_trace(
+        self,
+        fig: go.Figure,
+        *,
+        df: pd.DataFrame,
+        x_col: str,
+        y_col: str,
+        style: Style,
+        color: str,
+        name: str,
+        yaxis: str,
+        hovertemplate: str,
+        customdata: pd.Series | None,
+    ) -> None:
+        """Build + add one Scatter trace honoring :class:`Style` (line_shape / fill)."""
+        config: dict = {
+            "x": df[x_col],
+            "y": df[y_col],
+            "mode": style.mode,
+            "line": dict(width=style.line_width, color=color),
+            "name": name,
+            "yaxis": yaxis,
             "customdata": customdata,
-            "hovertemplate": primary_hover,
+            "hovertemplate": hovertemplate,
         }
-
-        # Apply line shape if specified
-        if primary_style.line_shape:
-            primary_trace_config["line"]["shape"] = primary_style.line_shape
-
-        # Apply fill if specified
-        if primary_style.fill:
-            primary_trace_config["fill"] = primary_style.fill
-            primary_trace_config["fillcolor"] = (
-                f"rgba({int(primary_rgb[0] * 255)}, {int(primary_rgb[1] * 255)}, {int(primary_rgb[2] * 255)}, {primary_style.fill_opacity})"
+        if style.line_shape:
+            config["line"]["shape"] = style.line_shape
+        if style.fill:
+            r, g, b = mcolors.to_rgb(color)
+            config["fill"] = style.fill
+            config["fillcolor"] = (
+                f"rgba({int(r * 255)}, {int(g * 255)}, {int(b * 255)}, {style.fill_opacity})"
             )
+        fig.add_trace(go.Scatter(**config))
 
-        fig.add_trace(go.Scatter(**primary_trace_config))
-
-        # Build secondary trace configuration
-        secondary_trace_config = {
-            "x": df_secondary[x_col_secondary],
-            "y": df_secondary[y2_metric],
-            "mode": secondary_style.mode,
-            "line": dict(width=secondary_style.line_width, color=secondary_color),
-            "name": y2_label,
-            "yaxis": "y2",
-            "hovertemplate": f"{x_label}: %{{x:.1f}}s<br>{y2_label}: %{{y:.1f}}<extra></extra>",
-        }
-
-        # Apply line shape if specified
-        if secondary_style.line_shape:
-            secondary_trace_config["line"]["shape"] = secondary_style.line_shape
-
-        # Apply fill if specified
-        if secondary_style.fill:
-            secondary_trace_config["fill"] = secondary_style.fill
-            secondary_trace_config["fillcolor"] = (
-                f"rgba({int(secondary_rgb[0] * 255)}, {int(secondary_rgb[1] * 255)}, {int(secondary_rgb[2] * 255)}, {secondary_style.fill_opacity})"
-            )
-
-        fig.add_trace(go.Scatter(**secondary_trace_config))
-
+    def _build_dual_axis_layout(
+        self,
+        title: str,
+        x_label: str,
+        y1_label: str,
+        *,
+        y2_label: str,
+        y1_metric: str,
+        y2_metric: str,
+    ) -> dict:
+        """Base layout plus right-side yaxis2 for a dual-axis plot."""
         layout = self._get_base_layout(title, x_label, y1_label, hovermode="x unified")
-
-        # Check if both metrics are percentage-based for aligned Y-axes
-        # Uses unit lookup or heuristic detection for custom metrics
-        def is_percentage_metric(metric_name: str) -> bool:
-            unit = get_gpu_metric_unit(metric_name)
-            if unit == "%":
-                return True
-            # Heuristic: metrics with "utilization" in the name are percentages
-            return "utilization" in metric_name.lower()
-
-        y1_is_pct = is_percentage_metric(y1_metric)
-        y2_is_pct = is_percentage_metric(y2_metric)
-        both_percentage = y1_is_pct and y2_is_pct
-
+        both_percentage = _is_percentage_metric(y1_metric) and _is_percentage_metric(
+            y2_metric
+        )
         if both_percentage:
             layout["yaxis"]["range"] = [0, 100]
-
         layout["yaxis2"] = {
             "title": y2_label,
             "overlaying": "y",
@@ -1704,17 +1927,9 @@ class PlotGenerator:
             "color": self.colors["text"],
             "rangemode": "tozero",
         }
-
         if both_percentage:
             layout["yaxis2"]["range"] = [0, 100]
-
-        fig.update_layout(layout)
-        fig.update_layout(
-            legend=dict(x=0.99, y=0.01, xanchor="right", yanchor="bottom"),
-            margin=dict(r=20),
-        )
-
-        return fig
+        return layout
 
     def create_latency_scatter_with_percentiles(
         self,
@@ -1727,39 +1942,17 @@ class PlotGenerator:
         x_label: str | None = None,
         y_label: str | None = None,
     ) -> go.Figure:
-        """
-        Create a scatter plot with rolling percentile overlays for latency analysis.
-
-        Displays individual request latencies as scatter points with overlaid percentile
-        lines to provide statistical context. This visualization is ideal for identifying
-        tail latency, temporal patterns, and debugging anomalies.
-
-        Args:
-            df: DataFrame containing the time series data with percentile columns
-            x_col: Column name for x-axis (e.g., "timestamp")
-            y_metric: Column name for y-axis metric (e.g., "request_latency")
-            percentile_cols: List of column names for percentile lines (e.g., ["p50", "p95", "p99"])
-            title: Plot title (auto-generated if None)
-            x_label: X-axis label (auto-generated if None)
-            y_label: Y-axis label (auto-generated if None)
-
-        Returns:
-            Plotly Figure object with scatter points and percentile lines
-        """
+        """Scatter of individual request latencies with overlaid rolling-percentile lines."""
         fig = go.Figure()
 
-        # Auto-generate labels if not provided
         title = (
             title or f"{get_metric_display_name(y_metric)} Over Time with Percentiles"
         )
         x_label = x_label or get_metric_display_name(x_col)
         y_label = y_label or get_metric_display_name(y_metric)
 
-        # Get theme-specific color palette for percentile lines
-        n_percentiles = len(percentile_cols)
-        percentile_colors = self._get_palette_colors(n_percentiles)
+        percentile_colors = self._get_palette_colors(len(percentile_cols))
 
-        # Individual request scatter points (semi-transparent)
         fig.add_trace(
             go.Scatter(
                 x=df[x_col],
@@ -1776,15 +1969,11 @@ class PlotGenerator:
             )
         )
 
-        # Add percentile lines with NVIDIA color palette
         for idx, percentile_col in enumerate(percentile_cols):
             if percentile_col not in df.columns:
                 continue
-
-            # Extract percentile number from column name (e.g., "p95" -> "p95")
             percentile_display = percentile_col.upper()
             color = percentile_colors[idx % len(percentile_colors)]
-
             fig.add_trace(
                 go.Scatter(
                     x=df[x_col],
@@ -1796,14 +1985,13 @@ class PlotGenerator:
                 )
             )
 
-        # Apply NVIDIA branding layout with unified hover
-        layout = self._get_base_layout(title, x_label, y_label, hovermode="x unified")
-        fig.update_layout(layout)
+        fig.update_layout(
+            self._get_base_layout(title, x_label, y_label, hovermode="x unified")
+        )
         fig.update_layout(
             legend=dict(x=0.99, y=0.01, xanchor="right", yanchor="bottom"),
             margin=dict(r=20),
         )
-
         return fig
 
     def create_request_timeline(
@@ -1815,21 +2003,9 @@ class PlotGenerator:
         x_label: str | None = None,
         y_label: str | None = None,
     ) -> go.Figure:
-        """
-        Create request timeline with prefill and decode phases.
+        """Request timeline: horizontal lines per request split into prefill + decode phases.
 
-        Each request is shown as a horizontal line at its Y-metric value,
-        split into two colored phases: prefill (green) and decode (blue).
-
-        Args:
-            df: DataFrame with [request_id, y_value, start_s, ttft_end_s, end_s]
-            y_metric: Metric name for labels
-            title: Plot title
-            x_label: X-axis label
-            y_label: Y-axis label
-
-        Returns:
-            Plotly Figure object
+        Expects ``df`` with columns ``[request_id, y_value, start_s, ttft_end_s, end_s]``.
         """
         fig = go.Figure()
 
@@ -1845,59 +2021,20 @@ class PlotGenerator:
 
         ttft_legend_added = False
         generation_legend_added = False
-
         df_sorted = df.sort_values("y_value", ascending=True)
 
         for _, row in df_sorted.iterrows():
-            request_id = row["request_id"]
-            y_val = row["y_value"]
-            start_s = row["start_s"]
-            ttft_end_s = row["ttft_end_s"]
-            end_s = row["end_s"]
-
-            ttft_duration = ttft_end_s - start_s
-            fig.add_trace(
-                go.Scatter(
-                    x=[start_s, ttft_end_s],
-                    y=[y_val, y_val],
-                    mode="lines",
-                    line=dict(width=2, color=ttft_color),
-                    name="Prefill Phase",
-                    legendgroup="ttft",
-                    showlegend=not ttft_legend_added,
-                    hovertemplate=(
-                        f"Request {request_id}<br>"
-                        f"Prefill Phase<br>"
-                        f"Start: {start_s:.2f}s<br>"
-                        f"End: {ttft_end_s:.2f}s<br>"
-                        f"Duration: {ttft_duration:.2f}s<br>"
-                        f"{y_label}: {y_val:.2f}<extra></extra>"
-                    ),
-                )
+            self._add_request_timeline_row(
+                fig,
+                row,
+                y_label=y_label,
+                ttft_color=ttft_color,
+                generation_color=generation_color,
+                ttft_legend_added=ttft_legend_added,
+                generation_legend_added=generation_legend_added,
             )
             ttft_legend_added = True
-
-            generation_duration = end_s - ttft_end_s
-            if generation_duration > 0.001:
-                fig.add_trace(
-                    go.Scatter(
-                        x=[ttft_end_s, end_s],
-                        y=[y_val, y_val],
-                        mode="lines",
-                        line=dict(width=2, color=generation_color),
-                        name="Decode Phase",
-                        legendgroup="generation",
-                        showlegend=not generation_legend_added,
-                        hovertemplate=(
-                            f"Request {request_id}<br>"
-                            f"Decode Phase<br>"
-                            f"Start: {ttft_end_s:.2f}s<br>"
-                            f"End: {end_s:.2f}s<br>"
-                            f"Duration: {generation_duration:.2f}s<br>"
-                            f"{y_label}: {y_val:.2f}<extra></extra>"
-                        ),
-                    )
-                )
+            if (row["end_s"] - row["ttft_end_s"]) > 0.001:
                 generation_legend_added = True
 
         layout = self._get_base_layout(title, x_label, y_label, hovermode="closest")
@@ -1907,8 +2044,68 @@ class PlotGenerator:
             legend=dict(x=0.99, y=0.01, xanchor="right", yanchor="bottom"),
             margin=dict(r=20),
         )
-
         return fig
+
+    def _add_request_timeline_row(
+        self,
+        fig: go.Figure,
+        row: pd.Series,
+        *,
+        y_label: str,
+        ttft_color: str,
+        generation_color: str,
+        ttft_legend_added: bool,
+        generation_legend_added: bool,
+    ) -> None:
+        """Prefill + optional decode segment traces for one request row."""
+        request_id = row["request_id"]
+        y_val = row["y_value"]
+        start_s = row["start_s"]
+        ttft_end_s = row["ttft_end_s"]
+        end_s = row["end_s"]
+        ttft_duration = ttft_end_s - start_s
+
+        fig.add_trace(
+            go.Scatter(
+                x=[start_s, ttft_end_s],
+                y=[y_val, y_val],
+                mode="lines",
+                line=dict(width=2, color=ttft_color),
+                name="Prefill Phase",
+                legendgroup="ttft",
+                showlegend=not ttft_legend_added,
+                hovertemplate=(
+                    f"Request {request_id}<br>"
+                    f"Prefill Phase<br>"
+                    f"Start: {start_s:.2f}s<br>"
+                    f"End: {ttft_end_s:.2f}s<br>"
+                    f"Duration: {ttft_duration:.2f}s<br>"
+                    f"{y_label}: {y_val:.2f}<extra></extra>"
+                ),
+            )
+        )
+
+        generation_duration = end_s - ttft_end_s
+        if generation_duration > 0.001:
+            fig.add_trace(
+                go.Scatter(
+                    x=[ttft_end_s, end_s],
+                    y=[y_val, y_val],
+                    mode="lines",
+                    line=dict(width=2, color=generation_color),
+                    name="Decode Phase",
+                    legendgroup="generation",
+                    showlegend=not generation_legend_added,
+                    hovertemplate=(
+                        f"Request {request_id}<br>"
+                        f"Decode Phase<br>"
+                        f"Start: {ttft_end_s:.2f}s<br>"
+                        f"End: {end_s:.2f}s<br>"
+                        f"Duration: {generation_duration:.2f}s<br>"
+                        f"{y_label}: {y_val:.2f}<extra></extra>"
+                    ),
+                )
+            )
 
     def create_percentile_bands(
         self,
@@ -1924,32 +2121,46 @@ class PlotGenerator:
         y_label: str,
         unit: str,
     ) -> go.Figure:
-        """Create percentile bands plot with p50 line and p95/p99 shaded bands.
-
-        Visualizes uncertainty and variance over time with median line and
-        percentile confidence bands. Perfect for SLA monitoring and stability analysis.
-
-        Args:
-            df: DataFrame with timestamp and percentile columns
-            x_col: Column name for x-axis (usually timestamp_s)
-            percentile_cols: List of percentile column names (e.g., ["p50", "p95", "p99"])
-            lower_col: Optional lower percentile column (e.g., "p05" for gauges)
-            metric_name: Metric name for legend
-            metric_type: Metric type (HISTOGRAM, GAUGE, COUNTER)
-            title: Plot title
-            x_label: X-axis label
-            y_label: Y-axis label
-            unit: Metric unit
-
-        Returns:
-            Plotly Figure with percentile bands
-        """
+        """Percentile bands plot: p50 line with p95/p99 shaded bands (optional lower band)."""
         fig = go.Figure()
-
         x = df[x_col]
 
-        # Add bands from highest to lowest (for proper stacking)
-        # p99 band (outermost - lightest)
+        self._add_percentile_band_traces(
+            fig, df, x, percentile_cols=percentile_cols, lower_col=lower_col, unit=unit
+        )
+
+        fig.update_layout(
+            title=title,
+            xaxis_title=x_label,
+            yaxis_title=y_label,
+            hovermode="x unified",
+            template="plotly_white",
+            showlegend=True,
+            height=600,
+        )
+        band_type = "percentiles" if metric_type == "HISTOGRAM" else "min/avg/max"
+        fig.add_annotation(
+            text=f"Shaded bands show {band_type} range over time",
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=1.05,
+            showarrow=False,
+            font=dict(size=10, color="gray"),
+        )
+        return fig
+
+    def _add_percentile_band_traces(
+        self,
+        fig: go.Figure,
+        df: pd.DataFrame,
+        x: pd.Series,
+        *,
+        percentile_cols: list[str],
+        lower_col: str | None,
+        unit: str,
+    ) -> None:
+        """Add p99/p95/p50 and optional lower-band traces (outermost first for stacking)."""
         if "p99" in percentile_cols and "p99" in df.columns:
             fig.add_trace(
                 go.Scatter(
@@ -1962,8 +2173,6 @@ class PlotGenerator:
                     hovertemplate=f"Time: %{{x:.2f}}s<br>p99: %{{y:.3f}} {unit}<extra></extra>",
                 )
             )
-
-        # p95 band (middle - medium shade)
         if "p95" in percentile_cols and "p95" in df.columns:
             fig.add_trace(
                 go.Scatter(
@@ -1972,13 +2181,11 @@ class PlotGenerator:
                     fill="tonexty" if "p99" in df.columns else None,
                     mode="lines",
                     line=dict(width=0),
-                    fillcolor="rgba(68, 138, 255, 0.2)",  # Light blue
+                    fillcolor="rgba(68, 138, 255, 0.2)",
                     name="p95-p99 band" if "p99" in df.columns else "p95",
                     hovertemplate=f"Time: %{{x:.2f}}s<br>p95: %{{y:.3f}} {unit}<extra></extra>",
                 )
             )
-
-        # p50 median line (darkest - solid line)
         if "p50" in percentile_cols and "p50" in df.columns:
             fig.add_trace(
                 go.Scatter(
@@ -1994,8 +2201,6 @@ class PlotGenerator:
                     hovertemplate=f"Time: %{{x:.2f}}s<br>p50: %{{y:.3f}} {unit}<extra></extra>",
                 )
             )
-
-        # Lower band (for gauges with min values)
         if lower_col and lower_col in df.columns:
             fig.add_trace(
                 go.Scatter(
@@ -2010,31 +2215,6 @@ class PlotGenerator:
                 )
             )
 
-        # Layout
-        fig.update_layout(
-            title=title,
-            xaxis_title=x_label,
-            yaxis_title=y_label,
-            hovermode="x unified",
-            template="plotly_white",
-            showlegend=True,
-            height=600,
-        )
-
-        # Add annotation explaining the bands
-        band_type = "percentiles" if metric_type == "HISTOGRAM" else "min/avg/max"
-        fig.add_annotation(
-            text=f"Shaded bands show {band_type} range over time",
-            xref="paper",
-            yref="paper",
-            x=0.5,
-            y=1.05,
-            showarrow=False,
-            font=dict(size=10, color="gray"),
-        )
-
-        return fig
-
     def create_bucket_histogram(
         self,
         buckets: dict[str, int],
@@ -2045,44 +2225,10 @@ class PlotGenerator:
         y_label: str,
         unit: str,
     ) -> go.Figure:
-        """Create Prometheus histogram bucket distribution bar chart.
+        """Prometheus histogram bucket distribution: one bar per ``le`` upper bound."""
+        bucket_labels, bucket_counts = _sort_prometheus_buckets(buckets)
 
-        Visualizes the actual bucket boundaries (le values) and observation counts
-        from a Prometheus histogram metric. Perfect for understanding distribution
-        shape and validating percentile estimates.
-
-        Args:
-            buckets: Dict mapping bucket upper bounds (le) to counts
-            metric_name: Metric name for annotations
-            title: Plot title
-            x_label: X-axis label
-            y_label: Y-axis label
-            unit: Metric unit
-
-        Returns:
-            Plotly Figure with bucket distribution bar chart
-        """
-        # Sort buckets by upper bound (handle +Inf specially)
-        sorted_buckets = []
-        for le, count in buckets.items():
-            if le == "+Inf":
-                sort_key = float("inf")
-            else:
-                try:
-                    sort_key = float(le)
-                except ValueError:
-                    sort_key = float("inf")  # Fallback
-            sorted_buckets.append((le, sort_key, count))
-
-        sorted_buckets.sort(key=lambda x: x[1])
-
-        # Extract labels and counts
-        bucket_labels = [b[0] for b in sorted_buckets]
-        bucket_counts = [b[2] for b in sorted_buckets]
-
-        # Create bar chart
         fig = go.Figure()
-
         fig.add_trace(
             go.Bar(
                 x=bucket_labels,
@@ -2092,8 +2238,6 @@ class PlotGenerator:
                 hovertemplate="Bucket ≤ %{x}<br>Count: %{y:,}<extra></extra>",
             )
         )
-
-        # Layout
         fig.update_layout(
             title=title,
             xaxis_title=x_label,
@@ -2102,13 +2246,12 @@ class PlotGenerator:
             showlegend=False,
             height=600,
             xaxis=dict(
-                type="category",  # Treat bucket boundaries as categories
+                type="category",
                 categoryorder="array",
-                categoryarray=bucket_labels,  # Already sorted
+                categoryarray=bucket_labels,
             ),
         )
 
-        # Add annotation explaining bucket format
         total_count = sum(bucket_counts)
         fig.add_annotation(
             text=f"Total observations: {total_count:,} | Each bar shows count in bucket ≤ upper bound",
@@ -2119,5 +2262,4 @@ class PlotGenerator:
             showarrow=False,
             font=dict(size=10, color="gray"),
         )
-
         return fig

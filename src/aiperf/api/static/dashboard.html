@@ -682,32 +682,44 @@ SPDX-License-Identifier: Apache-2.0
 
         // --- Config ---
 
-        const fetchConfig = () => {
+        const fetchConfig = epoch => {
             fetch('/api/config')
                 .then(r => r.ok ? r.json() : null)
-                .then(cfg => { if (cfg) renderConfig(cfg); })
+                .then(cfg => { if (cfg && epoch === connectionEpoch) renderConfig(cfg); })
                 .catch(() => {});
         };
 
         const renderConfig = cfg => {
+            // Schema matches BenchmarkConfig (src/aiperf/config/config.py): top-level
+            // is { models, endpoint, datasets, phases, ... } — no `loadgen`/`input`.
             const ep = cfg.endpoint || {};
-            const lg = cfg.loadgen || {};
-            const inp = cfg.input || {};
+            const phases = cfg.phases || {};
             const items = [];
             const add = (label, value) => items.push({ label, value: String(value) });
 
-            if (ep.model_names?.length) add('Model', ep.model_names.join(', '));
+            const modelNames = (cfg.models?.items || []).map(m => m?.name).filter(Boolean);
+            if (modelNames.length) add('Model', modelNames.join(', '));
             if (ep.type) add('Endpoint', ep.type + (ep.streaming ? ' (streaming)' : ''));
             if (ep.urls?.length) add('URL', ep.urls.length === 1 ? ep.urls[0] : `${ep.urls.length} URLs`);
-            if (lg.concurrency != null) add('Concurrency', lg.concurrency);
-            if (lg.prefill_concurrency != null) add('Prefill Concurrency', lg.prefill_concurrency);
-            if (lg.request_rate != null) add('Request Rate', `${lg.request_rate} QPS`);
-            if (lg.user_centric_rate != null) add('User Rate', `${lg.user_centric_rate} QPS`);
-            if (lg.num_users != null) add('Users', lg.num_users);
-            if (lg.arrival_pattern) add('Arrival', lg.arrival_pattern);
-            if (lg.request_count != null) add('Requests', lg.request_count.toLocaleString());
-            if (lg.benchmark_duration != null) add('Duration', formatTime(lg.benchmark_duration));
-            if (inp.conversation?.num != null) add('Sessions', inp.conversation.num.toLocaleString());
+
+            // Phases are a dict keyed by phase name; summarize each.
+            const phaseEntries = Object.entries(phases);
+            const showName = phaseEntries.length > 1;
+            for (const [name, phase] of phaseEntries) {
+                if (!phase) continue;
+                const prefix = showName ? `${name} ` : '';
+                if (phase.type) add(`${prefix}Type`, phase.type);
+                if (phase.concurrency != null) add(`${prefix}Concurrency`, phase.concurrency);
+                if (phase.prefill_concurrency != null) add(`${prefix}Prefill`, phase.prefill_concurrency);
+                if (phase.rate != null) add(`${prefix}Rate`, `${phase.rate} QPS`);
+                if (phase.users != null) add(`${prefix}Users`, phase.users);
+                if (phase.requests != null) add(`${prefix}Requests`, Number(phase.requests).toLocaleString());
+                if (phase.duration != null) {
+                    const durSec = typeof phase.duration === 'number' ? phase.duration : null;
+                    add(`${prefix}Duration`, durSec != null ? formatTime(durSec) : String(phase.duration));
+                }
+                if (phase.sessions != null) add(`${prefix}Sessions`, Number(phase.sessions).toLocaleString());
+            }
 
             if (!items.length) return;
 
@@ -721,10 +733,10 @@ SPDX-License-Identifier: Apache-2.0
 
         // --- Bootstrap from /api/progress (handles page refresh mid-benchmark) ---
 
-        const fetchProgress = () => {
+        const fetchProgress = epoch => {
             fetch('/api/progress')
                 .then(r => r.ok ? r.json() : null)
-                .then(data => { if (data) bootstrapProgress(data); })
+                .then(data => { if (data && epoch === connectionEpoch) bootstrapProgress(data); })
                 .catch(() => {});
         };
 
@@ -884,16 +896,20 @@ SPDX-License-Identifier: Apache-2.0
             const activeCount = ids.filter(id => ['healthy', 'high_load'].includes(workers[id].status)).length;
             el.workerSummary.textContent = `(${activeCount}/${ids.length} active)`;
 
+            const KNOWN_STATUSES = ['healthy', 'high_load', 'error', 'idle', 'stale'];
             el.workersBody.innerHTML = ids.map(id => {
                 const w = workers[id];
                 const startupLabel = w.startupState && w.startupState !== 'ready'
                     ? ` (${w.startupState.replaceAll('_', ' ')})`
                     : '';
                 const statusLabel = `${(w.status || 'idle').replace('_', ' ')}${startupLabel}`;
+                // Restrict CSS class to known enum values — the status string comes
+                // from the wire and a stray space would break layout.
+                const statusClass = KNOWN_STATUSES.includes(w.status) ? w.status : 'idle';
                 const cpu = w.cpu != null ? `${w.cpu.toFixed(1)}%` : 'N/A';
                 return `<tr>` +
                     `<td><span class="worker-id">${escapeHtml(shortWorkerId(id))}</span></td>` +
-                    `<td><span class="worker-status ${escapeHtml(w.status || 'idle')}">${escapeHtml(statusLabel)}</span></td>` +
+                    `<td><span class="worker-status ${statusClass}">${escapeHtml(statusLabel)}</span></td>` +
                     `<td>${formatNumber(w.inFlight)}</td><td>${formatNumber(w.completed)}</td>` +
                     `<td>${formatNumber(w.failed)}</td><td>${cpu}</td><td>${formatBytes(w.memory)}</td></tr>`;
             }).join('');
@@ -1011,7 +1027,7 @@ SPDX-License-Identifier: Apache-2.0
             if (stats.start_ns && !phaseState.startNs) phaseState.startNs = Number(stats.start_ns);
             if (stats.sent_end_ns) phaseState.sentEndNs = Number(stats.sent_end_ns);
             if (stats.requests_end_ns) phaseState.requestsEndNs = Number(stats.requests_end_ns);
-            if (stats.timeout_triggered) phaseState.timeoutTriggered = true;
+            if (stats.timeout_triggered || stats.grace_period_timeout_triggered) phaseState.timeoutTriggered = true;
         };
 
         // --- Message handling ---
@@ -1230,10 +1246,11 @@ SPDX-License-Identifier: Apache-2.0
             }
         };
 
-        const fetchServerMetrics = () => {
+        const fetchServerMetrics = epoch => {
             fetch('/api/server-metrics')
                 .then(r => r.ok ? r.json() : null)
                 .then(data => {
+                    if (epoch !== connectionEpoch) return;
                     if (data?.endpoint_summaries) renderServerMetrics(data.endpoint_summaries);
                 })
                 .catch(() => {});
@@ -1282,7 +1299,17 @@ SPDX-License-Identifier: Apache-2.0
 
         // --- WebSocket connection ---
 
+        // Each connect() bumps this; fetch callbacks from a previous connection
+        // must not clobber state populated by the current WS.
+        let connectionEpoch = 0;
+        let reconnectTimer = null;
+
         const connect = () => {
+            if (reconnectTimer !== null) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+            const epoch = ++connectionEpoch;
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
             log('Connecting...');
@@ -1291,9 +1318,9 @@ SPDX-License-Identifier: Apache-2.0
                 el.status.textContent = 'Connected';
                 el.status.className = 'status connected';
                 log('Connected');
-                fetchConfig();
-                fetchProgress();
-                fetchServerMetrics();
+                fetchConfig(epoch);
+                fetchProgress(epoch);
+                fetchServerMetrics(epoch);
                 ws.send(JSON.stringify({
                     type: 'subscribe',
                     message_types: [
@@ -1311,7 +1338,7 @@ SPDX-License-Identifier: Apache-2.0
                 el.status.className = 'status disconnected';
                 resetDashboard();
                 log('Disconnected, reconnecting...');
-                setTimeout(connect, 2000);
+                reconnectTimer = setTimeout(connect, 2000);
             };
 
             ws.onerror = () => log('WebSocket error');
@@ -1321,6 +1348,10 @@ SPDX-License-Identifier: Apache-2.0
                 catch (e) { log(`Parse error: ${e.message}`); }
             };
         };
+
+        window.addEventListener('beforeunload', () => {
+            if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+        });
 
         connect();
     </script>

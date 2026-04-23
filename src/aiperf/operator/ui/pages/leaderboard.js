@@ -30,92 +30,6 @@ function formatValue(value, unit) {
   return unit ? `${formatted} ${unit}` : String(formatted);
 }
 
-// Feature 7: Percentile heatmap cell
-// For latency metrics: lower = better (green), higher = worse (red)
-// For throughput metrics: higher = better (green), lower = worse (red)
-function heatmapColor(value, allValues, isLowerBetter) {
-  if (value == null || allValues.length === 0) return palette.surface0;
-  const min = Math.min(...allValues.filter(v => v != null));
-  const max = Math.max(...allValues.filter(v => v != null));
-  if (min === max) return palette.surface0;
-
-  // Normalize to 0-1 range
-  let normalized = (value - min) / (max - min);
-  if (isLowerBetter) normalized = 1 - normalized;
-
-  // Interpolate: green (good) -> yellow (mid) -> red (bad)
-  if (normalized >= 0.5) {
-    // Good half: blend green and yellow
-    const t = (normalized - 0.5) * 2;
-    return blendColors(palette.yellow, palette.green, t);
-  } else {
-    // Bad half: blend red and yellow
-    const t = normalized * 2;
-    return blendColors(palette.red, palette.yellow, t);
-  }
-}
-
-function blendColors(c1, c2, t) {
-  const r1 = parseInt(c1.slice(1, 3), 16);
-  const g1 = parseInt(c1.slice(3, 5), 16);
-  const b1 = parseInt(c1.slice(5, 7), 16);
-  const r2 = parseInt(c2.slice(1, 3), 16);
-  const g2 = parseInt(c2.slice(3, 5), 16);
-  const b2 = parseInt(c2.slice(5, 7), 16);
-  const r = Math.round(r1 + (r2 - r1) * t);
-  const g = Math.round(g1 + (g2 - g1) * t);
-  const b = Math.round(b1 + (b2 - b1) * t);
-  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-}
-
-function PercentileHeatmap({ entry, allEntries, metric }) {
-  const pVals = entry.percentiles ?? {};
-  const p50 = pVals.p50 ?? null;
-  const p90 = pVals.p90 ?? null;
-  const p99 = pVals.p99 ?? null;
-
-  // If no percentile data, skip
-  if (p50 == null && p90 == null && p99 == null) return null;
-
-  // Determine if lower is better based on metric name
-  const isLowerBetter = !metric.includes('throughput');
-
-  // Collect all values across entries for normalization
-  const allP50 = allEntries.map(e => e.percentiles?.p50).filter(v => v != null);
-  const allP90 = allEntries.map(e => e.percentiles?.p90).filter(v => v != null);
-  const allP99 = allEntries.map(e => e.percentiles?.p99).filter(v => v != null);
-
-  const cells = [
-    { label: 'p50', value: p50, allValues: allP50 },
-    { label: 'p90', value: p90, allValues: allP90 },
-    { label: 'p99', value: p99, allValues: allP99 },
-  ];
-
-  return html`
-    <div style="display: flex; gap: 2px; align-items: center">
-      ${cells.map(cell => {
-        if (cell.value == null) {
-          return html`
-            <div
-              key=${cell.label}
-              title="${cell.label}: ---"
-              style=${'width: 24px; height: 18px; border-radius: 2px; background: ' + palette.surface0}
-            />
-          `;
-        }
-        const bg = heatmapColor(cell.value, cell.allValues, isLowerBetter);
-        return html`
-          <div
-            key=${cell.label}
-            title="${cell.label}: ${fmtNumber(cell.value, 1)}"
-            style=${'width: 24px; height: 18px; border-radius: 2px; background: ' + bg + '88; border: 1px solid ' + bg}
-          />
-        `;
-      })}
-    </div>
-  `;
-}
-
 export function Leaderboard() {
   const [selected, setSelected] = useState({ metric: 'request_throughput', stat: 'avg' });
   const [model, setModel] = useState('');
@@ -193,9 +107,6 @@ export function Leaderboard() {
     },
   };
 
-  // Check if any entries have percentile data
-  const hasPercentiles = filtered.some(e => e.percentiles && (e.percentiles.p50 != null || e.percentiles.p90 != null || e.percentiles.p99 != null));
-
   return html`
     <div class="leaderboard">
       <div class="section-header" style="margin-bottom: var(--space-4)">
@@ -256,28 +167,6 @@ export function Leaderboard() {
           <${ChartWrapper} type="bar" data=${chartData} options=${chartOptions} height=${Math.max(200, top10.length * 32)} />
         </div>
 
-        <!-- Feature 7: Heatmap legend (only if percentile data exists) -->
-        ${hasPercentiles && html`
-          <div class="card" style="margin-bottom: var(--space-4); padding: var(--space-3) var(--space-4)">
-            <div style="display: flex; align-items: center; gap: var(--space-4); font-size: var(--font-size-xs); color: ${palette.overlay0}; flex-wrap: wrap">
-              <span style="font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em">Percentile Heatmap</span>
-              <div style="display: flex; align-items: center; gap: var(--space-2)">
-                <div style=${'width: 12px; height: 12px; border-radius: 2px; background: ' + palette.green + '88; border: 1px solid ' + palette.green} />
-                <span>Good</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: var(--space-2)">
-                <div style=${'width: 12px; height: 12px; border-radius: 2px; background: ' + palette.yellow + '88; border: 1px solid ' + palette.yellow} />
-                <span>Mid</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: var(--space-2)">
-                <div style=${'width: 12px; height: 12px; border-radius: 2px; background: ' + palette.red + '88; border: 1px solid ' + palette.red} />
-                <span>Poor</span>
-              </div>
-              <span style="margin-left: var(--space-2)">Cells: p50 | p90 | p99</span>
-            </div>
-          </div>
-        `}
-
         <!-- Ranked table -->
         <div class="card">
           <div class="card-title">All Results</div>
@@ -289,9 +178,6 @@ export function Leaderboard() {
                   <th style="text-align: left; padding: var(--space-2) var(--space-3)">Job</th>
                   <th style="text-align: left; padding: var(--space-2) var(--space-3)">Namespace</th>
                   <th style="text-align: right; padding: var(--space-2) var(--space-3)">Value</th>
-                  ${hasPercentiles && html`
-                    <th style="text-align: center; padding: var(--space-2) var(--space-3)">p50/p90/p99</th>
-                  `}
                   <th style="text-align: left; padding: var(--space-2) var(--space-3)">Model</th>
                   <th style="text-align: left; padding: var(--space-2) var(--space-3)">Endpoint</th>
                   <th style="text-align: left; padding: var(--space-2) var(--space-3)">Date</th>
@@ -326,15 +212,6 @@ export function Leaderboard() {
                       <td style=${'padding: var(--space-2) var(--space-3); text-align: right; font-weight: 600;' + (isTop3 ? ' color: ' + rowColor : '')}>
                         ${formatValue(entry.value, entry.unit)}
                       </td>
-                      ${hasPercentiles && html`
-                        <td style="padding: var(--space-2) var(--space-3); text-align: center">
-                          <${PercentileHeatmap}
-                            entry=${entry}
-                            allEntries=${filtered}
-                            metric=${selected.metric}
-                          />
-                        </td>
-                      `}
                       <td style="padding: var(--space-2) var(--space-3); color: var(--subtext0)">
                         ${entry.model ?? '---'}
                       </td>

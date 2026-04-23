@@ -9,7 +9,7 @@ import { ChartWrapper } from '../components/chart-wrapper.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtLatencyStr } from '../lib/format.js';
 
 function formatElapsed(ms) {
-  const s = Math.floor(ms / 1000);
+  const s = Math.max(0, Math.floor(ms / 1000));
   const m = Math.floor(s / 60);
   const h = Math.floor(m / 60);
   if (h > 0) return `${h}h ${m % 60}m`;
@@ -109,14 +109,21 @@ const quadrantPlugin = {
   },
 };
 
-if (window.Chart && !window._quadrantPluginRegistered) {
-  window.Chart.register(quadrantPlugin);
-  window._quadrantPluginRegistered = true;
+// Chart.js UMD loads via a plain <script> tag while this module is imported
+// asynchronously; at module-evaluation time, window.Chart may or may not exist.
+// Register lazily from inside the component instead.
+function ensureQuadrantPluginRegistered() {
+  if (window.Chart && !window._quadrantPluginRegistered) {
+    window.Chart.register(quadrantPlugin);
+    window._quadrantPluginRegistered = true;
+  }
 }
 
 function ThroughputLatencyScatter({ completedJobs }) {
   const [axisMode, setAxisMode] = useState('tps_p99');
   const [logScale, setLogScale] = useState(false);
+
+  ensureQuadrantPluginRegistered();
 
   if (!completedJobs || completedJobs.length === 0) return null;
 
@@ -270,18 +277,18 @@ export function Dashboard() {
             api.getJobSummary(e.namespace, e.job_id).then(s => ({ id: e.job_id, ns: e.namespace, summary: s }))
           )
         );
-        const newMap = { ...summaryMap };
+        const newEntries = {};
         for (const r of results) {
           if (r.status !== 'fulfilled') continue;
           const { id, summary: s } = r.value;
-          newMap[id] = {
+          newEntries[id] = {
             throughputRps: s?.request_throughput?.avg ?? null,
             latencyP99Ms: s?.request_latency?.p99 ?? null,
             ttftMs: s?.time_to_first_token?.avg ?? null,
             tokenThroughput: s?.output_token_throughput?.avg ?? null,
           };
         }
-        setSummaryMap(newMap);
+        setSummaryMap((prev) => ({ ...prev, ...newEntries }));
       } catch (_e) { /* not available yet */ }
     }, 15000, ac.signal);
     return () => ac.abort();

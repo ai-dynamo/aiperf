@@ -155,6 +155,91 @@ class AioHttpTransport(BaseHTTPTransport):
             url_schemes=["http", "https"],
         )
 
+    def _resolve_connector(
+        self,
+        reuse_strategy: ConnectionReuseStrategy,
+        lease_manager: ConnectionLeaseManager | None,
+        request_info: RequestInfo,
+    ) -> tuple[aiohttp.TCPConnector | None, bool]:
+        """Resolve the TCP connector and ownership flag for a request.
+
+        Returns:
+            (connector, connector_owner) tuple suitable for aiohttp post_request.
+        """
+        match reuse_strategy:
+            case ConnectionReuseStrategy.NEVER:
+                # Create a new connector for this request, and have aiohttp
+                # close it when the request is done by setting connector_owner to True
+                kwargs = self.tcp_kwargs.copy()
+                kwargs["force_close"] = True
+                kwargs["limit"] = 1
+                kwargs["keepalive_timeout"] = None
+                return create_tcp_connector(**kwargs), True
+
+            case ConnectionReuseStrategy.STICKY_USER_SESSIONS:
+                if lease_manager is None:
+                    raise NotInitializedError(
+                        "ConnectionLeaseManager not initialized for sticky-user-sessions strategy"
+                    )
+                # Use x_correlation_id as the session key - it's the shared ID
+                # for all turns in a multi-turn conversation.
+                # We manage the connector lifecycle ourselves, so don't let aiohttp close it.
+                return lease_manager.get_connector(request_info.x_correlation_id), False
+
+            case ConnectionReuseStrategy.POOLED:
+                # Setting connector to None uses the shared pool internally, and connector_owner
+                # is set to False to ensure the connector is not closed automatically by aiohttp.
+                return None, False
+
+            case _:
+                raise ValueError(f"Invalid connection reuse strategy: {reuse_strategy}")
+
+    async def _maybe_release_sticky_lease(
+        self,
+        reuse_strategy: ConnectionReuseStrategy,
+        lease_manager: ConnectionLeaseManager | None,
+        request_info: RequestInfo,
+        *,
+        force: bool,
+        record: RequestRecord | None = None,
+    ) -> None:
+        """Release the sticky-user-session lease when appropriate.
+
+        When `force=True`, always release (used on cancellation/exception paths where
+        the connection is dirty). Otherwise release only on final turn, cancellation,
+        or recorded error.
+        """
+        if (
+            reuse_strategy != ConnectionReuseStrategy.STICKY_USER_SESSIONS
+            or lease_manager is None
+        ):
+            return
+        if not force:
+            should_release = request_info.is_final_turn or (
+                record is not None
+                and (
+                    record.cancellation_perf_ns is not None or record.error is not None
+                )
+            )
+            if not should_release:
+                return
+        await lease_manager.release_lease(request_info.x_correlation_id)
+
+    def _build_error_record(
+        self,
+        exc: BaseException,
+        request_info: RequestInfo,
+        headers: dict[str, str] | None,
+        start_perf_ns: int,
+    ) -> RequestRecord:
+        """Construct a RequestRecord capturing an unexpected exception."""
+        return RequestRecord(
+            request_headers=redact_headers(headers or request_info.endpoint_headers),
+            start_perf_ns=start_perf_ns,
+            end_perf_ns=time.perf_counter_ns(),
+            error=ErrorDetails.from_exception(exc),
+        )
+
     async def send_request(
         self,
         request_info: RequestInfo,
@@ -164,18 +249,9 @@ class AioHttpTransport(BaseHTTPTransport):
     ) -> RequestRecord:
         """Send HTTP POST request with JSON payload.
 
-        Connection behavior depends on the configured connection_reuse_strategy:
-        - POOLED: Uses shared connection pool (default aiohttp behavior)
-        - NEVER: Creates a new connection for each request, closed after
-        - STICKY_USER_SESSIONS: Reuses connection across conversation turns, closed on final turn
-
-        Args:
-            request_info: Request context and metadata (includes cancel_after_ns)
-            payload: JSON-serializable request payload
-            first_token_callback: Optional callback fired on first SSE message with ttft_ns
-
-        Returns:
-            Request record with responses, timing, and any errors
+        Connection behavior follows endpoint.connection_reuse:
+        POOLED (shared pool), NEVER (one-shot connector), STICKY_USER_SESSIONS
+        (lease reused across a conversation's turns; released on final turn/error).
         """
         if self.aiohttp_client is None:
             raise NotInitializedError(
@@ -185,7 +261,6 @@ class AioHttpTransport(BaseHTTPTransport):
         start_perf_ns = time.perf_counter_ns()
         headers = None
         reuse_strategy = self.run.cfg.endpoint.connection_reuse
-
         # Capture lease_manager reference to avoid race with concurrent shutdown
         lease_manager = self.lease_manager
 
@@ -198,42 +273,9 @@ class AioHttpTransport(BaseHTTPTransport):
             url = self.build_url(request_info)
             headers = self.build_headers(request_info)
             json_bytes = orjson.dumps(payload)
-
-            match reuse_strategy:
-                case ConnectionReuseStrategy.NEVER:
-                    # Create a new connector for this request, and have aiohttp
-                    # close it when the request is done by setting connector_owner to True
-                    kwargs = self.tcp_kwargs.copy()
-                    kwargs["force_close"] = True
-                    kwargs["limit"] = 1
-                    kwargs["keepalive_timeout"] = None
-                    connector = create_tcp_connector(**kwargs)
-                    connector_owner = True
-
-                case ConnectionReuseStrategy.STICKY_USER_SESSIONS:
-                    if lease_manager is None:
-                        raise NotInitializedError(
-                            "ConnectionLeaseManager not initialized for sticky-user-sessions strategy"
-                        )
-                    # Use x_correlation_id as the session key - it's the shared ID
-                    # for all turns in a multi-turn conversation.
-                    connector = lease_manager.get_connector(
-                        request_info.x_correlation_id
-                    )
-                    # We are going to manage the connector lifecycle ourselves, so we don't want aiohttp to close it.
-                    connector_owner = False
-
-                case ConnectionReuseStrategy.POOLED:
-                    # Setting connector to None uses the shared pool internally, and connector_owner
-                    # is set to False to ensure the connector is not closed automatically by aiohttp.
-                    connector = None
-                    connector_owner = False
-
-                case _:
-                    raise ValueError(
-                        f"Invalid connection reuse strategy: {self.run.cfg.endpoint.connection_reuse}"
-                    )
-
+            connector, connector_owner = self._resolve_connector(
+                reuse_strategy, lease_manager, request_info
+            )
             record = await self.aiohttp_client.post_request(
                 url,
                 json_bytes,
@@ -244,45 +286,20 @@ class AioHttpTransport(BaseHTTPTransport):
                 connector_owner=connector_owner,
             )
             record.request_headers = redact_headers(headers)
-
-            # Release lease for sticky-user-sessions strategy if it's the final turn of the conversation,
-            # or the request was cancelled (connection is now dirty/closed), or there was an error.
-            if (
-                reuse_strategy == ConnectionReuseStrategy.STICKY_USER_SESSIONS
-                and lease_manager is not None
-            ):
-                should_release = (
-                    request_info.is_final_turn
-                    or record.cancellation_perf_ns is not None
-                    or record.error is not None
-                )
-                if should_release:
-                    await lease_manager.release_lease(request_info.x_correlation_id)
-
+            await self._maybe_release_sticky_lease(
+                reuse_strategy, lease_manager, request_info, force=False, record=record
+            )
         except asyncio.CancelledError:
-            # Task was cancelled externally (e.g., credit cancellation from router)
-            # Release the lease since the connection is now dirty/unusable
-            if (
-                reuse_strategy == ConnectionReuseStrategy.STICKY_USER_SESSIONS
-                and lease_manager is not None
-            ):
-                await lease_manager.release_lease(request_info.x_correlation_id)
+            # External cancellation (e.g., credit cancellation); connection now dirty.
+            await self._maybe_release_sticky_lease(
+                reuse_strategy, lease_manager, request_info, force=True
+            )
             raise
         except Exception as e:  # noqa: BLE001 - per-request; attach ErrorDetails and return record
-            record = RequestRecord(
-                request_headers=redact_headers(
-                    headers or request_info.endpoint_headers
-                ),
-                start_perf_ns=start_perf_ns,
-                end_perf_ns=time.perf_counter_ns(),
-                error=ErrorDetails.from_exception(e),
-            )
+            record = self._build_error_record(e, request_info, headers, start_perf_ns)
             self.exception(f"HTTP request failed: {e!r}")
-            # Release lease on exception - connection is likely broken
-            if (
-                reuse_strategy == ConnectionReuseStrategy.STICKY_USER_SESSIONS
-                and lease_manager is not None
-            ):
-                await lease_manager.release_lease(request_info.x_correlation_id)
+            await self._maybe_release_sticky_lease(
+                reuse_strategy, lease_manager, request_info, force=True
+            )
 
         return record

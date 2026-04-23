@@ -6,10 +6,9 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 _logger = AIPerfLogger(__name__)
 
 
-# Module-scoped lookup tables (baselined as module-state; read-only, used
-# inside the format_* helpers below).
-_time_suffixes = ["d", "h", "m"]
-_time_factors = [60 * 60 * 24, 60 * 60, 60]
+# Read-only lookup tables for the format_* helpers below.
+_TIME_SUFFIXES = ("d", "h", "m")
+_TIME_FACTORS = (60 * 60 * 24, 60 * 60, 60)
 
 
 def format_elapsed_time(seconds: float | None, none_str: str = "--") -> str:
@@ -23,9 +22,9 @@ def format_elapsed_time(seconds: float | None, none_str: str = "--") -> str:
 
     parts = []
     _logger.debug(
-        f"format_elapsed_time: _time_suffixes: {_time_suffixes}, _time_factors: {_time_factors}"
+        f"format_elapsed_time: _time_suffixes: {_TIME_SUFFIXES}, _time_factors: {_TIME_FACTORS}"
     )
-    for suffix, factor in zip(_time_suffixes, _time_factors, strict=True):
+    for suffix, factor in zip(_TIME_SUFFIXES, _TIME_FACTORS, strict=True):
         _logger.debug(f"format_elapsed_time: seconds: {seconds}, factor: {factor}")
         if seconds >= factor:
             amount = int(seconds // factor)
@@ -71,9 +70,9 @@ def format_eta(seconds: float | None, none_str: str = "--") -> str:
     return f"{days}d {hours}h"
 
 
-# Module-scoped lookup table (baselined as module-state; read-only).
-_byte_suffixes = ["KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"]
-_byte_factors = [1024 ** (i + 1) for i in range(len(_byte_suffixes))]
+# Read-only lookup tables for format_bytes.
+_BYTE_SUFFIXES = ("KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
+_BYTE_FACTORS = tuple(1024 ** (i + 1) for i in range(len(_BYTE_SUFFIXES)))
 
 
 def format_bytes(bytes: int | None, none_str: str = "--") -> str:
@@ -83,7 +82,7 @@ def format_bytes(bytes: int | None, none_str: str = "--") -> str:
     if bytes < 1000:
         return f"{bytes} B"
 
-    for factor, suffix in zip(_byte_factors, _byte_suffixes, strict=True):
+    for factor, suffix in zip(_BYTE_FACTORS, _BYTE_SUFFIXES, strict=True):
         if bytes / factor < 100:
             return f"{bytes / factor:.1f} {suffix}"
         if bytes / factor < 1000:

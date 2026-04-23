@@ -202,7 +202,16 @@ When making changes, update the appropriate documentation files. When adding a n
 | Contribution process, DCO | `CONTRIBUTING.md` |
 | New services, message types, plugin types | `docs/architecture.md` + `docs/dev/patterns.md` |
 | Kubernetes operator, handlers, CR lifecycle | `docs/dev/kubernetes-flow.md` |
-| Kubernetes deployment, Helm chart, cluster setup | `docs/kubernetes/getting-started.md` + `docs/kubernetes/configuration.md` + `docs/kubernetes/production.md` |
+| Kubernetes deployment, Helm chart, cluster setup | `docs/kubernetes/getting-started.md` + `docs/kubernetes/configuration.md` + `docs/kubernetes/production.md` + `docs/kubernetes/workflow.md` |
+| Kubernetes RBAC, securityContext, NetworkPolicy | `docs/kubernetes/rbac-security.md` |
+| Kube preflight checks / validate / debug | `docs/kubernetes/preflight.md` + `docs/kubernetes/validate.md` + `docs/kubernetes/debug-command.md` |
+| Watch diagnosis issues / thresholds | `docs/kubernetes/diagnosis-issues.md` |
+| Operator HTTP API / web dashboard | `docs/kubernetes/results-api.md` + `docs/kubernetes/dashboard-ui.md` |
+| Controller-pod sidecars (event-bus, results) | `docs/kubernetes/sidecars.md` |
+| Memory estimator model / tuning | `docs/kubernetes/memory-estimator.md` |
+| Kueue integration | `docs/kubernetes/kueue.md` |
+| Direct mode (`--no-operator`) | `docs/kubernetes/direct-mode.md` |
+| `aiperf kube init` / `generate` | `docs/kubernetes/init-and-generate.md` |
 | Kube CLI commands | `docs/cli-options.md` (auto-generated via `make generate-cli-docs`) |
 | Tutorials and feature guides | `docs/tutorials/` + `README.md` tutorial index |
 

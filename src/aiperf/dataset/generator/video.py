@@ -5,23 +5,29 @@ from __future__ import annotations
 
 import base64
 import io
-import math
-import platform
 import shutil
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import ffmpeg
-import numpy as np
 import soundfile as sf
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import VideoAudioCodec, VideoFormat, VideoSynthType
 from aiperf.config.dataset import VIDEO_AUDIO_CODEC_MAP
 from aiperf.dataset.generator.audio import SUPPORTED_BIT_DEPTHS
 from aiperf.dataset.generator.base import BaseGenerator, generate_noise_signal
+from aiperf.dataset.generator.ffmpeg_support import (
+    check_ffmpeg_availability,
+    get_ffmpeg_install_instructions,
+)
+from aiperf.dataset.generator.video_frames import (
+    generate_grid_clock_frames,
+    generate_moving_shapes_frames,
+    generate_noise_frames,
+)
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
@@ -45,44 +51,11 @@ class VideoGenerator(BaseGenerator):
 
     def _check_ffmpeg_availability(self) -> bool:
         """Check if FFmpeg binary is available in the system."""
-        return shutil.which("ffmpeg") is not None
+        return check_ffmpeg_availability()
 
     def _get_ffmpeg_install_instructions(self) -> str:
         """Get platform-specific FFmpeg installation instructions."""
-        system = platform.system().lower()
-
-        if system == "linux":
-            # Try to detect the distribution
-            try:
-                with open("/etc/os-release") as f:
-                    os_info = f.read().lower()
-                if "ubuntu" in os_info or "debian" in os_info:
-                    return "sudo apt update && sudo apt install ffmpeg"
-                elif "fedora" in os_info or "rhel" in os_info or "centos" in os_info:
-                    return "sudo dnf install ffmpeg  # or: sudo yum install ffmpeg"
-                elif "arch" in os_info:
-                    return "sudo pacman -S ffmpeg"
-            except (FileNotFoundError, PermissionError, OSError):
-                pass
-            return "sudo apt install ffmpeg  # (Ubuntu/Debian) or use your distribution's package manager"
-        elif system == "darwin":  # macOS
-            if shutil.which("brew"):
-                return "brew install ffmpeg"
-            elif shutil.which("port"):
-                return "sudo port install ffmpeg"
-            else:
-                return (
-                    "brew install ffmpeg  # (install Homebrew first: https://brew.sh)"
-                )
-        elif system == "windows":
-            if shutil.which("choco"):
-                return "choco install ffmpeg"
-            elif shutil.which("winget"):
-                return "winget install ffmpeg"
-            else:
-                return "Download from https://ffmpeg.org/download.html or use 'choco install ffmpeg'"
-        else:
-            return "Install FFmpeg using your system's package manager or download from https://ffmpeg.org"
+        return get_ffmpeg_install_instructions()
 
     def generate(self, *args, **kwargs) -> str:
         """Generate a video with the configured parameters.
@@ -118,160 +91,16 @@ class VideoGenerator(BaseGenerator):
     def _generate_frames(self) -> list[Image.Image]:
         """Generate frames based on the synthesis type."""
         total_frames = int(self.video_config.duration * self.video_config.fps)
-        frames = []
-
-        if self.video_config.synth_type == VideoSynthType.MOVING_SHAPES:
-            frames = self._generate_moving_shapes_frames(total_frames)
-        elif self.video_config.synth_type == VideoSynthType.GRID_CLOCK:
-            frames = self._generate_grid_clock_frames(total_frames)
-        elif self.video_config.synth_type == VideoSynthType.NOISE:
-            frames = self._generate_noise_frames(total_frames)
-        else:
-            raise ValueError(f"Unknown synthesis type: {self.video_config.synth_type}")
-
-        return frames
-
-    def _generate_moving_shapes_frames(self, total_frames: int) -> list[Image.Image]:
-        """Generate frames with moving geometric shapes."""
-        frames = []
         width, height = self.video_config.width, self.video_config.height
+        synth_type = self.video_config.synth_type
 
-        # Create multiple moving objects
-        shapes = [
-            {
-                "type": "circle",
-                "color": (255, 0, 0),  # Red circle
-                "size": 30,
-                "start_x": 0,
-                "start_y": height // 2,
-                "dx": width / total_frames * 2,  # Move across screen in half duration
-                "dy": 0,
-            },
-            {
-                "type": "rectangle",
-                "color": (0, 255, 0),  # Green rectangle
-                "size": 25,
-                "start_x": width // 2,
-                "start_y": 0,
-                "dx": 0,
-                "dy": height / total_frames * 2,  # Move down
-            },
-            {
-                "type": "circle",
-                "color": (0, 0, 255),  # Blue circle
-                "size": 20,
-                "start_x": width,
-                "start_y": height,
-                "dx": -width / total_frames * 1.5,  # Move diagonally
-                "dy": -height / total_frames * 1.5,
-            },
-        ]
-
-        for frame_num in range(total_frames):
-            # Create black background
-            img = Image.new("RGB", (width, height), (0, 0, 0))
-            draw = ImageDraw.Draw(img)
-
-            # Draw each shape at its current position
-            for shape in shapes:
-                x = shape["start_x"] + shape["dx"] * frame_num
-                y = shape["start_y"] + shape["dy"] * frame_num
-
-                # Wrap around screen edges
-                x = x % width
-                y = y % height
-
-                size = shape["size"]
-                color = shape["color"]
-
-                if shape["type"] == "circle":
-                    draw.ellipse(
-                        [x - size // 2, y - size // 2, x + size // 2, y + size // 2],
-                        fill=color,
-                    )
-                elif shape["type"] == "rectangle":
-                    draw.rectangle(
-                        [x - size // 2, y - size // 2, x + size // 2, y + size // 2],
-                        fill=color,
-                    )
-
-            frames.append(img)
-
-        return frames
-
-    def _generate_grid_clock_frames(self, total_frames: int) -> list[Image.Image]:
-        """Generate frames with a grid and clock-like animation."""
-        frames = []
-        width, height = self.video_config.width, self.video_config.height
-
-        for frame_num in range(total_frames):
-            # Create dark gray background
-            img = Image.new("RGB", (width, height), (32, 32, 32))
-            draw = ImageDraw.Draw(img)
-
-            # Draw grid
-            grid_size = 32
-            for x in range(0, width, grid_size):
-                draw.line([(x, 0), (x, height)], fill=(64, 64, 64), width=1)
-            for y in range(0, height, grid_size):
-                draw.line([(0, y), (width, y)], fill=(64, 64, 64), width=1)
-
-            # Draw clock hands
-            center_x, center_y = width // 2, height // 2
-            radius = min(width, height) // 4
-
-            # Frame-based rotation
-            angle = (frame_num / total_frames) * 2 * math.pi
-
-            # Hour hand (slower)
-            hour_angle = angle / 12
-            hour_x = center_x + radius * 0.6 * math.cos(hour_angle - math.pi / 2)
-            hour_y = center_y + radius * 0.6 * math.sin(hour_angle - math.pi / 2)
-            draw.line(
-                [(center_x, center_y), (hour_x, hour_y)], fill=(255, 255, 0), width=3
-            )
-
-            # Minute hand
-            min_x = center_x + radius * 0.9 * math.cos(angle - math.pi / 2)
-            min_y = center_y + radius * 0.9 * math.sin(angle - math.pi / 2)
-            draw.line(
-                [(center_x, center_y), (min_x, min_y)], fill=(255, 255, 255), width=2
-            )
-
-            # Clock face circle
-            draw.ellipse(
-                [
-                    center_x - radius,
-                    center_y - radius,
-                    center_x + radius,
-                    center_y + radius,
-                ],
-                outline=(128, 128, 128),
-                width=2,
-            )
-
-            # Center dot
-            draw.ellipse(
-                [center_x - 3, center_y - 3, center_x + 3, center_y + 3],
-                fill=(255, 0, 0),
-            )
-
-            # Add frame number in corner
-            draw.text((10, 10), f"Frame {frame_num}", fill=(255, 255, 255))
-
-            frames.append(img)
-
-        return frames
-
-    def _generate_noise_frames(self, total_frames: int) -> list[Image.Image]:
-        """Generate frames with random noise pixels."""
-        width, height = self.video_config.width, self.video_config.height
-        return [
-            Image.fromarray(
-                self._noise_rng.integers(0, 256, (height, width, 3), dtype=np.uint8)
-            )
-            for _ in range(total_frames)
-        ]
+        if synth_type == VideoSynthType.MOVING_SHAPES:
+            return generate_moving_shapes_frames(total_frames, width, height)
+        if synth_type == VideoSynthType.GRID_CLOCK:
+            return generate_grid_clock_frames(total_frames, width, height)
+        if synth_type == VideoSynthType.NOISE:
+            return generate_noise_frames(total_frames, width, height, self._noise_rng)
+        raise ValueError(f"Unknown synthesis type: {synth_type}")
 
     def _encode_frames_to_base64(self, frames: list[Image.Image]) -> str:
         """Convert frames to video data and encode as base64 string.

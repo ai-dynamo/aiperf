@@ -90,6 +90,7 @@ export function fmtPercent(value, decimals = 1) {
  * @returns {string}
  */
 export function fmtBytes(bytes) {
+  if (bytes == null || typeof bytes !== 'number' || !isFinite(bytes)) return '---';
   if (bytes < 1024) return fmtInt(bytes) + ' B';
   if (bytes < 1024 * 1024) return fmtNumber(bytes / 1024, 1) + ' KiB';
   return fmtNumber(bytes / (1024 * 1024), 1) + ' MiB';

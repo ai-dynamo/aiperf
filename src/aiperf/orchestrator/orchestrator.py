@@ -19,6 +19,7 @@ from aiperf.orchestrator.strategies import ExecutionStrategy
 
 if TYPE_CHECKING:
     from aiperf.common.models.export_models import JsonMetricResult
+    from aiperf.config.benchmark import BenchmarkRun
 
 logger = logging.getLogger(__name__)
 
@@ -127,136 +128,26 @@ class MultiRunOrchestrator:
         Returns:
             RunResult with success status and metrics or error
         """
-        from aiperf.config.benchmark import BenchmarkRun
-
         # Initialize label and artifacts_path BEFORE try block to ensure they're always defined
         # This prevents UnboundLocalError in the except block if any operation fails
         label = None
         artifacts_path = None
 
         try:
-            # Strategy determines artifact path and label
             artifacts_path = strategy.get_run_path(self.base_dir, run_index)
             artifacts_path.mkdir(parents=True, exist_ok=True)
             label = strategy.get_run_label(run_index)
 
-            config = config.model_copy(deep=True)
-            config.artifacts.dir = artifacts_path
-
-            # Build a BenchmarkRun for subprocess serialization
-            run = BenchmarkRun(
-                benchmark_id=uuid4().hex,
-                cfg=config,
-                artifact_dir=artifacts_path,
-            )
-
-            # Serialize config to JSON (with secrets for subprocess to read)
-            # Overwritten with redacted version after the subprocess finishes.
-            config_file = artifacts_path / "run_config.json"
-            with open(config_file, "wb") as f:
-                f.write(
-                    orjson.dumps(
-                        run.model_dump(mode="json", exclude_none=True),
-                        option=orjson.OPT_INDENT_2,
-                    )
-                )
-
-            # Run the benchmark in a subprocess using the dedicated runner module
-            # The runner loads the config and calls _run_single_benchmark()
-            # No timeout is set - SystemController handles benchmark duration and grace period internally
-            # stdin/stdout are passed through to terminal so Textual can detect TTY and render live dashboard
-            # stderr is captured for error reporting
-            # -u flag forces unbuffered output so live dashboard updates are visible immediately
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-u",  # Unbuffered output - critical for live dashboard rendering
-                    "-m",
-                    "aiperf.orchestrator.subprocess_runner",
-                    str(config_file),
-                ],
-                stdin=sys.stdin,  # Pass through stdin so Textual can detect interactive TTY
-                stdout=sys.stdout,  # Pass through stdout for live dashboard rendering
-                stderr=subprocess.PIPE,  # Capture for error reporting
-                text=True,
-            )
-
-            # Overwrite config file with redacted version so secrets don't persist in artifacts
-            redacted = run.model_dump(mode="json", exclude_none=True)
-            if "cfg" in redacted and "endpoint" in redacted["cfg"]:
-                endpoint = redacted["cfg"]["endpoint"]
-                if "api_key" in endpoint and endpoint["api_key"] is not None:
-                    endpoint["api_key"] = REDACTED_VALUE
-            with open(config_file, "wb") as f:
-                f.write(orjson.dumps(redacted, option=orjson.OPT_INDENT_2))
+            run, config_file = self._prepare_run_artifacts(config, artifacts_path)
+            result = self._run_benchmark_subprocess(config_file)
+            self._write_redacted_config(run, config_file)
 
             if result.returncode != 0:
-                error_msg = f"Benchmark failed with exit code {result.returncode}"
-                if result.stderr:
-                    # Get last 2000 chars of stderr for debugging
-                    error_msg += f"\nStderr: {result.stderr[-2000:]}"
-                logger.error(error_msg)
-                return RunResult(
-                    label=label,
-                    success=False,
-                    error=error_msg,
-                    artifacts_path=artifacts_path,
-                )
+                return self._failure_from_subprocess(result, label, artifacts_path)
 
-            # Extract summary metrics from the artifacts
-            # The SystemController writes results to files, so we read them back
             summary_metrics = self._extract_summary_metrics(artifacts_path)
-
-            # Check if the run produced any meaningful results
-            # If no metrics were extracted or request_count is 0, treat as failure
-            if not summary_metrics:
-                error_msg = (
-                    "No metrics found in artifacts - run may have failed to complete"
-                )
-                logger.error(error_msg)
-                return RunResult(
-                    label=label,
-                    success=False,
-                    error=error_msg,
-                    artifacts_path=artifacts_path,
-                )
-
-            # Check if any requests completed successfully
-            # request_count only counts valid (successful) requests
-            # error_request_count counts failed requests
-            # If error_request_count > 0 but request_count is missing or 0, all requests failed
-            request_count_metric = summary_metrics.get("request_count")
-            error_request_count_metric = summary_metrics.get("error_request_count")
-
-            # If no request_count metric exists or it's 0, check if there were any errors
-            if not request_count_metric or request_count_metric.avg == 0:
-                # If there were error requests, all requests failed
-                if error_request_count_metric and error_request_count_metric.avg > 0:
-                    error_msg = (
-                        f"All {int(error_request_count_metric.avg)} requests failed"
-                    )
-                    logger.error(error_msg)
-                    return RunResult(
-                        label=label,
-                        success=False,
-                        error=error_msg,
-                        artifacts_path=artifacts_path,
-                    )
-                # If no errors either, no requests were made at all
-                error_msg = "No requests completed"
-                logger.error(error_msg)
-                return RunResult(
-                    label=label,
-                    success=False,
-                    error=error_msg,
-                    artifacts_path=artifacts_path,
-                )
-
-            return RunResult(
-                label=label,
-                success=True,
-                summary_metrics=summary_metrics,
-                artifacts_path=artifacts_path,
+            return self._build_result_from_metrics(
+                summary_metrics, label, artifacts_path
             )
         except Exception as e:
             # Use safe values for label and artifacts_path in case they weren't set
@@ -268,6 +159,131 @@ class MultiRunOrchestrator:
                 error=str(e),
                 artifacts_path=artifacts_path,
             )
+
+    def _prepare_run_artifacts(
+        self, config: BenchmarkConfig, artifacts_path: Path
+    ) -> tuple["BenchmarkRun", Path]:
+        """Clone config into the artifacts dir and serialize the run config for the subprocess."""
+        from aiperf.config.benchmark import BenchmarkRun
+
+        config = config.model_copy(deep=True)
+        config.artifacts.dir = artifacts_path
+
+        run = BenchmarkRun(
+            benchmark_id=uuid4().hex,
+            cfg=config,
+            artifact_dir=artifacts_path,
+        )
+
+        # Serialize config to JSON (with secrets for subprocess to read)
+        # Overwritten with redacted version after the subprocess finishes.
+        config_file = artifacts_path / "run_config.json"
+        with open(config_file, "wb") as f:
+            f.write(
+                orjson.dumps(
+                    run.model_dump(mode="json", exclude_none=True),
+                    option=orjson.OPT_INDENT_2,
+                )
+            )
+        return run, config_file
+
+    @staticmethod
+    def _run_benchmark_subprocess(
+        config_file: Path,
+    ) -> "subprocess.CompletedProcess[str]":
+        """Run the benchmark subprocess runner and return its completed-process."""
+        # No timeout is set - SystemController handles benchmark duration and grace period internally
+        # stdin/stdout are passed through to terminal so Textual can detect TTY and render live dashboard
+        # stderr is captured for error reporting
+        # -u flag forces unbuffered output so live dashboard updates are visible immediately
+        return subprocess.run(
+            [
+                sys.executable,
+                "-u",  # Unbuffered output - critical for live dashboard rendering
+                "-m",
+                "aiperf.orchestrator.subprocess_runner",
+                str(config_file),
+            ],
+            stdin=sys.stdin,  # Pass through stdin so Textual can detect interactive TTY
+            stdout=sys.stdout,  # Pass through stdout for live dashboard rendering
+            stderr=subprocess.PIPE,  # Capture for error reporting
+            text=True,
+        )
+
+    @staticmethod
+    def _write_redacted_config(run: "BenchmarkRun", config_file: Path) -> None:
+        """Overwrite the on-disk config file with a redacted copy so secrets don't persist."""
+        redacted = run.model_dump(mode="json", exclude_none=True)
+        if "cfg" in redacted and "endpoint" in redacted["cfg"]:
+            endpoint = redacted["cfg"]["endpoint"]
+            if "api_key" in endpoint and endpoint["api_key"] is not None:
+                endpoint["api_key"] = REDACTED_VALUE
+        with open(config_file, "wb") as f:
+            f.write(orjson.dumps(redacted, option=orjson.OPT_INDENT_2))
+
+    @staticmethod
+    def _failure_from_subprocess(
+        result: "subprocess.CompletedProcess[str]",
+        label: str,
+        artifacts_path: Path,
+    ) -> RunResult:
+        """Build a failed RunResult from a non-zero subprocess exit."""
+        error_msg = f"Benchmark failed with exit code {result.returncode}"
+        if result.stderr:
+            # Get last 2000 chars of stderr for debugging
+            error_msg += f"\nStderr: {result.stderr[-2000:]}"
+        logger.error(error_msg)
+        return RunResult(
+            label=label,
+            success=False,
+            error=error_msg,
+            artifacts_path=artifacts_path,
+        )
+
+    @staticmethod
+    def _build_result_from_metrics(
+        summary_metrics: dict[str, "JsonMetricResult"],
+        label: str,
+        artifacts_path: Path,
+    ) -> RunResult:
+        """Classify success/failure from extracted summary metrics."""
+        if not summary_metrics:
+            error_msg = (
+                "No metrics found in artifacts - run may have failed to complete"
+            )
+            logger.error(error_msg)
+            return RunResult(
+                label=label,
+                success=False,
+                error=error_msg,
+                artifacts_path=artifacts_path,
+            )
+
+        # request_count only counts valid (successful) requests; error_request_count
+        # counts failures. If request_count is missing/0 and error_request_count>0
+        # the whole run failed; if both are absent, no requests were made.
+        request_count_metric = summary_metrics.get("request_count")
+        error_request_count_metric = summary_metrics.get("error_request_count")
+
+        if not request_count_metric or request_count_metric.avg == 0:
+            if error_request_count_metric and error_request_count_metric.avg > 0:
+                error_msg = f"All {int(error_request_count_metric.avg)} requests failed"
+            else:
+                error_msg = "No requests completed"
+            logger.error(error_msg)
+            return RunResult(
+                label=label,
+                success=False,
+                error=error_msg,
+                artifacts_path=artifacts_path,
+            )
+
+        return RunResult(
+            label=label,
+            success=True,
+            summary_metrics=summary_metrics,
+            artifacts_path=artifacts_path,
+        )
 
     def _extract_summary_metrics(
         self, artifacts_path: Path
@@ -315,7 +331,7 @@ class MultiRunOrchestrator:
                     try:
                         # Parse as JsonMetricResult to preserve full structure
                         metrics[field_name] = JsonMetricResult(**field_value)
-                    except Exception as e:
+                    except TypeError as e:
                         logger.debug(f"Skipping field {field_name}: {e}")
                         continue
 

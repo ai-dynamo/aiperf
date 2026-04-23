@@ -102,6 +102,10 @@ class SessionSynthesizer:
         self._session_counter += 1
         return idx
 
+    def _new_session_id(self) -> str:
+        rand_bytes = self._rng.bytes(16)
+        return f"sess-{uuid.UUID(bytes=rand_bytes).hex[:12]}"
+
     def _should_reset(self, input_length: int) -> bool:
         """Check probabilistic reset based on context utilization."""
         cfg = self._config.reset
@@ -159,6 +163,164 @@ class SessionSynthesizer:
         target = round(sampled)
         return min(max(target, turns_cfg.min), turns_cfg.max)
 
+    def _build_turn_zero(
+        self,
+        *,
+        session_index: int,
+        group_id: int,
+        initial_ctx: int,
+    ) -> SynthesizedTurn:
+        output_len = self._sample_output_length()
+        hash_ids = self._allocator.turn_hash_ids(
+            session_index,
+            group_id=group_id,
+            input_length=initial_ctx,
+            prev_session_ids=None,
+        )
+        return SynthesizedTurn(
+            turn_index=0,
+            input_length=initial_ctx,
+            output_length=output_len,
+            new_tokens=initial_ctx,
+            delay_ms=0.0,
+            timestamp_ms=0.0,
+            hash_ids=hash_ids,
+        )
+
+    def _sample_next_input(
+        self, prev_input: int, prev_output: int
+    ) -> tuple[float, int, int] | None:
+        """Sample delay + new_tokens and compute input_length.
+
+        Returns (delay_ms, new_tokens, input_length), or None if the result
+        would exceed max_prompt_tokens (caller treats as FORCED_RETIRE).
+        """
+        delay_ms = self._sample_delay_ms(prev_input)
+        new_tokens = self._sample_new_tokens()
+        input_length = prev_input + prev_output + new_tokens
+        if input_length >= self._config.max_prompt_tokens:
+            return None
+        return delay_ms, new_tokens, input_length
+
+    def _finalize_follow_turn(
+        self,
+        *,
+        session_index: int,
+        group_id: int,
+        turn_index: int,
+        prev_turn: SynthesizedTurn,
+        delay_ms: float,
+        new_tokens: int,
+        input_length: int,
+    ) -> SynthesizedTurn:
+        """Sample output_length and hash_ids, then build the turn."""
+        output_len = self._sample_output_length()
+        prev_session = self._allocator.extract_session_ids(prev_turn.hash_ids)
+        hash_ids = self._allocator.turn_hash_ids(
+            session_index,
+            group_id=group_id,
+            input_length=input_length,
+            prev_session_ids=prev_session,
+        )
+        return SynthesizedTurn(
+            turn_index=turn_index,
+            input_length=input_length,
+            output_length=output_len,
+            new_tokens=new_tokens,
+            delay_ms=delay_ms,
+            timestamp_ms=prev_turn.timestamp_ms + delay_ms,
+            hash_ids=hash_ids,
+        )
+
+    def _grow_session(
+        self,
+        *,
+        turns: list[SynthesizedTurn],
+        session_index: int,
+        group_id: int,
+        prev_input: int,
+        prev_output: int,
+    ) -> SessionEndReason:
+        """Run the main turn-generation loop, mutating `turns` in place."""
+        turn_idx = len(turns)
+        while True:
+            sampled = self._sample_next_input(prev_input, prev_output)
+            if sampled is None:
+                return SessionEndReason.FORCED_RETIRE
+            delay_ms, new_tokens, input_length = sampled
+
+            if self._should_reset(input_length):
+                return SessionEndReason.PROBABILISTIC_RESET
+
+            turn = self._finalize_follow_turn(
+                session_index=session_index,
+                group_id=group_id,
+                turn_index=turn_idx,
+                prev_turn=turns[-1],
+                delay_ms=delay_ms,
+                new_tokens=new_tokens,
+                input_length=input_length,
+            )
+            turns.append(turn)
+            prev_input = input_length
+            prev_output = turn.output_length
+            turn_idx += 1
+
+    def _try_build_explicit_turn_session(
+        self, target_turns: int, allow_truncation: bool
+    ) -> SynthesizedSession | None:
+        """One attempt at an explicit-turn session. Returns None to retry."""
+        session_index = self._next_session_index()
+        session_id = self._new_session_id()
+        group_id = self._sample_group_id()
+
+        initial_ctx = self._sample_initial_context()
+        if initial_ctx >= self._config.max_prompt_tokens:
+            return None
+
+        turns: list[SynthesizedTurn] = [
+            self._build_turn_zero(
+                session_index=session_index,
+                group_id=group_id,
+                initial_ctx=initial_ctx,
+            )
+        ]
+        prev_input = initial_ctx
+        prev_output = turns[0].output_length
+
+        for turn_idx in range(1, target_turns):
+            sampled = self._sample_next_input(prev_input, prev_output)
+            if sampled is None:
+                if allow_truncation:
+                    return SynthesizedSession(
+                        session_id=session_id,
+                        group_id=group_id,
+                        turns=turns,
+                        end_reason=SessionEndReason.FORCED_RETIRE,
+                    )
+                return None
+
+            delay_ms, new_tokens, input_length = sampled
+            turn = self._finalize_follow_turn(
+                session_index=session_index,
+                group_id=group_id,
+                turn_index=turn_idx,
+                prev_turn=turns[-1],
+                delay_ms=delay_ms,
+                new_tokens=new_tokens,
+                input_length=input_length,
+            )
+            turns.append(turn)
+            prev_input = input_length
+            prev_output = turn.output_length
+
+        return SynthesizedSession(
+            session_id=session_id,
+            group_id=group_id,
+            turns=turns,
+            end_reason=SessionEndReason.TARGET_TURN_COUNT,
+        )
+
     def _synthesize_explicit_turn_session(self) -> SynthesizedSession:
         turns_cfg = self._config.turns
         if turns_cfg is None:
@@ -167,84 +329,11 @@ class SessionSynthesizer:
         target_turns = self._sample_turn_target()
         max_attempts = turns_cfg.max_session_attempts or 1
         for _ in range(max_attempts):
-            session_index = self._next_session_index()
-            rand_bytes = self._rng.bytes(16)
-            session_id = f"sess-{uuid.UUID(bytes=rand_bytes).hex[:12]}"
-            group_id = self._sample_group_id()
-
-            initial_ctx = self._sample_initial_context()
-            if initial_ctx >= self._config.max_prompt_tokens:
-                continue
-
-            output_len = self._sample_output_length()
-            timestamp_ms = 0.0
-            hash_ids = self._allocator.turn_hash_ids(
-                session_index,
-                group_id=group_id,
-                input_length=initial_ctx,
-                prev_session_ids=None,
+            session = self._try_build_explicit_turn_session(
+                target_turns, turns_cfg.allow_truncation
             )
-            turns: list[SynthesizedTurn] = [
-                SynthesizedTurn(
-                    turn_index=0,
-                    input_length=initial_ctx,
-                    output_length=output_len,
-                    new_tokens=initial_ctx,
-                    delay_ms=0.0,
-                    timestamp_ms=timestamp_ms,
-                    hash_ids=hash_ids,
-                )
-            ]
-
-            prev_input = initial_ctx
-            prev_output = output_len
-            realized = True
-            for turn_idx in range(1, target_turns):
-                delay_ms = self._sample_delay_ms(prev_input)
-                timestamp_ms += delay_ms
-
-                new_tokens = self._sample_new_tokens()
-                input_length = prev_input + prev_output + new_tokens
-                if input_length >= self._config.max_prompt_tokens:
-                    if turns_cfg.allow_truncation:
-                        return SynthesizedSession(
-                            session_id=session_id,
-                            group_id=group_id,
-                            turns=turns,
-                            end_reason=SessionEndReason.FORCED_RETIRE,
-                        )
-                    realized = False
-                    break
-
-                output_len = self._sample_output_length()
-                prev_session = self._allocator.extract_session_ids(turns[-1].hash_ids)
-                hash_ids = self._allocator.turn_hash_ids(
-                    session_index,
-                    group_id=group_id,
-                    input_length=input_length,
-                    prev_session_ids=prev_session,
-                )
-                turns.append(
-                    SynthesizedTurn(
-                        turn_index=turn_idx,
-                        input_length=input_length,
-                        output_length=output_len,
-                        new_tokens=new_tokens,
-                        delay_ms=delay_ms,
-                        timestamp_ms=timestamp_ms,
-                        hash_ids=hash_ids,
-                    )
-                )
-                prev_input = input_length
-                prev_output = output_len
-
-            if realized:
-                return SynthesizedSession(
-                    session_id=session_id,
-                    group_id=group_id,
-                    turns=turns,
-                    end_reason=SessionEndReason.TARGET_TURN_COUNT,
-                )
+            if session is not None:
+                return session
 
         raise RuntimeError(
             "Failed to synthesize explicit-turn session for "
@@ -268,47 +357,35 @@ class SessionSynthesizer:
             return [self._synthesize_explicit_turn_session()]
 
         session_index = self._next_session_index()
-        rand_bytes = self._rng.bytes(16)
-        session_id = f"sess-{uuid.UUID(bytes=rand_bytes).hex[:12]}"
-        turns: list[SynthesizedTurn] = []
+        session_id = self._new_session_id()
 
         lo, hi = self._config.restart_turn_range
         restart_at_turn = int(self._rng.integers(lo, hi)) if inject_restart else -1
 
         group_id = self._sample_group_id()
 
-        # Turn 0: derive initial_context = L1 + L1.5 + sampled L2
         initial_ctx = self._sample_initial_context()
-        output_len = self._sample_output_length()
-
-        timestamp_ms = 0.0
-        hash_ids = self._allocator.turn_hash_ids(
-            session_index,
-            group_id=group_id,
-            input_length=initial_ctx,
-            prev_session_ids=None,
-        )
-
-        turns.append(
-            SynthesizedTurn(
-                turn_index=0,
-                input_length=initial_ctx,
-                output_length=output_len,
-                new_tokens=initial_ctx,
-                delay_ms=0.0,
-                timestamp_ms=timestamp_ms,
-                hash_ids=hash_ids,
+        turns: list[SynthesizedTurn] = [
+            self._build_turn_zero(
+                session_index=session_index,
+                group_id=group_id,
+                initial_ctx=initial_ctx,
             )
-        )
-
+        ]
         prev_input = initial_ctx
-        prev_output = output_len
+        prev_output = turns[0].output_length
 
-        turn_idx = 1
-        end_reason = SessionEndReason.FORCED_RETIRE
-        while True:
-            # Split into two sessions at restart turn
-            if turn_idx == restart_at_turn:
+        if restart_at_turn > 0:
+            outcome = self._grow_until_restart(
+                turns=turns,
+                session_index=session_index,
+                group_id=group_id,
+                prev_input=prev_input,
+                prev_output=prev_output,
+                restart_at_turn=restart_at_turn,
+            )
+            if isinstance(outcome, tuple):
+                split_input, split_output = outcome
                 session_a = SynthesizedSession(
                     session_id=session_id,
                     group_id=group_id,
@@ -318,60 +395,20 @@ class SessionSynthesizer:
                 session_b = self._synthesize_continuation(
                     session_index=session_index,
                     group_id=group_id,
-                    prev_input=prev_input,
-                    prev_output=prev_output,
+                    prev_input=split_input,
+                    prev_output=split_output,
                     prev_hash_ids=turns[-1].hash_ids,
                 )
                 return [session_a, session_b]
-
-            # 1. Sample delay
-            delay_ms = self._sample_delay_ms(prev_input)
-            timestamp_ms += delay_ms
-
-            # 2. Sample new tokens (bias-corrected for truncation)
-            new_tokens = self._sample_new_tokens()
-
-            # 3. Compute input length
-            input_length = prev_input + prev_output + new_tokens
-
-            # 4a. Forced retire if over context limit
-            if input_length >= self._config.max_prompt_tokens:
-                end_reason = SessionEndReason.FORCED_RETIRE
-                break
-
-            # 4b. Probabilistic reset
-            if self._should_reset(input_length):
-                end_reason = SessionEndReason.PROBABILISTIC_RESET
-                break
-
-            # 5. Sample output length
-            output_len = self._sample_output_length()
-
-            # 6. Generate hash_ids (extend previous session ids)
-            prev_session = self._allocator.extract_session_ids(turns[-1].hash_ids)
-            hash_ids = self._allocator.turn_hash_ids(
-                session_index,
+            end_reason = outcome
+        else:
+            end_reason = self._grow_session(
+                turns=turns,
+                session_index=session_index,
                 group_id=group_id,
-                input_length=input_length,
-                prev_session_ids=prev_session,
+                prev_input=prev_input,
+                prev_output=prev_output,
             )
-
-            turns.append(
-                SynthesizedTurn(
-                    turn_index=turn_idx,
-                    input_length=input_length,
-                    output_length=output_len,
-                    new_tokens=new_tokens,
-                    delay_ms=delay_ms,
-                    timestamp_ms=timestamp_ms,
-                    hash_ids=hash_ids,
-                )
-            )
-
-            prev_input = input_length
-            prev_output = output_len
-            turn_idx += 1
-
         return [
             SynthesizedSession(
                 session_id=session_id,
@@ -380,6 +417,45 @@ class SessionSynthesizer:
                 end_reason=end_reason,
             )
         ]
+
+    def _grow_until_restart(
+        self,
+        *,
+        turns: list[SynthesizedTurn],
+        session_index: int,
+        group_id: int,
+        prev_input: int,
+        prev_output: int,
+        restart_at_turn: int,
+    ) -> tuple[int, int] | SessionEndReason:
+        """Grow session until restart_at_turn or natural end.
+
+        Returns (prev_input, prev_output) at the split point when the restart
+        turn is reached, or a SessionEndReason if the session ended naturally
+        before reaching restart_at_turn.
+        """
+        turn_idx = len(turns)
+        while turn_idx < restart_at_turn:
+            sampled = self._sample_next_input(prev_input, prev_output)
+            if sampled is None:
+                return SessionEndReason.FORCED_RETIRE
+            delay_ms, new_tokens, input_length = sampled
+            if self._should_reset(input_length):
+                return SessionEndReason.PROBABILISTIC_RESET
+            turn = self._finalize_follow_turn(
+                session_index=session_index,
+                group_id=group_id,
+                turn_index=turn_idx,
+                prev_turn=turns[-1],
+                delay_ms=delay_ms,
+                new_tokens=new_tokens,
+                input_length=input_length,
+            )
+            turns.append(turn)
+            prev_input = input_length
+            prev_output = turn.output_length
+            turn_idx += 1
+        return prev_input, prev_output
 
     def _synthesize_continuation(
         self,
@@ -395,8 +471,7 @@ class SessionSynthesizer:
         Turn 0 carries all accumulated tokens from Session A's last turn
         and extends A's hash_ids to cover the full initial context.
         """
-        rand_bytes = self._rng.bytes(16)
-        session_id = f"sess-{uuid.UUID(bytes=rand_bytes).hex[:12]}"
+        session_id = self._new_session_id()
 
         initial_input = prev_input + prev_output
         initial_input = min(initial_input, self._config.max_prompt_tokens - 1)
@@ -423,52 +498,13 @@ class SessionSynthesizer:
             )
         ]
 
-        prev_input_b = initial_input
-        prev_output_b = output_len
-        turn_idx = 1
-        end_reason = SessionEndReason.FORCED_RETIRE
-
-        while True:
-            delay_ms = self._sample_delay_ms(prev_input_b)
-            timestamp_ms = turns[-1].timestamp_ms + delay_ms
-
-            new_tokens = self._sample_new_tokens()
-
-            input_length = prev_input_b + prev_output_b + new_tokens
-
-            if input_length >= self._config.max_prompt_tokens:
-                end_reason = SessionEndReason.FORCED_RETIRE
-                break
-
-            if self._should_reset(input_length):
-                end_reason = SessionEndReason.PROBABILISTIC_RESET
-                break
-
-            output_len = self._sample_output_length()
-
-            prev_session = self._allocator.extract_session_ids(turns[-1].hash_ids)
-            hash_ids = self._allocator.turn_hash_ids(
-                session_index,
-                group_id=group_id,
-                input_length=input_length,
-                prev_session_ids=prev_session,
-            )
-
-            turns.append(
-                SynthesizedTurn(
-                    turn_index=turn_idx,
-                    input_length=input_length,
-                    output_length=output_len,
-                    new_tokens=new_tokens,
-                    delay_ms=delay_ms,
-                    timestamp_ms=timestamp_ms,
-                    hash_ids=hash_ids,
-                )
-            )
-
-            prev_input_b = input_length
-            prev_output_b = output_len
-            turn_idx += 1
+        end_reason = self._grow_session(
+            turns=turns,
+            session_index=session_index,
+            group_id=group_id,
+            prev_input=initial_input,
+            prev_output=output_len,
+        )
 
         return SynthesizedSession(
             session_id=session_id,

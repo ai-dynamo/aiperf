@@ -14,6 +14,47 @@ import orjson
 
 from aiperf.plot.metric_names import _format_server_metric_name
 
+_METRIC_SPEC_RE = re.compile(r"^([^\[\{]+)(?:\[([^\]]+)\])?(?:\{([^\}]+)\})?$")
+
+
+def _raise_for_unbalanced_brackets(metric_spec: str) -> None:
+    """Raise ValueError if metric_spec has mismatched [] or {}."""
+    if "[" in metric_spec and "]" not in metric_spec:
+        raise ValueError(
+            f"Invalid metric specification: missing closing bracket ']' in '{metric_spec}'\n"
+            f"Expected format: metric_name[endpoint]"
+        )
+    if "{" in metric_spec and "}" not in metric_spec:
+        raise ValueError(
+            f"Invalid metric specification: missing closing brace '}}' in '{metric_spec}'\n"
+            f"Expected format: metric_name{{label1=value1,label2=value2}}"
+        )
+
+
+def _parse_labels_str(labels_str: str, metric_spec: str) -> dict:
+    """Parse the labels portion of a metric spec into a dict."""
+    labels: dict = {}
+    for raw_pair in labels_str.split(","):
+        pair = raw_pair.strip()
+        if not pair:
+            continue
+        if "=" not in pair:
+            raise ValueError(
+                f"Invalid label syntax in '{metric_spec}': '{pair}' is missing '='\n"
+                f"Expected format: {{label1=value1,label2=value2}}"
+            )
+        key, value = pair.split("=", 1)
+        key = key.strip()
+        # Remove both single and double quotes from value
+        value = value.strip().strip("'").strip('"')
+        if not key:
+            raise ValueError(
+                f"Invalid label syntax in '{metric_spec}': empty label key\n"
+                f"Expected format: {{label1=value1,label2=value2}}"
+            )
+        labels[key] = value
+    return labels
+
 
 def parse_server_metric_spec(metric_spec: str) -> tuple[str, str | None, dict | None]:
     """
@@ -57,57 +98,46 @@ def parse_server_metric_spec(metric_spec: str) -> tuple[str, str | None, dict | 
         >>> parse_server_metric_spec("vllm:cache[http://localhost:8081]{instance='worker-1'}")
         ("vllm:cache", "http://localhost:8081", {"instance": "worker-1"})
     """
-    # Combined pattern: metric[endpoint]{labels}
-    # Groups: (1) metric name, (2) endpoint (optional), (3) labels (optional)
-    combined_match = re.match(
-        r"^([^\[\{]+)(?:\[([^\]]+)\])?(?:\{([^\}]+)\})?$", metric_spec
-    )
-
+    combined_match = _METRIC_SPEC_RE.match(metric_spec)
     if not combined_match:
-        # Check for common syntax errors
-        if "[" in metric_spec and "]" not in metric_spec:
-            raise ValueError(
-                f"Invalid metric specification: missing closing bracket ']' in '{metric_spec}'\n"
-                f"Expected format: metric_name[endpoint]"
-            )
-        if "{" in metric_spec and "}" not in metric_spec:
-            raise ValueError(
-                f"Invalid metric specification: missing closing brace '}}' in '{metric_spec}'\n"
-                f"Expected format: metric_name{{label1=value1,label2=value2}}"
-            )
+        _raise_for_unbalanced_brackets(metric_spec)
         # Fallback: return as-is if pattern doesn't match (may be simple metric name)
         return metric_spec.strip(), None, None
 
     metric_name = combined_match.group(1)
     endpoint = combined_match.group(2)  # None if not present
     labels_str = combined_match.group(3)  # None if not present
-
-    # Parse labels if present
-    labels = None
-    if labels_str:
-        labels = {}
-        for pair in labels_str.split(","):
-            pair = pair.strip()
-            if not pair:
-                continue
-            if "=" not in pair:
-                raise ValueError(
-                    f"Invalid label syntax in '{metric_spec}': '{pair}' is missing '='\n"
-                    f"Expected format: {{label1=value1,label2=value2}}"
-                )
-            key, value = pair.split("=", 1)
-            key = key.strip()
-            value = value.strip()
-            # Remove both single and double quotes from value
-            value = value.strip("'").strip('"')
-            if not key:
-                raise ValueError(
-                    f"Invalid label syntax in '{metric_spec}': empty label key\n"
-                    f"Expected format: {{label1=value1,label2=value2}}"
-                )
-            labels[key] = value
-
+    labels = _parse_labels_str(labels_str, metric_spec) if labels_str else None
     return metric_name.strip(), endpoint, labels
+
+
+def _apply_endpoint_filter(filtered, df, metric_name: str, endpoint_filter: str):
+    """Filter by endpoint_url, raising if the result is empty."""
+    filtered = filtered[filtered["endpoint_url"] == endpoint_filter]
+    if filtered.empty:
+        available_endpoints = (
+            df[df["metric_name"] == metric_name]["endpoint_url"].unique().tolist()
+        )
+        raise ValueError(
+            f"No data for metric '{metric_name}' at endpoint '{endpoint_filter}'. "
+            f"Available endpoints: {available_endpoints}"
+        )
+    return filtered
+
+
+def _apply_labels_filter(filtered, df, metric_name: str, labels_filter: dict):
+    """Filter by labels_json, raising if the result is empty."""
+    labels_json = orjson.dumps(labels_filter, option=orjson.OPT_SORT_KEYS).decode()
+    filtered = filtered[filtered["labels_json"] == labels_json]
+    if filtered.empty:
+        available_labels = (
+            df[df["metric_name"] == metric_name]["labels_json"].unique().tolist()
+        )
+        raise ValueError(
+            f"No data for metric '{metric_name}' with labels {labels_filter}. "
+            f"Available label combinations: {available_labels[:5]}"
+        )
+    return filtered
 
 
 def filter_server_metrics_dataframe(
@@ -140,9 +170,7 @@ def filter_server_metrics_dataframe(
     Raises:
         ValueError: If no data remains after filtering
     """
-    # Filter by metric name
     filtered = df[df["metric_name"] == metric_name].copy()
-
     if filtered.empty:
         available = df["metric_name"].unique().tolist()
         raise ValueError(
@@ -150,30 +178,10 @@ def filter_server_metrics_dataframe(
             f"Available: {available[:10]}{'...' if len(available) > 10 else ''}"
         )
 
-    # Apply endpoint filter if specified
     if endpoint_filter:
-        filtered = filtered[filtered["endpoint_url"] == endpoint_filter]
-        if filtered.empty:
-            available_endpoints = (
-                df[df["metric_name"] == metric_name]["endpoint_url"].unique().tolist()
-            )
-            raise ValueError(
-                f"No data for metric '{metric_name}' at endpoint '{endpoint_filter}'. "
-                f"Available endpoints: {available_endpoints}"
-            )
-
-    # Apply labels filter if specified
+        filtered = _apply_endpoint_filter(filtered, df, metric_name, endpoint_filter)
     if labels_filter:
-        labels_json = orjson.dumps(labels_filter, option=orjson.OPT_SORT_KEYS).decode()
-        filtered = filtered[filtered["labels_json"] == labels_json]
-        if filtered.empty:
-            available_labels = (
-                df[df["metric_name"] == metric_name]["labels_json"].unique().tolist()
-            )
-            raise ValueError(
-                f"No data for metric '{metric_name}' with labels {labels_filter}. "
-                f"Available label combinations: {available_labels[:5]}"
-            )
+        filtered = _apply_labels_filter(filtered, df, metric_name, labels_filter)
 
     # Convert timestamp to relative seconds (from minimum timestamp)
     if not filtered.empty:
@@ -181,7 +189,6 @@ def filter_server_metrics_dataframe(
             filtered["timestamp_ns"] - filtered["timestamp_ns"].min()
         ) / 1e9
 
-    # Extract metadata from first row
     unit = (
         filtered["unit"].iloc[0]
         if "unit" in filtered.columns and not filtered.empty
@@ -192,7 +199,6 @@ def filter_server_metrics_dataframe(
         if "metric_type" in filtered.columns and not filtered.empty
         else ""
     )
-
     return filtered, unit, metric_type
 
 
@@ -228,6 +234,78 @@ def detect_server_metric_series(df) -> list[tuple[str, str]]:
     return [
         (row["endpoint_url"], row["labels_json"]) for _, row in combinations.iterrows()
     ]
+
+
+_LEGEND_PRIORITY_KEYS = (
+    "dynamo_component",
+    "component",
+    "dynamo_endpoint",
+    "endpoint",
+    "method",
+    "status",
+    "engine",
+    "finished_reason",
+)
+
+
+def _find_varying_label_keys(
+    labels_dict: dict, all_series_labels: list[dict]
+) -> set[str]:
+    """Return the subset of keys in labels_dict whose values vary across series."""
+    varying_keys: set[str] = set()
+    for key in labels_dict:
+        values = {other[key] for other in all_series_labels if key in other}
+        if len(values) > 1:
+            varying_keys.add(key)
+    return varying_keys
+
+
+def _label_from_varying_keys(labels_dict: dict, varying_keys: set[str]) -> str:
+    """Build a compact legend string from the set of varying label keys."""
+    # Special case: If only "engine" varies (common in vLLM histograms)
+    if varying_keys == {"engine"}:
+        return f"engine-{labels_dict['engine']}"
+
+    # Special case: finished_reason (vLLM request completion)
+    if varying_keys == {"finished_reason"} or (
+        "finished_reason" in varying_keys and len(varying_keys) <= 2
+    ):
+        return labels_dict.get("finished_reason", "unknown")
+
+    selected_keys = [k for k in _LEGEND_PRIORITY_KEYS if k in varying_keys]
+    selected_keys.extend([k for k in sorted(varying_keys) if k not in selected_keys])
+
+    # Special formatting for engine
+    if selected_keys and selected_keys[0] == "engine":
+        return f"engine-{labels_dict['engine']}"
+
+    values = [labels_dict[k] for k in selected_keys if k in labels_dict]
+    return "/".join(values[:3])  # Max 3 components for readability
+
+
+def _fallback_label_from_dict(labels_dict: dict) -> str:
+    """Fallback formatting when varying-key analysis isn't available."""
+    if "engine" in labels_dict:
+        return f"engine-{labels_dict['engine']}"
+    if "dynamo_component" in labels_dict and "dynamo_endpoint" in labels_dict:
+        return f"{labels_dict['dynamo_component']}/{labels_dict['dynamo_endpoint']}"
+    if "component" in labels_dict and "endpoint" in labels_dict:
+        return f"{labels_dict['component']}/{labels_dict['endpoint']}"
+    if "method" in labels_dict:
+        return labels_dict["method"]
+    if "finished_reason" in labels_dict:
+        return labels_dict["finished_reason"]
+    values = list(labels_dict.values())[:2]
+    return "/".join(values)
+
+
+def _endpoint_short_label(endpoint_url: str) -> str:
+    """Compact label derived from an endpoint URL when no labels are present."""
+    endpoint_short = (
+        endpoint_url.split("/")[-2] if "/" in endpoint_url else endpoint_url
+    )
+    endpoint_short = endpoint_short.replace(":9090", "").replace("proxy", "")
+    return endpoint_short[:20]
 
 
 def create_series_legend_label(
@@ -270,88 +348,20 @@ def create_series_legend_label(
         ...                        {"component":"prefill","endpoint":"clear"}])
         'backend/generate'
     """
-    # Parse labels
     labels_dict = orjson.loads(labels_json.encode()) if labels_json != "{}" else {}
 
-    # Single series - just use metric name
     if total_series == 1:
         return metric_name
 
-    # If we have all series labels, show only differentiating ones
     if all_series_labels and len(all_series_labels) > 1:
-        # Find which label keys actually vary across series
-        varying_keys = set()
-        for key in labels_dict:
-            values = set()
-            for other_labels in all_series_labels:
-                if key in other_labels:
-                    values.add(other_labels[key])
-            if len(values) > 1:  # This key has different values across series
-                varying_keys.add(key)
-
-        # Use only varying labels
+        varying_keys = _find_varying_label_keys(labels_dict, all_series_labels)
         if varying_keys:
-            # Special case: If only "engine" varies (common in vLLM histograms)
-            if varying_keys == {"engine"}:
-                return f"engine-{labels_dict['engine']}"
+            return _label_from_varying_keys(labels_dict, varying_keys)
 
-            # Special case: finished_reason (vLLM request completion)
-            if varying_keys == {"finished_reason"} or (
-                "finished_reason" in varying_keys and len(varying_keys) <= 2
-            ):
-                return labels_dict.get("finished_reason", "unknown")
-
-            # Prioritize certain keys for cleaner display
-            priority_keys = [
-                "dynamo_component",
-                "component",
-                "dynamo_endpoint",
-                "endpoint",
-                "method",
-                "status",
-                "engine",
-                "finished_reason",
-            ]
-            selected_keys = [k for k in priority_keys if k in varying_keys]
-            # Add any remaining varying keys not in priority list
-            selected_keys.extend(
-                [k for k in sorted(varying_keys) if k not in selected_keys]
-            )
-
-            # Special formatting for engine
-            if selected_keys and selected_keys[0] == "engine":
-                return f"engine-{labels_dict['engine']}"
-
-            # Build compact label (no key names, just values)
-            values = [labels_dict[k] for k in selected_keys if k in labels_dict]
-            return "/".join(values[:3])  # Max 3 components for readability
-
-    # Fallback: show key labels in compact format
     if labels_dict:
-        # Special handling for engine labels (vLLM histograms)
-        if "engine" in labels_dict:
-            return f"engine-{labels_dict['engine']}"
+        return _fallback_label_from_dict(labels_dict)
 
-        # Try to use common meaningful keys
-        if "dynamo_component" in labels_dict and "dynamo_endpoint" in labels_dict:
-            return f"{labels_dict['dynamo_component']}/{labels_dict['dynamo_endpoint']}"
-        elif "component" in labels_dict and "endpoint" in labels_dict:
-            return f"{labels_dict['component']}/{labels_dict['endpoint']}"
-        elif "method" in labels_dict:
-            return labels_dict["method"]
-        elif "finished_reason" in labels_dict:
-            return labels_dict["finished_reason"]
-        else:
-            # Show first 2 label values
-            values = list(labels_dict.values())[:2]
-            return "/".join(values)
-
-    # No labels but multiple series - show short endpoint
-    endpoint_short = (
-        endpoint_url.split("/")[-2] if "/" in endpoint_url else endpoint_url
-    )
-    endpoint_short = endpoint_short.replace(":9090", "").replace("proxy", "")
-    return endpoint_short[:20]
+    return _endpoint_short_label(endpoint_url)
 
 
 def get_available_labels_for_metric(

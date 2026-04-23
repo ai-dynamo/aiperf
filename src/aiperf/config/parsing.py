@@ -110,6 +110,43 @@ def coerce_value(value: Any) -> Any:
     return value
 
 
+def _parse_sequence_as_tuple_list(input: Any) -> list[tuple[str, Any]]:
+    """Parse a list/tuple/set into a list of (key, value) tuples."""
+    output: list[tuple[str, Any]] = []
+    for item in input:
+        # If item is already a 2-element sequence (key-value pair), convert directly to tuple
+        if isinstance(item, list | tuple) and len(item) == 2:
+            key, value = item
+            output.append((str(key), coerce_value(value)))
+        else:
+            res = parse_str_or_dict_as_tuple_list(item)
+            if res is not None:
+                output.extend(res)
+    return output
+
+
+def _parse_str_as_tuple_list(input: str) -> list[tuple[str, Any]]:
+    """Parse a string (JSON object or comma-separated key:value pairs) into a list of tuples."""
+    if input.startswith("{"):
+        try:
+            return list(load_json_str(input).items())
+        except orjson.JSONDecodeError as e:
+            raise ValueError(
+                f"User Config: {input} - must be a valid JSON string"
+            ) from e
+
+    result: list[tuple[str, Any]] = []
+    for item in input.split(","):
+        parts = item.split(":", 1)
+        if len(parts) != 2:
+            raise ValueError(
+                f"User Config: {input} - each item must be in 'key:value' format"
+            )
+        key, value = parts
+        result.append((key.strip(), coerce_value(value.strip())))
+    return result
+
+
 def parse_str_or_dict_as_tuple_list(input: Any | None) -> list[tuple[str, Any]] | None:
     """
     Parses the input to ensure it is a list of tuples. (key, value) pairs.
@@ -132,42 +169,12 @@ def parse_str_or_dict_as_tuple_list(input: Any | None) -> list[tuple[str, Any]] 
     """
     if input is None:
         return None
-
     if isinstance(input, list | tuple | set):
-        output = []
-        for item in input:
-            # If item is already a 2-element sequence (key-value pair), convert directly to tuple
-            if isinstance(item, list | tuple) and len(item) == 2:
-                key, value = item
-                output.append((str(key), coerce_value(value)))
-            else:
-                res = parse_str_or_dict_as_tuple_list(item)
-                if res is not None:
-                    output.extend(res)
-        return output
-
+        return _parse_sequence_as_tuple_list(input)
     if isinstance(input, dict):
         return [(key, coerce_value(value)) for key, value in input.items()]
-
     if isinstance(input, str):
-        if input.startswith("{"):
-            try:
-                return [(key, value) for key, value in load_json_str(input).items()]
-            except orjson.JSONDecodeError as e:
-                raise ValueError(
-                    f"User Config: {input} - must be a valid JSON string"
-                ) from e
-        else:
-            result = []
-            for item in input.split(","):
-                parts = item.split(":", 1)
-                if len(parts) != 2:
-                    raise ValueError(
-                        f"User Config: {input} - each item must be in 'key:value' format"
-                    )
-                key, value = parts
-                result.append((key.strip(), coerce_value(value.strip())))
-            return result
+        return _parse_str_as_tuple_list(input)
 
     raise ValueError(f"User Config: {input} - must be a valid string, list, or dict")
 
@@ -260,6 +267,24 @@ def validate_sequence_distribution(v: str | None) -> str | None:
     return v
 
 
+def _parse_numeric_dict_item(item: str) -> tuple[str, float]:
+    """Parse a single 'key:value' token into (key, float(value))."""
+    if not item or ":" not in item:
+        raise ValueError(f"User Config: '{item}' is not in 'key:value' format")
+    key, val = item.split(":", 1)
+    key, val = key.strip(), val.strip()
+    if not key:
+        raise ValueError(f"User Config: '{item}' has an empty key")
+    if not val:
+        raise ValueError(f"User Config: '{item}' has an empty value")
+    try:
+        return key, float(val)
+    except ValueError as e:
+        raise ValueError(
+            f"User Config: value for '{key}' must be numeric, got '{val}'"
+        ) from e
+
+
 def parse_str_as_numeric_dict(
     input_string: str | dict | None,
 ) -> dict[str, float] | None:
@@ -286,20 +311,4 @@ def parse_str_as_numeric_dict(
             "User Config: expected space-separated 'key:value' pairs (e.g., 'k:v x:y'), got empty string"
         )
 
-    output: dict[str, float] = {}
-    for item in input_string.split():
-        if not item or ":" not in item:
-            raise ValueError(f"User Config: '{item}' is not in 'key:value' format")
-        key, val = item.split(":", 1)
-        key, val = key.strip(), val.strip()
-        if not key:
-            raise ValueError(f"User Config: '{item}' has an empty key")
-        if not val:
-            raise ValueError(f"User Config: '{item}' has an empty value")
-        try:
-            output[key] = float(val)
-        except ValueError as e:
-            raise ValueError(
-                f"User Config: value for '{key}' must be numeric, got '{val}'"
-            ) from e
-    return output
+    return dict(_parse_numeric_dict_item(item) for item in input_string.split())

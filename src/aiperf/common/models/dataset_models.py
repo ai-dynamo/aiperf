@@ -13,6 +13,52 @@ from aiperf.common.types import MediaTypeT
 from aiperf.plugin.enums import DatasetClientStoreType, DatasetSamplingStrategy
 
 
+def _iter_dataset_client_subclasses(cls: type) -> list[type]:
+    seen: list[type] = []
+    stack: list[type] = list(cls.__subclasses__())
+    while stack:
+        sub = stack.pop()
+        if sub in seen:
+            continue
+        seen.append(sub)
+        stack.extend(sub.__subclasses__())
+    return seen
+
+
+def _dataset_client_union_target(cls: type) -> Any:
+    subs = _iter_dataset_client_subclasses(cls)
+    if not subs:
+        return cls
+    if len(subs) == 1:
+        return subs[0]
+    import typing as _typing
+
+    return _typing.Union[tuple(subs)]  # noqa: UP007
+
+
+def _make_dataset_client_metadata_validator(cls: type) -> Any:
+    from aiperf.common.models.base_models import _msgspec_dec_hook
+
+    def _validate(value: Any) -> Any:
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, dict):
+            raise ValueError(
+                f"Expected dict or {cls.__name__} instance, got {type(value).__name__}"
+            )
+        return msgspec.convert(
+            value, _dataset_client_union_target(cls), dec_hook=_msgspec_dec_hook
+        )
+
+    return _validate
+
+
+def _serialize_dataset_client_metadata(value: Any) -> Any:
+    from aiperf.common.models.base_models import _msgspec_enc_hook
+
+    return msgspec.to_builtins(value, enc_hook=_msgspec_enc_hook)
+
+
 class DatasetClientMetadata(
     msgspec.Struct,
     tag_field="client_type",
@@ -47,48 +93,13 @@ class DatasetClientMetadata(
         # Union type when decoding via tag; the bare base class does not route.
         from pydantic_core import core_schema as _core_schema
 
-        from aiperf.common.models.base_models import (
-            _msgspec_dec_hook,
-            _msgspec_enc_hook,
-        )
-
-        def _iter_subclasses() -> list[type]:
-            seen: list[type] = []
-            stack: list[type] = list(cls.__subclasses__())
-            while stack:
-                sub = stack.pop()
-                if sub in seen:
-                    continue
-                seen.append(sub)
-                stack.extend(sub.__subclasses__())
-            return seen
-
-        def _union_target() -> Any:
-            subs = _iter_subclasses()
-            if not subs:
-                return cls
-            if len(subs) == 1:
-                return subs[0]
-            import typing as _typing
-
-            return _typing.Union[tuple(subs)]  # noqa: UP007
-
-        def _validate(value: Any) -> Any:
-            if isinstance(value, cls):
-                return value
-            if not isinstance(value, dict):
-                raise ValueError(
-                    f"Expected dict or {cls.__name__} instance, got {type(value).__name__}"
-                )
-            return msgspec.convert(value, _union_target(), dec_hook=_msgspec_dec_hook)
-
-        def _serialize(value: Any) -> Any:
-            return msgspec.to_builtins(value, enc_hook=_msgspec_enc_hook)
+        validate = _make_dataset_client_metadata_validator(cls)
+        serialize = _serialize_dataset_client_metadata
 
         return _core_schema.no_info_plain_validator_function(
-            _validate,
+            validate,
             serialization=_core_schema.plain_serializer_function_ser_schema(
-                _serialize,
+                serialize,
                 return_schema=_core_schema.any_schema(),
                 when_used="always",
             ),

@@ -115,7 +115,7 @@ At this point you should have:
 
 - A Kubernetes cluster with `kubectl` configured
 - GPU nodes with the NVIDIA device plugin
-- [JobSet](https://github.com/kubernetes-sigs/jobset) installed (v0.5+)
+- [JobSet](https://github.com/kubernetes-sigs/jobset) installed (v0.8.0 — pinned in `dev/versions.py`)
 - [Helm](https://helm.sh/) v3 installed locally
 - AIPerf installed locally (`pip install aiperf` or `uv pip install aiperf`)
 - Access to NGC container registry (`nvcr.io/nvidia/ai-dynamo`)
@@ -529,9 +529,9 @@ aiperf kube list
 ```
 
 ```
-NAME                 NAMESPACE           PHASE      PROGRESS  AGE
-dynamo-benchmark     aiperf-benchmarks   Completed  100%      5m
-disagg-test          aiperf-benchmarks   Running    42%       2m
+NAME                 NAMESPACE           PHASE      WORKERS  PROGRESS  THROUGHPUT  LATENCY  AGE
+dynamo-benchmark     aiperf-benchmarks   Completed  10       100%      142.3 rps   187ms    5m
+disagg-test          aiperf-benchmarks   Running    10       42%       98.1 rps    201ms    2m
 ```
 
 Use `--wide` to see model and endpoint columns.

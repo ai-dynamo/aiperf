@@ -183,41 +183,20 @@ class PluginEntry(BaseModel):
         if self.loaded_class is not None:
             return True, None
 
-        # Validate class_path format
-        parts = self.class_path.split(":")
-        if len(parts) != 2 or not parts[0] or not parts[1]:
-            return (
-                False,
-                f"Invalid class_path format: {self.class_path} (expected 'module:ClassName')",
-            )
+        parsed = _parse_class_path(self.class_path)
+        if isinstance(parsed, str):
+            return False, parsed
+        module_path, class_name = parsed
 
-        module_path, class_name = parts
+        spec_result = _find_module_spec(module_path)
+        if isinstance(spec_result, str):
+            return False, spec_result
+        spec = spec_result
 
-        # Check if module exists without importing it
-        try:
-            spec = importlib.util.find_spec(module_path)
-            if spec is None:
-                return False, f"Module not found: {module_path}"
-        except ModuleNotFoundError as e:
-            return False, f"Module not found: {module_path} ({e})"
-        except Exception as e:  # noqa: BLE001 - importlib can raise arbitrary errors during spec discovery; report as validation failure
-            return False, f"Error checking module {module_path}: {e}"
-
-        # Optionally verify class exists via AST (no code execution)
-        if check_class and spec is not None and spec.origin is not None:
-            try:
-                source_path = Path(spec.origin)
-                if source_path.suffix == ".py" and source_path.exists():
-                    source = source_path.read_text(encoding="utf-8")
-                    tree = ast.parse(source)
-
-                    if not _ast_defines_name(tree, class_name):
-                        return False, f"Class '{class_name}' not found in {module_path}"
-            except SyntaxError as e:
-                return False, f"Syntax error in {module_path}: {e}"
-            except Exception as e:  # noqa: BLE001 - AST verification is advisory; any read/parse failure is logged and tolerated
-                # AST parsing failed, but module exists - don't fail validation
-                _logger.debug(lambda err=e: f"Could not verify class via AST: {err}")
+        if check_class:
+            ast_error = _verify_class_in_module_ast(spec, module_path, class_name)
+            if ast_error is not None:
+                return False, ast_error
 
         return True, None
 
@@ -234,6 +213,47 @@ class PluginEntry(BaseModel):
             ValidationError: If metadata doesn't match the schema.
         """
         return metadata_class.model_validate(self.metadata)
+
+
+def _parse_class_path(class_path: str) -> tuple[str, str] | str:
+    """Parse ``module:ClassName``. Returns (module, class) on success or an error string."""
+    parts = class_path.split(":")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return f"Invalid class_path format: {class_path} (expected 'module:ClassName')"
+    return parts[0], parts[1]
+
+
+def _find_module_spec(module_path: str) -> Any:
+    """Find module spec without importing. Returns the spec or an error string."""
+    try:
+        spec = importlib.util.find_spec(module_path)
+    except ModuleNotFoundError as e:
+        return f"Module not found: {module_path} ({e})"
+    except Exception as e:  # noqa: BLE001 - importlib can raise arbitrary errors during spec discovery; report as validation failure
+        return f"Error checking module {module_path}: {e}"
+    if spec is None:
+        return f"Module not found: {module_path}"
+    return spec
+
+
+def _verify_class_in_module_ast(
+    spec: Any, module_path: str, class_name: str
+) -> str | None:
+    """Return an error string if AST parsing proves the class is absent; else None."""
+    if spec.origin is None:
+        return None
+    try:
+        source_path = Path(spec.origin)
+        if source_path.suffix != ".py" or not source_path.exists():
+            return None
+        tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        if not _ast_defines_name(tree, class_name):
+            return f"Class '{class_name}' not found in {module_path}"
+    except SyntaxError as e:
+        return f"Syntax error in {module_path}: {e}"
+    except Exception as e:  # noqa: BLE001 - AST verification is advisory; any read/parse failure is logged and tolerated
+        _logger.debug(lambda err=e: f"Could not verify class via AST: {err}")
+    return None
 
 
 def _ast_defines_name(tree: ast.Module, class_name: str) -> bool:

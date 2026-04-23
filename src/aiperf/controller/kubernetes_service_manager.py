@@ -16,8 +16,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import aiohttp
 from kubernetes_asyncio import config
@@ -28,11 +27,17 @@ from aiperf.common.exceptions import ServiceProcessDiedError
 from aiperf.common.hooks import background_task
 from aiperf.common.service_registry import ServiceRegistry
 from aiperf.common.types import ServiceTypeT
+from aiperf.controller._pod_monitoring_mixin import PodMonitoringMixin
+from aiperf.controller.kubernetes_pod_helpers import (
+    PodInfo,
+    aggregate_pods_by_index,
+)
 from aiperf.controller.multiprocess_service_manager import MultiProcessServiceManager
 from aiperf.kubernetes.client import get_pods, job_selector
-from aiperf.kubernetes.constants import JobSetLabels
-from aiperf.kubernetes.enums import PodPhase
 from aiperf.plugin.enums import ServiceType
+
+# Re-export PodInfo for backwards compatibility with existing importers.
+__all__ = ["EXTERNAL_K8S_SERVICES", "KubernetesServiceManager", "PodInfo"]
 
 # Services that are externally managed in Kubernetes mode (not spawned by the
 # service manager as local subprocesses).
@@ -59,38 +64,7 @@ if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
 
 
-@dataclass
-class PodInfo:
-    """Tracked state for a single Kubernetes worker pod."""
-
-    pod_index: str
-    """JobSet pod index (from JobSetLabels.POD_INDEX label)."""
-
-    pod_name: str
-    """Kubernetes pod name."""
-
-    phase: PodPhase = PodPhase.PENDING
-    """Current pod phase."""
-
-    restart_count: int = 0
-    """Total container restart count across all containers."""
-
-    container_issues: list[str] = field(default_factory=list)
-    """Active container-level issues (e.g. 'OOMKilled', 'CrashLoopBackOff')."""
-
-    last_checked_ns: int = 0
-    """Timestamp of last health check (nanoseconds)."""
-
-    failed: bool = False
-    """Whether this pod has been marked as failed in the registry."""
-
-    @property
-    def is_terminal(self) -> bool:
-        """Whether the pod is in a terminal failure state."""
-        return self.phase in (PodPhase.FAILED, PodPhase.UNKNOWN)
-
-
-class KubernetesServiceManager(MultiProcessServiceManager):
+class KubernetesServiceManager(PodMonitoringMixin, MultiProcessServiceManager):
     """Service manager for Kubernetes distributed deployments.
 
     Treats control-plane services as sibling containers in the controller pod,
@@ -133,14 +107,11 @@ class KubernetesServiceManager(MultiProcessServiceManager):
     ) -> None:
         """Register expectations for an externally managed Kubernetes service.
 
-        For service types listed in ``EXTERNAL_K8S_SERVICES`` (``API``,
-        ``DATASET_MANAGER``, ``GPU_TELEMETRY_MANAGER``, ``RECORDS_MANAGER``,
-        ``SERVER_METRICS_MANAGER``, ``TIMING_MANAGER``, ``WORKER``,
-        ``WORKER_MANAGER``, ``RECORD_PROCESSOR``, ``WORKER_GROUP_MANAGER``),
-        this is a no-op for process spawning: Kubernetes manifests launch
-        control-plane services as sibling containers and workers/record
-        processors via worker pods. We only record how many instances must
-        register with ``ServiceRegistry``.
+        For service types listed in ``EXTERNAL_K8S_SERVICES``, this is a no-op
+        for process spawning: Kubernetes manifests launch control-plane
+        services as sibling containers and workers/record processors via
+        worker pods. We only record how many instances must register with
+        ``ServiceRegistry``.
 
         For any other (non-external) service types, delegates to the parent
         ``MultiProcessServiceManager.run_service`` which spawns a subprocess.
@@ -163,13 +134,9 @@ class KubernetesServiceManager(MultiProcessServiceManager):
     ) -> list[BaseException | None]:
         """Stop a service, either local subprocess or external Kubernetes runtime.
 
-        For service types listed in ``EXTERNAL_K8S_SERVICES`` (``API``,
-        ``DATASET_MANAGER``, ``GPU_TELEMETRY_MANAGER``, ``RECORDS_MANAGER``,
-        ``SERVER_METRICS_MANAGER``, ``TIMING_MANAGER``, ``WORKER``,
-        ``WORKER_MANAGER``, ``RECORD_PROCESSOR``, ``WORKER_GROUP_MANAGER``),
-        this is a no-op: externally managed Kubernetes services receive
-        shutdown over the control channel and exit on their own. Returns an
-        empty list.
+        For service types listed in ``EXTERNAL_K8S_SERVICES``, this is a no-op:
+        externally managed Kubernetes services receive shutdown over the
+        control channel and exit on their own. Returns an empty list.
 
         For any other (non-external) service types, delegates to the parent
         ``MultiProcessServiceManager.stop_service`` which stops the local
@@ -268,34 +235,25 @@ class KubernetesServiceManager(MultiProcessServiceManager):
         )
         await ServiceRegistry.wait_for_all(timeout_seconds)
 
-    # -- Pod state queries (for SystemController) --
+    # -- Kubernetes API access --
+    #
+    # ``check_pods_healthy``, ``_get_api``, and ``_monitor_worker_pods`` live
+    # here (not on ``PodMonitoringMixin``) so tests can patch ``get_pods``,
+    # ``config``, and ``ApiClient`` on this module.
 
-    def get_pod_info(self, pod_index: str) -> PodInfo | None:
-        """Get tracked state for a specific pod by index."""
-        return self._pods.get(pod_index)
+    async def _get_api(self) -> ApiClient:
+        """Get or create a cached Kubernetes ApiClient."""
+        async with self._kube_client_lock:
+            if self._kube_api is None:
+                from aiperf.common.noisy_loggers import suppress_noisy_http_loggers
 
-    def get_all_pod_info(self) -> dict[str, PodInfo]:
-        """Get tracked state for all known worker pods."""
-        return dict(self._pods)
-
-    def get_failed_pods(self) -> list[PodInfo]:
-        """Get pods that have been marked as failed."""
-        return [p for p in self._pods.values() if p.failed]
-
-    def get_pod_summary(self) -> dict[str, str]:
-        """Get a summary dict of pod states for logging/diagnostics.
-
-        Returns a dict mapping pod_index to a human-readable status string.
-        """
-        summary: dict[str, str] = {}
-        for idx, pod in self._pods.items():
-            parts = [pod.phase]
-            if pod.restart_count > 0:
-                parts.append(f"restarts={pod.restart_count}")
-            if pod.container_issues:
-                parts.append(f"issues=[{', '.join(pod.container_issues)}]")
-            summary[idx] = " ".join(parts)
-        return summary
+                suppress_noisy_http_loggers()
+                try:
+                    config.load_incluster_config()
+                except config.ConfigException:
+                    await config.load_kube_config()
+                self._kube_api = ApiClient()
+            return self._kube_api
 
     async def check_pods_healthy(self) -> None:
         """Verify all tracked pods are in a healthy state before profiling.
@@ -316,125 +274,13 @@ class KubernetesServiceManager(MultiProcessServiceManager):
         try:
             api = await self._get_api()
             pods = await get_pods(api, namespace, job_selector(job_id))
-
-            for pod in pods:
-                labels = (pod.metadata.labels or {}) if pod.metadata else {}
-                replicated_job = labels.get(JobSetLabels.REPLICATED_JOB_NAME)
-                if replicated_job and replicated_job != "workers":
-                    continue
-                pod_index = labels.get(JobSetLabels.POD_INDEX)
-                if pod_index is None:
-                    continue
-
-                phase_str = (pod.status.phase if pod.status else None) or str(
-                    PodPhase.UNKNOWN
-                )
-                phase = PodPhase(phase_str)
-                if phase in (PodPhase.FAILED, PodPhase.UNKNOWN):
-                    pod_name = (pod.metadata.name if pod.metadata else "unknown") or (
-                        "unknown"
-                    )
-                    container_statuses = (
-                        _container_statuses_as_dicts(
-                            pod.status.container_statuses or []
-                        )
-                        if pod.status
-                        else []
-                    )
-                    conditions = _conditions_as_dicts(
-                        pod.status.conditions or [] if pod.status else []
-                    )
-                    reason = _format_pod_failure_reason(
-                        pod_name,
-                        phase,
-                        container_statuses,
-                        {"conditions": conditions},
-                    )
-                    self.error(
-                        f"Pod health check failed before PROFILE_START: {reason}"
-                    )
-                    self._fail_pod_services(pod_index)
-                    ServiceRegistry._raise_on_failure()
+            self._raise_for_any_failed_pod(aggregate_pods_by_index(pods))
         except ServiceProcessDiedError:
             raise
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 - pod health check is advisory, must not raise
             self.warning(f"Pod health check before PROFILE_START failed: {e!r}")
-
-    # -- Kubernetes pod health monitoring --
-
-    def _fail_pod_services(
-        self,
-        pod_index: str,
-        pod_name: str | None = None,
-        phase: PodPhase | None = None,
-    ) -> None:
-        """Mark all services on a pod as failed in the ServiceRegistry."""
-        affected = ServiceRegistry.get_services_by_pod(pod_index)
-        if not affected:
-            self.warning(
-                f"No services found for pod_index={pod_index} via registry — "
-                f"services may not have registered with pod_index"
-            )
-            return
-        for info in affected:
-            context = ""
-            if pod_name and phase:
-                context = f" (pod '{pod_name}' is {phase})"
-            self.warning(f"Marking service '{info.service_id}' as failed{context}")
-            ServiceRegistry.fail_service(info.service_id, info.service_type)
-
-    def _check_pod_failure_threshold(self) -> None:
-        """Check if failed pods exceed the abort threshold.
-
-        When the percentage of failed worker pods reaches the configured
-        threshold (AIPERF_SERVICE_POD_FAILURE_ABORT_THRESHOLD_PERCENT),
-        signals pod_failure_abort_event so the system controller can
-        cancel the benchmark.
-        """
-        if self.pod_failure_abort_event.is_set():
-            return
-
-        threshold = Environment.SERVICE.POD_FAILURE_ABORT_THRESHOLD_PERCENT
-        if threshold == 0:
-            return
-
-        expected_total_pods = self.required_services.get(
-            ServiceType.WORKER_GROUP_MANAGER, 0
-        )
-        total_pods = expected_total_pods or len(self._pods)
-        if total_pods == 0:
-            return
-
-        failed_pods = sum(1 for p in self._pods.values() if p.failed)
-        if failed_pods == 0:
-            return
-
-        failure_percent = (failed_pods / total_pods) * 100
-        if failure_percent >= threshold:
-            self.pod_failure_abort_reason = (
-                f"{failed_pods}/{total_pods} worker pods failed "
-                f"({failure_percent:.0f}% >= {threshold}% threshold)"
-            )
-            self.error(
-                f"Pod failure threshold exceeded: {self.pod_failure_abort_reason}"
-            )
-            self.pod_failure_abort_event.set()
-
-    async def _get_api(self) -> ApiClient:
-        """Get or create a cached Kubernetes ApiClient."""
-        async with self._kube_client_lock:
-            if self._kube_api is None:
-                from aiperf.common.noisy_loggers import suppress_noisy_http_loggers
-
-                suppress_noisy_http_loggers()
-                try:
-                    config.load_incluster_config()
-                except config.ConfigException:
-                    await config.load_kube_config()
-                self._kube_api = ApiClient()
-            return self._kube_api
 
     @background_task(
         interval=lambda self: Environment.SERVICE.PROCESS_MONITOR_INTERVAL,
@@ -470,242 +316,9 @@ class KubernetesServiceManager(MultiProcessServiceManager):
         try:
             api = await self._get_api()
             pods = await get_pods(api, namespace, job_selector(job_id))
-            now_ns = time.time_ns()
-
-            pods_by_index: dict[str, tuple[str, PodPhase, list[dict], dict]] = {}
-            for pod in pods:
-                pod_name = (pod.metadata.name if pod.metadata else "") or "unknown"
-                labels = (pod.metadata.labels or {}) if pod.metadata else {}
-                replicated_job = labels.get(JobSetLabels.REPLICATED_JOB_NAME)
-                if replicated_job and replicated_job != "workers":
-                    continue
-                pod_index = labels.get(JobSetLabels.POD_INDEX)
-                if pod_index is None:
-                    continue
-
-                phase_str = (pod.status.phase if pod.status else None) or str(
-                    PodPhase.UNKNOWN
-                )
-                phase = PodPhase(phase_str)
-                cs_dicts = (
-                    _container_statuses_as_dicts(pod.status.container_statuses or [])
-                    if pod.status
-                    else []
-                )
-                cond_dicts = _conditions_as_dicts(
-                    pod.status.conditions or [] if pod.status else []
-                )
-                status_dict = {
-                    "conditions": cond_dicts,
-                    "containerStatuses": cs_dicts,
-                }
-                existing = pods_by_index.get(pod_index)
-                if existing is None or (
-                    existing[1] in (PodPhase.FAILED, PodPhase.UNKNOWN)
-                    and phase not in (PodPhase.FAILED, PodPhase.UNKNOWN)
-                ):
-                    pods_by_index[pod_index] = (
-                        pod_name,
-                        phase,
-                        cs_dicts,
-                        status_dict,
-                    )
-
-            for pod_index, (
-                pod_name,
-                phase,
-                container_statuses,
-                status,
-            ) in pods_by_index.items():
-                restart_count = sum(
-                    cs.get("restartCount", 0) for cs in container_statuses
-                )
-                issues = _extract_container_issues(container_statuses)
-
-                # Update pod tracking
-                pod_info = self._pods.get(pod_index)
-                if pod_info is None:
-                    pod_info = PodInfo(pod_index=pod_index, pod_name=pod_name)
-                    self._pods[pod_index] = pod_info
-
-                pod_info.pod_name = pod_name
-                pod_info.phase = phase
-                pod_info.restart_count = restart_count
-                pod_info.container_issues = issues
-                pod_info.last_checked_ns = now_ns
-
-                # Warn on high restart count (once per pod)
-                if restart_count >= 3 and pod_index not in self._restart_warned:
-                    self._restart_warned.add(pod_index)
-                    issue_detail = f" ({', '.join(issues)})" if issues else ""
-                    self.warning(
-                        f"Pod '{pod_name}' (index={pod_index}) has "
-                        f"{restart_count} container restarts{issue_detail}"
-                    )
-
-                if issues and phase == PodPhase.RUNNING:
-                    self.debug(
-                        f"Pod '{pod_name}' is Running but has container issues: "
-                        f"{', '.join(issues)}"
-                    )
-
-                if not pod_info.is_terminal:
-                    continue
-
-                if pod_info.failed:
-                    continue
-
-                pod_info.failed = True
-                reason = _format_pod_failure_reason(
-                    pod_name, phase, container_statuses, status
-                )
-                self.warning(reason)
-
-                self._fail_pod_services(pod_index, pod_name, phase)
-
+            self._process_pod_snapshots(aggregate_pods_by_index(pods), time.time_ns())
             self._check_pod_failure_threshold()
-
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 - pod monitoring loop must not crash on transient k8s errors
             self.warning(f"Failed to query Kubernetes pod statuses: {e!r}")
-
-
-def _container_statuses_as_dicts(container_statuses: list[Any]) -> list[dict]:
-    """Convert a list of V1ContainerStatus objects to the legacy dict shape.
-
-    Preserves the container-state field names (``state``, ``waiting``,
-    ``terminated``, ``lastState``) used by ``_extract_container_issues`` and
-    ``_format_pod_failure_reason`` so those helpers keep working unchanged.
-    """
-    results: list[dict] = []
-    for cs in container_statuses:
-        state_dict: dict[str, Any] = {}
-        state = cs.state
-        if state is not None:
-            if state.waiting is not None:
-                state_dict["waiting"] = {
-                    "reason": state.waiting.reason or "",
-                    "message": state.waiting.message or "",
-                }
-            if state.terminated is not None:
-                state_dict["terminated"] = {
-                    "reason": state.terminated.reason or "",
-                    "message": state.terminated.message or "",
-                    "exitCode": state.terminated.exit_code,
-                }
-
-        last_state_dict: dict[str, Any] = {}
-        last_state = cs.last_state
-        if last_state is not None and last_state.terminated is not None:
-            last_state_dict["terminated"] = {
-                "reason": last_state.terminated.reason or "",
-            }
-
-        results.append(
-            {
-                "name": cs.name or "unknown",
-                "restartCount": cs.restart_count or 0,
-                "state": state_dict,
-                "lastState": last_state_dict,
-            }
-        )
-    return results
-
-
-def _conditions_as_dicts(conditions: list[Any]) -> list[dict]:
-    """Convert V1PodCondition objects to the legacy dict shape."""
-    return [
-        {
-            "type": c.type or "",
-            "status": c.status or "",
-            "message": c.message or "",
-        }
-        for c in conditions
-    ]
-
-
-def _extract_container_issues(container_statuses: list[dict]) -> list[str]:
-    """Extract actionable issue labels from container statuses.
-
-    Inspects waiting and terminated container states for known failure
-    patterns like OOMKilled, CrashLoopBackOff, and ImagePullBackOff.
-    """
-    issues: list[str] = []
-    seen: set[str] = set()
-    for cs in container_statuses:
-        state = cs.get("state", {})
-
-        waiting = state.get("waiting", {})
-        if waiting:
-            reason = waiting.get("reason", "")
-            if reason and reason not in seen:
-                seen.add(reason)
-                issues.append(reason)
-
-        terminated = state.get("terminated", {})
-        if terminated:
-            reason = terminated.get("reason", "")
-            if reason and reason not in seen:
-                seen.add(reason)
-                issues.append(reason)
-
-        last_state = cs.get("lastState", {})
-        last_terminated = last_state.get("terminated", {})
-        if last_terminated:
-            reason = last_terminated.get("reason", "")
-            if reason and reason not in seen:
-                seen.add(reason)
-                issues.append(reason)
-
-    return issues
-
-
-def _format_pod_failure_reason(
-    pod_name: str,
-    phase: PodPhase,
-    container_statuses: list[dict],
-    status: dict,
-) -> str:
-    """Build a detailed failure reason string for a failed pod.
-
-    Includes the pod phase, container exit codes, termination reasons,
-    and any waiting state reasons to help operators diagnose the failure.
-    """
-    parts = [f"K8s pod '{pod_name}' is {phase}"]
-
-    for cs in container_statuses:
-        container_name = cs.get("name", "unknown")
-        state = cs.get("state", {})
-
-        terminated = state.get("terminated", {})
-        if terminated:
-            reason = terminated.get("reason", "")
-            exit_code = terminated.get("exitCode")
-            detail = f"container '{container_name}': terminated"
-            if reason:
-                detail += f" ({reason})"
-            if exit_code is not None:
-                detail += f" exit_code={exit_code}"
-            message = terminated.get("message", "")
-            if message:
-                detail += f" - {message[:200]}"
-            parts.append(detail)
-
-        waiting = state.get("waiting", {})
-        if waiting:
-            reason = waiting.get("reason", "")
-            if reason:
-                detail = f"container '{container_name}': waiting ({reason})"
-                message = waiting.get("message", "")
-                if message:
-                    detail += f" - {message[:200]}"
-                parts.append(detail)
-
-    # Include pod-level conditions with useful messages
-    conditions = status.get("conditions", [])
-    for cond in conditions:
-        if cond.get("status") == "False" and cond.get("message"):
-            parts.append(f"condition {cond['type']}: {cond['message'][:200]}")
-
-    return " | ".join(parts)

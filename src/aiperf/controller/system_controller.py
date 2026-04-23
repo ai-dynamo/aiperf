@@ -4,19 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
-import sys
 import time
-import traceback
 import uuid
-from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import orjson
-from msgspec import Struct
-from rich.console import Console
-from rich.panel import Panel
 
 from aiperf.cli_utils import (
     print_developer_mode_warning,
@@ -25,30 +17,19 @@ from aiperf.cli_utils import (
 from aiperf.common.base_service import BaseService
 from aiperf.common.control_structs import (
     Command,
-    CommandAck,
     CommandErr,
     CommandOk,
     CommandResponse,
     ControllerBoundMessage,
-    Heartbeat,
-    MemoryReport,
-    Registration,
-    RegistrationAck,
-    ServerMetricsStatus,
-    StatusUpdate,
-    TelemetryStatus,
 )
-from aiperf.config.defaults import OutputDefaults
 from aiperf.config.zmq import ZMQDualBindConfig
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
-from pydantic import Field
 
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
-    LifecycleState,
     MessageType,
     ServiceRegistrationStatus,
     WorkerStartupState,
@@ -63,7 +44,6 @@ from aiperf.common.exceptions import (
     ServiceRegistrationTimeoutError,
 )
 from aiperf.common.hooks import (
-    AIPerfHook,
     on_command,
     on_init,
     on_message,
@@ -73,8 +53,6 @@ from aiperf.common.hooks import (
 from aiperf.common.logging import cleanup_global_log_queue, get_global_log_queue
 from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.memory_tracker import (
-    MemoryPhase,
-    MemoryReading,
     MemoryTracker,
     read_pss_self,
 )
@@ -87,7 +65,6 @@ from aiperf.common.messages import (
     WorkerStatusSummaryMessage,
 )
 from aiperf.common.models import (
-    AIPerfBaseModel,
     ErrorDetails,
     ProcessRecordsResult,
 )
@@ -96,9 +73,19 @@ from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.service_registry import ServiceRegistry
 from aiperf.common.types import ServiceTypeT
-from aiperf.controller.controller_utils import print_exit_errors
 from aiperf.controller.protocols import ServiceManagerProtocol
 from aiperf.controller.proxy_manager import ProxyManager
+from aiperf.controller.system_controller_commands import SystemControllerCommandMixin
+from aiperf.controller.system_controller_dispatch import SystemControllerDispatchMixin
+from aiperf.controller.system_controller_models import (
+    AggregateWorkerStatus,
+    K8sServiceTopology,
+    build_aggregate_worker_status,
+)
+from aiperf.controller.system_controller_output import SystemControllerOutputMixin
+from aiperf.controller.system_controller_raw_records import (
+    SystemControllerRawRecordsMixin,
+)
 from aiperf.controller.system_mixins import SignalHandlerMixin
 from aiperf.credit.messages import CreditsCompleteMessage
 from aiperf.exporters.exporter_manager import ExporterManager
@@ -108,90 +95,14 @@ from aiperf.ui.protocols import AIPerfUIProtocol
 from aiperf.zmq.streaming_router_client import ZMQStreamingRouterClient
 
 
-class AggregateWorkerStatus(AIPerfBaseModel):
-    """Controller-authored aggregate worker-pod status snapshot."""
-
-    ready: int = Field(default=0, description="Dispatch-ready worker count.")
-    total: int = Field(default=0, description="Declared worker count.")
-    dispatchable: int = Field(
-        default=0,
-        description="Workers eligible to receive credits.",
-    )
-    router_connected: int = Field(
-        default=0,
-        description="Workers connected to the credit router.",
-    )
-    ready_record_processors: int = Field(
-        default=0,
-        description="Record processors currently available across worker pods.",
-    )
-    declared_record_processors: int = Field(
-        default=0,
-        description="Declared record-processor count across worker pods.",
-    )
-    ready_pods: int = Field(
-        default=0,
-        description="Pods with usable worker capacity.",
-    )
-    total_pods: int = Field(
-        default=0,
-        description="Total worker pods seen by the controller.",
-    )
-    degraded_pods: int = Field(
-        default=0,
-        description="Pods that are usable but degraded.",
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class K8sServiceTopology:
-    """Expected Kubernetes worker-pod topology derived from runtime config."""
-
-    num_worker_pods: int
-    """Number of Kubernetes worker pods to deploy."""
-
-    workers_per_pod: int
-    """Number of worker processes per pod."""
-
-    record_processors_per_pod: int
-    """Number of record processor processes per pod."""
-
-    total_workers: int
-    """Total worker count across all pods."""
-
-    total_record_processors: int
-    """Total record processor count across all pods."""
-
-
-def build_aggregate_worker_status(
-    pod_states: dict[str, WorkerPodStateMessage],
-) -> AggregateWorkerStatus:
-    """Summarize worker-pod snapshots into controller aggregate status."""
-    pods = list(pod_states.values())
-    return AggregateWorkerStatus(
-        ready=sum(pod.ready_workers for pod in pods),
-        total=sum(pod.declared_workers for pod in pods),
-        dispatchable=sum(pod.dispatchable_workers for pod in pods),
-        router_connected=sum(pod.router_connected_workers for pod in pods),
-        ready_record_processors=sum(pod.ready_record_processors for pod in pods),
-        declared_record_processors=sum(pod.declared_record_processors for pod in pods),
-        ready_pods=sum(
-            1
-            for pod in pods
-            if pod.dispatchable_workers >= 1 and pod.ready_record_processors >= 1
-        ),
-        total_pods=len(pods),
-        degraded_pods=sum(
-            1
-            for pod in pods
-            if pod.dispatchable_workers >= 1
-            and pod.ready_record_processors >= 1
-            and (pod.degraded_workers > 0 or pod.degraded_record_processors > 0)
-        ),
-    )
-
-
-class SystemController(SignalHandlerMixin, BaseService):
+class SystemController(
+    SystemControllerDispatchMixin,
+    SystemControllerOutputMixin,
+    SystemControllerCommandMixin,
+    SystemControllerRawRecordsMixin,
+    SignalHandlerMixin,
+    BaseService,
+):
     """System Controller service.
 
     This service is responsible for managing the lifecycle of all other services.
@@ -218,11 +129,19 @@ class SystemController(SignalHandlerMixin, BaseService):
         if self._should_warn_osl_without_ignore_eos():
             warn_osl_without_ignore_eos()
 
-        self._was_cancelled = False
         is_k8s_mode = self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
+        self._init_topology_and_required_services(is_k8s_mode)
+        self._init_proxy_manager(is_k8s_mode)
+        self._init_control_router()
+        self._init_service_manager_and_ui()
+        self._init_runtime_state()
+        self.debug("System Controller created")
+
+    def _init_topology_and_required_services(self, is_k8s_mode: bool) -> None:
+        """Populate K8s topology and required-service counts."""
+        self._was_cancelled = False
         self._k8s_topology: K8sServiceTopology | None = None
         self._declared_group_capacities: dict[str, tuple[int, int]] = {}
-
         self.required_services: dict[ServiceTypeT, int] = {
             ServiceType.DATASET_MANAGER: 1,
             ServiceType.TIMING_MANAGER: 1,
@@ -230,19 +149,19 @@ class SystemController(SignalHandlerMixin, BaseService):
             ServiceType.WORKER_GROUP_MANAGER: self.run.cfg.worker_group_service_count,
         }
         self.scale_record_processors_with_workers = False
-
         if is_k8s_mode:
             self._k8s_topology = self._build_k8s_service_topology()
             self.required_services[ServiceType.WORKER_GROUP_MANAGER] = (
                 self._k8s_topology.num_worker_pods
             )
 
+    def _init_proxy_manager(self, is_k8s_mode: bool) -> None:
+        """Create the ZMQ proxy manager, respecting K8s sidecar mode."""
         event_bus_sidecar_enabled = False
         if is_k8s_mode:
             from aiperf.kubernetes.environment import K8sEnvironment
 
             event_bus_sidecar_enabled = K8sEnvironment.EVENT_BUS_SIDECAR_ENABLED
-
         self.proxy_manager: ProxyManager = ProxyManager(
             run=self.run,
             enable_event_bus=not event_bus_sidecar_enabled,
@@ -250,9 +169,13 @@ class SystemController(SignalHandlerMixin, BaseService):
             enable_raw_inference=False,
         )
 
-        # Control ROUTER lives outside the comms lifecycle so it stays
-        # alive after comms.stop() — child processes still need it during
-        # their own shutdown sequence.
+    def _init_control_router(self) -> None:
+        """Create the control ROUTER client outside the comms lifecycle.
+
+        The control ROUTER lives outside the comms lifecycle so it stays
+        alive after comms.stop() — child processes still need it during
+        their own shutdown sequence.
+        """
         additional_bind: str | None = None
         comm_config = self.run.resolved.comm_config or self.run.cfg.comm_config
         if (
@@ -276,16 +199,16 @@ class SystemController(SignalHandlerMixin, BaseService):
             socket_ops={_zmq.ROUTER_MANDATORY: 1},
         )
 
+    def _init_service_manager_and_ui(self) -> None:
+        """Instantiate the service manager, error collector, and UI plugin."""
         ServiceManagerClass = plugins.get_class(
             PluginType.SERVICE_MANAGER, self.run.cfg.runtime.service_run_type
         )
-
         using_dashboard = self.run.cfg.ui_type == UIType.DASHBOARD
         log_queue = get_global_log_queue() if using_dashboard else None
         self._error_collector = ErrorCollector(
             logger=self, exit_errors=self._exit_errors
         )
-
         self.service_manager: ServiceManagerProtocol = ServiceManagerClass(
             required_services=self.required_services,
             run=self.run,
@@ -299,6 +222,9 @@ class SystemController(SignalHandlerMixin, BaseService):
             controller=self,
         )
         self.attach_child_lifecycle(self.ui)
+
+    def _init_runtime_state(self) -> None:
+        """Reset per-run state holders (results, events, tracking sets)."""
         self._profile_results: ProcessRecordsResult | None = None
         self._exit_errors: list[ExitErrorInfo] = []
         self._telemetry_results: TelemetryExportData | None = None
@@ -331,7 +257,6 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._all_workers_ready_event: asyncio.Event = asyncio.Event()
         self._server_metrics_endpoints_reachable: list[str] = []
         self._pod_failure_watcher_task: asyncio.Task | None = None
-        self.debug("System Controller created")
 
     def _build_k8s_service_topology(self) -> K8sServiceTopology:
         """Derive the full Kubernetes worker-pod topology from runtime config.
@@ -458,61 +383,12 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._configure_scheduler = LoopScheduler()
         self._auto_configure = True
 
-        # Flush any services that registered BEFORE auto-configure was
-        # enabled (e.g. k8s worker pods whose Registration arrived during
-        # initialize/control-router bind, before _start_services ran).
-        # Without this flush those services never receive PROFILE_CONFIGURE.
-        for sid, info in list(ServiceRegistry.services.items()):
-            if (
-                info.registration_status == ServiceRegistrationStatus.REGISTERED
-                and sid not in self._configuring_ids
-            ):
-                self.info(
-                    f"Flushing pre-CONFIGURING registration for '{sid}' "
-                    f"({info.service_type})"
-                )
-                self._configure_scheduler.execute_async(
-                    self._configure_single_service(sid)
-                )
+        self._flush_pre_configuring_registrations()
 
-        # Collect optional services to spawn alongside required services
-        optional_services: list[ServiceTypeT] = []
-        if self.run.cfg.gpu_telemetry.enabled:
-            optional_services.append(ServiceType.GPU_TELEMETRY_MANAGER)
-        else:
-            self.info("GPU telemetry disabled via --no-gpu-telemetry")
-            self._should_wait_for_telemetry = False
-
-        if self.run.cfg.server_metrics.enabled:
-            optional_services.append(ServiceType.SERVER_METRICS_MANAGER)
-        else:
-            self.info("Server metrics disabled via --no-server-metrics")
-            self._should_wait_for_server_metrics = False
-
-        # Start AIPerf API if enabled
-        api_port = self.run.cfg.runtime.api_port or Environment.API_SERVER.PORT
-        api_host = self.run.cfg.runtime.api_host or Environment.API_SERVER.HOST
-        if api_port is not None and api_host is not None:
-            self.info(f"Starting AIPerf API server at http://{api_host}:{api_port}/")
-            optional_services.append(ServiceType.API)
+        optional_services = self._collect_optional_services()
 
         total_services = sum(self.required_services.values()) + len(optional_services)
-        types_summary = ", ".join(
-            f"{st}: {n}" for st, n in self.required_services.items()
-        )
-        if optional_services:
-            types_summary += ", " + ", ".join(f"{st}: 1" for st in optional_services)
-        if self._k8s_topology is not None:
-            topo = self._k8s_topology
-            self.info(
-                "Kubernetes startup topology: "
-                f"{topo.num_worker_pods} worker pod(s) x "
-                f"{topo.workers_per_pod} workers + "
-                f"{topo.record_processors_per_pod} record processors per pod "
-                f"({topo.total_workers} workers, "
-                f"{topo.total_record_processors} record processors total)"
-            )
-        self.info(f"Preparing {total_services} services ({types_summary})")
+        self._log_startup_summary(total_services, optional_services)
         spawn_start = time.perf_counter()
 
         async with self.try_operation_or_stop("Start Service Manager"):
@@ -531,6 +407,74 @@ class SystemController(SignalHandlerMixin, BaseService):
         # registration/configuration rather than waiting for timeout.
         self.service_manager.activate_pod_monitoring()
 
+        await self._configure_all_services_and_start_profiling()
+
+    def _flush_pre_configuring_registrations(self) -> None:
+        """Kick off PROFILE_CONFIGURE for services registered before auto-configure.
+
+        e.g. k8s worker pods whose Registration arrived during
+        initialize/control-router bind, before _start_services ran.
+        Without this flush those services never receive PROFILE_CONFIGURE.
+        """
+        assert self._configure_scheduler is not None
+        for sid, info in list(ServiceRegistry.services.items()):
+            if (
+                info.registration_status == ServiceRegistrationStatus.REGISTERED
+                and sid not in self._configuring_ids
+            ):
+                self.info(
+                    f"Flushing pre-CONFIGURING registration for '{sid}' "
+                    f"({info.service_type})"
+                )
+                self._configure_scheduler.execute_async(
+                    self._configure_single_service(sid)
+                )
+
+    def _collect_optional_services(self) -> list[ServiceTypeT]:
+        """Return the optional services to spawn alongside required services."""
+        optional_services: list[ServiceTypeT] = []
+        if self.run.cfg.gpu_telemetry.enabled:
+            optional_services.append(ServiceType.GPU_TELEMETRY_MANAGER)
+        else:
+            self.info("GPU telemetry disabled via --no-gpu-telemetry")
+            self._should_wait_for_telemetry = False
+
+        if self.run.cfg.server_metrics.enabled:
+            optional_services.append(ServiceType.SERVER_METRICS_MANAGER)
+        else:
+            self.info("Server metrics disabled via --no-server-metrics")
+            self._should_wait_for_server_metrics = False
+
+        api_port = self.run.cfg.runtime.api_port or Environment.API_SERVER.PORT
+        api_host = self.run.cfg.runtime.api_host or Environment.API_SERVER.HOST
+        if api_port is not None and api_host is not None:
+            self.info(f"Starting AIPerf API server at http://{api_host}:{api_port}/")
+            optional_services.append(ServiceType.API)
+        return optional_services
+
+    def _log_startup_summary(
+        self, total_services: int, optional_services: list[ServiceTypeT]
+    ) -> None:
+        """Emit the informational banner describing the service topology."""
+        types_summary = ", ".join(
+            f"{st}: {n}" for st, n in self.required_services.items()
+        )
+        if optional_services:
+            types_summary += ", " + ", ".join(f"{st}: 1" for st in optional_services)
+        if self._k8s_topology is not None:
+            topo = self._k8s_topology
+            self.info(
+                "Kubernetes startup topology: "
+                f"{topo.num_worker_pods} worker pod(s) x "
+                f"{topo.workers_per_pod} workers + "
+                f"{topo.record_processors_per_pod} record processors per pod "
+                f"({topo.total_workers} workers, "
+                f"{topo.total_record_processors} record processors total)"
+            )
+        self.info(f"Preparing {total_services} services ({types_summary})")
+
+    async def _configure_all_services_and_start_profiling(self) -> None:
+        """Drive configure -> pod-health -> worker-ready -> profile-start sequence."""
         self.info("AIPerf System is CONFIGURING")
         async with self.try_operation_or_stop("Configure Services"):
             await self._wait_for_all_configured(
@@ -674,91 +618,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         begin = time.perf_counter()
 
         if not self._all_expected_configured():
-            # Ensure ServiceRegistry has a failure event we can watch
-            if ServiceRegistry._failure_event is None:
-                ServiceRegistry._failure_event = asyncio.Event()
-            failure_event = ServiceRegistry._failure_event
-
-            progress_task = asyncio.create_task(
-                self._log_configure_progress(begin, timeout)
-            )
-            try:
-                # Wait for any of: all configured, service failure, or timeout
-                config_waiter = asyncio.create_task(self._all_configured_event.wait())
-                failure_waiter = asyncio.create_task(failure_event.wait())
-                try:
-                    done, pending = await asyncio.wait(
-                        {config_waiter, failure_waiter},
-                        timeout=timeout,
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                finally:
-                    config_waiter.cancel()
-                    failure_waiter.cancel()
-
-                if not done:
-                    # Timeout -- neither event fired
-                    self._cancel_configure_tasks()
-                    pending_ids = ServiceRegistry.expected_ids - self._configured_ids
-                    pending_types = self._get_pending_type_counts()
-                    startup_summary = self._summarize_pending_worker_startup_states(
-                        pending_ids
-                    )
-                    startup_detail = (
-                        f", Pending worker startup: {startup_summary}"
-                        if startup_summary
-                        else ""
-                    )
-                    raise ServiceRegistrationTimeoutError(
-                        f"Timed out waiting for services to configure "
-                        f"({len(self._configured_ids)} configured). "
-                        f"Pending IDs: {pending_ids}, "
-                        f"Pending types: {pending_types}"
-                        f"{startup_detail}",
-                        missing={},
-                    ) from None
-
-                # Something woke us -- check what
-                self._cancel_configure_tasks()
-
-                # Cancellation (Ctrl+C)
-                if self._was_cancelled:
-                    raise asyncio.CancelledError(
-                        "Configuration interrupted by shutdown"
-                    )
-
-                # Service process died
-                ServiceRegistry._raise_on_failure()
-
-                # Configure task returned an error
-                self._parse_control_responses_for_errors(
-                    self._configure_errors, "Configure Profiling"
-                )
-
-                # Verify all expected services are actually configured.
-                if not self._all_expected_configured():
-                    pending_ids = ServiceRegistry.expected_ids - self._configured_ids
-                    pending_types = self._get_pending_type_counts()
-                    startup_summary = self._summarize_pending_worker_startup_states(
-                        pending_ids
-                    )
-                    startup_detail = (
-                        f", Pending worker startup: {startup_summary}"
-                        if startup_summary
-                        else ""
-                    )
-                    raise ServiceRegistrationTimeoutError(
-                        f"Configuration wait ended but not all services "
-                        f"configured. Pending IDs: {pending_ids}, "
-                        f"Pending types: {pending_types}"
-                        f"{startup_detail}",
-                        missing={},
-                    ) from None
-
-            finally:
-                progress_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await progress_task
+            await self._wait_and_handle_configure_events(begin, timeout)
         else:
             self._cancel_configure_tasks()
             self._parse_control_responses_for_errors(
@@ -774,6 +634,82 @@ class SystemController(SignalHandlerMixin, BaseService):
                 "SSL certificate verification is DISABLED - this is insecure. "
                 "This should only be used for testing in a trusted environment."
             )
+
+    async def _wait_and_handle_configure_events(
+        self, begin: float, timeout: float
+    ) -> None:
+        """Wait for configure completion / failure / timeout and react."""
+        # Ensure ServiceRegistry has a failure event we can watch
+        if ServiceRegistry._failure_event is None:
+            ServiceRegistry._failure_event = asyncio.Event()
+        failure_event = ServiceRegistry._failure_event
+
+        progress_task = asyncio.create_task(
+            self._log_configure_progress(begin, timeout)
+        )
+        try:
+            # Wait for any of: all configured, service failure, or timeout
+            config_waiter = asyncio.create_task(self._all_configured_event.wait())
+            failure_waiter = asyncio.create_task(failure_event.wait())
+            try:
+                done, _pending = await asyncio.wait(
+                    {config_waiter, failure_waiter},
+                    timeout=timeout,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            finally:
+                config_waiter.cancel()
+                failure_waiter.cancel()
+
+            if not done:
+                # Timeout -- neither event fired
+                self._cancel_configure_tasks()
+                raise self._build_configure_timeout_error(
+                    "Timed out waiting for services to configure "
+                    f"({len(self._configured_ids)} configured). "
+                )
+
+            # Something woke us -- check what
+            self._cancel_configure_tasks()
+
+            # Cancellation (Ctrl+C)
+            if self._was_cancelled:
+                raise asyncio.CancelledError("Configuration interrupted by shutdown")
+
+            # Service process died
+            ServiceRegistry._raise_on_failure()
+
+            # Configure task returned an error
+            self._parse_control_responses_for_errors(
+                self._configure_errors, "Configure Profiling"
+            )
+
+            # Verify all expected services are actually configured.
+            if not self._all_expected_configured():
+                raise self._build_configure_timeout_error(
+                    "Configuration wait ended but not all services configured. "
+                )
+
+        finally:
+            progress_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await progress_task
+
+    def _build_configure_timeout_error(
+        self, prefix: str
+    ) -> ServiceRegistrationTimeoutError:
+        """Compose a ServiceRegistrationTimeoutError describing pending services."""
+        pending_ids = ServiceRegistry.expected_ids - self._configured_ids
+        pending_types = self._get_pending_type_counts()
+        startup_summary = self._summarize_pending_worker_startup_states(pending_ids)
+        startup_detail = (
+            f", Pending worker startup: {startup_summary}" if startup_summary else ""
+        )
+        return ServiceRegistrationTimeoutError(
+            f"{prefix}Pending IDs: {pending_ids}, Pending types: {pending_types}"
+            f"{startup_detail}",
+            missing={},
+        )
 
     async def _log_configure_progress(self, begin: float, timeout: float) -> None:
         """Log periodic progress during configuration wait."""
@@ -1187,55 +1123,6 @@ class SystemController(SignalHandlerMixin, BaseService):
         self.warning(f"Graceful shutdown requested (signal {sig})")
         await self._cancel_profiling()
 
-    def _print_cancel_warning(self) -> None:
-        """Print prominent warning panel on first Ctrl+C.
-
-        Informs user that the benchmark is being cancelled gracefully and
-        results are being processed. Also instructs how to force quit.
-
-        Uses stderr to ensure visibility even when stdout is redirected or
-        captured by the UI.
-        """
-        console = Console(file=sys.stderr, force_terminal=True)
-        console.print()
-        console.print(
-            Panel(
-                "[bold yellow]⚠️  BENCHMARK CANCELLED[/bold yellow]\n\n"
-                "Stopping credit issuance and cancelling in-flight requests...\n"
-                "Results will be written to files.\n\n"
-                "[dim]Press Ctrl+C again to force quit immediately[/dim]\n"
-                "[dim](results may be incomplete or not written)[/dim]",
-                border_style="yellow",
-                padding=(1, 2),
-                title="[bold yellow]Cancellation in Progress[/bold yellow]",
-            )
-        )
-        console.print()
-        console.file.flush()
-
-    def _print_force_quit_warning(self) -> None:
-        """Print warning panel on second Ctrl+C (force quit).
-
-        Warns user that results may be incomplete due to immediate termination.
-
-        Uses stderr to ensure visibility even when stdout is redirected or
-        captured by the UI.
-        """
-        console = Console(file=sys.stderr, force_terminal=True)
-        console.print()
-        console.print(
-            Panel(
-                "[bold red]🛑 FORCE QUIT[/bold red]\n\n"
-                "Terminating all processes immediately.\n"
-                "Results may be incomplete or not written to files.",
-                border_style="red",
-                padding=(1, 2),
-                title="[bold red]Force Quit[/bold red]",
-            )
-        )
-        console.print()
-        console.file.flush()
-
     async def _watch_pod_failure_abort(self) -> None:
         """Watch for pod failure threshold breach and cancel profiling."""
         await self.service_manager.pod_failure_abort_event.wait()
@@ -1276,49 +1163,14 @@ class SystemController(SignalHandlerMixin, BaseService):
         )
 
         try:
-            # Fire-and-forget cancel to non-RecordsManager services
-            non_rm_ids = [sid for sid in all_ids if sid not in records_manager_ids]
-            for sid in non_rm_ids:
-                with contextlib.suppress(Exception):
-                    await self.control_router.send_to(
-                        sid,
-                        Command(
-                            cid=uuid.uuid4().hex,
-                            cmd=CommandType.PROFILE_CANCEL,
-                        ),
-                    )
-
-            # Wait for RecordsManager responses (they return ProcessRecordsResult)
+            await self._fire_and_forget_cancel_non_rm(all_ids, records_manager_ids)
             responses = await self._send_control_command_to_all(
                 CommandType.PROFILE_CANCEL,
                 list(records_manager_ids),
                 timeout=Environment.SERVICE.PROFILE_CANCEL_TIMEOUT,
             )
-
-            for response in responses:
-                if isinstance(response, ErrorDetails):
-                    self.warning(
-                        f"Cancel command error (timeout or service unavailable): {response}"
-                    )
-                elif isinstance(response, CommandErr):
-                    self.warning(
-                        f"Cancel command failed from {response.sid}: {response.error}"
-                    )
-
-            # Extract ProcessRecordsResult from RecordsManager's CommandOk response
-            for response in responses:
-                if isinstance(response, CommandOk) and response.payload:
-                    try:
-                        data = orjson.loads(response.payload)
-                        result = ProcessRecordsResult.model_validate(data)
-                        self.debug(
-                            f"Received ProcessRecordsResult from cancel command: {result}"
-                        )
-                        self._profile_results = result
-                        self._profile_results_received = True
-                        break
-                    except (orjson.JSONDecodeError, ValueError) as e:
-                        self.warning(f"Failed to parse cancel response payload: {e}")
+            self._log_cancel_response_errors(responses)
+            self._capture_cancel_records_result(responses)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 - cancel path must always reach stop()
@@ -1327,6 +1179,53 @@ class SystemController(SignalHandlerMixin, BaseService):
         if should_call_stop:
             self.debug("Stopping system controller after profiling cancelled")
             await asyncio.shield(self.stop())
+
+    async def _fire_and_forget_cancel_non_rm(
+        self, all_ids: list[str], records_manager_ids: set[str]
+    ) -> None:
+        """Send PROFILE_CANCEL to non-RecordsManager services without awaiting reply."""
+        non_rm_ids = [sid for sid in all_ids if sid not in records_manager_ids]
+        for sid in non_rm_ids:
+            with contextlib.suppress(Exception):
+                await self.control_router.send_to(
+                    sid,
+                    Command(
+                        cid=uuid.uuid4().hex,
+                        cmd=CommandType.PROFILE_CANCEL,
+                    ),
+                )
+
+    def _log_cancel_response_errors(
+        self, responses: list[CommandResponse | ErrorDetails]
+    ) -> None:
+        """Warn on any cancel-command errors or timeouts."""
+        for response in responses:
+            if isinstance(response, ErrorDetails):
+                self.warning(
+                    f"Cancel command error (timeout or service unavailable): {response}"
+                )
+            elif isinstance(response, CommandErr):
+                self.warning(
+                    f"Cancel command failed from {response.sid}: {response.error}"
+                )
+
+    def _capture_cancel_records_result(
+        self, responses: list[CommandResponse | ErrorDetails]
+    ) -> None:
+        """Extract ProcessRecordsResult from a RecordsManager CommandOk payload, if present."""
+        for response in responses:
+            if isinstance(response, CommandOk) and response.payload:
+                try:
+                    data = orjson.loads(response.payload)
+                    result = ProcessRecordsResult.model_validate(data)
+                    self.debug(
+                        f"Received ProcessRecordsResult from cancel command: {result}"
+                    )
+                    self._profile_results = result
+                    self._profile_results_received = True
+                    return
+                except (orjson.JSONDecodeError, ValueError) as e:
+                    self.warning(f"Failed to parse cancel response payload: {e}")
 
     @on_stop
     async def _stop_system_controller(self) -> None:
@@ -1348,26 +1247,9 @@ class SystemController(SignalHandlerMixin, BaseService):
         # Suppress heartbeat/process monitors before broadcasting shutdown
         self.service_manager.notify_shutdown()
 
-        # Send shutdown command to all registered services via ROUTER (fire-and-forget)
-        all_ids = list(ServiceRegistry.get_all_registered_ids())
-        if keep_api_running:
-            api_ids = {
-                s.service_id for s in ServiceRegistry.get_services(ServiceType.API)
-            }
-            all_ids = [sid for sid in all_ids if sid not in api_ids]
-        for sid in all_ids:
-            try:
-                await self.control_router.send_to(
-                    sid,
-                    Command(
-                        cid=uuid.uuid4().hex,
-                        cmd=CommandType.SHUTDOWN,
-                    ),
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:  # noqa: BLE001 - shutdown is best-effort per service
-                self.debug(f"Failed to send shutdown to {sid}: {e}")
+        await self._broadcast_shutdown_to_services(
+            keep_api_running=bool(keep_api_running)
+        )
 
         # Brief delay for messages to propagate before tearing down services
         await asyncio.sleep(Environment.SERVICE.SHUTDOWN_PROPAGATION_DELAY)
@@ -1389,10 +1271,62 @@ class SystemController(SignalHandlerMixin, BaseService):
         # Drain subprocess errors reported via the error queue backchannel
         self._error_collector.drain_into()
 
-        # Post-benchmark reporting (after services and comms are stopped).
-        # Bound with a timeout: the Dashboard UI can hang when the parent
-        # process runs under PIPE'd stdio (integration tests under xdist)
-        # because Textual's driver waits on a terminal that never arrives.
+        await self._teardown_ui_with_timeout()
+        await asyncio.sleep(0.1)
+
+        await self._emit_post_benchmark_report_or_errors()
+        self._print_process_memory_summary()
+
+        if Environment.DEV.MODE:
+            print_developer_mode_warning()
+
+        has_results = self._profile_results and self._profile_results.results.records
+        await self._maybe_signal_k8s_completion(keep_api_running, has_results)
+
+        # Clean up global queues to prevent semaphore leaks. Bound each
+        # cleanup with a hard timeout: multiprocessing.Queue.join_thread can
+        # block indefinitely when the feeder thread cannot flush pending
+        # items (e.g. pipe buffer contention under heavy xdist load).
+        with contextlib.suppress(asyncio.TimeoutError, Exception):
+            await asyncio.wait_for(cleanup_global_log_queue(), timeout=2.0)
+        with contextlib.suppress(asyncio.TimeoutError, Exception):
+            await asyncio.wait_for(cleanup_global_error_queue(), timeout=2.0)
+
+        await self._exit_after_optional_api_wait(is_k8s_mode, has_results)
+
+    async def _broadcast_shutdown_to_services(self, *, keep_api_running: bool) -> None:
+        """Fire-and-forget SHUTDOWN command to all registered services via ROUTER.
+
+        When ``keep_api_running`` is True the API service is excluded so it can
+        keep serving results after the rest of the system tears down.
+        """
+        all_ids = list(ServiceRegistry.get_all_registered_ids())
+        if keep_api_running:
+            api_ids = {
+                s.service_id for s in ServiceRegistry.get_services(ServiceType.API)
+            }
+            all_ids = [sid for sid in all_ids if sid not in api_ids]
+        for sid in all_ids:
+            try:
+                await self.control_router.send_to(
+                    sid,
+                    Command(
+                        cid=uuid.uuid4().hex,
+                        cmd=CommandType.SHUTDOWN,
+                    ),
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 - shutdown is best-effort per service
+                self.debug(f"Failed to send shutdown to {sid}: {e}")
+
+    async def _teardown_ui_with_timeout(self) -> None:
+        """Stop the UI and drain its tasks, each bounded by a 5s timeout.
+
+        The Dashboard UI can hang when the parent process runs under PIPE'd
+        stdio (integration tests under xdist) because Textual's driver waits
+        on a terminal that never arrives.
+        """
         try:
             await asyncio.wait_for(self.ui.stop(), timeout=5.0)
         except asyncio.CancelledError:
@@ -1405,56 +1339,50 @@ class SystemController(SignalHandlerMixin, BaseService):
             raise
         except (asyncio.TimeoutError, Exception) as e:  # noqa: BLE001 - UI wait must not block controller teardown
             self.warning(f"UI task drain did not complete cleanly: {e!r}")
-        await asyncio.sleep(0.1)
 
-        if not self._exit_errors:
-            if self._profile_results and self._profile_results.results.records:
-                await self._print_post_benchmark_info_and_metrics()
-            elif self._was_cancelled:
-                self.warning("Benchmark was cancelled before results were collected")
-            else:
-                self.error("No profile results to export")
-                self._exit_errors.append(
-                    ExitErrorInfo(
-                        error_details=ErrorDetails(
-                            type="NO_RESULTS",
-                            message="No profile results to export",
-                        ),
-                        operation="profile",
-                    )
-                )
-                self._print_exit_errors_and_log_file()
-        else:
+    async def _emit_post_benchmark_report_or_errors(self) -> None:
+        """Print results/metrics, or the exit-error summary if startup failed."""
+        if self._exit_errors:
             self._print_exit_errors_and_log_file()
+            return
+        if self._profile_results and self._profile_results.results.records:
+            await self._print_post_benchmark_info_and_metrics()
+            return
+        if self._was_cancelled:
+            self.warning("Benchmark was cancelled before results were collected")
+            return
+        self.error("No profile results to export")
+        self._exit_errors.append(
+            ExitErrorInfo(
+                error_details=ErrorDetails(
+                    type="NO_RESULTS",
+                    message="No profile results to export",
+                ),
+                operation="profile",
+            )
+        )
+        self._print_exit_errors_and_log_file()
 
-        self._print_process_memory_summary()
+    async def _maybe_signal_k8s_completion(
+        self, keep_api_running: object, has_results: object
+    ) -> None:
+        """Signal benchmark completion to the operator via CR annotation.
 
-        if Environment.DEV.MODE:
-            print_developer_mode_warning()
-
-        # Signal benchmark completion to the operator via CR annotation.
-        # This triggers the kopf handler immediately instead of waiting
-        # for the next monitor poll cycle.
-        # Only signal when the benchmark actually ran — if startup failed
-        # (e.g. tokenizer resolution error), there are no results to fetch
-        # and signaling completion would cause the operator to incorrectly
-        # mark the job as Completed.
-        has_results = self._profile_results and self._profile_results.results.records
+        Triggers the kopf handler immediately instead of waiting for the next
+        monitor poll cycle. Only signal when the benchmark actually ran — if
+        startup failed (e.g. tokenizer resolution error), there are no results
+        to fetch and signaling completion would cause the operator to
+        incorrectly mark the job as Completed.
+        """
         if keep_api_running and (has_results or self._was_cancelled):
             from aiperf.kubernetes.completion_signal import signal_benchmark_complete
 
             await signal_benchmark_complete()
 
-        # Clean up global queues to prevent semaphore leaks. Bound each
-        # cleanup with a hard timeout: multiprocessing.Queue.join_thread can
-        # block indefinitely when the feeder thread cannot flush pending
-        # items (e.g. pipe buffer contention under heavy xdist load).
-        with contextlib.suppress(asyncio.TimeoutError, Exception):
-            await asyncio.wait_for(cleanup_global_log_queue(), timeout=2.0)
-        with contextlib.suppress(asyncio.TimeoutError, Exception):
-            await asyncio.wait_for(cleanup_global_error_queue(), timeout=2.0)
-
-        is_k8s_mode = self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
+    async def _exit_after_optional_api_wait(
+        self, is_k8s_mode: bool, has_results: object
+    ) -> None:
+        """Block on the K8s API subprocess if it must keep serving results, then exit."""
         keep_api_running = is_k8s_mode and self.run.cfg.runtime.api_port
 
         if keep_api_running:
@@ -1472,418 +1400,6 @@ class SystemController(SignalHandlerMixin, BaseService):
                 self.info("Kubernetes mode: benchmark failed, not waiting for API")
 
         self._force_exit(1 if self._exit_errors else 0)
-
-    async def _handle_control_message(
-        self, identity: str, message: ControllerBoundMessage
-    ) -> Struct | None:
-        """Dispatch control channel messages from child services.
-
-        Returns a Struct response for request-reply patterns (Registration, Command).
-        Returns None for fire-and-forget messages (Heartbeat, StatusUpdate, etc.).
-        """
-        match message:
-            case Registration():
-                self.debug(
-                    lambda: f"Received registration from {message.stype} service: {message.sid}"
-                )
-                already_configuring = message.sid in self._configuring_ids
-                ServiceRegistry.register(
-                    service_id=message.sid,
-                    service_type=message.stype,
-                    first_seen_ns=time.time_ns(),
-                    state=LifecycleState(message.state),
-                    pod_name=message.pod_name,
-                    pod_index=message.pod_index,
-                )
-                if (
-                    not already_configuring
-                    and message.declared_worker_capacity is not None
-                    and message.declared_record_processor_capacity is not None
-                ):
-                    self._declared_group_capacities[message.sid] = (
-                        message.declared_worker_capacity,
-                        message.declared_record_processor_capacity,
-                    )
-                    self.info(
-                        f"Pod '{message.sid}' reports capacity: "
-                        f"{message.declared_worker_capacity} workers, "
-                        f"{message.declared_record_processor_capacity} record processors"
-                    )
-                    if self._k8s_topology is not None and (
-                        message.declared_worker_capacity
-                        != self._k8s_topology.workers_per_pod
-                        or message.declared_record_processor_capacity
-                        != self._k8s_topology.record_processors_per_pod
-                    ):
-                        self.warning(
-                            f"Pod '{message.sid}' reported unexpected capacity "
-                            f"({message.declared_worker_capacity} workers, "
-                            f"{message.declared_record_processor_capacity} record processors). "
-                            f"Expected {self._k8s_topology.workers_per_pod} workers and "
-                            f"{self._k8s_topology.record_processors_per_pod} "
-                            "record processors per pod."
-                        )
-                if self._auto_configure and not already_configuring:
-                    self._configure_scheduler.execute_async(
-                        self._configure_single_service(message.sid)
-                    )
-                return RegistrationAck(rid=message.rid)
-            case Heartbeat():
-                self.debug(
-                    lambda msg=message: f"Received heartbeat from {msg.stype} service: {msg.sid}"
-                )
-                ServiceRegistry.update_service(
-                    service_id=message.sid,
-                    service_type=message.stype,
-                    last_seen_ns=time.time_ns(),
-                    state=LifecycleState(message.state),
-                )
-                return None
-            case StatusUpdate():
-                self.debug(
-                    lambda msg=message: f"Received status from {msg.stype} service: {msg.sid}"
-                )
-                ServiceRegistry.update_service(
-                    service_id=message.sid,
-                    service_type=message.stype,
-                    last_seen_ns=time.time_ns(),
-                    state=LifecycleState(message.state),
-                )
-                return None
-            case MemoryReport():
-                self._memory_tracker.record(
-                    label=message.sid,
-                    group=message.stype,
-                    pid=message.pid,
-                    phase=MemoryPhase(message.phase),
-                    reading=MemoryReading(
-                        pss=message.pss_bytes,
-                        rss=message.rss_bytes,
-                        uss=message.uss_bytes,
-                        shared=message.shared_bytes,
-                    ),
-                )
-                return None
-            case TelemetryStatus():
-                self._telemetry_endpoints_configured = list(
-                    message.endpoints_configured
-                )
-                self._telemetry_endpoints_reachable = list(message.endpoints_reachable)
-                self._should_wait_for_telemetry = message.enabled
-                if not message.enabled:
-                    reason_msg = f" - {message.reason}" if message.reason else ""
-                    self.info(f"GPU telemetry disabled{reason_msg}")
-                    ServiceRegistry.forget(message.sid)
-                else:
-                    self.info(
-                        f"GPU telemetry enabled - {len(message.endpoints_reachable)}/{len(message.endpoints_configured)} endpoint(s) reachable"
-                    )
-                await self._check_and_trigger_shutdown()
-                return None
-            case ServerMetricsStatus():
-                self._server_metrics_endpoints_configured = list(
-                    message.endpoints_configured
-                )
-                self._server_metrics_endpoints_reachable = list(
-                    message.endpoints_reachable
-                )
-                self._should_wait_for_server_metrics = message.enabled
-                if not message.enabled:
-                    reason_msg = f" - {message.reason}" if message.reason else ""
-                    self.info(f"Server metrics disabled{reason_msg}")
-                    ServiceRegistry.forget(message.sid)
-                else:
-                    self.info(
-                        f"Server metrics enabled - {len(message.endpoints_reachable)}/{len(message.endpoints_configured)} endpoint(s) reachable."
-                    )
-                    unreachable = set(message.endpoints_configured) - set(
-                        message.endpoints_reachable
-                    )
-                    if unreachable:
-                        self.warning(f"Unreachable endpoints: {', '.join(unreachable)}")
-                await self._check_and_trigger_shutdown()
-                return None
-            case Command():
-                return await self._dispatch_control_command(identity, message)
-            case CommandAck() | CommandOk() | CommandErr():
-                # Responses to pending requests are handled by _pending_requests
-                # matching in the ROUTER receive loop. If we get here, it's
-                # an unexpected response.
-                self.debug(
-                    f"Unexpected command response from {identity}: {type(message).__name__}"
-                )
-                return None
-
-    # -------------------------------------------------------------------------
-    # Control channel: command dispatch and sending helpers
-    # -------------------------------------------------------------------------
-
-    @staticmethod
-    def _encode_command_payload(result: Any) -> bytes:
-        """Encode a command-hook result to a payload byte-string."""
-        from pydantic import BaseModel
-
-        if isinstance(result, BaseModel):
-            return result.model_dump_json().encode()
-        if isinstance(result, bytes):
-            return result
-        return orjson.dumps(result)
-
-    async def _dispatch_control_command(
-        self, identity: str, message: Command
-    ) -> Struct | None:
-        """Dispatch an incoming Command from a service to local @on_command hooks.
-
-        Returns a CommandAck/CommandOk/CommandErr response struct.
-        """
-        for hook in self.get_hooks(AIPerfHook.ON_COMMAND):
-            resolved = hook.resolve_params(self)
-            if not (isinstance(resolved, Iterable) and message.cmd in resolved):
-                continue
-            try:
-                result = await hook.func(message)
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:  # noqa: BLE001 - service cmd dispatch boundary
-                tb = traceback.format_exc()
-                self.error(
-                    f"Failed to handle command {message.cmd} from {identity}: {e}"
-                )
-                return CommandErr(
-                    cid=message.cid,
-                    sid=self.service_id,
-                    error=str(e),
-                    traceback=tb,
-                )
-
-            if result is None:
-                return CommandAck(cid=message.cid, sid=self.service_id)
-            return CommandOk(
-                cid=message.cid,
-                sid=self.service_id,
-                payload=self._encode_command_payload(result),
-            )
-
-        self.debug(f"No handler for command {message.cmd} from {identity}")
-        return CommandAck(cid=message.cid, sid=self.service_id)
-
-    async def _send_control_command(
-        self,
-        identity: str,
-        cmd: str,
-        payload: bytes = b"",
-        timeout: float = Environment.SERVICE.COMMAND_RESPONSE_TIMEOUT,
-    ) -> CommandResponse:
-        """Send a command to a specific service via ROUTER and wait for response."""
-        command = Command(cid=uuid.uuid4().hex, cmd=cmd, payload=payload)
-        return await self.control_router.request_to(identity, command, timeout)
-
-    async def _send_control_command_to_all(
-        self,
-        cmd: str,
-        service_ids: list[str],
-        payload: bytes = b"",
-        timeout: float = Environment.SERVICE.COMMAND_RESPONSE_TIMEOUT,
-    ) -> list[CommandResponse | ErrorDetails]:
-        """Send a command to all specified services and wait for all responses."""
-        tasks = {
-            sid: asyncio.create_task(
-                self._send_control_command(sid, cmd, payload, timeout)
-            )
-            for sid in service_ids
-        }
-        results: list[CommandResponse | ErrorDetails] = []
-        for sid, task in tasks.items():
-            try:
-                results.append(await task)
-            except asyncio.TimeoutError:
-                results.append(
-                    ErrorDetails(
-                        type="TimeoutError",
-                        message=f"Command {cmd} timed out for {sid}",
-                    )
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:  # noqa: BLE001 - service cmd dispatch boundary
-                results.append(ErrorDetails.from_exception(e))
-        return results
-
-    async def _send_control_command_to_all_fail_fast(
-        self,
-        cmd: str,
-        service_ids: list[str],
-        payload: bytes = b"",
-        timeout: float = Environment.SERVICE.COMMAND_RESPONSE_TIMEOUT,
-    ) -> list[CommandResponse | ErrorDetails]:
-        """Send command to all services, aborting on first error."""
-        tasks = {
-            sid: asyncio.create_task(
-                self._send_control_command(sid, cmd, payload, timeout)
-            )
-            for sid in service_ids
-        }
-        results: list[CommandResponse | ErrorDetails] = []
-        try:
-            for coro in asyncio.as_completed(tasks.values()):
-                try:
-                    response = await coro
-                    results.append(response)
-                    if isinstance(response, CommandErr):
-                        self.debug(
-                            f"Received error from {response.sid}, aborting wait for "
-                            f"remaining {len(service_ids) - len(results)} service(s)"
-                        )
-                        break
-                except asyncio.TimeoutError:
-                    results.append(
-                        ErrorDetails(
-                            type="TimeoutError", message=f"Command {cmd} timed out"
-                        )
-                    )
-                    break
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:  # noqa: BLE001 - service cmd dispatch boundary
-                    results.append(ErrorDetails.from_exception(e))
-                    break
-        finally:
-            for task in tasks.values():
-                task.cancel()
-        return results
-
-    @staticmethod
-    def _force_exit(code: int) -> None:
-        """Flush stdio and exit. Falls back to os._exit if sys.exit hangs
-        (e.g. ZMQ context blocking in atexit)."""
-        sys.stdout.flush()
-        sys.stderr.flush()
-        os._exit(code)
-
-    def _should_wait_for_raw_records(self) -> bool:
-        """Check if we need to wait for raw record uploads from worker pods."""
-        from aiperf.common.enums import ExportLevel
-
-        return self.run.cfg.output.export_level == ExportLevel.RAW
-
-    async def _wait_for_raw_record_uploads(self) -> None:
-        """Wait for worker pods to upload raw record files to the API.
-
-        Polls the raw_records subdirectory until we have at least one file
-        per worker group manager, or the timeout expires.
-        """
-        raw_records_dir = (
-            self.run.cfg.output.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
-        )
-        timeout = Environment.SERVICE.RAW_RECORD_UPLOAD_TIMEOUT
-        poll_interval = 1.0
-        deadline = time.monotonic() + timeout
-
-        wgm_count = len(ServiceRegistry.get_services(ServiceType.WORKER_GROUP_MANAGER))
-        if wgm_count == 0:
-            self.debug("No worker group managers registered, skipping raw record wait")
-            return
-
-        self.info(f"Waiting for raw record uploads from {wgm_count} worker group(s)...")
-
-        while time.monotonic() < deadline:
-            if raw_records_dir.exists():
-                files = list(raw_records_dir.glob("raw_records_*.jsonl"))
-                if len(files) >= wgm_count:
-                    self.info(
-                        f"Received {len(files)} raw record file(s) from "
-                        f"{wgm_count} group(s), proceeding with export"
-                    )
-                    return
-                if files:
-                    self.debug(
-                        f"Have {len(files)}/{wgm_count} raw record file(s), "
-                        "waiting for remaining pods..."
-                    )
-            await asyncio.sleep(poll_interval)
-
-        # Check what we got before warning
-        actual = 0
-        if raw_records_dir.exists():
-            actual = len(list(raw_records_dir.glob("raw_records_*.jsonl")))
-        if actual > 0:
-            self.warning(
-                f"Timed out after {timeout}s: received {actual}/{wgm_count} "
-                "raw record file(s). Proceeding with partial data."
-            )
-        else:
-            self.warning(
-                f"Timed out waiting for raw record uploads after {timeout}s. "
-                "Raw records may be missing from export."
-            )
-
-    def _print_exit_errors_and_log_file(self) -> None:
-        """Print post exit errors and log file info to the console."""
-        console = Console()
-        print_exit_errors(self._exit_errors, console=console)
-        self._print_log_file_info(console)
-        console.print()
-        console.file.flush()
-
-    async def _shutdown_record_processors_and_wait_for_flush(self) -> None:
-        """Shut down WorkerGroupManager(s) and poll for flushed raw record files.
-
-        In local multiprocessing mode, RPs are WGM subprocesses — outside the
-        controller's service_manager — so stop_service(RECORD_PROCESSOR) on
-        the controller is a no-op. Instead, send SHUTDOWN to each WGM over the
-        control router; each WGM cascades shutdown to its child RPs, whose
-        @on_stop hooks (BufferedJSONLWriterMixin._close_file) flush the
-        raw_records_*.jsonl files before the aggregator reads them.
-        """
-        wgm_services = ServiceRegistry.get_services(ServiceType.WORKER_GROUP_MANAGER)
-        if not wgm_services:
-            return
-
-        for svc in wgm_services:
-            try:
-                await self.control_router.send_to(
-                    svc.service_id,
-                    Command(cid=uuid.uuid4().hex, cmd=CommandType.SHUTDOWN),
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:  # noqa: BLE001 - shutdown is best-effort per WGM
-                self.debug(f"Failed to send shutdown to {svc.service_id}: {e}")
-
-        raw_records_dir = (
-            self.run.cfg.output.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
-        )
-        expected = len(wgm_services)
-        deadline = time.monotonic() + Environment.SERVICE.RAW_RECORD_UPLOAD_TIMEOUT
-        stable_snapshots: list[tuple[int, int]] = []
-        # Wait until at least `expected` files exist, each with size > 0, and
-        # the (count, total_size) tuple is unchanged across two consecutive
-        # samples ~300ms apart. Mere existence is insufficient: RPs flush in
-        # batches, so the first write of a partial batch can lead the
-        # aggregator to read a truncated file.
-        while time.monotonic() < deadline:
-            if raw_records_dir.exists():
-                files = list(raw_records_dir.glob("raw_records_*.jsonl"))
-                if len(files) >= expected and all(f.stat().st_size > 0 for f in files):
-                    snapshot = (len(files), sum(f.stat().st_size for f in files))
-                    stable_snapshots.append(snapshot)
-                    if (
-                        len(stable_snapshots) >= 2
-                        and stable_snapshots[-1] == stable_snapshots[-2]
-                    ):
-                        self.debug(
-                            f"Raw record files stable at {raw_records_dir} "
-                            f"(files={snapshot[0]}, bytes={snapshot[1]})"
-                        )
-                        return
-                else:
-                    stable_snapshots.clear()
-            await asyncio.sleep(0.3)
-
-        self.warning(
-            f"Timed out waiting for record processors to flush raw records to "
-            f"{raw_records_dir}; export may be incomplete."
-        )
 
     async def _export_results_data(self) -> None:
         """Write result files (CSV, JSON, Parquet) to the artifacts directory.
@@ -1929,100 +1445,6 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
         self._results_exported = True
         self.info("Results exported to disk")
-
-    async def _print_post_benchmark_info_and_metrics(self) -> None:
-        """Print post benchmark info and metrics to the console."""
-        console = Console()
-        if console.width < 100:
-            console.width = 100
-
-        if not self._results_exported:
-            # Non-K8s path or export didn't happen yet — do it now
-            self._exporter_manager = ExporterManager(
-                results=self._profile_results.results,
-                config=self.run.cfg,
-                telemetry_results=self._telemetry_results,
-                server_metrics_results=self._server_metrics_results,
-            )
-            await self._exporter_manager.export_data()
-            self._results_exported = True
-
-        await self._exporter_manager.export_console(console=console)
-
-        console.print()
-        self._print_cli_command(console)
-        self._print_benchmark_duration(console)
-        self._print_exported_file_infos(self._exporter_manager, console)
-        self._print_log_file_info(console)
-        if self._was_cancelled:
-            console.print(
-                "[italic yellow]The profile run was cancelled early. Results shown may be incomplete or inaccurate.[/italic yellow]"
-            )
-
-        console.print()
-        console.file.flush()
-
-    def _print_log_file_info(self, console: Console) -> None:
-        """Print the log file info."""
-        log_file = (
-            self.run.cfg.artifacts.dir
-            / OutputDefaults.LOG_FOLDER
-            / OutputDefaults.LOG_FILE
-        )
-        console.print(
-            f"[bold green]Log File:[/bold green] [cyan]{log_file.resolve()}[/cyan]"
-        )
-
-    def _print_exported_file_infos(
-        self, exporter_manager: ExporterManager, console: Console
-    ) -> None:
-        """Print the exported file infos."""
-        file_infos = exporter_manager.get_exported_file_infos()
-        for file_info in file_infos:
-            console.print(
-                f"[bold green]{file_info.export_type}[/bold green]: [cyan]{file_info.file_path.resolve()}[/cyan]"
-            )
-
-    def _print_cli_command(self, console: Console) -> None:
-        """Print the CLI command that was used to run the benchmark."""
-        cli_command = self.run.cfg.artifacts.cli_command or "N/A"
-        console.print(
-            f"[bold green]CLI Command:[/bold green] [italic]{cli_command}[/italic]"
-        )
-
-    def _print_benchmark_duration(self, console: Console) -> None:
-        """Print the duration of the benchmark."""
-        from aiperf.metrics.types.benchmark_duration_metric import (
-            BenchmarkDurationMetric,
-        )
-
-        # Metrics are already in display units from summarize()
-        duration = self._profile_results.get(BenchmarkDurationMetric.tag)
-        if duration:
-            duration_str = f"[bold green]{BenchmarkDurationMetric.header}[/bold green]: {duration.avg:.2f} {duration.unit}"
-            if self._was_cancelled:
-                duration_str += " [italic yellow](cancelled early)[/italic yellow]"
-            console.print(duration_str)
-
-    def _print_process_memory_summary(self) -> None:
-        """Print memory summary for all AIPerf processes."""
-        controller_pss_start = getattr(self, "_controller_pss_at_start", None)
-        if controller_pss_start is not None:
-            self._memory_tracker.record(
-                label="SystemController",
-                group="controller",
-                pid=os.getpid(),
-                phase=MemoryPhase.STARTUP,
-                reading=MemoryReading(pss=controller_pss_start),
-            )
-        self._memory_tracker.capture(
-            label="SystemController",
-            group="controller",
-            pid=os.getpid(),
-            phase=MemoryPhase.SHUTDOWN,
-        )
-
-        self._memory_tracker.print_summary(title="AIPerf Process Memory")
 
     async def _kill(self) -> None:
         """Kill the system controller."""

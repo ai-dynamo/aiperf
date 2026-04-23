@@ -289,7 +289,9 @@ class TestSignalHandling:
         self, system_controller: SystemController
     ):
         """_print_cancel_warning prints to console."""
-        with patch("aiperf.controller.system_controller.Console") as mock_console_class:
+        with patch(
+            "aiperf.controller.system_controller_output.Console"
+        ) as mock_console_class:
             mock_console = MagicMock()
             mock_console_class.return_value = mock_console
 
@@ -303,7 +305,9 @@ class TestSignalHandling:
         self, system_controller: SystemController
     ):
         """_print_force_quit_warning prints to console."""
-        with patch("aiperf.controller.system_controller.Console") as mock_console_class:
+        with patch(
+            "aiperf.controller.system_controller_output.Console"
+        ) as mock_console_class:
             mock_console = MagicMock()
             mock_console_class.return_value = mock_console
 

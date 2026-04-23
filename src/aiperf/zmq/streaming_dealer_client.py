@@ -155,6 +155,24 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         finally:
             self._pending_requests.pop(key, None)
 
+    async def _process_received_message(self, message: Any) -> None:
+        """Dispatch a decoded message to a pending request future or the handler."""
+        # Check if this is a response to a pending request (by rid or cid)
+        key = getattr(message, "rid", None) or getattr(message, "cid", None)
+        if key and key in self._pending_requests:
+            future = self._pending_requests.pop(key)
+            if not future.done():
+                future.set_result(message)
+            return
+
+        if self._receiver_handler:
+            self.execute_async(self._receiver_handler(message))
+            self._msg_count += 1
+            if self._yield_interval > 0 and self._msg_count % self._yield_interval == 0:
+                await yield_to_event_loop()
+        else:
+            self.warning(f"Received {type(message).__name__} but no handler registered")
+
     @background_task(immediate=True, interval=None)
     async def _streaming_dealer_receiver(self) -> None:
         """Background task for receiving messages from ROUTER."""
@@ -168,28 +186,7 @@ class ZMQStreamingDealerClient(BaseZMQClient):
                 if self.is_trace_enabled:
                     self.trace(f"Received message: {message_bytes}")
                 message = self._decoder.decode(message_bytes)
-
-                # Check if this is a response to a pending request (by rid or cid)
-                key = getattr(message, "rid", None) or getattr(message, "cid", None)
-                if key and key in self._pending_requests:
-                    future = self._pending_requests.pop(key)
-                    if not future.done():
-                        future.set_result(message)
-                    continue
-
-                if self._receiver_handler:
-                    self.execute_async(self._receiver_handler(message))
-                    self._msg_count += 1
-                    if (
-                        self._yield_interval > 0
-                        and self._msg_count % self._yield_interval == 0
-                    ):
-                        await yield_to_event_loop()
-                else:
-                    self.warning(
-                        f"Received {type(message).__name__} but no handler registered"
-                    )
-
+                await self._process_received_message(message)
             except zmq.Again:
                 self.trace("No data on dealer socket received, yielding to event loop")
                 await yield_to_event_loop()

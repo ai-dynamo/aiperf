@@ -144,6 +144,48 @@ navigation:
   - page: Trace Replay with Mooncake Traces
     path: benchmark-modes/trace-replay.md
 
+- section: Kubernetes
+  collapsed: true
+  contents:
+  - page: Getting Started on Kubernetes
+    path: kubernetes/getting-started.md
+  - page: End-to-End Workflow
+    path: kubernetes/workflow.md
+  - page: Config Init and Manifest Generation
+    path: kubernetes/init-and-generate.md
+  - page: Kubernetes Configuration Reference
+    path: kubernetes/configuration.md
+  - page: Production Deployment
+    path: kubernetes/production.md
+  - page: RBAC and Security
+    path: kubernetes/rbac-security.md
+  - page: Monitoring and Observability
+    path: kubernetes/monitoring.md
+  - page: Config Validation
+    path: kubernetes/validate.md
+  - page: Preflight Checks
+    path: kubernetes/preflight.md
+  - page: Debug Command
+    path: kubernetes/debug-command.md
+  - page: Watch Diagnosis Issues
+    path: kubernetes/diagnosis-issues.md
+  - page: Results Server API Reference
+    path: kubernetes/results-api.md
+  - page: Web Dashboard
+    path: kubernetes/dashboard-ui.md
+  - page: Controller Pod Sidecars
+    path: kubernetes/sidecars.md
+  - page: Memory Estimator
+    path: kubernetes/memory-estimator.md
+  - page: Kueue Integration
+    path: kubernetes/kueue.md
+  - page: Direct Mode (no operator)
+    path: kubernetes/direct-mode.md
+  - page: AI-Assisted Deployment Guide
+    path: kubernetes/ai-deployment-guide.md
+  - page: AI-Assisted Debugging Guide
+    path: kubernetes/ai-debugging-guide.md
+
 - section: Reference
   collapsed: true
   contents:
@@ -191,6 +233,8 @@ navigation:
   contents:
   - page: Architecture of AIPerf
     path: architecture.md
+  - page: Kubernetes Flow
+    path: dev/kubernetes-flow.md
   - page: Metrics Flow
     path: diagrams/metrics-flow.md
   - page: Mixins

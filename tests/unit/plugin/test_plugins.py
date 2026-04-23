@@ -912,7 +912,7 @@ class TestCategoryMetadata:
     ) -> None:
         """_load_category_metadata() filters out schema_version."""
         yaml_content = 'schema_version: "1.0"\nendpoint:\n  internal: false'
-        with patch("aiperf.plugin.plugins.importlib.resources.files") as mock_files:
+        with patch("aiperf.plugin._loader.importlib.resources.files") as mock_files:
             mock_files.return_value.__truediv__.return_value.read_text.return_value = (
                 yaml_content
             )
@@ -1021,7 +1021,7 @@ class TestPluginDiscovery:
         mock_ep.value = "some.module:plugins.yaml"
 
         with (
-            patch("aiperf.plugin.plugins.entry_points", return_value=[mock_ep]),
+            patch("aiperf.plugin._loader.entry_points", return_value=[mock_ep]),
             patch.object(empty_registry, "load_manifest") as mock_load,
         ):
             empty_registry.discover_plugins()

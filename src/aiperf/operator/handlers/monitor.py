@@ -529,7 +529,15 @@ async def _run_worker_and_progress_phase(
     await _check_pod_restarts(api, body, namespace, jobset_name, key=key)
 
     if await _maybe_recover_terminated_controller(
-        api, body, namespace, jobset_name, job_id, status=status, sb=sb, key=key
+        api,
+        body,
+        namespace,
+        jobset_name,
+        job_id,
+        status=status,
+        sb=sb,
+        key=key,
+        name=name,
     ):
         await close_progress_client(key)
         return
@@ -878,6 +886,7 @@ async def _maybe_recover_terminated_controller(
     status: dict[str, Any],
     sb: StatusBuilder,
     key: str,
+    name: str,
 ) -> bool:
     """Recover results from the sidecar if the controller container terminated.
 
@@ -913,7 +922,11 @@ async def _maybe_recover_terminated_controller(
         job_id,
     )
     if result.downloaded:
-        _shutdown_sent.add(key)
+        # Go through the durable claim — the in-process _shutdown_sent set
+        # above is a fast path, but a peer operator pod (HA) has its own
+        # set, so only the CR annotation patch is authoritative.
+        if not await try_claim_completion(namespace, name, body):
+            return False
         await handle_completion(
             body,
             namespace,

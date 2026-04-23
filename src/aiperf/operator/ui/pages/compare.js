@@ -45,7 +45,9 @@ export function Compare() {
   const [jobsError, setJobsError] = useState(null);
 
   const [search, setSearch] = useState('');
-  const [selectedIds, setSelectedIds] = useState([]);
+  // selectedKeys are composite "<namespace>/<job_id>" strings — this is the key
+  // format used by the backend's compare response (_pivot_compare_rows).
+  const [selectedKeys, setSelectedKeys] = useState([]);
 
   const [compareData, setCompareData] = useState(null);
   const [comparing, setComparing] = useState(false);
@@ -64,25 +66,38 @@ export function Compare() {
       });
   }, []);
 
-  function toggleJob(jobId) {
-    setSelectedIds((prev) =>
-      prev.includes(jobId) ? prev.filter((id) => id !== jobId) : [...prev, jobId],
+  function compositeKey(job) {
+    const id = job.job_id ?? '';
+    const ns = job.namespace ?? '';
+    return ns ? `${ns}/${id}` : id;
+  }
+
+  function splitKey(key) {
+    const idx = key.indexOf('/');
+    return idx < 0 ? { ns: '', jobId: key } : { ns: key.slice(0, idx), jobId: key.slice(idx + 1) };
+  }
+
+  function toggleJob(key) {
+    setSelectedKeys((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
     );
   }
 
   function clearSelection() {
-    setSelectedIds([]);
+    setSelectedKeys([]);
     setCompareData(null);
     setCompareError(null);
   }
 
   async function handleCompare() {
-    if (selectedIds.length < 2) return;
+    if (selectedKeys.length < 2) return;
     setComparing(true);
     setCompareError(null);
     setCompareData(null);
     try {
-      const resp = await api.compareJobs(selectedIds);
+      // Backend filters by bare job_id; strip the namespace prefix.
+      const bareJobIds = selectedKeys.map((k) => splitKey(k).jobId);
+      const resp = await api.compareJobs(bareJobIds);
       setCompareData(resp);
     } catch (err) {
       setCompareError(err.message);
@@ -99,15 +114,16 @@ export function Compare() {
   });
 
   const entries = compareData?.entries ?? [];
-  const jobIds = compareData?.job_ids ?? selectedIds;
+  // Display keys match composite values-map keys from the backend.
+  const displayKeys = selectedKeys;
 
   // Build chart data: grouped bars per metric, one dataset per job
   const chartData = (() => {
     if (entries.length === 0) return null;
     const metrics = entries.map((e) => e.metric + (e.stat ? ' (' + e.stat + ')' : ''));
-    const datasets = jobIds.map((jobId, idx) => ({
-      label: jobId,
-      data: entries.map((e) => e.values?.[jobId] ?? null),
+    const datasets = displayKeys.map((key, idx) => ({
+      label: splitKey(key).jobId,
+      data: entries.map((e) => e.values?.[key] ?? null),
       backgroundColor: JOB_COLORS[idx % JOB_COLORS.length] + 'cc',
       borderColor: JOB_COLORS[idx % JOB_COLORS.length],
       borderWidth: 1,
@@ -173,16 +189,17 @@ export function Compare() {
             ${filtered.map((job) => {
               const jobId = job.job_id ?? '';
               const ns = job.namespace ?? '';
-              const isChecked = selectedIds.includes(jobId);
+              const key = compositeKey(job);
+              const isChecked = selectedKeys.includes(key);
               return html`
                 <label
-                  key=${jobId}
+                  key=${key}
                   style=${'display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-2) var(--space-1); cursor: pointer; border-radius: var(--radius-sm);' + (isChecked ? ' background: var(--surface0);' : '')}
                 >
                   <input
                     type="checkbox"
                     checked=${isChecked}
-                    onchange=${() => toggleJob(jobId)}
+                    onchange=${() => toggleJob(key)}
                     style="margin-top: 2px; accent-color: var(--mauve)"
                   />
                   <div>
@@ -197,15 +214,15 @@ export function Compare() {
           <div style="margin-top: var(--space-3); display: flex; gap: var(--space-2)">
             <button
               onclick=${handleCompare}
-              disabled=${selectedIds.length < 2 || comparing}
+              disabled=${selectedKeys.length < 2 || comparing}
               style=${'flex: 1; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); border: 1px solid; font-size: var(--font-size-sm); cursor: pointer;'
-                + (selectedIds.length >= 2 && !comparing
+                + (selectedKeys.length >= 2 && !comparing
                   ? ' background: var(--mauve); color: var(--base); border-color: var(--mauve); font-weight: 600;'
                   : ' background: var(--surface0); color: var(--overlay0); border-color: var(--surface1); cursor: not-allowed;')}
             >
-              ${comparing ? 'Comparing…' : `Compare (${selectedIds.length})`}
+              ${comparing ? 'Comparing…' : `Compare (${selectedKeys.length})`}
             </button>
-            ${selectedIds.length > 0 && html`
+            ${selectedKeys.length > 0 && html`
               <button
                 onclick=${clearSelection}
                 style="padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); border: 1px solid var(--surface1); background: transparent; color: var(--subtext0); font-size: var(--font-size-sm); cursor: pointer"
@@ -218,19 +235,19 @@ export function Compare() {
 
         <!-- Right: Results -->
         <div>
-          ${selectedIds.length > 0 && html`
+          ${selectedKeys.length > 0 && html`
             <div style="display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4)">
-              ${selectedIds.map((id, idx) => html`
+              ${selectedKeys.map((key, idx) => html`
                 <span
-                  key=${id}
+                  key=${key}
                   style=${'display: inline-flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2); border-radius: 999px; font-size: var(--font-size-xs); font-family: var(--font-mono);'
                     + ' background: ' + JOB_COLORS[idx % JOB_COLORS.length] + '22;'
                     + ' color: ' + JOB_COLORS[idx % JOB_COLORS.length] + ';'
                     + ' border: 1px solid ' + JOB_COLORS[idx % JOB_COLORS.length] + '44;'}
                 >
-                  ${id}
+                  ${splitKey(key).jobId}
                   <span
-                    onclick=${() => toggleJob(id)}
+                    onclick=${() => toggleJob(key)}
                     style="cursor: pointer; opacity: 0.7; font-size: var(--font-size-xs)"
                   >✕</span>
                 </span>
@@ -244,7 +261,7 @@ export function Compare() {
             </div>
           `}
 
-          ${!compareData && !comparing && selectedIds.length < 2 && html`
+          ${!compareData && !comparing && selectedKeys.length < 2 && html`
             <div class="card empty-state">
               <p class="text-dim">Select 2 or more jobs from the list to compare them.</p>
             </div>
@@ -265,12 +282,12 @@ export function Compare() {
                   <thead>
                     <tr style="color: var(--subtext0); border-bottom: 1px solid var(--surface1)">
                       <th style="text-align: left; padding: var(--space-2) var(--space-3)">Metric</th>
-                      ${jobIds.map((id, idx) => html`
+                      ${displayKeys.map((key, idx) => html`
                         <th
-                          key=${id}
+                          key=${key}
                           style=${'text-align: right; padding: var(--space-2) var(--space-3); color: ' + JOB_COLORS[idx % JOB_COLORS.length]}
                         >
-                          ${id}
+                          ${splitKey(key).jobId}
                         </th>
                       `)}
                     </tr>
@@ -284,12 +301,12 @@ export function Compare() {
                             <div>${entry.metric}</div>
                             ${entry.stat && html`<div style="font-size: var(--font-size-xs); color: var(--overlay0)">${entry.stat}${entry.unit ? ' · ' + entry.unit : ''}</div>`}
                           </td>
-                          ${jobIds.map((id) => {
-                            const val = entry.values?.[id] ?? null;
+                          ${displayKeys.map((key) => {
+                            const val = entry.values?.[key] ?? null;
                             const isBest = val != null && val === best;
                             return html`
                               <td
-                                key=${id}
+                                key=${key}
                                 style=${'text-align: right; padding: var(--space-2) var(--space-3); font-weight: 600;'
                                   + (isBest ? ' color: ' + palette.green : ' color: var(--text)')}
                               >

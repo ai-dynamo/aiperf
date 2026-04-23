@@ -175,50 +175,65 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
         endpoint_info: dict[str, ServerMetricsEndpointInfo] = {}
 
         for endpoint_summary in endpoint_summaries.values():
-            endpoint_url = endpoint_summary.endpoint_url
+            endpoint_info[endpoint_summary.endpoint_url] = endpoint_summary.info
+            self._merge_endpoint_metrics(metrics, endpoint_summary)
 
-            # Collect endpoint metadata for summary
-            endpoint_info[endpoint_url] = endpoint_summary.info
+        return self._sort_metrics(metrics), self._sort_endpoint_info(endpoint_info)
 
-            # Process metrics - series contains type-specific stats
-            for metric_name, metric_data in endpoint_summary.metrics.items():
+    def _merge_endpoint_metrics(
+        self,
+        metrics: dict[str, ServerMetricData],
+        endpoint_summary,
+    ) -> None:
+        """Merge a single endpoint's metrics into the shared metrics dict."""
+        endpoint_url = endpoint_summary.endpoint_url
+        for metric_name, metric_data in endpoint_summary.metrics.items():
+            if metric_name not in metrics:
                 unit = infer_unit(metric_name, metric_data.description)
-                unit_display_name = unit.display_name() if unit else None
+                metrics[metric_name] = self._make_metric_entry(
+                    metric_data,
+                    unit.display_name() if unit else None,
+                )
 
-                # Get or create metric entry with appropriate type
-                if metric_name not in metrics:
-                    match metric_data.type:
-                        case PrometheusMetricType.GAUGE:
-                            metric_class = GaugeMetricData
-                        case PrometheusMetricType.COUNTER:
-                            metric_class = CounterMetricData
-                        case PrometheusMetricType.HISTOGRAM:
-                            metric_class = HistogramMetricData
-                        case _:
-                            raise ValueError(f"Unknown metric type: {metric_data.type}")
+            for series_stats in metric_data.series:
+                series_stats.endpoint_url = endpoint_url
+                metrics[metric_name].series.append(series_stats)
 
-                    metrics[metric_name] = metric_class(
-                        description=metric_data.description,
-                        unit=unit_display_name,
-                    )
+    @staticmethod
+    def _make_metric_entry(
+        metric_data, unit_display_name: str | None
+    ) -> ServerMetricData:
+        """Create a type-specific ServerMetricData entry from a Prometheus metric type."""
+        match metric_data.type:
+            case PrometheusMetricType.GAUGE:
+                metric_class = GaugeMetricData
+            case PrometheusMetricType.COUNTER:
+                metric_class = CounterMetricData
+            case PrometheusMetricType.HISTOGRAM:
+                metric_class = HistogramMetricData
+            case _:
+                raise ValueError(f"Unknown metric type: {metric_data.type}")
 
-                # Add endpoint info to each series stats and append
-                for series_stats in metric_data.series:
-                    series_stats.endpoint_url = endpoint_url
-                    metrics[metric_name].series.append(series_stats)
+        return metric_class(
+            description=metric_data.description,
+            unit=unit_display_name,
+        )
 
-        # Sort metrics alphabetically by name for deterministic output and easier lookup
+    @staticmethod
+    def _sort_metrics(
+        metrics: dict[str, ServerMetricData],
+    ) -> dict[str, ServerMetricData]:
+        """Sort metrics alphabetically and sort each metric's series deterministically."""
         sorted_metrics = dict(sorted(metrics.items()))
-
-        # Sort series within each metric by endpoint, then by labels
         for metric_data in sorted_metrics.values():
             metric_data.series.sort(
                 key=lambda s: (s.endpoint_url or "", str(s.labels) if s.labels else "")
             )
+        return sorted_metrics
 
-        # Sort endpoint_info for consistency
-        sorted_endpoint_info = (
-            dict(sorted(endpoint_info.items())) if endpoint_info else None
-        )
-
-        return sorted_metrics, sorted_endpoint_info
+    @staticmethod
+    def _sort_endpoint_info(
+        endpoint_info: dict[str, ServerMetricsEndpointInfo],
+    ) -> dict[str, ServerMetricsEndpointInfo] | None:
+        """Sort endpoint_info by URL for stable output, or return None if empty."""
+        return dict(sorted(endpoint_info.items())) if endpoint_info else None

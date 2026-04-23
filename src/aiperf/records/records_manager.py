@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import orjson
@@ -17,26 +16,20 @@ from aiperf.config.zmq import ZMQDualBindConfig
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
 from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
     CreditPhase,
     MessageType,
-    MetricFlags,
 )
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.hooks import (
     background_task,
     on_command,
     on_message,
     on_pull_message,
 )
-
-if TYPE_CHECKING:
-    from aiperf.common.models.export_models import JsonExportData
-
-from aiperf.common.control_structs import Command
 from aiperf.common.messages import (
     AllRecordsReceivedMessage,
     ProcessRecordsResultMessage,
@@ -57,7 +50,6 @@ from aiperf.common.models import (
     MetricResult,
     PhaseRecordsStats,
     ProcessRecordsResult,
-    ProfileResults,
     WorkerProcessingStats,
 )
 from aiperf.common.utils import yield_to_event_loop
@@ -67,19 +59,21 @@ from aiperf.credit.messages import (
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
 )
-from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType, ServiceRunType, UIType
+from aiperf.plugin.enums import ServiceRunType, UIType
 from aiperf.post_processors.protocols import ResultsProcessorProtocol
 from aiperf.records.error_tracker import ErrorTracker
+from aiperf.records.records_manager_export import (
+    current_results_record_count,
+    write_partial_checkpoint,
+)
+from aiperf.records.records_manager_processing import (
+    bucket_summarize_results,
+    build_process_records_result,
+    filter_display_metrics,
+    generate_realtime_metrics,
+    load_results_processors,
+)
 from aiperf.records.records_tracker import RecordsTracker
-
-
-def _write_json_file_atomic(path: Path, content: bytes) -> None:
-    """Write a JSON file atomically so readers never observe a partial write."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_bytes(content)
-    tmp.replace(path)
 
 
 class RecordsManager(PullClientMixin, BaseComponentService):
@@ -126,31 +120,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         self._metric_state = ErrorTrackingState()
 
-        self._metric_results_processors: list[ResultsProcessorProtocol] = []  # fmt: skip
+        self._metric_results_processors: list[ResultsProcessorProtocol] = (
+            load_results_processors(self)
+        )
         self._last_checkpoint_records: int = 0
-
-        for entry in plugins.iter_entries(PluginType.RESULTS_PROCESSOR):
-            try:
-                ProcessorClass = plugins.get_class(
-                    PluginType.RESULTS_PROCESSOR, entry.name
-                )
-                results_processor = ProcessorClass(
-                    service_id=self.service_id,
-                    run=self.run,
-                    pub_client=self.pub_client,
-                )
-                self.attach_child_lifecycle(results_processor)
-                self._metric_results_processors.append(results_processor)
-
-                self.debug(
-                    f"Created results processor: {entry.name}: {results_processor.__class__.__name__}"
-                )
-            except PostProcessorDisabled:
-                self.debug(
-                    f"Results processor {entry.name} is disabled and will not be used"
-                )
-            except Exception as e:  # noqa: BLE001 - one bad results processor must not abort the whole records manager; error is surfaced via self.error
-                self.error(f"Failed to create results processor {entry.name}: {e}")
 
     async def _process_metric_record_data(self, record_data: MetricRecordsData) -> None:
         """Process one metric record payload."""
@@ -227,14 +200,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """
         # Use the first results phase for the AllRecordsReceived message
         results_phases = self._records_tracker.get_results_phases()
-        if results_phases:
-            phase_stats = self._records_tracker.create_stats_for_phase(
-                results_phases[0]
-            )
-        else:
-            phase_stats = self._records_tracker.create_stats_for_phase("profiling")
+        phase_stats = self._records_tracker.create_stats_for_phase(
+            results_phases[0] if results_phases else "profiling"
+        )
 
-        # Send a message to the event bus to signal that we received all the records
         await self.publish(
             AllRecordsReceivedMessage(
                 service_id=self.service_id,
@@ -255,13 +224,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             ),
             timeout=10.0,
         )
-
         if isinstance(response, ErrorDetails):
             self.warning(f"Server metrics final scrape timed out or failed: {response}")
-        else:
-            self.debug("Server metrics final scrape completed")
 
-        self.debug("Waiting for server metrics flush period...")
         flush_period = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
         flush_end_ns = (end_ns or time.time_ns()) + (
             (flush_period or 0) * NANOS_PER_SECOND
@@ -273,9 +238,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
             await asyncio.sleep(sleep_dur_sec)
 
-        self.debug("Server metrics flush period complete, processing now...")
         await self._process_results(cancelled=cancelled)
-        self.info("_finalize_and_process_results completed")
 
     async def _send_results_to_results_processors(
         self, record_data: MetricRecordsData
@@ -415,10 +378,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         while not self.stop_requested:
             await asyncio.sleep(Environment.UI.REALTIME_METRICS_INTERVAL)
-            total_records = sum(
-                self._records_tracker.create_stats_for_phase(p).total_records
-                for p in self._records_tracker.get_results_phases()
-            )
+            total_records = current_results_record_count(self._records_tracker)
             if total_records == self._previous_realtime_records:
                 continue  # No new records have been processed, so no need to update the metrics
             self._previous_realtime_records = total_records
@@ -436,25 +396,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         metrics to display units before publishing. This ensures all consumers
         receive consistent, pre-processed metrics.
         """
-        from aiperf.metrics.metric_registry import MetricRegistry, MetricTypeError
-
-        raw_metrics = await self._generate_realtime_metrics()
+        raw_metrics = await generate_realtime_metrics(self._metric_results_processors)
         if not raw_metrics:
             return
 
-        # Filter hidden metrics and convert to display units
-        hidden_flags = MetricFlags.INTERNAL | MetricFlags.EXPERIMENTAL
-        display_metrics = []
-        for m in raw_metrics:
-            try:
-                metric_cls = MetricRegistry.get_class(m.tag)
-                if metric_cls.flags.has_any_flags(hidden_flags):
-                    continue
-            except MetricTypeError:
-                # Unregistered tag (plugin/external metric): include it in output as-is
-                pass
-            display_metrics.append(m)
-
+        display_metrics = filter_display_metrics(raw_metrics)
         if display_metrics:
             await self.publish(
                 RealtimeMetricsMessage(
@@ -463,100 +409,30 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 )
             )
 
-    async def _generate_realtime_metrics(self) -> list[MetricResult]:
-        """Generate the real-time metrics for the profile run."""
-        results = await asyncio.gather(
-            *[
-                asyncio.wait_for(
-                    results_processor.summarize(),
-                    timeout=30.0,  # Shorter timeout for realtime updates
-                )
-                for results_processor in self._metric_results_processors
-            ],
-            return_exceptions=True,
-        )
-
-        # Flatten results: each processor returns list[MetricResult], so we have
-        # list[list[MetricResult] | Exception]. Flatten to single list[MetricResult].
-        metric_results = [
-            res
-            for result in results
-            if isinstance(result, list)
-            for res in result
-            if isinstance(res, MetricResult)
-        ]
-
-        return metric_results
-
-    def _current_results_record_count(self) -> int:
-        """Return the total processed record count across all result phases."""
-        return sum(
-            self._records_tracker.create_stats_for_phase(phase).total_records
-            for phase in self._records_tracker.get_results_phases()
-        )
-
-    def _build_partial_profile_results(
-        self, records: list[MetricResult]
-    ) -> ProfileResults:
-        """Build a partial profile result snapshot from current in-memory state."""
-        start_ns, end_ns = self._records_tracker.get_results_time_window()
-        error_summary = []
-        for phase in self._records_tracker.get_results_phases():
-            error_summary.extend(self._error_tracker.get_error_summary_for_phase(phase))
-
-        return ProfileResults(
-            records=records,
-            completed=self._current_results_record_count(),
-            start_ns=start_ns or time.time_ns(),
-            end_ns=end_ns or time.time_ns(),
-            error_summary=error_summary,
-            was_cancelled=any(
-                self._records_tracker.was_phase_cancelled(phase)
-                for phase in self._records_tracker.get_results_phases()
-            ),
-        )
-
     @background_task(interval=Environment.RECORD.CHECKPOINT_INTERVAL, immediate=False)
     async def _write_partial_checkpoint_task(self) -> None:
         """Periodically persist a partial aggregate snapshot for recovery."""
         if self.run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES:
             return
 
-        total_records = self._current_results_record_count()
-        if total_records == 0 or total_records == self._last_checkpoint_records:
-            return
-
-        records = await self._generate_realtime_metrics()
-        if not records:
-            return
-
-        profile_results = self._build_partial_profile_results(records)
-        export_data = self._generate_json_export_data(
-            records,
-            profile_results,
+        new_count = await write_partial_checkpoint(
+            tracker=self._records_tracker,
+            error_tracker=self._error_tracker,
+            processors=self._metric_results_processors,
+            benchmark_config=self.run.cfg,
+            checkpoint_path=self.run.cfg.artifacts.profile_export_partial_json_file,
+            last_checkpoint_records=self._last_checkpoint_records,
         )
-        export_data.checkpoint = True
-        export_data.records_completed = total_records
-        export_data.generated_at_ns = time.time_ns()
-
-        payload = export_data.model_dump_json(
-            indent=2, exclude_unset=True, exclude_none=True
-        ).encode("utf-8")
-        checkpoint_path = self.run.cfg.artifacts.profile_export_partial_json_file
-        await asyncio.to_thread(_write_json_file_atomic, checkpoint_path, payload)
-        self._last_checkpoint_records = total_records
-        self.debug(f"Wrote partial checkpoint to {checkpoint_path}")
+        if new_count != self._last_checkpoint_records:
+            self._last_checkpoint_records = new_count
+            self.debug(
+                lambda: f"Wrote partial checkpoint to {self.run.cfg.artifacts.profile_export_partial_json_file}"
+            )
 
     async def _process_results(self, cancelled: bool) -> ProcessRecordsResult:
         """Process the results across all non-excluded phases."""
         self.debug(lambda: f"Processing records (cancelled: {cancelled})")
         self.info("Processing records results...")
-
-        # Debug: log processors being summarized
-        self.debug(
-            f"Summarizing {len(self._metric_results_processors)} processors: "
-            f"{[p.__class__.__name__ for p in self._metric_results_processors]}"
-        )
 
         async def _summarize_with_logging(
             processor: ResultsProcessorProtocol, idx: int
@@ -575,7 +451,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 self.error(f"Error in summarize for processor {idx}: {name}: {e!r}")
                 raise
 
-        # Process the records through the metric results processors only.
         results = await asyncio.gather(
             *[
                 _summarize_with_logging(processor, idx)
@@ -583,106 +458,31 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             ],
             return_exceptions=True,
         )
-        self.debug(f"All processors completed summarize, got {len(results)} results")
-        records_results, timeslice_metric_results, error_results = [], {}, []
-        for result in results:
-            if isinstance(result, list):
-                records_results.extend(result)
-            elif isinstance(result, dict):
-                timeslice_metric_results = result
-            elif isinstance(result, ErrorDetails):
-                error_results.append(result)
-            elif isinstance(result, BaseException):
-                self.error(f"Exception processing results: {result!r}")
-                error_results.append(ErrorDetails.from_exception(result))
+        (
+            records_results,
+            timeslice_metric_results,
+            error_results,
+            raw_exceptions,
+        ) = bucket_summarize_results(results)
+        for exc in raw_exceptions:
+            self.error(f"Exception processing results: {exc!r}")
+            error_results.append(ErrorDetails.from_exception(exc))
 
-        start_ns, end_ns = self._records_tracker.get_results_time_window()
-        # Aggregate error summaries across all results phases
-        error_summary = []
-        for phase in self._records_tracker.get_results_phases():
-            error_summary.extend(self._error_tracker.get_error_summary_for_phase(phase))
-        result = ProcessRecordsResult(
-            results=ProfileResults(
-                records=records_results,
-                timeslice_metric_results=timeslice_metric_results,
-                completed=len(records_results),
-                start_ns=start_ns or time.time_ns(),
-                end_ns=end_ns or time.time_ns(),
-                error_summary=error_summary,
-                was_cancelled=cancelled,
-            ),
-            errors=error_results,
+        result = build_process_records_result(
+            records_results=records_results,
+            timeslice_metric_results=timeslice_metric_results,
+            error_results=error_results,
+            tracker=self._records_tracker,
+            error_tracker=self._error_tracker,
+            cancelled=cancelled,
         )
-        self.debug(lambda: f"Process records result: {result}")
-
-        self.debug("Publishing ProcessRecordsResultMessage...")
         await self.publish(
             ProcessRecordsResultMessage(
                 service_id=self.service_id,
                 results=result,
             )
         )
-        self.debug("ProcessRecordsResultMessage published")
-
-        self.debug("_process_results completed, returning result")
         return result
-
-    def _generate_json_export_data(
-        self,
-        records: list[MetricResult],
-        profile_results: ProfileResults,
-    ) -> JsonExportData:
-        """Generate JsonExportData for ConfigMap publishing.
-
-        Args:
-            records: List of metric results from processing
-            profile_results: The profile results containing timing and error info
-
-        Returns:
-            JsonExportData ready for serialization to ConfigMap
-        """
-        from datetime import datetime
-        from importlib.metadata import PackageNotFoundError
-        from importlib.metadata import version as get_version
-
-        from aiperf.common.models.export_models import JsonExportData
-
-        try:
-            aiperf_version = get_version("aiperf")
-        except PackageNotFoundError:
-            aiperf_version = "unknown"
-
-        # Calculate timestamps
-        start_time = (
-            datetime.fromtimestamp(profile_results.start_ns / NANOS_PER_SECOND)
-            if profile_results.start_ns
-            else None
-        )
-        end_time = (
-            datetime.fromtimestamp(profile_results.end_ns / NANOS_PER_SECOND)
-            if profile_results.end_ns
-            else None
-        )
-
-        # Create base export data
-        export_data = JsonExportData(
-            schema_version=JsonExportData.SCHEMA_VERSION,
-            aiperf_version=aiperf_version,
-            benchmark_id=self.run.cfg.benchmark_id,
-            input_config=self.run.cfg,
-            was_cancelled=profile_results.was_cancelled,
-            error_summary=profile_results.error_summary,
-            start_time=start_time,
-            end_time=end_time,
-            telemetry_data=None,
-        )
-
-        # Add all metrics dynamically
-        for metric in records:
-            if metric.tag:
-                setattr(export_data, str(metric.tag), metric.to_json_result())
-
-        return export_data
 
 
 def main() -> None:

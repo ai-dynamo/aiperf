@@ -132,79 +132,73 @@ class MultiRunPNGExporter(BasePNGExporter):
         Returns:
             DataFrame with columns for metrics, metadata, and all config fields
         """
-        rows = []
-        for run in runs:
-            row = {}
-
-            row["run_name"] = run.metadata.run_name
-            row["model"] = run.metadata.model or "Unknown"
-            row["concurrency"] = run.metadata.concurrency or 1
-            row["request_count"] = run.metadata.request_count
-            row["duration_seconds"] = run.metadata.duration_seconds
-            row["experiment_type"] = run.metadata.experiment_type
-            row["experiment_group"] = run.metadata.experiment_group
-            if run.metadata.endpoint_type:
-                row["endpoint_type"] = run.metadata.endpoint_type
-
-            if "input_config" in run.aggregated:
-                config = run.aggregated["input_config"]
-                flattened = flatten_config(config)
-                row.update(flattened)
-
-            for key, value in run.aggregated.items():
-                if key in NON_METRIC_KEYS:
-                    continue
-
-                if isinstance(value, MetricResult):
-                    if (
-                        hasattr(value, DEFAULT_PERCENTILE)
-                        and getattr(value, DEFAULT_PERCENTILE) is not None
-                    ):
-                        row[key] = getattr(value, DEFAULT_PERCENTILE)
-                    elif value.avg is not None:
-                        row[key] = value.avg
-                elif isinstance(value, dict) and "unit" in value and value is not None:
-                    if DEFAULT_PERCENTILE in value:
-                        row[key] = value[DEFAULT_PERCENTILE]
-                    elif "avg" in value:
-                        row[key] = value["avg"]
-                    elif "value" in value:
-                        row[key] = value["value"]
-
-            # Extract server metrics from server_metrics_aggregated
-            if run.server_metrics_aggregated:
-                for metric_name, endpoint_data in run.server_metrics_aggregated.items():
-                    self._aggregate_server_metric_into_row(
-                        row, metric_name, endpoint_data
-                    )
-
-            rows.append(row)
-
+        rows = [self._run_to_row(run) for run in runs]
         df = pd.DataFrame(rows)
 
-        if "experiment_group" in df.columns:
-            if classification_config and classification_config.group_display_names:
-                df["group_display_name"] = (
-                    df["experiment_group"]
-                    .map(classification_config.group_display_names)
-                    .fillna(df["experiment_group"])
-                )
-            else:
-                df["group_display_name"] = df["experiment_group"]
+        self._apply_group_display_names(df, classification_config)
+        self._log_unique_experiment_columns(df)
 
+        return df
+
+    def _run_to_row(self, run: RunData) -> dict:
+        """Build a single DataFrame row dict from one RunData."""
+        row: dict = {
+            "run_name": run.metadata.run_name,
+            "model": run.metadata.model or "Unknown",
+            "concurrency": run.metadata.concurrency or 1,
+            "request_count": run.metadata.request_count,
+            "duration_seconds": run.metadata.duration_seconds,
+            "experiment_type": run.metadata.experiment_type,
+            "experiment_group": run.metadata.experiment_group,
+        }
+        if run.metadata.endpoint_type:
+            row["endpoint_type"] = run.metadata.endpoint_type
+
+        if "input_config" in run.aggregated:
+            row.update(flatten_config(run.aggregated["input_config"]))
+
+        for key, value in run.aggregated.items():
+            if key in NON_METRIC_KEYS:
+                continue
+            extracted = _extract_aggregated_value(value)
+            if extracted is not None:
+                row[key] = extracted
+
+        if run.server_metrics_aggregated:
+            for metric_name, endpoint_data in run.server_metrics_aggregated.items():
+                self._aggregate_server_metric_into_row(row, metric_name, endpoint_data)
+
+        return row
+
+    def _apply_group_display_names(
+        self,
+        df: pd.DataFrame,
+        classification_config: ExperimentClassificationConfig | None,
+    ) -> None:
+        """Populate ``group_display_name`` on the DataFrame if experiment_group exists."""
+        if "experiment_group" not in df.columns:
+            return
+        if classification_config and classification_config.group_display_names:
+            df["group_display_name"] = (
+                df["experiment_group"]
+                .map(classification_config.group_display_names)
+                .fillna(df["experiment_group"])
+            )
+        else:
+            df["group_display_name"] = df["experiment_group"]
+
+    def _log_unique_experiment_columns(self, df: pd.DataFrame) -> None:
+        """Log unique values for experiment_group and experiment_type columns."""
         if "experiment_group" in df.columns:
             unique_groups = df["experiment_group"].unique()
             self.info(
                 f"DataFrame has {len(unique_groups)} unique experiment_groups: {sorted(unique_groups)}"
             )
-
         if "experiment_type" in df.columns:
             unique_types = df["experiment_type"].unique()
             self.info(
                 f"DataFrame has {len(unique_types)} unique experiment_types: {sorted(unique_types)}"
             )
-
-        return df
 
     def _aggregate_server_metric_into_row(
         self,
@@ -255,6 +249,27 @@ class MultiRunPNGExporter(BasePNGExporter):
                 f"endpoint+label combinations - aggregated to single value "
                 f"({'sum' if metric_type == PrometheusMetricType.COUNTER else 'average'})"
             )
+
+
+def _extract_aggregated_value(value: object) -> float | None:
+    """Pull the preferred scalar (percentile, avg, or value) from an aggregated entry.
+
+    Handles both ``MetricResult`` objects and legacy dict-shaped entries that carry
+    a ``unit`` key. Returns ``None`` when nothing usable is present.
+    """
+    if isinstance(value, MetricResult):
+        pct = getattr(value, DEFAULT_PERCENTILE, None)
+        if pct is not None:
+            return pct
+        return value.avg
+    if isinstance(value, dict) and "unit" in value:
+        if DEFAULT_PERCENTILE in value:
+            return value[DEFAULT_PERCENTILE]
+        if "avg" in value:
+            return value["avg"]
+        if "value" in value:
+            return value["value"]
+    return None
 
 
 def _extract_stat_value(stats, metric_type) -> float | None:

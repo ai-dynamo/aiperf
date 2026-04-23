@@ -209,4 +209,4 @@ class HooksMixin(AIPerfLoggerMixin):
 # Add this file as one to be ignored when finding the caller of aiperf_logger.
 # This helps to make it more transparent where the actual function is being called from.
 _srcfile = os.path.normcase(HooksMixin.get_hooks.__code__.co_filename)
-aiperf_logger._ignored_files.append(_srcfile)
+aiperf_logger.AIPerfLogger._ignored_files.append(_srcfile)

@@ -69,6 +69,7 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
 
     def __init__(
         self,
+        *,
         frontend_socket_class: type[BaseZMQClient],
         backend_socket_class: type[BaseZMQClient],
         zmq_proxy_config: BaseZMQProxyConfig,

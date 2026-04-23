@@ -356,13 +356,12 @@ def _generate_composite_enum_py(
     lines = []
     desc = config.get("description", "Composite enum merging multiple categories.")
 
-    # Generate the dynamic creation code
+    # Generate the dynamic creation code. Build the members dict inside a
+    # function so there's no module-level mutable state.
+    builder = f"_build_{enum_name.lower()}_members"
     lines.append(f"{enum_name}Str: TypeAlias = str")
-    lines.append(
-        "# Module-scoped lookup table composed from the plugin registry at"
-        " import time (baselined as module-state)."
-    )
-    lines.append(f"_{enum_name.lower()}_members: dict[str, str] = {{}}")
+    lines.append(f"def {builder}() -> dict[str, str]:")
+    lines.append("    members: dict[str, str] = {}")
 
     for source in config["sources"]:
         cat = source["category"]
@@ -373,21 +372,22 @@ def _generate_composite_enum_py(
         renames_repr = repr(renames) if renames else "{}"
 
         lines.append(
-            f"for _entry in plugins.list_entries(PluginType.{plugin_type_member}):"
+            f"    for entry in plugins.list_entries(PluginType.{plugin_type_member}):"
         )
 
         # Add exclusion check if needed
         if excludes:
             excludes_repr = repr(excludes)
-            lines.append(f"    if _entry.name in {excludes_repr}:")
-            lines.append("        continue")
+            lines.append(f"        if entry.name in {excludes_repr}:")
+            lines.append("            continue")
 
-        lines.append(f"    _alias = {renames_repr}.get(_entry.name, _entry.name)")
-        lines.append(f"    if _alias.upper() not in _{enum_name.lower()}_members:")
-        lines.append(f"        _{enum_name.lower()}_members[_alias.upper()] = _alias")
+        lines.append(f"        alias = {renames_repr}.get(entry.name, entry.name)")
+        lines.append("        if alias.upper() not in members:")
+        lines.append("            members[alias.upper()] = alias")
 
+    lines.append("    return members")
     lines.append(
-        f'{enum_name} = create_enum("{enum_name}", _{enum_name.lower()}_members, module=__name__)'
+        f'{enum_name} = create_enum("{enum_name}", {builder}(), module=__name__)'
     )
 
     # Build example from current plugins for docstring

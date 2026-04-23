@@ -251,7 +251,32 @@ class ProgressDashboard(Container, MaximizableWidget):
             return stats_table
 
         stats_table.add_row("Status:", self._get_status())
+        self._add_progress_row(stats_table, stats)
 
+        # Show live concurrency during profiling and grace period (until requests complete)
+        if not stats.is_requests_complete:
+            stats_table.add_row(
+                "Live Concurrency:",
+                f"{stats.in_flight_requests or 0:,} requests in flight",
+            )
+
+        self._add_errors_row(stats_table)
+
+        stats_table.add_row(
+            "Request Rate:", f"{stats.requests_per_second or 0:,.1f} requests/s"
+        )
+
+        if self.records_stats:
+            stats_table.add_row(
+                "Processing Rate:",
+                f"{self.records_stats.records_per_second or 0:,.1f} records/s",
+            )
+
+        self._add_timing_rows(stats_table, stats)
+        return stats_table
+
+    def _add_progress_row(self, stats_table: Table, stats: CombinedPhaseStats) -> None:
+        """Add the Progress row based on which expected bound is active."""
         # During grace period, show progress as completed+cancelled out of sent
         if stats.timeout_triggered:
             completed = stats.requests_completed + stats.requests_cancelled
@@ -280,38 +305,22 @@ class ProgressDashboard(Container, MaximizableWidget):
                 f"({stats.requests_progress_percent:.1f}%)",
             )
 
-        # Show live concurrency during profiling and grace period (until requests complete)
-        if not stats.is_requests_complete:
-            stats_table.add_row(
-                "Live Concurrency:",
-                f"{stats.in_flight_requests or 0:,} requests in flight",
-            )
-
-        if self.records_stats:
-            error_percent = self.records_stats.records_error_percent
-            error_color = (
-                "green"
-                if error_percent == 0
-                else "red"
-                if error_percent > 10
-                else "yellow"
-            )
-            stats_table.add_row(
-                "Errors:",
-                f"[{error_color}]{self.records_stats.error_records or 0:,} / {self.records_stats.total_records or 0:,} "
-                f"({error_percent:.1f}%)[/{error_color}]",
-            )
-
+    def _add_errors_row(self, stats_table: Table) -> None:
+        """Add the Errors row with color-coded percent when records stats exist."""
+        if not self.records_stats:
+            return
+        error_percent = self.records_stats.records_error_percent
+        error_color = (
+            "green" if error_percent == 0 else "red" if error_percent > 10 else "yellow"
+        )
         stats_table.add_row(
-            "Request Rate:", f"{stats.requests_per_second or 0:,.1f} requests/s"
+            "Errors:",
+            f"[{error_color}]{self.records_stats.error_records or 0:,} / {self.records_stats.total_records or 0:,} "
+            f"({error_percent:.1f}%)[/{error_color}]",
         )
 
-        if self.records_stats:
-            stats_table.add_row(
-                "Processing Rate:",
-                f"{self.records_stats.records_per_second or 0:,.1f} records/s",
-            )
-
+    def _add_timing_rows(self, stats_table: Table, stats: CombinedPhaseStats) -> None:
+        """Add Elapsed / Grace Period / ETA rows depending on request completion."""
         if not stats.is_requests_complete:
             # Display request stats while profiling
             if stats.start_ns:
@@ -339,5 +348,3 @@ class ProgressDashboard(Container, MaximizableWidget):
                 stats_table.add_row(
                     "Records ETA:", format_eta(self.records_stats.records_eta_sec)
                 )
-
-        return stats_table

@@ -146,17 +146,18 @@ GPUTelemetryCollectorType = plugins.create_enum(PluginType.GPU_TELEMETRY_COLLECT
 # =============================================================================
 
 PhaseTypeStr: TypeAlias = str
-# Module-scoped lookup table composed from the plugin registry at import time (baselined as module-state).
-_phasetype_members: dict[str, str] = {}
-for _entry in plugins.list_entries(PluginType.ARRIVAL_PATTERN):
-    _alias = {'concurrency_burst': 'concurrency'}.get(_entry.name, _entry.name)
-    if _alias.upper() not in _phasetype_members:
-        _phasetype_members[_alias.upper()] = _alias
-for _entry in plugins.list_entries(PluginType.TIMING_STRATEGY):
-    if _entry.name in {'request_rate'}:
-        continue
-    _alias = {'user_centric_rate': 'user_centric'}.get(_entry.name, _entry.name)
-    if _alias.upper() not in _phasetype_members:
-        _phasetype_members[_alias.upper()] = _alias
-PhaseType = create_enum("PhaseType", _phasetype_members, module=__name__)
+def _build_phasetype_members() -> dict[str, str]:
+    members: dict[str, str] = {}
+    for entry in plugins.list_entries(PluginType.ARRIVAL_PATTERN):
+        alias = {'concurrency_burst': 'concurrency'}.get(entry.name, entry.name)
+        if alias.upper() not in members:
+            members[alias.upper()] = alias
+    for entry in plugins.list_entries(PluginType.TIMING_STRATEGY):
+        if entry.name in {'request_rate'}:
+            continue
+        alias = {'user_centric_rate': 'user_centric'}.get(entry.name, entry.name)
+        if alias.upper() not in members:
+            members[alias.upper()] = alias
+    return members
+PhaseType = create_enum("PhaseType", _build_phasetype_members(), module=__name__)
 """Load generation type for benchmark phases. Example: PhaseType.CONCURRENCY, PhaseType.CONSTANT, PhaseType.FIXED_SCHEDULE"""

@@ -29,7 +29,8 @@ export function ChartWrapper({ type, data, options = {}, height = 300 }) {
   const prevFingerprintRef = useRef('');
   const prevOptionsRef = useRef('');
 
-  // Create chart on mount, destroy on unmount
+  // Create chart on mount and whenever `type` changes (Chart.js cannot mutate
+  // chart type in place — it must be destroyed and recreated).
   useEffect(() => {
     if (!canvasRef.current) return;
     if (!window.Chart) {
@@ -56,7 +57,7 @@ export function ChartWrapper({ type, data, options = {}, height = 300 }) {
         chartRef.current = null;
       }
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps - intentionally mount-only
+  }, [type]); // eslint-disable-line react-hooks/exhaustive-deps - data/options handled by their own effects
 
   // Update data only when fingerprint changes
   useEffect(() => {

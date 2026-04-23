@@ -9,15 +9,27 @@ import io
 import logging
 import os
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from aiperf.common.exceptions import NotInitializedError, TokenizerError
+from aiperf.common.tokenizer_alias import (
+    AliasResolutionResult,
+    AmbiguousTokenizerNameError,
+)
+from aiperf.common.tokenizer_tiktoken import TiktokenAdapter as _TiktokenAdapter
 
 if TYPE_CHECKING:
-    import tiktoken
     from transformers import BatchEncoding
+
+__all__ = [
+    "BUILTIN_TOKENIZER_NAME",
+    "TIKTOKEN_ENCODING_NAMES",
+    "AliasResolutionResult",
+    "AmbiguousTokenizerNameError",
+    "Tokenizer",
+    "resolve_alias",
+]
 
 _logger = logging.getLogger(__name__)
 
@@ -35,63 +47,6 @@ TIKTOKEN_ENCODING_NAMES = frozenset(
         "r50k_base",
     }
 )
-
-
-class _TiktokenAdapter:
-    """Adapts tiktoken.Encoding to the interface expected by Tokenizer._tokenizer."""
-
-    def __init__(self, encoding: "tiktoken.Encoding") -> None:
-        self._encoding = encoding
-
-    @property
-    def bos_token_id(self) -> int | None:
-        return None
-
-    @property
-    def eos_token_id(self) -> int:
-        return self._encoding.eot_token
-
-    def encode(self, text: str, **kwargs) -> list[int]:
-        return self._encoding.encode(text, allowed_special="all")
-
-    def decode(self, token_ids: list[int], **kwargs) -> str:
-        return self._encoding.decode(token_ids)
-
-    def __call__(self, text: str, **kwargs) -> dict:
-        return {"input_ids": self.encode(text)}
-
-    def __repr__(self) -> str:
-        return f"TiktokenAdapter({self._encoding.name})"
-
-    def __str__(self) -> str:
-        return repr(self)
-
-
-@dataclass(slots=True)
-class AliasResolutionResult:
-    """Result of tokenizer alias resolution."""
-
-    resolved_name: str
-    """The resolved name (canonical ID or original if not resolved)."""
-
-    suggestions: list[tuple[str, int]] = field(default_factory=list)
-    """List of (model_id, downloads) suggestions if ambiguous."""
-
-    @property
-    def is_ambiguous(self) -> bool:
-        """Whether the name was ambiguous (has suggestions but no resolution)."""
-        return len(self.suggestions) > 0
-
-
-class AmbiguousTokenizerNameError(ValueError):
-    """Raised when a tokenizer name is ambiguous and has multiple possible matches."""
-
-    def __init__(self, name: str, suggestions: list[tuple[str, int]]) -> None:
-        self.name = name
-        self.suggestions = suggestions
-        super().__init__(
-            f"'{name}' is ambiguous. Did you mean: {', '.join(s[0] for s in suggestions[:3])}?"
-        )
 
 
 def _supports_kwarg(obj: object, method_name: str, kwarg: str) -> bool:

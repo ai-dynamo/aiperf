@@ -139,71 +139,55 @@ class InferenceResultParser(CommunicationMixin):
         request_record.create_error_from_invalid()
 
         if request_record.has_error:
-            # Even for error records, compute input token count if possible
-            input_token_count = None
-            if not self.disable_tokenization:
-                # Suppress exceptions during token counting for error records to avoid masking the original error.
-                # If token counting fails, we still return the error record with token_counts.input=None.
-                with suppress(Exception):
-                    input_token_count = await self.compute_input_token_count(
-                        request_record
-                    )
+            return await self._build_error_record(request_record)
 
-            return ParsedResponseRecord(
-                request=request_record,
-                responses=[],
-                token_counts=TokenCounts(
-                    input=input_token_count,
-                ),
-            )
+        try:
+            raw_response_count = len(request_record.responses)
+            record = await self.process_valid_record(request_record)
 
-        else:
-            try:
-                raw_response_count = len(request_record.responses)
-                record = await self.process_valid_record(request_record)
+            # Check if the parsed record is actually valid (e.g., has content responses)
+            record.create_error_from_invalid()
 
-                # Check if the parsed record is actually valid (e.g., has content responses)
-                record.create_error_from_invalid()
-
-                if record.has_error:
-                    # Parsed record was invalid, return as error record
-                    return ParsedResponseRecord(
-                        request=record.request,
-                        responses=[],
-                        token_counts=TokenCounts(
-                            input=record.token_counts.input
-                            if record.token_counts
-                            else None
-                        ),
-                    )
-                else:
-                    # Success path: valid record with no errors
-                    self.debug(
-                        lambda: f"Received {raw_response_count} response packet(s), token counts: {record.token_counts}"
-                    )
-                    return record
-
-            except Exception as e:  # noqa: BLE001 - per-request parser errors are attached as ErrorDetails on the record, not raised
-                # TODO: We should add an ErrorDetails to the response record and not the request record.
-                self.exception(f"Error processing valid record: {e}")
-                request_record.error = ErrorDetails.from_exception(e)
-                input_token_count = None
-
-                if not self.disable_tokenization:
-                    # Suppress exceptions during token counting for error records to avoid masking the original error.
-                    # If token counting fails, we still return the error record with token_counts.input=None.
-                    with suppress(Exception):
-                        input_token_count = await self.compute_input_token_count(
-                            request_record
-                        )
-
+            if record.has_error:
+                # Parsed record was invalid, return as error record
                 return ParsedResponseRecord(
-                    request=request_record,
+                    request=record.request,
                     responses=[],
                     token_counts=TokenCounts(
-                        input=input_token_count,
+                        input=record.token_counts.input if record.token_counts else None
                     ),
                 )
+
+            # Success path: valid record with no errors
+            self.debug(
+                lambda: f"Received {raw_response_count} response packet(s), token counts: {record.token_counts}"
+            )
+            return record
+
+        except Exception as e:  # noqa: BLE001 - per-request parser errors are attached as ErrorDetails on the record, not raised
+            # TODO: We should add an ErrorDetails to the response record and not the request record.
+            self.exception(f"Error processing valid record: {e}")
+            request_record.error = ErrorDetails.from_exception(e)
+            return await self._build_error_record(request_record)
+
+    async def _build_error_record(
+        self, request_record: RequestRecord
+    ) -> ParsedResponseRecord:
+        """Build an error ParsedResponseRecord, computing input tokens when possible."""
+        input_token_count = None
+        if not self.disable_tokenization:
+            # Suppress exceptions during token counting for error records to avoid masking the original error.
+            # If token counting fails, we still return the error record with token_counts.input=None.
+            with suppress(Exception):
+                input_token_count = await self.compute_input_token_count(request_record)
+
+        return ParsedResponseRecord(
+            request=request_record,
+            responses=[],
+            token_counts=TokenCounts(
+                input=input_token_count,
+            ),
+        )
 
     async def process_valid_record(
         self, request_record: RequestRecord

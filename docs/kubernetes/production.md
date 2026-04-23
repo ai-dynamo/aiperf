@@ -329,8 +329,9 @@ operator:
     resultsCompressOnDisk: "true"  # zstd compression
 
 storage:
-  size: 1Ti
-  storageClassName: ""             # cluster default
+  enabled: true                    # default is false; must be true to provision the PVC
+  size: 1Ti                        # only used when enabled: true
+  storageClassName: ""             # cluster default; only used when enabled: true
 ```
 
 ---

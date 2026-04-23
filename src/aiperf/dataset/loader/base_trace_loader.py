@@ -290,6 +290,85 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
             max_tokens=getattr(trace, "output_length", None),
         )
 
+    def _resolve_trace_prompt(
+        self,
+        trace: TraceT,
+        session_id: str,
+        idx: int,
+        pending_decodes: list[tuple[str, int, list[int], tuple]],
+    ) -> tuple[TraceT, str | None]:
+        """Resolve the prompt for a single trace, appending to pending_decodes on cache miss."""
+        text_input = self._get_text_input(trace)
+        if text_input is not None:
+            return (trace, text_input)
+
+        hash_ids: list[int] = getattr(trace, "hash_ids", None) or []
+        input_length: int = getattr(trace, "input_length", 0)
+
+        if not hash_ids:
+            prompt = self.prompt_generator.generate(
+                mean=input_length, stddev=0, hash_ids=[]
+            )
+            return (trace, prompt)
+
+        cache_key = (tuple(hash_ids), input_length, self._block_size)
+        if cache_key in self.prompt_generator._decoded_cache:
+            prompt = self.prompt_generator._decoded_cache[cache_key]
+            return (trace, prompt)
+
+        tokens = self.prompt_generator._build_token_sequence(
+            input_length, hash_ids, self._block_size
+        )
+        pending_decodes.append((session_id, idx, tokens, cache_key))
+        return (trace, None)
+
+    def _fill_pending_decodes(
+        self,
+        pending_decodes: list[tuple[str, int, list[int], tuple]],
+        conversations_data: dict[str, list[tuple[TraceT, str | None]]],
+        num_conversations: int,
+    ) -> None:
+        """Batch-decode all cache misses and fill resolved prompts back into conversations_data."""
+        if not pending_decodes:
+            return
+
+        self.debug(
+            lambda: f"Parallel decoding {len(pending_decodes)} prompts "
+            f"({num_conversations} conversations)"
+        )
+        token_sequences = [p[2] for p in pending_decodes]
+        decoded_prompts = parallel_decode(
+            token_sequences,
+            self._tokenizer_name,
+            trust_remote_code=self._trust_remote_code,
+            revision=self._tokenizer_revision,
+        )
+
+        for (session_id, idx, _, cache_key), prompt in zip(
+            pending_decodes, decoded_prompts, strict=True
+        ):
+            self.prompt_generator._decoded_cache[cache_key] = prompt
+            trace, _ = conversations_data[session_id][idx]
+            conversations_data[session_id][idx] = (trace, prompt)
+
+    def _assemble_conversations(
+        self,
+        conversations_data: dict[str, list[tuple[TraceT, str | None]]],
+    ) -> list[Conversation]:
+        """Assemble final Conversation objects from resolved trace/prompt pairs."""
+        conversations: list[Conversation] = []
+        for session_id, trace_prompt_pairs in conversations_data.items():
+            traces_in_session = [trace for trace, _ in trace_prompt_pairs]
+            context_mode = self._infer_context_mode(traces_in_session)
+
+            conversation = Conversation(
+                session_id=session_id, context_mode=context_mode
+            )
+            for trace, prompt in trace_prompt_pairs:
+                conversation.turns.append(self._build_turn(trace, prompt))
+            conversations.append(conversation)
+        return conversations
+
     def convert_to_conversations(
         self, data: dict[str, list[TraceT]]
     ) -> list[Conversation]:
@@ -306,72 +385,16 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         conversations_data: dict[str, list[tuple[TraceT, str | None]]] = {}
 
         for session_id, traces in data.items():
-            conversations_data[session_id] = []
-            for idx, trace in enumerate(traces):
-                text_input = self._get_text_input(trace)
-                if text_input is not None:
-                    conversations_data[session_id].append((trace, text_input))
-                    continue
-
-                hash_ids: list[int] = getattr(trace, "hash_ids", None) or []
-                input_length: int = getattr(trace, "input_length", 0)
-
-                if hash_ids:
-                    cache_key = (
-                        tuple(hash_ids),
-                        input_length,
-                        self._block_size,
-                    )
-                    if cache_key in self.prompt_generator._decoded_cache:
-                        prompt = self.prompt_generator._decoded_cache[cache_key]
-                        conversations_data[session_id].append((trace, prompt))
-                    else:
-                        tokens = self.prompt_generator._build_token_sequence(
-                            input_length, hash_ids, self._block_size
-                        )
-                        pending_decodes.append((session_id, idx, tokens, cache_key))
-                        conversations_data[session_id].append((trace, None))
-                else:
-                    prompt = self.prompt_generator.generate(
-                        mean=input_length, stddev=0, hash_ids=[]
-                    )
-                    conversations_data[session_id].append((trace, prompt))
+            conversations_data[session_id] = [
+                self._resolve_trace_prompt(trace, session_id, idx, pending_decodes)
+                for idx, trace in enumerate(traces)
+            ]
 
         # Phase 2: Batch parallel decode for all cache misses
-        if pending_decodes:
-            self.debug(
-                lambda: f"Parallel decoding {len(pending_decodes)} prompts "
-                f"({len(data)} conversations)"
-            )
-            token_sequences = [p[2] for p in pending_decodes]
-            decoded_prompts = parallel_decode(
-                token_sequences,
-                self._tokenizer_name,
-                trust_remote_code=self._trust_remote_code,
-                revision=self._tokenizer_revision,
-            )
-
-            for (session_id, idx, _, cache_key), prompt in zip(
-                pending_decodes, decoded_prompts, strict=True
-            ):
-                self.prompt_generator._decoded_cache[cache_key] = prompt
-                trace, _ = conversations_data[session_id][idx]
-                conversations_data[session_id][idx] = (trace, prompt)
+        self._fill_pending_decodes(pending_decodes, conversations_data, len(data))
 
         # Phase 3: Build final conversation objects
-        conversations: list[Conversation] = []
-        for session_id, trace_prompt_pairs in conversations_data.items():
-            traces_in_session = [trace for trace, _ in trace_prompt_pairs]
-            context_mode = self._infer_context_mode(traces_in_session)
-
-            conversation = Conversation(
-                session_id=session_id, context_mode=context_mode
-            )
-            for trace, prompt in trace_prompt_pairs:
-                conversation.turns.append(self._build_turn(trace, prompt))
-            conversations.append(conversation)
-
-        return conversations
+        return self._assemble_conversations(conversations_data)
 
     # ------------------------------------------------------------------
     # Synthesis — shared orchestration with subclass hooks

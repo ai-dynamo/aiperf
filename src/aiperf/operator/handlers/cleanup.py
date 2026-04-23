@@ -29,8 +29,11 @@ async def cleanup_old_results(
     **_: Any,
 ) -> None:
     """Clean up old results based on TTL."""
-    # Only run cleanup for completed jobs
-    if status.get("phase") != Phase.COMPLETED:
+    # Run cleanup for terminal phases. Failed jobs can still leave partial
+    # artifacts on disk (see monitor._recover_from_partial_checkpoints
+    # writing results before setting Phase.FAILED) — without this they leak
+    # forever.
+    if status.get("phase") not in (Phase.COMPLETED, Phase.FAILED):
         return
 
     ttl_days = status.get("resultsTtlDays", OperatorEnvironment.RESULTS.TTL_DAYS)

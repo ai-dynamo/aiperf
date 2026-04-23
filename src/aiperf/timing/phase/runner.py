@@ -20,11 +20,17 @@ from aiperf.common.mixins import TaskManagerMixin
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TimingMode
+from aiperf.timing.phase.event_timeout import wait_for_event_with_timeout
 from aiperf.timing.phase.lifecycle import PhaseLifecycle
+from aiperf.timing.phase.log_formatters import (
+    format_phase_complete,
+    format_phase_sending_complete,
+    format_phase_started,
+)
 from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
+from aiperf.timing.phase.ramper_builder import build_rampers
 from aiperf.timing.phase.stop_conditions import StopConditionChecker
-from aiperf.timing.ramping import Ramper, RampType, TimingRampConfig
-from aiperf.timing.strategies.core import RateSettableProtocol
+from aiperf.timing.ramping import Ramper
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
@@ -42,31 +48,12 @@ if TYPE_CHECKING:
 class PhaseRunner(TaskManagerMixin):
     """Executes credit phases with full lifecycle management.
 
-    Creates all per-phase components lazily during run():
-    - LoopScheduler (SINGLE owner - key architectural decision)
-    - PhaseLifecycle (state machine)
-    - PhaseProgressTracker (wraps counter + events)
-    - StopConditionChecker (evaluates stop conditions)
-    - CreditIssuer (issues credits with concurrency control)
+    Creates all per-phase components lazily during run(): LoopScheduler,
+    PhaseLifecycle, PhaseProgressTracker, StopConditionChecker, CreditIssuer.
 
-    Lifecycle:
-        1. Create components
-        2. Register phase with callback handler
-        3. Setup timing strategy with injected dependencies
-        4. Start phase (mark started, publish)
-        5. Execute timing strategy (with timeout)
-        6. Wait for returns (with grace period)
-        7. Complete phase (mark complete, publish)
-        8. Cleanup (cancel scheduler, stop rampers)
-
-    Component Ownership Diagram:
-        PhaseRunner (owns)
-            ├── LoopScheduler
-            ├── PhaseLifecycle
-            ├── PhaseProgressTracker
-            │       └── CreditCounter (owned by tracker)
-            ├── StopConditionChecker (reads lifecycle + counter)
-            └── CreditIssuer (uses stop_checker, progress, concurrency, router)
+    Lifecycle: create components → register with callback handler → setup
+    timing strategy → start phase → execute with timeout → wait for returns
+    with grace period → complete phase → cleanup (cancel scheduler, stop rampers).
     """
 
     def __init__(
@@ -200,73 +187,16 @@ class PhaseRunner(TaskManagerMixin):
         Returns:
             CreditPhaseStats snapshot of final phase state.
         """
-        StrategyClass = plugins.get_class(
-            PluginType.TIMING_STRATEGY, self._config.timing_mode
-        )
-        strategy: TimingStrategyProtocol = StrategyClass(
-            config=self._config,
-            conversation_source=self._conversation_source,
-            scheduler=self._scheduler,
-            stop_checker=self._stop_checker,
-            credit_issuer=self._credit_issuer,
-            lifecycle=self._lifecycle,
-        )
-
+        strategy = self._build_strategy()
         try:
-            # Register phase with callback handler (BEFORE any credits are sent)
-            self._callback_handler.register_phase(
-                phase=self._config.phase,
-                progress=self._progress,
-                lifecycle=self._lifecycle,
-                stop_checker=self._stop_checker,
-                strategy=strategy,
-                conversation_source=self._conversation_source,
-            )
-
-            self._concurrency_manager.configure_for_phase(
-                self._config.phase,
-                self._config.concurrency,
-                self._config.prefill_concurrency,
-            )
-
-            await strategy.setup_phase()
-
-            self._create_rampers(strategy)
-
-            self._lifecycle.start()
-            stats = self._progress.create_stats(self._lifecycle)
-            self.notice(self._format_phase_started(stats))
-            await self._phase_publisher.publish_phase_start(self._config, stats)
-
-            self._progress_task = self.execute_async(self._progress_report_loop())
-
-            # Start rampers BEFORE execution to ensure concurrency limits are applied
-            # from the start. Otherwise, credits could be issued at full concurrency
-            # before the ramper sets the initial (lower) limit.
-            for ramper in self._rampers:
-                ramper.start()
-
-            self._execution_task = self.execute_async(strategy.execute_phase())
-
+            await self._prepare_phase(strategy)
+            await self._start_phase(strategy)
             await self._wait_for_sending_complete()
 
             if self._was_cancelled:
-                if not self._lifecycle.is_complete:
-                    self._lifecycle.mark_complete(grace_period_triggered=True)
-                    self._progress.freeze_completed_counts()
-                self._progress.all_credits_returned_event.set()
-                return self._progress.create_stats(self._lifecycle)
+                return self._finalize_cancelled()
 
-            # 11. Seamless mode: phase flows into next without waiting for returns
-            #     Progress task continues in background until phase complete
-            if self._config.seamless and not is_final_phase:
-                self._return_wait_task = self.execute_async(
-                    self._wait_for_returning_complete()
-                )
-                self._return_wait_task.add_done_callback(self._on_return_wait_complete)
-            else:
-                await self._wait_for_returning_complete()
-                self._progress_task.cancel()
+            await self._wait_for_returns(is_final_phase)
 
             for ramper in self._rampers:
                 ramper.stop()
@@ -275,166 +205,119 @@ class PhaseRunner(TaskManagerMixin):
             return self._progress.create_stats(self._lifecycle)
 
         except Exception as e:
-            # TODO: This can be improved a bit by having a better way to notify other services
-            # and the system controller of a failure in the benchmark.
-            # If there is an error while setting up or executing the phase,
-            # we need to flush it through the lifecycle to ensure the other services
-            # are notified that the phase has ended, and the benchmark does not hang forever.
-            self.error(f"Error executing phase {self._config.phase.title}: {e!r}")
-            if not self._was_cancelled:
-                self.cancel()
-
-            if not self._lifecycle.is_started:
-                self._lifecycle.start()
-                stats = self._progress.create_stats(self._lifecycle)
-                await self._phase_publisher.publish_phase_start(self._config, stats)
-
-            if not self._lifecycle.is_sending_complete:
-                self._lifecycle.mark_sending_complete(timeout_triggered=False)
-                self._progress.freeze_sent_counts()
-                self._progress.all_credits_sent_event.set()
-                stats = self._progress.create_stats(self._lifecycle)
-                await self._phase_publisher.publish_phase_sending_complete(stats)
-
-            if not self._lifecycle.is_complete:
-                self._lifecycle.mark_complete(grace_period_triggered=False)
-                self._progress.freeze_completed_counts()
-                self._progress.all_credits_returned_event.set()
-                stats = self._progress.create_stats(self._lifecycle)
-                await self._phase_publisher.publish_phase_complete(stats)
-
+            await self._handle_execution_error(e)
             raise e
 
-    def _create_rampers(self, strategy: TimingStrategyProtocol) -> None:
-        """Create rampers for concurrency and rate if ramp durations are configured.
+    def _build_strategy(self) -> TimingStrategyProtocol:
+        """Instantiate the timing strategy for this phase."""
+        StrategyClass = plugins.get_class(
+            PluginType.TIMING_STRATEGY, self._config.timing_mode
+        )
+        return StrategyClass(
+            config=self._config,
+            conversation_source=self._conversation_source,
+            scheduler=self._scheduler,
+            stop_checker=self._stop_checker,
+            credit_issuer=self._credit_issuer,
+            lifecycle=self._lifecycle,
+        )
 
-        Concurrency rampers use stepped mode (discrete integer steps), starting at 1.
-        Rate rampers use continuous mode (smooth float interpolation), starting at a
-        rate proportional to target (to avoid issues when target < 1 QPS).
+    async def _prepare_phase(self, strategy: TimingStrategyProtocol) -> None:
+        """Register callback handler, configure concurrency, setup strategy and rampers."""
+        # Register phase with callback handler (BEFORE any credits are sent)
+        self._callback_handler.register_phase(
+            phase=self._config.phase,
+            progress=self._progress,
+            lifecycle=self._lifecycle,
+            stop_checker=self._stop_checker,
+            strategy=strategy,
+            conversation_source=self._conversation_source,
+        )
+        self._concurrency_manager.configure_for_phase(
+            self._config.phase,
+            self._config.concurrency,
+            self._config.prefill_concurrency,
+        )
+        await strategy.setup_phase()
+        self._create_rampers(strategy)
+
+    async def _start_phase(self, strategy: TimingStrategyProtocol) -> None:
+        """Mark phase started, publish, and launch progress + execution tasks."""
+        self._lifecycle.start()
+        stats = self._progress.create_stats(self._lifecycle)
+        self.notice(format_phase_started(stats))
+        await self._phase_publisher.publish_phase_start(self._config, stats)
+
+        self._progress_task = self.execute_async(self._progress_report_loop())
+
+        # Start rampers BEFORE execution to ensure concurrency limits are applied
+        # from the start. Otherwise, credits could be issued at full concurrency
+        # before the ramper sets the initial (lower) limit.
+        for ramper in self._rampers:
+            ramper.start()
+
+        self._execution_task = self.execute_async(strategy.execute_phase())
+
+    def _finalize_cancelled(self) -> CreditPhaseStats:
+        """Complete lifecycle after external cancellation and return stats."""
+        if not self._lifecycle.is_complete:
+            self._lifecycle.mark_complete(grace_period_triggered=True)
+            self._progress.freeze_completed_counts()
+        self._progress.all_credits_returned_event.set()
+        return self._progress.create_stats(self._lifecycle)
+
+    async def _wait_for_returns(self, is_final_phase: bool) -> None:
+        """Wait for credit returns, or spawn background task for non-final seamless phase."""
+        # Seamless mode: phase flows into next without waiting for returns.
+        # Progress task continues in background until phase complete.
+        if self._config.seamless and not is_final_phase:
+            self._return_wait_task = self.execute_async(
+                self._wait_for_returning_complete()
+            )
+            self._return_wait_task.add_done_callback(self._on_return_wait_complete)
+        else:
+            await self._wait_for_returning_complete()
+            if self._progress_task:
+                self._progress_task.cancel()
+
+    async def _handle_execution_error(self, e: Exception) -> None:
+        """Flush lifecycle state on failure so downstream services don't hang.
+
+        TODO: This can be improved by having a better way to notify other services
+        and the system controller of a failure in the benchmark.
         """
-        self._rampers = []
-        config = self._config
+        self.error(f"Error executing phase {self._config.phase.title}: {e!r}")
+        if not self._was_cancelled:
+            self.cancel()
 
-        # Session concurrency ramper (stepped mode)
-        if config.concurrency_ramp_duration_sec and config.concurrency:
-            self.info(
-                f"Starting session concurrency ramp: 1 → {config.concurrency} "
-                f"over {config.concurrency_ramp_duration_sec}s"
-            )
-            ramp_config = TimingRampConfig(
-                ramp_type=RampType.LINEAR,
-                start=1,
-                target=config.concurrency,
-                duration_sec=config.concurrency_ramp_duration_sec,
-            )
+        if not self._lifecycle.is_started:
+            self._lifecycle.start()
+            stats = self._progress.create_stats(self._lifecycle)
+            await self._phase_publisher.publish_phase_start(self._config, stats)
 
-            def setter(limit: float) -> None:
-                return self._concurrency_manager.set_session_limit(
-                    config.phase, int(limit)
-                )
+        if not self._lifecycle.is_sending_complete:
+            self._lifecycle.mark_sending_complete(timeout_triggered=False)
+            self._progress.freeze_sent_counts()
+            self._progress.all_credits_sent_event.set()
+            stats = self._progress.create_stats(self._lifecycle)
+            await self._phase_publisher.publish_phase_sending_complete(stats)
 
-            self._rampers.append(Ramper(setter=setter, config=ramp_config))
+        if not self._lifecycle.is_complete:
+            self._lifecycle.mark_complete(grace_period_triggered=False)
+            self._progress.freeze_completed_counts()
+            self._progress.all_credits_returned_event.set()
+            stats = self._progress.create_stats(self._lifecycle)
+            await self._phase_publisher.publish_phase_complete(stats)
 
-        # Prefill concurrency ramper (stepped mode)
-        if config.prefill_concurrency_ramp_duration_sec and config.prefill_concurrency:
-            self.info(
-                f"Starting prefill concurrency ramp: 1 → {config.prefill_concurrency} "
-                f"over {config.prefill_concurrency_ramp_duration_sec}s"
-            )
-            ramp_config = TimingRampConfig(
-                ramp_type=RampType.LINEAR,
-                start=1,
-                target=config.prefill_concurrency,
-                duration_sec=config.prefill_concurrency_ramp_duration_sec,
-            )
-
-            def setter(limit: float) -> None:
-                return self._concurrency_manager.set_prefill_limit(
-                    config.phase, int(limit)
-                )
-
-            self._rampers.append(Ramper(setter=setter, config=ramp_config))
-
-        # Request rate ramper (continuous mode via update_interval)
-        if config.request_rate_ramp_duration_sec and config.request_rate:
-            # Start at one linear increment (proportional to target, not fixed 1 QPS).
-            # This avoids awkward cases where target < 1 QPS would actually increase.
-            update_interval = Environment.TIMING.RATE_RAMP_UPDATE_INTERVAL
-            start_rate = config.request_rate * (
-                update_interval / config.request_rate_ramp_duration_sec
-            )
-            self.info(
-                f"Starting request rate ramp: {start_rate:.2f} → {config.request_rate} QPS "
-                f"over {config.request_rate_ramp_duration_sec}s"
-            )
-            ramp_config = TimingRampConfig(
-                ramp_type=RampType.LINEAR,
-                start=start_rate,
-                target=config.request_rate,
-                duration_sec=config.request_rate_ramp_duration_sec,
-                update_interval=update_interval,
-            )
-            if isinstance(strategy, RateSettableProtocol):
-                self._rampers.append(
-                    Ramper(setter=strategy.set_request_rate, config=ramp_config)
-                )
-            else:
-                self.warning(
-                    f"Strategy {strategy.__class__.__name__} does not implement RateSettableProtocol. "
-                    "Request rate will be fixed at the target value."
-                )
-
-    def _format_phase_started(self, stats: CreditPhaseStats) -> str:
-        """Format a concise log message for phase start."""
-        parts = [f"Phase {stats.phase} started"]
-        targets = []
-        if stats.total_expected_requests:
-            targets.append(f"{stats.total_expected_requests:,} requests")
-        if stats.expected_duration_sec:
-            targets.append(f"{stats.expected_duration_sec:.1f}s duration")
-        if stats.expected_num_sessions:
-            targets.append(f"{stats.expected_num_sessions:,} sessions")
-        if targets:
-            parts.append(f"target: {', '.join(targets)}")
-        return " | ".join(parts)
-
-    def _format_phase_sending_complete(self, stats: CreditPhaseStats) -> str:
-        """Format a concise log message for phase sending complete."""
-        parts = [f"Phase {stats.phase} sending complete"]
-        parts.append(
-            f"sent={stats.requests_sent:,}, "
-            f"completed={stats.requests_completed:,}, "
-            f"in_flight={stats.in_flight_requests:,}"
+    def _create_rampers(self, strategy: TimingStrategyProtocol) -> None:
+        """Create rampers for concurrency and rate if ramp durations are configured."""
+        self._rampers = build_rampers(
+            config=self._config,
+            strategy=strategy,
+            concurrency_manager=self._concurrency_manager,
+            info=self.info,
+            warning=self.warning,
         )
-        if stats.sent_sessions > 0:
-            parts.append(
-                f"sessions: sent={stats.sent_sessions:,}, "
-                f"completed={stats.completed_sessions:,}"
-            )
-        if stats.timeout_triggered:
-            parts.append("timeout_triggered=True")
-        return " | ".join(parts)
-
-    def _format_phase_complete(self, stats: CreditPhaseStats) -> str:
-        """Format a concise log message for phase complete."""
-        parts = [f"Phase {stats.phase} complete"]
-        parts.append(
-            f"completed={stats.final_requests_completed:,}, "
-            f"cancelled={stats.final_requests_cancelled:,}, "
-            f"errors={stats.final_request_errors:,}"
-        )
-        if stats.final_sent_sessions and stats.final_sent_sessions > 0:
-            parts.append(
-                f"sessions: completed={stats.final_completed_sessions:,}, "
-                f"cancelled={stats.final_cancelled_sessions:,}"
-            )
-        elapsed = stats.requests_elapsed_time
-        parts.append(f"elapsed={elapsed:.2f}s")
-        if stats.grace_period_timeout_triggered:
-            parts.append("grace_period_timeout=True")
-        if stats.was_cancelled:
-            parts.append("was_cancelled=True")
-        return " | ".join(parts)
 
     async def _wait_for_sending_complete(self) -> None:
         """Wait for phase to send all credits (with timeout).
@@ -467,7 +350,7 @@ class PhaseRunner(TaskManagerMixin):
                 self._progress.all_credits_sent_event.set()
 
             stats = self._progress.create_stats(self._lifecycle)
-            self.notice(self._format_phase_sending_complete(stats))
+            self.notice(format_phase_sending_complete(stats))
             await self._phase_publisher.publish_progress(stats)
             await self._phase_publisher.publish_phase_sending_complete(stats)
 
@@ -544,7 +427,7 @@ class PhaseRunner(TaskManagerMixin):
                 self._lifecycle.mark_complete(grace_period_triggered=timed_out)
                 self._progress.freeze_completed_counts()
             stats = self._progress.create_stats(self._lifecycle)
-            self.notice(self._format_phase_complete(stats))
+            self.notice(format_phase_complete(stats))
             await self._phase_publisher.publish_progress(stats)
             await self._phase_publisher.publish_phase_complete(stats)
 
@@ -568,49 +451,17 @@ class PhaseRunner(TaskManagerMixin):
         task_to_cancel: asyncio.Task | None,
         set_event_on_timeout: bool = False,
     ) -> bool:
-        """Wait for event with optional timeout.
-
-        Args:
-            name: The name of the event to wait for.
-            event: The event to wait for.
-            timeout: The timeout in seconds.
-                If None, the event will be waited for indefinitely.
-                If timeout is <= 0, returns immediately with timeout.
-            task_to_cancel: The optional task to cancel when the timeout occurs.
-            set_event_on_timeout: If True, the event will also be set when the timeout occurs.
-
-        Returns:
-            True if the event timed out, False if the event was set before timeout.
-        """
-        if timeout is None:
-            self.debug(lambda: f"Waiting for event '{name}' indefinitely")
-            await event.wait()
-            return False
-
-        def _on_timeout() -> bool:
-            self.info(f"Timeout of {timeout}s elapsed for event '{name}'")
-            if set_event_on_timeout:
-                event.set()
-            if task_to_cancel:
-                task_to_cancel.cancel()
-            return True
-
-        if timeout <= 0:
-            self.debug(lambda: f"Timeout already elapsed for event '{name}'")
-            return _on_timeout()
-
-        try:
-            self.info(f"Waiting for event '{name}' with timeout of {timeout}s")
-            await asyncio.wait_for(event.wait(), timeout=timeout)
-            self.debug(lambda: f"Event '{name}' set before timeout of {timeout}s")
-            return False
-
-        except asyncio.TimeoutError:
-            return _on_timeout()
-
-        except Exception as e:
-            self.error(f"Error waiting for event '{name}' with timeout: {e!r}")
-            raise
+        """Wait for event with optional timeout (logged)."""
+        return await wait_for_event_with_timeout(
+            name=name,
+            event=event,
+            timeout=timeout,
+            task_to_cancel=task_to_cancel,
+            set_event_on_timeout=set_event_on_timeout,
+            info=self.info,
+            debug=self.debug,
+            error=self.error,
+        )
 
     async def _progress_report_loop(self) -> None:
         """Publish phase progress stats at regular intervals.

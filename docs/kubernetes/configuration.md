@@ -138,6 +138,8 @@ phases:
 | `ttlSecondsAfterFinished` | int | 300 | Seconds to keep pods after completion |
 | `timeoutSeconds` | int | 0 | Benchmark timeout in seconds (0 = no timeout) |
 | `cancel` | bool | `false` | Set to `true` to cancel a running benchmark |
+| `keepFailedPods` | bool | `false` | Preserve pods on failure for debugging (overrides `ttlSecondsAfterFinished`) |
+| `resultsTtlDays` | int | - | Override operator-level `AIPERF_K8S_RESULTS_TTL_DAYS` for this job only |
 
 ### Pod Template (`spec.podTemplate`)
 
@@ -154,6 +156,7 @@ Customize the pods that run your benchmark:
 | `annotations` | map | Extra pod annotations |
 | `labels` | map | Extra pod labels |
 | `serviceAccountName` | string | Custom service account |
+| `containerSecurityContext` | map | SecurityContext applied to every container in the controller and worker pods |
 
 ### Scheduling (`spec.scheduling`)
 
@@ -335,9 +338,82 @@ Phases run in order. Metrics from phases with `exclude_from_results: true` are n
 
 ---
 
+## Resource Mode
+
+`spec.resourceMode` controls the QoS class Kubernetes assigns to benchmark pods. The three modes differ only in how `requests` and `limits` are emitted onto the manifest — the underlying resource budget is the same in every case.
+
+| Mode | Behavior | K8s QoS class | When to use |
+|---|---|---|---|
+| `guaranteed` (default) | `requests == limits` for CPU and memory. | Guaranteed | Production benchmarks where pods must not be evicted under pressure and noisy-neighbor behavior is unacceptable. |
+| `burstable` | `requests` only; no `limits`. | Burstable | Cost-sensitive clusters or development where headroom above the request is acceptable. Controller pods stay Burstable by default in the operator's own `values.yaml`. |
+| `none` | Neither `requests` nor `limits`. | BestEffort | Environments where CPU/memory admission control is disabled (e.g. CI `kind` clusters with tight node budgets, or when an external scheduler handles admission). **Preflight check "Memory Estimation" is auto-skipped.** |
+
+The mode applies to both controller-pod and worker-pod containers; there is no per-container override. OOMKill semantics follow the QoS class — `guaranteed` pods will not be evicted for resource pressure, `burstable` pods may be throttled, and `none`/BestEffort pods can be evicted first.
+
+---
+
+## Tunable Environment Variables (`AIPERF_K8S_*`)
+
+These variables tune the operator and individual benchmark pods. Set them on the operator deployment (`operator.env.*` in `values.yaml`) to affect every subsequent job, or on `spec.podTemplate.env` to affect one CR only.
+
+### Resource sizing (per-container CPU / memory)
+
+Every control-plane container, the event-bus proxy sidecar, the results sidecar, and the worker pod have a paired `_CPU` / `_MEMORY` variable. Defaults reflect the measured footprint under typical load — raise them for very large concurrency or high-token workloads.
+
+| Variable | Default | Applies to |
+|---|---|---|
+| `AIPERF_K8S_SYSTEM_CONTROLLER_CPU` / `_MEMORY` | `500m` / `1Gi` | SystemController container |
+| `AIPERF_K8S_WORKER_MANAGER_CPU` / `_MEMORY` | `500m` / `1Gi` | WorkerManager container |
+| `AIPERF_K8S_TIMING_MANAGER_CPU` / `_MEMORY` | `1000m` / `2Gi` | TimingManager container |
+| `AIPERF_K8S_DATASET_MANAGER_CPU` / `_MEMORY` | `1000m` / `2Gi` | DatasetManager container |
+| `AIPERF_K8S_RECORDS_MANAGER_CPU` / `_MEMORY` | `1000m` / `2Gi` | RecordsManager container (raise to 4000m+ for >500k concurrency) |
+| `AIPERF_K8S_API_CPU` / `_MEMORY` | `1000m` / `8Gi` | API container (WebSocket + HTTP) |
+| `AIPERF_K8S_GPU_TELEMETRY_MANAGER_CPU` / `_MEMORY` | `250m` / `512Mi` | GPU telemetry container |
+| `AIPERF_K8S_SERVER_METRICS_MANAGER_CPU` / `_MEMORY` | `250m` / `512Mi` | Server-metrics container |
+| `AIPERF_K8S_RESULTS_SIDECAR_CPU` / `_MEMORY` | `250m` / `512Mi` | Results sidecar (fallback retrieval path) |
+| `AIPERF_K8S_EVENT_BUS_PROXY_CPU` / `_MEMORY` | `2000m` / `1Gi` | Event-bus XPUB/XSUB proxy sidecar |
+| `AIPERF_K8S_WORKER_POD_CPU` / `_MEMORY` | `4000m` / `12Gi` | Worker pod (workers + record processors + WPM) |
+
+### Architecture toggles
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AIPERF_K8S_EVENT_BUS_SIDECAR_ENABLED` | `true` | Run the XPUB/XSUB event-bus proxy as a dedicated sidecar container. Set to `false` to revert to the pre-sidecar behavior where `SystemController` hosts the proxy in-process. Only disable if you are explicitly testing the legacy path. |
+| `AIPERF_K8S_RECORD_PROCESSOR_SCALE_FACTOR` | `1` | Workers per record processor inside each worker pod. `1` means one RP per worker (maximum fairness); higher values amortize RP overhead across more workers. |
+| `AIPERF_K8S_RECORD_PROCESSOR_CPU_REQUEST` | (unset) | Optional per-RP CPU request override. When unset, RP CPU is derived from the worker-pod budget. |
+
+### JobSet and lifecycle
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AIPERF_K8S_JOBSET_TTL_SECONDS_AFTER_FINISHED` | `300` | Seconds to keep pods after JobSet completion. Override per-CR via `spec.ttlSecondsAfterFinished`. |
+| `AIPERF_K8S_JOBSET_DIRECT_MODE_TTL_SECONDS` | `28800` (8h) | TTL applied when `--no-operator` is used, giving you time to pull results from pod-local storage. |
+| `AIPERF_K8S_JOBSET_CONTROLLER_BACKOFF_LIMIT` | `0` | Controller-job retry count. Default `0` — fail fast when the controller crashes. |
+| `AIPERF_K8S_JOBSET_WORKER_BACKOFF_LIMIT` | `20` | Worker-job retry count. Higher than controller to absorb transient pod-startup flakes. |
+| `AIPERF_K8S_JOBSET_WORKER_CONNECTION_PROBE_TIMEOUT` | `60.0` | Seconds a worker waits for the PUB/SUB connection probe before exiting so K8s restarts it. |
+
+### Health probes
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AIPERF_K8S_HEALTH_STARTUP_PERIOD_SECONDS` | `5` | Startup probe interval. |
+| `AIPERF_K8S_HEALTH_STARTUP_FAILURE_THRESHOLD` | `30` | Consecutive failures before the container is killed during startup. Raise for slow-starting workloads (large tokenizers, cold container images). |
+| Other `AIPERF_K8S_HEALTH_*` | see code | Liveness/readiness intervals, timeouts, thresholds. |
+
+### Ports
+
+All health and service ports are overridable via `AIPERF_K8S_PORT_*` (e.g. `AIPERF_K8S_PORT_API_SERVICE=9090`, `AIPERF_K8S_PORT_RESULTS_SIDECAR=9091`, `AIPERF_K8S_PORT_SYSTEM_CONTROLLER_HEALTH=8080`). Consult `src/aiperf/kubernetes/environment.py::_PortSettings` for the full list — changing these is rarely necessary.
+
+The complete, generated reference for every `AIPERF_*` variable (including non-k8s ones) lives in [`../environment-variables.md`](../environment-variables.md).
+
+---
+
 ## Related Documentation
 
 - [Getting Started](getting-started.md) -- First benchmark walkthrough
 - [Monitoring and Troubleshooting](monitoring.md) -- Live monitoring and debugging
 - [Production Deployments](production.md) -- CI/CD, Kueue, and GitOps workflows
+- [Preflight Checks](preflight.md) -- What the operator validates before admitting a CR
+- [Memory Estimator](memory-estimator.md) -- How per-component memory estimates drive resource requests
+- [Direct Mode](direct-mode.md) -- Trade-offs when running `--no-operator`
 - [YAML Config Reference](../tutorials/yaml-config.md) -- Complete benchmark configuration options

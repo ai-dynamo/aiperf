@@ -312,6 +312,30 @@ SINGLE_RUN_TITLE_SUFFIXES = {
 }
 
 
+def _resolve_single_run_column_and_title(
+    plot_type: str,
+    *,
+    y_metric: str,
+    y_stat: str | None,
+    metric_stats: dict[str, list[str]],
+    y2_metric: str | None,
+) -> tuple[str, str]:
+    """Resolve the actual column name and default title for a single-run plot."""
+    if plot_type == "timeslice":
+        return y_metric, f"{y_metric} {SINGLE_RUN_TITLE_SUFFIXES['timeslice']}"
+
+    if plot_type == "dual_axis":
+        actual_column = resolve_single_run_column_name(y_metric, y_stat, metric_stats)
+        y_display = get_metric_display_name(y_metric)
+        y2_display = get_metric_display_name(y2_metric) if y2_metric else ""
+        title = f"{y_display} and {y2_display} {SINGLE_RUN_TITLE_SUFFIXES['dual_axis']}"
+        return actual_column, title
+
+    actual_column = resolve_single_run_column_name(y_metric, y_stat, metric_stats)
+    suffix = SINGLE_RUN_TITLE_SUFFIXES.get(plot_type, f"({plot_type})")
+    return actual_column, f"{get_metric_display_name(y_metric)} {suffix}"
+
+
 def build_single_run_plot_config(
     plot_type: str,
     *,
@@ -347,28 +371,18 @@ def build_single_run_plot_config(
     Returns:
         Plot configuration dictionary.
     """
-    # Resolve actual column name and generate title
-    if plot_type == "timeslice":
-        actual_column = y_metric
-        default_title = f"{y_metric} {SINGLE_RUN_TITLE_SUFFIXES['timeslice']}"
-    elif plot_type == "dual_axis":
-        actual_column = resolve_single_run_column_name(y_metric, y_stat, metric_stats)
-        y_display = get_metric_display_name(y_metric)
-        y2_display = get_metric_display_name(y2_metric) if y2_metric else ""
-        default_title = (
-            f"{y_display} and {y2_display} {SINGLE_RUN_TITLE_SUFFIXES['dual_axis']}"
-        )
-    else:
-        actual_column = resolve_single_run_column_name(y_metric, y_stat, metric_stats)
-        suffix = SINGLE_RUN_TITLE_SUFFIXES.get(plot_type, f"({plot_type})")
-        default_title = f"{get_metric_display_name(y_metric)} {suffix}"
+    actual_column, default_title = _resolve_single_run_column_and_title(
+        plot_type,
+        y_metric=y_metric,
+        y_stat=y_stat,
+        metric_stats=metric_stats,
+        y2_metric=y2_metric,
+    )
 
-    # Use custom title if provided
     title = (
         custom_title.strip() if custom_title and custom_title.strip() else default_title
     )
 
-    # Build base config
     config = {
         "plot_type": plot_type,
         "x_axis": x_axis,
@@ -383,7 +397,6 @@ def build_single_run_plot_config(
         "mode": "single_run",
     }
 
-    # Add type-specific fields
     if plot_type == "timeslice":
         config["stat"] = y_stat or "avg"
         config["source"] = "timeslices"

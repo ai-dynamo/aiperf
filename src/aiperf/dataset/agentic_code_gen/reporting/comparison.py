@@ -5,7 +5,145 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from aiperf.dataset.agentic_code_gen.models import PercentileStats
+
+
+def _format_row(
+    row_label: str,
+    target_val: float | None,
+    obs_val: float | None,
+    pct_err: float | None = None,
+) -> str:
+    target = f"{target_val:>12,.0f}" if target_val is not None else f"{'-':>12s}"
+    observed = f"{obs_val:>12,.1f}" if obs_val is not None else f"{'-':>12s}"
+    error = ""
+    if pct_err is not None:
+        sign = (
+            "+"
+            if obs_val is None
+            or target_val is None
+            or abs(pct_err) == 0.0
+            or obs_val >= target_val
+            else "-"
+        )
+        error = f"  {sign}{abs(pct_err):.1f}%"
+    return f"  {row_label:38s}{target}{observed}{error}"
+
+
+def _render_metric_block(
+    w: Callable[[str], None], ovt: dict, label: str, key: str
+) -> None:
+    w(label)
+    metric = ovt.get(key, {})
+    observed = metric.get("observed", {})
+    w(
+        _format_row(
+            "mean",
+            metric.get("target_mean"),
+            observed.get("mean"),
+            metric.get("pct_error_mean"),
+        )
+    )
+    w(
+        _format_row(
+            "median",
+            metric.get("target_median"),
+            observed.get("median"),
+            metric.get("pct_error_median"),
+        )
+    )
+
+
+def _render_generation_length(
+    w: Callable[[str], None],
+    ovt: dict,
+    target_p05: float | None,
+    target_p99: float | None,
+) -> None:
+    gen = ovt.get("generation_length", {})
+    gen_obs = gen.get("observed", {})
+    w("Generation Length (tokens)")
+    w(
+        _format_row(
+            "mean",
+            gen.get("target_mean"),
+            gen_obs.get("mean"),
+            gen.get("pct_error_mean"),
+        )
+    )
+    w(
+        _format_row(
+            "median",
+            gen.get("target_median"),
+            gen_obs.get("median"),
+            gen.get("pct_error_median"),
+        )
+    )
+    w(_format_row("p05", target_p05, gen_obs.get("p05")))
+    w(_format_row("p99", target_p99, gen_obs.get("p99")))
+
+
+def _render_turns_per_session(w: Callable[[str], None], sess: dict) -> None:
+    w("Turns Per Session")
+    for label, field in [
+        ("mean", "mean"),
+        ("median", "median"),
+        ("p05", "p05"),
+        ("p25", "p25"),
+        ("p75", "p75"),
+        ("p95", "p95"),
+        ("p99", "p99"),
+    ]:
+        val = sess.get(field, 0)
+        w(f"  {label:38s}{'-':>12s}{val:>12.1f}")
+
+
+def _render_inter_turn_delay(w: Callable[[str], None], ovt: dict, cfg: dict) -> None:
+    delay = ovt.get("inter_turn_delay_ms", {}).get("observed", {})
+    if not delay:
+        return
+    w("Inter-Turn Delay (ms)")
+    for label, field in [
+        ("mean", "mean"),
+        ("median", "median"),
+        ("p05", "p05"),
+        ("p95", "p95"),
+    ]:
+        val = delay.get(field, 0)
+        w(f"  {label:38s}{'-':>12s}{val:>12,.0f}")
+    af = cfg.get("inter_turn_delay_agentic_fraction", 0)
+    am = cfg.get("inter_turn_delay_agentic_mean_ms", 0) / 1000
+    hm = cfg.get("inter_turn_delay_human_mean_ms", 0) / 1000
+    w(f"  ({af:.0%} agentic ~{am:.0f}s, {1 - af:.0%} human ~{hm:.0f}s)")
+    w("")
+
+
+def _render_session_duration(
+    w: Callable[[str], None],
+    session_duration_stats: PercentileStats,
+    prefill_tps: float,
+    decode_tps: float,
+) -> None:
+    w(
+        f"Session Duration (estimated @ {prefill_tps:,.0f} prefill tok/s, {decode_tps:,.0f} decode tok/s)"
+    )
+    for label, val in [
+        ("mean", session_duration_stats.mean),
+        ("median", session_duration_stats.median),
+    ]:
+        w(f"  {label:38s}{'-':>12s}{val:>12.1f} min")
+    w("")
+
+
+def _render_session_endings(w: Callable[[str], None], ends: dict) -> None:
+    w("Session Endings")
+    w(
+        f"  {'forced retires (hit context limit)':38s}{'-':>12s}{ends['forced_retires']:>12d}"
+    )
+    w(f"  {'probabilistic resets':38s}{'-':>12s}{ends['probabilistic_resets']:>12d}")
+    w(f"  {'restart splits':38s}{'-':>12s}{ends.get('restart_splits', 0):>12d}")
 
 
 def render_comparison_text(
@@ -38,62 +176,11 @@ def render_comparison_text(
     w(f"{'':40s} {'Target':>12s} {'Dataset':>12s} {'Error':>8s}")
     w("-" * 76)
 
-    def row(
-        row_label: str,
-        target_val: float | None,
-        obs_val: float | None,
-        pct_err: float | None = None,
-    ) -> None:
-        target = f"{target_val:>12,.0f}" if target_val is not None else f"{'-':>12s}"
-        observed = f"{obs_val:>12,.1f}" if obs_val is not None else f"{'-':>12s}"
-        error = ""
-        if pct_err is not None:
-            sign = (
-                "+"
-                if obs_val is None
-                or target_val is None
-                or abs(pct_err) == 0.0
-                or obs_val >= target_val
-                else "-"
-            )
-            error = f"  {sign}{abs(pct_err):.1f}%"
-        w(f"  {row_label:38s}{target}{observed}{error}")
-
-    def metric_block(label: str, key: str) -> None:
-        w(label)
-        metric = ovt.get(key, {})
-        observed = metric.get("observed", {})
-        row(
-            "mean",
-            metric.get("target_mean"),
-            observed.get("mean"),
-            metric.get("pct_error_mean"),
-        )
-        row(
-            "median",
-            metric.get("target_median"),
-            observed.get("median"),
-            metric.get("pct_error_median"),
-        )
-
-    metric_block("Initial Context (tokens)", "initial_context")
+    _render_metric_block(w, ovt, "Initial Context (tokens)", "initial_context")
     w("")
-
-    metric_block("New Tokens Per Turn", "new_tokens_per_turn")
+    _render_metric_block(w, ovt, "New Tokens Per Turn", "new_tokens_per_turn")
     w("")
-
-    gen = ovt.get("generation_length", {})
-    gen_obs = gen.get("observed", {})
-    w("Generation Length (tokens)")
-    row("mean", gen.get("target_mean"), gen_obs.get("mean"), gen.get("pct_error_mean"))
-    row(
-        "median",
-        gen.get("target_median"),
-        gen_obs.get("median"),
-        gen.get("pct_error_median"),
-    )
-    row("p05", target_p05, gen_obs.get("p05"))
-    row("p99", target_p99, gen_obs.get("p99"))
+    _render_generation_length(w, ovt, target_p05, target_p99)
     w("")
 
     w("Prompt")
@@ -105,53 +192,14 @@ def render_comparison_text(
     w("Additional Dataset Statistics")
     w("-" * 76)
 
-    w("Turns Per Session")
-    for label, field in [
-        ("mean", "mean"),
-        ("median", "median"),
-        ("p05", "p05"),
-        ("p25", "p25"),
-        ("p75", "p75"),
-        ("p95", "p95"),
-        ("p99", "p99"),
-    ]:
-        val = sess.get(field, 0)
-        w(f"  {label:38s}{'-':>12s}{val:>12.1f}")
+    _render_turns_per_session(w, sess)
     w("")
 
-    delay = ovt.get("inter_turn_delay_ms", {}).get("observed", {})
-    if delay:
-        w("Inter-Turn Delay (ms)")
-        for label, field in [
-            ("mean", "mean"),
-            ("median", "median"),
-            ("p05", "p05"),
-            ("p95", "p95"),
-        ]:
-            val = delay.get(field, 0)
-            w(f"  {label:38s}{'-':>12s}{val:>12,.0f}")
-        af = cfg.get("inter_turn_delay_agentic_fraction", 0)
-        am = cfg.get("inter_turn_delay_agentic_mean_ms", 0) / 1000
-        hm = cfg.get("inter_turn_delay_human_mean_ms", 0) / 1000
-        w(f"  ({af:.0%} agentic ~{am:.0f}s, {1 - af:.0%} human ~{hm:.0f}s)")
-        w("")
+    _render_inter_turn_delay(w, ovt, cfg)
 
     if session_duration_stats:
-        w(
-            f"Session Duration (estimated @ {prefill_tps:,.0f} prefill tok/s, {decode_tps:,.0f} decode tok/s)"
-        )
-        for label, val in [
-            ("mean", session_duration_stats.mean),
-            ("median", session_duration_stats.median),
-        ]:
-            w(f"  {label:38s}{'-':>12s}{val:>12.1f} min")
-        w("")
+        _render_session_duration(w, session_duration_stats, prefill_tps, decode_tps)
 
-    w("Session Endings")
-    w(
-        f"  {'forced retires (hit context limit)':38s}{'-':>12s}{ends['forced_retires']:>12d}"
-    )
-    w(f"  {'probabilistic resets':38s}{'-':>12s}{ends['probabilistic_resets']:>12d}")
-    w(f"  {'restart splits':38s}{'-':>12s}{ends.get('restart_splits', 0):>12d}")
+    _render_session_endings(w, ends)
 
     return "\n".join(lines) + "\n"

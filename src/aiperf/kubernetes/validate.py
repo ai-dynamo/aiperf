@@ -25,10 +25,13 @@ EXPECTED_KIND = "AIPerfJob"
 K8S_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$")
 K8S_NAME_MAX_LENGTH = 253
 
-# Deployment/operator fields that live at the top-level spec (camelCase)
+# Deployment/operator fields that live at the top-level spec (camelCase).
+# Must stay in sync with AIPerfJobSpecConverter.to_deployment_config() and the
+# CRD's spec.properties schema in deploy/helm/aiperf-operator/templates/crd.yaml.
 _DEPLOYMENT_FIELDS = {
     "image",
     "imagePullPolicy",
+    "keepFailedPods",
     "resourceMode",
     "connectionsPerWorker",
     "timeoutSeconds",
@@ -37,7 +40,6 @@ _DEPLOYMENT_FIELDS = {
     "cancel",
     "podTemplate",
     "scheduling",
-    "sweepExecution",
 }
 
 # Top-level spec fields: deployment fields + the benchmark key

@@ -14,7 +14,6 @@ from aiperf.common.enums import CommandType, MessageType
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.hooks import on_command, on_init, on_message, on_stop
 from aiperf.common.messages import ProcessTelemetryResultMessage
 from aiperf.common.models import (
@@ -25,19 +24,19 @@ from aiperf.common.models import (
     TelemetryRecord,
 )
 from aiperf.credit.messages import CreditPhaseStartMessage
-from aiperf.gpu_telemetry.constants import PYNVML_SOURCE_IDENTIFIER
-from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
+from aiperf.gpu_telemetry._setup import (
+    compute_endpoints_for_display,
+    configure_dcgm_collectors,
+    configure_pynvml_collector,
+    create_processors,
+    normalize_dcgm_url,
+)
 from aiperf.gpu_telemetry.protocols import (
     GPUTelemetryAccumulatorProtocol,
     GPUTelemetryCollectorProtocol,
     GPUTelemetryProcessorProtocol,
 )
-from aiperf.plugin import plugins
-from aiperf.plugin.enums import (
-    GPUTelemetryCollectorType,
-    GPUTelemetryProcessorType,
-    PluginType,
-)
+from aiperf.plugin.enums import GPUTelemetryCollectorType
 
 __all__ = ["GPUTelemetryManager"]
 
@@ -90,7 +89,7 @@ class GPUTelemetryManager(BaseComponentService):
         if isinstance(user_endpoints, str):
             user_endpoints = [user_endpoints]
 
-        valid_endpoints = [self._normalize_dcgm_url(url) for url in user_endpoints]
+        valid_endpoints = [normalize_dcgm_url(url) for url in user_endpoints]
 
         # Store user-provided endpoints separately for display filtering (excluding auto-inserted defaults)
         self._user_provided_endpoints = [
@@ -109,79 +108,17 @@ class GPUTelemetryManager(BaseComponentService):
 
         self._collection_interval = Environment.GPU.COLLECTION_INTERVAL
 
-        self._processors: list[GPUTelemetryProcessorProtocol] = []
         self._accumulator: GPUTelemetryAccumulatorProtocol | None = None
         self._error_state = ErrorTrackingState()
         self._result_published: bool = False
 
-        for entry in plugins.iter_entries(PluginType.GPU_TELEMETRY_PROCESSOR):
-            try:
-                ProcessorClass = plugins.get_class(
-                    PluginType.GPU_TELEMETRY_PROCESSOR, entry.name
-                )
-                processor = ProcessorClass(
-                    service_id=self.service_id,
-                    run=self.run,
-                    pub_client=self.pub_client,
-                )
-                self.attach_child_lifecycle(processor)
-                self._processors.append(processor)
-                if entry.name == GPUTelemetryProcessorType.GPU_TELEMETRY_ACCUMULATOR:
-                    self._accumulator = processor
-                self.debug(
-                    f"Created GPU telemetry processor: {entry.name}: "
-                    f"{processor.__class__.__name__}"
-                )
-            except PostProcessorDisabled:
-                self.debug(
-                    f"GPU telemetry processor {entry.name} is disabled and will not be used"
-                )
-            except Exception as e:  # noqa: BLE001 - per-plugin; skip bad processor and continue
-                self.error(
-                    f"Failed to create GPU telemetry processor {entry.name}: {e}"
-                )
+        self._processors: list[GPUTelemetryProcessorProtocol]
+        self._processors, self._accumulator = create_processors(self)
 
-    @staticmethod
-    def _normalize_dcgm_url(url: str) -> str:
-        """Ensure DCGM URL ends with /metrics endpoint.
-
-        Args:
-            url: Base URL or full metrics URL
-
-        Returns:
-            str: URL ending with /metrics
-        """
-        url = url.rstrip("/")
-        if not url.endswith("/metrics"):
-            url = f"{url}/metrics"
-        return url
-
-    def _compute_endpoints_for_display(
-        self, reachable_defaults: list[str]
-    ) -> list[str]:
-        """Compute which DCGM endpoints should be displayed to the user.
-
-        Filters endpoints for clean console output based on user configuration
-        and reachability. This intentional filtering prevents cluttering the UI
-        with unreachable default endpoints that the user didn't explicitly configure.
-
-        Args:
-            reachable_defaults: List of default DCGM endpoints that are reachable
-
-        Returns:
-            List of endpoint URLs to display in console/export output:
-            - reachable_defaults if any defaults are reachable
-            - user_provided_endpoints + reachable_defaults if custom endpoints and defaults reachable
-            - user_provided_endpoints if user configured but no defaults reachable
-            - Empty list if no reachable defaults and user did not configure telemetry
-        """
-        if reachable_defaults and self._user_provided_endpoints:
-            return list(self._user_provided_endpoints) + reachable_defaults
-        elif reachable_defaults:
-            return reachable_defaults
-        elif self._user_provided_endpoints:
-            return self._user_provided_endpoints
-        return []
+    # Retained as a static method for callers/tests that reference
+    # ``GPUTelemetryManager._normalize_dcgm_url``. The implementation lives in
+    # ``_setup.normalize_dcgm_url``.
+    _normalize_dcgm_url = staticmethod(normalize_dcgm_url)
 
     @on_init
     async def _initialize(self) -> None:
@@ -217,126 +154,9 @@ class GPUTelemetryManager(BaseComponentService):
 
         # Phase 1: Test reachability for all endpoints
         if self._collector_type == GPUTelemetryCollectorType.PYNVML:
-            await self._configure_pynvml_collector()
+            await configure_pynvml_collector(self)
         else:
-            await self._configure_dcgm_collectors()
-
-    async def _configure_pynvml_collector(self) -> None:
-        """Configure a single PyNVML collector for local GPU monitoring."""
-        self.debug("GPU Telemetry: Configuring pynvml collector")
-
-        try:
-            CollectorClass = plugins.get_class(
-                PluginType.GPU_TELEMETRY_COLLECTOR,
-                GPUTelemetryCollectorType.PYNVML,
-            )
-
-            collector_id = "pynvml_collector"
-            collector = CollectorClass(
-                collection_interval=self._collection_interval,
-                record_callback=self._on_telemetry_records,
-                error_callback=self._on_telemetry_error,
-                collector_id=collector_id,
-            )
-
-            is_available = await collector.is_url_reachable()
-            if is_available:
-                self._collectors[PYNVML_SOURCE_IDENTIFIER] = collector
-                self.debug("GPU Telemetry: pynvml collector configured successfully")
-                await self._send_telemetry_status(
-                    enabled=True,
-                    reason=None,
-                    endpoints_configured=[PYNVML_SOURCE_IDENTIFIER],
-                    endpoints_reachable=[PYNVML_SOURCE_IDENTIFIER],
-                )
-            else:
-                self.warning("GPU Telemetry: pynvml not available or no GPUs found")
-                await self._send_telemetry_status(
-                    enabled=False,
-                    reason="pynvml not available or no GPUs found",
-                    endpoints_configured=[PYNVML_SOURCE_IDENTIFIER],
-                    endpoints_reachable=[],
-                )
-        except RuntimeError as e:
-            # pynvml package not installed
-            self.error(f"GPU Telemetry: {e}")
-            await self._send_telemetry_status(
-                enabled=False,
-                reason=str(e),
-                endpoints_configured=[],
-                endpoints_reachable=[],
-            )
-        except Exception as e:  # noqa: BLE001 - fault-tolerant telemetry
-            self.error(f"GPU Telemetry: Failed to configure pynvml collector: {e}")
-            await self._send_telemetry_status(
-                enabled=False,
-                reason=f"pynvml configuration failed: {e}",
-                endpoints_configured=[],
-                endpoints_reachable=[],
-            )
-
-    async def _configure_dcgm_collectors(self) -> None:
-        """Configure DCGM collectors for HTTP-based GPU telemetry."""
-        for dcgm_url in self._dcgm_endpoints:
-            self.debug(f"GPU Telemetry: Testing reachability of {dcgm_url}")
-            collector_id = f"collector_{dcgm_url.replace(':', '_').replace('/', '_')}"
-            collector = DCGMTelemetryCollector(
-                dcgm_url=dcgm_url,
-                collection_interval=self._collection_interval,
-                record_callback=self._on_telemetry_records,
-                error_callback=self._on_telemetry_error,
-                collector_id=collector_id,
-            )
-
-            try:
-                is_reachable = await collector.is_url_reachable()
-                if is_reachable:
-                    self._collectors[dcgm_url] = collector
-                    self.debug(f"GPU Telemetry: DCGM endpoint {dcgm_url} is reachable")
-                else:
-                    self.debug(
-                        f"GPU Telemetry: DCGM endpoint {dcgm_url} is not reachable"
-                    )
-            except Exception as e:  # noqa: BLE001 - per-endpoint; skip unreachable and continue
-                self.error(f"GPU Telemetry: Exception testing {dcgm_url}: {e}")
-
-        # Determine which defaults are reachable for display filtering
-        reachable_endpoints = list(self._collectors.keys())
-        reachable_defaults = [
-            ep
-            for ep in Environment.GPU.DEFAULT_DCGM_ENDPOINTS
-            if ep in reachable_endpoints
-        ]
-        endpoints_for_display = self._compute_endpoints_for_display(reachable_defaults)
-
-        if not self._collectors:
-            # Telemetry manager shutdown occurs in _on_start_profiling to prevent hang
-            await self._send_telemetry_status(
-                enabled=False,
-                reason="no DCGM endpoints reachable",
-                endpoints_configured=endpoints_for_display,
-                endpoints_reachable=[],
-            )
-            return
-
-        # Phase 2: Capture baseline metrics before profiling starts
-        self.info("GPU Telemetry: Capturing baseline metrics...")
-        for dcgm_url, collector in self._collectors.items():
-            try:
-                await collector.initialize()
-                await collector.collect_and_process_metrics()
-                self.debug(f"GPU Telemetry: Captured baseline from {dcgm_url}")
-            except Exception as e:  # noqa: BLE001 - per-endpoint; skip baseline failure and continue
-                self.warning(
-                    f"GPU Telemetry: Failed to capture baseline from {dcgm_url}: {e}"
-                )
-
-        await self._send_telemetry_status(
-            enabled=True,
-            reason=None,
-            endpoints_configured=endpoints_for_display,
-            endpoints_reachable=reachable_endpoints,
-        )
+            await configure_dcgm_collectors(self)
 
     @on_command(CommandType.PROFILE_START)
     async def _on_start_profiling(self, message: Command) -> None:
@@ -367,7 +187,9 @@ class GPUTelemetryManager(BaseComponentService):
             await self._send_telemetry_status(
                 enabled=False,
                 reason="all collectors failed to start",
-                endpoints_configured=self._compute_endpoints_for_display([]),
+                endpoints_configured=compute_endpoints_for_display(
+                    [], self._user_provided_endpoints
+                ),
                 endpoints_reachable=[],
             )
             self._shutdown_task = asyncio.create_task(self._delayed_shutdown())

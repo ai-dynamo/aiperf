@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client import ApiClient
+from kubernetes_asyncio.client.exceptions import ApiException
 from pydantic import Field
 
 from aiperf.common.models import AIPerfBaseModel
@@ -77,6 +78,19 @@ async def _fetch_node_gpu_totals(api: ApiClient) -> tuple[int, int]:
     """Return (node_count, total_nvidia_gpus). Returns (0, 0) on failure."""
     try:
         node_list = await client.CoreV1Api(api).list_node()
+    except ApiException as e:
+        # 403 here is almost always the operator ClusterRole missing
+        # `nodes get/list` — log at ERROR so it surfaces in the usual
+        # RBAC-misconfig triage instead of masquerading as "0 nodes".
+        if (e.status or 0) == 403:
+            logger.error(
+                "Cluster node listing forbidden (403) — check that the "
+                "operator ClusterRole grants `nodes get/list`: %s",
+                e,
+            )
+        else:
+            logger.warning("Failed to query nodes (apiserver %s): %s", e.status, e)
+        return 0, 0
     except Exception as e:  # noqa: BLE001 - UI tolerates missing cluster-wide query
         logger.warning(f"Failed to query nodes: {e}")
         return 0, 0

@@ -2676,6 +2676,11 @@ class TestRecoverTerminatedController:
                 ),
             ),
             mock_patch(
+                "aiperf.operator.handlers.monitor.try_claim_completion",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            mock_patch(
                 "aiperf.operator.handlers.monitor.handle_completion",
                 new_callable=AsyncMock,
             ) as mock_handle_completion,
@@ -2689,6 +2694,7 @@ class TestRecoverTerminatedController:
                 status={"workers": {"total": 1}},
                 sb=sb,
                 key="default/job-1",
+                name="job-1",
             )
 
         assert handled is True
@@ -2752,6 +2758,7 @@ class TestRecoverTerminatedController:
                 status={"workers": {"total": 1}},
                 sb=sb,
                 key="default/job-1",
+                name="job-1",
             )
 
         assert handled is True
@@ -2829,6 +2836,7 @@ class TestRecoverTerminatedController:
                 status={"workers": {"total": 1}},
                 sb=sb,
                 key="default/job-1",
+                name="job-1",
             )
 
         assert handled is True

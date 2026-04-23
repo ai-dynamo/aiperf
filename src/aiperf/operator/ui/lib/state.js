@@ -20,11 +20,12 @@ export const loading = signal({
   history: false,
 });
 
-// Derived: jobs indexed by "namespace/name" key
+// Derived: jobs indexed by "namespace/name" key.
+// Note: /api/v1/jobs returns flat AIPerfJobInfo records, not raw CR objects.
 export const jobsById = computed(() => {
   const map = {};
   for (const job of jobs.value) {
-    const key = `${job.metadata?.namespace ?? 'default'}/${job.metadata?.name ?? ''}`;
+    const key = `${job.namespace ?? 'default'}/${job.name ?? ''}`;
     map[key] = job;
   }
   return map;
@@ -33,7 +34,7 @@ export const jobsById = computed(() => {
 // Derived: running jobs only
 export const runningJobs = computed(() =>
   jobs.value.filter((j) => {
-    const phase = (j.status?.phase ?? '').toLowerCase();
+    const phase = (j.phase ?? '').toLowerCase();
     return phase === 'running' || phase === 'initializing';
   }),
 );
@@ -41,7 +42,7 @@ export const runningJobs = computed(() =>
 // Derived: completed jobs only
 export const completedJobs = computed(() =>
   jobs.value.filter((j) => {
-    const phase = (j.status?.phase ?? '').toLowerCase();
+    const phase = (j.phase ?? '').toLowerCase();
     return phase === 'completed' || phase === 'succeeded';
   }),
 );
@@ -49,7 +50,7 @@ export const completedJobs = computed(() =>
 // Derived: failed jobs only
 export const failedJobs = computed(() =>
   jobs.value.filter((j) => {
-    const phase = (j.status?.phase ?? '').toLowerCase();
+    const phase = (j.phase ?? '').toLowerCase();
     return phase === 'failed' || phase === 'error';
   }),
 );

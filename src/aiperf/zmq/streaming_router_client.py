@@ -262,6 +262,44 @@ class ZMQStreamingRouterClient(BaseZMQClient):
                     f"failure to {identity}: {recreate_error!r}"
                 )
 
+    def _try_resolve_pending_request(self, message: Any) -> bool:
+        """Resolve the pending-request future if ``message.cid`` matches a pending one.
+
+        Returns True if the message was consumed as a response, False otherwise.
+        """
+        cid = getattr(message, "cid", None)
+        if not cid or cid not in self._pending_requests:
+            return False
+        future = self._pending_requests.pop(cid)
+        if not future.done():
+            future.set_result(message)
+        return True
+
+    async def _handle_incoming_message(self, data: list[bytes]) -> None:
+        """Decode and route a single multipart message received from the ROUTER socket."""
+        if self.is_trace_enabled:
+            self.trace(f"Received message: {data}")
+
+        # ROUTER envelope: [identity, message_bytes]
+        identity = data[0].decode("utf-8", "surrogateescape")
+        message = self._decoder.decode(data[-1])
+        routing_envelope: tuple[bytes, ...] = tuple(data[:-1])
+
+        if self.is_trace_enabled:
+            self.trace(f"Received {type(message).__name__} from {identity}: {message}")
+
+        if self._try_resolve_pending_request(message):
+            return
+
+        if self._receiver_handler is None:
+            self.warning(f"Received {type(message).__name__} but no handler registered")
+            return
+
+        self.execute_async(self._dispatch_message(identity, routing_envelope, message))
+        self._msg_count += 1
+        if self._yield_interval > 0 and self._msg_count % self._yield_interval == 0:
+            await yield_to_event_loop()
+
     @background_task(immediate=True, interval=None)
     async def _streaming_router_receiver(self) -> None:
         """Background task for receiving messages from DEALER clients."""
@@ -270,43 +308,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         while not self.stop_requested:
             try:
                 data = await self.socket.recv_multipart()
-                if self.is_trace_enabled:
-                    self.trace(f"Received message: {data}")
-
-                # ROUTER envelope: [identity, message_bytes]
-                identity = data[0].decode("utf-8", "surrogateescape")
-                message = self._decoder.decode(data[-1])
-
-                routing_envelope: tuple[bytes, ...] = tuple(data[:-1])
-
-                if self.is_trace_enabled:
-                    self.trace(
-                        f"Received {type(message).__name__} from {identity}: {message}"
-                    )
-
-                # Check if this is a response to a pending request (by cid)
-                cid = getattr(message, "cid", None)
-                if cid and cid in self._pending_requests:
-                    future = self._pending_requests.pop(cid)
-                    if not future.done():
-                        future.set_result(message)
-                    continue
-
-                if self._receiver_handler:
-                    self.execute_async(
-                        self._dispatch_message(identity, routing_envelope, message)
-                    )
-                    self._msg_count += 1
-                    if (
-                        self._yield_interval > 0
-                        and self._msg_count % self._yield_interval == 0
-                    ):
-                        await yield_to_event_loop()
-                else:
-                    self.warning(
-                        f"Received {type(message).__name__} but no handler registered"
-                    )
-
+                await self._handle_incoming_message(data)
             except zmq.Again:
                 self.trace("Router receiver task timed out")
                 await yield_to_event_loop()

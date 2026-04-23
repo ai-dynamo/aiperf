@@ -43,6 +43,202 @@ def _enable_hf_offline_mode() -> None:
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 
+def _configure_child_process() -> None:
+    """Prepare a child-process environment: signals and HF offline mode.
+
+    Ignore SIGINT and SIGTERM in child processes. SIGINT is ignored so only
+    the parent handles Ctrl+C. SIGTERM is ignored because graceful shutdown is
+    handled via the message bus (ShutdownCommand); process.terminate() is only
+    called after the message bus path has already timed out, and the manager
+    falls through to SIGKILL after the join timeout anyway. Ignoring SIGTERM
+    prevents SIGSEGV crashes that occur when SIGTERM arrives while C extension
+    code (uvloop, zmq, aiohttp, orjson) is executing.
+    """
+    if multiprocessing.parent_process() is None:
+        return
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+    # Skip HF offline mode in Kubernetes pods: the parent process may not
+    # have warmed the cache (e.g. controller pod), so children need network
+    # access.  Worker pods prefetch via WorkerGroupManager before spawning
+    # subprocesses, but the controller pod does not.
+    if not os.environ.get("AIPERF_JOB_ID"):
+        _enable_hf_offline_mode()
+
+
+def _resolve_service_id(
+    service_type: ServiceType,
+    service_id: str | None,
+    service_metadata: Any,
+) -> str:
+    """Resolve the final service_id for a bootstrapping service."""
+    if service_id:
+        return service_id
+    # Use AIPERF_POD_INDEX (set via Downward API from the JobSet job-index
+    # label) for deterministic pod-level IDs in Kubernetes.
+    pod_index = os.environ.get("AIPERF_POD_INDEX")
+    if pod_index is not None:
+        return f"{service_type}_{pod_index}"
+    if service_metadata.replicable:
+        return f"{service_type}_{uuid.uuid4().hex[:8]}"
+    return str(service_type)
+
+
+def _build_run_if_missing(
+    run: BenchmarkRun | None,
+    config: AIPerfConfig | None,
+) -> BenchmarkRun:
+    """Return ``run`` or build a standalone one from ``config``/env vars."""
+    if run is not None:
+        return run
+
+    from aiperf.config import BenchmarkRun as BenchmarkRunCls
+
+    if config is None:
+        from aiperf.config.loader import load_config_from_env
+
+        config = load_config_from_env()
+    return BenchmarkRunCls(
+        benchmark_id="standalone",
+        cfg=config,
+        artifact_dir=config.artifacts.dir,
+    )
+
+
+def _disable_gc_for_latency() -> None:
+    """Disable GC in child processes to prevent unpredictable latency spikes.
+
+    Only required in timing critical services such as Worker and TimingManager.
+    """
+    import gc
+
+    for _ in range(3):  # Run 3 times to ensure all objects are collected
+        gc.collect()
+    gc.freeze()
+    gc.set_threshold(0)
+    gc.disable()
+
+
+def _apply_custom_gpu_metrics(run: BenchmarkRun) -> None:
+    """Apply custom GPU metrics from resolver cache or re-parse if needed."""
+    if not run.cfg.gpu_telemetry.metrics_file:
+        return
+
+    from aiperf.gpu_telemetry import constants
+
+    if run.resolved.gpu_custom_metrics is not None:
+        custom_metrics = run.resolved.gpu_custom_metrics
+        new_dcgm_mappings = run.resolved.gpu_dcgm_mappings or {}
+    else:
+        from aiperf.gpu_telemetry.metrics_config import MetricsConfigLoader
+
+        loader = MetricsConfigLoader()
+        custom_metrics, new_dcgm_mappings = loader.build_custom_metrics_from_csv(
+            custom_csv_path=run.cfg.gpu_telemetry.metrics_file
+        )
+
+    constants.GPU_TELEMETRY_METRICS_CONFIG.extend(custom_metrics)
+    constants.DCGM_TO_FIELD_MAPPING.update(new_dcgm_mappings)
+
+
+async def _drive_service_lifecycle(
+    service: Any,
+    error_queue: ErrorQueue | None,
+) -> bool:
+    """Run the service's initialize/start/wait-for-stop lifecycle.
+
+    Returns True if the service recorded any exit errors.
+    """
+    try:
+        await service.initialize()
+        await service.start()
+        await service.stopped_event.wait()
+    except Exception as e:  # noqa: BLE001 - top-level service entry must log and surface any unhandled exception
+        service.exception(f"Unhandled exception in service: {e}")
+    finally:
+        if error_queue is not None and service._exit_errors:
+            from aiperf.common.error_queue import report_errors
+
+            report_errors(error_queue, service._exit_errors)
+    return bool(service._exit_errors)
+
+
+def _run_event_loop(coro: Any) -> None:
+    """Run ``coro`` on uvloop or asyncio, suppressing CancelledError on shutdown."""
+    with contextlib.suppress(asyncio.CancelledError):
+        if not Environment.SERVICE.DISABLE_UVLOOP:
+            import uvloop
+
+            uvloop.run(coro)
+        else:
+            asyncio.run(coro)
+
+
+async def _run_service(
+    ServiceClass: Any,
+    service_metadata: Any,
+    *,
+    run: BenchmarkRun,
+    service_id: str,
+    log_queue: LogQueue | None,
+    error_queue: ErrorQueue | None,
+    health_port: int | None,
+    api_port: int | None,
+    kwargs: dict[str, Any],
+) -> bool:
+    """Construct and drive the service lifecycle; return True on exit errors."""
+    # Disable health server in child processes to prevent port conflicts.
+    # Multiple child processes on the same host cannot bind to the same port.
+    # The main process (SystemController) handles health probes for local mode.
+    is_child_process = multiprocessing.parent_process() is not None
+    if is_child_process:
+        Environment.SERVICE.HEALTH_ENABLED = False
+
+    if Environment.DEV.ENABLE_YAPPI:
+        _start_yappi_profiling()
+
+    if service_metadata.disable_gc:
+        _disable_gc_for_latency()
+
+    _apply_custom_gpu_metrics(run)
+
+    service = ServiceClass(
+        run=run,
+        service_id=service_id,
+        health_port=health_port,
+        api_port=api_port,
+        **kwargs,
+    )
+
+    from aiperf.common.logging import setup_child_process_logging
+
+    setup_child_process_logging(log_queue, service.service_id, run.cfg)
+
+    # Redirect child process stdio to /dev/null unconditionally.
+    # - On macOS this fixes Textual UI terminal corruption.
+    # - On Linux this is required so that when the parent aiperf
+    #   process exits (e.g. after a startup failure) the inherited
+    #   stdout/stderr pipes close promptly; otherwise a harness doing
+    #   process.communicate() waits until every child also exits,
+    #   which can hang indefinitely if a grandchild is stuck.
+    if is_child_process:
+        _redirect_stdio_to_devnull()
+
+    # Initialize global RandomGenerator for reproducible random number generation.
+    # Always reset and then initialize to ensure a clean state.
+    from aiperf.common import random_generator as rng
+
+    rng.reset()
+    rng.init(run.cfg.random_seed)
+
+    has_errors = await _drive_service_lifecycle(service, error_queue)
+
+    if Environment.DEV.ENABLE_YAPPI:
+        _stop_yappi_profiling(service.service_id, run)
+    return has_errors
+
+
 def bootstrap_and_run_service(
     service_type: ServiceType,
     *,
@@ -57,167 +253,42 @@ def bootstrap_and_run_service(
 ) -> None:
     """Bootstrap the service and run it.
 
-    Args:
-        service_type: The type of the service to run.
-        run: The BenchmarkRun for this execution. If not provided, config
-            will be loaded from the ``config`` argument, then environment variables.
-        config: Optional AIPerfConfig. Used when ``run`` is not provided
-            (e.g. ``aiperf service --config-file``). Falls back to env vars.
-        service_id: Optional service ID. If not provided, will be auto-generated.
-        log_queue: Optional multiprocessing queue for child process logging. If provided,
-            the child process logging will be set up.
-        error_queue: Optional multiprocessing queue for reporting unhandled errors back
-            to the parent process.
-        health_port: HTTP port for health endpoints (/healthz, /readyz).
-        api_port: HTTP port for API endpoints (services that support it).
-        kwargs: Additional keyword arguments to pass to the service constructor.
+    If ``run`` is not provided it is built from ``config`` (or loaded from
+    env vars). ``service_id`` is auto-generated from pod index, a UUID, or
+    the service type. ``log_queue`` and ``error_queue`` wire child-process
+    logging and error reporting back to the parent. ``health_port`` and
+    ``api_port`` expose HTTP endpoints for services that support them.
+    Additional ``kwargs`` are forwarded to the service constructor.
     """
-    # Ignore SIGINT and SIGTERM in child processes. SIGINT is ignored so only
-    # the parent handles Ctrl+C. SIGTERM is ignored because graceful shutdown is
-    # handled via the message bus (ShutdownCommand); process.terminate() is only
-    # called after the message bus path has already timed out, and the manager
-    # falls through to SIGKILL after the join timeout anyway. Ignoring SIGTERM
-    # prevents SIGSEGV crashes that occur when SIGTERM arrives while C extension
-    # code (uvloop, zmq, aiohttp, orjson) is executing.
-    if multiprocessing.parent_process() is not None:
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)
-
-        # Skip HF offline mode in Kubernetes pods: the parent process may not
-        # have warmed the cache (e.g. controller pod), so children need network
-        # access.  Worker pods prefetch via WorkerGroupManager before spawning
-        # subprocesses, but the controller pod does not.
-        if not os.environ.get("AIPERF_JOB_ID"):
-            _enable_hf_offline_mode()
+    _configure_child_process()
 
     from aiperf.plugin import plugins
     from aiperf.plugin.enums import PluginType
 
     ServiceClass = plugins.get_class(PluginType.SERVICE, service_type)
     service_metadata = plugins.get_service_metadata(service_type)
-    if not service_id:
-        # Use AIPERF_POD_INDEX (set via Downward API from the JobSet job-index
-        # label) for deterministic pod-level IDs in Kubernetes.
-        pod_index = os.environ.get("AIPERF_POD_INDEX")
-        if pod_index is not None:
-            service_id = f"{service_type}_{pod_index}"
-        elif service_metadata.replicable:
-            service_id = f"{service_type}_{uuid.uuid4().hex[:8]}"
-        else:
-            service_id = str(service_type)
-
-    # Build a BenchmarkRun if not provided (standalone / env-var fallback)
-    if run is None:
-        from aiperf.config import BenchmarkRun as BenchmarkRunCls
-
-        if config is None:
-            from aiperf.config.loader import load_config_from_env
-
-            config = load_config_from_env()
-        run = BenchmarkRunCls(
-            benchmark_id="standalone",
-            cfg=config,
-            artifact_dir=config.artifacts.dir,
-        )
-
-    async def _run_service():
-        # Disable health server in child processes to prevent port conflicts.
-        # Multiple child processes on the same host cannot bind to the same port.
-        # The main process (SystemController) handles health probes for local mode.
-        is_child_process = multiprocessing.parent_process() is not None
-        if is_child_process:
-            Environment.SERVICE.HEALTH_ENABLED = False
-
-        if Environment.DEV.ENABLE_YAPPI:
-            _start_yappi_profiling()
-
-        if service_metadata.disable_gc:
-            # Disable garbage collection in child processes to prevent unpredictable latency spikes.
-            # Only required in timing critical services such as Worker and TimingManager.
-            import gc
-
-            for _ in range(3):  # Run 3 times to ensure all objects are collected
-                gc.collect()
-            gc.freeze()
-            gc.set_threshold(0)
-            gc.disable()
-
-        # Apply custom GPU metrics from resolver cache or re-parse if needed
-        if run.cfg.gpu_telemetry.metrics_file:
-            from aiperf.gpu_telemetry import constants
-
-            if run.resolved.gpu_custom_metrics is not None:
-                custom_metrics = run.resolved.gpu_custom_metrics
-                new_dcgm_mappings = run.resolved.gpu_dcgm_mappings or {}
-            else:
-                from aiperf.gpu_telemetry.metrics_config import MetricsConfigLoader
-
-                loader = MetricsConfigLoader()
-                custom_metrics, new_dcgm_mappings = (
-                    loader.build_custom_metrics_from_csv(
-                        custom_csv_path=run.cfg.gpu_telemetry.metrics_file
-                    )
-                )
-
-            constants.GPU_TELEMETRY_METRICS_CONFIG.extend(custom_metrics)
-            constants.DCGM_TO_FIELD_MAPPING.update(new_dcgm_mappings)
-
-        service = ServiceClass(
-            run=run,
-            service_id=service_id,
-            health_port=health_port,
-            api_port=api_port,
-            **kwargs,
-        )
-
-        from aiperf.common.logging import setup_child_process_logging
-
-        setup_child_process_logging(log_queue, service.service_id, run.cfg)
-
-        # Redirect child process stdio to /dev/null unconditionally.
-        # - On macOS this fixes Textual UI terminal corruption.
-        # - On Linux this is required so that when the parent aiperf
-        #   process exits (e.g. after a startup failure) the inherited
-        #   stdout/stderr pipes close promptly; otherwise a harness doing
-        #   process.communicate() waits until every child also exits,
-        #   which can hang indefinitely if a grandchild is stuck.
-        if is_child_process:
-            _redirect_stdio_to_devnull()
-
-        # Initialize global RandomGenerator for reproducible random number generation
-        from aiperf.common import random_generator as rng
-
-        # Always reset and then initialize the global random generator to ensure a clean state
-        rng.reset()
-        rng.init(run.cfg.random_seed)
-
-        nonlocal has_errors
-
-        try:
-            await service.initialize()
-            await service.start()
-            await service.stopped_event.wait()
-        except Exception as e:  # noqa: BLE001 - top-level service entry must log and surface any unhandled exception
-            service.exception(f"Unhandled exception in service: {e}")
-        finally:
-            if error_queue is not None and service._exit_errors:
-                from aiperf.common.error_queue import report_errors
-
-                report_errors(error_queue, service._exit_errors)
-            has_errors = bool(service._exit_errors)
-
-        if Environment.DEV.ENABLE_YAPPI:
-            _stop_yappi_profiling(service.service_id, run)
+    resolved_service_id = _resolve_service_id(
+        service_type, service_id, service_metadata
+    )
+    resolved_run = _build_run_if_missing(run, config)
 
     has_errors = False
 
-    with contextlib.suppress(asyncio.CancelledError):
-        if not Environment.SERVICE.DISABLE_UVLOOP:
-            import uvloop
+    async def _main() -> None:
+        nonlocal has_errors
+        has_errors = await _run_service(
+            ServiceClass,
+            service_metadata,
+            run=resolved_run,
+            service_id=resolved_service_id,
+            log_queue=log_queue,
+            error_queue=error_queue,
+            health_port=health_port,
+            api_port=api_port,
+            kwargs=kwargs,
+        )
 
-            uvloop.run(_run_service())
-        else:
-            asyncio.run(_run_service())
+    _run_event_loop(_main())
 
     if has_errors and error_queue is None:
         # Hard-exit so a hung cleanup path (e.g. a cancelled background task

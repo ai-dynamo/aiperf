@@ -44,6 +44,11 @@ class AIPerfLogger:
         logger.exception(f"Direct f-string usage: {e}")
     """
 
+    # Process-wide registry of source files to skip when attributing caller frames.
+    # Populated at import time by this module plus utils.py, aiperf_logger_mixin.py,
+    # and hooks_mixin.py so their frames don't appear as the log origin.
+    _ignored_files: list[str] = []
+
     def __init__(self, logger_name: str):
         self.logger_name = logger_name
         self._logger = logging.getLogger(logger_name)
@@ -146,7 +151,7 @@ class AIPerfLogger:
             filename = os.path.normcase(co.co_filename)
             # NOTE: The if-statement below was modified to use our own list of ignored files (_ignored_files).
             # This is required to avoid it appearing as all logs are coming from this file.
-            if filename in _ignored_files:
+            if filename in AIPerfLogger._ignored_files:
                 f = f.f_back
                 continue
             sinfo = None
@@ -243,7 +248,4 @@ class AIPerfLogger:
 # This is required to avoid it appearing as all logs are coming from this file.
 # NOTE: Using similar logic to logging._srcfile
 _srcfile = os.path.normcase(AIPerfLogger.find_caller.__code__.co_filename)
-_ignored_files = [
-    logging._srcfile,
-    _srcfile,
-]  # process-wide registry of source files to skip when attributing caller frames
+AIPerfLogger._ignored_files.extend([logging._srcfile, _srcfile])

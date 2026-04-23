@@ -4,46 +4,34 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import TYPE_CHECKING
 
 import orjson
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.control_structs import Command, ServerMetricsStatus
-from aiperf.common.enums import (
-    CommandType,
-    MessageType,
-    ServerMetricsDiscoveryMode,
-)
+from aiperf.common.enums import CommandType, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.hooks import on_command, on_message, on_stop
-from aiperf.common.messages import ProcessServerMetricsResultMessage
-from aiperf.common.metric_utils import normalize_metrics_endpoint_url
 from aiperf.common.models import (
     ErrorDetails,
-    ErrorDetailsCount,
     ErrorTrackingState,
-    ProcessServerMetricsResult,
     ServerMetricsRecord,
 )
 from aiperf.credit.messages import CreditPhaseStartMessage
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServerMetricsProcessorType
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
-from aiperf.server_metrics.discovery.kubernetes import (
-    discover_kubernetes_endpoints,
-    is_running_in_kubernetes,
-)
+from aiperf.server_metrics.endpoint_resolver import EndpointResolver
 from aiperf.server_metrics.protocols import (
     ServerMetricsAccumulatorProtocol,
     ServerMetricsProcessorProtocol,
 )
+from aiperf.server_metrics.result_publisher import publish_server_metrics_result
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
-    from aiperf.config.artifacts import ServerMetricsDiscoveryConfig
 
 
 class ServerMetricsManager(BaseComponentService):
@@ -75,42 +63,17 @@ class ServerMetricsManager(BaseComponentService):
         service_id: str | None = None,
         **kwargs,
     ) -> None:
-        super().__init__(
-            run=run,
-            service_id=service_id,
-            **kwargs,
-        )
+        super().__init__(run=run, service_id=service_id, **kwargs)
 
         self._collectors: dict[str, ServerMetricsDataCollector] = {}
 
-        # Check if server metrics is enabled in config
         server_metrics_config = run.cfg.server_metrics
         self._server_metrics_disabled = (
             not server_metrics_config.enabled if server_metrics_config else True
         )
 
-        # Store discovery configuration
-        self._discovery: ServerMetricsDiscoveryConfig | None = (
-            server_metrics_config.discovery if server_metrics_config else None
-        )
-
-        # Keep default inference-derived metrics URLs separate from explicit server
-        # metrics URLs so Kubernetes discovery can replace the load-balanced default
-        # targets without discarding user-provided scrape endpoints.
-        self._default_server_metrics_endpoints: list[str] = []
-        for url in run.cfg.endpoint.urls:
-            normalized_url = normalize_metrics_endpoint_url(url)
-            if normalized_url not in self._default_server_metrics_endpoints:
-                self._default_server_metrics_endpoints.append(normalized_url)
-
-        self._explicit_server_metrics_endpoints: list[str] = []
-        if server_metrics_config and server_metrics_config.urls:
-            for url in server_metrics_config.urls:
-                normalized_url = normalize_metrics_endpoint_url(url)
-                if normalized_url not in self._explicit_server_metrics_endpoints:
-                    self._explicit_server_metrics_endpoints.append(normalized_url)
-
-        self._server_metrics_endpoints = self._build_server_metrics_endpoints(
+        self._resolver = EndpointResolver(run)
+        self._server_metrics_endpoints = self._resolver.build_endpoints(
             include_default_endpoints=True
         )
         self.info(
@@ -119,9 +82,7 @@ class ServerMetricsManager(BaseComponentService):
             f"{self._server_metrics_endpoints}"
         )
 
-        # Use server metrics collection interval
         self._collection_interval = Environment.SERVER_METRICS.COLLECTION_INTERVAL
-
         # Task for delayed shutdown, created when no endpoints are reachable
         self._shutdown_task: asyncio.Task[None] | None = None
 
@@ -130,6 +91,10 @@ class ServerMetricsManager(BaseComponentService):
         self._error_state = ErrorTrackingState()
         self._result_published: bool = False
 
+        self._init_processors()
+
+    def _init_processors(self) -> None:
+        """Instantiate all SERVER_METRICS_PROCESSOR plugins; skip disabled/failed ones."""
         for entry in plugins.iter_entries(PluginType.SERVER_METRICS_PROCESSOR):
             try:
                 ProcessorClass = plugins.get_class(
@@ -168,7 +133,6 @@ class ServerMetricsManager(BaseComponentService):
         Args:
             message: Profile configuration command from SystemController
         """
-        # Check if server metrics are disabled via CLI flag
         if self._server_metrics_disabled:
             await self._send_server_metrics_status(
                 enabled=False,
@@ -178,11 +142,34 @@ class ServerMetricsManager(BaseComponentService):
             )
             return
 
-        self._server_metrics_endpoints = self._build_server_metrics_endpoints(
-            include_default_endpoints=self._should_include_default_endpoints()
+        await self._resolve_endpoints()
+        await self._probe_collectors()
+        reachable_endpoints = list(self._collectors.keys())
+
+        if not self._collectors:
+            # Server metrics manager shutdown occurs in _on_start_profiling to prevent hang
+            await self._send_server_metrics_status(
+                enabled=False,
+                reason="no Prometheus endpoints reachable",
+                endpoints_configured=self._server_metrics_endpoints,
+                endpoints_reachable=[],
+            )
+            return
+
+        await self._capture_baseline_metrics()
+        await self._send_server_metrics_status(
+            enabled=True,
+            reason=None,
+            endpoints_configured=self._server_metrics_endpoints,
+            endpoints_reachable=reachable_endpoints,
         )
 
-        # Run auto-discovery if enabled
+    async def _resolve_endpoints(self) -> None:
+        """Rebuild scrape targets and fold in auto-discovery results."""
+        self._server_metrics_endpoints = self._resolver.build_endpoints(
+            include_default_endpoints=self._resolver.should_include_default_endpoints(),
+        )
+
         discovered_urls = await self._run_metrics_discovery()
         added = 0
         for url in discovered_urls:
@@ -192,8 +179,9 @@ class ServerMetricsManager(BaseComponentService):
         if added > 0:
             self.info(f"Server Metrics: Auto-discovery added {added} endpoint(s)")
 
+    async def _probe_collectors(self) -> None:
+        """Create a collector per endpoint and keep only reachable ones."""
         self._collectors.clear()
-
         for endpoint_url in self._server_metrics_endpoints:
             self.debug(
                 lambda url=endpoint_url: f"Server Metrics: Testing reachability of {url}"
@@ -205,7 +193,6 @@ class ServerMetricsManager(BaseComponentService):
                 error_callback=self._on_server_metrics_error,
                 collector_id=endpoint_url,
             )
-
             try:
                 is_reachable = await collector.is_url_reachable()
                 if is_reachable:
@@ -220,19 +207,8 @@ class ServerMetricsManager(BaseComponentService):
             except Exception as e:  # noqa: BLE001 - per-endpoint; skip unreachable and continue
                 self.error(f"Server Metrics: Exception testing {endpoint_url}: {e}")
 
-        reachable_endpoints = list(self._collectors.keys())
-
-        if not self._collectors:
-            # Server metrics manager shutdown occurs in _on_start_profiling to prevent hang
-            await self._send_server_metrics_status(
-                enabled=False,
-                reason="no Prometheus endpoints reachable",
-                endpoints_configured=self._server_metrics_endpoints,
-                endpoints_reachable=[],
-            )
-            return
-
-        # Capture baseline metrics before profiling starts
+    async def _capture_baseline_metrics(self) -> None:
+        """Capture pre-profiling baseline scrape from every reachable collector."""
         self.info("Server Metrics: Capturing baseline metrics...")
         for endpoint_url, collector in self._collectors.items():
             try:
@@ -245,13 +221,6 @@ class ServerMetricsManager(BaseComponentService):
                 self.warning(
                     f"Server Metrics: Failed to capture baseline from {endpoint_url}: {e}"
                 )
-
-        await self._send_server_metrics_status(
-            enabled=True,
-            reason=None,
-            endpoints_configured=self._server_metrics_endpoints,
-            endpoints_reachable=reachable_endpoints,
-        )
 
     @on_command(CommandType.PROFILE_START)
     async def _on_start_profiling(self, message: Command) -> None:
@@ -366,7 +335,6 @@ class ServerMetricsManager(BaseComponentService):
                         f"Server Metrics: Failed to capture final state from {endpoint_url}: {e}"
                     )
 
-            # Stop all collectors after final scrape
             await self._stop_all_collectors()
 
         if self._result_published:
@@ -398,37 +366,12 @@ class ServerMetricsManager(BaseComponentService):
         """Publish accumulated server metrics results to subscribers. Idempotent."""
         # Latch before awaits so a failed publish still prevents republish on re-entry.
         self._result_published = True
-        error_summary = [
-            ErrorDetailsCount(error_details=err, count=count)
-            for err, count in self._error_state.error_counts.items()
-        ]
-        if not self._accumulator:
-            await self.publish(
-                ProcessServerMetricsResultMessage(
-                    service_id=self.service_id,
-                    server_metrics_result=ProcessServerMetricsResult(results=None),
-                )
-            )
-            return
-        resolved_start_ns = start_ns or time.time_ns()
-        resolved_end_ns = end_ns or time.time_ns()
-        if resolved_end_ns < resolved_start_ns:
-            self.warning(
-                f"Invalid time window start_ns={resolved_start_ns} > end_ns={resolved_end_ns}; "
-                "falling back to full-history export (start_ns=0)"
-            )
-            resolved_start_ns = 0
-
-        export_data = await self._accumulator.export_results(
-            start_ns=resolved_start_ns,
-            end_ns=resolved_end_ns,
-            error_summary=error_summary,
-        )
-        await self.publish(
-            ProcessServerMetricsResultMessage(
-                service_id=self.service_id,
-                server_metrics_result=ProcessServerMetricsResult(results=export_data),
-            )
+        await publish_server_metrics_result(
+            publisher=self,
+            accumulator=self._accumulator,
+            error_state=self._error_state,
+            start_ns=start_ns,
+            end_ns=end_ns,
         )
 
     @on_command(CommandType.PROFILE_CANCEL)
@@ -478,11 +421,7 @@ class ServerMetricsManager(BaseComponentService):
                 self.error(f"Failed to stop collector for {endpoint_url}: {e}")
 
     async def _delayed_shutdown(self) -> None:
-        """Shutdown service after a delay to allow command response to be sent.
-
-        Waits before calling stop() to ensure the command response
-        has time to be published and transmitted to the SystemController.
-        """
+        """Sleep briefly so the command response flushes, then stop the service."""
         await asyncio.sleep(Environment.SERVER_METRICS.SHUTDOWN_DELAY)
         await asyncio.shield(self.stop())
 
@@ -491,15 +430,8 @@ class ServerMetricsManager(BaseComponentService):
     ) -> None:
         """Fan out records to all loaded server metrics processors.
 
-        A single flattened gather runs over every (processor, record) pair.
-        Server metrics storage tolerates out-of-order ingestion, so per-record
-        serialization provides no correctness benefit.
-
-        Args:
-            records: List of ServerMetricsRecord objects from a collection cycle.
-                    Typically 1 record per successful scrape, may be empty if
-                    endpoint returned no metrics.
-            collector_id: Unique identifier of the collector (typically endpoint URL)
+        A single flattened gather runs over every (processor, record) pair;
+        storage tolerates out-of-order ingestion.
         """
         if not records:
             return
@@ -520,19 +452,11 @@ class ServerMetricsManager(BaseComponentService):
     async def _on_server_metrics_error(
         self, error: ErrorDetails, collector_id: str
     ) -> None:
-        """Async callback for receiving server metrics errors from collectors.
+        """Callback from collectors to record scrape errors into the local error state.
 
-        Called by ServerMetricsDataCollector when collection fails (e.g., network
-        timeout, HTTP error, parsing failure). Records the error against the local
-        error state so it is reflected in the published
-        ProcessServerMetricsResultMessage on PROFILE_COMPLETE.
-
-        This callback-based error handling prevents exceptions from crashing
-        the collector's background task, enabling recovery on subsequent scrapes.
-
-        Args:
-            error: ErrorDetails describing the collection error with exception info
-            collector_id: Unique identifier of the collector (typically endpoint URL)
+        Records flow into the ProcessServerMetricsResultMessage published on
+        PROFILE_COMPLETE; returning instead of raising keeps the collector's
+        background task alive across transient failures.
         """
         self._error_state.error_counts[error] += 1
 
@@ -543,18 +467,7 @@ class ServerMetricsManager(BaseComponentService):
         endpoints_configured: list[str] | None = None,
         endpoints_reachable: list[str] | None = None,
     ) -> None:
-        """Send server metrics status message to SystemController.
-
-        Publishes ServerMetricsStatusMessage to inform SystemController about metrics
-        availability and endpoint reachability. Used during configuration phase and
-        when metrics are disabled due to errors.
-
-        Args:
-            enabled: Whether server metrics collection is enabled/available
-            reason: Optional human-readable reason for status (e.g., "no Prometheus endpoints reachable")
-            endpoints_configured: List of Prometheus endpoint URLs configured
-            endpoints_reachable: List of Prometheus endpoint URLs that are accessible
-        """
+        """Publish ServerMetricsStatus to SystemController (config phase / disable paths)."""
         try:
             await self.control_client.send(
                 ServerMetricsStatus(
@@ -568,113 +481,6 @@ class ServerMetricsManager(BaseComponentService):
         except Exception as e:  # noqa: BLE001 - best-effort status publish
             self.error(f"Failed to send server metrics status message: {e}")
 
-    def _build_server_metrics_endpoints(
-        self, *, include_default_endpoints: bool
-    ) -> list[str]:
-        """Build the current scrape target list with stable deduplication."""
-        endpoints: list[str] = []
-
-        if include_default_endpoints:
-            for url in self._default_server_metrics_endpoints:
-                if url not in endpoints:
-                    endpoints.append(url)
-
-        for url in self._explicit_server_metrics_endpoints:
-            if url not in endpoints:
-                endpoints.append(url)
-
-        return endpoints
-
-    def _should_include_default_endpoints(self) -> bool:
-        """Whether inference-derived metrics URLs should remain scrape targets.
-
-        Kubernetes discovery should replace the default inference endpoint scrape
-        target because that endpoint often resolves to a load balancer rather than
-        a single pod, which can corrupt cumulative metrics.
-        """
-        if self._discovery is None:
-            return True
-
-        mode = self._discovery.mode
-        if mode == ServerMetricsDiscoveryMode.DISABLED:
-            return True
-        if mode == ServerMetricsDiscoveryMode.KUBERNETES:
-            return False
-        if mode == ServerMetricsDiscoveryMode.AUTO:
-            return not is_running_in_kubernetes()
-
-        return True
-
     async def _run_metrics_discovery(self) -> list[str]:
-        """Run metrics endpoint auto-discovery based on configuration.
-
-        Returns:
-            List of discovered endpoint URLs.
-        """
-        if self._discovery is None:
-            return []
-
-        mode = self._discovery.mode
-        if mode == ServerMetricsDiscoveryMode.DISABLED:
-            return []
-
-        if mode == ServerMetricsDiscoveryMode.KUBERNETES:
-            if not is_running_in_kubernetes():
-                self.warning(
-                    "Server Metrics: Kubernetes discovery requested but not running in K8s cluster"
-                )
-                return []
-            self.info("Server Metrics: Running Kubernetes discovery...")
-            try:
-                return await discover_kubernetes_endpoints(
-                    namespace=self._discovery.namespace,
-                    label_selector=self._discovery.label_selector,
-                )
-            except Exception as e:  # noqa: BLE001 - discovery is best-effort; fall through
-                self.warning(f"Server Metrics: Kubernetes discovery failed: {e}")
-                return []
-
-        # AUTO mode: try K8s if in-cluster
-        if is_running_in_kubernetes():
-            # Derive namespace from endpoint URLs if not explicitly set.
-            # Service DNS: "svc-name.namespace.svc.cluster.local" → namespace
-            ns = self._discovery.namespace
-            if ns is None:
-                ns = self._extract_namespace_from_endpoints()
-
-            self.info(
-                f"Server Metrics: Running Kubernetes auto-discovery"
-                f"{f' (namespace={ns})' if ns else ''}..."
-            )
-            try:
-                return await discover_kubernetes_endpoints(
-                    namespace=ns,
-                    label_selector=self._discovery.label_selector,
-                )
-            except Exception as e:  # noqa: BLE001 - discovery is best-effort; fall through
-                self.warning(f"Server Metrics: Kubernetes auto-discovery failed: {e}")
-                return []
-
-        self.debug(lambda: "Server Metrics: Not in K8s, skipping auto-discovery")
-        return []
-
-    def _extract_namespace_from_endpoints(self) -> str | None:
-        """Extract K8s namespace from endpoint service DNS names.
-
-        Parses ``svc-name.namespace.svc.cluster.local`` to extract namespace.
-        Returns the first namespace found, or None.
-        """
-        from urllib.parse import urlparse
-
-        for url in (
-            self._explicit_server_metrics_endpoints
-            + self._default_server_metrics_endpoints
-        ):
-            try:
-                host = urlparse(url).hostname or ""
-                parts = host.split(".")
-                if len(parts) >= 3 and parts[2] == "svc":
-                    return parts[1]
-            except (ValueError, AttributeError):
-                continue
-        return None
+        """Run metrics endpoint auto-discovery; delegates to EndpointResolver."""
+        return await self._resolver.run_discovery(self)

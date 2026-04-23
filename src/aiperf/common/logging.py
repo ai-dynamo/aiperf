@@ -354,6 +354,39 @@ class CustomRichHandler(RichHandler):
         super().__init__(*args, **kwargs)
         self.highlighter = ReprHighlighter()
 
+    @staticmethod
+    def _wrap_lines(
+        full_content: str, first_width: int, continuation_width: int
+    ) -> list[str]:
+        """Character-level wrap ``full_content`` using distinct widths for first/continuation lines."""
+        lines: list[str] = []
+        remaining = full_content
+        is_first_line = True
+        while remaining:
+            line_width = first_width if is_first_line else continuation_width
+            if len(remaining) <= line_width:
+                lines.append(remaining)
+                break
+            lines.append(remaining[:line_width])
+            remaining = remaining[line_width:]
+            is_first_line = False
+        return lines
+
+    def _style_line_segments(
+        self, line: str, char_pos: int, suffix_start_pos: int
+    ) -> list[Text]:
+        """Apply highlighter to message chars and dim-italic to suffix chars within a wrapped line."""
+        line_end_pos = char_pos + len(line)
+        if char_pos >= suffix_start_pos:
+            return [Text(line, style="dim italic")]
+        if line_end_pos <= suffix_start_pos:
+            return [self.highlighter(Text(line))]
+        msg_chars = suffix_start_pos - char_pos
+        return [
+            self.highlighter(Text(line[:msg_chars])),
+            Text(line[msg_chars:], style="dim italic"),
+        ]
+
     def render(
         self,
         *,
@@ -367,41 +400,23 @@ class CustomRichHandler(RichHandler):
         message = record.getMessage()[: self.MAX_MESSAGE_LENGTH]
         log_suffix = f"({record.filename}:{record.lineno})"
 
-        # Calculate widths
         console_width = self.console.size.width if self.console else self.DEFAULT_WIDTH
         target_width = max(console_width - 2, 40)
 
-        prefix = f"{timestamp} {record.levelname:<8} "
-        prefix_len = len(prefix)
+        prefix_len = len(f"{timestamp} {record.levelname:<8} ")
         content_width = target_width - prefix_len
 
-        # Combine message and suffix into one string for character-level wrapping
         full_content = f"{message} {log_suffix}"
-        suffix_start_pos = (
-            len(message) + 1
-        )  # Position where suffix starts in full_content
+        suffix_start_pos = len(message) + 1
 
         # Only indent continuation lines on wide consoles (90+)
         indent_continuations = console_width >= 90
-        # Continuation lines get full width when not indented
         continuation_width = content_width if indent_continuations else target_width
 
-        # Manual character-level wrapping
-        lines = []
-        remaining = full_content
-        is_first_line = True
-        while remaining:
-            line_width = content_width if is_first_line else continuation_width
-            if len(remaining) <= line_width:
-                lines.append(remaining)
-                break
-            lines.append(remaining[:line_width])
-            remaining = remaining[line_width:]
-            is_first_line = False
+        lines = self._wrap_lines(full_content, content_width, continuation_width)
 
-        # Build output with proper styling
-        parts = []
-        char_pos = 0  # Track position in full_content
+        parts: list[Text] = []
+        char_pos = 0
         for i, line in enumerate(lines):
             if i > 0:
                 parts.append(Text("\n"))
@@ -411,22 +426,8 @@ class CustomRichHandler(RichHandler):
                 parts.append(Text(f"{timestamp} ", style="log.time"))
                 parts.append(Text(f"{record.levelname:<8} ", style=level_style))
 
-            line_end_pos = char_pos + len(line)
-
-            # Determine how much of this line is message vs suffix
-            if char_pos >= suffix_start_pos:
-                # Entire line is suffix
-                parts.append(Text(line, style="dim italic"))
-            elif line_end_pos <= suffix_start_pos:
-                # Entire line is message
-                parts.append(self.highlighter(Text(line)))
-            else:
-                # Line contains both message and suffix
-                msg_chars = suffix_start_pos - char_pos
-                parts.append(self.highlighter(Text(line[:msg_chars])))
-                parts.append(Text(line[msg_chars:], style="dim italic"))
-
-            char_pos = line_end_pos
+            parts.extend(self._style_line_segments(line, char_pos, suffix_start_pos))
+            char_pos += len(line)
 
         formatted_log = Text.assemble(*parts)
         formatted_log.no_wrap = True  # Prevent Rich from re-wrapping

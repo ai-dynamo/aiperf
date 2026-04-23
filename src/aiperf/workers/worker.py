@@ -36,10 +36,6 @@ from aiperf.common.hooks import (
     on_start,
     on_stop,
 )
-from aiperf.common.inference_wire import (
-    build_inference_results_wire_message,
-    encode_inference_results_wire_message,
-)
 from aiperf.common.memory_profiler import MemoryProfiler
 from aiperf.common.messages import (
     DatasetConfiguredNotification,
@@ -59,11 +55,9 @@ from aiperf.common.models import (
     ErrorDetails,
     MemoryMapClientMetadata,
     ProcessHealth,
-    ReasoningResponseData,
     RequestInfo,
     RequestRecord,
     SSEMessage,
-    Text,
     Turn,
     WorkerTaskStats,
 )
@@ -104,6 +98,13 @@ from aiperf.plugin.enums import PluginType, ServiceRunType
 from aiperf.workers.clock_offset_tracker import ClockOffsetTracker
 from aiperf.workers.inference_client import InferenceClient
 from aiperf.workers.session_manager import UserSession, UserSessionManager
+from aiperf.workers.worker_post_processing import (
+    build_inference_wire_message,
+    create_health_message,
+    create_pod_worker_health,
+    process_response_sync,
+    serialize_inference_wire,
+)
 
 
 class Worker(BaseComponentService, ProcessHealthMixin):
@@ -187,18 +188,47 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self.service_id,
             artifact_dir=self.run.cfg.output.artifact_directory,
         )
-
         self.task_stats: WorkerTaskStats = WorkerTaskStats()
-
         self.credit_tasks: dict[int, asyncio.Task] = {}
 
+        self._init_inference_clients()
+        self._init_credit_channels()
+        self._init_pod_lifecycle_channel()
+        self._init_startup_state()
+
+        self.memory_usage_before_profiling: float | None = None
+        self._pod_index = os.environ.get("AIPERF_POD_INDEX")
+        self.session_manager: UserSessionManager = UserSessionManager()
+        self.clock_offset_tracker = ClockOffsetTracker(logger_name=self.service_id)
+        # Memory profiler for debugging memory growth (enabled via AIPERF_DEV_MEMORY_PROFILE_ENABLED)
+        self._memory_profiler = MemoryProfiler(service_id=self.service_id)
+
+        # Only send FirstToken messages when prefill concurrency limiting is active.
+        # Detecting first token requires parsing each SSE chunk, so skip this overhead
+        # when the orchestrator doesn't need TTFT events for slot management.
+        self._prefill_concurrency_enabled = any(
+            phase.prefill_concurrency is not None
+            for phase in self.run.cfg.phases.values()
+        )
+
+        # Only used as a fallback when dataset client is not initialized
+        # or was not available when the credit was dropped. Must be created here
+        # so it can be attached to the worker lifecycle.
+        self.conversation_request_client: RequestClientProtocol = (
+            self.comms.create_request_client(
+                address=CommAddress.DATASET_MANAGER_PROXY_FRONTEND,
+                bind=False,
+            )
+        )
+
+    def _init_inference_clients(self) -> None:
+        """Create push client for raw inference results and the inference client itself."""
         self.inference_results_push_client: PushClientProtocol = (
             self.comms.create_push_client(
                 CommAddress.RAW_INFERENCE_PROXY_FRONTEND,
                 codec=RAW_INFERENCE_CODEC,
             )
         )
-
         self.inference_client: InferenceClient = InferenceClient(
             run=self.run,
             service_id=self.service_id,
@@ -211,6 +241,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             ),
         )
 
+    def _init_credit_channels(self) -> None:
+        """Wire up DEALER sockets for the credit and return channels."""
         # Credit channel (Router -> Worker): receive-only, gets Credit and CancelCredits.
         # Identity must be unique - ZMQ ROUTER uses it to address messages.
         self.credit_dealer_client: StreamingDealerClientProtocol = (
@@ -234,6 +266,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
         )
 
+    def _init_pod_lifecycle_channel(self) -> None:
+        """Wire up the optional pod-lifecycle DEALER socket used in group-managed mode."""
         self.pod_lifecycle_dealer_client: StreamingDealerClientProtocol | None = None
         if self._is_group_managed_mode():
             self.pod_lifecycle_dealer_client = (
@@ -248,16 +282,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 self._on_pod_lifecycle_message
             )
 
-        self.memory_usage_before_profiling: float | None = None
-        self._pod_index = os.environ.get("AIPERF_POD_INDEX")
-
-        self.session_manager: UserSessionManager = UserSessionManager()
-
-        self.clock_offset_tracker = ClockOffsetTracker(logger_name=self.service_id)
-
-        # Memory profiler for debugging memory growth (enabled via AIPERF_DEV_MEMORY_PROFILE_ENABLED)
-        self._memory_profiler = MemoryProfiler(service_id=self.service_id)
-
+    def _init_startup_state(self) -> None:
+        """Initialize dataset/readiness state used by startup and lifecycle handlers."""
         # Dataset client for direct data access (eliminates DatasetManager bottleneck)
         # Initialized when DatasetConfiguredNotification is received via factory.
         # In Kubernetes mode (network client type), initialization is deferred until
@@ -269,25 +295,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._worker_ready_event = asyncio.Event()
         self._worker_ready_lock = asyncio.Lock()
         self._startup_state: WorkerStartupState | None = None
-
-        # Only send FirstToken messages when prefill concurrency limiting is active.
-        # Detecting first token requires parsing each SSE chunk, so skip this overhead
-        # when the orchestrator doesn't need TTFT events for slot management.
-        # Check all phases for prefill_concurrency settings
-        self._prefill_concurrency_enabled = any(
-            phase.prefill_concurrency is not None
-            for phase in self.run.cfg.phases.values()
-        )
-
-        # Only used as a fallback when dataset client is not initialized
-        # or was not available when the credit was dropped. Must be created here
-        # so it can be attached to the worker lifecycle.
-        self.conversation_request_client: RequestClientProtocol = (
-            self.comms.create_request_client(
-                address=CommAddress.DATASET_MANAGER_PROXY_FRONTEND,
-                bind=False,
-            )
-        )
 
     @on_start
     async def _send_worker_ready_message(self) -> None:
@@ -640,7 +647,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         await self.publish(self.create_health_message(health))
 
     def create_health_message(self, health: ProcessHealth) -> WorkerHealthMessage:
-        return WorkerHealthMessage(
+        return create_health_message(
             service_id=self.service_id,
             health=health,
             task_stats=self.task_stats,
@@ -648,30 +655,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     def create_pod_worker_health(self, health: ProcessHealth) -> GroupWorkerHealth:
         """Build the group-local msgspec health snapshot."""
-        io_counters = (
-            tuple(health.io_counters) if health.io_counters is not None else None
-        )
-        cpu_times = tuple(health.cpu_times) if health.cpu_times is not None else None
-        num_ctx_switches = (
-            tuple(health.num_ctx_switches)
-            if health.num_ctx_switches is not None
-            else None
-        )
-        return GroupWorkerHealth(
+        return create_pod_worker_health(
             service_id=self.service_id,
-            pid=health.pid,
-            create_time=health.create_time,
-            uptime=health.uptime,
-            cpu_usage=health.cpu_usage,
-            memory_usage=health.memory_usage,
-            pss_memory=health.pss_memory,
-            io_counters=io_counters,
-            cpu_times=cpu_times,
-            num_ctx_switches=num_ctx_switches,
-            num_threads=health.num_threads,
-            task_total=self.task_stats.total,
-            task_failed=self.task_stats.failed,
-            task_completed=self.task_stats.completed,
+            health=health,
+            task_stats=self.task_stats,
         )
 
     async def _publish_startup_state(self, state: WorkerStartupState) -> None:
@@ -876,77 +863,19 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """
         x_request_id = str(uuid.uuid4())
         x_correlation_id = credit_context.credit.x_correlation_id
-        credit = credit_context.credit
-
-        # First token callback - only needed when prefill concurrency is enabled
-        # Sends FirstToken to router for prefill concurrency slot release
-        # Returns True when meaningful content is found to stop looking for first token
-        first_token_callback = None
-        if self._prefill_concurrency_enabled:
-
-            async def first_token_callback(ttft_ns: int, message: SSEMessage) -> bool:
-                # Use endpoint to check if message has meaningful content
-                parsed = self.inference_client.endpoint.parse_response(message)
-                if parsed is None or parsed.data is None:
-                    return False  # Keep looking for meaningful content
-
-                # Meaningful content found - send FirstToken to router
-                await self.return_dealer_client.send(
-                    FirstToken(
-                        credit_id=credit.id,
-                        phase=credit.phase,
-                        ttft_ns=ttft_ns,
-                    )
-                )
-                # Track that FirstToken was sent so CreditReturn can report it
-                credit_context.first_token_sent = True
-                return True  # Stop looking, first token found
+        first_token_callback = self._make_first_token_callback(credit_context)
 
         try:
-            session = self.session_manager.get(x_correlation_id)
-            if session is None:
-                _conversation = await self._retrieve_conversation(
-                    conversation_id=credit_context.credit.conversation_id,
-                    credit_context=credit_context,
-                )
-                # Store url_index from first turn so all turns hit the same backend
-                session = self.session_manager.create_and_store(
-                    x_correlation_id,
-                    _conversation,
-                    credit_context.credit.num_turns,
-                    url_index=credit_context.credit.url_index,
-                )
-
+            session = await self._get_or_create_session(
+                x_correlation_id, credit_context
+            )
             session.advance_turn(credit_context.credit.turn_index)
-
-            self.task_stats.total += 1
-            request_info: RequestInfo = self._create_request_info(
+            await self._dispatch_turn(
                 session=session,
                 credit_context=credit_context,
                 x_request_id=x_request_id,
-                system_message=session.conversation.system_message,
-                user_context_message=session.conversation.user_context_message,
+                first_token_callback=first_token_callback,
             )
-            record: RequestRecord = await self.inference_client.send_request(
-                request_info, first_token_callback=first_token_callback
-            )
-            # Store clock offset for cross-machine timestamp alignment.
-            # Do NOT overwrite timestamp_ns — it was set at record creation
-            # (pre-request) and serves as the wall-clock anchor for all
-            # exported timestamps. Overwriting it post-request would shift
-            # every exported timestamp forward by the request latency.
-            record.clock_offset_ns = self.clock_offset_tracker.offset_ns
-            await self._send_inference_result_message(record)
-
-            # Copy request-level errors to credit context for CreditReturn tracking
-            if record.error is not None:
-                credit_context.error = record.error
-
-            if session.should_store_response() and (
-                resp_turn := await self._process_response(record)
-            ):
-                session.store_response(resp_turn)
-
         except asyncio.CancelledError:
             # Mark cancelled before re-raising so finally can evict session
             credit_context.cancelled = True
@@ -958,6 +887,96 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             # Evict session on final turn OR if cancelled (no retry expected)
             if credit_context.credit.is_final_turn or credit_context.cancelled:
                 self.session_manager.evict(x_correlation_id)
+
+    def _make_first_token_callback(self, credit_context: CreditContext):
+        """Build the FirstToken callback used only when prefill concurrency is enabled.
+
+        Detecting first token requires parsing each SSE chunk, so skip this overhead
+        when the orchestrator doesn't need TTFT events for slot management.
+        Returns True when meaningful content is found to stop looking for first token.
+        """
+        if not self._prefill_concurrency_enabled:
+            return None
+
+        credit = credit_context.credit
+
+        async def first_token_callback(ttft_ns: int, message: SSEMessage) -> bool:
+            # Use endpoint to check if message has meaningful content
+            parsed = self.inference_client.endpoint.parse_response(message)
+            if parsed is None or parsed.data is None:
+                return False  # Keep looking for meaningful content
+
+            # Meaningful content found - send FirstToken to router
+            await self.return_dealer_client.send(
+                FirstToken(
+                    credit_id=credit.id,
+                    phase=credit.phase,
+                    ttft_ns=ttft_ns,
+                )
+            )
+            # Track that FirstToken was sent so CreditReturn can report it
+            credit_context.first_token_sent = True
+            return True  # Stop looking, first token found
+
+        return first_token_callback
+
+    async def _get_or_create_session(
+        self,
+        x_correlation_id: str,
+        credit_context: CreditContext,
+    ) -> UserSession:
+        """Return the cached session for this correlation id, creating it on cache miss."""
+        session = self.session_manager.get(x_correlation_id)
+        if session is not None:
+            return session
+        _conversation = await self._retrieve_conversation(
+            conversation_id=credit_context.credit.conversation_id,
+            credit_context=credit_context,
+        )
+        # Store url_index from first turn so all turns hit the same backend
+        return self.session_manager.create_and_store(
+            x_correlation_id,
+            _conversation,
+            credit_context.credit.num_turns,
+            url_index=credit_context.credit.url_index,
+        )
+
+    async def _dispatch_turn(
+        self,
+        *,
+        session: UserSession,
+        credit_context: CreditContext,
+        x_request_id: str,
+        first_token_callback,
+    ) -> None:
+        """Send the current turn's request and forward the record to RecordProcessor."""
+        self.task_stats.total += 1
+        request_info: RequestInfo = self._create_request_info(
+            session=session,
+            credit_context=credit_context,
+            x_request_id=x_request_id,
+            system_message=session.conversation.system_message,
+            user_context_message=session.conversation.user_context_message,
+        )
+        record: RequestRecord = await self.inference_client.send_request(
+            request_info, first_token_callback=first_token_callback
+        )
+        # Store clock offset for cross-machine timestamp alignment.
+        # Do NOT overwrite timestamp_ns — it was set at record creation
+        # (pre-request) and serves as the wall-clock anchor for all
+        # exported timestamps. Overwriting it post-request would shift
+        # every exported timestamp forward by the request latency.
+        record.clock_offset_ns = self.clock_offset_tracker.offset_ns
+        await self._send_inference_result_message(record)
+
+        # Copy request-level errors to credit context for CreditReturn tracking
+        if record.error is not None:
+            credit_context.error = record.error
+
+        if session.should_store_response() and (
+            resp_turn := await self._process_response(record)
+        ):
+            session.store_response(resp_turn)
 
     def _create_request_info(
         self,
@@ -1104,45 +1123,26 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     def _process_response_sync(self, record: RequestRecord) -> Turn | None:
         """Synchronous response processing — runs in a thread pool."""
-        resp = self.inference_client.endpoint.extract_response_data(record)
-        output_texts = []
-        for response in resp:
-            if not response.data:
-                continue
-            if isinstance(response.data, ReasoningResponseData):
-                if response.data.content:
-                    output_texts.append(response.data.content)
-            else:
-                output_texts.append(response.data.get_text())
-        resp_text = "".join(output_texts)
-
-        return (
-            Turn(role="assistant", texts=[Text(contents=[resp_text])])
-            if resp_text
-            else None
-        )
+        return process_response_sync(self.inference_client, record)
 
     def _build_inference_wire_message(self, record: RequestRecord):
         """Build the msgspec worker->record-processor wire payload."""
-        include_raw_export_fields = self.run.cfg.artifacts.raw
-        raw_payload = None
-        if include_raw_export_fields and record.request_info is not None:
-            raw_payload = self.inference_client.endpoint.format_payload(
-                record.request_info
-            )
-        return build_inference_results_wire_message(
+        return build_inference_wire_message(
             service_id=self.service_id,
+            inference_client=self.inference_client,
             record=record,
-            raw_payload=raw_payload,
-            include_request_headers=include_raw_export_fields,
-            include_status=include_raw_export_fields,
+            include_raw_export_fields=self.run.cfg.artifacts.raw,
             include_trace_data=self.run.cfg.artifacts.trace,
         )
 
     def _serialize_inference_wire(self, record: RequestRecord) -> bytes:
         """Serialize the msgspec worker->record-processor wire payload."""
-        return encode_inference_results_wire_message(
-            self._build_inference_wire_message(record)
+        return serialize_inference_wire(
+            service_id=self.service_id,
+            inference_client=self.inference_client,
+            record=record,
+            include_raw_export_fields=self.run.cfg.artifacts.raw,
+            include_trace_data=self.run.cfg.artifacts.trace,
         )
 
     async def _send_inference_result_message(self, record: RequestRecord) -> None:

@@ -15,6 +15,32 @@ logger = logging.getLogger(__name__)
 DEFAULT_JSONL_FILENAME = str(OutputDefaults.PROFILE_EXPORT_JSONL_FILE)
 
 
+def _extract_profiling_metrics(line: bytes, jsonl_path: Path) -> dict | None:
+    """Parse one JSONL line and return its ``metrics`` dict if it's a valid profiling record."""
+    try:
+        record = orjson.loads(line)
+    except orjson.JSONDecodeError:
+        logger.warning("Skipping malformed JSONL line in %s", jsonl_path)
+        return None
+
+    if not isinstance(record, dict):
+        logger.warning("Skipping non-dict JSONL record in %s", jsonl_path)
+        return None
+
+    metadata = record.get("metadata", {})
+    if not isinstance(metadata, dict):
+        return None
+    if metadata.get("benchmark_phase") != "profiling":
+        return None
+    if record.get("error") is not None:
+        return None
+
+    metrics = record.get("metrics", {})
+    if not isinstance(metrics, dict):
+        return None
+    return metrics
+
+
 def iter_profiling_records(
     artifacts_path: Path,
     jsonl_filename: str = DEFAULT_JSONL_FILENAME,
@@ -38,33 +64,13 @@ def iter_profiling_records(
 
     try:
         with open(jsonl_path, "rb") as f:
-            for line in f:
-                line = line.strip()
+            for raw_line in f:
+                line = raw_line.strip()
                 if not line:
                     continue
-                try:
-                    record = orjson.loads(line)
-                except orjson.JSONDecodeError:
-                    logger.warning("Skipping malformed JSONL line in %s", jsonl_path)
-                    continue
-
-                if not isinstance(record, dict):
-                    logger.warning("Skipping non-dict JSONL record in %s", jsonl_path)
-                    continue
-
-                metadata = record.get("metadata", {})
-                if not isinstance(metadata, dict):
-                    continue
-                if metadata.get("benchmark_phase") != "profiling":
-                    continue
-                if record.get("error") is not None:
-                    continue
-
-                metrics = record.get("metrics", {})
-                if not isinstance(metrics, dict):
-                    continue
-
-                yield metrics
+                metrics = _extract_profiling_metrics(line, jsonl_path)
+                if metrics is not None:
+                    yield metrics
     except OSError:
         logger.exception("I/O error reading %s", jsonl_path)
 

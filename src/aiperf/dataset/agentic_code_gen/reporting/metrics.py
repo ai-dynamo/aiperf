@@ -376,107 +376,125 @@ def build_quality_metric(
     )
 
 
-def compute_quality_report(
+class _QualityAccumulator(AIPerfBaseModel):
+    """Accumulated per-turn/per-session arrays used to build a QualityReport."""
+
+    initial_ctx: list[float] = Field(default_factory=list, description="Initial inputs")
+    new_tokens: list[float] = Field(default_factory=list, description="New tokens")
+    output_lens: list[float] = Field(default_factory=list, description="Output lengths")
+    delays: list[float] = Field(default_factory=list, description="Inter-turn delays")
+    turns_per_session: list[float] = Field(
+        default_factory=list, description="Turns per session"
+    )
+    final_context_utils: list[float] = Field(
+        default_factory=list, description="Final context utilization"
+    )
+    end_reason_counts: dict[SessionEndReason, int] = Field(
+        default_factory=dict, description="Counts by end reason"
+    )
+
+
+def _collect_quality_accumulator(
     sessions: list[SynthesizedSession],
     config: SessionDistributionConfig,
-) -> QualityReport:
-    """Compute quality metrics comparing observed distributions to targets."""
-    all_initial_ctx: list[float] = []
-    all_new_tokens: list[float] = []
-    all_output_lens: list[float] = []
-    all_delays: list[float] = []
-    turns_per_session: list[float] = []
-    final_context_utils: list[float] = []
-    forced_retires = 0
-    probabilistic_resets = 0
-    target_turn_completions = 0
-    restart_splits = 0
-
+) -> _QualityAccumulator:
+    acc = _QualityAccumulator()
     for session in sessions:
-        turns_per_session.append(float(len(session.turns)))
-
-        if session.end_reason == SessionEndReason.FORCED_RETIRE:
-            forced_retires += 1
-        elif session.end_reason == SessionEndReason.PROBABILISTIC_RESET:
-            probabilistic_resets += 1
-        elif session.end_reason == SessionEndReason.TARGET_TURN_COUNT:
-            target_turn_completions += 1
-        elif session.end_reason == SessionEndReason.RESTART_SPLIT:
-            restart_splits += 1
-
-        last_turn = session.turns[-1]
-        final_context_utils.append(last_turn.input_length / config.max_prompt_tokens)
-
+        acc.turns_per_session.append(float(len(session.turns)))
+        acc.end_reason_counts[session.end_reason] = (
+            acc.end_reason_counts.get(session.end_reason, 0) + 1
+        )
+        acc.final_context_utils.append(
+            session.turns[-1].input_length / config.max_prompt_tokens
+        )
         for turn in session.turns:
             if turn.turn_index == 0:
-                all_initial_ctx.append(float(turn.input_length))
+                acc.initial_ctx.append(float(turn.input_length))
             else:
-                all_new_tokens.append(float(turn.new_tokens))
-                all_delays.append(turn.delay_ms)
-            all_output_lens.append(float(turn.output_length))
+                acc.new_tokens.append(float(turn.new_tokens))
+                acc.delays.append(turn.delay_ms)
+            acc.output_lens.append(float(turn.output_length))
+    return acc
 
-    observed_vs_target: dict[str, QualityMetric] = {}
 
-    if all_initial_ctx:
+def _build_observed_vs_target(
+    acc: _QualityAccumulator,
+    config: SessionDistributionConfig,
+) -> dict[str, QualityMetric]:
+    observed: dict[str, QualityMetric] = {}
+    if acc.initial_ctx:
         l1 = config.cache.layer1_tokens
         l15 = config.cache.layer1_5_tokens
-        observed_vs_target["initial_context"] = build_quality_metric(
-            np.array(all_initial_ctx),
+        observed["initial_context"] = build_quality_metric(
+            np.array(acc.initial_ctx),
             target_mean=l1 + l15 + config.cache.layer2.mean,
             target_median=l1 + l15 + config.cache.layer2.median,
         )
-
-    if all_output_lens:
-        observed_vs_target["generation_length"] = build_quality_metric(
-            np.array(all_output_lens),
+    if acc.output_lens:
+        observed["generation_length"] = build_quality_metric(
+            np.array(acc.output_lens),
             target_mean=config.generation_length.mean,
             target_median=config.generation_length.median,
         )
-
-    if all_new_tokens:
-        observed_vs_target["new_tokens_per_turn"] = build_quality_metric(
-            np.array(all_new_tokens),
+    if acc.new_tokens:
+        observed["new_tokens_per_turn"] = build_quality_metric(
+            np.array(acc.new_tokens),
             target_mean=config.new_tokens_per_turn.mean,
             target_median=config.new_tokens_per_turn.median,
         )
-
-    if all_delays:
-        observed_vs_target["inter_turn_delay_ms"] = build_quality_metric(
-            np.array(all_delays),
-            target_mean=None,
-            target_median=None,
+    if acc.delays:
+        observed["inter_turn_delay_ms"] = build_quality_metric(
+            np.array(acc.delays), target_mean=None, target_median=None
         )
-
-    if turns_per_session:
-        observed_vs_target["turns_per_session"] = build_quality_metric(
-            np.array(turns_per_session),
+    if acc.turns_per_session:
+        observed["turns_per_session"] = build_quality_metric(
+            np.array(acc.turns_per_session),
             target_mean=float(config.turns.mean) if config.turns is not None else None,
             target_median=float(config.turns.median)
             if config.turns is not None
             else None,
         )
+    return observed
 
-    tps_arr = np.array(turns_per_session) if turns_per_session else np.array([0.0])
-    session_stats = percentile_stats(tps_arr)
 
-    total = len(sessions)
-    fcu_arr = np.array(final_context_utils) if final_context_utils else np.array([0.0])
-    session_end_stats = SessionEndStats(
+def _build_session_end_stats(acc: _QualityAccumulator, total: int) -> SessionEndStats:
+    counts = acc.end_reason_counts
+    forced = counts.get(SessionEndReason.FORCED_RETIRE, 0)
+    resets = counts.get(SessionEndReason.PROBABILISTIC_RESET, 0)
+    target_turns = counts.get(SessionEndReason.TARGET_TURN_COUNT, 0)
+    restarts = counts.get(SessionEndReason.RESTART_SPLIT, 0)
+    fcu_arr = (
+        np.array(acc.final_context_utils)
+        if acc.final_context_utils
+        else np.array([0.0])
+    )
+    denom = max(total, 1)
+    return SessionEndStats(
         total_sessions=total,
-        forced_retires=forced_retires,
-        probabilistic_resets=probabilistic_resets,
-        target_turn_completions=target_turn_completions,
-        restart_splits=restart_splits,
-        retire_fraction=round(forced_retires / max(total, 1), 4),
-        reset_fraction=round(probabilistic_resets / max(total, 1), 4),
-        target_turn_fraction=round(target_turn_completions / max(total, 1), 4),
-        restart_split_fraction=round(restart_splits / max(total, 1), 4),
+        forced_retires=forced,
+        probabilistic_resets=resets,
+        target_turn_completions=target_turns,
+        restart_splits=restarts,
+        retire_fraction=round(forced / denom, 4),
+        reset_fraction=round(resets / denom, 4),
+        target_turn_fraction=round(target_turns / denom, 4),
+        restart_split_fraction=round(restarts / denom, 4),
         final_context_utilization=percentile_stats(fcu_arr),
     )
 
+
+def compute_quality_report(
+    sessions: list[SynthesizedSession],
+    config: SessionDistributionConfig,
+) -> QualityReport:
+    """Compute quality metrics comparing observed distributions to targets."""
+    acc = _collect_quality_accumulator(sessions, config)
+    tps_arr = (
+        np.array(acc.turns_per_session) if acc.turns_per_session else np.array([0.0])
+    )
     return QualityReport(
         config_summary=config_summary(config),
-        observed_vs_target=observed_vs_target,
-        session_stats=session_stats,
-        session_end_stats=session_end_stats,
+        observed_vs_target=_build_observed_vs_target(acc, config),
+        session_stats=percentile_stats(tps_arr),
+        session_end_stats=_build_session_end_stats(acc, len(sessions)),
     )

@@ -258,71 +258,71 @@ class ServerMetricsCsvExporter(MetricsBaseExporter):
         - Non-info metrics: Labels become columns (e.g., "method", "status")
         - Info metrics: Label columns left blank (labels contain config, not dimensions)
 
-        Layout optimizations reduce file size and improve readability by grouping
-        metrics with similar label sets together, minimizing CSV sparsity.
-
         Args:
             writer: CSV writer to output rows to
             metric_type: Type of metrics in this section (GAUGE, COUNTER, or HISTOGRAM)
             metrics: List of CsvMetricInfo objects to export in this section
         """
         stat_keys = STAT_KEYS_MAP[metric_type]
-
-        # Get optimal label column order (minimizes horizontal gaps)
         label_column_order = self._get_optimal_label_order(metrics)
 
-        # Build header: start + stats + label columns + end
-        header = BASE_HEADERS_START + stat_keys + label_column_order + BASE_HEADERS_END
+        writer.writerow(
+            self._build_section_header(metric_type, stat_keys, label_column_order)
+        )
 
-        # Add metadata column for histogram
-        if metric_type == PrometheusMetricType.HISTOGRAM:
-            header.append("buckets")
-
-        writer.writerow(header)
-
-        # Sort by bitmap pattern (vertical clustering), then name/endpoint/labels
         sorted_metrics = sorted(
             metrics,
             key=lambda m: self._get_vertical_sort_key(m, label_column_order),
         )
-
         for metric in sorted_metrics:
-            labels = metric.stats.labels or {}
-            is_info = metric.is_info_metric
-
-            # Start with base columns
-            row = [
-                metric.endpoint,
-                metric_type,
-                metric.metric_name,
-                metric.unit or "",
-            ]
-
-            series = metric.stats
-            for stat in stat_keys:
-                stat_value = self._get_stat_value(series, stat)
-                row.append(self._format_number(stat_value))
-
-            # Add individual label columns (blank for info metrics)
-            for label_key in label_column_order:
-                if is_info:
-                    row.append("")
-                else:
-                    row.append(labels.get(label_key, ""))
-
-            # Add description
-            row.append(metric.description)
-
-            # Add metadata column for histogram (key=value;key2=value2 format)
-            if metric_type == PrometheusMetricType.HISTOGRAM:
-                buckets = metric.stats.buckets or {}
-                row.append(
-                    ";".join(
-                        f"{k}={self._format_number(v)}" for k, v in buckets.items()
-                    )
+            writer.writerow(
+                self._build_metric_row(
+                    metric, metric_type, stat_keys, label_column_order
                 )
+            )
 
-            writer.writerow(row)
+    def _build_section_header(
+        self,
+        metric_type: PrometheusMetricType,
+        stat_keys: list[str],
+        label_column_order: list[str],
+    ) -> list[str]:
+        """Build the CSV header row for a metric-type section."""
+        header = BASE_HEADERS_START + stat_keys + label_column_order + BASE_HEADERS_END
+        if metric_type == PrometheusMetricType.HISTOGRAM:
+            header.append("buckets")
+        return header
+
+    def _build_metric_row(
+        self,
+        metric: CsvMetricInfo,
+        metric_type: PrometheusMetricType,
+        stat_keys: list[str],
+        label_column_order: list[str],
+    ) -> list[str]:
+        """Build a single CSV row for a metric, including stats, labels, and histogram buckets."""
+        labels = metric.stats.labels or {}
+        is_info = metric.is_info_metric
+
+        row: list[str] = [
+            metric.endpoint,
+            metric_type,
+            metric.metric_name,
+            metric.unit or "",
+        ]
+        for stat in stat_keys:
+            row.append(self._format_number(self._get_stat_value(metric.stats, stat)))
+        for label_key in label_column_order:
+            row.append("" if is_info else labels.get(label_key, ""))
+        row.append(metric.description)
+
+        if metric_type == PrometheusMetricType.HISTOGRAM:
+            buckets = metric.stats.buckets or {}
+            row.append(
+                ";".join(f"{k}={self._format_number(v)}" for k, v in buckets.items())
+            )
+
+        return row
 
     def _write_info_section(
         self,

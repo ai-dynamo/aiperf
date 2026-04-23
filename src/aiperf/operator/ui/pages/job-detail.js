@@ -732,7 +732,7 @@ function FileViewerModal({ filename, url, onClose }) {
         .then(t => setRawContent(t))
         .catch(() => setRawContent(null));
     }
-  }, [url]);
+  }, [url, ext]);
 
   function handleDownload() {
     const a = document.createElement('a');
@@ -834,7 +834,13 @@ function buildHistogramChartData(metric, color) {
   let labels, counts;
   if (Array.isArray(raw)) {
     if (raw.length === 0) return null;
-    labels = raw.map(b => b.le === Infinity || b.le >= 1e10 ? '+Inf' : String(b.le));
+    labels = raw.map(b => {
+      // JSON cannot carry Infinity; backends typically send +Inf as null
+      // or a large sentinel. Normalize them all.
+      if (b.le == null || b.le === Infinity || b.le === '+Inf' || b.le === 'Inf') return '+Inf';
+      if (typeof b.le === 'number' && b.le >= 1e10) return '+Inf';
+      return String(b.le);
+    });
     counts = raw.map(b => b.count ?? 0);
   } else if (typeof raw === 'object') {
     const entries = Object.entries(raw);
@@ -1149,8 +1155,12 @@ function PerRecordAnalysis({ records }) {
 
   const def = COL_DEFS.find(d => d.key === sortCol) ?? COL_DEFS[0];
   const sorted = [...rows].sort((a, b) => {
-    const av = def.get(a) ?? -Infinity;
-    const bv = def.get(b) ?? -Infinity;
+    const av = def.get(a);
+    const bv = def.get(b);
+    // Nulls always sort last regardless of direction.
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
     return sortAsc ? av - bv : bv - av;
   });
   const displayRows = tableExpanded ? sorted : sorted.slice(0, 50);
@@ -1319,26 +1329,26 @@ export function JobDetail({ namespace, name }) {
     );
 
     // Fetch job config (original CR spec)
-    fetch(`/api/v1/config/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)
+    fetch(`/api/v1/config/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { signal: ac.signal })
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d) setJobConfig(d); })
       .catch(() => {});
 
     // Fetch available result files directly
-    fetch(`/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)
+    fetch(`/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { signal: ac.signal })
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (!d) return;
         const fileList = d?.files ?? [];
         setFiles(fileList);
         if (fileList.some(f => f.name === 'server_metrics_export.json')) {
-          fetch(`/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/server_metrics_export.json`)
+          fetch(`/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/server_metrics_export.json`, { signal: ac.signal })
             .then(r => r.ok ? r.json() : null)
             .then(sm => { if (sm) setServerMetrics(sm); })
             .catch(() => {});
         }
         if (fileList.some(f => f.name === 'profile_export.jsonl')) {
-          fetch(`/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/profile_export.jsonl`)
+          fetch(`/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/profile_export.jsonl`, { signal: ac.signal })
             .then(r => r.ok ? r.text() : null)
             .then(text => {
               if (!text) return;
@@ -1383,20 +1393,16 @@ export function JobDetail({ namespace, name }) {
   }
 
   function downloadAll() {
-    for (const f of files) {
-      downloadFile(f.name);
-    }
+    // Browsers throttle synthetic download clicks from one user gesture;
+    // space them out so all files actually start downloading.
+    files.forEach((f, i) => {
+      setTimeout(() => downloadFile(f.name), i * 300);
+    });
   }
 
   function exportJson() {
     const exportFile = files.find(f => f.name === 'profile_export_aiperf.json');
-    if (exportFile) {
-      downloadFile(exportFile.name);
-    } else {
-      // Fall back to downloading the first json file if the canonical name isn't present
-      const jsonFile = files.find(f => f.name.endsWith('.json'));
-      if (jsonFile) downloadFile(jsonFile.name);
-    }
+    if (exportFile) downloadFile(exportFile.name);
   }
 
   async function handleCancel() {
@@ -1444,7 +1450,7 @@ export function JobDetail({ namespace, name }) {
   const ttftAvg = summary.ttft_avg_ms ?? null;
   const latP99 = summary.latency_p99_ms ?? info.latencyP99Ms ?? null;
   const errorRate = summary.error_rate ?? null;
-  const errorCount = errorRate != null ? (errorRate > 0 ? fmtNumber(errorRate, 1) + '%' : '0') : null;
+  const errorCount = errorRate != null ? fmtNumber(errorRate, 1) + '%' : null;
 
   // Metrics from results (nested under .metrics in the CR status)
   const rawResults = status.results ?? null;
@@ -1511,7 +1517,7 @@ export function JobDetail({ namespace, name }) {
     },
   };
 
-  const hasExportFile = files.some(f => f.name === 'profile_export_aiperf.json' || f.name.endsWith('.json'));
+  const hasExportFile = files.some(f => f.name === 'profile_export_aiperf.json');
 
   function fileColor(filename) {
     const ext = filename.split('.').pop().toLowerCase();

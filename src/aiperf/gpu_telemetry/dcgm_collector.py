@@ -25,6 +25,20 @@ SCALING_FACTORS = {
 }
 
 
+def _build_gpu_metadata(gpu_index: int, labels: dict) -> GpuMetadata:
+    """Build a GpuMetadata from a DCGM sample's label set."""
+    return GpuMetadata(
+        gpu_index=gpu_index,
+        gpu_model_name=labels.get("modelName"),
+        gpu_uuid=labels.get("UUID"),
+        pci_bus_id=labels.get("pci_bus_id"),
+        device=labels.get("device"),
+        hostname=labels.get("Hostname"),
+        namespace=labels.get("namespace"),
+        pod_name=labels.get("pod"),
+    )
+
+
 class DCGMTelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
     """Collects GPU telemetry metrics from DCGM exporter HTTP endpoints.
 
@@ -115,74 +129,80 @@ class DCGMTelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
             return []
 
         current_timestamp = time.time_ns()
-        gpu_data = {}
-        gpu_metadata = {}
-
         try:
-            for family in text_string_to_metric_families(metrics_data):
-                for sample in family.samples:
-                    metric_name = sample.name
-                    labels = sample.labels
-                    value = sample.value
-
-                    # Skip non-finite values early (value != value checks for NaN)
-                    if isinstance(value, float) and (
-                        value != value or value in (float("inf"), float("-inf"))
-                    ):
-                        continue
-
-                    gpu_index = labels.get("gpu")
-                    if gpu_index is not None:
-                        try:
-                            gpu_index = int(gpu_index)
-                        except ValueError:
-                            continue
-                    else:
-                        continue
-
-                    if gpu_index not in gpu_metadata:
-                        gpu_metadata[gpu_index] = GpuMetadata(
-                            gpu_index=gpu_index,
-                            gpu_model_name=labels.get("modelName"),
-                            gpu_uuid=labels.get("UUID"),
-                            pci_bus_id=labels.get("pci_bus_id"),
-                            device=labels.get("device"),
-                            hostname=labels.get("Hostname"),
-                            namespace=labels.get("namespace"),
-                            pod_name=labels.get("pod"),
-                        )
-
-                    base_metric_name = metric_name.removesuffix("_total")
-                    if base_metric_name in DCGM_TO_FIELD_MAPPING:
-                        field_name = DCGM_TO_FIELD_MAPPING[base_metric_name]
-                        gpu_data.setdefault(gpu_index, {})[field_name] = value
+            gpu_data, gpu_metadata = self._aggregate_samples(metrics_data)
         except ValueError as e:
             self.warning(f"Failed to parse Prometheus metrics - invalid format: {e}")
             return []
 
+        return self._build_records(current_timestamp, gpu_data, gpu_metadata)
+
+    def _aggregate_samples(
+        self, metrics_data: str
+    ) -> tuple[dict[int, dict], dict[int, GpuMetadata]]:
+        """Walk Prometheus samples, grouping metric values and metadata by GPU index."""
+        gpu_data: dict[int, dict] = {}
+        gpu_metadata: dict[int, GpuMetadata] = {}
+        for family in text_string_to_metric_families(metrics_data):
+            for sample in family.samples:
+                gpu_index = self._sample_gpu_index(sample.value, sample.labels)
+                if gpu_index is None:
+                    continue
+
+                if gpu_index not in gpu_metadata:
+                    gpu_metadata[gpu_index] = _build_gpu_metadata(
+                        gpu_index, sample.labels
+                    )
+
+                base_metric_name = sample.name.removesuffix("_total")
+                field_name = DCGM_TO_FIELD_MAPPING.get(base_metric_name)
+                if field_name is not None:
+                    gpu_data.setdefault(gpu_index, {})[field_name] = sample.value
+        return gpu_data, gpu_metadata
+
+    @staticmethod
+    def _sample_gpu_index(value: float, labels: dict) -> int | None:
+        """Return the integer gpu index for a sample, or None to skip it."""
+        # Skip non-finite values early (value != value checks for NaN)
+        if isinstance(value, float) and (
+            value != value or value in (float("inf"), float("-inf"))
+        ):
+            return None
+        raw = labels.get("gpu")
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
+    def _build_records(
+        self,
+        current_timestamp: int,
+        gpu_data: dict[int, dict],
+        gpu_metadata: dict[int, GpuMetadata],
+    ) -> list[TelemetryRecord]:
         records = []
         for gpu_index, metrics in gpu_data.items():
             metadata = gpu_metadata.get(gpu_index)
             if metadata is None:
                 self.warning(f"No metadata found for GPU {gpu_index}")
                 continue
-            scaled_metrics = self._apply_scaling_factors(metrics)
-
-            record = TelemetryRecord(
-                timestamp_ns=current_timestamp,
-                dcgm_url=self.endpoint_url,
-                gpu_index=metadata.gpu_index,
-                gpu_uuid=metadata.gpu_uuid,
-                gpu_model_name=metadata.gpu_model_name,
-                pci_bus_id=metadata.pci_bus_id,
-                device=metadata.device,
-                hostname=metadata.hostname,
-                namespace=metadata.namespace,
-                pod_name=metadata.pod_name,
-                telemetry_data=scaled_metrics,
+            records.append(
+                TelemetryRecord(
+                    timestamp_ns=current_timestamp,
+                    dcgm_url=self.endpoint_url,
+                    gpu_index=metadata.gpu_index,
+                    gpu_uuid=metadata.gpu_uuid,
+                    gpu_model_name=metadata.gpu_model_name,
+                    pci_bus_id=metadata.pci_bus_id,
+                    device=metadata.device,
+                    hostname=metadata.hostname,
+                    namespace=metadata.namespace,
+                    pod_name=metadata.pod_name,
+                    telemetry_data=self._apply_scaling_factors(metrics),
+                )
             )
-            records.append(record)
-
         return records
 
     def _apply_scaling_factors(self, metrics: dict) -> dict:

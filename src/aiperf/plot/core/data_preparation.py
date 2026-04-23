@@ -50,6 +50,57 @@ def prepare_request_timeseries(run: RunData) -> pd.DataFrame:
     return df
 
 
+def _request_throughput_events(row: pd.Series) -> list[dict[str, float | int]]:
+    """Build the two (start/end) throughput events for a single request row.
+
+    Returns an empty list when the row lacks valid timestamps, has zero output
+    tokens, or the generation window collapses to zero duration.
+    """
+    request_start_ns = row.get("request_start_ns")
+    request_end_ns = row.get("request_end_ns")
+
+    if pd.isna(request_start_ns) or pd.isna(request_end_ns):
+        return []
+
+    if isinstance(request_start_ns, pd.Timestamp):
+        request_start_ns = request_start_ns.value
+    if isinstance(request_end_ns, pd.Timestamp):
+        request_end_ns = request_end_ns.value
+
+    request_start_ns = int(request_start_ns)
+    request_end_ns = int(request_end_ns)
+
+    ttft_ms = row.get("time_to_first_token", 0)
+    if pd.isna(ttft_ms):
+        ttft_ms = 0
+
+    generation_start_ns = (
+        request_start_ns + int(ttft_ms * 1e6) if ttft_ms > 0 else request_start_ns
+    )
+
+    output_tokens = row.get("output_sequence_length", 0)
+    if pd.isna(output_tokens):
+        output_tokens = 0
+
+    generation_duration_ns = request_end_ns - generation_start_ns
+    if generation_duration_ns <= 0 or output_tokens <= 0:
+        return []
+
+    token_rate = output_tokens / (generation_duration_ns / 1e9)
+    return [
+        {
+            "timestamp_ns": generation_start_ns,
+            "delta_rate": token_rate,
+            "active_delta": 1,
+        },
+        {
+            "timestamp_ns": request_end_ns,
+            "delta_rate": -token_rate,
+            "active_delta": -1,
+        },
+    ]
+
+
 def calculate_throughput_events(requests_df: pd.DataFrame) -> pd.DataFrame:
     """
     Calculate throughput using event-based approach with evenly dispersed tokens.
@@ -84,54 +135,9 @@ def calculate_throughput_events(requests_df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         DataFrame with columns: timestamp_s, throughput_tokens_per_sec, active_requests
     """
-    events = []
-
+    events: list[dict[str, float | int]] = []
     for _, row in requests_df.iterrows():
-        request_start_ns = row.get("request_start_ns")
-        request_end_ns = row.get("request_end_ns")
-
-        if pd.isna(request_start_ns) or pd.isna(request_end_ns):
-            continue
-
-        if isinstance(request_start_ns, pd.Timestamp):
-            request_start_ns = request_start_ns.value
-        if isinstance(request_end_ns, pd.Timestamp):
-            request_end_ns = request_end_ns.value
-
-        request_start_ns = int(request_start_ns)
-        request_end_ns = int(request_end_ns)
-
-        ttft_ms = row.get("time_to_first_token", 0)
-        if pd.isna(ttft_ms):
-            ttft_ms = 0
-
-        generation_start_ns = (
-            request_start_ns + int(ttft_ms * 1e6) if ttft_ms > 0 else request_start_ns
-        )
-
-        output_tokens = row.get("output_sequence_length", 0)
-        if pd.isna(output_tokens):
-            output_tokens = 0
-
-        generation_duration_ns = request_end_ns - generation_start_ns
-
-        if generation_duration_ns > 0 and output_tokens > 0:
-            token_rate = output_tokens / (generation_duration_ns / 1e9)
-
-            events.append(
-                {
-                    "timestamp_ns": generation_start_ns,
-                    "delta_rate": token_rate,
-                    "active_delta": 1,
-                }
-            )
-            events.append(
-                {
-                    "timestamp_ns": request_end_ns,
-                    "delta_rate": -token_rate,
-                    "active_delta": -1,
-                }
-            )
+        events.extend(_request_throughput_events(row))
 
     if not events:
         return pd.DataFrame(

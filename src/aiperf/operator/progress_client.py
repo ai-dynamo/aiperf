@@ -580,9 +580,12 @@ class ProgressClient:
             return await self._stream_result_file(url, filename, dest_path)
         except aiohttp.ClientError as e:
             logger.warning(f"Failed to download {filename}: {e}")
-            # Remove partial file so retries don't consume corrupted data
-            if dest_path.exists():
-                dest_path.unlink(missing_ok=True)
+            # Remove partial file so retries don't consume corrupted data.
+            # With COMPRESS_ON_DISK the writers in progress_download.save_*
+            # land on ``dest_path.name + ".zst"``, not on ``dest_path``
+            # itself, so clean both to avoid leaking a half-written .zst.
+            dest_path.unlink(missing_ok=True)
+            (dest_path.parent / (dest_path.name + ".zst")).unlink(missing_ok=True)
             return False
 
     async def _stream_result_file(

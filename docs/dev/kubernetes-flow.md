@@ -1,3 +1,9 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Kubernetes Flow
+---
+
 # Kubernetes Flow End-to-End
 
 This document describes the complete flow from user command to benchmark completion when running AIPerf on Kubernetes.
@@ -136,7 +142,9 @@ likewise each run in their own container inside a worker pod.
 │    gpu-telemetry-manager  GPU metrics via DCGM (optional)                   │
 │    server-metrics-manager Prometheus metrics (optional)                     │
 │    results-sidecar        Serves exported results after controller exit     │
-│    event-bus-proxy        XPUB/XSUB ZMQ proxy (when enabled)                │
+│    event-bus-proxy        XPUB/XSUB ZMQ proxy sidecar (AIPERF_K8S_EVENT_     │
+│                           BUS_SIDECAR_ENABLED=true by default; isolates     │
+│                           pub/sub I/O from the SystemController process)    │
 │                                                                             │
 │  Per-container health ports (8080-8088); API on 9090; results-sidecar 9091  │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -339,15 +347,16 @@ DatasetManager                      API Service                    WorkerGroupMa
                                               └─────────────────┘
 ```
 
-Results are available via the API service or by copying files from the controller pod.
+In operator mode, results are served by the `results-server` container inside the operator deployment (port 8081), which reads from the operator PVC. In direct mode (no operator) or when the operator PVC is unavailable, results can be copied from the controller pod's `results-sidecar` or via `kubectl cp`.
 
 ### Retrieval Methods
 
 ```bash
-# Via API service (preferred)
+# Operator mode (default): fetch via operator results-server
 aiperf kube results {job_id}
 
-# Copy from pod
+# Direct mode / fallback: copy from the controller pod
+aiperf kube results {job_id} --from-pods
 kubectl cp <controller-pod>:/results ./results -n <namespace>
 ```
 

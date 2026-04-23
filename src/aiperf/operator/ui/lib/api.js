@@ -116,7 +116,7 @@ export function poll(fn, intervalMs, abortSignal) {
 
   abortSignal.addEventListener('abort', () => {
     if (handle !== null) clearTimeout(handle);
-  });
+  }, { once: true });
 
   tick();
 }

@@ -12,7 +12,10 @@ from prometheus_client.parser import text_string_to_metric_families
 from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.environment import Environment
 from aiperf.common.mixins import BaseMetricsCollectorMixin
-from aiperf.common.mixins.base_metrics_collector_mixin import FetchResult
+from aiperf.common.mixins.base_metrics_collector_mixin import (
+    FetchResult,
+    HttpTraceTiming,
+)
 from aiperf.common.models import ErrorDetails
 from aiperf.common.models.server_metrics_models import (
     MetricFamily,
@@ -160,76 +163,18 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
         Raises:
             ValueError: If parsing fails
         """
-        trace_timing = fetch_result.trace_timing
-
         if not fetch_result.text or not fetch_result.text.strip():
             return None
 
-        # Use first_byte_ns as timestamp if available (best approximation of server snapshot time)
-        # Otherwise fall back to current time
-        if trace_timing and trace_timing.first_byte_ns is not None:
-            timestamp_ns = trace_timing.first_byte_ns
-        else:
-            timestamp_ns = time.time_ns()
-
-        metrics_dict: dict[str, MetricFamily] = {}
-
-        try:
-            for family in text_string_to_metric_families(fetch_result.text):
-                # Skip _created metrics - these are timestamps indicating when the parent metric was created, not actual metric data
-                # or _uptime metrics - these are timestamps indicating how long the server has been running.
-                if (
-                    family.name.endswith("_created")
-                    or family.name.endswith("_uptime")
-                    or "_uptime_" in family.name
-                ):
-                    if family.name not in self._seen_metadata_metrics:
-                        self.debug(
-                            lambda name=family.name: f"Skipping metadata metric: {name}"
-                        )
-                        self._seen_metadata_metrics.add(family.name)
-                    continue
-
-                metric_type = PrometheusMetricType(family.type)
-                match metric_type:
-                    case PrometheusMetricType.HISTOGRAM:
-                        samples = self._process_histogram_family(family)
-                    case PrometheusMetricType.SUMMARY:
-                        # Summary metrics are not supported - they compute quantiles
-                        # cumulatively over server lifetime, not per-benchmark period
-                        if family.name not in self._seen_summary_metrics:
-                            self.info(
-                                lambda name=family.name: f"Skipping unsupported summary metric: {name}"
-                            )
-                            self._seen_summary_metrics.add(family.name)
-                        continue
-                    case (
-                        PrometheusMetricType.COUNTER
-                        | PrometheusMetricType.GAUGE
-                        | PrometheusMetricType.UNKNOWN
-                    ):
-                        samples = self._process_simple_family(family)
-                    case _:
-                        self.warning(f"Unsupported metric type: {metric_type}")
-                        continue
-
-                # Only add metric family if it has samples (skip empty after validation)
-                if samples:
-                    metrics_dict[family.name] = MetricFamily(
-                        type=metric_type,
-                        description=family.documentation or "",
-                        samples=samples,
-                    )
-        except ValueError as e:
-            self.warning(f"Failed to parse Prometheus metrics - invalid format: {e!r}")
-            raise
+        metrics_dict = self._build_metrics_dict(fetch_result.text)
 
         # Suppress empty snapshots to reduce I/O noise
         if not metrics_dict:
             return None
 
+        trace_timing = fetch_result.trace_timing
         return ServerMetricsRecord(
-            timestamp_ns=timestamp_ns,
+            timestamp_ns=self._resolve_timestamp_ns(trace_timing),
             endpoint_latency_ns=trace_timing.latency_ns if trace_timing else None,
             endpoint_url=self._endpoint_url,
             metrics=metrics_dict,
@@ -237,6 +182,92 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
             first_byte_ns=trace_timing.first_byte_ns if trace_timing else None,
             is_duplicate=fetch_result.is_duplicate,
         )
+
+    @staticmethod
+    def _resolve_timestamp_ns(trace_timing: HttpTraceTiming | None) -> int:
+        """Return the best available server snapshot timestamp in nanoseconds.
+
+        Uses first_byte_ns from trace timing when available (best approximation of
+        server snapshot time); otherwise falls back to current wall-clock time.
+        """
+        if trace_timing and trace_timing.first_byte_ns is not None:
+            return trace_timing.first_byte_ns
+        return time.time_ns()
+
+    def _build_metrics_dict(self, text: str) -> dict[str, MetricFamily]:
+        """Parse Prometheus text and assemble the per-family metrics dict."""
+        metrics_dict: dict[str, MetricFamily] = {}
+        try:
+            for family in text_string_to_metric_families(text):
+                entry = self._process_family(family)
+                if entry is not None:
+                    metrics_dict[family.name] = entry
+        except ValueError as e:
+            self.warning(f"Failed to parse Prometheus metrics - invalid format: {e!r}")
+            raise
+        return metrics_dict
+
+    def _process_family(self, family: Metric) -> MetricFamily | None:
+        """Classify a Prometheus metric family and return its MetricFamily entry.
+
+        Returns None for metadata families, unsupported summary metrics, unknown
+        metric types, or families whose samples all get filtered out.
+        """
+        if self._is_metadata_family(family.name):
+            self._log_skipped_metadata(family.name)
+            return None
+
+        metric_type = PrometheusMetricType(family.type)
+        samples = self._extract_samples(family, metric_type)
+        if not samples:
+            return None
+
+        return MetricFamily(
+            type=metric_type,
+            description=family.documentation or "",
+            samples=samples,
+        )
+
+    @staticmethod
+    def _is_metadata_family(name: str) -> bool:
+        """Return True for `_created`/`_uptime` timestamp families that aren't metric data."""
+        return (
+            name.endswith("_created") or name.endswith("_uptime") or "_uptime_" in name
+        )
+
+    def _log_skipped_metadata(self, name: str) -> None:
+        """Log a skipped metadata metric family once, then suppress further logs."""
+        if name not in self._seen_metadata_metrics:
+            self.debug(lambda n=name: f"Skipping metadata metric: {n}")
+            self._seen_metadata_metrics.add(name)
+
+    def _extract_samples(
+        self, family: Metric, metric_type: PrometheusMetricType
+    ) -> list[MetricSample]:
+        """Extract samples for a metric family based on its type.
+
+        Returns an empty list for unsupported summary metrics and unknown types, so
+        callers can uniformly skip them.
+        """
+        if metric_type == PrometheusMetricType.HISTOGRAM:
+            return self._process_histogram_family(family)
+        if metric_type == PrometheusMetricType.SUMMARY:
+            # Summary metrics are not supported - they compute quantiles
+            # cumulatively over server lifetime, not per-benchmark period
+            if family.name not in self._seen_summary_metrics:
+                self.info(
+                    lambda name=family.name: f"Skipping unsupported summary metric: {name}"
+                )
+                self._seen_summary_metrics.add(family.name)
+            return []
+        if metric_type in (
+            PrometheusMetricType.COUNTER,
+            PrometheusMetricType.GAUGE,
+            PrometheusMetricType.UNKNOWN,
+        ):
+            return self._process_simple_family(family)
+        self.warning(f"Unsupported metric type: {metric_type}")
+        return []
 
     def _process_simple_family(self, family: Metric) -> list[MetricSample]:
         """Process counter, gauge, or untyped metrics with de-duplication.

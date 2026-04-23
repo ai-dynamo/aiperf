@@ -97,38 +97,7 @@ class MetricResultsProcessor(BaseMetricsProcessor):
 
         for tag, value in record_data.metrics.items():
             try:
-                metric_type = self._tags_to_types[tag]
-                if metric_type == MetricType.RECORD:
-                    if isinstance(value, list):
-                        existing_values = results_dict.get(tag)
-                        if existing_values is None:
-                            existing_values = build_list_metric_aggregator(
-                                self._list_metric_aggregation_mode
-                            )
-                            results_dict[tag] = existing_values
-                        if not isinstance(existing_values, ListMetricAggregator):
-                            raise TypeError(
-                                f"Expected ListMetricAggregator for list-valued metric '{tag}', got {type(existing_values)}"
-                            )
-                        existing_values.extend(value)
-                    else:
-                        existing_values = results_dict.get(tag)
-                        if existing_values is None:
-                            existing_values = MetricArray()
-                            results_dict[tag] = existing_values
-                        if not isinstance(existing_values, MetricArray):
-                            raise TypeError(
-                                f"Expected MetricArray for scalar metric '{tag}', got {type(existing_values)}"
-                            )
-                        existing_values.append(value)
-
-                elif metric_type == MetricType.AGGREGATE:
-                    metric: BaseAggregateMetric = instances_map[tag]  # type: ignore
-                    metric.aggregate_value(value)
-                    results_dict[tag] = metric.current_value
-
-                else:
-                    raise ValueError(f"Metric '{tag}' is not a valid metric type")
+                self._process_metric(tag, value, instances_map, results_dict)
             except NoMetricValue as e:
                 self.trace(
                     lambda tag=tag, e=e: f"No metric value for metric '{tag}': {e!r}"
@@ -138,6 +107,55 @@ class MetricResultsProcessor(BaseMetricsProcessor):
 
         if self.is_trace_enabled:
             self.trace(f"Results after processing incoming metrics: {results_dict}")
+
+    def _process_metric(
+        self,
+        tag: MetricTagT,
+        value: Any,
+        instances_map: dict[MetricTagT, BaseMetric],
+        results_dict: MetricResultsDict,
+    ) -> None:
+        """Dispatch a single incoming metric value to the appropriate accumulator."""
+        metric_type = self._tags_to_types[tag]
+        if metric_type == MetricType.RECORD:
+            self._process_record_metric(tag, value, results_dict)
+        elif metric_type == MetricType.AGGREGATE:
+            metric: BaseAggregateMetric = instances_map[tag]  # type: ignore
+            metric.aggregate_value(value)
+            results_dict[tag] = metric.current_value
+        else:
+            raise ValueError(f"Metric '{tag}' is not a valid metric type")
+
+    def _process_record_metric(
+        self,
+        tag: MetricTagT,
+        value: Any,
+        results_dict: MetricResultsDict,
+    ) -> None:
+        """Append a RECORD-type metric value into its list or scalar accumulator."""
+        if isinstance(value, list):
+            existing_values = results_dict.get(tag)
+            if existing_values is None:
+                existing_values = build_list_metric_aggregator(
+                    self._list_metric_aggregation_mode
+                )
+                results_dict[tag] = existing_values
+            if not isinstance(existing_values, ListMetricAggregator):
+                raise TypeError(
+                    f"Expected ListMetricAggregator for list-valued metric '{tag}', got {type(existing_values)}"
+                )
+            existing_values.extend(value)
+            return
+
+        existing_values = results_dict.get(tag)
+        if existing_values is None:
+            existing_values = MetricArray()
+            results_dict[tag] = existing_values
+        if not isinstance(existing_values, MetricArray):
+            raise TypeError(
+                f"Expected MetricArray for scalar metric '{tag}', got {type(existing_values)}"
+            )
+        existing_values.append(value)
 
     async def get_instances_map(
         self, request_start_ns: int | None = None
