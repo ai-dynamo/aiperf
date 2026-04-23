@@ -1,6 +1,13 @@
 import { html } from 'htm/preact';
+import { Sparkline } from './sparkline.js';
 
 const slugifyLabel = (s) => String(s ?? '').toLowerCase().trim().replace(/\s+/g, '-');
+
+// Stroke colors keyed to SLO status. Neutral dim when no SLO is declared
+// (or the value isn't numeric) so the line stays visible but uncoloured.
+const SPARK_STROKE_GOOD = 'var(--green, #40a02b)';
+const SPARK_STROKE_BAD = 'var(--red, #d20f39)';
+const SPARK_STROKE_NEUTRAL = 'var(--muted, #7f849c)';
 
 /** Evaluate an optional SLO against the tile's headline value.
  *
@@ -31,6 +38,12 @@ function evalSlo(slo, rawValue) {
  * Optional ``slo`` prop renders a small green/red chip next to the label with
  * the threshold (e.g. ``✓ ≤ 500``). When undeclared, no chip renders.
  *
+ * Optional ``points`` prop (chronological ``{t, v}`` samples) renders an
+ * inline SVG sparkline between the headline value and the subtitle. Stroke
+ * color follows SLO status: green when pass, red when fail, neutral when
+ * the SLO is undeclared. The Sparkline component renders a stable placeholder
+ * when fewer than 2 samples are available, so callers can always pass the prop.
+ *
  * @param {{
  *   label: string,
  *   value: string|number,
@@ -39,11 +52,16 @@ function evalSlo(slo, rawValue) {
  *   sub?: string,
  *   rawValue?: number,
  *   slo?: { threshold: number, compare?: 'lt' | 'gt', value?: number },
+ *   points?: Array<{t: number, v: number}>,
  * }} props
  */
-export function KpiCard({ label, value, unit, color, sub, rawValue, slo }) {
+export function KpiCard({ label, value, unit, color, sub, rawValue, slo, points }) {
   const valueStyle = color ? `color: ${color}` : '';
   const sloResult = evalSlo(slo, rawValue);
+  const sparkStroke =
+    sloResult?.kind === 'bad' ? SPARK_STROKE_BAD
+    : sloResult?.kind === 'good' ? SPARK_STROKE_GOOD
+    : SPARK_STROKE_NEUTRAL;
 
   return html`
     <div class="metric-card" data-testid=${'kpi-' + slugifyLabel(label)}>
@@ -65,6 +83,7 @@ export function KpiCard({ label, value, unit, color, sub, rawValue, slo }) {
         </span>
         ${unit && html`<span class="metric-unit">${unit}</span>`}
       </div>
+      <${Sparkline} points=${points} stroke=${sparkStroke} />
       ${sub && html`<div class="metric-sub">${sub}</div>`}
     </div>
   `;

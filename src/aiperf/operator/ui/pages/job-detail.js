@@ -1275,11 +1275,18 @@ export function JobDetail({ namespace, name }) {
   const throughputPoints = useRef({ labels: [], values: [] });
   const [chartData, setChartData] = useState(null);
 
+  // Per-KPI rolling window of {t, v} samples for inline sparklines. Keyed by
+  // the same short tag (``throughput``, ``token_throughput``, ``ttft``, ...)
+  // we pass into each KpiCard's ``points`` prop below. Capped at 60 samples
+  // per key — matches the throughput chart buffer.
+  const [kpiSeries, setKpiSeries] = useState({});
+
   useEffect(() => {
     const ac = new AbortController();
     // Reset chart points when job changes
     throughputPoints.current = { labels: [], values: [] };
     setChartData(null);
+    setKpiSeries({});
     setPolling(true);
 
     poll(
@@ -1298,6 +1305,34 @@ export function JobDetail({ namespace, name }) {
           summary?.throughput_rps ??
           data?.status?.metrics?.request_throughput?.avg ??
           null;
+
+        // Accumulate rolling samples per KPI tile (60 max). Keys mirror the
+        // short tag we hand to each ``<KpiCard points=...>`` below — mutate
+        // locally, then setState once so React re-renders all tiles in sync.
+        const liveOrStaticSummary =
+          data?.status?.liveSummary ?? data?.status?.summary ?? summary ?? {};
+        const kpiSample = {
+          throughput: tps,
+          token_throughput: liveOrStaticSummary?.output_token_throughput_tps ?? null,
+          ttft:
+            liveOrStaticSummary?.ttft_p99_ms ??
+            liveOrStaticSummary?.ttft_avg_ms ??
+            null,
+          latency: liveOrStaticSummary?.latency_p99_ms ?? null,
+          errors: liveOrStaticSummary?.error_rate ?? null,
+        };
+        const now = Date.now();
+        setKpiSeries((prev) => {
+          const next = { ...prev };
+          for (const [k, v] of Object.entries(kpiSample)) {
+            if (v == null || !isFinite(v)) continue;
+            const buf = next[k] ? [...next[k]] : [];
+            buf.push({ t: now, v });
+            if (buf.length > MAX_CHART_POINTS) buf.shift();
+            next[k] = buf;
+          }
+          return next;
+        });
 
         if (tps != null) {
           const pts = throughputPoints.current;
@@ -1613,6 +1648,7 @@ export function JobDetail({ namespace, name }) {
           sub=${throughput != null ? `avg ${fmtRps(throughput)} req/s` : null}
           rawValue=${throughput}
           slo=${sloThroughput != null ? { threshold: sloThroughput, compare: 'gt' } : null}
+          points=${kpiSeries.throughput}
         />
         <${KpiCard}
           label="Token Throughput"
@@ -1620,6 +1656,7 @@ export function JobDetail({ namespace, name }) {
           unit=${outputTokenThroughputCurrent != null ? 'tok/s' : ''}
           color=${palette.sapphire}
           sub=${outputTokenThroughputAvg != null ? `avg ${fmtNum(outputTokenThroughputAvg, 0)} tok/s` : null}
+          points=${kpiSeries.token_throughput}
         />
         <${KpiCard}
           label="TTFT"
@@ -1629,6 +1666,7 @@ export function JobDetail({ namespace, name }) {
           sub=${ttftAvg != null ? `avg ${fmtNum(ttftAvg, 0)} ms` : null}
           rawValue=${ttftP99 ?? ttftAvg}
           slo=${sloTtft != null ? { threshold: sloTtft, compare: 'lt' } : null}
+          points=${kpiSeries.ttft}
         />
         <${KpiCard}
           label="Latency P99"
@@ -1638,11 +1676,13 @@ export function JobDetail({ namespace, name }) {
           sub=${latAvg != null ? `avg ${fmtNum(latAvg, 0)} ms` : null}
           rawValue=${latP99}
           slo=${sloLatency != null ? { threshold: sloLatency, compare: 'lt' } : null}
+          points=${kpiSeries.latency}
         />
         <${KpiCard}
           label="Errors"
           value=${errorCount ?? '---'}
           color=${errorCount ? colors.error : colors.textMuted}
+          points=${kpiSeries.errors}
         />
         <!-- Feature 5: Token Efficiency -->
         ${isCompleted && results && html`<${TokenEfficiencyCard} results=${results} info=${info} />`}

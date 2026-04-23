@@ -505,6 +505,17 @@ select, input {
   margin-top: 4px;
 }
 
+/* Inline sparkline on each KPI tile — stretches to the card width, but
+ * caps at a sane max so it doesn't blow up on ultra-wide layouts. Kept
+ * thin enough that it doesn't push the sub-line off the card. */
+.sparkline {
+  display: block;
+  width: 100%;
+  max-width: 160px;
+  margin-top: 6px;
+  opacity: 0.9;
+}
+
 .metrics-row {
   display: grid;
   grid-template-columns: repeat(5, 1fr);

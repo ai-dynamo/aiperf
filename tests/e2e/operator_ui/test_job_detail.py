@@ -295,3 +295,19 @@ async def test_job_detail_slo_chip_when_declared(
     # Chip renders "✓ ≤ 500" (or "✗ ≤ 500" when over budget). 420 <= 500 → ✓.
     await expect(chip).to_contain_text("✓")
     await expect(chip).to_contain_text("500")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_job_detail_sparkline_element_present(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page,
+) -> None:
+    """Sparkline <svg> renders inside each KPI tile (empty placeholder is OK)."""
+    _set_job_summary(
+        fake_k8s_client, "aiperf-bench", "aiperf-llama3-c128",
+        {"throughput_rps": 42.1, "ttft_p99_ms": 180.0, "latency_p99_ms": 300.0},
+    )
+    detail = JobDetailPage(page, live_operator_app.base_url, "aiperf-bench", "aiperf-llama3-c128")
+    await detail.goto()
+    # Every KPI tile has an <svg class="sparkline"> element (or equivalent).
+    count = await page.locator("svg.sparkline").count()
+    assert count >= 4, f"expected >=4 sparkline svgs, got {count}"
