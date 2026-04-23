@@ -28,7 +28,7 @@
 		test-fern-docs internal-help help \
 		validate-config-examples validate-template-metadata \
 		generate-config-schema check-config-schema \
-		generate-crd check-crd benchmark-resources \
+		generate-crd check-crd crd-release benchmark-resources \
 		kube-setup kube-doctor kube-status kube-cleanup kube-teardown kube-reload \
 		kube-build kube-load kube-logs kube-cluster-create kube-cluster-delete \
 		kube-install-jobset kube-install-dynamo \
@@ -340,6 +340,13 @@ generate-crd: #? generate Kubernetes CRD YAML from AIPerfConfig model.
 
 check-crd: #? check if CRD YAML is up-to-date.
 	$(activate_venv) && python -m tools.generate_crd --check $(args)
+
+crd-release: #? render the Helm CRD template to dist/aiperfjob-crd.yaml for release.
+	$(activate_venv) && mkdir -p dist && \
+		helm template aiperf-operator deploy/helm/aiperf-operator \
+			--show-only templates/crd.yaml \
+			> dist/aiperfjob-crd.yaml
+	@echo "Wrote dist/aiperfjob-crd.yaml"
 
 generate-all-plugin-files: #? generate all plugin files (enums, overloads, schemas).
 	$(activate_venv) && ./tools/generate_plugin_artifacts.py
