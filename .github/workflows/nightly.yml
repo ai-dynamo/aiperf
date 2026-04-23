@@ -29,8 +29,8 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: 'Branch name, tag, or commit SHA to build from. Must resolve to a commit reachable from origin/main.'
-        default: '083d3c479d2995c3074363b491d5aea833020ab4'
+        description: 'Branch name, tag, or commit SHA to build from. Must resolve to a commit reachable from origin/main. Defaults to tip-of-tree on the triggering ref.'
+        default: ''
         required: false
       release:
         description: 'Stage artifacts and trigger GitLab security scan. Ignored for schedule — cron always sets release=false.'
@@ -52,10 +52,6 @@ on:
         description: 'Existing container tag (nightly-YYYYMMDD-<short_sha>) to re-stage (used only when publish_only=true).'
         default: ''
         required: false
-      count:
-        description: 'Number of concurrent nightly runs to launch (1-20). This run counts as 1; if count>1, the fanout job dispatches (count-1) sibling runs.'
-        default: '12'
-        required: false
 
 # Allow concurrent nightly runs. Shared destinations (ECR/NGC `aiperf:<container_tag>`,
 # S3 wheel path, Artifactory wheel) are last-writer-wins on same-day/same-commit
@@ -71,85 +67,6 @@ permissions:
   packages: write
 
 jobs:
-  # ============================================================================
-  # PHASE 0: FAN-OUT (workflow_dispatch + push, when effective count > 1)
-  # Triggers (count - 1) additional nightly runs in parallel with this one.
-  # Sibling runs are dispatched with count=1 so they don't fan out again.
-  # Schedule (cron) is excluded — scheduled nightlies run exactly once.
-  # For push events, inputs are unset so defaults (count=12, release=true, etc.)
-  # are applied via shell fallbacks; siblings are pinned to github.sha to
-  # guarantee all 12 pipelines build the exact triggering commit.
-  # Uses github.token with actions:write permission. workflow_dispatch and
-  # repository_dispatch are explicit exceptions to GitHub's anti-recursion
-  # rule, so the built-in token can dispatch sibling runs.
-  # ============================================================================
-
-  fanout:
-    name: Fan out ${{ inputs.count || '12' }} concurrent runs
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write   # required for `gh workflow run` via GITHUB_TOKEN
-    if: ${{ github.event_name != 'schedule' && (inputs.count || '12') != '1' }}
-    steps:
-      - name: Validate count
-        env:
-          COUNT: ${{ inputs.count || '12' }}
-        run: |
-          set -euo pipefail
-          if ! [[ "${COUNT}" =~ ^[0-9]+$ ]]; then
-            echo "::error::count must be an integer, got '${COUNT}'"
-            exit 1
-          fi
-          if [ "${COUNT}" -lt 1 ] || [ "${COUNT}" -gt 20 ]; then
-            echo "::error::count must be between 1 and 20, got '${COUNT}'"
-            exit 1
-          fi
-
-      - name: Dispatch sibling nightly runs
-        env:
-          GH_TOKEN:  ${{ github.token }}
-          COUNT:     ${{ inputs.count || '12' }}
-          # For workflow_dispatch, inputs.ref defaults to the pinned main SHA.
-          # For push events, inputs.ref is empty — fall back to the same pinned
-          # main SHA (NOT github.sha, which may be on the dev branch and would
-          # fail the Verify step's main-ancestor check on each sibling).
-          # Keep this value in sync with the `ref` input's default above.
-          REF:       ${{ inputs.ref || '083d3c479d2995c3074363b491d5aea833020ab4' }}
-          RELEASE:   ${{ inputs.release }}
-          SKIP_SCAN: ${{ inputs.skip_security_scan }}
-          PUBLISH:   ${{ inputs.publish_only }}
-          WHEEL_VER: ${{ inputs.wheel_version }}
-          CONT_TAG:  ${{ inputs.container_tag }}
-        run: |
-          set -euo pipefail
-          # Shell-level fallbacks for inputs that aren't populated on push events.
-          # For push-triggered fanout testing: release=false skips stage+scan,
-          # so siblings build (cache-hot, fast) without touching NGC/Artifactory
-          # or triggering the GitLab security pipeline. publish_only=false is
-          # required — publish_only=true needs wheel_version and container_tag
-          # inputs which the fanout doesn't have for push events.
-          RELEASE="${RELEASE:-false}"
-          SKIP_SCAN="${SKIP_SCAN:-true}"
-          PUBLISH="${PUBLISH:-false}"
-          SIBLINGS=$((COUNT - 1))
-          for i in $(seq 1 "${SIBLINGS}"); do
-            gh workflow run nightly.yml \
-              --repo "${GITHUB_REPOSITORY}" \
-              --ref  "${GITHUB_REF_NAME}" \
-              --field ref="${REF}" \
-              --field release="${RELEASE}" \
-              --field skip_security_scan="${SKIP_SCAN}" \
-              --field publish_only="${PUBLISH}" \
-              --field wheel_version="${WHEEL_VER}" \
-              --field container_tag="${CONT_TAG}" \
-              --field count=1
-            echo "Dispatched sibling run ${i}/${SIBLINGS}"
-            # Space by 2s so each child's prepare-nightly TIMESTAMP lands in a
-            # unique UTC second, keeping CONTAINER_TAG and WHEEL_VERSION unique.
-            sleep 2
-          done
-          echo "Fan-out complete: this run + ${SIBLINGS} siblings = ${COUNT} total"
-
   # ============================================================================
   # PHASE 1: INIT
   # Version strings are computed once and saved as a workflow artifact so that
