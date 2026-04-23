@@ -144,7 +144,7 @@ AIPerf treats agent-readability as a first-class quality axis. The code is expec
 **Mechanical floor (enforced in CI, zero new violations allowed):**
 
 ```bash
-make check-ergonomics        # 9 custom AST checks: file-size, function-size, nesting-depth, keyword-only-args, module-state, duplicate-classes, pydantic-fields, stdlib-json, exception-message
+make check-ergonomics        # 10 custom AST checks: file-size, function-size, nesting-depth, keyword-only-args, module-state, duplicate-classes, pydantic-fields, stdlib-json, exception-message, isinstance-tuple
 make check-ruff-baselined    # 9 ruff rules: PLR0915, PLR0912, C901, TID251, BLE001, S110, S112, ANN201, D103
 ```
 

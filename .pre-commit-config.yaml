@@ -122,8 +122,9 @@ repos:
         description: >-
           LLM-ergonomics checks — file size, function size, nesting depth,
           module-level mutable state, duplicate class names, wide positional
-          signatures, Pydantic field count, stdlib-json ban. Pre-existing
-          violations are grandfathered via tools/ergonomics_baseline.json.
+          signatures, Pydantic field count, stdlib-json ban, isinstance
+          tuple-form. Pre-existing violations are grandfathered via
+          tools/ergonomics_baseline.json.
         entry: python tools/check_ergonomics.py
         language: python
         files: ^src/aiperf/.*\.py$
@@ -141,9 +142,9 @@ repos:
         files: ^src/aiperf/.*\.py$
         pass_filenames: true
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.8
+    rev: v0.14.14
     hooks:
-      - id: ruff
+      - id: ruff-check
         args: [--fix, --exit-non-zero-on-fix]
         types_or: [python, pyi]
       - id: ruff-format
