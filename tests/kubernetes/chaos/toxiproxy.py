@@ -21,6 +21,19 @@ Usage::
         )
         # ... observe operator behavior ...
         await toxiproxy_injector.reset()
+
+Event-loop-scope invariant (DO NOT REFACTOR AWAY):
+    Every REST-API method opens its own short-lived ``aiohttp.ClientSession``
+    via ``async with`` and closes it before returning. This is intentional
+    and load-bearing: ``kubectl`` (and therefore this injector) is
+    package-scoped in the chaos conftest, but individual tests run on
+    pytest-asyncio's function loop. A cached ``aiohttp.ClientSession``
+    created in the package loop raises
+    ``RuntimeError: Timeout context manager should be used inside a task``
+    when re-used from a function-scoped test. A per-call session (~10 ms
+    overhead) keeps the aiohttp timeout context bound to the current task.
+    The kubectl port-forward subprocess is safe to keep alive across
+    loops — only the TCP port it bound is used here, not its transport.
 """
 
 from __future__ import annotations
@@ -64,17 +77,23 @@ Generic proxy slots (20000-20005) remain unreserved."""
 class ToxiproxyInjector:
     """Async REST client for a cluster-deployed toxiproxy instance.
 
-    Intended lifecycle (session-scoped fixture):
+    Intended lifecycle (package-scoped fixture):
 
-    1. ``ensure_deployed(kubectl)`` — apply the fixture manifest and wait
-       for the pod to become Ready.
-    2. One-or-more proxy/toxic calls per test.
+    1. ``ensure_deployed(kubectl)`` — apply the fixture manifest, wait
+       for the pod to become Ready, and open a kubectl port-forward to
+       the admin API. No aiohttp session is cached.
+    2. One-or-more proxy/toxic calls per test. Each call opens its own
+       ``aiohttp.ClientSession`` bound to the test's event loop.
     3. ``reset()`` between tests to wipe state.
-    4. ``teardown(kubectl)`` at session end to delete the namespace.
+    4. ``teardown(kubectl)`` at package end to close the port-forward
+       and delete the namespace.
 
     All methods raise ``aiohttp.ClientError`` subclasses on network errors
     and ``ToxiproxyError`` on unexpected API responses; tests should wrap
     calls in ``try/finally`` + ``reset()`` for hermetic cleanup.
+
+    DO NOT cache an ``aiohttp.ClientSession`` on the instance. See the
+    module docstring for the event-loop-scope rationale.
     """
 
     def __init__(
@@ -88,11 +107,11 @@ class ToxiproxyInjector:
             base_url: Admin API URL (e.g. ``http://127.0.0.1:8474``). When
                 ``None``, ``ensure_deployed`` must be called first to open
                 a port-forward and set the URL.
-            timeout: Per-request timeout in seconds.
+            timeout: Per-request timeout in seconds, applied to every
+                short-lived aiohttp session opened by this injector.
         """
         self._base_url = base_url
-        self._timeout = aiohttp.ClientTimeout(total=timeout)
-        self._session: aiohttp.ClientSession | None = None
+        self._timeout_seconds = timeout
         self._pf_stack: AsyncExitStack | None = None
 
     @property
@@ -104,12 +123,22 @@ class ToxiproxyInjector:
             )
         return self._base_url
 
+    def _client_timeout(self) -> aiohttp.ClientTimeout:
+        """Build a fresh ``ClientTimeout`` for a short-lived session.
+
+        Must be constructed inside the calling task's event loop because
+        aiohttp binds the timeout context to the running loop.
+        """
+        return aiohttp.ClientTimeout(total=self._timeout_seconds)
+
     async def ensure_deployed(self, kubectl: KubectlClient) -> None:
         """Apply the fixture manifest, wait for Ready, and port-forward admin.
 
         Idempotent: safe to call multiple times within the same session.
         Opens a port-forward from a local ephemeral port to the toxiproxy
-        admin service and sets ``self._base_url`` accordingly.
+        admin service and sets ``self._base_url`` accordingly. Does not
+        cache an aiohttp session; the reachability probe below opens its
+        own short-lived session, same as every other method on this class.
         """
         from pathlib import Path
 
@@ -151,12 +180,16 @@ class ToxiproxyInjector:
             )
         )
         self._base_url = f"http://127.0.0.1:{local_port}"
-        self._session = aiohttp.ClientSession(timeout=self._timeout)
 
-        # Confirm admin API reachable before returning.
+        # Confirm admin API reachable before returning. Each attempt opens
+        # its own session so a failure mid-probe never leaves a dangling
+        # session tied to this fixture's loop.
         for attempt in range(10):
             try:
-                async with self._session.get(f"{self._base_url}/version") as resp:
+                async with (
+                    aiohttp.ClientSession(timeout=self._client_timeout()) as session,
+                    session.get(f"{self._base_url}/version") as resp,
+                ):
                     if resp.status == 200:
                         logger.info(
                             "toxiproxy reachable at %s (version=%s)",
@@ -174,6 +207,8 @@ class ToxiproxyInjector:
 
     async def add_proxy(self, name: str, listen: str, upstream: str) -> dict[str, Any]:
         """Create a new proxy that fronts ``upstream`` on ``listen``.
+
+        Opens a short-lived aiohttp session (see module docstring).
 
         Args:
             name: Proxy name (unique per toxiproxy instance).
@@ -206,6 +241,8 @@ class ToxiproxyInjector:
     ) -> dict[str, Any]:
         """Attach a toxic to an existing proxy.
 
+        Opens a short-lived aiohttp session (see module docstring).
+
         Args:
             proxy_name: Target proxy (must have been created via ``add_proxy``).
             toxic_type: Toxiproxy toxic identifier, e.g. ``"latency"``,
@@ -231,11 +268,11 @@ class ToxiproxyInjector:
         return await self._post_json(f"/proxies/{proxy_name}/toxics", payload)
 
     async def remove_toxic(self, proxy_name: str, toxic_name: str) -> None:
-        """Delete a toxic by name."""
+        """Delete a toxic by name. Opens a short-lived aiohttp session."""
         await self._delete(f"/proxies/{proxy_name}/toxics/{toxic_name}")
 
     async def remove_proxy(self, name: str) -> None:
-        """Delete a proxy by name."""
+        """Delete a proxy by name. Opens a short-lived aiohttp session."""
         await self._delete(f"/proxies/{name}")
 
     async def reset(self) -> None:
@@ -243,12 +280,16 @@ class ToxiproxyInjector:
 
         Implemented by listing proxies and deleting each, which also
         removes attached toxics. ``/reset`` re-enables proxies rather than
-        deleting them, so we use DELETE explicitly.
+        deleting them, so we use DELETE explicitly. Opens a short-lived
+        aiohttp session for the list call; each ``_delete`` opens its own.
         """
-        if self._session is None:
+        if self._base_url is None:
             return
         try:
-            async with self._session.get(f"{self.base_url}/proxies") as resp:
+            async with (
+                aiohttp.ClientSession(timeout=self._client_timeout()) as session,
+                session.get(f"{self.base_url}/proxies") as resp,
+            ):
                 if resp.status != 200:
                     return
                 body = await resp.read()
@@ -270,10 +311,10 @@ class ToxiproxyInjector:
                 )
 
     async def teardown(self, kubectl: KubectlClient) -> None:
-        """Delete the toxiproxy namespace and close the port-forward."""
-        if self._session is not None:
-            await self._session.close()
-            self._session = None
+        """Close the port-forward and delete the toxiproxy namespace.
+
+        No aiohttp session to close — they are all short-lived per call.
+        """
         if self._pf_stack is not None:
             await self._pf_stack.aclose()
             self._pf_stack = None
@@ -281,16 +322,19 @@ class ToxiproxyInjector:
         await kubectl.delete_namespace(TOXIPROXY_NAMESPACE, wait=False)
 
     async def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """POST JSON to the admin API and return the decoded response body."""
-        if self._session is None:
-            raise RuntimeError(
-                "ToxiproxyInjector session not open; call ensure_deployed"
-            )
-        async with self._session.post(
-            f"{self.base_url}{path}",
-            data=orjson.dumps(payload),
-            headers={"Content-Type": "application/json"},
-        ) as resp:
+        """POST JSON to the admin API and return the decoded response body.
+
+        Opens a short-lived aiohttp session bound to the current task's
+        event loop (see module docstring).
+        """
+        async with (
+            aiohttp.ClientSession(timeout=self._client_timeout()) as session,
+            session.post(
+                f"{self.base_url}{path}",
+                data=orjson.dumps(payload),
+                headers={"Content-Type": "application/json"},
+            ) as resp,
+        ):
             body = await resp.read()
             if resp.status >= 400:
                 raise ToxiproxyError(
@@ -301,12 +345,15 @@ class ToxiproxyInjector:
             return orjson.loads(body)
 
     async def _delete(self, path: str) -> None:
-        """DELETE a toxiproxy resource; tolerates 404 on already-gone paths."""
-        if self._session is None:
-            raise RuntimeError(
-                "ToxiproxyInjector session not open; call ensure_deployed"
-            )
-        async with self._session.delete(f"{self.base_url}{path}") as resp:
+        """DELETE a toxiproxy resource; tolerates 404 on already-gone paths.
+
+        Opens a short-lived aiohttp session bound to the current task's
+        event loop (see module docstring).
+        """
+        async with (
+            aiohttp.ClientSession(timeout=self._client_timeout()) as session,
+            session.delete(f"{self.base_url}{path}") as resp,
+        ):
             if resp.status not in (200, 204, 404):
                 body = await resp.read()
                 raise ToxiproxyError(
