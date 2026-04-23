@@ -29,8 +29,8 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: 'Branch name, tag, or commit SHA to build from. Must resolve to a commit reachable from origin/main. Defaults to tip-of-tree on the triggering ref.'
-        default: ''
+        description: 'Branch name, tag, or commit SHA to build from. Must resolve to a commit reachable from origin/main.'
+        default: '083d3c479d2995c3074363b491d5aea833020ab4'
         required: false
       release:
         description: 'Stage artifacts and trigger GitLab security scan. Ignored for schedule — cron always sets release=false.'
@@ -52,6 +52,10 @@ on:
         description: 'Existing container tag (nightly-YYYYMMDD-<short_sha>) to re-stage (used only when publish_only=true).'
         default: ''
         required: false
+      count:
+        description: 'Number of concurrent nightly runs to launch (1-20). This run counts as 1; if count>1, the fanout job dispatches (count-1) sibling runs.'
+        default: '12'
+        required: false
 
 # Allow concurrent nightly runs. Shared destinations (ECR/NGC `aiperf:<container_tag>`,
 # S3 wheel path, Artifactory wheel) are last-writer-wins on same-day/same-commit
@@ -68,6 +72,77 @@ permissions:
 
 jobs:
   # ============================================================================
+  # PHASE 0: FAN-OUT (workflow_dispatch + push, when effective count > 1)
+  # Triggers (count - 1) additional nightly runs in parallel with this one.
+  # Sibling runs are dispatched with count=1 so they don't fan out again.
+  # Schedule (cron) is excluded — scheduled nightlies run exactly once.
+  # For push events, inputs are unset so defaults (count=12, release=true, etc.)
+  # are applied via shell fallbacks; siblings are pinned to github.sha to
+  # guarantee all 12 pipelines build the exact triggering commit.
+  # Requires NIGHTLY_GITHUB_PAT with `workflow` scope (GITHUB_TOKEN can't
+  # trigger workflow_dispatch events to prevent loops).
+  # ============================================================================
+
+  fanout:
+    name: Fan out ${{ inputs.count || '12' }} concurrent runs
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'schedule' && (inputs.count || '12') != '1' }}
+    steps:
+      - name: Validate count
+        env:
+          COUNT: ${{ inputs.count || '12' }}
+        run: |
+          set -euo pipefail
+          if ! [[ "${COUNT}" =~ ^[0-9]+$ ]]; then
+            echo "::error::count must be an integer, got '${COUNT}'"
+            exit 1
+          fi
+          if [ "${COUNT}" -lt 1 ] || [ "${COUNT}" -gt 20 ]; then
+            echo "::error::count must be between 1 and 20, got '${COUNT}'"
+            exit 1
+          fi
+
+      - name: Dispatch sibling nightly runs
+        env:
+          GH_TOKEN:  ${{ secrets.NIGHTLY_GITHUB_PAT }}
+          COUNT:     ${{ inputs.count || '12' }}
+          # For push events, inputs.ref is empty — pin siblings to github.sha
+          # so all 12 runs build the exact triggering commit (no branch drift).
+          REF:       ${{ inputs.ref || github.sha }}
+          RELEASE:   ${{ inputs.release }}
+          SKIP_SCAN: ${{ inputs.skip_security_scan }}
+          PUBLISH:   ${{ inputs.publish_only }}
+          WHEEL_VER: ${{ inputs.wheel_version }}
+          CONT_TAG:  ${{ inputs.container_tag }}
+        run: |
+          set -euo pipefail
+          # Shell-level fallbacks for inputs that aren't populated on push events.
+          # SKIP_SCAN and PUBLISH default to true so push-driven fanout tests
+          # skip the GitLab security scan and the full build path; useful for
+          # exercising staging/fanout orchestration without burning scans/builds.
+          RELEASE="${RELEASE:-true}"
+          SKIP_SCAN="${SKIP_SCAN:-true}"
+          PUBLISH="${PUBLISH:-true}"
+          SIBLINGS=$((COUNT - 1))
+          for i in $(seq 1 "${SIBLINGS}"); do
+            gh workflow run nightly.yml \
+              --repo "${GITHUB_REPOSITORY}" \
+              --ref  "${GITHUB_REF_NAME}" \
+              --field ref="${REF}" \
+              --field release="${RELEASE}" \
+              --field skip_security_scan="${SKIP_SCAN}" \
+              --field publish_only="${PUBLISH}" \
+              --field wheel_version="${WHEEL_VER}" \
+              --field container_tag="${CONT_TAG}" \
+              --field count=1
+            echo "Dispatched sibling run ${i}/${SIBLINGS}"
+            # Space by 2s so each child's prepare-nightly TIMESTAMP lands in a
+            # unique UTC second, keeping CONTAINER_TAG and WHEEL_VERSION unique.
+            sleep 2
+          done
+          echo "Fan-out complete: this run + ${SIBLINGS} siblings = ${COUNT} total"
+
+  # ============================================================================
   # PHASE 1: INIT
   # Version strings are computed once and saved as a workflow artifact so that
   # partial reruns use the same versions as the original run.
@@ -78,11 +153,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       nightly_tag:    ${{ steps.version.outputs.nightly_tag }}
-      wheel_version: ${{ steps.version.outputs.wheel_version }}
+      wheel_version:  ${{ steps.version.outputs.wheel_version }}
       container_tag:  ${{ steps.version.outputs.container_tag }}
       wheel_filename: ${{ steps.version.outputs.wheel_filename }}
       base_version:   ${{ steps.version.outputs.base_version }}
       run_timestamp:  ${{ steps.version.outputs.run_timestamp }}
+      resolved_sha:   ${{ steps.version.outputs.resolved_sha }}
       release:        ${{ steps.release.outputs.release }}
     steps:
       - name: Checkout
@@ -131,6 +207,7 @@ jobs:
             # concurrency, append ${GITHUB_RUN_ID} (see TODO below).
             TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
             SHORT_SHA=$(git rev-parse --short=7 HEAD)
+            FULL_SHA=$(git rev-parse HEAD)
 
             BASE_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
             if [[ ! "${BASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -156,11 +233,12 @@ jobs:
           fi
 
           echo "nightly_tag=${NIGHTLY_TAG}"         >> "$GITHUB_OUTPUT"
-          echo "wheel_version=${WHEEL_VERSION}"   >> "$GITHUB_OUTPUT"
+          echo "wheel_version=${WHEEL_VERSION}"     >> "$GITHUB_OUTPUT"
           echo "container_tag=${CONTAINER_TAG}"     >> "$GITHUB_OUTPUT"
           echo "wheel_filename=${WHEEL_FILENAME}"   >> "$GITHUB_OUTPUT"
           echo "base_version=${BASE_VERSION}"       >> "$GITHUB_OUTPUT"
           echo "run_timestamp=${TIMESTAMP:-reused}" >> "$GITHUB_OUTPUT"
+          echo "resolved_sha=${FULL_SHA}"           >> "$GITHUB_OUTPUT"
 
           mkdir -p .nightly-version
           {
@@ -170,6 +248,7 @@ jobs:
             echo "WHEEL_FILENAME=${WHEEL_FILENAME}"
             echo "BASE_VERSION=${BASE_VERSION}"
             echo "TIMESTAMP=${TIMESTAMP:-reused}"
+            echo "FULL_SHA=${FULL_SHA}"
           } > .nightly-version/version-info.env
 
       - name: Save version artifact
@@ -574,8 +653,9 @@ jobs:
           GITLAB_TRIGGER_TOKEN:   ${{ secrets.GITLAB_TRIGGER_TOKEN }}
           GITLAB_TRIGGER_URL:     ${{ secrets.GITLAB_PIPELINE_URL }}
           NIGHTLY_TAG:            ${{ needs.prepare-nightly.outputs.nightly_tag }}
-          WHEEL_VERSION:         ${{ needs.prepare-nightly.outputs.wheel_version }}
+          WHEEL_VERSION:          ${{ needs.prepare-nightly.outputs.wheel_version }}
           CONTAINER_TAG:          ${{ needs.prepare-nightly.outputs.container_tag }}
+          RESOLVED_SHA:           ${{ needs.prepare-nightly.outputs.resolved_sha }}
           ARTIFACTORY_PYPI_URL:   ${{ secrets.ARTIFACTORY_PYPI_URL }}
         run: |
           set -euo pipefail
@@ -601,7 +681,7 @@ jobs:
             --form "variables[NIGHTLY_TAG]=${NIGHTLY_TAG}" \
             --form "variables[WHEEL_VERSION]=${WHEEL_VERSION}" \
             --form "variables[CONTAINER_TAG]=${CONTAINER_TAG}" \
-            --form "variables[COMMIT_SHA]=${{ github.sha }}" \
+            --form "variables[COMMIT_SHA]=${RESOLVED_SHA}" \
             --form "variables[GITHUB_RUN_ID]=${GITHUB_RUN_ID}" \
             --form "variables[ARTIFACTS]=wheel,container" \
             --form "variables[ARTIFACTORY_PYPI_URL]=${ARTIFACTORY_PYPI_URL}" \
@@ -609,7 +689,7 @@ jobs:
             --form "variables[ENABLE_WHEEL_SCAN]=true" \
             --form "variables[ENABLE_SONARQUBE]=true" \
             --form "variables[SONAR_REPO]=aiperf" \
-            --form "variables[SONAR_BRANCH]=${GITHUB_REF_NAME}" \
+            --form "variables[SONAR_BRANCH]=${RESOLVED_SHA}" \
             "${GITLAB_TRIGGER_URL}")
 
           PIPELINE_ID=$(echo "${RESPONSE}" | jq -r '.id // empty')

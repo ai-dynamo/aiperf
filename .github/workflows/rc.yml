@@ -64,6 +64,7 @@ jobs:
       rc_tag: ${{ steps.rc.outputs.rc_tag }}
       wheel_version: ${{ steps.rc.outputs.wheel_version }}
       wheel_filename: ${{ steps.rc.outputs.wheel_filename }}
+      resolved_sha: ${{ steps.rc.outputs.resolved_sha }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -106,11 +107,13 @@ jobs:
           RC_TAG="v${VERSION}-rc${NEXT_RC}"
           WHEEL_VERSION="${VERSION}rc${NEXT_RC}"
           WHEEL_FILENAME="aiperf-${WHEEL_VERSION}-py3-none-any.whl"
+          RESOLVED_SHA=$(git rev-parse HEAD)
 
           echo "rc_number=${NEXT_RC}" >> "$GITHUB_OUTPUT"
           echo "rc_tag=${RC_TAG}" >> "$GITHUB_OUTPUT"
           echo "wheel_version=${WHEEL_VERSION}" >> "$GITHUB_OUTPUT"
           echo "wheel_filename=${WHEEL_FILENAME}" >> "$GITHUB_OUTPUT"
+          echo "resolved_sha=${RESOLVED_SHA}" >> "$GITHUB_OUTPUT"
 
   # ============================================================================
   # QUALITY GATES
@@ -462,6 +465,7 @@ jobs:
           RC_TAG: ${{ needs.prepare-release.outputs.rc_tag }}
           WHEEL_VERSION: ${{ needs.prepare-release.outputs.wheel_version }}
           WHEEL_FILENAME: ${{ needs.prepare-release.outputs.wheel_filename }}
+          RESOLVED_SHA: ${{ needs.prepare-release.outputs.resolved_sha }}
           GITLAB_TOKEN: ${{ secrets.GITLAB_TRIGGER_TOKEN }}
           GITLAB_URL: ${{ secrets.GITLAB_PIPELINE_URL }}
           ARTIFACTORY_PYPI_URL: ${{ secrets.ARTIFACTORY_PYPI_URL }}
@@ -484,13 +488,15 @@ jobs:
             --form "variables[SOURCE_BRANCH]=${GITHUB_REF_NAME}" \
             --form "variables[RC_TAG]=${RC_TAG}" \
             --form "variables[WHEEL_VERSION]=${WHEEL_VERSION}" \
-            --form "variables[COMMIT_SHA]=${{ github.sha }}" \
+            --form "variables[COMMIT_SHA]=${RESOLVED_SHA}" \
             --form "variables[GITHUB_RUN_ID]=${{ github.run_id }}" \
             --form "variables[ARTIFACTS]=wheel,container" \
             --form "variables[ARTIFACTORY_PYPI_URL]=${ARTIFACTORY_PYPI_URL}" \
             --form "variables[ENABLE_PULSE_SCAN]=true" \
             --form "variables[ENABLE_WHEEL_SCAN]=true" \
-            --form "variables[ENABLE_SONARQUBE]=false" \
+            --form "variables[ENABLE_SONARQUBE]=true" \
+            --form "variables[SONAR_REPO]=aiperf" \
+            --form "variables[SONAR_BRANCH]=${RESOLVED_SHA}" \
             "${GITLAB_URL}")
 
           PIPELINE_ID=$(echo "${RESPONSE}" | jq -r '.id // empty')
