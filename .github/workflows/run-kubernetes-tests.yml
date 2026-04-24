@@ -98,7 +98,15 @@ jobs:
       timeout-minutes: 20
 
     - name: Build mock server image
-      run: docker build -f dev/deploy/Dockerfile.mock-server -t aiperf-mock-server:latest .
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: dev/deploy/Dockerfile.mock-server
+        platforms: linux/amd64
+        load: true
+        tags: aiperf-mock-server:latest
+        cache-from: type=gha,scope=aiperf-mock-server
+        cache-to: type=gha,scope=aiperf-mock-server,mode=max
       timeout-minutes: 10
 
     - name: Run kubernetes tests
