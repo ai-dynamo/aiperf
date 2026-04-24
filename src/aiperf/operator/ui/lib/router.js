@@ -1,24 +1,34 @@
 import { signal, effect } from '@preact/signals';
 
-// Current route signal - hash without the leading '#'
-export const route = signal(getHash());
+// Current route signal - hash path without the leading '#' and without the query string.
+// The query string is exposed separately via `search` / `queryParams()` so existing
+// equality checks (e.g. `currentRoute === '/compare'`) keep working when callers add
+// deep-link params like `#/compare?cluster=foo`.
+export const route = signal(getPath());
+export const search = signal(getSearch());
 
-function getHash() {
+function splitHash() {
   const hash = window.location.hash;
-  // Strip leading '#', normalize empty to '/'
-  const path = hash.startsWith('#') ? hash.slice(1) : hash;
-  return path || '/';
+  const raw = hash.startsWith('#') ? hash.slice(1) : hash;
+  const qIdx = raw.indexOf('?');
+  if (qIdx === -1) return { path: raw || '/', search: '' };
+  return { path: raw.slice(0, qIdx) || '/', search: raw.slice(qIdx + 1) };
+}
+
+function getPath() { return splitHash().path; }
+function getSearch() { return splitHash().search; }
+
+function syncFromHash() {
+  const { path, search: s } = splitHash();
+  route.value = path;
+  search.value = s;
 }
 
 // Listen for hash changes
-window.addEventListener('hashchange', () => {
-  route.value = getHash();
-});
+window.addEventListener('hashchange', syncFromHash);
 
 // Also capture initial load
-window.addEventListener('load', () => {
-  route.value = getHash();
-});
+window.addEventListener('load', syncFromHash);
 
 /**
  * Navigate to a path. Updates the hash, which triggers the hashchange listener.
@@ -64,4 +74,25 @@ export function matchRoute(pattern, path) {
  */
 export function buildRoute(pattern, params = {}) {
   return pattern.replace(/:([^/]+)/g, (_, key) => encodeURIComponent(params[key] ?? ''));
+}
+
+/**
+ * Parse the query string portion of the current hash route into an object.
+ * Reads from the `search` signal so callers can react to hash changes.
+ *
+ * @returns {Object<string, string>}
+ */
+export function queryParams() {
+  const s = search.value;
+  if (!s) return {};
+  const out = {};
+  for (const pair of s.split('&')) {
+    if (!pair) continue;
+    const eq = pair.indexOf('=');
+    const k = eq === -1 ? pair : pair.slice(0, eq);
+    const v = eq === -1 ? '' : pair.slice(eq + 1);
+    try { out[decodeURIComponent(k)] = decodeURIComponent(v.replace(/\+/g, ' ')); }
+    catch { out[k] = v; }
+  }
+  return out;
 }

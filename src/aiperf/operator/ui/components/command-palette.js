@@ -4,11 +4,11 @@ import { jobs } from '../lib/state.js';
 import { navigate } from '../lib/router.js';
 
 const PAGES = [
-  { label: 'Dashboard', path: '/' },
-  { label: 'Jobs', path: '/jobs' },
-  { label: 'Leaderboard', path: '/leaderboard' },
-  { label: 'Compare', path: '/compare' },
-  { label: 'History', path: '/history' },
+  { label: 'Home', path: '/', hint: 'All runs' },
+  { label: 'Launch', path: '/launch', hint: '⌘N — new run' },
+  { label: 'Archive', path: '/archive', hint: 'Past runs' },
+  { label: 'Compare', path: '/compare', hint: 'Analysis lab' },
+  { label: 'Log', path: '/log', hint: 'Historical run log' },
 ];
 
 /**
@@ -40,7 +40,7 @@ export function CommandPalette({ onClose }) {
 
   // Build items: pages + job entries
   const allItems = [
-    ...PAGES.map((p) => ({ label: p.label, sub: 'Page', action: () => navigate(p.path) })),
+    ...PAGES.map((p) => ({ label: p.label, sub: p.hint ?? 'Page', action: () => navigate(p.path) })),
     ...jobs.value.map((j) => {
       // /api/v1/jobs returns flat AIPerfJobInfo records (K8sCamelModel),
       // not raw CR objects — so namespace/name live at the top level.
@@ -49,7 +49,7 @@ export function CommandPalette({ onClose }) {
       return {
         label: name,
         sub: ns,
-        action: () => navigate(`/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`),
+        action: () => navigate(`/run/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`),
       };
     }),
   ];

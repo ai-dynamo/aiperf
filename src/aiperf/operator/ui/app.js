@@ -2,25 +2,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * AIPERF // FLIGHT DECK — new three-pane operator shell.
+ * AIPERF // WORKBENCH — single-viewport operator UI.
  *
- * Layout (persistent across every view):
+ * Unlike the previous "Flight Deck" incarnation (always-on left run rail +
+ * right inspector + log strip), this shell is deliberately spare: one top
+ * strip carrying the callsign + breadcrumb + LAUNCH CTA + ⌘K search, and one
+ * full-bleed main viewport below. The operator is a task-focused tool, not a
+ * monitoring console — the user comes here with intent (launch this run,
+ * watch that run finish, grab its results, compare two runs) and the UI gets
+ * out of the way of that intent.
  *
- *   ┌──────────────────────────────────────────────────┐ 48 px
- *   │                  TOP RAIL                         │
- *   ├──────────┬──────────────────────┬──────────────┤
- *   │          │                       │                │
- *   │  LEFT    │        MAIN           │   RIGHT        │
- *   │  RAIL    │        VIEWPORT       │   INSPECTOR    │
- *   │  (260)   │        (flex)         │   (340)        │
- *   ├──────────┴──────────────────────┴──────────────┤
- *   │                  LOG STRIP                        │ 0 / 240 px
- *   └──────────────────────────────────────────────────┘
+ * Routes:
+ *   /                → smart Home (active run / pick-one cards / launch CTA)
+ *   /launch          → YAML editor + templates, POST to the operator
+ *   /run/:ns/:name   → the rich workbench for a single run
+ *   /archive         → past-runs browser
+ *   /compare         → side-by-side chart overlay
+ *   /log             → durable run log (kept but de-emphasized)
  *
- * Views are swapped inside the viewport without unmounting the rails, so the
- * user stays oriented (no page flash, no state loss). Routes become viewport
- * selectors — `/run/:ns/:name` swaps in a RUN view, `/fleet` swaps in FLEET,
- * etc. Default route is OVERVIEW.
+ * Legacy paths (`/jobs`, `/leaderboard`, `/compare`, `/history`, and
+ * `/jobs/:ns/:name`) still resolve to the new views so deep links keep
+ * working.
  */
 
 import { html, render } from 'htm/preact';
@@ -29,33 +31,33 @@ import { route, matchRoute, navigate } from './lib/router.js';
 import { api, poll } from './lib/api.js';
 import { jobs, clusterInfo, globalError } from './lib/state.js';
 import { TopRail } from './components/top-rail.js';
-import { LeftRail } from './components/left-rail.js';
-import { RightInspector } from './components/right-inspector.js';
 import { LogStrip } from './components/log-strip.js';
 import { CommandPalette } from './components/command-palette.js';
-import { Overview } from './views/overview.js';
+import { Home } from './views/home.js';
+import { Launch } from './views/launch.js';
 import { Run } from './views/run.js';
-import { Fleet } from './views/fleet.js';
+import { Archive } from './views/archive.js';
 import { Analysis } from './views/analysis.js';
 import { Log } from './views/log.js';
 
 function resolveView(currentRoute) {
   const runMatch = matchRoute('/run/:ns/:name', currentRoute)
-    ?? matchRoute('/jobs/:ns/:name', currentRoute);        // legacy
-  if (runMatch) return { kind: 'run', params: runMatch };
-  if (currentRoute === '/fleet' || currentRoute === '/jobs')         return { kind: 'fleet' };
-  if (currentRoute === '/analysis'
+    ?? matchRoute('/jobs/:ns/:name', currentRoute);
+  if (runMatch)                                        return { kind: 'run', params: runMatch };
+  if (currentRoute === '/launch')                      return { kind: 'launch' };
+  if (currentRoute === '/archive'
+    || currentRoute === '/fleet'
+    || currentRoute === '/jobs')                       return { kind: 'archive' };
+  if (currentRoute === '/compare'
     || currentRoute === '/leaderboard'
-    || currentRoute === '/compare')                                  return { kind: 'analysis' };
-  if (currentRoute === '/log' || currentRoute === '/history')        return { kind: 'log' };
-  return { kind: 'overview' };
+    || currentRoute === '/analysis')                   return { kind: 'analysis' };
+  if (currentRoute === '/log'
+    || currentRoute === '/history')                    return { kind: 'log' };
+  return { kind: 'home' };
 }
 
 function App() {
   const [showPalette, setShowPalette] = useState(false);
-  const [logOpen, setLogOpen] = useState(false);
-  const [rightOpen, setRightOpen] = useState(true);
-  const [leftOpen, setLeftOpen] = useState(true);
 
   const currentRoute = route.value;
   const resolved = resolveView(currentRoute);
@@ -67,11 +69,11 @@ function App() {
       try {
         const data = await api.listJobs();
         jobs.value = data?.jobs ?? [];
-      } catch (_e) { /* left rail shows empty until recovery */ }
+      } catch (_e) { /* ignore until recovery */ }
     }, 5000, ac.signal);
     poll(async () => {
       try { clusterInfo.value = await api.getCluster(); } catch (_e) { /* ignore */ }
-    }, 10000, ac.signal);
+    }, 15000, ac.signal);
     return () => ac.abort();
   }, []);
 
@@ -80,18 +82,11 @@ function App() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setShowPalette(v => !v);
-      } else if ((e.ctrlKey || e.metaKey) && e.key === '`') {
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
         e.preventDefault();
-        setLogOpen(v => !v);
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
-        e.preventDefault();
-        setLeftOpen(v => !v);
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'i') {
-        e.preventDefault();
-        setRightOpen(v => !v);
+        navigate('/launch');
       } else if (e.key === 'Escape' && !showPalette) {
-        // Escape backs out of a selected run to overview.
-        if (resolved.kind === 'run') navigate('/overview');
+        if (resolved.kind === 'run') navigate('/');
       }
     }
     window.addEventListener('keydown', onKey);
@@ -101,61 +96,34 @@ function App() {
   let mainView;
   if (resolved.kind === 'run') {
     mainView = html`<${Run} ns=${resolved.params.ns} name=${resolved.params.name} />`;
-  } else if (resolved.kind === 'fleet') {
-    mainView = html`<${Fleet} />`;
+  } else if (resolved.kind === 'launch') {
+    mainView = html`<${Launch} />`;
+  } else if (resolved.kind === 'archive') {
+    mainView = html`<${Archive} />`;
   } else if (resolved.kind === 'analysis') {
     mainView = html`<${Analysis} />`;
   } else if (resolved.kind === 'log') {
     mainView = html`<${Log} />`;
   } else {
-    mainView = html`<${Overview} />`;
+    mainView = html`<${Home} />`;
   }
 
-  const deckCls = [
-    'deck',
-    logOpen   ? 'deck--log-open'         : '',
-    rightOpen ? ''                       : 'deck--right-collapsed',
-    leftOpen  ? ''                       : 'deck--left-collapsed',
-  ].filter(Boolean).join(' ');
-
   return html`
-    <div class=${deckCls} data-route=${resolved.kind}>
+    <div class="bench" data-route=${resolved.kind}>
       <${TopRail}
         viewKind=${resolved.kind}
         runParams=${resolved.params}
         onSearchClick=${() => setShowPalette(true)}
-        onToggleLog=${() => setLogOpen(v => !v)}
-        onToggleLeft=${() => setLeftOpen(v => !v)}
-        onToggleRight=${() => setRightOpen(v => !v)}
-        logOpen=${logOpen}
-        leftOpen=${leftOpen}
-        rightOpen=${rightOpen}
       />
-      <${LeftRail}
-        viewKind=${resolved.kind}
-        runParams=${resolved.params}
-        open=${leftOpen}
-        onToggle=${() => setLeftOpen(v => !v)}
-      />
-      <main class="deck-main" data-testid="deck-main">
+      <main class="bench-main" data-testid="bench-main">
         ${error && html`
-          <div class="deck-error-flash" data-testid="global-error">
-            <strong>FAULT</strong>
-            ${error}
+          <div class="bench-error-flash" data-testid="global-error">
+            <strong>FAULT</strong> ${error}
           </div>
         `}
         ${mainView}
       </main>
-      <${RightInspector}
-        viewKind=${resolved.kind}
-        runParams=${resolved.params}
-        open=${rightOpen}
-        onToggle=${() => setRightOpen(v => !v)}
-      />
-      <${LogStrip}
-        open=${logOpen}
-        onClose=${() => setLogOpen(false)}
-      />
+      <${LogStrip} />
       ${showPalette && html`<${CommandPalette} onClose=${() => setShowPalette(false)} />`}
     </div>
   `;

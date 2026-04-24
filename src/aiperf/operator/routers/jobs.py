@@ -10,16 +10,16 @@ from typing import TYPE_CHECKING, Any
 
 import orjson
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client import ApiClient
 from kubernetes_asyncio.client.exceptions import ApiException
-from pydantic import Field
 
-from aiperf.common.models import AIPerfBaseModel
 from aiperf.kubernetes.client import (
     cancel_aiperf_job,
     cluster_version,
     get_pods,
+    get_raw_aiperfjob,
     get_raw_aiperfjob_status,
 )
 from aiperf.operator.job_union import (
@@ -27,25 +27,25 @@ from aiperf.operator.job_union import (
     list_all_jobs,
     synthesize_status_from_summary,
 )
+from aiperf.operator.routers.jobs_logs import get_pod_logs_impl
+from aiperf.operator.routers.jobs_models import (
+    ActiveJobListResponse,
+    CancelResponse,
+    ClusterResponse,
+    CreateJobRequest,
+    CreateJobResponse,
+    EventEntry,
+    EventInvolvedObject,
+    EventSource,
+    JobDetailResponse,
+    JobEventsResponse,
+    JobPodSummary,
+)
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client.models import V1Node, V1Pod
 
 logger = logging.getLogger("aiperf.operator.ui")
-
-
-class JobPodSummary(AIPerfBaseModel):
-    """Pod identity + lifecycle summary returned in JobDetailResponse.
-
-    Distinct from ``aiperf.kubernetes.models.PodSummary`` (an aggregate
-    ``ready/total/restarts`` snapshot of a JobSet): this model is per-pod and
-    includes the pod name / phase.
-    """
-
-    name: str = Field(description="Pod name.")
-    phase: str = Field(description="Pod phase (Running, Pending, Succeeded, ...).")
-    ready: bool = Field(description="True iff at least one container is ready.")
-    restarts: int = Field(description="Sum of restart counts across containers.")
 
 
 def _pod_summary(pod: V1Pod) -> JobPodSummary:
@@ -101,36 +101,6 @@ async def _fetch_node_gpu_totals(api: ApiClient) -> tuple[int, int]:
         return 0, 0
     nodes = node_list.items
     return len(nodes), sum(_node_gpu_count(n) for n in nodes)
-
-
-class ActiveJobListResponse(AIPerfBaseModel):
-    """Response for GET /api/v1/jobs: active AIPerfJob CRs in the cluster."""
-
-    jobs: list[dict[str, Any]] = Field(description="List of AIPerfJob summaries.")
-
-
-class JobDetailResponse(AIPerfBaseModel):
-    """Response for GET /api/v1/jobs/{namespace}/{name}."""
-
-    job: dict[str, Any] = Field(description="AIPerfJob summary.")
-    status: dict[str, Any] = Field(
-        description="Raw CR status (phases, conditions, liveMetrics)."
-    )
-    pods: list[JobPodSummary] = Field(description="Pod summaries for this job.")
-
-
-class ClusterResponse(AIPerfBaseModel):
-    """Response for GET /api/v1/cluster."""
-
-    nodes: int = Field(description="Number of cluster nodes.")
-    gpus: int = Field(description="Total allocatable GPUs.")
-    kubernetes_version: str = Field(description="Kubernetes server version.")
-
-
-class CancelResponse(AIPerfBaseModel):
-    """Response for POST /api/v1/jobs/{namespace}/{name}/cancel."""
-
-    cancelled: bool = Field(description="Whether cancellation was requested.")
 
 
 async def _list_jobs_impl(api: ApiClient, results_dir: Path) -> ActiveJobListResponse:
@@ -222,6 +192,61 @@ async def _get_job_impl(
     )
 
 
+async def _create_job_impl(
+    api: ApiClient,
+    manifest: dict[str, Any],
+) -> CreateJobResponse:
+    """Body of POST /api/v1/jobs: create an AIPerfJob CR from a manifest dict.
+
+    Fills in ``apiVersion`` and ``kind`` when omitted, resolves the target
+    namespace (default: ``default``), and submits to the CustomObjectsApi.
+    Returns the namespace/name/uid so the UI can deep-link to the new run's
+    workbench page immediately.
+
+    Args:
+        api: The kubernetes_asyncio ApiClient.
+        manifest: Full AIPerfJob manifest shaped like ``kubectl apply -f`` input.
+
+    Raises:
+        HTTPException: 400 when the manifest is missing ``metadata.name`` or
+            is otherwise malformed in a way the client should fix.
+        HTTPException: Other ``kubernetes_asyncio.client.ApiException`` status
+            codes propagate (e.g. 401/403 on RBAC denial, 409 if a CR with
+            the same name already exists, 422 on schema validation errors).
+    """
+    if not isinstance(manifest, dict):
+        raise HTTPException(400, "Manifest must be a JSON/YAML object.")
+
+    manifest = dict(manifest)
+    manifest.setdefault("apiVersion", "aiperf.nvidia.com/v1alpha1")
+    manifest.setdefault("kind", "AIPerfJob")
+    metadata = manifest.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        raise HTTPException(400, "metadata must be an object.")
+    name = metadata.get("name")
+    if not name:
+        raise HTTPException(400, "metadata.name is required.")
+    namespace = metadata.get("namespace") or "default"
+    metadata["namespace"] = namespace
+    manifest["metadata"] = metadata
+
+    co = client.CustomObjectsApi(api)
+    try:
+        created = await co.create_namespaced_custom_object(
+            group="aiperf.nvidia.com",
+            version="v1alpha1",
+            namespace=namespace,
+            plural="aiperfjobs",
+            body=manifest,
+        )
+    except ApiException as e:
+        detail = e.body or e.reason or "Kubernetes API error"
+        raise HTTPException(e.status or 500, detail) from e
+
+    uid = (created.get("metadata") or {}).get("uid")
+    return CreateJobResponse(namespace=namespace, name=name, uid=uid)
+
+
 async def _cancel_job_impl(
     api: ApiClient,
     results_dir: Path,
@@ -266,6 +291,108 @@ async def _cancel_job_impl(
         )
     await cancel_aiperf_job(api, name, namespace)
     return CancelResponse(cancelled=True)
+
+
+MAX_EVENTS_RETURNED = 200
+
+
+def _event_to_entry(raw: Any) -> EventEntry:
+    """Map a ``V1Event`` to the UI-facing :class:`EventEntry`.
+
+    Timestamps are ISO-8601 strings (``.isoformat()``) so the UI does not need
+    to know the ``kubernetes_asyncio`` datetime type. Both ``firstTimestamp``
+    and ``lastTimestamp`` can be None for events emitted via the newer
+    ``events.k8s.io/v1`` API — we fall back to ``eventTime`` if present.
+    """
+    involved = raw.involved_object
+    src = raw.source
+    # event_time is the newer ``events.k8s.io/v1`` timestamp; older Events
+    # populate first/last timestamp but not event_time.
+    event_time = getattr(raw, "event_time", None)
+    first_ts = raw.first_timestamp or event_time
+    last_ts = raw.last_timestamp or event_time
+    return EventEntry(
+        type=raw.type,
+        reason=raw.reason,
+        message=raw.message,
+        source=EventSource(
+            component=getattr(src, "component", None) if src else None,
+            host=getattr(src, "host", None) if src else None,
+        ),
+        involved_object=EventInvolvedObject(
+            kind=getattr(involved, "kind", None) if involved else None,
+            name=getattr(involved, "name", None) if involved else None,
+            namespace=getattr(involved, "namespace", None) if involved else None,
+        ),
+        first_timestamp=first_ts.isoformat() if first_ts is not None else None,
+        last_timestamp=last_ts.isoformat() if last_ts is not None else None,
+        count=raw.count,
+    )
+
+
+async def _events_for_object(
+    core: client.CoreV1Api,
+    namespace: str,
+    object_name: str,
+) -> list[Any]:
+    """Return raw ``V1Event`` objects whose ``involvedObject.name`` matches.
+
+    Uses a field selector so the apiserver filters server-side — this is cheap
+    even in busy namespaces. ``involvedObject.name`` is not globally unique
+    (two kinds can share a name), so callers may need to further filter by
+    ``involvedObject.kind`` if disambiguation matters; the jobs endpoint does
+    not, because AIPerfJob CRs and their pods always have distinct names.
+    """
+    resp = await core.list_namespaced_event(
+        namespace=namespace,
+        field_selector=f"involvedObject.name={object_name}",
+    )
+    return list(resp.items or [])
+
+
+async def _list_events_impl(
+    api: ApiClient,
+    namespace: str,
+    name: str,
+) -> JobEventsResponse:
+    """Body of GET /api/v1/jobs/{namespace}/{name}/events.
+
+    Collects events for (1) the AIPerfJob CR itself and (2) every pod labelled
+    ``aiperf.nvidia.com/job-id=<name>``. Owned intermediate resources (k8s Jobs,
+    JobSets, ConfigMaps, Services) are intentionally omitted — their event
+    streams are low-signal for the UI log and the pod events already surface
+    the interesting failures (ImagePull, FailedScheduling, OOMKilled, ...).
+
+    The result is sorted by ``lastTimestamp`` descending and capped at
+    :data:`MAX_EVENTS_RETURNED` entries. Events with no timestamp sort last.
+
+    Raises:
+        HTTPException: 404 if the AIPerfJob CR does not exist in ``namespace``.
+            Non-404 ``ApiException`` errors propagate via the app-level handler
+            registered in ``results_server._register_k8s_exception_handler``.
+    """
+    cr = await get_raw_aiperfjob(api, namespace, name)
+    if cr is None:
+        raise HTTPException(404, f"AIPerfJob {namespace}/{name} not found")
+
+    core = client.CoreV1Api(api)
+    cr_events = await _events_for_object(core, namespace, name)
+
+    pods = await get_pods(api, namespace, f"aiperf.nvidia.com/job-id={name}")
+    pod_names = [p.metadata.name for p in pods if p.metadata and p.metadata.name]
+
+    pod_event_lists: list[list[Any]] = []
+    for pod_name in pod_names:
+        pod_event_lists.append(await _events_for_object(core, namespace, pod_name))
+
+    raw_events: list[Any] = [*cr_events]
+    for lst in pod_event_lists:
+        raw_events.extend(lst)
+
+    entries = [_event_to_entry(e) for e in raw_events]
+    # Sort by last_timestamp desc; push None (no timestamp) to the end.
+    entries.sort(key=lambda e: e.last_timestamp or "", reverse=True)
+    return JobEventsResponse(events=entries[:MAX_EVENTS_RETURNED])
 
 
 async def _cluster_info_impl(api: ApiClient) -> ClusterResponse:
@@ -322,6 +449,10 @@ def create_jobs_router(
     async def list_jobs() -> ActiveJobListResponse:
         return await _list_jobs_impl(_require_api(), _results_dir)
 
+    @router.post("/jobs", response_model=CreateJobResponse, status_code=201)
+    async def create_job(body: CreateJobRequest) -> CreateJobResponse:
+        return await _create_job_impl(_require_api(), body.manifest)
+
     @router.get("/jobs/{namespace}/{name}", response_model=JobDetailResponse)
     async def get_job(namespace: str, name: str) -> JobDetailResponse:
         return await _get_job_impl(_require_api(), _results_dir, namespace, name)
@@ -329,6 +460,30 @@ def create_jobs_router(
     @router.post("/jobs/{namespace}/{name}/cancel", response_model=CancelResponse)
     async def cancel_job(namespace: str, name: str) -> CancelResponse:
         return await _cancel_job_impl(_require_api(), _results_dir, namespace, name)
+
+    @router.get("/jobs/{namespace}/{name}/events", response_model=JobEventsResponse)
+    async def list_job_events(namespace: str, name: str) -> JobEventsResponse:
+        return await _list_events_impl(_require_api(), namespace, name)
+
+    @router.get("/jobs/{namespace}/{name}/logs")
+    async def get_pod_logs(
+        namespace: str,
+        name: str,
+        *,
+        pod: str,
+        follow: int = 0,
+        tail_lines: int = 200,
+        container: str | None = None,
+    ) -> Response:
+        return await get_pod_logs_impl(
+            _require_api(),
+            namespace,
+            name,
+            pod=pod,
+            follow=bool(follow),
+            tail_lines=tail_lines,
+            container=container,
+        )
 
     @router.get("/cluster", response_model=ClusterResponse)
     async def cluster_info() -> ClusterResponse:

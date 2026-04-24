@@ -2,33 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * TOP RAIL — the persistent command strip at the top of the Flight Deck.
+ * TOP RAIL — the only persistent element of the Workbench shell.
  *
- * Carries (left → right):
- *   ┌ logo + station callsign  (AIPERF // FLIGHT DECK)
- *   ├ view selector            (OVERVIEW / FLEET / ANALYSIS / LOG)
- *   ├ contextual path          (when a run is pinned to main viewport)
- *   ├ fleet telemetry strip    (live RUNS / GPUs / FLEET R/S / WORST P99)
- *   ├ UTC clock + NET LED
- *   ├ pane toggles             (left · right · log) with kbd hints
- *   └ search button            (Ctrl+K)
+ * Left:  station callsign, breadcrumb trail for the current view.
+ * Right: LAUNCH primary CTA (⌘N), ARCHIVE + LOG secondary buttons, ⌘K
+ *        search, UTC clock, NET heartbeat LED.
  *
- * Nothing here initiates API calls — the rail reads from `jobs` / `clusterInfo`
- * signals that ``app.js`` polls globally.
+ * Everything else — run listing, per-run inspector, event log — either
+ * lives inside the viewport itself or is reachable via ⌘K, so the rail stays
+ * thin and out of the way.
  */
 
 import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
-import { jobs, clusterInfo } from '../lib/state.js';
 import { navigate } from '../lib/router.js';
-import { fmtInt, fmtNumber } from '../lib/format.js';
-
-const VIEWS = [
-  { kind: 'overview', path: '/overview', label: 'OVERVIEW', icon: 'ph-crosshair' },
-  { kind: 'fleet',    path: '/fleet',    label: 'FLEET',    icon: 'ph-list-numbers' },
-  { kind: 'analysis', path: '/analysis', label: 'ANALYSIS', icon: 'ph-scales' },
-  { kind: 'log',      path: '/log',      label: 'LOG',      icon: 'ph-clock-counter-clockwise' },
-];
 
 const pad = n => String(n).padStart(2, '0');
 
@@ -65,154 +52,107 @@ function useNetStatus() {
   return status;
 }
 
-/** Aggregate live run stats for the fleet telemetry strip. */
-function useFleetSnapshot() {
-  const js = jobs.value ?? [];
-  const ci = clusterInfo.value;
-  const running = js.filter(j => {
-    const p = (j.phase ?? '').toLowerCase();
-    return p === 'running' || p === 'initializing' || p === 'pending';
-  });
-  const failed = js.filter(j => {
-    const p = (j.phase ?? '').toLowerCase();
-    return p === 'failed' || p === 'error';
-  });
-  let fleetRps = 0;
-  let rpsKnown = false;
-  let worstP99 = null;
-  for (const j of running) {
-    if (j.throughputRps != null) { fleetRps += Number(j.throughputRps); rpsKnown = true; }
-    if (j.latencyP99Ms != null) worstP99 = worstP99 == null ? j.latencyP99Ms : Math.max(worstP99, j.latencyP99Ms);
+/** Derive breadcrumb segments from the current view + params. */
+function breadcrumbFor(viewKind, runParams) {
+  if (viewKind === 'run' && runParams) {
+    return [
+      { label: 'Run', path: null },
+      { label: runParams.ns, path: '/archive' },
+      { label: runParams.name, path: null, emphasise: true },
+    ];
   }
-  const gpus = ci?.gpus ?? ci?.gpuCount ?? ci?.gpu_count ?? null;
-  const gpuCap = ci?.gpuCapacity ?? ci?.gpu_capacity ?? null;
-  return { running, failed, fleetRps, rpsKnown, worstP99, gpus, gpuCap };
+  if (viewKind === 'launch')   return [{ label: 'Launch', path: null, emphasise: true }];
+  if (viewKind === 'archive')  return [{ label: 'Archive', path: null, emphasise: true }];
+  if (viewKind === 'analysis') return [{ label: 'Compare', path: null, emphasise: true }];
+  if (viewKind === 'log')      return [{ label: 'Log',    path: null, emphasise: true }];
+  return [];
 }
 
-export function TopRail({
-  viewKind, runParams,
-  onSearchClick, onToggleLog, onToggleLeft, onToggleRight,
-  logOpen, leftOpen, rightOpen,
-}) {
+export function TopRail({ viewKind, runParams, onSearchClick }) {
   const clock = useUtcClock();
   const net = useNetStatus();
-  const snap = useFleetSnapshot();
+  const crumbs = breadcrumbFor(viewKind, runParams);
 
   const netLabel = net === 'ok' ? 'UP' : net === 'warn' ? 'RETRY' : 'DOWN';
 
   return html`
-    <header class="rail-top" data-testid="top-nav">
-      <div class="rail-top-left">
+    <header class="rail" data-testid="top-nav">
+      <div class="rail-left">
         <button
-          class="pane-toggle pane-toggle--left"
-          aria-pressed=${leftOpen}
-          onclick=${onToggleLeft}
-          title="Toggle fleet rail (Ctrl+B)"
-          data-testid="toggle-left"
-        ><i class="ph ph-sidebar-simple"></i></button>
+          class="rail-logo"
+          onclick=${() => navigate('/')}
+          title="Home"
+          data-testid="callsign"
+        >
+          <span class="rail-logo-light"></span>
+          <span class="rail-logo-head">AIPERF</span>
+          <span class="rail-logo-sep">//</span>
+          <span class="rail-logo-tail">WORKBENCH</span>
+        </button>
 
-        <div class="callsign" data-testid="callsign">
-          <span class="callsign-light" aria-hidden="true"></span>
-          <span class="callsign-head">AIPERF</span>
-          <span class="callsign-sep">//</span>
-          <span class="callsign-tail">FLIGHT DECK</span>
-        </div>
-
-        <nav class="view-switch" aria-label="View">
-          ${VIEWS.map(v => html`
-            <button
-              key=${v.kind}
-              class=${'view-switch-tab' + (v.kind === viewKind ? ' active' : '')}
-              onclick=${() => navigate(v.path)}
-              aria-current=${v.kind === viewKind ? 'page' : undefined}
-              data-testid=${'nav-link-' + (v.kind === 'overview' ? 'dashboard' : v.kind === 'analysis' ? 'leaderboard' : v.kind === 'log' ? 'history' : v.kind === 'fleet' ? 'jobs' : v.kind)}
-            >
-              <i class=${'ph ' + v.icon}></i>
-              <span>${v.label}</span>
-            </button>
-          `)}
-        </nav>
-
-        ${viewKind === 'run' && runParams && html`
-          <div class="rail-path" data-testid="rail-path">
-            <span class="rail-path-caret">▸</span>
-            <span class="rail-path-ns">${runParams.ns}</span>
-            <span class="rail-path-sep">/</span>
-            <span class="rail-path-name">${runParams.name}</span>
-          </div>
+        ${crumbs.length > 0 && html`
+          <nav class="rail-crumbs" aria-label="Breadcrumb" data-testid="breadcrumb">
+            ${crumbs.map((c, i) => html`
+              <span key=${i} class="rail-crumb-sep">▸</span>
+              ${c.path
+                ? html`<a class="rail-crumb" href=${'#' + c.path} onclick=${(e) => { e.preventDefault(); navigate(c.path); }}>${c.label}</a>`
+                : html`<span class=${'rail-crumb' + (c.emphasise ? ' rail-crumb--strong' : '')}>${c.label}</span>`}
+            `)}
+          </nav>
         `}
       </div>
 
-      <div class="rail-top-right">
-        <div class="tele-strip" role="group" aria-label="Fleet telemetry">
-          <div class="tele">
-            <span class="tele-label">LIVE</span>
-            <span class=${'tele-val' + (snap.running.length > 0 ? ' is-hot' : '')}>
-              ${snap.running.length}
-            </span>
-          </div>
-          <div class="tele">
-            <span class="tele-label">R/S</span>
-            <span class=${'tele-val' + (snap.rpsKnown ? ' is-amber' : '')}>
-              ${snap.rpsKnown ? fmtNumber(snap.fleetRps, 0) : '—'}
-            </span>
-          </div>
-          <div class="tele">
-            <span class="tele-label">P99</span>
-            <span class=${'tele-val' + (snap.worstP99 != null && snap.worstP99 > 500 ? ' is-red' : '')}>
-              ${snap.worstP99 != null ? fmtInt(snap.worstP99) : '—'}
-            </span>
-          </div>
-          <div class="tele">
-            <span class="tele-label">GPU</span>
-            <span class="tele-val">
-              ${snap.gpus != null ? fmtInt(snap.gpus) : '—'}${snap.gpuCap != null ? html`<small>/${fmtInt(snap.gpuCap)}</small>` : null}
-            </span>
-          </div>
-          ${snap.failed.length > 0 && html`
-            <div class="tele tele--bad">
-              <span class="tele-label">FAIL</span>
-              <span class="tele-val is-red">${snap.failed.length}</span>
-            </div>
-          `}
-        </div>
+      <div class="rail-right">
+        <button
+          class=${'rail-launch' + (viewKind === 'launch' ? ' is-active' : '')}
+          onclick=${() => navigate('/launch')}
+          data-testid="rail-launch"
+          title="Launch a new run (⌘N)"
+        >
+          <i class="ph ph-plus"></i>
+          <span>Launch</span>
+          <kbd>⌘N</kbd>
+        </button>
+
+        <button
+          class=${'rail-btn' + (viewKind === 'archive' ? ' is-active' : '')}
+          onclick=${() => navigate('/archive')}
+          data-testid="rail-archive"
+          title="Browse past runs"
+        >
+          <i class="ph ph-archive"></i>
+          <span>Archive</span>
+        </button>
+
+        <button
+          class=${'rail-btn' + (viewKind === 'analysis' ? ' is-active' : '')}
+          onclick=${() => navigate('/compare')}
+          data-testid="rail-compare"
+          title="Compare runs"
+        >
+          <i class="ph ph-scales"></i>
+          <span>Compare</span>
+        </button>
+
+        <div class="rail-sep" aria-hidden="true"></div>
+
+        <button
+          class="rail-search"
+          onclick=${onSearchClick}
+          title="Search runs (⌘K)"
+          data-testid="nav-search"
+        >
+          <i class="ph ph-magnifying-glass"></i>
+          <kbd>⌘K</kbd>
+        </button>
 
         <div class=${'rail-net rail-net--' + net} title=${'NET ' + netLabel} data-testid="net-status">
           <span class="rail-net-dot"></span>
           NET · ${netLabel}
         </div>
 
-        <div class="rail-clock" data-testid="topbar-clock">
-          <span class="rail-clock-label">UTC</span>
-          <span class="rail-clock-val">${clock}</span>
-        </div>
-
-        <button
-          class="rail-search"
-          onclick=${onSearchClick}
-          title="Search (Ctrl+K)"
-          data-testid="nav-search"
-        >
-          <i class="ph ph-magnifying-glass"></i>
-          <span>Search</span>
-          <kbd>⌘K</kbd>
-        </button>
-
-        <div class="pane-toggles">
-          <button
-            class=${'pane-toggle' + (logOpen ? ' is-on' : '')}
-            aria-pressed=${logOpen}
-            onclick=${onToggleLog}
-            title="Toggle log strip (Ctrl + grave)"
-            data-testid="toggle-log"
-          ><i class="ph ph-terminal-window"></i></button>
-          <button
-            class=${'pane-toggle' + (rightOpen ? ' is-on' : '')}
-            aria-pressed=${rightOpen}
-            onclick=${onToggleRight}
-            title="Toggle inspector (Ctrl+I)"
-            data-testid="toggle-right"
-          ><i class="ph ph-columns"></i></button>
+        <div class="rail-clock" data-testid="topbar-clock" title="UTC">
+          ${clock}
         </div>
       </div>
     </header>

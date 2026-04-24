@@ -19,8 +19,8 @@ let _initialized = false;
  *  green/red/purple for outlier / tertiary series. Fully saturated so lines
  *  punch against the near-black substrate. */
 export const PALETTE = [
-  '#ffb627', '#7eeaff', '#64ffb3', '#ff5964',
-  '#c4a5ff', '#f4eede', '#ffd166', '#a0d8ff',
+  '#76b900', '#7eeaff', '#9fe870', '#ff5964',
+  '#c4a5ff', '#f4eede', '#8ce200', '#a0d8ff',
 ];
 
 const MONO_FAMILY = "'IBM Plex Mono', 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace";
@@ -49,7 +49,7 @@ export function applyChartTheme(options = {}) {
     C.defaults.plugins.tooltip.cornerRadius = 0;
     C.defaults.plugins.tooltip.displayColors = false;
     C.defaults.plugins.tooltip.boxPadding = 6;
-    C.defaults.plugins.tooltip.borderColor = 'rgba(255, 182, 39, 0.45)';
+    C.defaults.plugins.tooltip.borderColor = 'rgba(118, 185, 0, 0.45)';
     C.defaults.plugins.tooltip.borderWidth = 1;
     C.defaults.plugins.tooltip.titleFont = { family: MONO_FAMILY, size: 11, weight: '700' };
     C.defaults.plugins.tooltip.bodyFont = { family: MONO_FAMILY, size: 11 };

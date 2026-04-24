@@ -2,16 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * LOG STRIP — bottom terminal-style event feed.
+ * LOG STRIP — always-on bottom event feed.
  *
- * Collapsed by default (grid row height = 0). Toggle via Ctrl+` or the terminal
- * button in the top rail. When open, shows a reverse-chronological list of
- * life-cycle events derived from the `jobs` signal — phase transitions (Pending
- * → Running → Completed/Failed), worker-ready transitions, SLO violations.
+ * Persistent (not collapsible) 180px-tall strip at the bottom of the
+ * Workbench shell. Streams derived lifecycle events — diffs successive
+ * ``jobs`` snapshots and emits events on phase transitions, worker-ready
+ * changes, fault discovery.
  *
- * Derivation is purely client-side: we diff successive snapshots of the jobs
- * list and emit events when a tracked field changes. This keeps the log cheap
- * (no backend streaming) and always in sync with what the left rail shows.
+ * Derivation is purely client-side: no backend streaming. First snapshot
+ * primes the state; thereafter only transitions produce entries.
  */
 
 import { html } from 'htm/preact';
@@ -19,7 +18,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { jobs } from '../lib/state.js';
 import { navigate } from '../lib/router.js';
 
-const MAX_EVENTS = 80;
+const MAX_EVENTS = 120;
 const pad = n => String(n).padStart(2, '0');
 
 function fmtTs(ts) {
@@ -35,33 +34,32 @@ function phaseBucket(phase) {
   return 'other';
 }
 
-/** Diff successive `jobs` snapshots, synthesizing events. */
 function useEventFeed() {
   const [events, setEvents] = useState([]);
-  const prevRef = useRef(new Map());
+  const prevRef = useRef(null);  // null on first snapshot — don't emit
 
   useEffect(() => {
     const unsubscribe = jobs.subscribe((list) => {
       const now = Date.now();
-      const prev = prevRef.current;
       const next = new Map();
       const fresh = [];
+      const prev = prevRef.current;
 
       for (const j of list ?? []) {
         const key = `${j.namespace}/${j.name}`;
         next.set(key, { phase: j.phase, workersReady: j.workersReady, workersTotal: j.workersTotal });
 
+        if (prev === null) continue;  // first snapshot — prime, don't emit
         const p = prev.get(key);
         if (!p) {
-          // first time we see the run — only emit if actively running or failed
           const b = phaseBucket(j.phase);
-          if (b === 'live' || b === 'fault') {
-            fresh.push({
-              ts: now, kind: b === 'fault' ? 'fault' : 'info',
-              ns: j.namespace, name: j.name,
-              msg: b === 'fault' ? 'discovered in FAULT state' : 'run detected',
-            });
-          }
+          fresh.push({
+            ts: now, kind: b === 'fault' ? 'fault' : b === 'live' ? 'info' : 'dim',
+            ns: j.namespace, name: j.name,
+            msg: b === 'fault' ? 'discovered in FAULT state'
+               : b === 'live'  ? 'new run detected'
+               : 'new run archived',
+          });
           continue;
         }
 
@@ -94,7 +92,7 @@ function useEventFeed() {
   return events;
 }
 
-export function LogStrip({ open, onClose }) {
+export function LogStrip() {
   const events = useEventFeed();
   const [filter, setFilter] = useState('all');
 
@@ -106,11 +104,11 @@ export function LogStrip({ open, onClose }) {
   });
 
   return html`
-    <section class=${'log-strip' + (open ? ' log-strip--open' : '')} aria-label="Event log" data-testid="log-strip" aria-hidden=${!open}>
+    <section class="log-strip" aria-label="Event log" data-testid="log-strip">
       <div class="log-strip-head">
         <div class="log-strip-title">
           <span class="log-strip-caret">▸</span>
-          EVENT LOG
+          EVENTS
           <span class="log-strip-count">${events.length}</span>
         </div>
         <div class="log-strip-filters" role="tablist">
@@ -124,13 +122,10 @@ export function LogStrip({ open, onClose }) {
             >${k.toUpperCase()}</button>
           `)}
         </div>
-        <button class="log-strip-close" onclick=${onClose} title="Close (Ctrl + grave)" aria-label="Close log">
-          <i class="ph ph-x"></i>
-        </button>
       </div>
       <div class="log-strip-body">
         ${visible.length === 0
-          ? html`<div class="log-strip-empty">no events — waiting for fleet activity</div>`
+          ? html`<div class="log-strip-empty">no events yet — waiting for run activity</div>`
           : html`
               <ol class="log-strip-list">
                 ${visible.map((e, i) => html`

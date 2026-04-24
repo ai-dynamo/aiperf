@@ -19,6 +19,33 @@ async function apiFetch(path, opts = {}) {
   return resp.json();
 }
 
+/**
+ * Pod log fetch. Non-follow returns text; follow=true returns the Response
+ * so the caller can reader.read() the chunked body itself. 404 throws like
+ * the other helpers. Accepts an AbortSignal for stream cleanup.
+ *
+ * @param {string} ns
+ * @param {string} name
+ * @param {{pod: string, container?: string, follow?: boolean, tailLines?: number, signal?: AbortSignal}} opts
+ * @returns {Promise<string|Response>}
+ */
+async function getJobLogs(ns, name, opts) {
+  const { pod, container, follow, tailLines, signal } = opts ?? {};
+  const params = new URLSearchParams();
+  if (pod) params.set('pod', pod);
+  if (container) params.set('container', container);
+  if (follow) params.set('follow', '1');
+  if (tailLines != null) params.set('tail_lines', String(tailLines));
+  const url = `${BASE}/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/logs?${params}`;
+  const resp = await fetch(url, { headers: { Accept: 'text/plain' }, signal });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => resp.statusText);
+    throw new Error(`API ${resp.status}: ${text}`);
+  }
+  if (follow) return resp;
+  return resp.text();
+}
+
 // Jobs
 export const api = {
   /** List all AIPerfJob resources */
@@ -37,6 +64,14 @@ export const api = {
       `/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/cancel`,
       { method: 'POST' },
     );
+  },
+
+  /** Create a new AIPerfJob CR from a manifest dict. Returns {namespace, name, uid}. */
+  createJob(manifest) {
+    return apiFetch('/jobs', {
+      method: 'POST',
+      body: JSON.stringify({ manifest }),
+    });
   },
 
   /** Get cluster-level info */
@@ -97,9 +132,21 @@ export const api = {
     );
   },
 
+  /** Get K8s events for a job (involvedObject=AIPerfJob + owned pods). */
+  getJobEvents(ns, name) {
+    return apiFetch(
+      `/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/events`,
+    );
+  },
+
   /** Get the full job index */
   getIndex() {
     return apiFetch('/index');
+  },
+
+  /** Fetch pod logs for a job. See `getJobLogs` above. */
+  getJobLogs(ns, name, opts) {
+    return getJobLogs(ns, name, opts);
   },
 };
 

@@ -22,18 +22,18 @@ export const palette = {
   white: '#ffffff',
 
   // Accent — phosphor amber is the primary meter-needle color.
-  accent: '#ffb627',
-  accentDim: 'rgba(255, 182, 39, 0.14)',
+  accent: '#76b900',
+  accentDim: 'rgba(118, 185, 0, 0.14)',
 
   // Semantic — primary = amber, secondary = cyan. All other named colors
   // collapse onto the phosphor palette.
-  blue: '#ffb627',     // legacy key re-pointed to amber (MCC primary)
+  blue: '#76b900',     // legacy key re-pointed to amber (MCC primary)
   cyan: '#7eeaff',
-  green: '#64ffb3',    // SLO pass only
-  amber: '#ffb627',
+  green: '#9fe870',    // SLO pass only
+  amber: '#76b900',
   red: '#ff5964',
-  pink: '#ffb627',
-  orange: '#ffb627',
+  pink: '#76b900',
+  orange: '#76b900',
   teal: '#7eeaff',
   indigo: '#7eeaff',
   mauve: '#7eeaff',
@@ -50,14 +50,14 @@ export const palette = {
   overlay2: 'rgba(244, 238, 222, 0.68)',
   subtext0: 'rgba(244, 238, 222, 0.68)',
   subtext1: '#f4eede',
-  yellow: '#ffb627',
-  peach: '#ffb627',
+  yellow: '#76b900',
+  peach: '#76b900',
   maroon: '#ff5964',
   sapphire: '#7eeaff',
   sky: '#7eeaff',
   lavender: '#7eeaff',
-  flamingo: '#ffb627',
-  rosewater: '#ffb627',
+  flamingo: '#76b900',
+  rosewater: '#76b900',
 };
 
 // Semantic mappings
@@ -104,8 +104,8 @@ export function phaseColor(phase) {
 // Stable model-color assignment — MCC: amber-first, then cyan. Downstream tints
 // cycle through the phosphor palette plus red/green for outlier signals.
 const MODEL_COLORS = [
-  '#ffb627', '#7eeaff', '#64ffb3', '#ff5964',
-  '#ffd166', '#c4a5ff',
+  '#76b900', '#7eeaff', '#9fe870', '#ff5964',
+  '#8ce200', '#c4a5ff',
 ];
 
 /**

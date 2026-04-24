@@ -21,11 +21,13 @@
  */
 
 import { html } from 'htm/preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
 import { jobs } from '../lib/state.js';
 import { navigate } from '../lib/router.js';
 import { fmtBytes, fmtDuration, fmtInt, fmtNumber, fmtPercent } from '../lib/format.js';
+import { ChartWrapper } from '../components/chart-wrapper.js';
+import { applyChartTheme } from '../lib/chart-theme.js';
 
 function phaseBucket(phase) {
   const p = (phase ?? '').toLowerCase();
@@ -221,6 +223,383 @@ function CancelButton({ ns, name, bucket, onCancel }) {
       <i class="ph ph-x-circle"></i>
       ${busy ? 'CANCELLING…' : err ? 'RETRY' : 'CANCEL'}
     </button>
+  `;
+}
+
+/* ──────────────────── re-launch button ─────────────────── */
+
+/** Minimal YAML serializer — AIPerfJob specs only. Handles strings, numbers,
+ *  bools, null, lists, objects. Quotes strings that contain YAML-significant
+ *  characters. Not a full emitter. */
+function serializeYaml(obj, indent = 0) {
+  const pad = ' '.repeat(indent);
+  if (obj === null || obj === undefined) return 'null';
+  if (typeof obj === 'boolean') return obj ? 'true' : 'false';
+  if (typeof obj === 'number') return String(obj);
+  if (typeof obj === 'string') {
+    if (obj === '') return "''";
+    if (/^[\w./:@\-+]+$/.test(obj) && !/^(true|false|null|~)$/i.test(obj) && !/^-?\d+(\.\d+)?$/.test(obj)) {
+      return obj;
+    }
+    return "'" + obj.replace(/'/g, "''") + "'";
+  }
+  if (Array.isArray(obj)) {
+    if (obj.length === 0) return '[]';
+    return obj.map(item => {
+      if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+        const body = serializeYaml(item, indent + 2);
+        // first line gets the dash, subsequent lines stay indented by 2
+        const lines = body.split('\n');
+        const first = lines[0].trimStart();
+        const rest = lines.slice(1).join('\n');
+        return `${pad}- ${first}${rest ? '\n' + rest : ''}`;
+      }
+      return `${pad}- ${serializeYaml(item, indent + 2).trimStart()}`;
+    }).join('\n');
+  }
+  if (typeof obj === 'object') {
+    const keys = Object.keys(obj);
+    if (keys.length === 0) return '{}';
+    return keys.map(k => {
+      const v = obj[k];
+      if (v !== null && typeof v === 'object') {
+        const isEmpty = Array.isArray(v) ? v.length === 0 : Object.keys(v).length === 0;
+        if (isEmpty) return `${pad}${k}: ${Array.isArray(v) ? '[]' : '{}'}`;
+        return `${pad}${k}:\n${serializeYaml(v, indent + 2)}`;
+      }
+      return `${pad}${k}: ${serializeYaml(v, indent + 2)}`;
+    }).join('\n');
+  }
+  return String(obj);
+}
+
+function suggestRetryName(orig) {
+  if (!orig) return 'run-retry';
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const stamp = `${String(d.getFullYear()).slice(2)}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+  // Strip any prior -retry-YYMMDD-HHMM suffix so repeat relaunches don't stack.
+  const base = orig.replace(/-retry-\d{6}-\d{4}$/, '');
+  return `${base}-retry-${stamp}`;
+}
+
+function RelaunchButton({ ns, name, config }) {
+  const spec = config?.spec;
+  if (!spec || Object.keys(spec).length === 0) return null;
+  return html`
+    <button
+      class="run-relaunch"
+      onclick=${() => {
+        const manifest = {
+          apiVersion: config.apiVersion ?? 'aiperf.nvidia.com/v1alpha1',
+          kind: config.kind ?? 'AIPerfJob',
+          metadata: {
+            name: suggestRetryName(name),
+            namespace: ns,
+          },
+          spec,
+        };
+        const yaml = serializeYaml(manifest) + '\n';
+        try {
+          sessionStorage.setItem('aiperf.launch.prefill', JSON.stringify({
+            yaml,
+            sourceNs: ns,
+            sourceName: name,
+            at: Date.now(),
+          }));
+        } catch (_e) { /* quota/private-mode — fall through to navigate */ }
+        navigate('/launch');
+      }}
+      data-testid="run-relaunch"
+      title="Copy this run's config into the Launch editor"
+    >
+      <i class="ph ph-arrow-counter-clockwise"></i>
+      RE-LAUNCH
+    </button>
+  `;
+}
+
+/* ─────────────────────── live logs pane ────────────────────── */
+
+const LOGS_MAX_LINES = 2000;
+
+function LogsPane({ ns, name, pods }) {
+  const podList = (pods ?? []).filter(p => p?.name);
+  const [selectedPod, setSelectedPod] = useState(null);
+  const [tailLines, setTailLines] = useState(200);
+  const [follow, setFollow] = useState(true);
+  const [tail, setTail] = useState([]);
+  const [err, setErr] = useState(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const bufRef = useRef([]);
+  const bodyRef = useRef(null);
+  const autoScrollRef = useRef(true);
+
+  // Auto-select first pod; re-align when pod list changes.
+  useEffect(() => {
+    if (podList.length === 0) { setSelectedPod(null); return; }
+    if (!selectedPod || !podList.find(p => p.name === selectedPod)) {
+      const pod = podList[0];
+      setSelectedPod(pod.name);
+      // default follow=ON iff pod is Running
+      setFollow((pod.phase ?? '').toLowerCase() === 'running');
+    }
+  }, [podList.map(p => p.name).join('|')]);
+
+  useEffect(() => { autoScrollRef.current = autoScroll; }, [autoScroll]);
+
+  // Stream lifecycle: reset buffer + (re)open on any dep change.
+  useEffect(() => {
+    if (!selectedPod) return;
+    bufRef.current = [];
+    setTail([]);
+    setErr(null);
+    setAutoScroll(true);
+    autoScrollRef.current = true;
+
+    const ac = new AbortController();
+    const clampedTail = Math.max(1, Math.min(5000, Number(tailLines) || 200));
+
+    const appendText = (text) => {
+      if (!text) return;
+      const lines = text.split('\n');
+      // trailing empty string from split('\n') drops a pure-newline chunk's tail
+      if (lines.length && lines[lines.length - 1] === '') lines.pop();
+      if (lines.length === 0) return;
+      const next = bufRef.current.concat(lines);
+      const overflow = next.length - LOGS_MAX_LINES;
+      bufRef.current = overflow > 0 ? next.slice(overflow) : next;
+      setTail(bufRef.current.slice());
+    };
+
+    (async () => {
+      try {
+        if (follow) {
+          const res = await api.getJobLogs(ns, name, {
+            pod: selectedPod, follow: true, tailLines: clampedTail, signal: ac.signal,
+          });
+          const reader = res.body?.getReader();
+          if (!reader) {
+            const text = await res.text();
+            appendText(text);
+            return;
+          }
+          const decoder = new TextDecoder();
+          let leftover = '';
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            const chunk = leftover + decoder.decode(value, { stream: true });
+            const lastNl = chunk.lastIndexOf('\n');
+            if (lastNl === -1) { leftover = chunk; continue; }
+            appendText(chunk.slice(0, lastNl + 1));
+            leftover = chunk.slice(lastNl + 1);
+          }
+          if (leftover) appendText(leftover + '\n');
+        } else {
+          const text = await api.getJobLogs(ns, name, {
+            pod: selectedPod, follow: false, tailLines: clampedTail, signal: ac.signal,
+          });
+          appendText(text);
+        }
+      } catch (e) {
+        if (ac.signal.aborted) return;
+        if (/\b404\b/.test(e.message)) setErr('Pod not found (it may have been evicted).');
+        else setErr(e.message);
+      }
+    })();
+
+    return () => ac.abort();
+  }, [ns, name, selectedPod, follow, tailLines]);
+
+  // Auto-scroll to bottom on new data, unless user scrolled up.
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    if (autoScrollRef.current) el.scrollTop = el.scrollHeight;
+  }, [tail]);
+
+  const onScroll = () => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.clientHeight - el.scrollTop <= 20;
+    if (atBottom && !autoScrollRef.current) setAutoScroll(true);
+    else if (!atBottom && autoScrollRef.current) setAutoScroll(false);
+  };
+
+  const jumpToLatest = () => {
+    const el = bodyRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    setAutoScroll(true);
+  };
+
+  const header = (meta) => html`
+    <header class="slab-head slab-head--flush">
+      <div class="slab-head-title"><span class="slab-head-caret">▸</span> LOGS</div>
+      <div class="slab-head-meta">${meta}</div>
+    </header>
+  `;
+
+  if (podList.length === 0) {
+    return html`
+      <section class="run-logs" id="run-logs" data-testid="run-logs">
+        ${header('NO PODS YET')}
+        <div class="run-logs-empty">No pods yet — logs will appear here once workers are scheduled.</div>
+      </section>
+    `;
+  }
+
+  return html`
+    <section class="run-logs" id="run-logs" data-testid="run-logs">
+      ${header(`${tail.length} LINE${tail.length === 1 ? '' : 'S'}${follow ? ' · LIVE' : ''}`)}
+      <div class="run-logs-controls">
+        <select
+          class="run-logs-pod"
+          value=${selectedPod ?? ''}
+          onchange=${e => setSelectedPod(e.target.value)}
+          data-testid="run-logs-pod"
+        >
+          ${podList.map(p => html`
+            <option key=${p.name} value=${p.name}>
+              ${truncPodName(p.name, 40)} · ${(p.phase ?? 'unknown').toLowerCase()}
+            </option>
+          `)}
+        </select>
+        <button
+          class=${'run-logs-follow' + (follow ? ' is-active' : '')}
+          onclick=${() => setFollow(f => !f)}
+          data-testid="run-logs-follow"
+          title=${follow ? 'Pause streaming (static tail)' : 'Resume live follow'}
+        >
+          <i class=${'ph ' + (follow ? 'ph-pause' : 'ph-play')}></i>
+          ${follow ? 'FOLLOW' : 'PAUSED'}
+        </button>
+        <label class="run-logs-tail-lbl">
+          TAIL
+          <input
+            class="run-logs-tail"
+            type="number"
+            min="1"
+            max="5000"
+            value=${tailLines}
+            onchange=${e => {
+              const v = Math.max(1, Math.min(5000, parseInt(e.target.value, 10) || 200));
+              setTailLines(v);
+            }}
+            data-testid="run-logs-tail"
+          />
+        </label>
+      </div>
+      <pre class="run-logs-body" ref=${bodyRef} onscroll=${onScroll} data-testid="run-logs-body">${tail.join('\n')}${err && html`<div class="run-logs-error">${err}</div>`}</pre>
+      ${!autoScroll && html`
+        <button class="run-logs-jump" onclick=${jumpToLatest} data-testid="run-logs-jump">
+          <i class="ph ph-arrow-down"></i>
+          JUMP TO LATEST
+        </button>
+      `}
+    </section>
+  `;
+}
+
+/* ─────────────────────── identity strip ───────────────────── */
+
+/** Dense grid of "who is this run" tiles. Renders only tiles whose value is
+ *  known; unknowns are omitted rather than shown as "—", so the strip stays
+ *  legible for partial metadata. MODEL and ENDPOINT span two columns because
+ *  their values are long. */
+/** Count of other runs in the same (namespace, model) cluster. Comparability
+ *  is count-only — we never aggregate metrics across independent benchmarks. */
+function siblingCount(job) {
+  if (!job || !job.model || !job.namespace) return 0;
+  const all = jobs.value ?? [];
+  let n = 0;
+  for (const r of all) {
+    if (r.namespace === job.namespace && r.model === job.model && r.name !== job.name) n++;
+  }
+  return n;
+}
+
+function IdentityStrip({ job, config, summary: _summary }) {
+  const spec = config?.spec ?? {};
+  const bench = spec.benchmark ?? {};
+  const input = spec.input ?? {};
+  const synth = input.synthetic_tokens ?? {};
+
+  const model = job?.model ?? spec.model ?? null;
+  const endpoint = job?.endpoint ?? spec.endpoint ?? null;
+  const backend = job?.backend ?? spec.backend ?? null;
+  const mode = bench.mode ?? spec.mode ?? null;
+  const concurrency = job?.concurrency ?? bench.concurrency ?? null;
+  const isl = synth.input_length ?? null;
+  const osl = synth.output_length ?? null;
+  const requests = bench.request_count ?? bench.number_of_requests ?? null;
+  const durationRaw = bench.duration_secs ?? bench.duration ?? null;
+  const gpus = job?.gpuConfig ?? null;
+
+  const tiles = [];
+  if (model != null)     tiles.push({ eyebrow: 'MODEL',          value: model,             wide: true });
+  if (endpoint != null)  tiles.push({ eyebrow: 'ENDPOINT',       value: endpoint,          wide: true });
+  if (backend != null)   tiles.push({ eyebrow: 'BACKEND',        value: backend });
+  if (mode != null)      tiles.push({ eyebrow: 'BENCHMARK MODE', value: String(mode) });
+  if (concurrency != null) tiles.push({ eyebrow: 'CONCURRENCY',  value: fmtInt(concurrency) });
+  if (isl != null || osl != null) {
+    tiles.push({
+      eyebrow: 'ISL / OSL',
+      value: `${isl ?? '—'} / ${osl ?? '—'}`,
+    });
+  }
+  if (requests != null)  tiles.push({ eyebrow: 'REQUESTS',       value: fmtInt(requests) });
+  if (durationRaw != null) {
+    const secs = typeof durationRaw === 'number' ? durationRaw : Number(durationRaw);
+    if (isFinite(secs)) tiles.push({ eyebrow: 'DURATION', value: fmtDuration(secs) });
+  }
+  if (gpus != null)      tiles.push({ eyebrow: 'GPUs',           value: gpus });
+
+  if (tiles.length === 0) return null;
+
+  const sibN = model != null ? siblingCount(job) : -1;
+  const clusterKey = model != null ? `${job?.namespace ?? ''} · ${model}` : null;
+
+  return html`
+    <section class="run-identity" data-testid="run-identity" aria-label="Run identity">
+      ${tiles.map(t => html`
+        <div
+          key=${t.eyebrow}
+          class=${'run-identity-tile' + (t.wide ? ' run-identity-tile--wide' : '')}
+        >
+          <span class="run-identity-eyebrow">${t.eyebrow}</span>
+          <span class="run-identity-value">${t.value}</span>
+        </div>
+      `)}
+      ${sibN > 0 && html`
+        <a
+          key="siblings"
+          class="run-identity-tile run-identity-tile--sibling"
+          href=${'/compare?cluster=' + encodeURIComponent(clusterKey)}
+          onclick=${(e) => { e.preventDefault(); navigate('/compare?cluster=' + encodeURIComponent(clusterKey)); }}
+          data-testid="run-identity-sibling"
+          title=${`Compare runs in ${clusterKey}`}
+        >
+          <span class="run-identity-eyebrow">${sibN} COMPARABLE RUN${sibN === 1 ? '' : 'S'}</span>
+          <span class="run-identity-value">
+            ${clusterKey}
+            <i class="ph ph-arrow-right run-identity-sibling-arrow"></i>
+          </span>
+        </a>
+      `}
+      ${sibN === 0 && html`
+        <div
+          key="siblings"
+          class="run-identity-tile run-identity-tile--sibling run-identity-tile--sibling-empty"
+          data-testid="run-identity-sibling"
+          aria-disabled="true"
+        >
+          <span class="run-identity-eyebrow">NO COMPARABLE RUNS</span>
+          <span class="run-identity-value">${clusterKey}</span>
+        </div>
+      `}
+    </section>
   `;
 }
 
@@ -477,14 +856,258 @@ function ReliabilityMeter({ summary, slosDeclared }) {
   return html`<${RunMeter} label="REQUESTS" value="—" tone="dim" />`;
 }
 
+/* ─────────────────────── live sparklines ──────────────────── */
+
+const MAX_SAMPLES = 60;  // ~4 min at 4 s/sample
+
+const SPARK_SPECS = [
+  { key: 'rps',   label: 'THROUGHPUT', unit: 'r/s',  color: 'var(--amber)',  digits: 1 },
+  { key: 'p99',   label: 'LATENCY P99', unit: 'ms',  color: 'var(--cyan)',   digits: 0 },
+  { key: 'ttft',  label: 'TTFT P99',    unit: 'ms',  color: 'var(--paper)',  digits: 0 },
+  { key: 'tokps', label: 'TOKEN/S',     unit: 'tok/s', color: 'var(--green)', digits: 0 },
+];
+
+const SPARK_OPTS = applyChartTheme({
+  animation: false,
+  plugins: {
+    legend: { display: false },
+    tooltip: {
+      displayColors: false,
+      callbacks: { title: () => '', label: ctx => fmtNumber(ctx.parsed.y, 1) },
+    },
+  },
+  elements: { point: { radius: 0, hoverRadius: 3 }, line: { borderWidth: 1.6, tension: 0.25 } },
+  scales: {
+    x: { type: 'linear', display: false, grid: { display: false } },
+    y: { display: false, grid: { display: false } },
+  },
+});
+
+function cssVar(v) {
+  if (typeof v !== 'string' || !v.startsWith('var(')) return v;
+  const name = v.slice(4, -1).trim();
+  if (typeof window === 'undefined') return '#76b900';
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#76b900';
+}
+
+function SparkTile({ spec, samples }) {
+  const pts = samples
+    .map((s, i) => ({ x: i, y: s[spec.key] }))
+    .filter(p => p.y != null && isFinite(p.y));
+  const last = pts.length > 0 ? pts[pts.length - 1].y : null;
+  const color = cssVar(spec.color);
+
+  const data = {
+    datasets: [{
+      data: pts,
+      borderColor: color,
+      backgroundColor: color + '22',
+      fill: true,
+      pointRadius: 0,
+      pointHoverRadius: 3,
+    }],
+  };
+
+  return html`
+    <div class="run-spark">
+      <div class="run-spark-head">
+        <span class="run-spark-label">${spec.label}</span>
+        <span class="run-spark-val" style=${'color: ' + color}>
+          ${last != null ? fmtNumber(last, spec.digits) : '—'}
+          <small>${spec.unit}</small>
+        </span>
+      </div>
+      <div class="run-spark-body">
+        ${pts.length < 2
+          ? html`<div class="run-spark-empty">AWAITING DATA</div>`
+          : html`<${ChartWrapper} type="line" data=${data} options=${SPARK_OPTS} height=${60} />`}
+      </div>
+    </div>
+  `;
+}
+
+/* ─────────────────────── fault callout ──────────────────────── */
+
+/** Prominent red callout shown only when the phase bucket is `fault`.
+ *  Surfaces the first False condition + any Failed/Error pod so the operator
+ *  doesn't have to scroll to Conditions + Pods to form a mental model. */
+function FaultCallout({ bucket, conditions, pods }) {
+  if (bucket !== 'fault') return null;
+  const falseCond = (conditions ?? []).find(c => c.status === 'False');
+  const failedPod = (pods ?? []).find(p => {
+    const ph = (p.phase ?? '').toLowerCase();
+    return ph === 'failed' || ph === 'error';
+  });
+  if (!falseCond && !failedPod) return null;
+
+  const condLabel = falseCond ? (CONDITION_LABELS[falseCond.type] ?? falseCond.type).toUpperCase() : null;
+  const term = failedPod?.lastState?.terminated;
+
+  return html`
+    <section class="run-fault-callout" data-testid="run-fault-callout" aria-label="Run fault details">
+      ${falseCond && html`
+        <div class="run-fault-headline">
+          <i class="ph ph-warning-octagon"></i>
+          <div class="run-fault-headline-body">
+            <span class="run-fault-headline-type">${condLabel}</span>
+            ${falseCond.message && html`<span class="run-fault-headline-msg">${falseCond.message}</span>`}
+          </div>
+        </div>
+      `}
+      ${failedPod && html`
+        <div class="run-fault-pod">
+          <span class="run-fault-pod-label">FAILING POD</span>
+          <span class="run-fault-pod-name">${failedPod.name}</span>
+          ${term?.reason && html`<span class="run-fault-pod-reason">${term.reason}</span>`}
+          ${term?.message && html`<span class="run-fault-pod-msg">${term.message}</span>`}
+        </div>
+      `}
+      <a
+        class="run-fault-footer"
+        href="#run-events"
+        onclick=${(e) => {
+          const el = document.getElementById('run-events');
+          if (el) { e.preventDefault(); el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+        }}
+      >See EVENTS below for more</a>
+    </section>
+  `;
+}
+
+/* ─────────────────────── events pane ────────────────────────── */
+
+function relTime(iso) {
+  if (!iso) return '—';
+  const t = new Date(iso).getTime();
+  if (!isFinite(t)) return '—';
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+
+function EventsPane({ ns, name }) {
+  const [state, setState] = useState({ kind: 'loading' });
+  const [filter, setFilter] = useState('all');
+  const [refreshed, setRefreshed] = useState(null);
+
+  useEffect(() => {
+    let cancel = false;
+    setState({ kind: 'loading' });
+    const ac = new AbortController();
+    const fetchOnce = async () => {
+      try {
+        const r = await api.getJobEvents(ns, name);
+        if (cancel) return;
+        const events = Array.isArray(r) ? r : (r?.events ?? []);
+        setState({ kind: 'ok', events });
+        setRefreshed(Date.now());
+      } catch (err) {
+        if (cancel) return;
+        if (/\b404\b/.test(err.message)) setState({ kind: 'none' });
+        else setState({ kind: 'err', msg: err.message });
+        setRefreshed(Date.now());
+      }
+    };
+    poll(fetchOnce, 15000, ac.signal);
+    return () => { cancel = true; ac.abort(); };
+  }, [ns, name]);
+
+  const header = (meta) => html`
+    <header class="slab-head slab-head--flush">
+      <div class="slab-head-title"><span class="slab-head-caret">▸</span> EVENTS</div>
+      <div class="slab-head-meta">${meta}</div>
+    </header>
+  `;
+
+  if (state.kind === 'loading') {
+    return html`<section class="run-events" id="run-events" data-testid="run-events">${header('LOADING…')}</section>`;
+  }
+  if (state.kind === 'none') {
+    return html`
+      <section class="run-events" id="run-events" data-testid="run-events">
+        ${header('NO EVENTS')}
+        <div class="run-events-empty">No events recorded for this run.</div>
+      </section>
+    `;
+  }
+  if (state.kind === 'err') {
+    return html`
+      <section class="run-events run-events--err" id="run-events" data-testid="run-events">
+        ${header('FETCH FAILED')}
+        <ol class="run-events-list">
+          <li class="run-events-row run-events-row--err">
+            <span class="run-events-type run-events-type--warn">ERR</span>
+            <span class="run-events-msg">${state.msg}</span>
+          </li>
+        </ol>
+      </section>
+    `;
+  }
+
+  const events = state.events ?? [];
+  const shown = filter === 'warn' ? events.filter(e => e.type === 'Warning') : events;
+  const metaText = `${events.length} TOTAL${refreshed != null ? ' · ' + relTime(new Date(refreshed).toISOString()) : ''}`;
+
+  return html`
+    <section class="run-events" id="run-events" data-testid="run-events">
+      <header class="slab-head slab-head--flush">
+        <div class="slab-head-title"><span class="slab-head-caret">▸</span> EVENTS</div>
+        <div class="slab-head-meta">
+          <span class="run-events-filter-group">
+            <button
+              class=${'run-events-filter' + (filter === 'all' ? ' is-active' : '')}
+              onclick=${() => setFilter('all')}
+            >ALL</button>
+            <button
+              class=${'run-events-filter' + (filter === 'warn' ? ' is-active' : '')}
+              onclick=${() => setFilter('warn')}
+            >WARN</button>
+          </span>
+          <span class="run-events-meta-count">${metaText}</span>
+        </div>
+      </header>
+      ${shown.length === 0
+        ? html`<div class="run-events-empty">No ${filter === 'warn' ? 'warning ' : ''}events.</div>`
+        : html`
+          <ol class="run-events-list">
+            ${shown.map((e, i) => {
+              const isWarn = e.type === 'Warning';
+              const ts = e.lastTimestamp ?? e.firstTimestamp;
+              const obj = e.involvedObject ?? {};
+              return html`
+                <li key=${(e.reason ?? '') + '-' + (ts ?? i)} class="run-events-row">
+                  <span class=${'run-events-type ' + (isWarn ? 'run-events-type--warn' : 'run-events-type--dim')}>
+                    ${(e.type ?? 'Normal').toUpperCase()}
+                  </span>
+                  <span class="run-events-reason">${e.reason ?? ''}</span>
+                  <span class="run-events-msg">${e.message ?? ''}</span>
+                  <span class="run-events-meta">
+                    ${obj.kind ?? ''}${obj.name ? '/' + obj.name : ''}
+                    ${e.count > 1 ? ' · ×' + e.count : ''}
+                    ${ts ? ' · ' + relTime(ts) : ''}
+                  </span>
+                </li>
+              `;
+            })}
+          </ol>
+        `}
+    </section>
+  `;
+}
+
 /* ──────────────────────── the view ────────────────────────── */
 
 export function Run({ ns, name }) {
   const [detail, setDetail] = useState(null);
   const [config, setConfig] = useState(null);
+  const [samples, setSamples] = useState([]);
+  const samplesKeyRef = useRef('');
 
   useEffect(() => {
-    setDetail(null); setConfig(null);
+    setDetail(null); setConfig(null); setSamples([]);
+    samplesKeyRef.current = ns + '/' + name;
     const ac = new AbortController();
     poll(async () => {
       try {
@@ -493,6 +1116,19 @@ export function Run({ ns, name }) {
           api.getJobConfig(ns, name).catch(() => null),
         ]);
         setDetail(d); setConfig(c);
+        const s = d?.status?.liveSummary ?? d?.status?.summary ?? null;
+        if (s && samplesKeyRef.current === ns + '/' + name) {
+          setSamples(prev => {
+            const next = [...prev, {
+              t: Date.now(),
+              rps:   s.throughput_rps ?? null,
+              p99:   s.latency_p99_ms ?? s.latency_avg_ms ?? null,
+              ttft:  s.ttft_p99_ms ?? s.ttft_avg_ms ?? null,
+              tokps: s.output_token_throughput ?? null,
+            }];
+            return next.length > MAX_SAMPLES ? next.slice(-MAX_SAMPLES) : next;
+          });
+        }
       } catch (_e) { /* transient */ }
     }, 4000, ac.signal);
     return () => ac.abort();
@@ -516,8 +1152,8 @@ export function Run({ ns, name }) {
   const ttft = summary.ttft_p99_ms ?? summary.ttft_avg_ms;
   const p99 = summary.latency_p99_ms ?? summary.latency_avg_ms;
   const tokps = summary.output_token_throughput ?? job?.tokenThroughput;
-  const totalReq = summary.total_requests;
-  const errRate = summary.error_rate ?? 0;  if (!job && !detail) {
+
+  if (!job && !detail) {
     return html`
       <div class="v-run v-run--loading" data-testid="page-job-detail">
         <div class="run-404">
@@ -534,23 +1170,26 @@ export function Run({ ns, name }) {
       <!-- 1. HEADER -->
       <header class="run-header">
         <div class="run-header-title">
-          <button class="run-header-back" onclick=${() => navigate('/overview')} title="Back to overview" aria-label="Back">
+          <button class="run-header-back" onclick=${() => navigate('/')} title="Back to home" aria-label="Back">
             <i class="ph ph-arrow-left"></i>
           </button>
           <div>
+            <div class="run-header-ns-row">
+              <span class="run-header-ns-eyebrow">NAMESPACE</span>
+              <a
+                class="run-header-ns-name"
+                href="#/"
+                onclick=${(e) => { e.preventDefault(); navigate('/'); }}
+                title="All runs in this namespace"
+              >${ns}</a>
+              <span class="run-header-ns-sep">/</span>
+            </div>
+            <h1 class="run-header-name">${name}</h1>
             <div class="run-header-eyebrow">
               <span class=${'run-header-phase run-header-phase--' + bucket}>
                 ${(job?.phase ?? 'UNKNOWN').toUpperCase()}
               </span>
-              <span class="run-header-ns">${ns}</span>
               ${job?.model && html`<span class="run-header-model">${job.model}</span>`}
-            </div>
-            <h1 class="run-header-name">${name}</h1>
-            <div class="run-header-sub">
-              ${job?.endpoint && html`<span><i class="ph ph-globe"></i> ${job.endpoint}</span>`}
-              ${job?.concurrency != null && html`<span>CONC ${job.concurrency}</span>`}
-              ${job?.backend && html`<span>${job.backend}</span>`}
-              ${job?.gpuConfig && html`<span>${job.gpuConfig}</span>`}
             </div>
           </div>
         </div>
@@ -564,8 +1203,15 @@ export function Run({ ns, name }) {
             <span class=${'run-clock-val' + (eta != null ? '' : ' is-dim')}>${eta != null ? fmtDuration(eta) : '—'}</span>
           </div>
           <${CancelButton} ns=${ns} name=${name} bucket=${bucket} />
+          <${RelaunchButton} ns=${ns} name=${name} config=${config} />
         </div>
       </header>
+
+      <!-- 1b. IDENTITY -->
+      <${IdentityStrip} job=${job} config=${config} summary=${summary} />
+
+      <!-- 1c. FAULT CALLOUT -->
+      <${FaultCallout} bucket=${bucket} conditions=${conditions} pods=${pods} />
 
       <!-- 2. CONDITIONS -->
       <${ConditionsStrip} conditions=${conditions} />
@@ -578,6 +1224,15 @@ export function Run({ ns, name }) {
         <${RunMeter} label="TOKEN/S"    value=${tokps != null ? fmtInt(tokps) : '—'}   unit="tok/s" tone=${tokps != null ? 'amber' : 'dim'} />
         <${ReliabilityMeter} summary=${summary} slosDeclared=${slosDeclared} />
       </section>
+
+      <!-- 3b. LIVE SPARKLINES -->
+      ${bucket === 'live' && html`
+        <section class="run-sparks" data-testid="run-sparks" aria-label="Live metric sparklines">
+          ${SPARK_SPECS.map(spec => html`
+            <${SparkTile} key=${spec.key} spec=${spec} samples=${samples} />
+          `)}
+        </section>
+      `}
 
       <!-- 3. PHASES SWIMLANE -->
       ${phaseEntries.length > 0 && html`
@@ -619,6 +1274,12 @@ export function Run({ ns, name }) {
 
       <!-- 5. PODS -->
       <${PodsBar} pods=${pods} />
+
+      <!-- 5b. EVENTS -->
+      <${EventsPane} ns=${ns} name=${name} />
+
+      <!-- 5c. LOGS -->
+      <${LogsPane} ns=${ns} name=${name} pods=${pods} />
 
       <!-- 6. GPU TELEMETRY -->
       <${GpuTelemetry} metrics=${gpuMetrics} />
