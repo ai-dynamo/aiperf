@@ -360,6 +360,56 @@ aiperf kube results {job_id} --from-pods
 kubectl cp <controller-pod>:/results ./results -n <namespace>
 ```
 
+## Results layout and history
+
+Each AIPerfJob submission lands in its own artifact directory keyed by the CR's
+**creationTimestamp epoch** (seconds since 1970). Re-creating a CR with the
+same name never overwrites prior results.
+
+On-disk shape under the operator's results PVC (`AIPERF_RESULTS_DIR`, default
+`/data`):
+
+```text
+<base>/<namespace>/<name>/
+  <epoch-A>/   ← run A artifacts
+  <epoch-B>/   ← run B artifacts
+  latest.txt   ← pointer to the epoch of the most recent successful run
+```
+
+The pointer file is written atomically (staged write + `os.replace`) at the
+single success gate in `handlers/completion.py`, alongside `status.resultsPath`
+and `status.runEpoch`. A retention pass (env `AIPERF_RESULTS_RETAIN_RUNS`,
+default 10) trims older run dirs on every successful completion; the just-written
+epoch is always protected from deletion.
+
+### HTTP API
+
+The routes are backward compatible — existing clients get the latest run
+automatically; no URL rewrites needed.
+
+| Route | Behavior |
+|---|---|
+| `GET /api/v1/results/<ns>/<name>` | List files from the **latest** run (via `latest.txt`) |
+| `GET /api/v1/results/<ns>/<name>.zip` | Zip bundle of the latest run |
+| `GET /api/v1/results/<ns>/<name>/<filename>` | Download one file from the latest run |
+| `GET /api/v1/results/<ns>/<name>/runs/<epoch>` | List files from a pinned historical run |
+| `GET /api/v1/results/<ns>/<name>/runs/<epoch>.zip` | Zip bundle of a historical run |
+| `GET /api/v1/results/<ns>/<name>/runs/<epoch>/<filename>` | Download one file from a historical run |
+
+`<epoch>` is validated against `^\d{9,11}$|^legacy$` before any disk access.
+
+### Edge cases
+
+- **Rapid delete + resubmit within the same wall-clock second** produces colliding
+  epoch keys; the second submission overwrites the first. This matches the
+  legacy `EPOCH=$(date +%s)` semantics and is intentional.
+- **Migration of pre-uid data** runs automatically at results-server lifespan:
+  any `<ns>/<name>/` directory with files directly under it gets folded into
+  `<name>/legacy/` with `latest.txt=legacy`. Idempotent on re-run.
+- **`latest.txt` points at a missing directory** (corruption, manual delete):
+  default-route requests return 404 until the next successful completion
+  rewrites the pointer. Historical routes still work.
+
 ## 8. Completion & Cleanup
 
 ### Lifecycle
