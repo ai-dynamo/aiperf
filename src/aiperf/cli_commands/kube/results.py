@@ -253,17 +253,21 @@ async def list_runs(
     *,
     manage_options: KubeManageOptions | None = None,
     output: Annotated[Literal["text", "json"], Parameter(name=["-o", "--output"], help="Output format: 'text' for table, 'json' for machine-parseable.")] = "text",
+    preview: Annotated[bool, Parameter(name="--preview", help="Show which runs would be reaped under current retention settings (read-only; no deletion).")] = False,
     operator_namespace: Annotated[str, Parameter(name="--operator-namespace", help="Namespace where the operator is deployed.")] = "aiperf-system",
 ) -> None:  # fmt: skip
     """List all historical runs of a benchmark job.
 
     Queries the operator's ``/api/v1/results/<ns>/<job_id>/runs`` endpoint and
-    prints either a table (default) or the raw JSON payload.
+    prints either a table (default) or the raw JSON payload. With ``--preview``,
+    also fetches ``/api/v1/config/retention`` and annotates each row with
+    whether the current policy would reap it (latest is always protected).
 
     Examples:
         aiperf kube results list-runs                 # last deployed job
         aiperf kube results list-runs foo             # specific job
         aiperf kube results list-runs foo --output json
+        aiperf kube results list-runs foo --preview   # mark reap candidates
     """
     from aiperf import cli_utils
 
@@ -273,6 +277,7 @@ async def list_runs(
             job_id=job_id,
             manage_options=manage_options,
             output=output,
+            preview=preview,
             operator_namespace=operator_namespace,
         )
 
@@ -282,11 +287,11 @@ async def _run_list_runs(
     job_id: str | None,
     manage_options: KubeManageOptions,
     output: Literal["text", "json"],
+    preview: bool,
     operator_namespace: str,
 ) -> None:
     import logging
 
-    import aiohttp
     import orjson
 
     from aiperf.kubernetes import cli_helpers
@@ -294,7 +299,6 @@ async def _run_list_runs(
     from aiperf.kubernetes.client import find_operator_pod
     from aiperf.kubernetes.port_forward import port_forward_with_status
     from aiperf.kubernetes.results_operator import RESULTS_SERVER_PORT
-    from aiperf.transports.aiohttp_client import create_tcp_connector
 
     kube_logger = logging.getLogger("aiperf.kube")
     original_level = kube_logger.level
@@ -332,23 +336,17 @@ async def _run_list_runs(
             kubeconfig=manage_options.kubeconfig,
             kube_context=manage_options.kube_context,
         ) as port:
-            url = f"http://localhost:{port}/api/v1/results/{namespace}/{job_id}/runs"
-            timeout = aiohttp.ClientTimeout(total=30)
-            connector = create_tcp_connector()
-            async with (
-                aiohttp.ClientSession(timeout=timeout, connector=connector) as session,
-                session.get(url) as resp,
-            ):
-                if resp.status == 404:
-                    raise RuntimeError(
-                        f"No runs found for {namespace}/{job_id}. "
-                        "The job may not have completed yet, or the operator "
-                        "has not captured any runs."
-                    )
-                resp.raise_for_status()
-                payload = await resp.json(loads=orjson.loads)
+            payload, retention = await _fetch_runs_and_retention(
+                base_url=f"http://localhost:{port}",
+                namespace=namespace,
+                job_id=job_id,
+                preview=preview,
+            )
     finally:
         kube_logger.setLevel(original_level)
+
+    if preview and retention is not None:
+        _annotate_preview(payload, retention)
 
     if output == "json":
         kube_console.console.print(
@@ -356,11 +354,90 @@ async def _run_list_runs(
             highlight=False,
         )
     else:
-        _print_runs_table(payload)
+        _print_runs_table(payload, preview=preview)
 
 
-def _print_runs_table(payload: dict) -> None:
-    """Render a ``RunHistoryListResponse`` payload as a rich table."""
+async def _fetch_runs_and_retention(
+    *,
+    base_url: str,
+    namespace: str,
+    job_id: str,
+    preview: bool,
+) -> tuple[dict, dict | None]:
+    """GET ``/runs`` (+ optionally ``/config/retention``) and return their payloads.
+
+    Split from ``_run_list_runs`` to keep each function below the 80-line
+    ergonomics ceiling — the port-forward/logging ceremony belongs in the
+    outer function, the HTTP shape belongs here.
+    """
+    import aiohttp
+    import orjson
+
+    from aiperf.transports.aiohttp_client import create_tcp_connector
+
+    timeout = aiohttp.ClientTimeout(total=30)
+    connector = create_tcp_connector()
+    async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+        runs_url = f"{base_url}/api/v1/results/{namespace}/{job_id}/runs"
+        async with session.get(runs_url) as resp:
+            if resp.status == 404:
+                raise RuntimeError(
+                    f"No runs found for {namespace}/{job_id}. "
+                    "The job may not have completed yet, or the operator "
+                    "has not captured any runs."
+                )
+            resp.raise_for_status()
+            payload = await resp.json(loads=orjson.loads)
+
+        retention: dict | None = None
+        if preview:
+            async with session.get(f"{base_url}/api/v1/config/retention") as r2:
+                r2.raise_for_status()
+                retention = await r2.json(loads=orjson.loads)
+
+    return payload, retention
+
+
+def _annotate_preview(payload: dict, retention: dict) -> None:
+    """Stamp each run with ``would_delete`` replicating ``enforce_retention`` dry-run.
+
+    Mirrors the server-side policy: a run is marked for deletion only if it
+    falls outside the count-keepers AND (when retain_days > 0) is older than
+    the cutoff. ``latest_epoch`` is always protected. Also embeds the raw
+    retention config on the payload so JSON consumers get both views.
+    """
+    import time
+
+    runs = payload.get("runs", []) or []
+    retain_runs = int(retention.get("retain_runs", 0))
+    retain_days = int(retention.get("retain_days", 0))
+    latest_epoch = payload.get("latest_epoch")
+
+    sorted_runs = sorted(runs, key=lambda r: int(r.get("mtime_epoch", 0)), reverse=True)
+    count_keepers = {r.get("epoch") for r in sorted_runs[:retain_runs]}
+    age_cutoff = time.time() - retain_days * 86400 if retain_days > 0 else None
+
+    for run in runs:
+        if run.get("epoch") == latest_epoch:
+            run["would_delete"] = False
+            continue
+        count_keep = run.get("epoch") in count_keepers
+        age_keep = age_cutoff is None or int(run.get("mtime_epoch", 0)) >= age_cutoff
+        run["would_delete"] = not (count_keep and age_keep)
+
+    payload["retention"] = {
+        "retain_runs": retain_runs,
+        "retain_days": retain_days,
+    }
+
+
+def _print_runs_table(payload: dict, *, preview: bool = False) -> None:
+    """Render a ``RunHistoryListResponse`` payload as a rich table.
+
+    When ``preview=True``, includes a ``WOULD DELETE`` column driven by the
+    per-run ``would_delete`` flag populated by ``_annotate_preview``, plus a
+    footer line summarizing the active retention policy.
+    """
     from datetime import datetime, timezone
 
     from rich.table import Table
@@ -382,21 +459,35 @@ def _print_runs_table(payload: dict) -> None:
     table.add_column("FILES", justify="right")
     table.add_column("SIZE", justify="right")
     table.add_column("LATEST", justify="center")
+    if preview:
+        table.add_column("WOULD DELETE", justify="center")
 
     for run in runs:
         ts = datetime.fromtimestamp(
             run.get("mtime_epoch", 0), tz=timezone.utc
         ).strftime("%Y-%m-%d %H:%M:%S UTC")
         latest = "[green]✓[/green]" if run.get("is_latest") else ""
-        table.add_row(
+        row = [
             str(run.get("epoch", "")),
             ts,
             str(run.get("file_count", 0)),
             _human_size(int(run.get("total_size_bytes", 0))),
             latest,
-        )
+        ]
+        if preview:
+            row.append("[red]✓[/red]" if run.get("would_delete") else "")
+        table.add_row(*row)
 
     kube_console.console.print(table)
     kube_console.console.print(
         "Pass --run <epoch> to `aiperf kube results` to pin a historical download."
     )
+
+    if preview:
+        retention = payload.get("retention") or {}
+        retain_runs = retention.get("retain_runs", 0)
+        retain_days = retention.get("retain_days", 0)
+        age_desc = f"{retain_days}" if retain_days else "0 (age policy disabled)"
+        kube_console.print_info(
+            f"Retention: RETAIN_RUNS={retain_runs}, RETAIN_DAYS={age_desc}"
+        )

@@ -381,3 +381,133 @@ async def test_results_run_rejects_invalid_epoch(tmp_path) -> None:
             operator_namespace="aiperf-system",
             run="not-an-epoch",
         )
+
+
+# =============================================================================
+# --preview: annotates which runs would be reaped
+# =============================================================================
+
+
+def _preview_payload(now_epoch: int) -> dict:
+    """Three runs: one within-keep, one outside-keep recent, one outside-keep old."""
+    day = 86400
+    return {
+        "namespace": "default",
+        "job_id": "foo",
+        "latest_epoch": "1714150923",
+        "runs": [
+            {
+                "epoch": "1714150923",
+                "mtime_epoch": now_epoch,
+                "file_count": 5,
+                "total_size_bytes": 1000,
+                "is_latest": True,
+            },
+            {
+                "epoch": "1714100000",
+                "mtime_epoch": now_epoch - 2 * day,
+                "file_count": 5,
+                "total_size_bytes": 1000,
+                "is_latest": False,
+            },
+            {
+                "epoch": "1714000000",
+                "mtime_epoch": now_epoch - 60 * day,
+                "file_count": 5,
+                "total_size_bytes": 1000,
+                "is_latest": False,
+            },
+        ],
+    }
+
+
+def _mock_session_two_gets(runs_payload: dict, retention_payload: dict):
+    """Return a mock aiohttp session whose .get() dispatches by URL substring."""
+
+    def _make_resp(payload: dict):
+        resp = MagicMock()
+        resp.status = 200
+        resp.raise_for_status = MagicMock()
+        resp.json = AsyncMock(return_value=payload)
+
+        @asynccontextmanager
+        async def _as_ctx():
+            yield resp
+
+        return _as_ctx
+
+    def _get(url: str, *_a, **_kw):
+        if "/config/retention" in url:
+            return _make_resp(retention_payload)()
+        return _make_resp(runs_payload)()
+
+    session = MagicMock()
+    session.get = MagicMock(side_effect=_get)
+
+    @asynccontextmanager
+    async def _as_ctx(*_args, **_kwargs):
+        yield session
+
+    return _as_ctx
+
+
+@pytest.mark.asyncio
+async def test_list_runs_preview_marks_old_for_deletion(
+    mock_resolve_and_pod, capsys
+) -> None:
+    """retain_runs=1 + retain_days=7: everything outside count-window is marked.
+
+    Actual server behavior matches ``enforce_retention`` in results_layout.py:
+    a run is deleted when EITHER policy would reap it (i.e. kept only if
+    count_keep AND age_keep). Only the single count-keeper — the latest —
+    survives under retain_runs=1.
+    """
+    import time
+
+    now = int(time.time())
+    runs = _preview_payload(now)
+    retention = {"retain_runs": 1, "retain_days": 7}
+    session_cm = _mock_session_two_gets(runs, retention)
+
+    with patch("aiohttp.ClientSession", new=session_cm):
+        await list_runs(
+            job_id="foo",
+            manage_options=KubeManageOptions(),
+            output="json",
+            preview=True,
+        )
+
+    out = capsys.readouterr().out.strip()
+    parsed = orjson.loads(out)
+    by_epoch = {r["epoch"]: r for r in parsed["runs"]}
+    # Latest is always protected and is the only count-keeper under retain_runs=1.
+    assert by_epoch["1714150923"]["would_delete"] is False
+    # 60-day-old: outside count-keepers AND outside age window -> reap.
+    assert by_epoch["1714000000"]["would_delete"] is True
+    # 2-day-old: outside count-keepers -> reap (count policy alone is enough).
+    assert by_epoch["1714100000"]["would_delete"] is True
+    assert parsed["retention"] == {"retain_runs": 1, "retain_days": 7}
+
+
+@pytest.mark.asyncio
+async def test_list_runs_preview_protects_latest(mock_resolve_and_pod, capsys) -> None:
+    """Even with retain_runs=0 + retain_days=1, latest must never be marked."""
+    import time
+
+    now = int(time.time())
+    runs = _preview_payload(now)
+    retention = {"retain_runs": 0, "retain_days": 1}
+    session_cm = _mock_session_two_gets(runs, retention)
+
+    with patch("aiohttp.ClientSession", new=session_cm):
+        await list_runs(
+            job_id="foo",
+            manage_options=KubeManageOptions(),
+            output="json",
+            preview=True,
+        )
+
+    out = capsys.readouterr().out.strip()
+    parsed = orjson.loads(out)
+    by_epoch = {r["epoch"]: r for r in parsed["runs"]}
+    assert by_epoch["1714150923"]["would_delete"] is False

@@ -238,3 +238,69 @@ def test_enforce_retention_retain_days_zero_disables_age_policy(
         retain_days=0,
     )
     assert len(deleted) == 2
+
+
+def test_enforce_retention_dry_run_returns_candidates_without_deleting(
+    tmp_path: Path,
+) -> None:
+    now = time.time()
+    epochs = ["1710000000", "1711000000", "1712000000"]
+    for i, epoch in enumerate(epochs):
+        d = run_dir(tmp_path, "ns", "job", epoch)
+        d.mkdir(parents=True)
+        age_days = len(epochs) - i
+        os.utime(d, (now - age_days * 86400, now - age_days * 86400))
+
+    deleted = enforce_retention(
+        tmp_path,
+        "ns",
+        "job",
+        keep=1,
+        protect_epoch=epochs[-1],
+        retain_days=0,
+        dry_run=True,
+    )
+    assert len(deleted) == 2
+    # No runs actually removed from disk.
+    survivors = set(list_run_epochs(tmp_path, "ns", "job"))
+    assert survivors == set(epochs)
+
+
+def test_enforce_retention_dry_run_matches_live_candidates(
+    tmp_path: Path,
+) -> None:
+    def _seed(base: Path) -> list[str]:
+        now = time.time()
+        epochs = ["1710000000", "1711000000", "1712000000", "1713000000"]
+        for i, epoch in enumerate(epochs):
+            d = run_dir(base, "ns", "job", epoch)
+            d.mkdir(parents=True)
+            age_days = len(epochs) - i
+            os.utime(d, (now - age_days * 86400, now - age_days * 86400))
+        return epochs
+
+    dry_base = tmp_path / "dry"
+    dry_base.mkdir()
+    epochs = _seed(dry_base)
+    dry = enforce_retention(
+        dry_base,
+        "ns",
+        "job",
+        keep=2,
+        protect_epoch=epochs[-1],
+        retain_days=0,
+        dry_run=True,
+    )
+
+    live_base = tmp_path / "live"
+    live_base.mkdir()
+    _seed(live_base)
+    live = enforce_retention(
+        live_base,
+        "ns",
+        "job",
+        keep=2,
+        protect_epoch=epochs[-1],
+        retain_days=0,
+    )
+    assert sorted(dry) == sorted(live)

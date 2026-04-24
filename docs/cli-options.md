@@ -4319,7 +4319,7 @@ Kubernetes namespace (default: aiperf-benchmarks).
 
 List all historical runs of a benchmark job.
 
-Queries the operator's ``/api/v1/results/<ns>/<job_id>/runs`` endpoint and prints either a table (default) or the raw JSON payload.
+Queries the operator's ``/api/v1/results/<ns>/<job_id>/runs`` endpoint and prints either a table (default) or the raw JSON payload. With ``--preview``, also fetches ``/api/v1/config/retention`` and annotates each row with whether the current policy would reap it (latest is always protected).
 
 **Examples:**
 
@@ -4327,6 +4327,7 @@ Queries the operator's ``/api/v1/results/<ns>/<job_id>/runs`` endpoint and print
 aiperf kube results list-runs                 # last deployed job
 aiperf kube results list-runs foo             # specific job
 aiperf kube results list-runs foo --output json
+aiperf kube results list-runs foo --preview   # mark reap candidates
 ```
 
 ### Parameters
@@ -4339,6 +4340,10 @@ AIPerf job ID to list runs for (default: last deployed job).
 
 Output format: 'text' for table, 'json' for machine-parseable.
 <br/>_Default: `text`_
+
+#### `--preview`, `--no-preview`
+
+Show which runs would be reaped under current retention settings (read-only; no deletion).
 
 #### `--operator-namespace` `<str>`
 

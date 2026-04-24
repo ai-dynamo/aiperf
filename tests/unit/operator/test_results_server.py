@@ -1096,3 +1096,27 @@ def test_list_runs_skips_non_epoch_dirs(tmp_path: Path) -> None:
         assert r.status_code == 200
         epochs = {run["epoch"] for run in r.json()["runs"]}
         assert epochs == {_EPOCH_OLD}
+
+
+def test_config_retention_endpoint_returns_current_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GET /api/v1/config/retention returns the live OperatorEnvironment values."""
+    from fastapi.testclient import TestClient
+
+    from aiperf.operator.environment import OperatorEnvironment
+    from aiperf.operator.results_server import create_app
+
+    # The singleton is constructed once at module import, so values are fixed
+    # from the test-runner's environment. Patch the already-loaded settings
+    # object directly rather than reloading the module (which would strand
+    # other importers on a stale instance).
+    monkeypatch.setattr(OperatorEnvironment.RESULTS, "RETAIN_RUNS", 15)
+    monkeypatch.setattr(OperatorEnvironment.RESULTS, "RETAIN_DAYS", 30)
+
+    with TestClient(create_app(results_dir=tmp_path)) as client:
+        r = client.get("/api/v1/config/retention")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["retain_runs"] == 15
+        assert body["retain_days"] == 30

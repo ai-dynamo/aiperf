@@ -23,6 +23,9 @@ Endpoints:
     GET /api/v1/analytics/compare                       - compare specific jobs
     GET /api/v1/analytics/summary/{namespace}/{job_id}   - full summary for a job
 
+    Config (``aiperf.operator.routers.config``):
+    GET /api/v1/config/retention                         - current retention policy
+
 Run: python -m aiperf.operator.results_server
 """
 
@@ -180,6 +183,7 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     from kubernetes_asyncio.client import ApiClient
 
     from aiperf.operator.results_db import ResultsDB
+    from aiperf.operator.routers.config import create_config_router
     from aiperf.operator.routers.jobs import create_jobs_router
     from aiperf.operator.routers.results_analytics import (
         create_results_analytics_router,
@@ -200,6 +204,7 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
 
     app.include_router(create_jobs_router(api_holder, base_dir))
     app.include_router(create_results_files_router(base_dir))
+    app.include_router(create_config_router())
 
     def _get_db() -> ResultsDB:
         db = db_holder[0]

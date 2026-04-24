@@ -214,6 +214,7 @@ def enforce_retention(
     keep: int,
     protect_epoch: str,
     retain_days: int = 0,
+    dry_run: bool = False,
 ) -> list[str]:
     """Prune old run dirs by count and optionally age (conservative intersection).
 
@@ -229,12 +230,19 @@ def enforce_retention(
     either policy — the active run must never be deleted out from under
     the writer.
 
-    Returns the list of deleted epoch strings. I/O failures on individual
-    deletions are logged and swallowed so one corrupt dir never blocks
-    retention on the rest.
+    When ``dry_run=True``, the function performs the same policy evaluation
+    and returns the list of epochs that WOULD be deleted, but touches no
+    files on disk. This powers the ``aiperf kube results list-runs --preview``
+    CLI flow so operators can see the reap plan before enabling retention.
+
+    Returns the list of deleted (or would-be-deleted, if ``dry_run``) epoch
+    strings. I/O failures on individual deletions are logged and swallowed
+    so one corrupt dir never blocks retention on the rest.
 
     Example:
         >>> enforce_retention(Path("/data"), "bench", "warmup-7f2a", keep=10, protect_epoch="1714069323")
+        ['1714000000', '1714000060']
+        >>> enforce_retention(Path("/data"), "bench", "warmup-7f2a", keep=10, protect_epoch="1714069323", dry_run=True)
         ['1714000000', '1714000060']
     """
     root = job_dir(base, namespace, name)
@@ -260,6 +268,9 @@ def enforce_retention(
         count_keep = child.name in count_keepers
         age_keep = age_cutoff is None or child.stat().st_mtime >= age_cutoff
         if count_keep and age_keep:
+            continue
+        if dry_run:
+            deleted.append(child.name)
             continue
         try:
             shutil.rmtree(child)
