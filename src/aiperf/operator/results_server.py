@@ -44,6 +44,7 @@ from kubernetes_asyncio.client.exceptions import ApiException
 
 # Re-exported for tests and downstream callers.
 from aiperf.operator.dashboard_mount import DashboardProxy, build_dashboard
+from aiperf.operator.results_layout import migrate_legacy_layout
 from aiperf.operator.routers.results_files import (
     _display_name,
     _safe_resolve,
@@ -74,6 +75,21 @@ def _build_lifespan(base_dir: Path, api_holder: list, db_holder: list):
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        try:
+            migrated = await asyncio.to_thread(migrate_legacy_layout, base_dir)
+            if migrated:
+                logger.info(
+                    "results layout migration: relocated %d jobs under %s",
+                    len(migrated),
+                    base_dir,
+                )
+        except OSError:
+            logger.warning(
+                "results layout migration failed under %s",
+                base_dir,
+                exc_info=True,
+            )
+
         db_holder[0] = ResultsDB(base_dir)
         logger.info(f"DuckDB analytics engine initialized (results_dir={base_dir})")
 
