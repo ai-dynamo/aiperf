@@ -1,0 +1,170 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Kubernetes operator chaos / fault-injection suite.
+#
+# Runs tests/kubernetes/chaos/ on a Kind cluster. Every scenario is marked
+# `k8s_slow` and intentionally waits on pod termination grace, benchmark
+# duration, or operator recovery — expect ~5 minutes per scenario. The full
+# non-xfail set takes roughly 45-60 minutes; timeout is 150 to absorb the
+# cluster/image-build overhead.
+#
+# This suite is NOT run on every PR (cost). Default triggers:
+#   - `workflow_dispatch` (manual)
+#   - push to `main`
+#   - nightly cron at 07:00 UTC
+#
+# To trigger from a PR, use the "Run workflow" button on this workflow and
+# select the PR branch. Chaos fixtures require `shareProcessNamespace` on
+# controller pods so `kubectl exec ... kill` can reach sibling containers;
+# this is enabled here via `AIPERF_K8S_SHARE_PROCESS_NAMESPACE=true` and is
+# NOT the production default.
+name: "Run Chaos Tests"
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'llms.txt'
+      - 'LICENSE'
+      - '.gitignore'
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      pytest_args:
+        description: "Extra pytest args (e.g. `-k test_c1` or `--k8s-reuse-cluster`)"
+        type: string
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  chaos-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      AIPERF_K8S_SHARE_PROCESS_NAMESPACE: "true"
+
+    steps:
+    - name: Free disk space
+      shell: bash
+      run: |
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+        sudo apt-get -y clean
+        docker system prune -af || true
+        df -h
+
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Cache uv downloads
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/uv
+        key: uv-${{ runner.os }}-py3.12-${{ hashFiles('uv.lock', 'pyproject.toml') }}
+        restore-keys: |
+          uv-${{ runner.os }}-py3.12-
+
+    - name: Install kubectl
+      uses: azure/setup-kubectl@v4
+
+    - name: Install helm
+      uses: azure/setup-helm@v4
+      with:
+        version: "latest"
+
+    - name: Install kind
+      uses: helm/kind-action@v1
+      with:
+        install_only: true
+
+    - name: Install dependencies
+      run: make first-time-setup PYTHON_VERSION=3.12
+
+    - name: Report pre-test disk and tool versions
+      shell: bash
+      run: |
+        df -h
+        docker version || true
+        kind version || true
+        kubectl version --client || true
+        helm version || true
+
+    - name: Run chaos tests
+      id: pytest
+      shell: bash
+      run: |
+        set -o pipefail
+        uv run pytest tests/kubernetes/chaos/ \
+          -m k8s_slow \
+          -v --tb=long \
+          ${{ inputs.pytest_args }}
+      timeout-minutes: 135
+
+    - name: Collect cluster diagnostics on failure
+      if: failure()
+      shell: bash
+      run: |
+        mkdir -p ./k8s-chaos-logs
+        kind export logs ./k8s-chaos-logs/kind --name aiperf || true
+        kubectl get all -A > ./k8s-chaos-logs/all-resources.txt || true
+        kubectl get events -A --sort-by=.lastTimestamp > ./k8s-chaos-logs/events.txt || true
+        kubectl describe nodes > ./k8s-chaos-logs/describe-nodes.txt || true
+        kubectl describe pods -A > ./k8s-chaos-logs/describe-pods.txt || true
+        kubectl get aiperfjobs -A -o yaml > ./k8s-chaos-logs/aiperfjobs.yaml 2>&1 || true
+        kubectl get jobsets -A -o yaml > ./k8s-chaos-logs/jobsets.yaml 2>&1 || true
+        kubectl get pods -A -o yaml > ./k8s-chaos-logs/pods.yaml 2>&1 || true
+        for ns in $(kubectl get ns -o name | cut -d/ -f2); do
+          kubectl logs -n "$ns" --all-containers --prefix --tail=-1 -l '' > "./k8s-chaos-logs/logs-$ns.txt" 2>&1 || true
+        done
+        docker ps -a > ./k8s-chaos-logs/docker-ps.txt 2>&1 || true
+        docker images > ./k8s-chaos-logs/docker-images.txt 2>&1 || true
+        df -h > ./k8s-chaos-logs/disk-usage.txt 2>&1 || true
+        free -h > ./k8s-chaos-logs/memory.txt 2>&1 || true
+        dmesg | tail -500 > ./k8s-chaos-logs/dmesg.txt 2>&1 || true
+
+    - name: Upload cluster diagnostics
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: k8s-chaos-logs-${{ github.run_id }}
+        path: k8s-chaos-logs/
+        retention-days: 7
+
+    - name: Write job summary
+      if: always()
+      shell: bash
+      run: |
+        {
+          echo "## Chaos tests"
+          echo ""
+          if [[ "${{ steps.pytest.outcome }}" == "success" ]]; then
+            echo "Result: **passed**"
+          else
+            echo "Result: **${{ steps.pytest.outcome }}**"
+            echo ""
+            echo "Diagnostics artifact: \`k8s-chaos-logs-${{ github.run_id }}\` (7 day retention)"
+          fi
+          echo ""
+          echo "- Runner: \`ubuntu-latest\`"
+          echo "- Python: \`3.12\`"
+          echo "- Marker: \`k8s_slow\`"
+          echo "- AIPERF_K8S_SHARE_PROCESS_NAMESPACE: \`true\`"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Teardown Kind cluster
+      if: always()
+      run: kind delete cluster --name aiperf || true
