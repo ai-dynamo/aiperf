@@ -52,21 +52,3 @@ async def test_analysis_renders_chart_canvas(
     await analysis.goto()
     await page.wait_for_load_state("networkidle")
     await expect(page.locator("canvas").first).to_be_visible()
-
-
-@pytest.mark.asyncio(loop_scope="session")
-async def test_analysis_row_click_not_applicable(
-    live_operator_app, seeded_results_dir, fake_k8s_client, page
-) -> None:
-    """The Analysis view has no ranked-table rows to click through.
-
-    The former leaderboard row→detail click path is gone; the Pareto
-    chart uses canvas-drawn points (not DOM rows) and per-cluster
-    toggles control visibility rather than navigation. Skip until an
-    equivalent click-through affordance is added upstream.
-    """
-    pytest.skip(
-        "Analysis view replaced the leaderboard's ranked-table rows with "
-        "canvas-drawn Pareto points; no DOM row click-through exists. "
-        "See src/aiperf/operator/ui/views/analysis.js."
-    )
