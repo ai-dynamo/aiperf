@@ -200,6 +200,7 @@ Results fetching and storage settings.
 | `AIPERF_RESULTS_TTL_DAYS` | `30` | ≥ 0, ≤ 3650 | Days to keep results before cleanup (0 = never clean) |
 | `AIPERF_RESULTS_COMPRESS_ON_DISK` | `True` | — | Store downloaded result files as zstd-compressed (.zst) on disk |
 | `AIPERF_RESULTS_RETAIN_RUNS` | `10` | ≥ 1, ≤ 10000 | Max per-run result dirs to keep under <namespace>/<name>/ before retention trimming. Applied after every successful completion; the just-written epoch is always protected from deletion. |
+| `AIPERF_RESULTS_RETAIN_DAYS` | `0` | ≥ 0, ≤ 36500 | Age-based retention cap in days. 0 disables age policy. A run is deleted only when BOTH this age cap AND RETAIN_RUNS agree the run is outside the keep window; protect_epoch still wins. |
 
 ## SERVERMETRICS
 
