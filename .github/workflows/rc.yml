@@ -298,6 +298,128 @@ jobs:
             --tag "${IMAGE_REF}" \
             .
 
+      # -------------------------------------------------------------------------
+      # Compliance: extract attribution artifacts from the python-licenses stage.
+      # Emits /opt/licenses/{python,dpkg,ffmpeg}/* — pip-licenses JSON,
+      # ATTRIBUTIONS-Python.md, per-ecosystem deps CSVs, and a CycloneDX SBOM.
+      # --cache-from hits the registry cache warmed by the runtime build above,
+      # so this step streams cached layers to local output without re-building.
+      # amd64 only: Python deps are pure-Python so identical across archs.
+      # -------------------------------------------------------------------------
+      - name: Extract license artifacts (amd64 only)
+        if: matrix.arch == 'amd64'
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          set -euo pipefail
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+          docker buildx build \
+            --platform linux/amd64 \
+            --target   python-licenses \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-amd64" \
+            --output     "type=local,dest=./license-raw" \
+            .
+          mkdir -p license-artifacts
+          cp -r ./license-raw/opt/licenses/. license-artifacts/
+          # Merge per-ecosystem CSVs into a unified deps.csv (shared schema).
+          {
+            cat license-artifacts/python/python-deps.csv
+            tail -n +2 license-artifacts/dpkg/dpkg-deps.csv
+          } > license-artifacts/deps.csv
+          echo "License artifacts:"
+          find license-artifacts -type f | sort
+
+      # Fetch the deps.csv from the most recent successful RC on this branch so
+      # we can compute a diff. continue-on-error so the first run on a new
+      # branch (no prior artifact) doesn't fail the pipeline — diff just shows
+      # every package as "added".
+      - name: Download prior RC deps.csv (best-effort)
+        if: matrix.arch == 'amd64'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p prior-artifacts
+          PRIOR_RUN_ID=$(gh run list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --workflow=rc.yml \
+            --branch "${GITHUB_REF_NAME}" \
+            --status=success \
+            --limit=10 \
+            --json databaseId \
+            --jq ".[] | select(.databaseId != ${GITHUB_RUN_ID}) | .databaseId" \
+            | head -1 || true)
+          if [ -n "${PRIOR_RUN_ID:-}" ]; then
+            echo "Prior RC run: ${PRIOR_RUN_ID}"
+            gh run download "${PRIOR_RUN_ID}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --pattern 'license-artifacts-*' \
+              --dir prior-artifacts/ 2>&1 || echo "No prior artifact available."
+            PRIOR_DEPS=$(find prior-artifacts -name deps.csv -print -quit 2>/dev/null || true)
+            if [ -n "${PRIOR_DEPS}" ]; then
+              cp "${PRIOR_DEPS}" prior-artifacts/deps.csv
+              echo "Using baseline: ${PRIOR_DEPS}"
+            fi
+          else
+            echo "No prior RC run found; diff will list every package as added."
+          fi
+
+      - name: Compute deps diff
+        if: matrix.arch == 'amd64'
+        run: |
+          set -euo pipefail
+          python3 - <<'PYEOF'
+          import csv
+          from pathlib import Path
+
+          current = Path("license-artifacts/deps.csv")
+          prior = Path("prior-artifacts/deps.csv")
+          out = Path("license-artifacts/deps-diff.csv")
+
+          def load(p):
+              if not p.is_file():
+                  return {}
+              with p.open(newline="") as f:
+                  return {(r["dependency_type"], r["name"]): r for r in csv.DictReader(f)}
+
+          cur, pri = load(current), load(prior)
+          fields = ["change", "dependency_type", "name", "version", "spdx_license",
+                    "prior_version", "prior_spdx_license"]
+          rows = []
+          for key in sorted(set(cur) | set(pri)):
+              c, p = cur.get(key), pri.get(key)
+              if c and not p:
+                  rows.append({"change": "added", **c,
+                               "prior_version": "", "prior_spdx_license": ""})
+              elif p and not c:
+                  rows.append({"change": "removed",
+                               "dependency_type": p["dependency_type"],
+                               "name": p["name"], "version": "", "spdx_license": "",
+                               "prior_version": p["version"],
+                               "prior_spdx_license": p["spdx_license"]})
+              elif c and p and (c["version"] != p["version"]
+                                or c["spdx_license"] != p["spdx_license"]):
+                  rows.append({"change": "changed", **c,
+                               "prior_version": p["version"],
+                               "prior_spdx_license": p["spdx_license"]})
+          with out.open("w", newline="") as f:
+              w = csv.DictWriter(f, fieldnames=fields)
+              w.writeheader()
+              w.writerows(rows)
+          print(f"Diff: {len(rows)} added/changed/removed vs prior (→ {out})")
+          PYEOF
+
+      - name: Upload license artifacts
+        if: matrix.arch == 'amd64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: license-artifacts-${{ needs.prepare-release.outputs.wheel_version }}
+          path: license-artifacts/
+          retention-days: 90
+          if-no-files-found: error
+
   create-multiarch-manifest-ecr:
     name: Create Multi-arch Manifest (ECR)
     needs: [prepare-release, build-container]
