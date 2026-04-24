@@ -22,6 +22,7 @@ from aiperf.kubernetes.client import (
     get_raw_aiperfjob,
     get_raw_aiperfjob_status,
     list_events_for_object,
+    list_nodes,
 )
 from aiperf.operator.job_union import (
     find_any_job,
@@ -83,7 +84,7 @@ async def _fetch_k8s_version(api: ApiClient) -> str:
 async def _fetch_node_gpu_totals(api: ApiClient) -> tuple[int, int]:
     """Return (node_count, total_nvidia_gpus). Returns (0, 0) on failure."""
     try:
-        node_list = await client.CoreV1Api(api).list_node()
+        nodes = await list_nodes(api)
     except ApiException as e:
         # 403 here is almost always the operator ClusterRole missing
         # `nodes get/list` — log at ERROR so it surfaces in the usual
@@ -100,7 +101,6 @@ async def _fetch_node_gpu_totals(api: ApiClient) -> tuple[int, int]:
     except Exception as e:  # noqa: BLE001 - UI tolerates missing cluster-wide query
         logger.warning(f"Failed to query nodes: {e}")
         return 0, 0
-    nodes = node_list.items
     return len(nodes), sum(_node_gpu_count(n) for n in nodes)
 
 

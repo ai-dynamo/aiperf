@@ -229,6 +229,37 @@ async def list_events_for_object(
     return list(resp.items or [])
 
 
+async def list_nodes(api: ApiClient) -> list[Any]:
+    """Return cluster-wide ``V1Node`` list for the given apiclient.
+
+    Thin wrapper over ``CoreV1Api(api).list_node().items`` exposed so
+    the UI's cluster-info endpoint (``_fetch_node_gpu_totals``) has a
+    single patch point for test fakes alongside :func:`get_pods` /
+    :func:`list_events_for_object`. Callers that just need counts or
+    GPU allocatable totals iterate the returned list directly.
+
+    Args:
+        api: Open ``ApiClient`` from :func:`k8s_client`.
+
+    Returns:
+        List of ``kubernetes_asyncio.client.V1Node`` instances. Empty
+        list if the cluster is empty. Return type is ``list[Any]``
+        because the ``V1Node`` class is not a stable import path.
+
+    Raises:
+        kubernetes_asyncio.client.exceptions.ApiException: On any API
+            failure — in particular 403 when the ServiceAccount's
+            ClusterRole lacks ``nodes get/list``. Callers decide
+            whether to suppress.
+
+    Example:
+        >>> async with k8s_client() as api:
+        ...     nodes = await list_nodes(api)
+        ...     gpus = sum(int(n.status.allocatable.get("nvidia.com/gpu", 0)) for n in nodes)
+    """
+    return list((await client.CoreV1Api(api).list_node()).items or [])
+
+
 async def cluster_version(api: ApiClient) -> dict[str, Any]:
     """Return Kubernetes cluster version info as a dict.
 

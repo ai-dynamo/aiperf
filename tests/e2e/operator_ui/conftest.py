@@ -211,6 +211,15 @@ class FakeK8sClient:
     cluster.
     """
 
+    cluster_nodes: list[dict[str, Any]] = field(default_factory=list)
+    """Canned list of raw ``V1Node`` dicts for the cluster-info endpoint.
+
+    Empty by default — ``_fetch_node_gpu_totals`` tolerates an empty
+    cluster and returns ``(0, 0)``. Tests that exercise GPU totals can
+    prepend entries shaped like
+    ``{"status": {"allocatable": {"nvidia.com/gpu": "8"}}}``.
+    """
+
     def set_jobs(self, jobs_raw: list[dict[str, Any]]) -> None:
         """Replace the canned AIPerfJob CR list."""
         self.jobs_raw = jobs_raw
@@ -249,6 +258,20 @@ def _pod_raw_to_v1pod(pod_raw: dict[str, Any]) -> SimpleNamespace:
                 for c in status.get("containerStatuses", [])
             ],
         ),
+    )
+
+
+def _node_raw_to_v1node(node_raw: dict[str, Any]) -> SimpleNamespace:
+    """Build a V1Node-shaped SimpleNamespace the router's ``_node_gpu_count`` reads.
+
+    ``_node_gpu_count`` calls ``node.status.allocatable.get(...)``; the
+    UI's ``_fetch_node_gpu_totals`` only needs ``.status`` and a
+    ``.status.allocatable`` dict.
+    """
+    status = node_raw.get("status") or {}
+    return SimpleNamespace(
+        metadata=SimpleNamespace(name=(node_raw.get("metadata") or {}).get("name", "")),
+        status=SimpleNamespace(allocatable=dict(status.get("allocatable") or {})),
     )
 
 
@@ -355,6 +378,9 @@ def fake_k8s_client(
     async def _events_for_object(api, namespace, object_name):
         return list(fake.events_by_object.get((namespace, object_name), []))
 
+    async def _list_nodes(api):
+        return [_node_raw_to_v1node(n) for n in fake.cluster_nodes]
+
     async def _pod_logs_stub(
         api, namespace, name, *, pod, follow, tail_lines, container
     ):
@@ -432,6 +458,7 @@ def fake_k8s_client(
         monkeypatch.setattr(
             target, "list_events_for_object", _events_for_object, raising=False
         )
+        monkeypatch.setattr(target, "list_nodes", _list_nodes, raising=False)
         monkeypatch.setattr(target, "cancel_aiperf_job", _cancel, raising=False)
 
     # The pod-logs endpoint is implemented in its own module but imported

@@ -47,6 +47,7 @@ from aiperf.kubernetes.client_pods import (
     get_pod_summary,
     get_pods,
     list_events_for_object,
+    list_nodes,
     wait_for_controller_pod_ready,
 )
 from aiperf.kubernetes.client_selectors import controller_selector, job_selector
@@ -73,6 +74,7 @@ __all__ = [
     "list_aiperf_jobs",
     "list_events_for_object",
     "list_jobsets",
+    "list_nodes",
     "wait_for_controller_pod_ready",
 ]
 
