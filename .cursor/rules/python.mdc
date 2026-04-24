@@ -133,9 +133,9 @@ Feature branches use `<username>/feature-name` format, forked from `main`. One P
 5. `Field(description=...)` on all Pydantic fields
 6. `git commit -s`
 
-## Three-File Sync Rule
+## Four-File Sync Rule
 
-`CLAUDE.md`, `.github/copilot-instructions.md`, and `.cursor/rules/python.mdc` must contain identical content (only headers/frontmatter differ). When updating one, update all three. Always diff them after editing to confirm sync.
+`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, and `.cursor/rules/python.mdc` must contain identical content (only headers/frontmatter differ). When updating one, update all four. Always diff them after editing to confirm sync.
 
 ## Documentation Updates
 
@@ -144,7 +144,7 @@ When making changes, update the appropriate documentation files. When adding a n
 | Change type | Files to update |
 |---|---|
 | Architecture, components, data flow, communication | `docs/architecture.md` |
-| Coding standards, build commands, new patterns | `CLAUDE.md` + `.github/copilot-instructions.md` + `.cursor/rules/python.mdc` |
+| Coding standards, build commands, new patterns | `AGENTS.md` + `CLAUDE.md` + `.github/copilot-instructions.md` + `.cursor/rules/python.mdc` |
 | Code patterns, examples, base classes | `docs/dev/patterns.md` |
 | CLI arguments or commands | `docs/cli-options.md` (auto-generated via `make generate-cli-docs`) |
 | Environment variables | `docs/environment-variables.md` (auto-generated via `make generate-env-vars-docs`) |
