@@ -187,6 +187,14 @@ class FakeK8sClient:
     cancelled: list[tuple[str, str]] = field(default_factory=list)
     """Recorded ``(namespace, name)`` for each cancel call."""
 
+    events_by_object: dict[tuple[str, str], list[Any]] = field(default_factory=dict)
+    """Canned ``V1Event`` lists keyed by ``(namespace, involvedObject.name)``.
+
+    Empty by default — the events endpoint returns ``[]`` for any object the
+    test has not primed. Tests that care about the events endpoint populate
+    this dict with ``V1Event``-shaped fakes.
+    """
+
     def set_jobs(self, jobs_raw: list[dict[str, Any]]) -> None:
         """Replace the canned AIPerfJob CR list."""
         self.jobs_raw = jobs_raw
@@ -328,6 +336,9 @@ def fake_k8s_client(
     async def _cancel(api, name, namespace):
         fake.cancelled.append((namespace, name))
 
+    async def _events_for_object(api, namespace, object_name):
+        return list(fake.events_by_object.get((namespace, object_name), []))
+
     # Patch both the source module and the router's local re-imports, because
     # the router does ``from aiperf.kubernetes.client import ...`` which binds
     # the names into its own module namespace. Also patch ``job_union`` which
@@ -338,6 +349,7 @@ def fake_k8s_client(
     import aiperf.kubernetes.client_pods as kc_pods_mod
     import aiperf.operator.job_union as job_union_mod
     import aiperf.operator.routers.jobs as jobs_router
+    import aiperf.operator.routers.jobs_logs as jobs_logs_mod
     import aiperf.operator.routers.results_analytics as results_analytics_mod
 
     patch_targets = (
@@ -345,6 +357,7 @@ def fake_k8s_client(
         kc_jobs_mod,
         kc_pods_mod,
         jobs_router,
+        jobs_logs_mod,
         job_union_mod,
         results_analytics_mod,
     )
@@ -357,6 +370,9 @@ def fake_k8s_client(
         monkeypatch.setattr(target, "get_raw_aiperfjob", _get_raw, raising=False)
         monkeypatch.setattr(target, "get_pods", _get_pods, raising=False)
         monkeypatch.setattr(target, "cluster_version", _version, raising=False)
+        monkeypatch.setattr(
+            target, "list_events_for_object", _events_for_object, raising=False
+        )
         monkeypatch.setattr(target, "cancel_aiperf_job", _cancel, raising=False)
 
     # Inject a non-None sentinel into the router's ``api_holder`` so
