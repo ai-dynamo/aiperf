@@ -1,18 +1,18 @@
 apiVersion: aiperf.nvidia.com/v1alpha1
 kind: AIPerfJob
 metadata:
-  name: gpt-oss-120b-bench
+  name: qwen3-32b-fp8-vllm-disagg-bench
 spec:
   benchmark:
-    model: openai/gpt-oss-120b
+    model: Qwen/Qwen3-32B-FP8
     endpoint:
-      url: http://gpt-oss-agg-frontend:8000
+      url: http://qwen3-32b-fp8-vllm-disagg-frontend:8000
       type: chat
       path: /v1/chat/completions
       streaming: true
       extra:
-        max_tokens: 1000
-        min_tokens: 1000
+        max_tokens: 500
+        min_tokens: 500
         ignore_eos: true
         repetition_penalty: 1.0
         temperature: 0.0
@@ -22,27 +22,27 @@ spec:
         Authorization: Bearer NOT USED
         Accept: text/event-stream
     tokenizer:
-      name: /model-cache/hub/models--openai--gpt-oss-120b/snapshots/b5c939de8f754692c1647ca79fbf85e8c1e70f8a
+      name: Qwen/Qwen3-32B-FP8
     dataset:
       type: synthetic
       entries: 12800
-      isl: 128
-      osl: 1000
+      isl: 2000
+      osl: 500
     warmup:
       type: concurrency
-      concurrency: 3600
-      requests: 3600
+      concurrency: 8
+      requests: 8
     profiling:
       type: concurrency
-      concurrency: 3600
-      requests: 36000
+      concurrency: 8
+      requests: 80
     randomSeed: 100
   podTemplate:
     imagePullSecrets:
       - nvcrimagepullsecret
     env:
       - name: AIPERF_HTTP_CONNECTION_LIMIT
-        value: "252"
+        value: "200"
     volumes:
       - name: model-cache
         persistentVolumeClaim:

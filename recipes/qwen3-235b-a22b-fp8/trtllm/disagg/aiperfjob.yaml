@@ -4,14 +4,12 @@ metadata:
   name: qwen3-235b-a22b-disagg-bench
 spec:
   benchmark:
-    models:
-    - Qwen/Qwen3-235B-A22B-FP8
+    model: Qwen/Qwen3-235B-A22B-FP8
     endpoint:
-      urls:
-      - http://qwen3-235b-a22b-disagg-frontend:8000
+      url: http://qwen3-235b-a22b-disagg-frontend:8000
       type: chat
-      streaming: true
       path: /v1/chat/completions
+      streaming: true
       extra:
         max_tokens: 200
         min_tokens: 200
@@ -25,16 +23,11 @@ spec:
         Accept: text/event-stream
     tokenizer:
       name: Qwen/Qwen3-235B-A22B-FP8
-    datasets:
-      main:
-        type: synthetic
-        entries: 12800
-        isl:
-          mean: 4000
-          stddev: 0
-        osl:
-          mean: 200
-          stddev: 0
+    dataset:
+      type: synthetic
+      entries: 12800
+      isl: 4000
+      osl: 200
     warmup:
       type: concurrency
       concurrency: 32
@@ -46,14 +39,14 @@ spec:
     randomSeed: 100
   podTemplate:
     imagePullSecrets:
-    - nvcrimagepullsecret
+      - nvcrimagepullsecret
     env:
-    - name: AIPERF_HTTP_CONNECTION_LIMIT
-      value: '200'
+      - name: AIPERF_HTTP_CONNECTION_LIMIT
+        value: "200"
     volumes:
-    - name: model-cache
-      persistentVolumeClaim:
-        claimName: model-cache
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: model-cache
     volumeMounts:
-    - name: model-cache
-      mountPath: /model-cache
+      - name: model-cache
+        mountPath: /model-cache

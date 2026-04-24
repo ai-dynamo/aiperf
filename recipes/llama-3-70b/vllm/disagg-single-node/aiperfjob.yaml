@@ -4,14 +4,12 @@ metadata:
   name: llama3-70b-disagg-sn-perf
 spec:
   benchmark:
-    models:
-    - RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic
+    model: RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic
     endpoint:
-      urls:
-      - http://llama3-70b-disagg-sn-frontend:8000
+      url: http://llama3-70b-disagg-sn-frontend:8000
       type: chat
-      streaming: true
       path: /v1/chat/completions
+      streaming: true
       extra:
         max_tokens: 1024
         min_tokens: 1024
@@ -25,16 +23,11 @@ spec:
         Accept: text/event-stream
     tokenizer:
       name: RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic
-    datasets:
-      main:
-        type: synthetic
-        entries: 12800
-        isl:
-          mean: 8192
-          stddev: 0
-        osl:
-          mean: 1024
-          stddev: 0
+    dataset:
+      type: synthetic
+      entries: 12800
+      isl: 8192
+      osl: 1024
     warmup:
       type: concurrency
       concurrency: 128
@@ -46,14 +39,14 @@ spec:
     randomSeed: 100
   podTemplate:
     imagePullSecrets:
-    - nvcrimagepullsecret
+      - nvcrimagepullsecret
     env:
-    - name: AIPERF_HTTP_CONNECTION_LIMIT
-      value: '200'
+      - name: AIPERF_HTTP_CONNECTION_LIMIT
+        value: "200"
     volumes:
-    - name: model-cache
-      persistentVolumeClaim:
-        claimName: model-cache
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: model-cache
     volumeMounts:
-    - name: model-cache
-      mountPath: /root/.cache/huggingface
+      - name: model-cache
+        mountPath: /root/.cache/huggingface

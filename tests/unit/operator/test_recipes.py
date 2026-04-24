@@ -102,8 +102,8 @@ class TestRecipeCompleteness:
     """Verify all expected recipes exist."""
 
     def test_recipe_count(self) -> None:
-        assert len(RECIPE_FILES) == 15, (
-            f"Expected 15 recipes, found {len(RECIPE_FILES)}: "
+        assert len(RECIPE_FILES) == 17, (
+            f"Expected 17 recipes, found {len(RECIPE_FILES)}: "
             + ", ".join(str(p.relative_to(RECIPES_DIR)) for p in RECIPE_FILES)
         )
 
@@ -112,6 +112,7 @@ class TestRecipeCompleteness:
             "deepseek-r1/trtllm/disagg/wide_ep/gb200/aiperfjob.yaml",
             "deepseek-v32-fp4/trtllm/agg-round-robin/aiperfjob.yaml",
             "deepseek-v32-fp4/trtllm/disagg-kv-router/aiperfjob.yaml",
+            "glm-5-nvfp4/sglang/disagg/aiperfjob.yaml",
             "gpt-oss-120b/trtllm/agg/aiperfjob.yaml",
             "gpt-oss-120b/trtllm/disagg/aiperfjob.yaml",
             "llama-3-70b/vllm/agg/aiperfjob.yaml",
@@ -121,6 +122,7 @@ class TestRecipeCompleteness:
             "qwen3-235b-a22b-fp8/trtllm/disagg/aiperfjob.yaml",
             "qwen3-32b-fp8/trtllm/agg/aiperfjob.yaml",
             "qwen3-32b-fp8/trtllm/disagg/aiperfjob.yaml",
+            "qwen3-32b-fp8/vllm/disagg/aiperfjob.yaml",
             "qwen3-32b/vllm/agg-round-robin/aiperfjob.yaml",
             "qwen3-32b/vllm/disagg-kv-router/aiperfjob.yaml",
             "qwen3-vl-30b/vllm/agg-embedding-cache/aiperfjob.yaml",

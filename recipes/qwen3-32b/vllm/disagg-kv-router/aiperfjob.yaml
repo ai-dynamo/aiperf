@@ -4,17 +4,14 @@ metadata:
   name: disagg-router-6p-2d-benchmark
 spec:
   benchmark:
-    models:
-    - Qwen/Qwen3-32B
+    model: Qwen/Qwen3-32B
     endpoint:
-      urls:
-      - http://disagg-router-6p-2d-frontend:8000
+      url: http://disagg-router-6p-2d-frontend:8000
       streaming: true
-    datasets:
-      main:
-        type: file
-        path: /perf-cache/traces/conversation_trace.jsonl
-        format: mooncake_trace
+    dataset:
+      type: file
+      path: /perf-cache/traces/conversation_trace.jsonl
+      format: mooncake_trace
     profiling:
       type: fixed_schedule
     slos:
@@ -22,14 +19,14 @@ spec:
       inter_token_latency: 25
   podTemplate:
     volumes:
-    - name: model-cache
-      persistentVolumeClaim:
-        claimName: model-cache
-    - name: perf-cache
-      persistentVolumeClaim:
-        claimName: perf-cache
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: model-cache
+      - name: perf-cache
+        persistentVolumeClaim:
+          claimName: perf-cache
     volumeMounts:
-    - name: model-cache
-      mountPath: /home/dynamo/.cache/huggingface
-    - name: perf-cache
-      mountPath: /perf-cache
+      - name: model-cache
+        mountPath: /home/dynamo/.cache/huggingface
+      - name: perf-cache
+        mountPath: /perf-cache

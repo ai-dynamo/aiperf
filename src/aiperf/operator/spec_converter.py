@@ -35,8 +35,16 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONNECTIONS_PER_WORKER = 100
 
 # AIPerfConfig field names — all keys that belong under spec.benchmark.
-# Used for validation to detect unknown benchmark fields.
-CONFIG_FIELDS: frozenset[str] = frozenset(AIPerfConfig.model_fields.keys())
+# Used for validation to detect unknown benchmark fields. Includes camelCase
+# aliases (via BaseConfig's alias_generator) and shorthand aliases (model,
+# dataset, warmup, profiling) that normalize to canonical forms at parse time.
+CONFIG_FIELDS: frozenset[str] = (
+    frozenset(AIPerfConfig.model_fields.keys())
+    | frozenset(
+        f.alias for f in AIPerfConfig.model_fields.values() if f.alias is not None
+    )
+    | {"model", "dataset", "warmup", "profiling"}
+)
 
 
 @dataclass(slots=True)

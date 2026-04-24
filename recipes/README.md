@@ -21,6 +21,7 @@ recipes/<model>/<engine>/<topology>/aiperfjob.yaml
 | deepseek-ai/DeepSeek-R1 | TRT-LLM | disagg wide-EP (GB200) | [`deepseek-r1/trtllm/disagg/wide_ep/gb200/aiperfjob.yaml`](deepseek-r1/trtllm/disagg/wide_ep/gb200/aiperfjob.yaml) |
 | nvidia/DeepSeek-V3.2-NVFP4 | TRT-LLM | agg (round-robin) | [`deepseek-v32-fp4/trtllm/agg-round-robin/aiperfjob.yaml`](deepseek-v32-fp4/trtllm/agg-round-robin/aiperfjob.yaml) |
 | nvidia/DeepSeek-V3.2-NVFP4 | TRT-LLM | disagg (KV-router) | [`deepseek-v32-fp4/trtllm/disagg-kv-router/aiperfjob.yaml`](deepseek-v32-fp4/trtllm/disagg-kv-router/aiperfjob.yaml) |
+| nvidia/GLM-5-NVFP4 | SGLang | disagg | [`glm-5-nvfp4/sglang/disagg/aiperfjob.yaml`](glm-5-nvfp4/sglang/disagg/aiperfjob.yaml) |
 | openai/gpt-oss-120b | TRT-LLM | agg | [`gpt-oss-120b/trtllm/agg/aiperfjob.yaml`](gpt-oss-120b/trtllm/agg/aiperfjob.yaml) |
 | openai/gpt-oss-120b | TRT-LLM | disagg | [`gpt-oss-120b/trtllm/disagg/aiperfjob.yaml`](gpt-oss-120b/trtllm/disagg/aiperfjob.yaml) |
 | RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic | vLLM | agg | [`llama-3-70b/vllm/agg/aiperfjob.yaml`](llama-3-70b/vllm/agg/aiperfjob.yaml) |
@@ -30,6 +31,7 @@ recipes/<model>/<engine>/<topology>/aiperfjob.yaml
 | Qwen/Qwen3-235B-A22B-FP8 | TRT-LLM | disagg | [`qwen3-235b-a22b-fp8/trtllm/disagg/aiperfjob.yaml`](qwen3-235b-a22b-fp8/trtllm/disagg/aiperfjob.yaml) |
 | Qwen/Qwen3-32B-FP8 | TRT-LLM | agg | [`qwen3-32b-fp8/trtllm/agg/aiperfjob.yaml`](qwen3-32b-fp8/trtllm/agg/aiperfjob.yaml) |
 | Qwen/Qwen3-32B-FP8 | TRT-LLM | disagg | [`qwen3-32b-fp8/trtllm/disagg/aiperfjob.yaml`](qwen3-32b-fp8/trtllm/disagg/aiperfjob.yaml) |
+| Qwen/Qwen3-32B-FP8 | vLLM | disagg | [`qwen3-32b-fp8/vllm/disagg/aiperfjob.yaml`](qwen3-32b-fp8/vllm/disagg/aiperfjob.yaml) |
 | Qwen/Qwen3-32B | vLLM | agg (round-robin) | [`qwen3-32b/vllm/agg-round-robin/aiperfjob.yaml`](qwen3-32b/vllm/agg-round-robin/aiperfjob.yaml) |
 | Qwen/Qwen3-32B | vLLM | disagg (KV-router) | [`qwen3-32b/vllm/disagg-kv-router/aiperfjob.yaml`](qwen3-32b/vllm/disagg-kv-router/aiperfjob.yaml) |
 | Qwen/Qwen3-VL-30B-A3B-Instruct-FP8 | vLLM | agg (embedding cache) | [`qwen3-vl-30b/vllm/agg-embedding-cache/aiperfjob.yaml`](qwen3-vl-30b/vllm/agg-embedding-cache/aiperfjob.yaml) |
